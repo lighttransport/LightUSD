@@ -1,8 +1,9 @@
+import {LightUSDLoader} from '../lightusd/LightUSDLoader.js';
 // SPDX-License-Identifier: Apache-2.0
 // Geometry diagnostic adapter. Material overrides are explicit in provenance.
 import { BufferGeometry, BufferAttribute, Matrix4 } from 'three';
-import { LightUSDComposer } from '../lightusd/LightUSDComposer.js';
-import { HttpAssetResolver } from '../../http-asset-resolver.js';
+import {createCoreRenderInspector,getCoreInspectorMesh} from '../lightusd/CoreRenderInspector.js';
+import { HttpAssetResolver,flattenNextOverHttp } from '../../http-asset-resolver.js';
 import { surfaceDocument } from './scene.js';
 import { appendRectLights } from './usd-lights.js';
 import { USDTextureSources } from './usd-texture-sources.js';
@@ -116,38 +117,13 @@ export function triangleMaterialIds(indexCount, fallback, submeshes = []) {
   return ids;
 }
 let nativePromise;
-// The legacy composer requests merged references without their source layer.
-// Retain provenance while loading each layer; reject ambiguous authored keys.
-class LayerResolver extends HttpAssetResolver {
-  constructor(native, options) { super(options); this.native = native; this.sources = new Map(); this.textures = new USDTextureSources(); }
-  registerLayer(layer, source) {
-    if (!layer.getShadingGraphJSON) throw new Error('Rebuild the combined WASM module for shading graph inspection');
-    const snapshot = layer.getShadingGraphJSON();
-    if (!snapshot) throw new Error(layer.error());
-    this.textures.register(JSON.parse(snapshot), source);
-    for (const method of ['extractSublayerAssetPaths', 'extractReferencesAssetPaths', 'extractPayloadAssetPaths']) {
-      for (const key of layer[method]?.() || []) {
-        const url = this.rewrite(key, { parentAssetPath: source });
-        const prior = this.sources.get(key);
-        if (prior && this.rewrite(key, { parentAssetPath: prior }) !== url) throw new Error(`Ambiguous merged asset path: ${key}`);
-        this.sources.set(key, source);
-      }
-    }
-  }
-  async resolveAsync(key, options = {}) {
-    const result = await super.resolveAsync(key, { parentAssetPath: options.parentAssetPath || this.sources.get(key) });
-    if (/\.usd[ac]?(?:$|[?#])/.test(result[2])) {
-      const layer = new this.native.LightUSDLoaderNative();
-      try { if (layer.loadAsLayerFromBinary(new Uint8Array(result[1]), key)) { if (layer.hasVariants()) layer.composeVariants(); this.registerLayer(layer, result[2]); } }
-      finally { layer.delete(); }
-    }
-    return result;
-  }
-}
 async function nativeModule() {
   if (!nativePromise) {
-    const url = new URL('../lightusd/lightusd_combined.js', import.meta.url).href;
-    nativePromise = import(/* @vite-ignore */ url).then(m => m.default()).catch(e => { nativePromise = null; throw new Error(`Build the combined LightUSD WASM module first: ${e.message}`); });
+    nativePromise=(async()=>{
+      const loader=new LightUSDLoader();
+      await loader.init({backend:'next'});
+      return loader.native_;
+    })().catch(error=>{nativePromise=null;throw error;});
   }
   return nativePromise;
 }
@@ -155,22 +131,20 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
   const url = new URL('/__assets/full_assets/StandardShaderBall/standard_shader_ball_scene.usda', location.href);
   onStatus('Loading USD module…'); const native = await nativeModule();
   const response = await fetch(url); if (!response.ok) throw new Error('ShaderBall checkout is missing');
-  const layer = new native.LightUSDLoaderNative();
+  const resolver=new HttpAssetResolver({baseUrl:new URL('.',url).href});
+  resolver.textures=new USDTextureSources();
+  onStatus('Composing ShaderBall layers and references…');
+  const flattened=await flattenNextOverHttp({renderer:{native},rootBytes:new Uint8Array(await response.arrayBuffer()),
+    filename:url.href,resolver,onStatus,packageAssets:false,
+    variantOverrides:{'/standard_shader_ball_scene{surface_geometry}':'triangulated'}});
+  const document=new native.LayerDocument();
+  let layer;
   try {
-    layer.setLoadTextureInNative(false);
-    layer.setAllowParentRelativeAssetPaths?.(true);
-    if (!layer.loadAsLayerFromBinary(new Uint8Array(await response.arrayBuffer()), 'standard_shader_ball_scene.usda')) throw new Error(layer.error());
-    if (!layer.applyVariantSelection('/standard_shader_ball_scene', 'surface_geometry', 'triangulated')) throw new Error('Unable to select triangulated ShaderBall geometry');
-    const composer = new LightUSDComposer(); composer.setLayer(layer); composer.setUSDLoader({ native_: native });
-    const resolver = new LayerResolver(native, { baseUrl: new URL('.', url).href }); resolver.registerLayer(layer, url.href); composer.setAssetResolver(resolver);
-    composer.setBaseWorkingPath('./'); composer.setAssetSearchPaths(['./']);
-    onStatus('Composing ShaderBall layers and references…'); await composer.progressiveComposition();
-    if (layer.hasReferences() || layer.hasPayload()) throw new Error('ShaderBall composition is incomplete');
-    if (!layer.getShadingGraphJSON) throw new Error('Rebuild the combined WASM module for shading graph inspection');
-    const shadingGraphJSON = layer.getShadingGraphJSON();
-    if (!shadingGraphJSON) throw new Error(layer.error());
-    const shadingGraph = JSON.parse(shadingGraphJSON);
-    if (!layer.layerToRenderScene()) throw new Error(layer.error());
+    const loaded=document.load(flattened.rootBytes);
+    if(!loaded.success)throw Error(loaded.error||document.error());
+    const shadingGraph=JSON.parse(document.getShadingGraphJSON());
+    resolver.textures.register(shadingGraph,url.href);
+    layer=await createCoreRenderInspector(native,flattened.rootBytes,url.href,{loadTextures:false});
     const primvarSnapshots = {};
     const collectPrimvars = node => {
       if (node.nodeType?.toLowerCase() === 'mesh' && layer.getMeshPrimvarsJSON) {
@@ -286,18 +260,18 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
       const matrix = new Matrix4().fromArray(node.globalMatrix || new Matrix4().elements);
       if (node.nodeType?.toLowerCase() === 'camera') {
         const c = layer.getCamera(node.contentId), m = matrix.elements;
-        camera = { origin: [m[12], m[13], m[14]], target: [m[12] - m[8], m[13] - m[9], m[14] - m[10]], fov: c.yfov * 180 / Math.PI };
+        camera = { origin: [m[12], m[13], m[14]], target: [m[12] - m[8], m[13] - m[9], m[14] - m[10]], fov: c.fovY * 180 / Math.PI };
       }
       if (node.nodeType?.toLowerCase() === 'mesh') {
-        const mesh = layer.getMeshPtr(node.contentId);
+        const mesh = getCoreInspectorMesh(layer,node.contentId);
         const binding = { path: mesh.absPath, materialId: mesh.materialId, submeshes: mesh.submeshes || [], hasSubmeshes: !!mesh.hasSubmeshes, vertexOffset: positions.length / 3, indexOffset: indices.length };
         authored.bindings.push(binding);
-        if (!mesh.singleIndexable || !mesh.triangulated) throw new Error(`USD mesh is not triangulated/single-indexed: ${mesh.absPath}`);
-        const p = read(mesh.points), ix = read(mesh.indices); if (!p?.length || !ix?.length) return;
+        const p = read(mesh.points), ix = read(mesh.faceVertexIndices); if (!p?.length || !ix?.length) return;
+        if(p.length%3 || ix.length%3 || ix.some(index=>!Number.isInteger(index)||index<0||index>=p.length/3))throw Error(`Invalid core triangle mesh: ${mesh.absPath}`);
         const geo = new BufferGeometry(); geo.setAttribute('position', new BufferAttribute(p, 3)); geo.setIndex(new BufferAttribute(ix, 1));
         const n = read(mesh.normals), uv = read(mesh.uv0), tangent = read(mesh.tangents), color = read(mesh.colors || mesh.color), opacity = read(mesh.colorOpacities);
         const meshUVSets = [];
-        for (const [slot, value] of Object.entries(mesh.uvSets || {})) meshUVSets[Number(slot)] = read(value);
+        for (const value of Object.values(mesh.uvSets || {})) meshUVSets[value.slotId] = read(value.data);
         const uvSlotCount = Math.max(uvSets.length, meshUVSets.length, 1);
         const priorVertexCount = positions.length / 3;
         while (uvSets.length < uvSlotCount) uvSets.push(new Array(priorVertexCount * 2).fill(0));
@@ -338,5 +312,5 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
     const materials = Array.from({ length: materialCount }, (_, id) => authoredDocuments[id] || (id === 1 ? surfaceDocument([0.8, 0.45, 0.15], 1, 0.25) : surfaceDocument([0.35, 0.35, 0.35], 0, 0.7)));
     const scene={ positions, normals, uvs, uvSets, tangents, colors, indices, materialIds, geompropSets, authored, materials, camera, provenance: { asset: 'StandardShaderBall', commit: SHADERBALL_COMMIT, variant: 'triangulated', materialOverride: authoredMaterials ? 'partial-authored' : true, authoredMaterialCount: Object.keys(authoredDocuments).length, lightingOverride: true, referenceReady: false } };
     return authoredLights ? appendRectLights(scene,authored.lights) : scene;
-  } finally { layer.delete(); }
+  } finally { layer?.delete();document.delete(); }
 }

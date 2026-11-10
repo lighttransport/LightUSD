@@ -106,16 +106,20 @@ const outputOf = result => {
   assert.equal(result.success, true, result.error);
   return new Uint8Array(result.data);
 };
-try {
-  // Single USDC buffers. The legacy entry points require a Crate root; next
-  // sessions also accept USDA roots.
-  assert.deepEqual(outputOf(loader.nextFlattenUSDC(singleUSDC, true)), nextFlatten(singleUSDC));
-  assert.equal(loader.nextFlattenUSDC(singleUSDA, true).success, false);
   const layerText = bytes => {
     const document = new nextModule.LayerDocument();
     try { assert.equal(document.load(bytes).success, true); return document.exportUSDA().text; }
     finally { document.delete(); }
   };
+  // Crate encodings may change across distributions (inline variant storage,
+  // table order). Compare all authored output through the canonical reader.
+  const assertLayersEqual = (actual, expected, message) =>
+    assert.equal(layerText(actual), layerText(expected), message);
+try {
+  // Single USDC buffers. The legacy entry points require a Crate root; next
+  // sessions also accept USDA roots.
+  assertLayersEqual(outputOf(loader.nextFlattenUSDC(singleUSDC, true)), nextFlatten(singleUSDC));
+  assert.equal(loader.nextFlattenUSDC(singleUSDA, true).success, false);
   const localEdits = encode('#usda 1.0\ndef Xform "Local" {\n' +
     'custom int[] a = edit [append 1; append 2]\n}\n');
   const localCrate = toUSDC(localEdits);
@@ -124,22 +128,22 @@ try {
     'a single-layer flatten resolves sparse edits without external arcs');
   assert.equal(layerText(nextFlatten(localCrate)), resolvedLocal,
     'USDA and USDC local edits flatten identically');
-  assert.deepEqual(outputOf(loader.nextFlattenUSDC(localCrate, true)),
+  assertLayersEqual(outputOf(loader.nextFlattenUSDC(localCrate, true)),
     nextFlatten(localCrate), 'combined and next-only local edits match');
   assert.equal(layerText(nextFlatten(singleUSDA)), layerText(nextFlatten(singleUSDC)),
     'a USDA root flattens to the same layer as its Crate encoding');
   exercised.set('nextFlattenUSDC', 'delta');
-  assert.deepEqual(outputOf(loader.nextFlattenBuffer(buffer('a.usdc', singleUSDC), true)),
+  assertLayersEqual(outputOf(loader.nextFlattenBuffer(buffer('a.usdc', singleUSDC), true)),
     nextFlatten(singleUSDC));
   assert.equal(loader.nextFlattenBuffer(buffer('a2.usda', singleUSDA), true).success, false);
   exercised.set('nextFlattenBuffer', 'delta');
-  assert.deepEqual(outputOf(loader.nextFlattenBufferRemap(buffer('b.usdc', singleUSDC), true, remap)),
+  assertLayersEqual(outputOf(loader.nextFlattenBufferRemap(buffer('b.usdc', singleUSDC), true, remap)),
     nextFlatten(singleUSDC, {remapping: remap}));
   note('nextFlattenBufferRemap', 'match');
   const withVariants = nextFlatten(singleUSDC, {remapping: remap, overrides: variants});
   assert.notDeepEqual(withVariants, nextFlatten(singleUSDC, {remapping: remap}),
     'the variant override changes the flattened output');
-  assert.deepEqual(outputOf(loader.nextFlattenBufferRemapVariants(buffer('c.usdc', singleUSDC),
+  assertLayersEqual(outputOf(loader.nextFlattenBufferRemapVariants(buffer('c.usdc', singleUSDC),
     true, remap, variants)), withVariants);
   note('nextFlattenBufferRemapVariants', 'match');
 
@@ -151,12 +155,12 @@ try {
     assert.equal(result.success, true, result.error);
     return concat(chunks);
   };
-  assert.deepEqual(sinkRun('nextFlattenBufferToSink'), nextFlatten(singleUSDC, {sink: true}));
+  assertLayersEqual(sinkRun('nextFlattenBufferToSink'), nextFlatten(singleUSDC, {sink: true}));
   note('nextFlattenBufferToSink', 'match');
-  assert.deepEqual(sinkRun('nextFlattenBufferToSinkRemap', remap),
+  assertLayersEqual(sinkRun('nextFlattenBufferToSinkRemap', remap),
     nextFlatten(singleUSDC, {sink: true, remapping: remap}));
   note('nextFlattenBufferToSinkRemap', 'match');
-  assert.deepEqual(sinkRun('nextFlattenBufferToSinkRemapVariants', remap, variants),
+  assertLayersEqual(sinkRun('nextFlattenBufferToSinkRemapVariants', remap, variants),
     nextFlatten(singleUSDC, {sink: true, remapping: remap, overrides: variants}));
   note('nextFlattenBufferToSinkRemapVariants', 'match');
 
@@ -174,7 +178,7 @@ try {
       key => key === 'ref.usda', key => { fetched.push(key); return depUSDA; }, ...extra);
     assert.equal(result.success, true, `${method}: ${result.error}`);
     assert.deepEqual(fetched, ['ref.usda'], method);
-    assert.deepEqual(concat(chunks), Object.keys(options).length
+    assertLayersEqual(concat(chunks), Object.keys(options).length
       ? nextFlatten(rootUSDA, {sink: true, ...options}) : expectedMulti, method);
     note(method, 'match');
   }
@@ -193,7 +197,7 @@ try {
     step = loader.nextFlattenAsyncStep(begun.session, sink);
     assert.equal(step.status, 'done');
     assert.equal(loader.nextFlattenAsyncEnd(begun.session).success, true);
-    assert.deepEqual(concat(chunks), nextFlatten(rootUSDA, {sink: true, ...options}), method);
+    assertLayersEqual(concat(chunks), nextFlatten(rootUSDA, {sink: true, ...options}), method);
     note(method, 'match');
   }
   for (const method of ['nextFlattenAsyncStep', 'nextFlattenAsyncProvideLayer', 'nextFlattenAsyncEnd'])
@@ -211,4 +215,4 @@ for (const row of claimed) {
     `${row.legacyMethod}: edgeDifference must be documented exactly when a delta is pinned`);
 }
 console.log(`ok - next flatten behavior parity (${wasm64 ? 'memory64' : 'wasm32'}): ` +
-  `${claimed.length} methods byte-identical to NextFlattenSession`);
+  `${claimed.length} methods match NextFlattenSession layer contents`);

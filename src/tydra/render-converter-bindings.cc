@@ -134,6 +134,8 @@ void RenderSceneConverter::Impl::AssignMeshMaterialBinding(const Stage& stage,
         ms.face_start = faces[run_start];
         ms.face_count = static_cast<uint32_t>(i - run_start);
         ms.material_id = mit->second;
+        const size_t slash = sub.path.find_last_of('/');
+        ms.name = slash == std::string::npos ? sub.path : sub.path.substr(slash + 1);
         mesh->material_subsets.push_back(ms);
         run_start = i;
       }
@@ -160,7 +162,7 @@ void RenderSceneConverter::Impl::AssignMeshMaterialBinding(const Stage& stage,
       const uint32_t tri_count = offs[face_end] - tri_start;
       if (tri_count == 0) continue;
       remapped.push_back(
-          RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
+          RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id, ms.name});
     }
     mesh->material_subsets = std::move(remapped);
   }

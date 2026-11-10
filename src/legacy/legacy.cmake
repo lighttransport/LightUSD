@@ -344,8 +344,6 @@ option(LIGHTUSD_WITH_REMOTERY
 
 # -- optional tool --
 # TODO: deperecate. Use lusdcat
-option(LIGHTUSD_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
-option(LIGHTUSD_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 # --------------
 
 # -- For developers --
@@ -550,6 +548,7 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/legacy/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/image-convert.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
@@ -707,7 +706,6 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/ik-solver.cc
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-math.h
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-collision.h
-        ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-collision.cc
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.h
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.hh
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/rb-dynamics.cc
@@ -1001,43 +999,8 @@ if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
   list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/legacy/zstd-compression.cc)
 endif()
 
-# Vendored pure-C11 texture processing stack used by lusdview/lusdrender.
-if(LIGHTUSD_WITH_TEXTOOLS)
-  set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
-  file(GLOB TEXTOOLS_SOURCES CONFIGURE_DEPENDS
-       ${TEXTOOLS_DIR}/resize/src/*.c
-       ${TEXTOOLS_DIR}/texcomp/src/*.c
-       ${TEXTOOLS_DIR}/texpipe/src/*.c
-       ${TEXTOOLS_DIR}/envmap/src/*.c)
-  add_library(lightusd_textools STATIC ${TEXTOOLS_SOURCES})
-  target_include_directories(lightusd_textools PUBLIC
-      ${TEXTOOLS_DIR}/resize/include
-      ${TEXTOOLS_DIR}/texcomp/include
-      ${TEXTOOLS_DIR}/texpipe/include
-      ${TEXTOOLS_DIR}/envmap/include)
-  target_compile_features(lightusd_textools PRIVATE c_std_11)
-  if(NOT MSVC)
-    target_compile_options(lightusd_textools PRIVATE -w)
-  endif()
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
-    include(CheckCCompilerFlag)
-    check_c_compiler_flag("-march=armv8-a+sve" TEXTOOLS_HAS_SVE)
-    if(TEXTOOLS_HAS_SVE)
-      set_source_files_properties(
-          ${TEXTOOLS_DIR}/resize/src/tir_kernels_sve.c
-          PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
-    endif()
-  endif()
-  if(UNIX AND NOT EMSCRIPTEN)
-    target_compile_definitions(lightusd_textools PRIVATE
-        TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
-    find_package(Threads REQUIRED)
-    target_link_libraries(lightusd_textools PUBLIC Threads::Threads)
-  endif()
-  if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-    target_link_libraries(lightusd_textools PUBLIC m)
-  endif()
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-textools.cmake")
+set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
 
 # -- nanoimage --
 if(LIGHTUSD_WITH_NANOIMAGE)
@@ -1590,6 +1553,13 @@ endif()
 list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/core/host-services.cc)
 add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
 target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
+# Shared pixel conversion uses the stage-independent C half-float helpers.
+if(TARGET lightusd_core_c)
+  target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_core_c)
+else()
+  target_sources(${LIGHTUSD_TARGET_STATIC} PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/c/half.c)
+endif()
 if(NOT LIGHTUSD_NATIVE_IO)
   target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
 endif()
@@ -1614,6 +1584,12 @@ if(LIGHTUSD_BUILD_SHARED_LIBS)
   add_library(
     ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
   target_link_libraries(${LIGHTUSD_TARGET} lightusd_asset_import)
+  if(TARGET lightusd_core_c)
+    target_link_libraries(${LIGHTUSD_TARGET} lightusd_core_c)
+  else()
+    target_sources(${LIGHTUSD_TARGET} PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/c/half.c)
+  endif()
   if(NOT LIGHTUSD_NATIVE_IO)
     target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
   endif()
@@ -1647,13 +1623,7 @@ endif()
 #
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
-if(LIGHTUSD_LEGACY_USE_CORE_PCP)
-  if(LIGHTUSD_BUILD_EXAMPLES)
-    # examples/lusdcat defines the legacy `lusdcat`; keep the next subproject
-    # from defining its own CLI (and the tests that require it) under that name.
-    set(LIGHTUSD_BUILD_LUSDCAT OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
-    set(LIGHTUSD_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
-  endif()
+if(LIGHTUSD_LEGACY_USE_CORE_PCP AND NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_next_build)
 endif()
 
@@ -1664,7 +1634,13 @@ endif()
 #
 # -- common target props
 #
+if(LIGHTUSD_WITH_TYDRA)
+  include(${PROJECT_SOURCE_DIR}/cmake/lightusd-rb-solver.cmake)
+endif()
 foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
+  if(LIGHTUSD_WITH_TYDRA)
+    target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_rb_solver)
+  endif()
 
   # Precompiled header to amortize parsing of large, stable headers across the
   # many C++ TUs. Guarded with COMPILE_LANGUAGE:CXX because the library also
@@ -1990,31 +1966,7 @@ if(LIGHTUSD_WITH_C_API)
     ${BUILD_TARGET_C}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
 
-# TODO: deprecate in next major version
-if(LIGHTUSD_WITH_TOOL_USDA_PARSER AND LIGHTUSD_WITH_MODULE_USDA_READER)
-  add_executable(
-    usda_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
-  add_sanitizers(usda_parser)
-  if(LIGHTUSD_PRODUCTION_BUILD)
-    target_compile_definitions(usda_parser
-                               PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
-  endif()
-  target_include_directories(usda_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usda_parser PRIVATE ${LIGHTUSD_TARGET_STATIC})
-endif()
-
-# TODO: deprecate in next major version
-if(LIGHTUSD_WITH_TOOL_USDC_PARSER AND LIGHTUSD_WITH_MODULE_USDC_READER)
-  add_executable(
-    usdc_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdc_parser/usdc-parser-main.cc)
-  add_sanitizers(usdc_parser)
-  if(LIGHTUSD_PRODUCTION_BUILD)
-    target_compile_definitions(usdc_parser
-                               PRIVATE "LIGHTUSD_PRODUCTION_BUILD")
-  endif()
-  target_include_directories(usdc_parser PRIVATE ${PROJECT_SOURCE_DIR}/src/)
-  target_link_libraries(usdc_parser PRIVATE ${LIGHTUSD_TARGET_STATIC})
-endif()
+# usda_parser/usdc_parser are registered by the core example build.
 
 # Enable CTest before the example subdirectories are added, so a subdirectory
 # (e.g. examples/lusdview) can register its own tests with add_test(). The
@@ -2055,19 +2007,14 @@ if(LIGHTUSD_WITH_TCMALLOC)
 endif()
 
 if(LIGHTUSD_BUILD_EXAMPLES)
-  if(NOT TARGET lusdcat)
-    add_subdirectory(examples/lusdcat)
-  endif()
-  if(LIGHTUSD_WITH_TEXTOOLS)
-    # Authors .ktx2 texture companions + the legacy-safe customData hints.
-    add_subdirectory(examples/usd-texcomp)
-  endif()
+  # The canonical lusdcat target is owned by the core build.
+  # usd-texcomp is registered by the core Tydra build.
   if (LIGHTUSD_WITH_TYDRA)
-    add_subdirectory(examples/tydra_api)
-    add_subdirectory(examples/tydra_to_renderscene)
-    add_subdirectory(examples/variant-lister)
-    add_subdirectory(examples/variant-analyzer)
-    add_subdirectory(examples/urdf-to-usd)
+    # tydra_api is registered by the core Tydra build.
+    # tydra_to_renderscene is registered by the core example build.
+    # variant-lister is a core example, registered by src/CMakeLists.txt.
+    # variant-analyzer is registered by the core example build.
+    # urdf-to-usd is a core example, registered by src/CMakeLists.txt.
 
     # examples/lusdview is a core app, added by the root CMakeLists.txt.
 
@@ -2075,31 +2022,23 @@ if(LIGHTUSD_BUILD_EXAMPLES)
     # no code with lusdview and needs no window-system or GPU dependency.
     # examples/lusdquicklook is a core app, added by the root CMakeLists.txt.
 
-    if (LIGHTUSD_WITH_MCP_SERVER)
-      add_subdirectory(examples/mcp_server)
-    endif()
+    # mcp_server is registered against the core MCP library by src/CMakeLists.txt.
 
-    if (LIGHTUSD_WITH_QJS)
-      add_subdirectory(examples/js-script)
-    endif()
+    # js-script is registered by the optional core QuickJS example build.
   endif ()
 
-  add_subdirectory(examples/api_tutorial)
+  # api_tutorial is registered by the root core example build.
   # examples/workflows is a core example, added by the root CMakeLists.txt.
-  add_subdirectory(examples/file_format)
-  add_subdirectory(examples/asset_resolution)
-  add_subdirectory(examples/progressive_composition)
-  add_subdirectory(examples/large-scene-load)
+  # file_format is registered by the root core example build.
+  # asset_resolution is a core example, registered by src/CMakeLists.txt.
+  # progressive_composition is a core example.
+  # large-scene-load is registered against the core StageSession by src/CMakeLists.txt.
   #if (LIGHTUSD_WITH_JSON)
-  #  add_subdirectory(examples/usd_to_json)
+  # usd_to_json is registered by the core example build.
   #endif()
-  add_subdirectory(examples/usd_to_gltf)
-  if(LIGHTUSD_WITH_MODULE_USDA_WRITER)
-    add_subdirectory(examples/save_usda)
-  endif()
-  if(LIGHTUSD_WITH_C_API)
-    add_subdirectory(examples/c_api_example)
-  endif()
+  # usd_to_gltf is registered by the core C API example build.
+  # save_usda is a core example registered by the root project.
+  # c_api_example is registered by the root core example build.
 endif(LIGHTUSD_BUILD_EXAMPLES)
 
 if(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH)

@@ -613,7 +613,7 @@
         <div id="status">Initializing...</div>
         <div id="model-info">
             <div>File: <span id="current-file">-</span></div>
-            <div>Backend: <span id="backend-name">legacy</span></div>
+            <div>Backend: <span id="backend-name">core</span></div>
             <div>FPS: <span id="fps-value">--</span></div>
             <div>File size: <span id="file-size">--</span></div>
             <div>Read/fetch: <span id="read-time">--</span></div>
@@ -649,11 +649,7 @@
         <button class="btn secondary" onclick="loadSampleModel()">
             Sample Model
         </button>
-        <select id="backend-select" title="Backend">
-            <option value="legacy">legacy</option>
-            <option value="next">next</option>
-            <option value="auto">auto</option>
-        </select>
+
         <button class="btn toggle active" id="worker-btn" onclick="toggleWorkerMode()" title="Toggle Web Worker mode for responsive UI during loading">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>

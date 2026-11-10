@@ -3,6 +3,7 @@
 #include "binding-core-render.hh"
 #include "binding-core-scene.hh"
 #include "layer/prim-spec.hh"
+#include "layer/asset-anchor.hh"
 #include "schema/usd-shade.hh"
 namespace lightusd {
 namespace web_core {
@@ -31,6 +32,20 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
         meta.path = *a;
       } else if (auto s = file->as_string()) {
         meta.path = *s;
+      }
+    }
+    if (!meta.path.empty()) {
+      const auto* spec = tex.GetPrimSpec();
+      const uint32_t anchor = spec ? spec->asset_anchor_id() : 0;
+      const std::string anchored = lightusd::ResolveAssetAnchorPath(meta.path, anchor);
+      const std::string& directory = lightusd::AssetAnchorPath(anchor);
+      const auto resolved = asset_resolver_.Resolve(meta.path,
+          directory.empty() ? std::string() :
+          lightusd::AssetResolver::IsPackagePath(directory) ? directory : directory + "/", false);
+      if (!resolved.resolved_path.empty()) {
+        if (asset_resolver_.GetMemoryAssetView(anchored)) meta.path = anchored;
+        else if (resolved.exists) meta.path = resolved.resolved_path;
+        else meta.path = anchored;
       }
     }
     auto read_tokenish = [&](const char *name, std::string *out) {

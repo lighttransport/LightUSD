@@ -98,7 +98,7 @@ def main():
             screenshot = output / f'{backend}-{name}.ppm'
             source.write_text(scene(asset.as_posix(), present, foreground, scaled))
             report = output / f'{backend}-{name}.json'
-            args = [str(viewer), '--config', str(config), '--legacy-load', '--frames', '2',
+            args = [str(viewer), '--config', str(config), '--frames', '2',
                     '--no-grid', '--render-report', str(report),
                     '--size', '128x128', '--no-robust-frame', '--view-dir', '0,0,-1',
                     '--vram-budget', '8', '--max-gpu-mem', '8',

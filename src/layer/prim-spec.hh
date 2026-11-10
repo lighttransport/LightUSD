@@ -264,6 +264,11 @@ public:
 
   /// Rewrite scalar asset paths stored in defaults and time samples.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+  /// Resolve keys against this prim's source layer. Used when flattening
+  /// multiple layers into a single asset package.
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap,
+                          bool anchor_relative);
+
 
   /// Remap every time sample's time by a layer offset (t -> offset+scale*t).
   void remap_time_sample_times(double offset, double scale);

@@ -607,6 +607,9 @@ assert.deepEqual(Object.getOwnPropertyNames(module.NextFlattenSession.prototype)
   .filter(name => name !== 'constructor').sort(),
 JSON.parse(fs.readFileSync(new URL('./next-flatten-session-api-inventory.json', import.meta.url), 'utf8')));
 const flatten = new module.NextFlattenSession();
+assert.throws(() => flatten.setRebaseAssetPaths(true), /session not started/);
+assert.throws(() => flatten.setRebaseAssetPaths(1), /boolean/);
+assert.throws(() => flatten.setRebaseAssetPaths(), /boolean/);
 assert.deepEqual(flatten.provideLayer('dep.usda', encode('#usda 1.0\n')),
   {success: false, error: 'session not started (call begin first)'});
 assert.deepEqual(flatten.begin(new Uint8Array(), 'root.usda', true),

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# AOUSD conformance suite: load every AOUSD fixture through both loaders and
+# AOUSD conformance suite: load every AOUSD fixture through the core loader and
 # assert no crashes.  External data — skip when the suite is not mounted.
 set -uo pipefail
 SKIP=77
@@ -23,9 +23,8 @@ err=0
 while IFS= read -r -d '' f; do
   base="$(basename "$f")"
   [[ "$base" == "test_output.usdc" ]] && continue
-  for loader in next legacy; do
+  for loader in core; do
     args=()
-    [ "$loader" = legacy ] && args+=(--legacy-load)
     LOG="$("${RUN[@]}" "$BIN" --headless --backend vk --frames 1 "${args[@]}" "$f" 2>&1)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -38,7 +37,7 @@ while IFS= read -r -d '' f; do
       err=1
     fi
   done
-  [ "$err" -eq 0 ] && echo "PASS: $base (both loaders)"
+  [ "$err" -eq 0 ] && echo "PASS: $base (core loader)"
 done < <(find "$AOUSD_ROOT" -type f \( -name '*.usda' -o -name '*.usdc' \) \
   ! -path '*/OpenUSD/*' ! -path '*/dist_minimal/*' ! -path '*/cpp_cmake/*' \
   ! -path '*/cpp_makefile/*' ! -path '*/build/*' -print0)

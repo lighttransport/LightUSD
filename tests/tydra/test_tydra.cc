@@ -4,6 +4,7 @@
 // Tydra Next - Unit Tests
 
 #include <algorithm>
+#include "layer/asset-anchor.hh"
 #include <iostream>
 #ifdef NDEBUG
 #undef NDEBUG
@@ -3296,6 +3297,28 @@ def Xform "Scene"
   }
   assert(resolved == expected);
   assert(texture.asset_path == "./textures/albedo.png");
+
+  // A memory store can contain both a root-level key and an entry relative
+  // to the authoring layer. The anchored entry must win that collision.
+  std::string memory_source(look);
+  const std::string connection = "asset inputs:file.connect = </BaseMaterial.inputs:surfaceMap>";
+  const size_t connection_at = memory_source.find(connection);
+  assert(connection_at != std::string::npos);
+  memory_source.replace(connection_at, connection.size(),
+                        "asset inputs:file = @textures/albedo.png@");
+  auto memory_stage = LoadUSDAFromString(memory_source);
+  assert(memory_stage.success);
+  StampLayerAssetAnchor(memory_stage.stage.GetRootLayer(), "nested/look.usda");
+  AssetResolver memory_resolver;
+  memory_resolver.RegisterMemoryAsset("textures/albedo.png", {1});
+  memory_resolver.RegisterMemoryAsset("nested/textures/albedo.png", {2});
+  ConverterConfig memory_config;
+  memory_config.material.load_textures = false;
+  memory_config.asset_resolver = &memory_resolver;
+  RenderSceneConverter memory_converter(memory_config);
+  const auto memory_scene = memory_converter.Convert(memory_stage.stage);
+  assert(memory_scene.success && memory_scene.scene.images.size() == 1);
+  assert(memory_scene.scene.images[0].resolved_path == "nested/textures/albedo.png");
 
   std::cout << "  Forwarded texture asset anchoring: PASSED\n";
 }
@@ -8911,6 +8934,23 @@ static void TestAuthoredPlaneTextureDomain() {
 
 static void TestGeneratedSmoothNormals() {
   using namespace lightusd::tydra;
+  auto painted = LoadUSDAFromString(R"(#usda 1.0
+ def Sphere "Painted" {
+  color3f[] primvars:displayColor = [(1,0.25,0.5)] (interpolation = "constant")
+  float[] primvars:displayOpacity = [0.4] (interpolation = "constant")
+ }
+)");
+  assert(painted.success);
+  RenderSceneConverter attributes_converter;
+  RenderMesh painted_mesh;
+  assert(attributes_converter.ConvertRenderableMesh(painted.stage,
+      painted.stage.GetPrimAtPath("/Painted"), &painted_mesh));
+  assert(painted_mesh.colors.size() == 3);
+  assert(painted_mesh.colors[0] == 1.0f && painted_mesh.colors[1] == 0.25f &&
+         painted_mesh.colors[2] == 0.5f);
+  assert(painted_mesh.colors_interp == Interpolation::Constant);
+  assert(painted_mesh.opacities.size() == 1 && painted_mesh.opacities[0] == 0.4f);
+
   auto policy = LoadUSDAFromString(R"(#usda 1.0
  def Mesh "Default" {}
  def Mesh "Polygon" { uniform token subdivisionScheme = "none" }

@@ -38,6 +38,18 @@ int32_t lightusd_wasm_encode_image(const uint8_t* pixels, uint32_t pixel_size,
 /* EXR query retains one encoded result until copied or released. */
 uintptr_t lightusd_wasm_encoded_image_data(void);
 void lightusd_wasm_encoded_image_release(void);
+/* Bounded converter image jobs. Handles are uint32 on both pointer widths;
+ * results stay owned by the job until release. Info is counted UTF-8 JSON. */
+uint32_t lightusd_image_convert(const uint8_t*,uint32_t,const uint8_t*,uint32_t);
+uint32_t lightusd_image_fit_begin(void);
+int32_t lightusd_image_fit_add(uint32_t,const uint8_t*,uint32_t,const uint8_t*,uint32_t);
+int32_t lightusd_image_fit_finish(uint32_t,const uint8_t*,uint32_t);
+int32_t lightusd_image_repack_finish(uint32_t,const uint8_t*,uint32_t);
+uint32_t lightusd_image_colorspaces(const uint8_t*,uint32_t);
+int32_t lightusd_image_job_info(uint32_t,uint8_t*,uint32_t);
+uintptr_t lightusd_image_job_data(uint32_t,uint32_t);
+int32_t lightusd_image_job_size(uint32_t,uint32_t);
+void lightusd_image_job_release(uint32_t);
 /* Next-only root rewrite. The result bytes remain owned by the converter
  * until its next rewrite or destruction; buffer queries copy them. Format is
  * 0=USDC, 1=USDA. A zero max_memory keeps finite library defaults. */
@@ -103,6 +115,8 @@ int32_t lightusd_wasm_converter_root_preflight(uint32_t handle,
 /* Output kinds: 0=physics JSON, 1=USDA, 2=USDC, 3=USDZ.
  * Returns 1 on success, 0 on converter error, -1 on invalid input. */
 int32_t lightusd_wasm_converter_export(uint32_t handle, uint8_t kind);
+int32_t lightusd_wasm_converter_export_configured(uint32_t handle,
+    const uint8_t* json, uint32_t size);
 int32_t lightusd_wasm_converter_export_with_options(uint32_t handle,
                                                     uint8_t kind,
                                                     uint8_t root_format);
@@ -309,6 +323,9 @@ int32_t lightusd_wasm_render_begin(uint32_t handle, const uint8_t* bytes,
                                   uint32_t size);
 /* Export a loaded LayerDocument to retained USDA and feed that buffer directly
  * to RenderStream, avoiding an intermediate JS/heap byte copy. */
+int32_t lightusd_wasm_render_begin_named(uint32_t handle, const uint8_t* bytes,
+                                        uint32_t size, const uint8_t* source_uri,
+                                        uint32_t source_uri_size);
 int32_t lightusd_wasm_render_begin_layer_document(uint32_t render_handle,
                                                   uint32_t layer_handle);
 /* Checks input-byte and current resident-memory headroom before JS staging.
@@ -1021,6 +1038,13 @@ int32_t lightusd_wasm_flatten_add_prim_arc(
     uint32_t handle, uint8_t kind, uint8_t list_op, const uint8_t* prim_path,
     uint32_t prim_size, const uint8_t* asset_path, uint32_t asset_size,
     const uint8_t* target_path, uint32_t target_size);
+/* Select arcs after begin: sublayers=1, references=2, payloads=4,
+ * inherits=8, specializes=16, variants=32. Disabled arcs remain authored. */
+int32_t lightusd_wasm_flatten_set_composition_mask(uint32_t handle, uint32_t mask);
+/* Rebase asset-valued properties against their authoring layer before
+ * composition, even when no replacement map is supplied. Call after begin. */
+int32_t lightusd_wasm_flatten_set_rebase_asset_paths(uint32_t handle,
+                                                   uint8_t enabled);
 /* Atomically replace the root's asset-valued property remap from a JSON
  * object. Returns 1 on success, 0 on parse/budget failure, -1 on bad handle. */
 int32_t lightusd_wasm_flatten_set_asset_path_remap(
@@ -1095,6 +1119,8 @@ int NextFlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
                           const uint8_t* prim_path, uint32_t prim_size,
                           const uint8_t* asset_path, uint32_t asset_size,
                           const uint8_t* target_path, uint32_t target_size);
+int NextFlattenSetCompositionMask(void* object, uint32_t mask);
+int NextFlattenSetRebaseAssetPaths(void* object, bool enabled);
 int NextFlattenSetAssetPathRemap(void* object, const uint8_t* json,
                                 uint32_t json_size);
 int NextFlattenRemapLayerAssetPaths(void* object, const uint8_t* json,
@@ -1143,6 +1169,7 @@ int NextConverterSetMesh(void* object, const uint8_t* name,
 int NextConverterControl(void* object, uint8_t kind, int32_t first,
                          int32_t second);
 int NextConverterExport(void* object, uint8_t kind);
+int NextConverterExportConfigured(void* object, const uint8_t* data, uint32_t size);
 int NextConverterExportWithOptions(void* object, uint8_t kind,
                                    uint8_t root_format);
 int NextConverterExportWithRemap(void* object, const uint8_t* remap_json,

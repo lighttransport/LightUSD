@@ -59,6 +59,27 @@ export class NextTextureLoadingManager {
     this.total = this.tasks.length;
   }
 
+  // Mesh-local material clones and implementation switches must receive the
+  // same pending texture results as the material that queued them.
+  cloneMaterialBindings(source, target) {
+    for (const task of this.tasks) {
+      for (const binding of [...task.bindings]) {
+        if (binding.material === source && !task.bindings.some(
+          item => item.material === target && item.mapProperty === binding.mapProperty)) {
+          task.bindings.push({material: target, mapProperty: binding.mapProperty});
+        }
+      }
+    }
+  }
+
+  replaceMaterials(replacements) {
+    for (const task of this.tasks) {
+      for (const binding of task.bindings) {
+        binding.material = replacements.get(binding.material) || binding.material;
+      }
+    }
+  }
+
   reset() {
     const adapters = new Set();
     for (const task of this.tasks) {
@@ -1365,6 +1386,34 @@ export function buildNextThreeNode(adapter, {
         }
         if (cursor < total) geometry.addGroup(cursor, total - cursor, fallbackIndex);
       }
+    }
+    const colors = mesh.vertexColors;
+    const opacity = mesh.opacities;
+    const vertexCount = mesh.points.length / 3;
+    const hasColors = colors?.length === 3 || colors?.length === vertexCount * 3;
+    const hasOpacity = opacity?.length === 1 || opacity?.length === vertexCount;
+    if (hasColors || hasOpacity) {
+      const components = hasOpacity ? 4 : 3;
+      const values = new Float32Array(vertexCount * components);
+      for (let i = 0; i < vertexCount; ++i) {
+        for (let c = 0; c < 3; ++c) values[i * components + c] =
+          hasColors ? colors[(colors.length === 3 ? 0 : i * 3) + c] : 1;
+        if (components === 4) values[i * 4 + 3] = opacity[opacity.length === 1 ? 0 : i];
+      }
+      geometry.setAttribute('color', new THREE.BufferAttribute(values, components));
+      const enable = source => {
+        const result = source.clone(); result.vertexColors = true;
+        textureManager?.cloneMaterialBindings(source, result);
+        delete result.userData.lightusdTextureColorHookInstalled;
+        for (const [key, transform] of Object.entries(
+          source.userData.lightusdTextureColorTransforms || {})) {
+          // Three clones userData but does not clone onBeforeCompile hooks.
+          installTextureColorTransform(result, key, transform);
+        }
+        if (components === 4 && opacity.some(value => value < 1)) result.transparent = true;
+        return result;
+      };
+      material = Array.isArray(material) ? material.map(enable) : enable(material);
     }
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;

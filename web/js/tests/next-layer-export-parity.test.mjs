@@ -368,9 +368,19 @@ try {
         customSamplesBytes, 'c-core-animation-queries.usda'), true,
       customSamplesLegacy.error());
       assert.equal(customSamplesNext.load(customSamplesBytes).success, true);
-      assert.deepEqual(JSON.parse(customSamplesNext.exportJSON().text).primSpecs,
-        JSON.parse(customSamplesLegacy.layerToJSON()).primSpecs,
-      'custom time-sample-only attributes retain authored property flags');
+      const actualSamples = JSON.parse(customSamplesNext.exportJSON().text).primSpecs;
+      const legacySamples = JSON.parse(customSamplesLegacy.layerToJSON()).primSpecs;
+      // The valid fixture declares custom attributes separately from their
+      // samples. Legacy JSON loses the inner attribute name for that form;
+      // core retains the authored name. Keep the remaining flags/data exact.
+      for (const name of ['gain', 'offset', 'velocity', 'tint']) {
+        assert.equal(actualSamples.World.properties[name].attribute.name, name);
+        assert.equal(actualSamples.World.properties[name].isCustom, true);
+        assert.equal(legacySamples.World.properties[name].attribute.name, '');
+        legacySamples.World.properties[name].attribute.name = name;
+      }
+      assert.deepEqual(actualSamples, legacySamples,
+        'custom time-sample-only attributes retain authored flags, values and canonical names');
     } finally { customSamplesLegacy.delete(); customSamplesNext.delete(); }
     const relationshipBytes = new Uint8Array(fs.readFileSync(new URL(
       '../../../tests/usda/c-core-relationships.usda', import.meta.url)));

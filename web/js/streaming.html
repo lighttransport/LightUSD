@@ -35,11 +35,10 @@
 
   <div id="top" class="ui">
     <h1>Low-Memory Streaming USD Renderer</h1>
-    <p>Streams a USD/USDZ into the WASM heap once, keeps textures <b>encoded</b>
-       (decoded per-texture in JS via <code>createImageBitmap</code>, off-heap),
-       uploads geometry through zero-copy heap views straight to GL, then
-       <code>reset()</code>s the WASM scene — the GPU keeps the data, so the WASM
-       working set drops to ~0. Target: peak WASM heap ≈ the input file size.</p>
+    <p>Loads USDA, USDC and USDZ with the core reader. Geometry uploads one mesh
+       at a time, while encoded archive textures stay in JavaScript and decode
+       through <code>createImageBitmap</code>. Native scene allocations are
+       released after GPU upload; the panel reports reserved WASM heap size.</p>
     <p class="hint">Drag a <code>.usdz</code> / <code>.usdc</code> / <code>.usda</code>
        onto the view, or pick a file. Drag to orbit, wheel to zoom.</p>
     <div id="controls">
@@ -59,8 +58,8 @@
     const params = new URLSearchParams(location.search);
     mountStreamingDemo({
       url: params.get('url') || undefined,
-      eager: params.get('eager') === '1',  // eager path supports textures; default is the incremental ≈1x path
-    }).catch((e) => {
+      eager: params.get('eager') === '1',  // standard inspection path; default uploads geometry before textures
+    }).then(renderer => { window.streamingRenderer = renderer; }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
       console.error(e);
     });

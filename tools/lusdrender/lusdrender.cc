@@ -50,7 +50,7 @@
 
 // Experimental `next` lazy loader: fast, low-memory USDC parse used as the
 // default backend for the RT preview path. tydra provides bit-exact
-// world transforms (see src/tydra/next/scene-access.cc).
+// world transforms (see src/tydra/scene-access.cc).
 #include "layer/prim-spec.hh"
 #include "pcp/prim-index.hh"
 #include "prim/path.hh"
@@ -70,7 +70,6 @@ extern "C" {
 #include <sstream>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "tydra/js-script.hh"
 extern "C" {
 #include "external/quickjs-ng/quickjs.h"
 }

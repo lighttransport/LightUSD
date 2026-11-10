@@ -1,18 +1,85 @@
-﻿#include <iostream>
-#include <iomanip>
 #include <algorithm>
-#include <map>
+#include <cstdint>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 
-#include "lightusd.hh"
-#include "tydra/render-data.hh"
-#include "tydra/variant-converter.hh"
-#include "tydra/variant-support.hh"
+#include "load-usd.hh"
+#include "writer/usda-writer.hh"
 
 using namespace lightusd;
 
-using namespace lightusd::legacy;  // NOLINT
-using namespace lightusd::tydra;
-using namespace lightusd::legacy::tydra;  // NOLINT
+struct VariantOption {
+  uint32_t nested_depth = 0;
+};
+struct VariantSet {
+  std::string name;
+  std::vector<VariantOption> options;
+};
+struct VariantGroup {
+  std::string prim_path;
+  std::vector<VariantSet> variant_sets;
+};
+
+// Count authored nesting, including child prims introduced by an option.
+static uint32_t variant_depth(const std::vector<PrimVariantSetData>& sets) {
+  uint32_t depth = sets.empty() ? 0u : 1u;
+  for (const auto& set : sets) {
+    for (const auto& option : set.variants) {
+      depth = std::max(depth, 1u + variant_depth(option.variantSets));
+      if (option.content) {
+        for (const auto& prim : option.content->prims())
+          depth =
+              std::max(depth, 1u + variant_depth(prim.meta().variantSets()));
+      }
+    }
+  }
+  return depth;
+}
+
+static std::vector<VariantGroup> collect_variants(const Stage& stage) {
+  std::vector<VariantGroup> groups;
+  for (const auto& prim : stage.GetRootLayer()->prims()) {
+    if (prim.meta().variantSets().empty()) continue;
+    VariantGroup group;
+    group.prim_path = prim.path().str();
+    for (const auto& set : prim.meta().variantSets()) {
+      VariantSet result;
+      result.name = set.name;
+      for (const auto& option : set.variants) {
+        uint32_t depth = variant_depth(option.variantSets);
+        if (option.content) {
+          for (const auto& child : option.content->prims())
+            depth = std::max(depth, variant_depth(child.meta().variantSets()));
+        }
+        result.options.push_back({depth});
+      }
+      group.variant_sets.push_back(std::move(result));
+    }
+    groups.push_back(std::move(group));
+  }
+  return groups;
+}
+
+static uint32_t capped_product(uint32_t a, uint32_t b) {
+  return b && a > 1000000u / b ? UINT32_MAX : a * b;
+}
+
+static std::string json_string(const std::string& value) {
+  std::ostringstream out;
+  out << '\"';
+  for (unsigned char c : value) {
+    if (c == '\"' || c == '\\')
+      out << '\\' << c;
+    else if (c < 32)
+      out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+          << unsigned(c) << std::dec;
+    else
+      out << c;
+  }
+  out << '\"';
+  return out.str();
+}
 
 void print_help() {
   std::cout << "Usage: variant-analyzer [options] input.usda/usdc/usdz\n\n";
@@ -54,23 +121,19 @@ ComplexityMetrics analyze_variants(const std::vector<VariantGroup>& groups) {
       metrics.max_options_per_set =
           std::max(metrics.max_options_per_set, option_count);
 
-      prim_combinations *= option_count;
+      prim_combinations = capped_product(prim_combinations, option_count);
 
       // Check if has nested variants (simplified depth calculation)
       for (const auto& opt : vs.options) {
-        if (!opt.nested_variant_sets.empty()) {
-          metrics.max_nesting_depth = std::max(metrics.max_nesting_depth, 2u);
-        }
+        metrics.max_nesting_depth =
+            std::max(metrics.max_nesting_depth, 1u + opt.nested_depth);
       }
     }
 
     // Total combinations is product of all variant options
     // (capped to avoid overflow)
-    if (prim_combinations <= 1000000) {
-      metrics.total_variant_combinations *= prim_combinations;
-    } else {
-      metrics.total_variant_combinations = UINT32_MAX;
-    }
+    metrics.total_variant_combinations =
+        capped_product(metrics.total_variant_combinations, prim_combinations);
   }
 
   if (metrics.total_variant_sets > 0) {
@@ -90,15 +153,15 @@ ComplexityMetrics analyze_variants(const std::vector<VariantGroup>& groups) {
 
 void print_text_report(const std::string& filepath,
                        const ComplexityMetrics& metrics,
-                       const std::vector<VariantGroup>& groups,
-                       bool detailed) {
+                       const std::vector<VariantGroup>& groups, bool detailed) {
   std::cout << "=== Variant Complexity Analysis ===\n";
   std::cout << "File: " << filepath << "\n\n";
 
   std::cout << "=== Summary ===\n";
   std::cout << "Prims with variants:     " << metrics.num_prims_with_variants
             << "\n";
-  std::cout << "Total variant sets:      " << metrics.total_variant_sets << "\n";
+  std::cout << "Total variant sets:      " << metrics.total_variant_sets
+            << "\n";
   std::cout << "Total variant options:   " << metrics.total_variant_options
             << "\n";
 
@@ -116,8 +179,8 @@ void print_text_report(const std::string& filepath,
   if (metrics.total_variant_combinations == UINT32_MAX) {
     std::cout << "Total combinations:      > 1,000,000 (capped)\n";
   } else {
-    std::cout << "Total combinations:      " << metrics.total_variant_combinations
-              << "\n";
+    std::cout << "Total combinations:      "
+              << metrics.total_variant_combinations << "\n";
   }
 
   if (detailed) {
@@ -130,7 +193,7 @@ void print_text_report(const std::string& filepath,
       uint32_t prim_combinations = 1;
       for (const auto& vs : group.variant_sets) {
         uint32_t option_count = vs.options.size();
-        prim_combinations *= option_count;
+        prim_combinations = capped_product(prim_combinations, option_count);
 
         std::cout << "    - \"" << vs.name << "\": " << option_count
                   << " options";
@@ -138,7 +201,7 @@ void print_text_report(const std::string& filepath,
         // Check for nested variants
         bool has_nested = false;
         for (const auto& opt : vs.options) {
-          if (!opt.nested_variant_sets.empty()) {
+          if (opt.nested_depth) {
             has_nested = true;
             break;
           }
@@ -158,7 +221,8 @@ void print_text_report(const std::string& filepath,
   // Complexity assessment
   std::cout << "\n=== Complexity Assessment ===\n";
   if (metrics.max_nesting_depth > 5) {
-    std::cout << "⚠  High nesting depth (" << metrics.max_nesting_depth << ")\n";
+    std::cout << "⚠  High nesting depth (" << metrics.max_nesting_depth
+              << ")\n";
   } else if (metrics.max_nesting_depth > 3) {
     std::cout << "⚡ Moderate nesting depth (" << metrics.max_nesting_depth
               << ")\n";
@@ -169,8 +233,8 @@ void print_text_report(const std::string& filepath,
   if (metrics.total_variant_combinations > 1000000) {
     std::cout << "⚠  Very high variant combinations (>1M)\n";
   } else if (metrics.total_variant_combinations > 100000) {
-    std::cout << "⚡ High variant combinations (" << metrics.total_variant_combinations
-              << ")\n";
+    std::cout << "⚡ High variant combinations ("
+              << metrics.total_variant_combinations << ")\n";
   } else {
     std::cout << "✓  Manageable variant combinations ("
               << metrics.total_variant_combinations << ")\n";
@@ -191,25 +255,26 @@ void print_text_report(const std::string& filepath,
 void print_json_report(const std::string& filepath,
                        const ComplexityMetrics& metrics) {
   std::cout << "{\n";
-  std::cout << "  \"file\": \"" << filepath << "\",\n";
+  std::cout << "  \"file\": " << json_string(filepath) << ",\n";
   std::cout << "  \"summary\": {\n";
-  std::cout << "    \"prims_with_variants\": " << metrics.num_prims_with_variants
-            << ",\n";
+  std::cout << "    \"prims_with_variants\": "
+            << metrics.num_prims_with_variants << ",\n";
   std::cout << "    \"total_variant_sets\": " << metrics.total_variant_sets
             << ",\n";
-  std::cout << "    \"total_variant_options\": " << metrics.total_variant_options
-            << "\n";
+  std::cout << "    \"total_variant_options\": "
+            << metrics.total_variant_options << "\n";
   std::cout << "  },\n";
   std::cout << "  \"statistics\": {\n";
-  std::cout << "    \"max_variants_per_prim\": " << metrics.max_variants_per_prim
-            << ",\n";
+  std::cout << "    \"max_variants_per_prim\": "
+            << metrics.max_variants_per_prim << ",\n";
   std::cout << "    \"max_options_per_set\": " << metrics.max_options_per_set
             << ",\n";
   std::cout << "    \"avg_options_per_set\": " << std::fixed
             << std::setprecision(2) << metrics.avg_options_per_set << ",\n";
-  std::cout << "    \"avg_variants_per_prim\": " << metrics.avg_variants_per_prim
+  std::cout << "    \"avg_variants_per_prim\": "
+            << metrics.avg_variants_per_prim << ",\n";
+  std::cout << "    \"max_nesting_depth\": " << metrics.max_nesting_depth
             << ",\n";
-  std::cout << "    \"max_nesting_depth\": " << metrics.max_nesting_depth << ",\n";
   std::cout << "    \"total_combinations\": ";
 
   if (metrics.total_variant_combinations == UINT32_MAX) {
@@ -243,6 +308,12 @@ int main(int argc, char** argv) {
       detailed = true;
     } else if (arg == "--json") {
       json_output = true;
+    } else if (!arg.empty() && arg[0] == '-') {
+      std::cerr << "Unknown option: " << arg << "\n";
+      return 1;
+    } else if (!filepath.empty()) {
+      std::cerr << "Only one input file is supported\n";
+      return 1;
     } else {
       filepath = arg;
     }
@@ -258,7 +329,7 @@ int main(int argc, char** argv) {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  bool ret = LoadUSD(filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN: " << warn << "\n";
   }
@@ -268,28 +339,16 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Convert variants
-  RenderScene scene;
-  VariantConverter converter;
-  if (!converter.ConvertVariants(stage, &scene, &err)) {
-    std::cerr << "Error: Failed to extract variants\n";
-    std::cerr << err << "\n";
-    return 1;
-  }
-
-  if (scene.variant_groups.empty()) {
-    std::cout << "No variants found in file: " << filepath << "\n";
-    return 0;
-  }
+  const auto groups = collect_variants(stage);
 
   // Analyze
-  auto metrics = analyze_variants(scene.variant_groups);
+  auto metrics = analyze_variants(groups);
 
   // Output
   if (json_output) {
     print_json_report(filepath, metrics);
   } else {
-    print_text_report(filepath, metrics, scene.variant_groups, detailed);
+    print_text_report(filepath, metrics, groups, detailed);
   }
 
   return 0;

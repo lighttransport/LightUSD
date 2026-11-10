@@ -154,6 +154,8 @@ if(LUSDVIEW_TEXTURE_HAVE_CUDA)
   set_tests_properties(lusdview-texture-cuda-hdr-real PROPERTIES
     SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;cuda" TIMEOUT 900)
 endif()
+set_target_properties(lusdview_texture_gpu_bench PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_dependencies(lusdview_texture_gpu_bench lusdview_texture_gpu_shaders)
 target_compile_features(lusdview_texture_gpu_bench PRIVATE cxx_std_17)
 target_compile_definitions(lusdview_texture_gpu_bench PRIVATE VK_NO_PROTOTYPES)
@@ -167,7 +169,7 @@ target_include_directories(lusdview_texture_gpu_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/include
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/src)
 target_link_libraries(lusdview_texture_gpu_bench PRIVATE
-  ${LIGHTUSD_TARGET_STATIC} lightusd_textools ${CMAKE_DL_LIBS})
+  lightusd_preview_images tydra lightusd_core lightusd_textools ${CMAKE_DL_LIBS})
 if(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(lusdview_texture_gpu_bench PRIVATE Threads::Threads m)

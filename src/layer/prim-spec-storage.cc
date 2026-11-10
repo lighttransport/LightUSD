@@ -5,6 +5,7 @@
 
 #include "prim-spec.hh"
 #include "layer.hh"
+#include "asset-anchor.hh"
 #include "int64-listop.hh"
 #include "prim/identifier.hh"
 #include "core/safe-arithmetic.hh"
@@ -427,6 +428,16 @@ const std::string* FindAssetPathRemap(
   return nullptr;
 }
 
+const std::string* FindAnchoredAssetPathRemap(
+    const std::map<std::string, std::string>& remap, const std::string& path,
+    uint32_t asset_anchor_id) {
+  if (asset_anchor_id) {
+    const std::string anchored = ResolveAssetAnchorPath(path, asset_anchor_id);
+    return anchored.empty() ? nullptr : FindAssetPathRemap(remap, anchored);
+  }
+  return FindAssetPathRemap(remap, path);
+}
+
 void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->name = src.name;
   dst->active = src.active;
@@ -823,14 +834,25 @@ const Value* TimeSampleBlock::value(uint32_t offset) const {
 
 size_t TimeSampleBlock::remap_asset_paths(
     const std::map<std::string, std::string>& remap) {
-  if (remap.empty()) return 0;
+  return remap_asset_paths(remap, 0);
+}
+
+size_t TimeSampleBlock::remap_asset_paths(
+    const std::map<std::string, std::string>& remap, uint32_t asset_anchor_id) {
+  if (remap.empty() && !asset_anchor_id) return 0;
   size_t count = 0;
   for (Value& value : values_) {
     auto path = value.as_asset_path();
     if (!path) continue;
-    const std::string* mapped = FindAssetPathRemap(remap, *path);
-    if (!mapped) continue;
-    value = Value::MakeAssetPath(*mapped);
+    const std::string* mapped =
+        FindAnchoredAssetPathRemap(remap, *path, asset_anchor_id);
+    const std::string rebased =
+        mapped
+            ? *mapped
+            : (asset_anchor_id ? ResolveAssetAnchorPath(*path, asset_anchor_id)
+                               : std::string(*path));
+    if (!mapped && rebased == *path) continue;
+    value = Value::MakeAssetPath(rebased);
     ++count;
   }
   return count;

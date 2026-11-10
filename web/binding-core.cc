@@ -8,6 +8,8 @@
 
 #include <new>
 #include "binding-core-api.h"
+#include "usdz/material-optimize.hh"
+#include "usdz/geometry-optimize.hh"
 #include "binding-core-udim.hh"
 #include "binding-core-assets.hh"
 #include "binding-core-layer.hh"
@@ -125,6 +127,24 @@ class NextFlattenSession {
   void setVariantOverride(const std::string& set_or_scoped_key,
                           const std::string& selection) {
     variant_overrides_[set_or_scoped_key] = selection;
+  }
+
+  int setCompositionMask(uint32_t mask) {
+    if (!began_ || mask > 63) {
+      error_ = "invalid composition mask or session not started";
+      return 0;
+    }
+    composition_mask_ = mask;
+    return 1;
+  }
+
+  int setRebaseAssetPaths(bool enabled) {
+    if (!began_) {
+      error_ = "session not started (call begin first)";
+      return 0;
+    }
+    rebase_asset_paths_ = enabled;
+    return 1;
   }
 
   int setAssetPathRemapJSON(const uint8_t* data, uint32_t size) {
@@ -496,7 +516,15 @@ class NextFlattenSession {
     opts.root_anchor_path = root_name_;
     opts.fail_on_composition_error = true;
     opts.composition.variant_overrides = variant_overrides_;
+    opts.composition.resolve_sublayers = (composition_mask_ & 1) != 0;
+    opts.composition.resolve_references = (composition_mask_ & 2) != 0;
+    opts.composition.load_payloads = (composition_mask_ & 4) != 0;
+    opts.composition.resolve_inherits = (composition_mask_ & 8) != 0;
+    opts.composition.resolve_specializes = (composition_mask_ & 16) != 0;
+    opts.composition.resolve_variants = (composition_mask_ & 32) != 0;
+    opts.composition.preserve_unresolved_arcs = composition_mask_ != 63;
     opts.asset_path_remap = asset_path_remap_;
+    opts.anchor_relative_asset_remap = rebase_asset_paths_ || !asset_path_remap_.empty();
     opts.write.max_file_size_bytes = max_output_bytes_;
 
     using tn::AssetResolver;
@@ -717,6 +745,8 @@ class NextFlattenSession {
     parsed_layers_.clear();
     variant_overrides_.clear();
     asset_path_remap_.clear();
+    rebase_asset_paths_ = false;
+    composition_mask_ = 63;
     asset_path_remap_bytes_ = 0;
     error_.clear();
   }
@@ -725,6 +755,7 @@ class NextFlattenSession {
   std::string root_name_;
   bool lazy_arrays_ = true;
   bool began_ = false;
+  uint32_t composition_mask_ = 63;
   std::string error_;
   uint32_t max_input_bytes_ = 512u * 1024u * 1024u;
   uint32_t max_output_bytes_ = 512u * 1024u * 1024u;
@@ -739,6 +770,7 @@ class NextFlattenSession {
   std::map<std::string, std::string> variant_overrides_;
   std::map<std::string, std::string> asset_path_remap_;
   size_t asset_path_remap_bytes_ = 0;
+  bool rebase_asset_paths_ = false;
 };
 
 namespace lightusd {
@@ -769,6 +801,14 @@ int NextFlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
   return static_cast<NextFlattenSession*>(object)->addPrimArcBytes(
       kind, list_op, prim_path, prim_size, asset_path, asset_size, target_path,
       target_size) ? 1 : 0;
+}
+
+int NextFlattenSetCompositionMask(void* object, uint32_t mask) {
+  return static_cast<NextFlattenSession*>(object)->setCompositionMask(mask);
+}
+
+int NextFlattenSetRebaseAssetPaths(void* object, bool enabled) {
+  return static_cast<NextFlattenSession*>(object)->setRebaseAssetPaths(enabled);
 }
 
 int NextFlattenSetAssetPathRemap(void* object, const uint8_t* json,
@@ -1077,8 +1117,72 @@ class NextUSDZConverterNative {
     return exportAsUSDZFrom_(stage_, assets_, output, usda_root);
   }
 
+  bool exportConfiguredJSON(const uint8_t* data, uint32_t size) {
+    lightusd::minijson::Value config;
+    if (!data || size == 0 || size > max_retained_payload_bytes_ ||
+        !lightusd::minijson::Parse(
+            std::string(reinterpret_cast<const char*>(data), size), &config) ||
+        !config.is_object()) {
+      error_ = "Invalid converter export options";
+      return false;
+    }
+    for (const char* key : {"optimizeMaterials", "optimizeGeometry", "rootLayerFormat"}) {
+      const auto* value = config.find(key);
+      if (value && !value->is_string()) {
+        error_ = "Converter export modes must be strings";
+        return false;
+      }
+    }
+    const auto* arkit_value = config.find("arkitCompatible");
+    if (arkit_value && !arkit_value->is_boolean()) {
+      error_ = "ARKit compatibility must be a boolean";
+      return false;
+    }
+    const bool arkit = arkit_value && arkit_value->get_bool();
+    const std::string material = config.value("optimizeMaterials", std::string("off"));
+    const std::string geometry = config.value("optimizeGeometry", std::string("off"));
+    const std::string format = config.value("rootLayerFormat", std::string("usdc"));
+    if ((material != "off" && material != "dedupe" && material != "preview" && material != "atlas") ||
+        (geometry != "off" && geometry != "mergeMeshes") ||
+        (format != "usda" && format != "usdc")) {
+      error_ = "Unsupported converter export option";
+      return false;
+    }
+    lightusd::usdz::MeshMergeOptions merge;
+    const std::pair<const char*, size_t*> limits[] = {
+      {"meshMergeMaxInputFaces", &merge.max_input_faces},
+      {"meshMergeMaxInputPoints", &merge.max_input_points},
+      {"meshMergeMaxAggregateFaces", &merge.max_aggregate_faces},
+      {"meshMergeMinGroupSize", &merge.min_group_size}};
+    for (const auto& limit : limits) {
+      const auto* value = config.find(limit.first);
+      if (!value) continue;
+      const double number = value->get<double>();
+      if (!value->is_number() || !std::isfinite(number) || number < 1 ||
+          number > 2147483647 || std::floor(number) != number) {
+        error_ = "Mesh merge limits must be positive bounded integers";
+        return false;
+      }
+      *limit.second = static_cast<size_t>(number);
+    }
+    if (merge.min_group_size < 2) {
+      error_ = "Mesh merge minimum group size must be at least two";
+      return false;
+    }
+    merge.memory_budget_bytes = max_retained_payload_bytes_;
+    if (material == "atlas")
+      warn_ += "Material atlas generation is unavailable; applying PreviewSurface graph deduplication.\n";
+    const auto* remap = config.find("remap");
+    const std::string json = remap ? remap->dump() : "{}";
+    return exportAsUSDZWithRemapJSON(
+        reinterpret_cast<const uint8_t*>(json.data()),
+        static_cast<uint32_t>(json.size()), format == "usda" && !arkit, material != "off",
+        geometry == "mergeMeshes" ? &merge : nullptr, material == "preview" || material == "atlas", arkit);
+  }
+
   bool exportAsUSDZWithRemapJSON(const uint8_t* data, uint32_t size,
-                                 bool usda_root) {
+                                 bool usda_root, bool dedupe = false,
+                                 const lightusd::usdz::MeshMergeOptions* merge = nullptr, bool preview = false, bool arkit = false) {
     if (!has_stage_) {
       error_ = "No stage loaded";
       return false;
@@ -1123,6 +1227,11 @@ class NextUSDZConverterNative {
       remap.emplace(member.key, *replacement);
     }
 
+    // Selecting only a root format needs no clone or renamed asset map. Keep
+    // the direct export contract when callers cap retained input at its size.
+    if (remap.empty() && !dedupe && !merge && !arkit)
+      return exportData(3, usda_root ? 1 : 0);
+
     size_t estimated_working_set = stage_.GetMemoryUsage();
     const size_t working_budget = max_retained_payload_bytes_;
     const auto charge = [&](size_t bytes) {
@@ -1143,6 +1252,17 @@ class NextUSDZConverterNative {
 
     tn::Stage remapped = stage_.Clone();
     tn::Layer* root = remapped.GetRootLayer();
+    if (arkit) {
+      remapped.GetMeta().upAxis = "Y";
+      remapped.GetMeta().upAxis_set = true;
+      if (root) {
+        root->meta().upAxis = "Y";
+        root->meta().upAxis_set = true;
+      }
+    }
+    if (dedupe && root) lightusd::usdz::DedupeMaterials(root, preview);
+    if (merge && !lightusd::usdz::MergeMeshes(&remapped, *merge, nullptr, &warn_, &error_))
+      return false;
     if (root) {
       for (size_t i = 0; i < root->prim_count(); ++i) {
         if (tn::PrimSpec* prim = root->prim(static_cast<uint32_t>(i))) {
@@ -1183,7 +1303,7 @@ class NextUSDZConverterNative {
     usdz_options.max_memory_bytes = usdc_max_memory_bytes_;
     tn::USDZWriteResult result;
     if (usda_root) {
-      const std::string usda = tn::WriteUSDAToString(stage_);
+      const std::string usda = tn::WriteUSDAToString(stage);
       if (usda.empty()) {
         error_ = "USDA export failed";
         return false;
@@ -1631,6 +1751,9 @@ int NextConverterPreflightAsset(void* object, const uint8_t* name,
 }
 int NextConverterExport(void* object, uint8_t kind) {
   return static_cast<NextUSDZConverterNative*>(object)->exportData(kind) ? 1 : 0;
+}
+int NextConverterExportConfigured(void* object, const uint8_t* data, uint32_t size) {
+  return static_cast<NextUSDZConverterNative*>(object)->exportConfiguredJSON(data, size) ? 1 : 0;
 }
 int NextConverterExportWithOptions(void* object, uint8_t kind,
                                    uint8_t root_format) {

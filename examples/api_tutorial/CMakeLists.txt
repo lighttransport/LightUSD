@@ -10,11 +10,11 @@ add_sanitizers(${EXAMPLE_TARGET})
 
 target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "next")
-  target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  target_link_libraries(${EXAMPLE_TARGET} lightusd_core)
-else()
-  target_link_libraries(${EXAMPLE_TARGET} lightusd_static)
-endif()
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_core)
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+if(LIGHTUSD_BUILD_TESTS)
+  add_test(NAME core_${EXAMPLE_TARGET} COMMAND $<TARGET_FILE:${EXAMPLE_TARGET}>)
+  set_tests_properties(core_${EXAMPLE_TARGET} PROPERTIES LABELS "core;examples")
+endif()

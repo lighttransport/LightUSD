@@ -1,3 +1,5 @@
+import { NextRenderSceneAdapter } from '../../src/lightusd/LightUSDLoader.js';
+import { buildUSDZWithNewRoot, unpackUSDZ } from '../../src/usdzconvert.js';
 import { authorLODVariants } from './lod-variants.js';
 import { createLayerPropertyDelta, applyLayerPropertyDelta } from './layer-delta.js';
 import { meshAttributeEdits } from './mesh-edits.js';
@@ -410,25 +412,33 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async init() {
-    const factory = (await import('../../src/lightusd/lightusd_legacy.js')).default;
+    const [{default: factory}, {default: mcpFactory}] = await Promise.all([
+      import('../../src/lightusd/lightusd.js'), import('../../src/lightusd/lightusd_mcp.js')]);
     this.module = await factory();
-    this.author = new this.module.LightUSDLoaderNative();
-    this.render = new this.module.LightUSDLoaderNative();
-    if (!this.author.mcpCreateContext(this.sessionId)) throw new LuciaError('LUCIA_INIT', 'Could not create the Lucia USD session.');
-    this.author.mcpSelectContext(this.sessionId);
+    this.nextModulePromise = Promise.resolve(this.module);
+    this.mcpModule = await mcpFactory();
+    this.author = new this.mcpModule.LightUSDMCPServer();
+    if (!this.author.createContext(this.sessionId)) throw new LuciaError('LUCIA_INIT', 'Could not create the Lucia USD session.');
+    this.author.selectContext(this.sessionId);
   }
 
   call(tool, args = {}) {
-    return parseNativeResult(this.author.mcpToolsCall(tool, JSON.stringify(args)));
+    return parseNativeResult(this.author.toolsCall(tool, JSON.stringify(args)));
   }
 
   async loadBytes(bytes, filename = 'scene.usda') {
     const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (u8.byteLength > MAX_INPUT_MB * 1024 * 1024) throw new LuciaError('LUCIA_PARSE_MEMORY', `Input exceeds the ${MAX_INPUT_MB} MB browser limit.`);
     const format = String(filename).toLowerCase().endsWith('.usda') ? 'usda' : String(filename).toLowerCase().endsWith('.usdc') ? 'usdc' : 'auto';
-    this.author.clearAssets();
-    for (const [name, asset] of this.assetProvider?.() || []) this.author.setAsset(name, asset.bytes);
-    this.call('stage_load_data', { data: bytesToBase64(u8), name: filename, format });
+    this.embeddedAssets = new Map();
+    this.renderRootPath = filename.replace(/\.[^/.]+$/, '.usda');
+    if (/\.usdz$/i.test(filename)) {
+      const archive = unpackUSDZ(u8);
+      this.renderRootPath = archive.order[0].replace(/\.[^/.]+$/, '.usda');
+      for (const [name, data] of archive.entries)
+        if (name !== archive.order[0]) this.embeddedAssets.set(name, {bytes:data});
+    }
+    this.call('stage_load_data', { data: bytesToBase64(u8), name: filename, format, options:{doComposition:false} });
     this.filename = filename;
     this.usda = this.call('stage_to_string').usda;
     await this.rebuildRender();
@@ -440,37 +450,45 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async rebuildRender(onProgress) {
-    const replacement = this.createRender(this.usda);
+    const replacement = await this.createRender(this.usda);
     this.render?.delete();
     this.render = replacement;
 
     onProgress?.({ stage: 'preview', percentage: 100, message: 'Preview ready' });
   }
 
-  createRender(source, assets = this.assetProvider?.() || new Map()) {
-    const render = new this.module.LightUSDLoaderNative();
+  async createRender(source, assets = this.assetProvider?.() || new Map()) {
+    const entries = new Map(this.embeddedAssets || []);
+    for (const [name, asset] of assets) entries.set(name, asset);
+    const rootPath = this.renderRootPath || this.filename.replace(/\.[^/.]+$/, '.usda');
+    entries.delete(rootPath);
+    const root = encoder.encode(source);
+    let total = root.byteLength;
+    const passthrough = [];
+    for (const [name, asset] of entries) {
+      total += asset.bytes.byteLength;
+      if (total > MAX_INPUT_MB * 1024 * 1024)
+        throw new LuciaError('LUCIA_PARSE_MEMORY', 'Preview assets exceed the browser input limit.');
+      passthrough.push({name,data:asset.bytes});
+    }
+    const bytes = buildUSDZWithNewRoot(rootPath, root, passthrough);
     try {
-      render.setMaxMemoryLimitMB(MAX_INPUT_MB);
-      // Cached loose assets must be decoded while their resolver is live;
-      // the legacy lazy image path only rereads embedded USDZ members.
-      render.setLoadTextureInNative(true);
-      for (const [name, asset] of assets) render.setAsset(name, asset.bytes);
-      if (!render.loadFromBinary(encoder.encode(source), this.filename))
-        throw new LuciaError('LUCIA_RENDER_CONVERT', render.error() || 'Could not build the preview scene.');
-      return render;
-    } catch (error) { render.delete(); throw error; }
+      return await NextRenderSceneAdapter.create(this.module, bytes, 'preview.usdz');
+    } catch (error) {
+      throw new LuciaError('LUCIA_RENDER_CONVERT', error.message || 'Could not build the preview scene.');
+    }
   }
 
   async replaceUSDA(source, summary = 'Edit scene') {
     const previous = this.usda;
     try {
-      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(source)), name: this.filename, format: 'usda' });
+      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(source)), name: this.filename, format: 'usda', options:{doComposition:false} });
       this.usda = this.call('stage_to_string').usda;
       await this.rebuildRender();
       this.dispatchEvent(new CustomEvent('stagechange', { detail: { summary } }));
       return previous;
     } catch (error) {
-      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(previous)), name: this.filename, format: 'usda' });
+      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(previous)), name: this.filename, format: 'usda', options:{doComposition:false} });
       this.usda = previous;
       throw error;
     }
@@ -489,7 +507,7 @@ export class LuciaUsdSession extends EventTarget {
       this.dispatchEvent(new CustomEvent('stagechange', { detail: { summary } }));
       return previous;
     } catch (error) {
-      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(previous)), name: this.filename, format: 'usda' });
+      this.call('stage_load_data', { data: bytesToBase64(encoder.encode(previous)), name: this.filename, format: 'usda', options:{doComposition:false} });
       this.usda = previous;
       throw error;
     }
@@ -1232,17 +1250,24 @@ export class LuciaUsdSession extends EventTarget {
     // The embind method takes an options JSON string even when no validation
     // options are requested. Passing an explicit empty object also keeps this
     // path compatible with native builds that do not provide a JS default.
-    const result = this.render.validateLoadedLayer('{}');
+    const document = new this.module.LayerDocument();
+    let result;
+    try {
+      const loaded = document.load(encoder.encode(this.usda));
+      if (!loaded.success) throw new LuciaError('LUCIA_VALIDATE_LOAD', loaded.error);
+      result = document.validateLoadedLayer('{}');
+    } finally { document.delete(); }
     if (typeof result === 'string') return JSON.parse(result);
     return result || { valid: true, issues: [] };
   }
 
   exportUSDA() { return this.usda; }
   exportUSDZ(assets = new Map(), remap = {}) {
-    const exporter = new this.module.LightUSDLoaderNative();
+    const exporter = new this.module.NextUSDZConverterNative();
     try {
-      for (const [name, asset] of assets) exporter.setAsset(name, asset.bytes);
-      if (!exporter.loadAsLayerFromBinary(encoder.encode(this.usda), this.filename)) throw new LuciaError('LUCIA_EXPORT_LOAD', exporter.error());
+      if (!exporter.loadFromBinary(encoder.encode(this.usda), this.filename)) throw new LuciaError('LUCIA_EXPORT_LOAD', exporter.error());
+      for (const [name, asset] of new Map([...(this.embeddedAssets || []), ...assets]))
+        if (!exporter.setAsset(name, asset.bytes)) throw new LuciaError('LUCIA_EXPORT_LOAD', exporter.error());
       const data = Object.keys(remap).length ? exporter.exportAsUSDZWithRemap(remap) : exporter.exportAsUSDZ();
       if (!data) throw new LuciaError('LUCIA_EXPORT_USDZ', exporter.error() || 'USDZ export failed.');
       const archive = new Uint8Array(data);

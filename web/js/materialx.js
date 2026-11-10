@@ -15,11 +15,10 @@ import {
     readNextSceneMeta
 } from 'lightusd/NextRenderSceneUtils.js';
 import {
-    getAssetUriFromURL,
-    LOADER_BACKEND_CHOICES,
-    setBackendAndReload
+    getAssetUriFromURL
 } from 'lightusd/LoaderConfigUtils.js';
 import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
+import {installTextureColorTransform} from 'lightusd/ColorSpaceUtils.js';
 import { OpenPBRMaterial } from 'lightusd/LightUSDOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
 
@@ -52,10 +51,7 @@ const TONE_MAPPINGS = {
 
 const TRACE_LOAD = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
 const TRACE_LOAD_T0 = performance.now();
-const LOADER_BACKEND = (() => {
-    const backend = new URLSearchParams(window.location.search).get('backend');
-    return (backend === 'next' || backend === 'auto' || backend === 'legacy') ? backend : 'legacy';
-})();
+const LOADER_BACKEND = 'next';
 
 function traceLoadPhase(name, detail = '') {
     if (!TRACE_LOAD) {
@@ -980,10 +976,6 @@ function setupGUI() {
     guiState.gui.domElement.style.right = '10px';
     guiState.gui.domElement.style.maxHeight = 'calc(100vh - 20px)';
     guiState.gui.domElement.style.overflowY = 'auto';
-
-    // Backend switch reloads the page: the loader binds its WASM module at init.
-    guiState.gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
-        .name('Loader Backend').onChange(setBackendAndReload);
 
     setupSceneFolder();
     setupMaterialTypeFolder();
@@ -2173,80 +2165,8 @@ async function loadUSDFromData(data, filename, stats = null) {
             window.renderComplete = true;
             return;
         }
-        console.log('[materialx] next backend auto-fell back to legacy.');
     }
-
-    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
-    if (typeof loaderState.nativeLoader.setNativeMaterialDedup === 'function') {
-        loaderState.nativeLoader.setNativeMaterialDedup(settings.nativeMaterialDedup);
-    }
-    if (typeof loaderState.nativeLoader.setNativeMeshMerge === 'function') {
-        loaderState.nativeLoader.setNativeMeshMerge(settings.nativeMeshMerge);
-    }
-    if (typeof loaderState.nativeLoader.setNativeMeshMergeBakeTransform === 'function') {
-        loaderState.nativeLoader.setNativeMeshMergeBakeTransform(settings.nativeMeshMergeBakeTransform);
-    }
-    if (typeof loaderState.nativeLoader.setNativeFlattenRenderTree === 'function') {
-        loaderState.nativeLoader.setNativeFlattenRenderTree(settings.nativeFlattenRenderTree);
-    }
-
-    traceLoadPhase('native:loadFromBinary:start');
-    const previousDebugCallback = loaderState.loader.native_.onLightUSDDebug;
-    if (TRACE_LOAD) {
-        loaderState.loader.native_.onLightUSDDebug = (event) => {
-            if (event && event.phase) {
-                traceLoadPhase(`native:${event.phase}`, event.detail || '');
-            }
-        };
-    }
-    let success = false;
-    const parseStart = performance.now();
-    try {
-        success = withNativeInfoLogFilter(() => loaderState.nativeLoader.loadFromBinary(data, filename));
-    } finally {
-        if (TRACE_LOAD) {
-            loaderState.loader.native_.onLightUSDDebug = previousDebugCallback;
-        }
-    }
-    stats.parseMs = performance.now() - parseStart;
-    traceLoadPhase('native:loadFromBinary:done', `success=${success}`);
-    if (!success) {
-        failLoadStats(stats);
-        updateStatus(`Failed to parse USD file: ${filename}`);
-        throw new Error(`Failed to parse USD file: ${filename}`);
-    }
-
-    const processStart = performance.now();
-    traceLoadPhase('metadata:start');
-    loadSceneMetadata();
-    traceLoadPhase('metadata:done');
-    traceLoadPhase('buildSceneGraph:start');
-    await buildSceneGraph();
-    traceLoadPhase('buildSceneGraph:done');
-    if (settings.skipDomeLight) {
-        traceLoadPhase('loadDomeLight:skipped');
-    } else {
-        traceLoadPhase('loadDomeLight:start');
-        await loadDomeLight();
-        traceLoadPhase('loadDomeLight:done');
-    }
-    // Animation disabled for now - may revisit later
-    // loadAnimations();
-    initUpAxisConversion();
-    applyUpAxisConversion();
-    fitCameraToScene();
-    updateHelpersSize();
-    traceLoadPhase('materialUI:start');
-    updateMaterialUI();
-    traceLoadPhase('materialUI:done');
-    traceLoadPhase('modelInfo:start');
-    updateModelInfo();
-    traceLoadPhase('modelInfo:done');
-    stats.processMs = performance.now() - processStart;
-    stats.totalMs = performance.now() - stats.startTime;
-    stats.memoryAfter = captureMemorySnapshot();
-    stats.status = 'done';
-    updateLoadStatsPanel(stats);
+    throw new Error('Core scene adapter was not produced');
 }
 
 function isNativeInfoLog(args) {
@@ -2412,7 +2332,12 @@ function collectMaterialsFromScene() {
 
     // Extract material data from userData if available
     sceneState.materialData = sceneState.materials.map(mat => {
-        return mat.userData?.rawData || null;
+        const data = mat.userData?.rawData || null;
+        if (data) {
+            mat.userData.typeInfo = LightUSDLoaderUtils.getMaterialType(data);
+            mat.userData.typeString = LightUSDLoaderUtils.getMaterialTypeString(data);
+        }
+        return data;
     });
 }
 
@@ -2735,45 +2660,7 @@ function updateModelInfo() {
 }
 
 async function convertMaterial(matData, index) {
-    if (matData?.__nextMaterial) {
-        const previousMaterial = sceneState.materials[index] || null;
-        const openPBR = matData.openPBR || {};
-        const baseColorParam = openPBR.base_color || openPBR.base?.base_color;
-        const roughnessParam = openPBR.specular_roughness || openPBR.base_roughness ||
-            openPBR.specular?.specular_roughness || openPBR.base?.base_roughness;
-        const metalnessParam = openPBR.base_metalness || openPBR.base?.base_metalness;
-        const opacityParam = openPBR.geometry_opacity || openPBR.opacity ||
-            openPBR.geometry?.geometry_opacity;
-        const emissionParam = openPBR.emission_color || openPBR.emission?.emission_color;
-        const material = new THREE.MeshPhysicalMaterial({
-            color: extractOpenPBRColor(baseColorParam, [0.8, 0.8, 0.8]),
-            roughness: extractOpenPBRValue(roughnessParam, 0.5),
-            metalness: extractOpenPBRValue(metalnessParam, 0.0),
-            opacity: extractOpenPBRValue(opacityParam, 1.0),
-            transparent: extractOpenPBRValue(opacityParam, 1.0) < 1.0,
-            emissive: extractOpenPBRColor(emissionParam, [0.0, 0.0, 0.0]),
-            envMap: threeState.envMap,
-            envMapIntensity: settings.envMapIntensity
-        });
-        material.name = matData.name || `next_material_${index}`;
-        material.userData.rawData = matData;
-        material.userData.typeInfo = {
-            hasOpenPBR: !!matData.hasOpenPBR,
-            hasUsdPreviewSurface: !!matData.hasUsdPreviewSurface
-        };
-        material.userData.typeString = matData.hasOpenPBR
-            ? (matData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
-            : (matData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
-        material.userData.nextTexturePaths = { ...(matData.texturePaths || previousMaterial?.userData?.nextTexturePaths || {}) };
-        material.userData.nextTextureMetadata = { ...(matData.textureMetadata || previousMaterial?.userData?.nextTextureMetadata || {}) };
-        for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
-            if (previousMaterial && previousMaterial[key]) {
-                material[key] = previousMaterial[key];
-            }
-        }
-        return material;
-    }
-
+    const previousMaterial = sceneState.materials[index] || null;
     const typeInfo = LightUSDLoaderUtils.getMaterialType(matData);
     const typeString = LightUSDLoaderUtils.getMaterialTypeString(matData);
 
@@ -2856,6 +2743,9 @@ async function convertMaterial(matData, index) {
         material.userData.typeInfo = typeInfo;
         material.userData.typeString = typeString + (useOpenPBRMaterial ? ' [OpenPBRMaterial]' : ' [MeshPhysicalMaterial]');
         material.userData.rawData = matData;
+        if (matData?.__nextMaterial && previousMaterial) {
+            copyCoreMaterialTextures(previousMaterial, material);
+        }
         return material;
     } catch (e) {
         console.warn(`Failed to convert material ${index}:`, e);
@@ -2911,10 +2801,7 @@ function extractTextureId(param) {
  * Extract value from OpenPBR parameter
  */
 function extractOpenPBRValue(param, defaultVal) {
-    if (param === undefined || param === null) return defaultVal;
-    if (typeof param === 'object' && param.value !== undefined) return param.value;
-    if (typeof param === 'number') return param;
-    return defaultVal;
+    return materialScalar(param) ?? defaultVal;
 }
 
 /**
@@ -3201,6 +3088,32 @@ function convertToOpenPBRMaterial(matData, nativeLoader = null) {
     return material;
 }
 
+function copyCoreMaterialTextures(previousMaterial, material) {
+            material.userData.nextTexturePaths = {...previousMaterial.userData.nextTexturePaths};
+            material.userData.nextTextureMetadata = {...previousMaterial.userData.nextTextureMetadata};
+            // Reuse decoded core archive textures across implementation changes.
+            // Material disposal does not own these shared texture objects.
+            for (const key of ['map','normalMap','roughnessMap','metalnessMap','aoMap',
+                'emissiveMap','alphaMap','bumpMap','displacementMap','clearcoatMap',
+                'clearcoatRoughnessMap','clearcoatNormalMap','sheenColorMap',
+                'sheenRoughnessMap','transmissionMap','thicknessMap','specularIntensityMap',
+                'specularColorMap']) {
+                if (previousMaterial[key]) material[key] = previousMaterial[key];
+            }
+            if (previousMaterial.normalScale && material.normalScale)
+                material.normalScale.copy(previousMaterial.normalScale);
+            material.side = previousMaterial.side;
+            material.vertexColors = previousMaterial.vertexColors;
+            material.alphaTest = previousMaterial.alphaTest;
+            material.depthWrite = previousMaterial.depthWrite;
+            if (material.alphaMap) material.transparent = true;
+            material.needsUpdate = true;
+    for (const [key, transform] of Object.entries(
+        previousMaterial.userData.lightusdTextureColorTransforms || {})) {
+        installTextureColorTransform(material, key, transform);
+    }
+}
+
 async function reloadMaterials() {
     if (!sceneState.root) return;
 
@@ -3226,6 +3139,14 @@ async function reloadMaterials() {
             newMaterialSet.add(mat);
         }
     }
+
+    // A texture may finish while an asynchronous material conversion yields.
+    // Refresh completed maps, then redirect all still-pending bindings.
+    for (const [oldMat, newMat] of oldToNewMaterialMap) {
+        if (oldMat !== newMat && oldMat.userData?.rawData?.__nextMaterial)
+            copyCoreMaterialTextures(oldMat, newMat);
+    }
+    sceneState.textureLoadingManager?.replaceMaterials(oldToNewMaterialMap);
 
     // Replace materials on meshes
     sceneState.root.traverse(obj => {
@@ -3575,6 +3496,31 @@ function addMaterialControls(folder, mat) {
     addGeometryNormalControl(folder, mat);
 }
 
+// Core material parameters retain value/texture metadata together. Inspector
+// controls read the value while edits preserve the remaining parameter fields.
+function materialParamValue(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value.value : value;
+}
+function materialScalar(value) {
+    value = materialParamValue(value);
+    if (Array.isArray(value)) value = value[0];
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function materialColor(value) {
+    value = materialParamValue(value);
+    return Array.isArray(value) && value.length >= 3 && value.slice(0,3).every(Number.isFinite)
+        ? value.slice(0,3) : undefined;
+}
+function setMaterialParam(container,key,value) {
+    if (!container) return;
+    const parameter = container[key];
+    if (parameter && typeof parameter === 'object' && !Array.isArray(parameter) && 'value' in parameter) {
+        const values = Array.isArray(value) ? value : [value];
+        parameter.value = Array.isArray(parameter.value)
+            ? [...values,...parameter.value.slice(values.length)] : value;
+    } else container[key] = value;
+}
+
 function addDiffuseRoughnessControl(folder, mat) {
     let diffuseRoughnessValue;
     const rawData = mat.userData.rawData;
@@ -3587,6 +3533,8 @@ function addDiffuseRoughnessControl(folder, mat) {
         diffuseRoughnessValue = rawData.openPBRShader.base_diffuse_roughness;
     }
 
+    diffuseRoughnessValue = materialScalar(diffuseRoughnessValue);
+
     if (diffuseRoughnessValue === undefined) return;
 
     if (!mat.userData.customParams) {
@@ -3598,14 +3546,15 @@ function addDiffuseRoughnessControl(folder, mat) {
         .name('Diffuse Roughness')
         .onChange(v => {
             if (rawData?.base_diffuse_roughness !== undefined) {
-                rawData.base_diffuse_roughness = v;
+                setMaterialParam(rawData, 'base_diffuse_roughness', v);
             }
             if (rawData?.openPBR?.base_diffuse_roughness !== undefined) {
-                rawData.openPBR.base_diffuse_roughness = v;
+                setMaterialParam(rawData.openPBR, 'base_diffuse_roughness', v);
             }
             if (rawData?.openPBRShader?.base_diffuse_roughness !== undefined) {
-                rawData.openPBRShader.base_diffuse_roughness = v;
+                setMaterialParam(rawData.openPBRShader, 'base_diffuse_roughness', v);
             }
+            if ('baseDiffuseRoughness' in mat) mat.baseDiffuseRoughness = v;
             mat.needsUpdate = true;
         });
 }
@@ -3648,14 +3597,15 @@ function addSpecularWeightControl(folder, mat) {
         .name('Specular Weight')
         .onChange(v => {
             if (rawData?.specular_weight !== undefined) {
-                rawData.specular_weight = v;
+                setMaterialParam(rawData, 'specular_weight', v);
             }
             if (rawData?.openPBR) {
-                rawData.openPBR.specular_weight = v;
+                setMaterialParam(rawData.openPBR, 'specular_weight', v);
             }
             if (rawData?.openPBRShader) {
-                rawData.openPBRShader.specular_weight = v;
+                setMaterialParam(rawData.openPBRShader, 'specular_weight', v);
             }
+            if ('specularWeight' in mat) mat.specularWeight = v;
             // Update Three.js specularIntensity if available
             if (mat.specularIntensity !== undefined) {
                 mat.specularIntensity = v;
@@ -3675,6 +3625,8 @@ function addSpecularColorControl(folder, mat) {
     } else if (rawData?.openPBRShader?.specular_color !== undefined) {
         specularColorValue = rawData.openPBRShader.specular_color;
     }
+
+    specularColorValue = materialColor(specularColorValue);
 
     // Default to white if OpenPBR material but no specular_color specified
     if (specularColorValue === undefined) {
@@ -3704,13 +3656,13 @@ function addSpecularColorControl(folder, mat) {
             const colorArray = [newColor.r, newColor.g, newColor.b];
 
             if (rawData?.specular_color !== undefined) {
-                rawData.specular_color = colorArray;
+                setMaterialParam(rawData, 'specular_color', colorArray);
             }
             if (rawData?.openPBR) {
-                rawData.openPBR.specular_color = colorArray;
+                setMaterialParam(rawData.openPBR, 'specular_color', colorArray);
             }
             if (rawData?.openPBRShader) {
-                rawData.openPBRShader.specular_color = colorArray;
+                setMaterialParam(rawData.openPBRShader, 'specular_color', colorArray);
             }
             // Update Three.js specularColor if available
             if (mat.specularColor) {
@@ -3732,6 +3684,8 @@ function addCoatIORControl(folder, mat) {
         coatIORValue = rawData.openPBRShader.coat_ior;
     }
 
+    coatIORValue = materialScalar(coatIORValue);
+
     // Default to 1.5 if OpenPBR material (show regardless of coat weight)
     if (coatIORValue === undefined) {
         if (rawData?.openPBR || rawData?.openPBRShader) {
@@ -3750,15 +3704,15 @@ function addCoatIORControl(folder, mat) {
         .name('Coat IOR')
         .onChange(v => {
             if (rawData?.coat_ior !== undefined) {
-                rawData.coat_ior = v;
+                setMaterialParam(rawData, 'coat_ior', v);
             }
             if (rawData?.openPBR) {
-                rawData.openPBR.coat_ior = v;
+                setMaterialParam(rawData.openPBR, 'coat_ior', v);
             }
             if (rawData?.openPBRShader) {
-                rawData.openPBRShader.coat_ior = v;
+                setMaterialParam(rawData.openPBRShader, 'coat_ior', v);
             }
-            // Note: Three.js MeshPhysicalMaterial doesn't support coat IOR (fixed at 1.5)
+            if ('coatIor' in mat) mat.coatIor = v;
             mat.needsUpdate = true;
         });
 }
@@ -3774,6 +3728,8 @@ function addCoatColorControl(folder, mat) {
     } else if (rawData?.openPBRShader?.coat_color !== undefined) {
         coatColorValue = rawData.openPBRShader.coat_color;
     }
+
+    coatColorValue = materialColor(coatColorValue);
 
     // Default to white if OpenPBR material (show regardless of coat weight)
     if (coatColorValue === undefined) {
@@ -3802,15 +3758,15 @@ function addCoatColorControl(folder, mat) {
             const colorArray = [newColor.r, newColor.g, newColor.b];
 
             if (rawData?.coat_color !== undefined) {
-                rawData.coat_color = colorArray;
+                setMaterialParam(rawData, 'coat_color', colorArray);
             }
             if (rawData?.openPBR) {
-                rawData.openPBR.coat_color = colorArray;
+                setMaterialParam(rawData.openPBR, 'coat_color', colorArray);
             }
             if (rawData?.openPBRShader) {
-                rawData.openPBRShader.coat_color = colorArray;
+                setMaterialParam(rawData.openPBRShader, 'coat_color', colorArray);
             }
-            // Note: Three.js MeshPhysicalMaterial doesn't support coat color (always white)
+            if (mat.coatColor) mat.coatColor.copy(newColor);
             mat.needsUpdate = true;
         });
 }
@@ -3831,6 +3787,8 @@ function addFuzzColorControl(folder, mat) {
     if (fuzzColorValue === undefined && mat.sheenColor) {
         fuzzColorValue = [mat.sheenColor.r, mat.sheenColor.g, mat.sheenColor.b];
     }
+
+    fuzzColorValue = materialColor(fuzzColorValue);
 
     // Default to white if has sheen/fuzz but no color specified
     if (fuzzColorValue === undefined) {
@@ -3860,13 +3818,13 @@ function addFuzzColorControl(folder, mat) {
             const colorArray = [newColor.r, newColor.g, newColor.b];
 
             if (rawData?.fuzz_color !== undefined) {
-                rawData.fuzz_color = colorArray;
+                setMaterialParam(rawData, 'fuzz_color', colorArray);
             }
             if (rawData?.openPBR) {
-                rawData.openPBR.fuzz_color = colorArray;
+                setMaterialParam(rawData.openPBR, 'fuzz_color', colorArray);
             }
             if (rawData?.openPBRShader) {
-                rawData.openPBRShader.fuzz_color = colorArray;
+                setMaterialParam(rawData.openPBRShader, 'fuzz_color', colorArray);
             }
             // Update Three.js sheenColor if available
             if (mat.sheenColor) {
@@ -3891,7 +3849,7 @@ function addGeometryNormalControl(folder, mat) {
     // Get normal map scale
     let normalScale = 1.0;
     if (openPBR?.normal_map_scale !== undefined) {
-        normalScale = openPBR.normal_map_scale;
+        normalScale = materialScalar(openPBR.normal_map_scale) ?? 1;
     } else if (mat.uniforms?.normalScale?.value) {
         normalScale = mat.uniforms.normalScale.value.x;
     } else if (mat.normalScale) {

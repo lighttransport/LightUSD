@@ -12,6 +12,7 @@
 
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
+#include "schema/physics-api.hh"
 #include "schema/usd-shade.hh"
 #include "schema/usd-skel.hh"
 #include "eval/xform-eval.hh"
@@ -177,7 +178,8 @@ void CollectRec(const ::lightusd::UsdPrim& root,
     rec.purpose = PurposeForPrim(prim, frame.purpose);
     rec.animated_world =
         frame.animated_world ||
-        ::lightusd::UsdGeomXform(prim).HasAnimatedTransform();
+        ::lightusd::UsdGeomXform(prim).HasAnimatedTransform() ||
+        ::lightusd::HasPhysicsRigidBodyAPI(prim);
     const std::string local_material =
         ::lightusd::GetBoundMaterialPath(prim);
     const std::string nearest_material =

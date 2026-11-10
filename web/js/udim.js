@@ -16,10 +16,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import { loadWasm, rootUsdFromMap, isUsdName, isImageName } from './src/usdzconvert.js';
-import { meshPtrToGeometry, meshCopyToGeometry } from './src/gl-upload.js';
+import { loadWasm, rootUsdFromMap, isUsdName, isImageName, buildUSDZWithNewRoot } from './src/usdzconvert.js';
+import { meshCopyToGeometry } from './src/gl-upload.js';
 
-const WASM_GLUE = './src/lightusd/lightusd.js';
+import { getCoreInspectorMesh } from './src/lightusd/CoreRenderInspector.js';
+
+const WASM_GLUE = new URL(import.meta.env.PROD ? './assets/lightusd.js' : './src/lightusd/lightusd.js', document.baseURI).href;
 
 // Sample 2x2 UDIM set. 1012 is authored smaller to exercise the resize path.
 const SAMPLE_TILES = [
@@ -144,7 +146,7 @@ let native = null;
 async function ensureWasm() {
   if (!native) {
     log('Loading WASM…');
-    native = await loadWasm(() => import(WASM_GLUE));
+    native = await loadWasm(() => import(/* @vite-ignore */ WASM_GLUE));
   }
   return native;
 }
@@ -265,27 +267,23 @@ function assetNameFor(path, rootDir) {
   return (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
 }
 
-// Register dependency layers + textures and load the root layer, returning a
-// configured LightUSDLoaderNative. `combine` toggles UDIM atlas vs sparse.
+// Import the complete asset store so core composition and tile resolution share
+// the root layer's directory, including nested uploaded folders.
 function loadUsd(assetMap, rootPath, combine) {
-  const usd = new native.LightUSDLoaderNative();
-  usd.setCombineUDIMTiles(combine);   // false => passthrough sparse tiles
-  usd.setLoadTextureInNative(true);   // decode tile images natively (RGBA)
-
+  const usd = new native.RenderStream();
+  const store = new native.NextAssetStore();
   const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
-  for (const [path, bytes] of assetMap) {
-    if (path === rootPath) continue;
-    usd.setAsset(assetNameFor(path, rootDir), bytes);
-  }
-
-  const ok = usd.loadFromBinary(assetMap.get(rootPath), rootPath.split('/').pop());
-  if (!ok) {
-    const err = (typeof usd.error === 'function' && usd.error()) || 'unknown error';
-    usd.delete();
-    throw new Error('Failed to load USD: ' + err);
-  }
-  if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
-  return { usd, rootDir };
+  try {
+    store.setBaseWorkingPath(rootDir);
+    for (const [path, bytes] of assetMap) store.registerMemoryAsset(path, bytes);
+    usd.importAssetStore(store);
+    usd.setCombineUDIMTiles(combine);
+    usd.setLoadTextureInNative(true);
+    const result = usd.begin(assetMap.get(rootPath), rootPath);
+    if (!result.success) throw Error(result.error || 'Failed to load USD');
+    return { usd, rootDir };
+  } catch (error) { usd.delete(); throw error; }
+  finally { store.delete(); }
 }
 
 // The UVTexture id used for a mesh's diffuse channel, or -1.
@@ -472,12 +470,12 @@ function makeUdimMaterial(arrayTex, lookupTex) {
 // ---------------------------------------------------------------------------
 
 let lastAssets = null;     // { assetMap, rootPath } for re-load on mode switch
-let exportUsd = null;      // the sparse loader kept for USDZ export
+let exportUsd = null;      // original sparse layers and tiles, packaged for export
 
 async function loadAndRender(assetMap, rootPath, mode) {
   await ensureWasm();
   clearGroup();
-  if (exportUsd) { try { exportUsd.delete(); } catch (_) {} exportUsd = null; }
+  exportUsd = null;
   els.btnExport.disabled = true;
 
   const combine = mode === 'combine';
@@ -505,16 +503,9 @@ async function loadAndRender(assetMap, rootPath, mode) {
 
   const gl = renderer.getContext();
   for (let i = 0; i < usd.numMeshes(); i++) {
-    const mptr = usd.getMeshPtr(i);
-    if (!mptr || !mptr.vertexCount) continue;
-    const matId = (mptr.materialId ?? -1);
-
-    // Zero-copy: upload heap buffers straight to GL (GLBufferAttribute).
-    // Falls back to an owned copy for non-triangulated / facevarying meshes.
-    let geo, glBuffers = null;
-    const built = meshPtrToGeometry(gl, native, mptr);
-    if (built) { geo = built.geometry; glBuffers = built.glBuffers; }
-    else geo = meshCopyToGeometry(usd.getMeshCopy(i));
+    const copy = getCoreInspectorMesh(usd, i);
+    const matId = copy.materialId ?? -1;
+    const geo = meshCopyToGeometry(copy);
     if (!geo) continue;
 
     const texId = diffuseTextureId(usd, matId);
@@ -529,7 +520,9 @@ async function loadAndRender(assetMap, rootPath, mode) {
       if (map) { material.map = map; material.color.set(0xffffff); }
     }
     const mesh = new THREE.Mesh(geo, material);
-    if (glBuffers) mesh.userData.glBuffers = glBuffers;
+    if (copy.transform?.length === 16) {
+      mesh.matrix.fromArray(copy.transform); mesh.matrixAutoUpdate = false;
+    }
     group.add(mesh);
   }
 
@@ -539,8 +532,12 @@ async function loadAndRender(assetMap, rootPath, mode) {
 
   setInfo(infoLines.join('\n'));
 
-  if (!combine) { exportUsd = usd; els.btnExport.disabled = false; }
-  else { usd.delete(); }
+  if (!combine) {
+    exportUsd = buildUSDZWithNewRoot(rootPath, assetMap.get(rootPath),
+      [...assetMap].filter(([path])=>path!==rootPath).map(([name,data])=>({name,data})));
+    els.btnExport.disabled = false;
+  }
+  usd.delete();
 
   log(`Loaded (${mode}).`);
 }
@@ -665,8 +662,7 @@ document.querySelectorAll('input[name="mode"]').forEach((r) =>
 els.btnExport.addEventListener('click', () => {
   if (!exportUsd) return;
   try {
-    const data = exportUsd.exportAsUSDZ();
-    if (!data) throw new Error(exportUsd.error?.() || 'export returned no data');
+    const data = exportUsd;
     const blob = new Blob([new Uint8Array(data)], { type: 'model/vnd.usdz+zip' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

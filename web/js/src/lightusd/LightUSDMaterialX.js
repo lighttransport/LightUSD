@@ -1,3 +1,4 @@
+import {hasImageBytes,createDecodedImageTexture} from './CoreImageTexture.js';
 import * as THREE from 'three';
 import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 
@@ -493,7 +494,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             return null;
         }
         const imageURI = imgData.uri || '';
-        if (isUnsupportedBrowserTextureURI(imageURI)) {
+        if (!imgData.decoded && isUnsupportedBrowserTextureURI(imageURI)) {
             warnUnsupportedTexture(textureId, imageURI, 'browser TextureLoader cannot decode this source format');
             return null;
         }
@@ -501,7 +502,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
         let texture = null;
 
         // Case 1: URI only - try to find embedded alternative first
-        if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
+        if (imgData.uri && !hasImageBytes(imgData)) {
             // LightUSD may create duplicate image entries: one with URI reference (bufferId=-1)
             // and one with embedded data (bufferId>=0). Try to find the embedded version.
             const filename = imageURI.replace(/^\.\//, ''); // Remove leading ./
@@ -511,8 +512,8 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 const numImages = usdScene.numImages();
                 for (let i = 0; i < numImages; i++) {
                     const altImg = usdScene.getImageCopy(i);
-                    if (altImg.bufferId >= 0 && altImg.uri === filename) {
-                        if (isUnsupportedBrowserTextureURI(altImg.uri || filename)) {
+                    if (hasImageBytes(altImg) && altImg.uri === filename) {
+                        if (!altImg.decoded && isUnsupportedBrowserTextureURI(altImg.uri || filename)) {
                             warnUnsupportedTexture(textureId, altImg.uri || filename, 'embedded image keeps an unsupported source format');
                             return null;
                         }
@@ -520,13 +521,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                         const altImgData = altImg;
                         if (altImgData.data) {
                             if (altImgData.decoded) {
-                                const image8Array = new Uint8ClampedArray(altImgData.data);
-                                texture = new THREE.DataTexture(image8Array, altImgData.width, altImgData.height);
-                                if (altImgData.channels === 1) texture.format = THREE.RedFormat;
-                                else if (altImgData.channels === 2) texture.format = THREE.RGFormat;
-                                else if (altImgData.channels === 4) texture.format = THREE.RGBAFormat;
-                                texture.flipY = true;
-                                texture.needsUpdate = true;
+                                texture = createDecodedImageTexture(altImgData);
                             } else {
                                 const mimeType = getMimeType(altImgData);
                                 // Check if HDR format - use specialized decoder
@@ -557,22 +552,10 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             }
         }
         // Case 2 & 3: Embedded texture
-        else if (imgData.bufferId >= 0 && imgData.data) {
+        else if (hasImageBytes(imgData)) {
             if (imgData.decoded) {
                 // Already decoded - create DataTexture
-                const image8Array = new Uint8ClampedArray(imgData.data);
-                texture = new THREE.DataTexture(image8Array, imgData.width, imgData.height);
-
-                if (imgData.channels === 1) texture.format = THREE.RedFormat;
-                else if (imgData.channels === 2) texture.format = THREE.RGFormat;
-                else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
-                else {
-                    console.warn(`Unsupported channel count for texture ${textureId}: ${imgData.channels}`);
-                    return null;
-                }
-
-                texture.flipY = true;
-                texture.needsUpdate = true;
+                texture = createDecodedImageTexture(imgData);
             } else {
                 // Needs decoding - check format and decode
                 const mimeType = getMimeType(imgData);

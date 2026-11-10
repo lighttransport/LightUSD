@@ -152,6 +152,10 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   return impl_->TriangulateMesh(mesh);
 }
 
+bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
+  return mesh && impl_->ComputeVertexTangents(mesh);
+}
+
 bool RenderSceneConverter::LoadTexture(const std::string& asset_path, TextureImage* out) {
   return impl_->LoadTexture(asset_path, out);
 }

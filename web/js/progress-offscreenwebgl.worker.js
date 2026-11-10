@@ -370,7 +370,7 @@ function applyEnv() {
 // USD Loading with progress
 // ============================================================================
 
-async function handleLoadFile({ data, filename, backend = 'legacy' }) {
+async function handleLoadFile({ data, filename, backend = 'next' }) {
     sendStatus(`Loading: ${filename}...`);
 
     try {
@@ -393,7 +393,7 @@ const COROUTINE_PHASE_MAP = {
     complete:  { stage: 'building', pct: 80, label: 'Parse complete' },
 };
 
-async function loadUSDFromData(data, filename, backend = 'legacy') {
+async function loadUSDFromData(data, filename, backend = 'next') {
     clearScene();
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);

@@ -5,7 +5,7 @@ export function materialSnapshotsDiffer(before, after) {
   return before.triangles.some((signature, index) => signature !== after.triangles[index]);
 }
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { LightUSDLoaderUtils } from '../../src/lightusd/LightUSDLoaderUtils.js';
+import { buildNextThreeNode, defaultTextureConcurrency } from '../../src/lightusd/NextRenderSceneUtils.js';
 import { choosePreviewBudget, previewGeometryDrawCount, previewTextureScale } from './preview-budget.js';
 
 export function isRenderedObject(object) {
@@ -46,12 +46,11 @@ export class LuciaRenderBridge extends EventTarget {
     this.clearSelection();
     this.clearVertexLockPreview();
     this.pathObjects.clear(); this.lodGroups = new Map(); this.authoredHidden = new Set(); this.colliderObjects = [];
-    const root = new THREE.Group(); root.name = 'LuciaUSD';
-    const total = nativeScene.numRootNodes();
-    for (let i = 0; i < total; i++) {
-      const object = await LightUSDLoaderUtils.buildThreeNode(nativeScene.getRootNode(i), null, nativeScene, { onProgress, yieldMode: 'raf' });
-      root.add(object);
-    }
+    const built = buildNextThreeNode(nativeScene, {skipTextures:false, lazyTextures:true,
+      releaseBuildData:false, onProgress});
+    if (built.textureManager) await built.textureManager.startLoading({
+      concurrency:defaultTextureConcurrency(), yieldInterval:16});
+    const root = built.node; root.name = 'LuciaUSD';
     let triangles = 0, meshes = 0, textureBytes = 0; const countedTextures = new Set();
     root.traverse((object) => { const path = object.userData?.['primMeta.absPath']; if (path) this.pathObjects.set(path, object); if (!object.isMesh) return; meshes++; const geometry = object.geometry; triangles += geometry?.index ? Math.floor(geometry.index.count / 3) : Math.floor((geometry?.attributes?.position?.count || 0) / 3); const materials = Array.isArray(object.material) ? object.material : [object.material]; for (const material of materials) for (const value of Object.values(material || {})) if (value?.isTexture && !countedTextures.has(value)) { countedTextures.add(value); textureBytes += (value.image?.width || 0) * (value.image?.height || 0) * 4; } });
     this.clearChangeOverlay();
@@ -258,9 +257,9 @@ export class LuciaRenderBridge extends EventTarget {
     const displayColor = mesh.userData?.luciaDisplayColor;
     const signature = (material) => JSON.stringify({ type: material?.type || null, color: material?.color?.isColor ? material.color.getHexString() : null, roughness: material?.roughness ?? null, metalness: material?.metalness ?? null, opacity: material?.opacity ?? null, map: material?.map?.uuid || null, normalMap: material?.normalMap?.uuid || null, displayColor: Array.isArray(displayColor) ? displayColor.map((value) => Number(value).toFixed(6)) : null });
     const colorSignature = (triangle) => {
-      if (!colors?.array || colors.itemSize !== 3) return '';
+      if (!colors?.array || ![3,4].includes(colors.itemSize)) return '';
       const ids = index ? [index[triangle * 3], index[triangle * 3 + 1], index[triangle * 3 + 2]] : [triangle * 3, triangle * 3 + 1, triangle * 3 + 2];
-      return ids.map((id) => { const offset = id * 3; return [colors.array[offset], colors.array[offset + 1], colors.array[offset + 2]].map((value) => Number.isFinite(value) ? Number(value).toFixed(6) : 'nan').join(','); }).join(';');
+      return ids.map((id) => { const offset = id * colors.itemSize; return Array.from(colors.array.subarray(offset,offset+colors.itemSize)).map((value) => Number.isFinite(value) ? Number(value).toFixed(6) : 'nan').join(','); }).join(';');
     };
     const materialSignatures = materials.map(signature), triangles = new Array(triangleCount).fill('');
     for (const group of geometry.groups || []) { const start = Math.floor(group.start / 3), end = Math.min(triangleCount, Math.ceil((group.start + group.count) / 3)); for (let triangle = start; triangle < end; triangle++) triangles[triangle] = materialSignatures[group.materialIndex] || ''; }

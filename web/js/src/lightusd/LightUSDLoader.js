@@ -1,3 +1,4 @@
+import {transferCoreChunks,responseChunks} from './CoreStreamTransfer.js';
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 import { parseUSDZEntries } from '../usdzconvert.js';
 import { copyWasmArray, markOwnedFloat32Array } from './TypedArrayOwnership.js';
@@ -335,7 +336,12 @@ export class NextRenderSceneAdapter {
         const progressRange = Number.isFinite(options.progressRange)
             ? options.progressRange
             : 100;
+        const checkAbort = () => {
+            if (options.signal?.aborted) throw new DOMException('Parsing aborted', 'AbortError');
+        };
+        checkAbort();
         const report = (stage, localPercentage, message, extra = {}) => {
+            checkAbort();
             if (!onProgress) return;
             const p = Math.max(0, Math.min(100, Number(localPercentage) || 0));
             onProgress({
@@ -346,8 +352,13 @@ export class NextRenderSceneAdapter {
                 message,
                 ...extra
             });
+            checkAbort();
         };
-        const yieldForProgress = onProgress ? nextAnimationFrame : async () => {};
+        const yieldForProgress = async () => {
+            checkAbort();
+            if (onProgress || options.signal) await nextAnimationFrame();
+            checkAbort();
+        };
         const now = () => globalThis.performance?.now?.() ?? Date.now();
         const createStart = now();
         const timings = {
@@ -363,21 +374,6 @@ export class NextRenderSceneAdapter {
             totalMs: 0
         };
         const archiveStart = now();
-        const previousNextCrateProgress = native.onNextCrateProgress;
-        if (onProgress) {
-            native.onNextCrateProgress = (info = {}) => {
-                const phase = info.phase || 'crate';
-                const total = Number(info.total);
-                const current = Number(info.current);
-                const count = Number.isFinite(total) && total > 0
-                    ? ` ${Math.min(current, total)}/${total}`
-                    : '';
-                report('native-load',
-                    nextCrateProgressLocalPercentage(info),
-                    `Loading USD crate: ${phase}${count}`,
-                    { cratePhase: phase, crateCurrent: current, crateTotal: total });
-            };
-        }
 
         const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
         let crate = u8;
@@ -420,6 +416,8 @@ export class NextRenderSceneAdapter {
         const renderStream = new native.RenderStream();
         let beginResult;
         try {
+            if (options.maxMemoryLimitMB !== undefined)
+                renderStream.setMaxMemoryLimitMB(options.maxMemoryLimitMB);
             if (options.materialDedup !== undefined &&
                 typeof renderStream.setMaterialDedup === 'function') {
                 renderStream.setMaterialDedup(!!options.materialDedup);
@@ -452,19 +450,19 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setTangentMethod === 'function') {
                 renderStream.setTangentMethod(String(options.tangentMethod));
             }
-            // Value-clip layers are ordinary USD files in the package. Supply
-            // them before conversion so tydra-next can bake clips without
-            // depending on a filesystem inside WASM.
-            if (typeof renderStream.provideAsset === 'function') {
-                for (const [assetName, assetBytes] of archiveEntries) {
-                    // begin() already receives the root layer. Supplying it
-                    // again retains a second native string copy for value-clip
-                    // lookup (hundreds of MiB for large crates).
-                    if (assetName !== rootAssetName &&
-                        this._isUsdName(assetName)) {
-                        renderStream.provideAsset(assetName, assetBytes);
+            // Supply every package entry to the resolver, including images.
+            // The root identifier anchors references and authored texture paths.
+            if (archiveEntries.size && typeof native.NextAssetStore === 'function') {
+                const store = new native.NextAssetStore();
+                try {
+                    store.setMemoryLimitBytes(Math.min(options.maxMemoryLimitMB ?? 512, 1024) * 1024 * 1024);
+                    const slash = rootAssetName.lastIndexOf('/');
+                    if (slash >= 0) store.setBaseWorkingPath(rootAssetName.slice(0, slash));
+                    for (const [name, bytes] of archiveEntries) {
+                        if (name !== rootAssetName) store.registerMemoryAsset(name, bytes);
                     }
-                }
+                    renderStream.importAssetStore(store);
+                } finally { store.delete(); }
             }
             // Variant selection: the next compositor keys overrides by variant
             // SET name (applies to every prim carrying that set).
@@ -477,7 +475,31 @@ export class NextRenderSceneAdapter {
             report('native-load', 24, 'Starting USD crate reader...');
             await yieldForProgress();
             const nativeBeginStart = now();
-            beginResult = renderStream.begin(crate);
+            // Native callbacks are module-global. Install them only across the
+            // synchronous native call, so concurrent async loads cannot retain
+            // or restore each other's callbacks across JavaScript yields.
+            const previousNextCrateProgress = native.onNextCrateProgress;
+            if (onProgress) {
+                native.onNextCrateProgress = (info = {}) => {
+                    const phase = info.phase || 'crate';
+                    const total = Number(info.total);
+                    const current = Number(info.current);
+                    const count = Number.isFinite(total) && total > 0
+                        ? ` ${Math.min(current, total)}/${total}`
+                        : '';
+                    report('native-load',
+                        nextCrateProgressLocalPercentage(info),
+                        `Loading USD crate: ${phase}${count}`,
+                        { cratePhase: phase, crateCurrent: current, crateTotal: total });
+                };
+            }
+            try {
+                beginResult = typeof native._lightusd_wasm_render_begin_named === 'function'
+                    ? renderStream.begin(crate, rootAssetName || filename)
+                    : renderStream.begin(crate);
+            } finally {
+                if (onProgress) native.onNextCrateProgress = previousNextCrateProgress;
+            }
             if (!beginResult || !beginResult.success) {
                 const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
                 throw new Error(error);
@@ -738,6 +760,10 @@ export class NextRenderSceneAdapter {
                 }
                 const meshJsCopyStart = now();
                 const copiedMesh = this._copyMesh(native, mesh, i);
+                if (typeof renderStream.meshColorsBuffer === 'function')
+                    copiedMesh.vertexColors = renderStream.meshColorsBuffer(i);
+                if (typeof renderStream.meshOpacitiesBuffer === 'function')
+                    copiedMesh.opacities = renderStream.meshOpacitiesBuffer(i);
                 timings.jsMeshCopyMs += now() - meshJsCopyStart;
                 const udimStart = now();
                 this._applyUDIMLayout(copiedMesh, archiveEntries);
@@ -753,6 +779,7 @@ export class NextRenderSceneAdapter {
                 : {};
             timings.totalMs = now() - createStart;
             stats.timings = timings;
+            report('complete', 100, 'Core scene ready.');
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
             return new NextRenderSceneAdapter(native, null, {
@@ -794,10 +821,6 @@ export class NextRenderSceneAdapter {
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
             throw error;
-        } finally {
-            if (onProgress) {
-                native.onNextCrateProgress = previousNextCrateProgress;
-            }
         }
     }
 
@@ -1503,17 +1526,15 @@ class LightUSDLoader extends Loader {
      * @param {Function} options.onLightUSDDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
      * @param {boolean} options.debugMemory - Print native heap debug events to console
      * @param {boolean} options.suppressNativeInfoLogs - Drop native [INFO] stdout logs
-     * @param {'next'|'legacy'|'auto'} options.backend - WASM/render backend;
-     *   next is the default, legacy is the compatibility path, and auto
-     *   probes next APIs before falling back when a combined module is used.
+     * @param {'next'|'legacy'|'auto'} options.backend - Compatibility setting;
+     *   all values use the core WASM/render backend. Legacy requests warn.
      */
     constructor(manager, options = {}) {
         super(manager);
 
         this.native_ = null;
         this.nextOnlyNative_ = false;
-        // The published loader is next-first. Applications that need the
-        // mature legacy conversion path can select backend: 'legacy'.
+        // Backend names remain accepted for older callers; scenes use core.
         this.backend_ = ['legacy', 'next', 'auto'].includes(options.backend)
             ? options.backend
             : 'next';
@@ -1899,8 +1920,8 @@ class LightUSDLoader extends Loader {
         if (!this.native_) {
             await this.init();
         }
-        const tempUsd = new this.native_.LightUSDLoaderNative();
-        return tempUsd.getMaxMemoryLimitMB();
+        const stream = new this.native_.RenderStream();
+        try {return stream.getMaxMemoryLimitMB();} finally {stream.delete();}
     }
 
     /**
@@ -1970,7 +1991,7 @@ class LightUSDLoader extends Loader {
 
     /**
      * Apply configured skinning options to a native USD loader instance.
-     * @param {Object} usd - LightUSDLoaderNative instance
+     * @param {Object} usd - core RenderStream instance
      * @private
      */
     _applySkinningLoadOptions(usd) {
@@ -1992,7 +2013,7 @@ class LightUSDLoader extends Loader {
      * loadFromBinary() runs the Tydra conversion. Each option is only forwarded
      * when present in `options`, so existing callers are unaffected.
      *
-     * @param {Object} usd - native LightUSDLoaderNative instance
+     * @param {Object} usd - native core RenderStream instance
      * @param {Object} options - parse/load options
      * @param {boolean} [options.materialDedup] - deduplicate materials/textures by identity
      * @param {boolean} [options.mergeMeshes] - merge meshes sharing a material
@@ -2178,6 +2199,7 @@ class LightUSDLoader extends Loader {
         if (!this.native_) {
             console.error('LightUSDLoader: Native module is not initialized.');
             _onError(new Error('LightUSDLoader: Native module is not initialized.'));
+            return;
         }
 
         // Every scene loads through the core module; `backend` values other
@@ -2187,7 +2209,9 @@ class LightUSDLoader extends Loader {
             console.warn('[LightUSDLoader] backend=' + backend + ' is not available; using the core module.');
             this.warnedLegacyBackend_ = true;
         }
-        NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
+        NextRenderSceneAdapter.create(this.native_, binary, filePath, {
+            ...options, maxMemoryLimitMB: options.maxMemoryLimitMB ?? this.maxMemoryLimitMB_
+        })
             .then(onLoad)
             .catch((error) => {
                 this._logFailedUSDInput(binary, filePath, error?.message || String(error));
@@ -2196,211 +2220,36 @@ class LightUSDLoader extends Loader {
         return;
     }
 
-    /**
-     * Parse USD binary data with progress reporting
-     * Uses the native progress callback mechanism for cancellation support.
-     *
-     * Note: Due to WASM being synchronous, progress updates only occur at
-     * checkpoint boundaries in the parser. The onProgress callback is called
-     * after parsing completes with final status information.
-     *
-     * For true async progress reporting in the UI, use Web Workers.
-     *
-     * @param {ArrayBuffer} binary - Binary USD data
-     * @param {string} filePath - Optional file path
-     * @param {Object} options - Parsing options
-     * @param {number} options.maxMemoryLimitMB - Override memory limit
-     * @param {Function} options.onProgress - Progress callback (progressInfo) => void
-     * @param {AbortSignal} options.signal - AbortController signal for cancellation
-     * @returns {Promise<Object>} Parsed USD object
-     */
-    async parseWithProgress(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
-        if (!this.native_) {
-            await this.init();
-        }
-
-        return new Promise((resolve, reject) => {
-            const usd = new this.native_.LightUSDLoaderNative();
-
-            // Set memory limit before loading if specified
-            const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-            if (memoryLimit !== undefined) {
-                usd.setMaxMemoryLimitMB(memoryLimit);
-            }
-
-            this._applySkinningLoadOptions(usd);
-
-            // Handle AbortController cancellation
-            if (options.signal) {
-                if (options.signal.aborted) {
-                    reject(new DOMException('Parsing aborted', 'AbortError'));
-                    return;
-                }
-                options.signal.addEventListener('abort', () => {
-                    usd.cancelParsing();
-                });
-            }
-
-            // Reset progress state
-            usd.resetProgress();
-
-            // Report initial progress
-            if (options.onProgress) {
-                options.onProgress({
-                    progress: 0,
-                    stage: 'parsing',
-                    percentage: 0,
-                    message: 'Starting parse...'
-                });
-            }
-
-            // Use setTimeout to allow UI to update before blocking parse
-            setTimeout(() => {
-                try {
-                    const ok = usd.loadFromBinaryWithProgress(binary, filePath);
-
-                    // Get final progress state
-                    const progressInfo = usd.getProgress();
-
-                    // Report final progress
-                    if (options.onProgress) {
-                        options.onProgress(progressInfo);
-                    }
-
-                    if (!ok) {
-                        if (usd.wasCancelled()) {
-                            reject(new DOMException('Parsing cancelled', 'AbortError'));
-                        } else {
-                            this._logFailedUSDInput(binary, filePath, usd.error());
-                            const fileInfo = filePath ? ` (file: ${filePath})` : '';
-                            reject(new Error(`LightUSDLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
-                        }
-                    } else {
-                        resolve(usd);
-                    }
-                } catch (e) {
-                    reject(e);
-                }
-            }, 0);
+    /** Parse on the core adapter, reporting phases and checking AbortSignal
+     * between native work and owned-array copies. Native parsing is synchronous;
+     * progress yields let the UI update between materialization phases. */
+    async parseWithProgress(binary, filePath, options = {}) {
+        if (options.signal?.aborted) throw new DOMException('Parsing aborted', 'AbortError');
+        if (!this.native_) await this.init(options);
+        return NextRenderSceneAdapter.create(this.native_, binary, filePath, {
+            ...options,
+            maxMemoryLimitMB: options.maxMemoryLimitMB ?? this.maxMemoryLimitMB_
         });
     }
 
-    /**
-     * Check if C++20 coroutine-based async loading is available.
-     * Returns true if the WASM module was compiled with LIGHTUSD_WASM_COROUTINE=ON.
-     *
-     * @returns {boolean} True if async support is available
-     */
+    /** Whether the initialized module supports the core async adapter. */
     hasAsyncSupport() {
-        if (!this.native_) {
-            console.warn('[LightUSDLoader] hasAsyncSupport called before init()');
-            return false;
-        }
-
-        // Check if a temporary instance has loadFromBinaryAsync
-        try {
-            const usd = new this.native_.LightUSDLoaderNative();
-            const hasMethod = typeof usd.loadFromBinaryAsync === 'function';
-            console.log(`[LightUSDLoader] Coroutine async support: ${hasMethod ? 'available' : 'not available'}`);
-            return hasMethod;
-        } catch (e) {
-            console.warn('[LightUSDLoader] Error checking async support:', e);
-            return false;
-        }
+        return typeof this.native_?.RenderStream === 'function';
     }
 
-    /**
-     * Parse USD binary data using C++20 coroutine-based async loading.
-     * This method yields to the JavaScript event loop between processing phases,
-     * allowing the browser to repaint during loading.
-     *
-     * Unlike parseWithProgress which uses setTimeout for a single yield,
-     * this method uses true C++20 coroutines with co_await to yield multiple times
-     * during parsing (detecting -> parsing -> converting -> complete).
-     *
-     * @param {ArrayBuffer} binary - Binary USD data
-     * @param {string} filePath - Optional file path
-     * @param {Object} options - Parsing options
-     * @param {number} options.maxMemoryLimitMB - Override memory limit
-     * @param {Function} options.onPhaseStart - Callback when a phase starts ({phase, progress}) => void
-     * @returns {Promise<Object>} Parsed USD object
-     */
-    async parseAsync(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
-        if (!this.native_) {
-            await this.init(options);
-        }
-
-        // backend=next (or a next-only module, which has no legacy
-        // LightUSDLoaderNative) routes through the promise-based parse path,
-        // which already dispatches to NextRenderSceneAdapter.
-        const requestedBackend = options.backend || this.backend_ || 'next';
-        const wantsNext = requestedBackend === 'next' || requestedBackend === 'auto';
-        if (wantsNext || this.nextOnlyNative_ ||
-            typeof this.native_.LightUSDLoaderNative !== 'function') {
-            const backendOptions = {
-                ...options,
-                backend: options.backend || (this.nextOnlyNative_ ? 'next' : this.backend_)
-            };
-            return new Promise((resolve, reject) => {
-                this.parse(binary, filePath, resolve, reject, backendOptions);
-            });
-        }
-
-        const usd = new this.native_.LightUSDLoaderNative();
-
-        // Set memory limit before loading if specified
-        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-        if (memoryLimit !== undefined) {
-            usd.setMaxMemoryLimitMB(memoryLimit);
-        }
-
-        this._applySkinningLoadOptions(usd);
-        this._applyConversionLoadOptions(usd, options);
-        if (options.loadTextureInNative && typeof usd.setLoadTextureInNative === 'function') {
-            usd.setLoadTextureInNative(true);
-        }
-
-        const previousTydraProgressCallback = this.native_.onTydraProgress;
-        if (options.onTydraProgress) {
-            this.native_.onTydraProgress = options.onTydraProgress;
-        }
-
-        const previousAsyncPhaseStart = this.native_.onAsyncPhaseStart;
-        // Set up async phase callback on Module if provided
-        if (options.onPhaseStart) {
-            this.native_.onAsyncPhaseStart = options.onPhaseStart;
-        }
-
-        try {
-            // Check if the C++20 coroutine-based async loader is available
-            if (typeof usd.loadFromBinaryAsync === 'function') {
-                // Call the C++20 coroutine-based async loader
-                // This returns a Promise that resolves to { success, error?, meshCount?, materialCount?, textureCount? }
-                const result = await usd.loadFromBinaryAsync(binary, filePath || '');
-
-                if (!result.success) {
-                    this._logFailedUSDInput(binary, filePath, result.error || 'unknown error');
-                    throw new Error(`LightUSDLoader: Failed to load USD: ${result.error || 'unknown error'}`);
+    /** Parse through the core phase-yielding adapter with optional phase callbacks. */
+    async parseAsync(binary, filePath, options = {}) {
+        let lastPhase;
+        return this.parseWithProgress(binary, filePath, {
+            ...options,
+            onProgress: options.onProgress || options.onPhaseStart ? info => {
+                options.onProgress?.(info);
+                if (info.stage !== lastPhase) {
+                    lastPhase = info.stage;
+                    options.onPhaseStart?.({...info, phase: info.stage, progress: info.percentage / 100});
                 }
-            } else {
-                // Fall back to synchronous loading
-                const ok = usd.loadFromBinary(binary, filePath || '');
-                if (!ok) {
-                    this._logFailedUSDInput(binary, filePath, usd.error());
-                    throw new Error(`LightUSDLoader: Failed to load USD: ${usd.error()}`);
-                }
-            }
-
-            return usd;
-        } finally {
-            // Clean up callbacks
-            if (options.onPhaseStart) {
-                this.native_.onAsyncPhaseStart = previousAsyncPhaseStart;
-            }
-            if (options.onTydraProgress) {
-                this.native_.onTydraProgress = previousTydraProgressCallback;
-            }
-        }
+            } : undefined
+        });
     }
 
     /**
@@ -2544,7 +2393,7 @@ class LightUSDLoader extends Loader {
 
     /**
      * Get the current progress state from a USD loader instance
-     * @param {Object} usd - LightUSDLoaderNative instance
+     * @param {Object} usd - core RenderStream instance
      * @returns {Object} Progress information
      */
     static getProgress(usd) {
@@ -2556,7 +2405,7 @@ class LightUSDLoader extends Loader {
 
     /**
      * Request cancellation of parsing on a USD loader instance
-     * @param {Object} usd - LightUSDLoaderNative instance
+     * @param {Object} usd - core RenderStream instance
      */
     static cancelParsing(usd) {
         if (usd && typeof usd.cancelParsing === 'function') {
@@ -2591,239 +2440,20 @@ class LightUSDLoader extends Loader {
      * @param {AbortSignal} options.signal - AbortController signal for cancellation
      * @param {Function} options.onProgress - Progress callback (bytesLoaded, totalBytes) => void
      * @param {number} options.chunkSize - Preferred chunk size in bytes (default: 64KB)
-     * @param {Object} options.usdInstance - Optional existing LightUSDLoaderNative instance to use
+     * @param {Object} options.usdInstance - Optional existing core RenderStream instance to use
      * @returns {Promise<{success: boolean, bytesTransferred: number, assetPath: string, usdInstance: Object}>}
      */
     async streamFetchToWasm(url, assetPath, options = {}) {
-        if (!this.native_) {
-            await this.init();
-        }
-
-        const usd = options.usdInstance || new this.native_.LightUSDLoaderNative();
-        const chunkSize = options.chunkSize || 64 * 1024; // 64KB default
-
-        // Check for cancellation before starting
-        if (options.signal?.aborted) {
-            throw new DOMException('Stream transfer aborted', 'AbortError');
-        }
-
-        // Start the fetch
-        const response = await fetch(url, { signal: options.signal });
-        if (!response.ok) {
-            throw new Error(`Failed to fetch: ${response.statusText}`);
-        }
-
-        // Get total size if available
-        const contentLength = response.headers.get('content-length');
-        const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
-
-        if (totalSize === 0) {
-            // If content-length is not available, fall back to buffered approach
-            return this._streamFetchBuffered(response, assetPath, usd, options);
-        }
-
-        // Allocate WASM buffer upfront
-        // Returns UUID for buffer operations, asset_name stored inside for cache key
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
-        if (!allocResult.success) {
-            throw new Error('Failed to allocate WASM buffer for streaming: ' + (allocResult.error || 'unknown error'));
-        }
-        const uuid = allocResult.uuid;
-
-        try {
-            // Get base pointer to WASM buffer
-            const basePtr = allocResult.bufferPtr;
-            if (basePtr === 0) {
-                throw new Error('Failed to get WASM buffer pointer');
-            }
-
-            // Get WASM heap reference
-            const HEAPU8 = this.native_.HEAPU8;
-
-            // Use BYOB reader if available for better performance
-            if (LightUSDLoader.supportsBYOBReader() && response.body.getReader) {
-                await this._streamWithBYOBReader(
-                    response.body, basePtr, totalSize, HEAPU8, usd, uuid, options
-                );
-            } else {
-                // Fall back to default reader
-                await this._streamWithDefaultReader(
-                    response.body, basePtr, totalSize, HEAPU8, usd, uuid, options
-                );
-            }
-
-            // Finalize the buffer (moves to asset cache using stored assetPath)
-            const success = usd.finalizeZeroCopyBuffer(uuid);
-            if (!success) {
-                throw new Error('Failed to finalize streaming buffer');
-            }
-
-            return {
-                success: true,
-                bytesTransferred: totalSize,
-                assetPath: assetPath,
-                usdInstance: usd
-            };
-
-        } catch (error) {
-            // Cancel/cleanup the buffer on error
-            usd.cancelZeroCopyBuffer(uuid);
-            throw error;
-        }
-    }
-
-    /**
-     * Stream with BYOB (Bring Your Own Buffer) reader for efficient reads.
-     * @private
-     */
-    async _streamWithBYOBReader(body, basePtr, totalSize, HEAPU8, usd, uuid, options) {
-        const reader = body.getReader({ mode: 'byob' });
-        let offset = 0;
-        const chunkSize = options.chunkSize || 64 * 1024;
-
-        try {
-            while (offset < totalSize) {
-                // Check for cancellation
-                if (options.signal?.aborted) {
-                    throw new DOMException('Stream transfer aborted', 'AbortError');
-                }
-
-                // Allocate buffer for this chunk
-                const remainingBytes = totalSize - offset;
-                const readSize = Math.min(chunkSize, remainingBytes);
-                let buffer = new ArrayBuffer(readSize);
-                let view = new Uint8Array(buffer);
-
-                // Read into the buffer
-                const { done, value } = await reader.read(view);
-                if (done) break;
-
-                // Write directly to WASM heap
-                const bytesRead = value.byteLength;
-                HEAPU8.set(value, basePtr + offset);
-
-                // Mark bytes as written
-                usd.markZeroCopyBytesWritten(uuid, bytesRead);
-                offset += bytesRead;
-
-                // Report progress
-                if (options.onProgress) {
-                    options.onProgress(offset, totalSize);
-                }
-
-                // Release the buffer (let GC reclaim it)
-                buffer = null;
-                view = null;
-            }
-        } finally {
-            reader.releaseLock();
-        }
-    }
-
-    /**
-     * Stream with default reader (fallback when BYOB is not available).
-     * @private
-     */
-    async _streamWithDefaultReader(body, basePtr, totalSize, HEAPU8, usd, uuid, options) {
-        const reader = body.getReader();
-        let offset = 0;
-
-        try {
-            while (true) {
-                // Check for cancellation
-                if (options.signal?.aborted) {
-                    throw new DOMException('Stream transfer aborted', 'AbortError');
-                }
-
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                // Write chunk directly to WASM heap
-                const bytesRead = value.byteLength;
-                HEAPU8.set(value, basePtr + offset);
-
-                // Mark bytes as written
-                usd.markZeroCopyBytesWritten(uuid, bytesRead);
-                offset += bytesRead;
-
-                // Report progress
-                if (options.onProgress) {
-                    options.onProgress(offset, totalSize);
-                }
-
-                // The chunk 'value' will be GC'd after this iteration
-            }
-        } finally {
-            reader.releaseLock();
-        }
-    }
-
-    /**
-     * Fallback for when content-length is unknown - buffers in JS then transfers.
-     * @private
-     */
-    async _streamFetchBuffered(response, assetPath, usd, options) {
-        const reader = response.body.getReader();
-        const chunks = [];
-        let totalBytes = 0;
-
-        // Read all chunks (we don't know the size upfront)
-        while (true) {
-            if (options.signal?.aborted) {
-                throw new DOMException('Stream transfer aborted', 'AbortError');
-            }
-
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            chunks.push(value);
-            totalBytes += value.byteLength;
-
-            if (options.onProgress) {
-                options.onProgress(totalBytes, 0); // 0 = unknown total
-            }
-        }
-
-        // Now allocate WASM buffer with known size
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalBytes, 0);
-        if (!allocResult.success) {
-            throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
-        }
-        const uuid = allocResult.uuid;
-
-        try {
-            const basePtr = allocResult.bufferPtr;
-            const HEAPU8 = this.native_.HEAPU8;
-
-            // Transfer chunks to WASM and free them
-            let offset = 0;
-            for (let i = 0; i < chunks.length; i++) {
-                const chunk = chunks[i];
-                HEAPU8.set(chunk, basePtr + offset);
-                usd.markZeroCopyBytesWritten(uuid, chunk.byteLength);
-                offset += chunk.byteLength;
-
-                // Clear reference to allow GC
-                chunks[i] = null;
-            }
-
-            // Finalize
-            const success = usd.finalizeZeroCopyBuffer(uuid);
-            if (!success) {
-                throw new Error('Failed to finalize streaming buffer');
-            }
-
-            return {
-                success: true,
-                bytesTransferred: totalBytes,
-                assetPath: assetPath,
-                usdInstance: usd
-            };
-
-        } catch (error) {
-            usd.cancelZeroCopyBuffer(uuid);
-            throw error;
-        }
+        if (!this.native_) await this.init();
+        if (options.signal?.aborted) throw new DOMException('Stream transfer aborted', 'AbortError');
+        const response = await fetch(url, {signal: options.signal});
+        if (!response.ok) throw new Error(`Failed to fetch: HTTP ${response.status}`);
+        const header = response.headers.get('content-length');
+        // Fetch transparently decompresses HTTP content; encoded length then
+        // differs from the bytes returned by its body reader.
+        const length = header !== null && !response.headers.get('content-encoding') ? Number(header) : null;
+        try {return await transferCoreChunks(this, responseChunks(response), assetPath, length, options);}
+        catch(error){if(response.body&&!response.body.locked)await response.body.cancel().catch(()=>{});throw error;}
     }
 
     /**
@@ -2842,7 +2472,8 @@ class LightUSDLoader extends Loader {
             await this.init();
         }
 
-        const concurrency = options.concurrency || 4;
+        const concurrency = options.concurrency ?? 4;
+        if (!Number.isInteger(concurrency) || concurrency < 1) throw RangeError('Invalid concurrency');
         const results = [];
         let completed = 0;
 
@@ -2900,169 +2531,38 @@ class LightUSDLoader extends Loader {
      * @returns {Promise<Object>} Parsed USD object
      */
     async loadWithStreaming(url, options = {}) {
-        if (!this.native_) {
-            await this.init();
-        }
-
-        // Extract filename for asset path
-        const assetPath = url.split('/').pop() || 'main.usd';
-
-        // Report streaming phase
-        if (options.onProgress) {
-            options.onProgress({
-                progress: 0,
-                stage: 'streaming',
-                percentage: 0,
-                message: 'Starting streaming transfer...'
-            });
-        }
-
-        // Create USD instance for streaming and loading (same instance to share cache)
-        const usd = new this.native_.LightUSDLoaderNative();
-
-        // Set memory limit before streaming
-        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-        if (memoryLimit !== undefined) {
-            usd.setMaxMemoryLimitMB(memoryLimit);
-        }
-
-        this._applySkinningLoadOptions(usd);
-
-        // Stream fetch to WASM using the same instance
-        const streamResult = await this.streamFetchToWasm(url, assetPath, {
-            signal: options.signal,
-            usdInstance: usd,
-            onProgress: (loaded, total) => {
-                if (options.onProgress) {
-                    const progress = total > 0 ? (loaded / total) * 0.3 : 0;
-                    options.onProgress({
-                        progress,
-                        stage: 'streaming',
-                        percentage: progress * 100,
-                        message: `Streaming... ${Math.round(loaded / 1024)}KB`
-                    });
-                }
-            }
+        options.onProgress?.({progress:0,stage:'streaming',percentage:0,message:'Starting streaming transfer...'});
+        const assetPath = url;
+        const result = await this.streamFetchToWasm(url, assetPath, {
+            ...options, onProgress:(loaded,total)=>options.onProgress?.({
+                progress:total?loaded/total*0.3:0,stage:'streaming',
+                percentage:total?loaded/total*30:0,message:`Streaming... ${Math.round(loaded/1024)}KB`
+            })
         });
-
-        if (!streamResult.success) {
-            throw new Error('Streaming transfer failed');
-        }
-
-        // Report parsing phase
-        if (options.onProgress) {
-            options.onProgress({
-                progress: 0.3,
-                stage: 'parsing',
-                percentage: 30,
-                message: 'Parsing USD...'
-            });
-        }
-
-        // Load from the cached asset (same instance, so cache is available)
-        const ok = usd.loadFromCachedAsset(assetPath);
-        if (!ok) {
-            throw new Error('Failed to parse USD from cached asset', { cause: usd.error() });
-        }
-
-        if (options.onProgress) {
-            options.onProgress({
-                progress: 1.0,
-                stage: 'complete',
-                percentage: 100,
-                message: 'Complete'
-            });
-        }
-
-        return usd;
+        const stream=result.usdInstance;
+        try {
+            if(options.signal?.aborted)throw new DOMException('Stream transfer aborted','AbortError');
+            options.onProgress?.({progress:0.3,stage:'parsing',percentage:30,message:'Parsing USD...'});
+            const loaded=stream.beginStreamedAsset(assetPath);
+            if(!loaded.success)throw Error(loaded.error||stream.error());
+            options.onProgress?.({progress:1,stage:'complete',percentage:100,message:'Complete'});
+            return stream;
+        }catch(error){if(!options.usdInstance)stream.delete();throw error;}
     }
 
-    /**
-     * Stream a Node.js file to WASM memory with chunk-based transfer.
-     * Uses fs.createReadStream for memory-efficient reading of large files.
-     *
-     * @param {string} filePath - Path to the file
-     * @param {string} assetPath - Asset path/identifier for the cache
-     * @param {Object} options - Options
-     * @param {Function} options.onProgress - Progress callback (bytesLoaded, totalBytes) => void
-     * @param {number} options.chunkSize - Read chunk size in bytes (default: 64KB)
-     * @param {Object} options.usdInstance - Optional existing LightUSDLoaderNative instance to use
-     * @returns {Promise<{success: boolean, bytesTransferred: number, assetPath: string, usdInstance: Object}>}
-     */
     async streamFileToWasm(filePath, assetPath, options = {}) {
-        if (!this.native_) {
-            await this.init();
+        if (!this.native_) await this.init();
+        if (typeof process === 'undefined' || !process.versions?.node) {
+            throw Error('streamFileToWasm is only available in Node.js environment');
         }
-
-        // Check if we're in Node.js
-        const isNode = typeof process !== 'undefined' && process.versions?.node;
-        if (!isNode) {
-            throw new Error('streamFileToWasm is only available in Node.js environment');
-        }
-
-        const { createRequire } = await import('module');
-        const require = createRequire(import.meta.url);
-        const fs = require('fs');
-        const { promisify } = require('util');
-        const stat = promisify(fs.stat);
-
-        // Get file size
-        const stats = await stat(filePath);
-        const totalSize = stats.size;
-
-        const usd = options.usdInstance || new this.native_.LightUSDLoaderNative();
-
-        // Allocate WASM buffer
-        const allocResult = usd.allocateZeroCopyBuffer(assetPath, totalSize, 0);
-        if (!allocResult.success) {
-            throw new Error('Failed to allocate WASM buffer: ' + (allocResult.error || 'unknown error'));
-        }
-        const uuid = allocResult.uuid;
-
-        try {
-            const basePtr = allocResult.bufferPtr;
-            const HEAPU8 = this.native_.HEAPU8;
-            const chunkSize = options.chunkSize || 64 * 1024;
-
-            // Create read stream
-            const stream = fs.createReadStream(filePath, { highWaterMark: chunkSize });
-
-            let offset = 0;
-
-            await new Promise((resolve, reject) => {
-                stream.on('data', (chunk) => {
-                    // Convert Buffer to Uint8Array and write to WASM
-                    const uint8Chunk = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-                    HEAPU8.set(uint8Chunk, basePtr + offset);
-                    usd.markZeroCopyBytesWritten(uuid, chunk.byteLength);
-                    offset += chunk.byteLength;
-
-                    if (options.onProgress) {
-                        options.onProgress(offset, totalSize);
-                    }
-                });
-
-                stream.on('end', resolve);
-                stream.on('error', reject);
-            });
-
-            // Finalize
-            const success = usd.finalizeZeroCopyBuffer(uuid);
-            if (!success) {
-                throw new Error('Failed to finalize streaming buffer');
-            }
-
-            return {
-                success: true,
-                bytesTransferred: totalSize,
-                assetPath: assetPath,
-                usdInstance: usd
-            };
-
-        } catch (error) {
-            usd.cancelZeroCopyBuffer(uuid);
-            throw error;
-        }
+        const fs=await import('node:fs');
+        const size=(await fs.promises.stat(filePath)).size;
+        const chunkSize=options.chunkSize??65536;
+        if(!Number.isInteger(chunkSize)||chunkSize<1)throw RangeError('Invalid chunk size');
+        const input=fs.createReadStream(filePath,{highWaterMark:chunkSize,signal:options.signal});
+        input.on('error',()=>{});
+        try{return await transferCoreChunks(this,input,assetPath,size,options);}
+        finally{input.destroy();}
     }
 
     /**
@@ -3074,8 +2574,7 @@ class LightUSDLoader extends Loader {
             await this.init();
         }
 
-        const usd = new this.native_.LightUSDLoaderNative();
-        return usd.getActiveZeroCopyBuffers();
+        return [...(this.activeCoreTransfers_ || [])].flatMap(stream => stream.getActiveZeroCopyBuffers());
     }
 
     /**
@@ -3088,149 +2587,42 @@ class LightUSDLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
      */
     loadAsLayer(url, onLoad, onProgress, onError, options = {}) {
-
-        const scope = this;
-
-        const _onError = function (e) {
-
-            if (onError) {
-
-                onError(e);
-
-            } else {
-
-                console.error(e);
-
-            }
-
-            //scope.manager.itemError( url );
-            //scope.manager.itemEnd( url );
-
-        };
-
-
-        // Create a promise chain to handle initialization and loading
-        const initPromise = this.native_ ? Promise.resolve() : this.init();
-
-        initPromise
-            .then(() => {
-                return fetch(url);
-            })
-            .then((response) => {
-                console.log('fetch USDZ file done:', url);
-                return response.arrayBuffer();
-            })
-            .then((usd_data) => {
-                console.log('usd_data done:', url);
-                const usd_binary = new Uint8Array(usd_data);
-
-                //return this.parse(usd_binary);
-
-                const usd = new this.native_.LightUSDLoaderNative();
-
-                // Set memory limit before loading if specified (otherwise use native default)
-                const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-                if (memoryLimit !== undefined) {
-                    usd.setMaxMemoryLimitMB(memoryLimit);
-                }
-
-                scope._applySkinningLoadOptions(usd);
-
-                const ok = usd.loadAsLayerFromBinary(usd_binary, url);
-                if (!ok) {
-                    _onError(new Error('LightUSDLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
-                } else {
-                    onLoad(usd);
-                }
-
-            })
-            .catch((error) => {
-                console.error('LightUSDLoader: Error initializing native module:', error);
-                if (onError) {
-                    onError(error);
-                }
-            });
+        this.loadAsLayerAsync(url,onProgress,options).then(onLoad,onError||console.error);
     }
 
     async loadAsLayerAsync(url, onProgress, options = {}) {
-     	const scope = this;
-
-		return new Promise( function ( resolve, reject ) {
-
-			scope.loadAsLayer( url, resolve, onProgress, reject, options );
-
-		} );
+        if(!this.native_)await this.init();
+        const response=await fetch(url,{signal:options.signal});
+        if(!response.ok)throw Error(`Failed to fetch: HTTP ${response.status}`);
+        const limit=(options.maxMemoryLimitMB??this.maxMemoryLimitMB_??512)*1024*1024;
+        const chunks=[];let size=0;
+        for await(const bytes of responseChunks(response)) {
+            if(options.signal?.aborted)throw new DOMException('Load aborted','AbortError');
+            if(bytes.length>limit-size)throw RangeError('Layer input exceeds memory limit');
+            size+=bytes.length;chunks.push(bytes);
+            onProgress?.({loaded:size,total:Number(response.headers.get('content-length'))||0});
+        }
+        let bytes=new Uint8Array(size);let offset=0;
+        for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+        if(bytes[0]===0x50&&bytes[1]===0x4b) {
+            const entries=parseUSDZEntries(bytes);
+            if(!entries[0]||!/\.usd[ac]?$/i.test(entries[0].name))throw Error('USDZ first entry is not a USD root layer');
+            bytes=entries[0].data;
+        }
+        const document=new this.native_.LayerDocument();
+        try {
+            const result=document.load(bytes);
+            if(!result.success)throw Error(result.error||document.error());
+            return document;
+        }catch(error){document.delete();throw error;}
     }
 
-    loadTest(url, onLoad, onProgress, onError, options = {}) {
-
-        const scope = this;
-
-        const _onError = function (e) {
-
-            if (onError) {
-
-                onError(e);
-
-            } else {
-
-                console.error(e);
-
-            }
-
-            //scope.manager.itemError( url );
-            //scope.manager.itemEnd( url );
-
-        };
-
-
-        // Create a promise chain to handle initialization and loading
-        const initPromise = this.native_ ? Promise.resolve() : this.init();
-
-        initPromise
-            .then(() => {
-                return fetch(url);
-            })
-            .then((response) => {
-                return response.arrayBuffer();
-            })
-            .then((usd_data) => {
-
-                const usd = new this.native_.LightUSDLoaderNative();
-
-                // Set memory limit before loading if specified (otherwise use native default)
-                const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
-                if (memoryLimit !== undefined) {
-                    usd.setMaxMemoryLimitMB(memoryLimit);
-                }
-
-                scope._applySkinningLoadOptions(usd);
-
-                const u8data = new Uint8Array(usd_data);
-                const ok = usd.loadTest(url, u8data);
-                if (!ok) {
-                    _onError(new Error('LightUSDLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
-                } else {
-                    onLoad(usd);
-                }
-
-            })
-            .catch((error) => {
-                console.error('LightUSDLoader: Error initializing native module:', error);
-                if (onError) {
-                    onError(error);
-                }
-            });
+    loadTest(url,onLoad,onProgress,onError,options={}) {
+        this.loadTestAsync(url,onProgress,options).then(onLoad,onError||console.error);
     }
 
-    async loadTestAsync(url, onProgress, options = {}) {
-     	const scope = this;
-
-		return new Promise( function ( resolve, reject ) {
-
-			scope.loadTest( url, resolve, onProgress, reject, options );
-
-		} );
+    async loadTestAsync(url,onProgress,options={}) {
+        return this.loadWithStreaming(url,{...options,onProgress});
     }
 
     /**
@@ -3239,7 +2631,7 @@ class LightUSDLoader extends Loader {
      *
      * @param {string} url - URL to load from
      * @param {Function} onLoad - Success callback (result) => void
-     *   - result.usd: The parsed USD object (LightUSDLoaderNative)
+     *   - result.usd: The parsed core USD object
      *   - result.scene: Three.js scene (if options.buildScene is true and sceneBuilder provided)
      * @param {Function} onProgress - Progress callback ({loaded, total, stage, percentage, message}) => void
      * @param {Function} onError - Error callback (error) => void
@@ -3334,26 +2726,12 @@ class LightUSDLoader extends Loader {
 
                 return usd_data;
             })
-            .then((usd_binary) => {
-                // Phase 2: Parse (50-80%)
-                reportProgress('parsing', 0, 'Parsing USD...');
-
-                const usd = new scope.native_.LightUSDLoaderNative();
-
-                // Set memory limit
-                const memoryLimit = options.maxMemoryLimitMB || scope.maxMemoryLimitMB_;
-                if (memoryLimit !== undefined) {
-                    usd.setMaxMemoryLimitMB(memoryLimit);
-                }
-
-                scope._applySkinningLoadOptions(usd);
-
-                const ok = usd.loadFromBinary(usd_binary, url);
-                if (!ok) {
-                    throw new Error(`Failed to parse USD: ${usd.error()}`);
-                }
-
-                reportProgress('parsing', 1, 'Parse complete');
+            .then(async (usd_binary) => {
+                reportProgress('parsing',0,'Parsing USD...');
+                const usd=await scope.parseWithProgress(usd_binary,url,{
+                    ...options,onProgress:info=>reportProgress('parsing',info.progress??0,info.message)
+                });
+                reportProgress('parsing',1,'Parse complete');
                 return usd;
             })
             .then(async (usd) => {

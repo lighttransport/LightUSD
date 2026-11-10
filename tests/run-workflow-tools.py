@@ -134,8 +134,8 @@ def Material "Mat" {
  }
 }
 ''')
-        # usd_to_gltf is a legacy example (built with LIGHTUSD_BUILD_LEGACY).
         have_gltf = find_tool("usd_to_gltf").exists()
+        assert have_gltf, "Core GLB exporter must be built"
         if have_gltf:
             textured_glb = work / "textured.glb"
             run("usd_to_gltf", textured, textured_glb)
@@ -212,11 +212,10 @@ over "Asset" (variants = { string lod = "low" }) {}
                    for d in composed["dependencies"])
         assert not any(d["authoredPath"] == "missing.png" for d in composed["dependencies"])
         run("lusddeps", "--max-records", "0", scene, code=2)
-        # `lusdcat --explain` is a legacy-CLI feature (examples/lusdcat); the
-        # core lusdcat has no opinion tracer yet.
-        explain_probe = subprocess.run([str(find_tool("lusdcat")), "--explain", "/World", "--json", str(scene)],
+        explain_probe = subprocess.run([str(find_tool("lusdcat")), "--explain", "/World.radius", "--json", str(scene)],
                                        text=True, capture_output=True)
-        if explain_probe.returncode == 0 and explain_probe.stdout.lstrip().startswith("{"):
+        assert explain_probe.returncode == 0, explain_probe.stderr
+        if explain_probe.returncode == 0:
             variant_trace = json.loads(run("lusdcat", "--explain", "/Asset.texture", "--json", variants))
             assert any("{lod=low}" in o["primPath"] and o["layer"].endswith("variants.usda") for o in variant_trace["opinions"])
             trace = json.loads(run("lusdcat", "--explain", "/World.radius", "--time", "0.5", "--json", scene))
@@ -232,7 +231,8 @@ def Xform "Graph" {
   float inputs:c = 7
 }
 ''')
-        if explain_probe.returncode == 0 and explain_probe.stdout.lstrip().startswith("{"):
+        assert explain_probe.returncode == 0, explain_probe.stderr
+        if explain_probe.returncode == 0:
             connection_trace = json.loads(run(
                 "lusdcat", "--explain", "/Graph.inputs:a", "--json", connected))
             assert connection_trace["resolution"]["value"] == "7"

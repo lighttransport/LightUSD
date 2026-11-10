@@ -12,8 +12,10 @@
   "provideLayer",
   "remapLayerAssetPaths",
   "setAssetPathRemap",
+  "setCompositionMask",
   "setMaxInputBytes",
   "setMaxOutputBytes",
+  "setRebaseAssetPaths",
   "setVariantOverride",
   "step"
 ]

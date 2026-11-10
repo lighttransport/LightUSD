@@ -546,13 +546,13 @@ function exportSampleBytes(native, format) {
 
 async function extractFromSample(lightusd, format) {
   const expected = sampleRobotPayload();
-  const writer = new lightusd.LightUSDLoaderNative();
+  const writer = new lightusd.NextUSDZConverterNative();
   try {
     if (!writer.createURDFPhysicsScene(JSON.stringify(expected))) {
       throw new Error(writer.error() || 'createURDFPhysicsScene failed');
     }
     const exported = exportSampleBytes(writer, format);
-    const reader = new lightusd.LightUSDLoaderNative();
+    const reader = new lightusd.NextUSDZConverterNative();
     try {
       if (!reader.loadFromBinary(exported.bytes, exported.filename)) {
         throw new Error(reader.error() || `Failed to reload ${exported.filename}`);
@@ -571,7 +571,7 @@ async function extractFromSample(lightusd, format) {
 async function main() {
   const opts = parseArgs();
   const lightusd = await LightUSDFactory();
-  const native = new lightusd.LightUSDLoaderNative();
+  const native = new lightusd.NextUSDZConverterNative();
   let extracted;
   let expected = null;
   try {

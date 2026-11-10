@@ -10,7 +10,8 @@ over LightUSD's C/POD API, then writes a self-contained glTF 2.0 binary:
 
 Built with `LIGHTUSD_BUILD_EXAMPLES=ON`. The public library entry is
 `lightusd_render_export_glb` (or `lightusd::api::ExportGLB`).
-The command writes GLB only. `--strict` refuses output if conversion reports a
+It builds with `LIGHTUSD_BUILD_EXAMPLES=ON` and Tydra enabled, independently
+of `LIGHTUSD_BUILD_LEGACY`. The command writes GLB only. `--strict` refuses output if conversion reports a
 loss; otherwise losses appear on stderr, in the optional JSON report, and in
 `extras.lightusdConversionLosses` (exporter losses) inside the GLB.
 

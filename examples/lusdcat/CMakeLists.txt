@@ -1,33 +1,12 @@
-# Assume this cmake is called from lightusd root(../../)
-set(EXAMPLE_TARGET "lusdcat")
-
-set(LIGHTUSD_SIMPLE_DUMP_SOURCES
-    main.cc
-    variant-format.cc
-    comp-graph-dump.cc
-    explain.cc
-    )
-
-add_executable(${EXAMPLE_TARGET} ${LIGHTUSD_SIMPLE_DUMP_SOURCES})
-add_sanitizers(${EXAMPLE_TARGET})
-
-target_include_directories(${EXAMPLE_TARGET} PRIVATE
-    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/c-api)
-# Allocator (if enabled) must precede the rest so it wins symbol resolution.
-target_link_libraries(${EXAMPLE_TARGET} ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} lightusd_static)
+# The canonical CLI is defined by the core project for both root and standalone builds.
+cmake_minimum_required(VERSION 3.13)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(lightusd_cli_example LANGUAGES C CXX)
+endif()
 if(NOT TARGET lightusd_core)
-  # Legacy product fallback: pull in the next library for the shared reader
-  # paths, but do NOT let it define its own `lusdcat` CLI (that would clash
-  # with the legacy target defined above). The unified next CLI is only built
-  # by the `LIGHTUSD_NATIVE_PRODUCT=next` root path.
-  set(LIGHTUSD_BUILD_LUSDCAT OFF CACHE BOOL "Build next CLI tools (lusdcat)" FORCE)
-  set(LIGHTUSD_BUILD_TESTS OFF CACHE BOOL "Build tests for stable LightUSD Next" FORCE)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/lusdcat_next_build)
+  set(LIGHTUSD_BUILD_TESTS OFF CACHE BOOL "Build core tests")
+  set(LIGHTUSD_BUILD_EXAMPLES OFF CACHE BOOL "Build other examples")
+  set(LIGHTUSD_WITH_TYDRA OFF CACHE BOOL "Build rendering support")
+  set(LIGHTUSD_BUILD_LUSDCAT ON CACHE BOOL "Build the core USD CLI")
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src core)
 endif()
-target_link_libraries(${EXAMPLE_TARGET} lightusd_core)
-if(TARGET lightusd_c)
-  target_link_libraries(${EXAMPLE_TARGET} lightusd_c)
-endif()
-
-
-set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

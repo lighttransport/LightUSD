@@ -6,18 +6,17 @@ pass it on the command line) and get a shaded, framed preview with a timeline.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DLIGHTUSD_NATIVE_PRODUCT=next \
       -DLIGHTUSD_BUILD_EXAMPLES=ON \
-      -DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON
+      -DLIGHTUSD_BUILD_LMETALVIEW=ON
 cmake --build build -j16
 
-open build/src/next/lmetalview_example/lmetalview.app --args model.usdz
+open build/src/lmetalview_example/lmetalview.app --args model.usdz
 # or, with a file argument:
-build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview model.usdz
+build/src/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview model.usdz
 ```
 
 The bundle is `lmetalview.app`; Finder's *Open With* lists it for USD files.
-`LIGHTUSD_NEXT_BUILD_LMETALVIEW` defaults to `LIGHTUSD_NEXT_BUILD_EXAMPLES` and
+`LIGHTUSD_BUILD_LMETALVIEW` defaults to `LIGHTUSD_BUILD_EXAMPLES` and
 is only available in the `next` product. The Swift + Metal app is macOS only;
 on Windows the option builds just the portable core (`lmetalview_core`) that
 [`ld3d12view`](../ld3d12view/README.md) renders with Direct3D 12.
@@ -25,7 +24,7 @@ on Windows the option builds just the portable core (`lmetalview_core`) that
 Headless mode (used by CTest) renders one frame without a window:
 
 ```sh
-build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
+build/src/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
   --headless --size 640x480 --screenshot out.png models/cube-previewsurface.usdc
 ```
 
@@ -53,9 +52,9 @@ build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
 
 | Layer | Source | Notes |
 | --- | --- | --- |
-| Composition + conversion | `lightusd_next` + `tydra_next` through the C API (`lightusd-c.h`, `lightusd-render-c.h`) | Only the `next` product is linked; no legacy `lightusd_static` |
+| Composition + conversion | `lightusd_core` + `tydra` through the C API (`lightusd-c.h`, `lightusd-render-c.h`) | The core product is linked |
 | Preview scene ABI | `examples/lmetalview/core/lmv.h` | Flat meshes, draws, packed OpenPBR materials, decoded images, lights, cameras |
-| Texture pixels | `stb_image`, vendored tinyexr (EXR), texpipe/texcomp + zstd (KTX2), `next::USDZReader` | tydra records texture metadata only; the viewer decodes preview-sized pixels itself |
+| Texture pixels | `stb_image`, vendored tinyexr (EXR), texpipe/texcomp + zstd (KTX2), `lightusd::USDZReader` | tydra records texture metadata only; the viewer decodes preview-sized pixels itself |
 | Ptex | `src/ptx-loader.cc` + a bounded preview atlas (`core/lmv-ptex.*`) | one atlas sampled by authored face index + face-local UV |
 | Skinning / morph | `lightusd_skel_sample_*` + GPU palette in `lmv_scene.cc` | 4 influences per vertex plus blend-shape deltas; the vertex shader poses the bind-pose geometry every frame |
 | Camera | `examples/common/light3d/camera-nav.hh` | The same `OrbitCamera` lusdview uses (moved there so both examples share it) |

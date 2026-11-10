@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-core-render.hh"
 #include <map>
+#include <algorithm>
 #include <cstring>
 #include <array>
 #include "schema/usd-shade.hh"
@@ -46,10 +47,41 @@ void RenderStream::buildAnalyticOutputs_() {
           (source.texcoords_0_interp == tr::Interpolation::Vertex &&
            source.texcoords_0.size() == point_count * 2);
 
-      if (vertex_normals && vertex_uvs) {
+      std::vector<size_t> face_offsets{0};
+      for (uint32_t count : source.face_vertex_counts)
+        face_offsets.push_back(face_offsets.back() + count);
+      const auto attribute_element = [&](tr::Interpolation interp, size_t vertex,
+                                         size_t corner) -> size_t {
+        if (interp == tr::Interpolation::Constant) return 0;
+        if (interp == tr::Interpolation::FaceVarying) return corner;
+        if (interp == tr::Interpolation::Uniform) {
+          const auto it = std::upper_bound(face_offsets.begin(), face_offsets.end(), corner);
+          return it == face_offsets.begin() ? 0 : size_t(it - face_offsets.begin() - 1);
+        }
+        return vertex;
+      };
+      const auto vertex_attribute = [](const auto& values, tr::Interpolation interp) {
+        return values.empty() || interp == tr::Interpolation::Constant ||
+               interp == tr::Interpolation::Vertex || interp == tr::Interpolation::Varying;
+      };
+      const auto append_attributes = [&](size_t vertex, size_t corner) {
+        if (!source.colors.empty()) {
+          const size_t index = attribute_element(source.colors_interp, vertex, corner) * 3;
+          for (size_t c = 0; c < 3; ++c)
+            out.colors.push_back(index + c < source.colors.size() ? source.colors[index + c] : 1.0f);
+        }
+        if (!source.opacities.empty()) {
+          const size_t index = attribute_element(source.opacities_interp, vertex, corner);
+          out.opacities.push_back(index < source.opacities.size() ? source.opacities[index] : 1.0f);
+        }
+      };
+      if (vertex_normals && vertex_uvs &&
+          vertex_attribute(source.colors, source.colors_interp) &&
+          vertex_attribute(source.opacities, source.opacities_interp)) {
         copyChunked_(source.points, &out.points);
         copyChunked_(source.normals, &out.normals);
         copyChunked_(source.texcoords_0, &out.uv);
+        for (size_t i = 0; i < point_count; ++i) append_attributes(i, 0);
         out.indices.resize(source.triangulated_indices.size());
         for (size_t i = 0; i < source.triangulated_indices.size(); ++i) {
           out.indices[i] = source.triangulated_indices[i];
@@ -62,7 +94,7 @@ void RenderStream::buildAnalyticOutputs_() {
         // corners to ~2.6k vertices. The converter's authored-corner remap
         // keeps generated UV seams and normals aligned.
         const size_t corners = source.triangulated_indices.size();
-        std::map<std::array<uint32_t, 6>, uint32_t> welded;
+        std::map<std::array<uint32_t, 10>, uint32_t> welded;
         out.indices.reserve(corners);
         auto bits = [](float f) {
           uint32_t u;
@@ -101,8 +133,15 @@ void RenderStream::buildAnalyticOutputs_() {
               has_uv = true;
             }
           }
-          const std::array<uint32_t, 6> key{vertex, bits(n[0]), bits(n[1]),
-                                            bits(n[2]), bits(uv[0]), bits(uv[1])};
+          float rgba[4] = {1,1,1,1};
+          const size_t color = attribute_element(source.colors_interp, vertex, authored_corner) * 3;
+          for (size_t c = 0; c < 3; ++c)
+            if (color + c < source.colors.size()) rgba[c] = source.colors[color + c];
+          const size_t opacity = attribute_element(source.opacities_interp, vertex, authored_corner);
+          if (opacity < source.opacities.size()) rgba[3] = source.opacities[opacity];
+          const std::array<uint32_t, 10> key{vertex, bits(n[0]), bits(n[1]),
+            bits(n[2]), bits(uv[0]), bits(uv[1]), bits(rgba[0]), bits(rgba[1]),
+            bits(rgba[2]), bits(rgba[3])};
           auto found = welded.find(key);
           if (found == welded.end()) {
             const uint32_t index = static_cast<uint32_t>(out.points.size() / 3);
@@ -110,6 +149,7 @@ void RenderStream::buildAnalyticOutputs_() {
             for (size_t c = 0; c < 3; ++c) {
               out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
             }
+            append_attributes(vertex, authored_corner);
             if (has_n) out.normals.insert(out.normals.end(), n, n + 3);
             if (has_uv) out.uv.insert(out.uv.end(), uv, uv + 2);
           }

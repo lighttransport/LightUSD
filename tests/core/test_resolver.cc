@@ -249,6 +249,10 @@ void TestPathNormalization() {
     const char* expected;
   };
   const Case cases[] = {
+      {"https://host/a/../b.png", "https://host/b.png"},
+      {"http://host:8080/a/./b?key=../x#part", "http://host:8080/a/b?key=../x#part"},
+      {"data:image/png;base64,a//b", "data:image/png;base64,a//b"},
+      {"https://host", "https://host"},
       {"a/b", "a/b"},
       {"/a/b", "/a/b"},
       {"a//b", "a/b"},
@@ -406,6 +410,31 @@ void TestPackageResolvers() {
         "move preserves registered package resolvers");
 
   fs::remove_all(root);
+}
+
+void TestAnchoredMemoryAssets() {
+  AssetResolver resolver;
+  auto config = resolver.GetConfig();
+  config.allow_filesystem = false;
+  resolver.SetConfig(config);
+  const std::vector<uint8_t> payload = {1, 2, 3};
+  resolver.RegisterMemoryAsset("nested/looks/look.usda", payload);
+  resolver.RegisterMemoryAsset("search/other.usda", payload);
+  CHECK(resolver.SetAlias("nested/looks/alias.usda", "nested/looks/look.usda"),
+        "anchored memory alias registers");
+  const auto anchored = resolver.Resolve("looks/look.usda", "nested/root.usda");
+  CHECK(anchored.exists && anchored.resolved_path == "nested/looks/look.usda" &&
+        !anchored.has_file_identity, "relative memory assets resolve against their layer");
+  const auto alias = resolver.Resolve("looks/alias.usda", "nested/root.usda");
+  CHECK(alias.exists && alias.canonical_path == "nested/looks/look.usda",
+        "anchored aliases retain canonical memory identity");
+  resolver.SetWorkingDirectory("nested");
+  CHECK(resolver.Resolve("looks/look.usda").exists, "working directory resolves memory assets");
+  resolver.SetSearchPaths({"search"});
+  CHECK(resolver.Resolve("other.usda").exists, "search directories resolve memory assets");
+  resolver.SetAllowParentPaths(false);
+  CHECK(!resolver.Resolve("../looks/look.usda", "nested/child/root.usda").exists,
+        "memory anchoring preserves the parent path policy");
 }
 
 void TestAliases() {
@@ -635,6 +664,7 @@ int main() {
   TestAssetInfoAndTimestamp();
   std::cout << "[AssetResolver aliases]\n";
   TestAliases();
+  TestAnchoredMemoryAssets();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " resolver check(s) FAILED\n";

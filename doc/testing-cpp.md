@@ -124,11 +124,11 @@ without fetching.
 
 ## Build
 
-Native `lusdzconvert` currently requires `LIGHTUSD_NATIVE_PRODUCT=legacy` and
-`LIGHTUSD_BUILD_TOOLS=ON`; use a separate Ninja tree such as
-`build_ninja/legacy-convert` (see [converter build instructions](../tools/lusdzconvert/README.md#build)).
-With tests enabled, `lusdzconvert-regression-driver` checks JPEG asset remapping,
-material deduplication, directory root discovery, both USDA/USDC package roots,
+Native `lusdzconvert` builds against the core with
+`LIGHTUSD_BUILD_TOOLS=ON`; use `build_ninja/` (see
+[converter build instructions](../tools/lusdzconvert/README.md#build)).
+With tests enabled, `core_lusdzconvert_regression` checks JPEG asset remapping,
+directory root discovery, both USDA/USDC package roots,
 and both flat layer formats. Flat outputs written into a different directory
 must retain reachable references to the original external images.
 
@@ -535,7 +535,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-camera-clipping-planes` | Authored camera clipping on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
 | `lusdview-camera-dof-raster` | Thin-lens response on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
 | `lusdview-camera-motion-raster-export` | Native/companion Vulkan shutter accumulation and closed shutter | Vulkan backend |
-| `lusdview-camera-motion-raster-legacy` | Legacy-loader native/companion camera shutter parity | Vulkan backend |
+| `lusdview-camera-motion-raster-static` | Static-scene native/companion camera shutter parity | Vulkan backend |
 | `lusdview-camera-motion-raster-gl` | Native/companion OpenGL shutter accumulation and closed shutter | `xvfb-run` |
 | `lusdview-camera-motion-vulkan` | Vulkan RT temporal poses retain progressive accumulation | Vulkan RT adapter |
 | `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
@@ -2166,10 +2166,10 @@ reset; returned heap views retain the existing borrowed-buffer lifetime.
 controls: unchanged v4 layout/defaults, fan triangulation, each tangent method,
 animation suppression, geometry release, instancer arrays required for draw
 expansion, persistent resolver lifetime and rejected invalid control values.
-`tydra-next-c-api-smoke` exercises the `tydra_to_renderscene --next` facade path
-with animation enabled/disabled and a mesh triangulation/tangent configuration;
-it checks both exit status and scene counts. The command's legacy conversion
-path remains separate.
+`core_render_scene_c_api_smoke` retains the former facade smoke cases against
+`tydra_to_renderscene --next` (now a compatibility alias for its core default):
+animation enabled/disabled and mesh triangulation/tangent configuration, with
+exit-status and scene-count checks. The example has no legacy conversion path.
 
 `core_volume_c` covers the UsdVol render C surface: volume/field info
 (binding, grid name, value type, components, bounds), dense voxels,
@@ -4048,21 +4048,425 @@ is built but registers no CTest cases; its test programs live under
 shell drivers are `core_scope_imageable_roundtrip`, `core_variant_chain` and
 (with a pinned OpenUSD usdcat) `core_pxr_crate_fidelity`.
 
-Known coverage gaps surfaced while porting the tools to the core (each a
-pre-existing core behavior, not a port regression):
+The canonical asset-resolution and variant-listing example sources now use core
+APIs; the old `*-next.cc` duplicates and their legacy example registrations have
+been removed. `core_asset_resolution_example` and `core_variant_lister_smoke`
+exercise the public example entry points. The OpenChess tracing worker loads
+`loadFeature('raytrace')` from the core distribution. Demo production builds copy
+all optional feature JS/WASM pairs, and shared composition/export demo loading
+uses the core path. `web/js/tests/next-features.test.mjs` checks feature loading,
+independent heaps, ray tracing, and Worker transfers. The former backend comparison
+page now compares the source with a USDC-rooted USDZ roundtrip. After building
+`web/demo` with Vite, run `cd web/js && npm run test:demo-core` to check
+all 27 production demo entry points and the landing-page links in headless
+Chromium. Coverage includes 12 shared-foundation pages with offline USDA,
+USDC and USDZ fixtures; the custom animation, composition/streaming, inspector,
+material, viewer, diff and packager pages; actual MuJoCo simulation and
+validation; and the production OpenChess raytrace Worker. Packager checks
+exercise all three download formats. `--custom-only` and `--page=<name>` allow
+focused custom-page runs. The URDF converter source and example CMake entry point also use core
+APIs exclusively; `--format all` exercises USDA, USDC, and USDZ output.
+
+`core_test_geometry_optimize` checks mesh merging with nonuniform/mirrored
+transforms, inverse-transpose normals, indexed face-varying continuity,
+element-sized and uint2 primvars, subdivision creases/corners/holes, material
+subsets, size limits, transactional budget failure, and Crate output without
+reviving removed meshes. `core_lusdzconvert_geometry` exercises flat USDA/USDC
+and both USDZ root formats. `web/js/tests/core-converter-geometry.test.mjs` checks
+the shared WASM exporter, source-stage isolation, and numeric option validation.
+
+`core_test_asset_rebase` verifies source-layer-relative asset defaults and time
+samples, inline variants, shared-content clone isolation, and material dedupe
+that distinguishes equal filenames anchored to different directories. The
+resumable WASM flatten path rebases source values before merging opinions, so a
+weak layer's texture remains anchored correctly when a stronger layer overrides
+another field on the same shader.
+
+`web/js/tests/core-converter-orchestration.test.mjs` exercises the public folder
+and streaming converter APIs with sublayers/references, variant overrides,
+source-relative texture paths and animated asset paths, both root formats,
+material dedupe, mesh merging, append-only ZIP sinks, missing dependencies, and
+input limits. Core conversion now flattens by default; `flatten: false` retains
+single-root authoring unless optimization or variant overrides require a
+composed stage. The single-USDZ passthrough shortcut excludes these options so it
+cannot silently ignore requested optimization. Texture-free scenes accept the
+default CLI/UI image settings. Converted USDZ inputs retain their embedded assets
+with `repackUsdz: false`, and custom asset processors disable passthrough.
+
+`core_lusdzconvert_images` covers ordinary uint16 PNG resize and JPEG asset
+remapping. The shared image engine also powers counted core WASM conversion,
+channel packing and size/quality fitting. `core-image-convert.test.mjs` covers
+bounded scanline fallback, precision, colorspaces, optional EXR and HDR output;
+`core-converter-textures.test.mjs` checks folder/streaming remaps and name
+collisions for both root formats. Format-only configured exports use the direct
+writer without imposing the remap/optimization clone's working-set budget.
+
+The MCP embedding example now uses `lightusd::mcp::Server` with stdio and
+HTTP transports. `core_mcp_example` checks both entry points, notifications,
+invalid CLI ports and bounded request bodies on loopback. Build it with
+`-DLIGHTUSD_WITH_MCP_SERVER=ON -DLIGHTUSD_BUILD_EXAMPLES=ON`; the standalone
+`lightusd-mcp` executable and `core_test_mcp` use the same core server library.
+
+Lucia now separates core MCP authoring from the core RenderStream preview
+adapter. Loose/embedded assets are packaged with the preview root, validation
+uses a core LayerDocument, USDZ export uses the core converter, and channel
+packing uses the counted image API. Its fidelity tests require Node 23+ when
+running both WASM32 and WASM64. Geometry-node assertions locate prim blocks
+instead of treating braces in quoted graph JSON as the end of a prim.
+The xatlas worker loads the core geometry feature; `core-xatlas.test.mjs` checks
+UV generation, options, source-vertex maps, output ownership and worker remapping.
+Generated primitives now extract authored primvars before triangulation.
+`core-generated-colors.test.mjs` checks constant/indexed-uniform display colors,
+opacity, analytic-output welding at attribute discontinuities, and the shared
+Three.js preview. Lucia builds through that shared core scene builder, including
+material conversion and archive textures. Its full headless browser gate covers
+UDIM, concurrency, sculpting, geometry nodes, persistence and a 131,072-triangle
+grid (with an explicit successful-import assertion).
+The standalone USD export demo uses the core converter; the validation worker
+uses the independent core validator for every URL/backend selection.
+`standalone-core-demos.test.mjs` checks browser downloads and worker validation.
+The high-level loader's progress/async methods also use the core adapter.
+`core-loader-progress.test.mjs` checks phase completion, cancellation, memory
+limits, callback failures, concurrent loads and native-owner cleanup. Native
+progress callbacks are installed only across the synchronous native call.
+The `test:progress` CLI uses the same adapter and requires real phase callbacks,
+100% completion and the expected mesh counts on its three generated scenes.
+The MaterialX GL inspector uses the core adapter, preserves structured parameter
+metadata during edits, and rebuilds physical/OpenPBR materials while retaining
+textures and source color transforms. The production standalone gate also checks
+its custom shader compilation. `core-texture-bindings.test.mjs` checks pending
+textures after material cloning/replacement and custom OpenPBR color hooks.
+The MaterialX WebGPU and debug inspectors now retain core RenderStreams. Their
+shared inspector imports packaged assets into a counted core store, and named
+root/cached/streamed inputs retain authoring-layer anchors. A matching anchored
+memory asset wins over a same-name root-level key. `core-render-inspector.test.mjs`
+checks this on WASM32/64, including owned decoded bytes after stream deletion and
+invalid source-name records; the native Tydra test checks the same collision.
+`core-image-texture.test.mjs` checks RGB expansion, integer normalization,
+Float16/Float32 HDR data and owned storage. The shared texture helpers use actual
+image bytes rather than requiring the removed legacy buffer IDs.
+`core-materialx-demos.test.mjs` loads textured USDZ input into both inspectors,
+checks Z-up conversion and exercises both WebGPU shader modes. Its Chromium
+software-Vulkan setup avoids incompatible headless swapchain backends. The
+`web/demo` smoke gate alone does not cover these standalone inspectors.
+The UDIM demo also uses core RenderStream and an imported asset store, with
+owned geometry copies and root-relative tile resolution. Sparse export preserves
+the original layer and tile bytes. The standalone browser regression checks both
+sparse and combined modes and all four exported tiles; `MUJOCO_WASM_DIR` also
+enables the browser physics demo's real MuJoCo startup check.
+The streaming viewer now uses core RenderStream for both load paths, including
+loose USDA and nested USDZ roots. Its material fast path resolves authoring-layer
+texture anchors; image payloads stay off the WASM heap. The browser regression
+`core-streaming-demo.test.mjs` checks production/development rendering, a
+same-name texture decoy, world bounds, non-uniform normal matrices, native handle
+cleanup and GL buffer deletion across successful and failed loads.
+The HTTP resolver, streamed loading utility, UDIM demo and development inspection
+entry points now use core APIs. The JavaScript USD CLI uses core composition,
+retains arcs with `--no-flatten`, and preserves nested USDZ roots and texture
+anchors. Its tests run in the Node regression profile alongside core asset-store
+allocation/readback/release diagnostics and the USD Physics/URDF roundtrip CLI. The high-level loader now imports the package asset store and passes the root
+identifier through the named render entry point. Nested-root and referenced-layer
+texture regressions include an identically named decoy at the archive root.
+Sparse UDIM pattern anchoring still needs equivalent cross-layer coverage.
+
+The browser physics simulation and physics/USD-to-MJCF CLIs use the core converter's physics
+extraction; render geometry comes from the core adapter. OBJ vertices are baked
+into the owning rigid body's frame, including intermediate transforms and
+mirrored winding. `core-physics-cli.test.mjs` checks loose USDA and nested USDZ
+inputs, real OBJ output and independent physics extraction with malformed
+render-only UVs. The `physics` regression profile also runs the robot-arm
+simulation against MuJoCo.
+
+The `large-scene-load` example now uses core StageSession snapshots and
+payload edits. `core_large_scene_example` exercises deferred/eager loading,
+byte/extent policies, load/unload, USDC roots, relative paths and invalid CLI
+arguments. `--no-dedup` now releases parsed-layer/composition caches between
+edits; source layers still share storage within each composition. Memoized
+payload-policy decisions keep byte/extent admissions stable across those
+recompositions. The diagnostic reports source-layer count rather than claiming
+a cumulative parser-invocation count.
+
+The variant analyzer now reads core authored variants directly, with real nested
+depth, overflow-safe capped combinations and JSON escaping. `core_variant_analyzer`
+checks empty reports, nesting, cap behavior and USDA/USDC parity. `tydra_api`
+uses core scene access, UsdShade and attribute evaluation; `core_tydra_api_example`
+checks external references, parent paths, inherited bindings and shader inputs.
+
+The optional `js-script` example embeds a stage-independent QuickJS runtime and
+reads core authored layer metadata. `core_js_script_example` checks Unicode,
+sublayer offsets, root prim names, JavaScript errors and execution limits for
+both loops and Promise jobs. Enable it with `LIGHTUSD_WITH_QJS=ON`; the same
+runtime supplies `lusdrender` scripting without linking the legacy library.
+`tool-lusdrender-qjs` checks scene statistics, bounds, scripted resolution,
+PNG output and script-error exit status on that core renderer path.
+
+`usd-texcomp` now authors companions through core Stage/layer APIs and the
+shared image codec library. `core_usd_texcomp_example` verifies USDA/USDC input,
+existing customData preservation, mip count, optional Zstd supercompression,
+HDR BC6H output, exported layer reload and missing-image failure. It requires
+Tydra and textools, with no legacy library dependency.
+
+`progressive_composition` now uses the core loader, resolver and compositor.
+Its cumulative LIVRPS passes recompose from the authored root. Selective passes
+preserve disabled arc values and list-op qualifiers, covered by
+`core_test_composition`; `core_progressive_composition_example` checks all six
+controls, later reload, variants, relative mesh paths, missing dependencies and
+USDA/USDC/nested USDZ inputs. Default compositor flattening remains unchanged.
+
+The render-scene example now uses core loading/composition, retained conversion,
+JSON/YAML diagnostics, animation sample inspection, image decoding and core
+OBJ/USDA exporters. It is registered with the core examples, independently of
+legacy. Its default index builder preserves attribute seams, skin weights, morphs
+and material subsets. `--fast-index-build` expands corners without deduplication;
+`--noidxbuild` retains separate attribute streams. `core_mesh_index` checks these
+modes, polygon topology, tangent winding, indexed primvars, memory limits and
+invalid input. Deduplication keeps distinct source points separate; triangulated
+output receives canonical triangle face counts and corner mappings.
+`usda_parser` and `usdc_parser` now use format-specific core readers and share
+core CLI/composition handling. They build with examples enabled or their existing
+`LIGHTUSD_WITH_TOOL_USDA_PARSER` / `LIGHTUSD_WITH_TOOL_USDC_PARSER` flags,
+independently of legacy reader module flags. `core_usda_parser_example` and
+`core_usdc_parser_example` cover all six arc controls, retained disabled list
+edits, output reload, format rejection, malformed input and CLI errors.
+`triangulation_method_example` now builds as a core Tydra example.
+`core_triangulation_example` checks Earcut and fan modes, original polygon
+statistics, triangle totals, external mesh references and invalid arguments.
+`usd_to_json` now uses the core archive reader and shared
+`WriteLayerToJSON` API. The WASM layer exporter delegates to that same core
+serializer and shares its typed metadata conversion helpers. `core_usdz_json_example`
+checks USDA/USDC scene parity, first-entry root selection in the presence of a
+USDC dependency, default runtime schema fields/arrays, an explicit authored
+layer JSON mode, exact base64 sidecars (including empty files, Unicode/quoted
+names and chunk boundaries), default prefixes and invalid input/output paths.
+Public examples, tools, and demo entry points use the core implementation.
+The native build, optional viewer/texture benchmark, Node profile, and both
+production demo sites are checked independently; legacy is a separate
+compile-only product.
+
+Migration follow-ups and coverage limitations are tracked below. The remaining
+GPU failures listed explicitly as pre-existing also reproduce on `main`:
 
 | Area | Gap | Found by |
 |---|---|---|
-| USDC reader | variant contents are held as `{set=sel}` child prims instead of prim variant metadata, so a USDA layer and its USDC twin diff as different | `lusddiff tests/usda/variantSet-*.usda tests/usdc/variantSet-*.usdc` |
-| USDC reader | `uint2` / `uint2[]` values come back as strings | `lusddiff` on `uint2-type-001`, `uint2-array-001` |
-| USDC reader | `sceneLibrary-001` prim metadata differs from the USDA reader | `lusddiff` on `sceneLibrary-001` |
-| USDA parser | `varying rel` is rejected (legacy accepted it) | `tests/usda/rel-001.usda` |
-| lusdcat | no `--explain` opinion tracer (legacy `examples/lusdcat` only); `run-workflow-tools.py` skips those checks | `workflow_tools` |
-| usd_to_gltf | legacy-only example; `run-workflow-tools.py` skips the glTF checks without it | `workflow_tools` |
-| lusdzconvert | `-optimizeMaterials`, `-optimizeGeometry` and `--bake-udim` are JS-converter only (`web/js/cli/usdzconvert.js`); the native tool rejects them, and `core_lusdzconvert_regression` no longer checks material dedupe | `tests/run-lusdzconvert-regression.sh` |
-| lusdzconvert | core builds have no `LIGHTUSD_WITH_TEXTOOLS`, so `.ktx2` textures are not collected/transcoded (legacy transcoded them to JPEG/PNG) | `models/ktx2-uni-plane.usda` |
+| lusdcat | Core `--explain` uses the public C API property tracer; workflow checks require sampled values, selected-variant provenance and connection chains | `workflow_tools` |
+| usd_to_gltf | Core C API example; workflow checks require GLB structure, strict loss refusal, UVs and embedded textures for loose files and USDZ | `workflow_tools` |
+| lusdzconvert | `-optimizeMaterials dedupe` is now shared core functionality with restored regression coverage; PreviewSurface graph deduplication now canonicalizes surface shader names and ignores unused shader children, with conservative exact comparison for unsupported graphs; atlas mode preserves the legacy warning and preview-dedupe fallback; true material-atlas generation remains unsupported; static whole-mesh geometry merging is now shared with the core WASM configured-export API; native UDIM grid/dense baking now shares the WASM implementation. High-level core JS composition/variant overrides and dedupe/mesh merging are wired; core image conversion, channel packing, size/quality fitting, folder/streaming texture remapping, and audio processor hooks are wired and covered by `core-image-convert.test.mjs` and `core-converter-textures.test.mjs`; core JS ARKit policy forces composition, a USDC root, Y-up metadata and PNG/JPEG textures; non-flattened dependency packaging preserves archive directories and source bytes | `tests/run-lusdzconvert-regression.sh` |
 | lusdview | `lusdview_{lighting,texture_pipeline,geometry_primvar,openpbr_material}_test` exercised the removed legacy RenderScene -> DrawScene converter and were deleted; core-path coverage is the screenshot/backend suites in `examples/lusdview/tests.cmake` | removed with the legacy loader |
-| lusdview | light/camera gizmos, the RenderScene node tree and the MCP `vchar_physics` rigid-body preview only worked on the legacy loader and were removed | — |
-| lusdrender | the CPU path does not apply tangent-space normal maps in the `run-cpu-multi-uv.sh` fixture (tilted and flat maps render identically; the pre-port `-rtPreview` path behaved the same, the removed legacy path did not); that check is skipped for lusdrender | `examples/lusdview/tests/run-cpu-multi-uv.sh` |
+| lusdview | Light/camera gizmos now use retained core records and the Render scene hierarchy uses composed draw-record paths. The MCP `vchar_physics` preview now uses public C API physics queries and an independent editable core stage | `lusdview_scene_gizmos_test`, `lusdview_physics_preview_test`, `lusdview-core-physics-preview` |
 | lusdview | `lusdview_ptex_atlas_test` segfaults (also on the pre-refactor `main` build); `lusdview-opacity-material`, `lusdview-cpu-ptex-routing`, `lusdview-backend-parity` (timeout) and the two HIP texture-semantic tests fail the same way on `main` | pre-existing |
-| lusdview | `lusdview-dome-orientation` needs `LIGHTUSD_WITH_TEXTOOLS` (not set in core builds) and is not registered | `examples/lusdview/tests.cmake` |
+| lusdview | `lusdview-dome-orientation` passes with texture tools enabled; it checks that rotation changes core IBL and loose/USDZ renders agree. Camera/light record checks likewise compare loose input with USDZ instead of the ignored legacy-loader flag | `examples/lusdview/tests.cmake` |
+
+The multi-UV normal-map fixture uses an oblique key light so both tangent
+directions affect shading. Its `lusdrender` normal-map assertions are enabled;
+an axis-aligned key made the previous tilted/flat control vacuous.
+
+`core_lusdzconvert_ktx2` verifies KTX2-to-PNG conversion, archive contents,
+shader asset remapping and reopening the resulting USDZ. It is registered
+when `LIGHTUSD_WITH_TEXTOOLS` is enabled (the core default).
+
+`core_reader_parity_sceneLibrary-001` and `core_reader_extension_parity`
+compare USDA raw metadata opinions with decoded USDC extension fields. The
+negative control edits `sceneName` and requires a metadata differential;
+raw spelling and unregistered-field storage remain available for round trips.
+
+Core example migration checks include `core_api_tutorial` (authoring, shader
+connections, schema access, indexed UV expansion, time interpolation and USDA
+reload), `core_file_format_example` (custom binary assets preloaded as core
+layers and composed through references), `core_file_format_missing_root`
+(input-error propagation), and `core_c_api_example` (portable C ABI load,
+traverse and export). These targets require `LIGHTUSD_BUILD_EXAMPLES=ON`.
+
+USDC readers now expose inline variant metadata/content like the USDA reader;
+bracketed holder specs are transient reconstruction details. The
+`core_test_variant_inline` API test checks that representation and a second
+Crate round trip. `core_reader_variant_parity` covers paired fixtures, selected
+composition, nested options, property metadata/time samples and unselected
+body-value edits. `variantSet-prop-001.usdc` genuinely lacks the selection in
+its USDA namesake (confirmed with OpenUSD); the test requires that real
+differential to remain visible.
+
+The scalar/array `uint2` fixture parity cases are covered by
+`core_reader_parity_uint2-type-001` and `core_reader_parity_uint2-array-001`.
+`core_test_aousd_conformance` checks compatibility acceptance with a warning,
+strict rejection, and Crate round-trip fidelity for `varying rel`.
+
+`core_lusdzconvert_udim` verifies native grid/dense atlas pixels, USDA/USDC
+package roots and flat outputs, authoring-layer anchors, USDZ input,
+non-flattened variant contents, animated-file common layouts, 16-bit PNG and
+(with `LIGHTUSD_WITH_EXR`) floating-point EXR round trips. Failure controls
+cover tile/memory limits, crossing-face reject/split and precision-losing output
+requests; pre-existing atlas-name collisions must not overwrite unrelated files.
+The WASM `udim-bake.test.mjs` suite exercises the same extracted core adapter.
+
+The HTTP asset resolver demo uses core `NextFlattenSession` and the incremental
+RenderStream renderer. `core-http-demo.test.mjs` checks remote dependency layers,
+texture paths anchored to different authoring directories, collision-free USDZ
+packaging, preloaded assets without network requests, and missing-layer errors.
+`NextFlattenSession.setRebaseAssetPaths(true)` preserves asset provenance before
+composition even when no remap is supplied; call it after `begin`. URI path
+normalization preserves the authority and opaque scheme payloads.
+
+The export CLI uses the core converter and runs directly with Node. The Node
+profile includes `core-export-cli.test.mjs`: sample generation, USDA/USDC/USDZ
+exports, reimported USDZ output in all formats, and invalid-input errors. The
+browser conversion benchmark reloads its generated root through `LayerDocument`.
+
+Core streaming transfer coverage is in `core-stream-transfer.test.mjs` (Node
+profile, also runnable with `LIGHTUSD_WASM64=1`). It checks known/unknown HTTP
+lengths, overrun/truncation rejection, limits, cancellation, callback failures,
+caller-owned streams, chunked files, layer loading and full-progress loading.
+Successful `streamFetchToWasm`/`streamFileToWasm` results own a core RenderStream;
+call `beginStreamedAsset(assetPath)` to parse and `delete()` when finished. The
+completed transfer remains a streaming root buffer until parsed. The examples
+and `cli/load-test-node.js` use this API and release both comparison scenes.
+
+The material-dedup demo defaults to core in both main-thread and worker modes;
+its GUI offers the shipped backend. `core-material-dedup-demo.test.mjs` compares
+renderable sample geometry and material counts across both paths. It also runs
+against the production bundle with `--production` after a Vite build.
+
+The experimental OpenPBR `mtlx-webgpu.html` viewer now uses core RenderStream
+and owned mesh/image records. `core-openpbr-webgpu-demo.test.mjs` runs it on
+headless SwiftShader WebGPU and checks authored transforms, repeated loads,
+invalid-input cleanup, exact packaged RGBA texture uploads and GPU validation.
+Run with `--production` after building Vite to check the bundled entry. The Node
+profile's `core-webgpu-texture.test.mjs` covers grayscale/alpha expansion and HDR
+half-float uploads without clipping values above one.
+
+The ShaderBall MaterialX adapter uses core HTTP composition, LayerDocument graph
+inspection and RenderStream geometry. `core-shaderball-adapter.test.mjs` checks a
+selected variant with references to separate authoring directories, distinct
+same-name texture provenance, deferred image fetches, UVs, mesh primvars, material
+bindings and camera optics. Its `--production` mode drives the bundled
+MaterialX WebGPU page's scene selector using the same fixture. Graph validation
+also runs against the core WASM
+module (`webgpu-mtlx-usd-graph.mjs`) and retains connected defaults and color-space
+metadata. HTTP flatten callers may request `packageAssets:false` to retain the
+rebased external asset paths and receive owned flattened `rootBytes`; optional
+`variantOverrides` are applied before composition.
+
+`core_obj_export` exercises the core RenderScene OBJ/MTL exporter used by the
+render-scene example migration: polygon/triangle topology, hole faces, source
+corner UVs, uniform normals, authored subset names, PBR texture references,
+normal maps, skin weights, atomic failure, output budgets and invalid indices.
+Core conversion now retains GeomSubset names across split runs and triangulation
+so diagnostic exports can keep authored group names. Mesh coordinates and scene
+up-axis remain unchanged in OBJ output.
+
+`core_usd_export` reparses and reconverts the core RenderScene USDA export. It
+checks triangulated source-corner UVs and uniform normals, material subsets,
+texture channels and normal-map scale/bias, asset quoting, skeleton bindings,
+blend shapes, instance transforms, RGBA alpha multiplied by displayOpacity,
+matrix primvars, output budgets and atomic rejection of invalid data. Animation
+clips remain an explicit export error, matching the legacy exporter; non-mesh
+resources are reported as omitted by this diagnostic mesh-export API.
+
+`core_render_scene_example` covers the migrated native diagnostic CLI: JSON/YAML,
+source metadata, automatic/forced/disabled tangents and all tangent methods,
+SNorm8 storage, low-memory source release, polygon preservation during normal
+computation, evaluated time codes, OBJ/MTL/USDA reload, local and USDZ texture
+pixels, USDA/USDC/USDZ loading, references/payload controls, animation samples and
+invalid options. The converter's polygon mode now computes normals using a
+shared-payload temporary triangulation, leaving authored output topology intact.
+
+The colorspace browser oracle compares the core scene adapter and direct
+RenderStream material paths against independently transformed expected pixels.
+The separate WASM parity test intentionally loads the combined module as its
+legacy reference. The optional Pixar math example uses `math-trig.hh`, with
+exact quarter turns and bounded reduction for large finite angles.
+
+The JavaScript production build includes every top-level demo HTML page (the
+validation-body fragment and test harness pages are excluded). Its ES2022 target
+supports the top-level await already used by demo modules. Local preparation
+also builds the independent C11 texture codec demo. The material validator uses
+Three.js `colorSpace` for both color and data textures; removed `encoding`
+constants no longer bypass normal/roughness/metalness/AO checks.
+
+Retained-layer JS export keeps dependency and image/audio bytes unchanged, matching
+the native converter's no-flatten processing policy. Root format conversion
+keeps the original root as an alias when its filename changes, preserving
+back-references; filename collisions select a fresh output root name. The folder
+and streaming tests reopen these packages, compose their external layers, check
+texture anchors, verify exact dependency bytes and reject unsafe archive paths.
+UDIM baking across retained dependency layers still requires flattening.
+
+The public `examples/lusdcat` entry point configures the canonical core CLI;
+historical sources are archived under `src/legacy/examples/lusdcat`. The optional
+legacy PCP bridge reuses an existing core target and leaves global CLI/test
+options intact instead of adding the core project twice.
+
+Core physics JSON snapshots describe meshes with `pointCount`/`faceCount`; raw
+vertex, index, normal, UV, skin and other render arrays belong to RenderStream.
+Expanding those arrays twice as JSON made small compressed scenes exhaust the
+WASM heap during physics-only conversion. Physics/engine array properties,
+transform ordering, bounds, analytic geometry and relationships remain in the
+snapshot. The core physics regression includes a large indexed mesh to verify
+bounded snapshot size and preserved counts.
+
+The production copy plugin includes complete 32-bit and, when built, 64-bit
+core/feature factory pairs (and optional MCP pairs). The production codec and
+colorspace regression checks every demo HTML entry and loads the copied 64-bit
+core, geometry and validator with independent heaps in capable browsers.
+`core-shaderball-adapter.test.mjs --production --hardware` validates the actual
+production page, adapter input and packed GPU scene under private Xvfb; run it
+through `scripts/xctest.sh`. The hardware flag requires a non-fallback adapter.
+
+The public `LightUSDComposer` helper now consumes caller-owned core
+`LayerDocument` objects and uses `NextFlattenSession` for dependency discovery.
+`core-composer.test.mjs` covers nested layer anchors, references, optional
+payload loading, preloaded partial composition and resolver errors.
+`setCompositionMask` selects sublayers (1), references (2), payloads (4),
+inherits (8), specializes (16), and variants (32); disabled arcs stay authored
+for subsequent passes. Call it after `begin`; the default mask is 63.
+
+The USD-independent collision/dynamics implementation lives in
+`src/tydra/rb-{solver,collision}.cc`; both the core preview and the optional
+legacy bridge link `lightusd_rb_solver`. `core_test_rb_solver` ports eleven
+numerical/contact/hinge/sleep/capacity checks without running legacy tests.
+The full-capacity case exposed an island offset overrun caused by reusing
+root-map storage as per-island counts; counts now live in island records.
+The solver suite also passes AddressSanitizer and UndefinedBehaviorSanitizer.
+
+`lusdview_physics_preview_test` covers core render-catalog transform retention,
+world-space contacts/writeback under a transformed parent, rotation and scale,
+immutable source stages, kinematic velocities, compound colliders, joint axes
+and angle units, bounded mesh-point scans and reset. `lusdview-core-physics-preview`
+drives the real MCP operations and verifies GPU pixel motion/reset, the mesh
+world matrix and bounds, hide/status, invalid steps and reset. The preview uses primitive
+colliders and conservative mesh bounds; it is a diagnostic solver, not an
+engine-exact MuJoCo/PhysX replacement. Unsupported geometry or non-rigid frames
+return an explicit error. Mesh bounds scan at most 16 million points using a
+fixed scratch buffer. Physics records are limited to 4096 and 64 MiB.
+
+Viewer regression scripts no longer select the ignored `--legacy-load` alias.
+Material, lighting, proxy and AOUSD checks run core semantic assertions;
+camera clipping, supported material outputs, GeomSubset materials and
+texture/displacement tests compare loose files with stored USDZ inputs where
+applicable. The static camera shutter control is
+`lusdview-camera-motion-raster-static`; RT texture archive shards are named
+`lusdview-texture-semantic-rt-package-parity-*`.
+
+The optional `LIGHTUSD_BUILD_TEXTURE_GPU_BENCH=ON` target is restored at the
+root and links the core image/Ptex providers explicitly. Its executable is
+`build_ninja/lusdview_texture_gpu_bench`; it no longer needs a legacy target.
+The Vulkan synthetic smoke runs BC1/3/5/6H/7 and ASTC through two mip levels.
+Native TIFF/DNG support (`LIGHTUSD_WITH_TIFF=ON`) now reaches the core image
+provider. `core_test_native_tiff` checks raw/deflate RGB8, RGB16 and float HDR,
+metadata, JPEG-in-TIFF, tight decode budgets, oversized dimensions and embedded
+JPEG frame sizes. TIFF preflight accounts aggregate IFD pixels and strip/tile
+scratch before decoding; embedded JPEG dimensions are inspected independently
+of the IFD dimensions. The texture benchmark normalizes 16-bit integer LDR
+inputs and validates their buffer sizes before uploading.
+
+Final migration verification (2026-11-11): the native Ninja suite registers
+276 tests, with zero failures and nine expected optional-fixture/capability
+skips. The optional legacy tree compiles without running legacy tests.
+The final viewer checks pass physics-preview pixel movement/reset, static
+camera control, material-binding inheritance and CPU normal-map shading.
+Both WASM widths build; all 27 production website demos plus the landing page
+pass, as do production codec/colorspace and independent memory64 feature
+loading. The Node regression profile passes 76 checks. Pixar comparison covers
+499 USDA and 227 USDC inputs with no unexpected differences; usdchecker parity
+compares 499 inputs without failures. The optional texture benchmark passes
+all six Vulkan compression formats and native 8/16-bit TIFF inputs (hardware
+and software Vulkan smoke runs were checked separately).

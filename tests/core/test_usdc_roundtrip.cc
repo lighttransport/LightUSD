@@ -1667,17 +1667,27 @@ def Xform "root" (
   }
   assert(has_high && has_low);
 
-  // Holder prims carry the variant CONTENT (inline property + child prim).
-  const PrimSpec* high = layer->prim_at_path("/root/{lod=high}");
-  assert(high);
-  const Value* a = high->property_value("a");
-  assert(a && a->as_float() && *a->as_float() == 1.0f);
-  const PrimSpec* extra = layer->prim_at_path("/root/{lod=high}/Extra");
+  // Crate and USDA expose the same inline variant representation. Bracket
+  // holder specs are an on-disk implementation detail, not public layer prims.
+  assert(!layer->prim_at_path("/root/{lod=high}"));
+  const PrimVariantData* high = nullptr;
+  const PrimVariantData* low = nullptr;
+  for (const auto& option : vs.variants) {
+    if (option.name == "high") high = &option;
+    if (option.name == "low") low = &option;
+  }
+  assert(high && low && high->content);
+  bool found_a = false;
+  for (const auto& property : high->properties)
+    if (property.name == "a") {
+      assert(property.value.as_float() && *property.value.as_float() == 1.0f);
+      found_a = true;
+    }
+  assert(found_a);
+  const PrimSpec* extra = high->content->prim_at_path("/__self__/Extra");
   assert(extra && extra->type_name() == "Mesh");
   const Value* b = extra->property_value("b");
   assert(b && b->as_float() && *b->as_float() == 2.0f);
-  const PrimSpec* low = layer->prim_at_path("/root/{lod=low}");
-  assert(low);
 
   // Second generation: crate -> crate must be stable (no duplicate holders).
   std::vector<uint8_t> buf2;
@@ -1688,7 +1698,14 @@ def Xform "root" (
   const PrimSpec* root2 = rr2.stage.GetRootLayer()->prim_at_path("/root");
   assert(root2 && root2->meta().variantSets().size() == 1);
   assert(root2->meta().variantSets()[0].variants.size() == 2);
-  assert(rr2.stage.GetRootLayer()->prim_at_path("/root/{lod=high}/Extra"));
+  const PrimVariantData* high2 = nullptr;
+  for (const auto& option : root2->meta().variantSets()[0].variants)
+    if (option.name == "high") high2 = &option;
+  assert(high2 && high2->content);
+  const PrimSpec* extra2 = high2->content->prim_at_path("/__self__/Extra");
+  const Value* b2 = extra2 ? extra2->property_value("b") : nullptr;
+  assert(b2 && b2->as_float() && *b2->as_float() == 2.0f);
+  assert(!rr2.stage.GetRootLayer()->prim_at_path("/root/{lod=high}/Extra"));
 
   std::cout << "  variant round-trip passed!\n\n";
 }

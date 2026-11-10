@@ -392,6 +392,17 @@ bool RenderSceneConverter::Impl::TriangulateFan(
 //
 
 bool RenderSceneConverter::Impl::ComputeVertexNormals(RenderMesh* mesh) {
+  if (!mesh->is_triangulated && !config_.mesh.triangulate) {
+    // Normal generation needs triangles, but the caller explicitly requested
+    // polygon output. Chunk-backed copies share the source payload; only the
+    // temporary triangulation and computed normal array allocate here.
+    RenderMesh temporary = *mesh;
+    if (!TriangulateMesh(&temporary) || !ComputeVertexNormals(&temporary))
+      return false;
+    mesh->normals = std::move(temporary.normals);
+    mesh->normals_interp = temporary.normals_interp;
+    return true;
+  }
   if (mesh->points.empty() || !mesh->is_triangulated) {
     // Need triangulated mesh for normal computation
     if (!mesh->is_triangulated) {

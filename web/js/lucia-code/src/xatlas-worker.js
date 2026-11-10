@@ -4,7 +4,7 @@ import { nextSingleAtlasOptions, validateXatlasRequest } from './xatlas-input.js
 import { normalizeIndexedMesh } from './indexed-mesh.js';
 
 async function getModule() {
-  modulePromise ||= import('../../src/lightusd/lightusd_legacy.js').then(({ default: factory }) => factory());
+  modulePromise ||= import('../../src/lightusd/lightusd.js').then(async ({ default: factory }) => (await factory()).loadFeature('geometry'));
   return modulePromise;
 }
 

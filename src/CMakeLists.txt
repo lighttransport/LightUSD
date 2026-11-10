@@ -113,7 +113,14 @@ set(LIGHTUSD_CORE_SOURCES
     types/value-view.cc
 
     # Writers
+    writer/layer-json.cc
+    writer/layer-json-values.cc
+    writer/layer-json-value.cc
     writer/prim-printer.cc
+    crate/variant-inline.cc
+    parser/extension-field.cc
+    usdz/material-optimize.cc
+    usdz/geometry-optimize.cc
     writer/usda-writer.cc
     writer/usda-writer-print.cc
     writer/usdc-writer.cc
@@ -242,6 +249,7 @@ set(LIGHTUSD_HEADERS
 
     # Writers
     writer/value-printer.hh
+    writer/layer-json.hh
     writer/prim-printer.hh
     writer/usda-writer.hh
     writer/usdc-writer.hh
@@ -723,6 +731,18 @@ if(LIGHTUSD_BUILD_TESTS)
         target_compile_definitions(test_pcp_parallel PRIVATE LIGHTUSD_FINE_LOCKS)
     endif()
 
+    add_executable(test_asset_rebase ../tests/core/test_asset_rebase.cc)
+    target_link_libraries(test_asset_rebase PRIVATE lightusd_core)
+    add_test(NAME core_test_asset_rebase COMMAND test_asset_rebase)
+    set_tests_properties(core_test_asset_rebase PROPERTIES LABELS "core;converter;assets")
+    add_executable(test_geometry_optimize ../tests/core/test_geometry_optimize.cc)
+    target_link_libraries(test_geometry_optimize PRIVATE lightusd_core)
+    add_test(NAME core_test_geometry_optimize COMMAND test_geometry_optimize)
+    set_tests_properties(core_test_geometry_optimize PROPERTIES LABELS "core;converter")
+    add_executable(test_variant_inline ../tests/core/test_variant_inline.cc)
+    target_link_libraries(test_variant_inline PRIVATE lightusd_core)
+    add_test(NAME core_test_variant_inline COMMAND test_variant_inline)
+    set_tests_properties(core_test_variant_inline PROPERTIES LABELS "core;readers;variants")
     add_executable(test_writer
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/test_writer.cc
     )
@@ -952,11 +972,12 @@ endif()
 if((LIGHTUSD_BUILD_LUSDCAT OR LIGHTUSD_BUILD_TESTS) AND NOT TARGET lusdcat)
     add_executable(lusdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/lusdcat.cc
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/explain.cc
     )
     # Allocator (if found, see LIGHTUSD_WITH_ALLOCATOR) first, so it wins
     # symbol resolution.
     target_link_libraries(lusdcat PRIVATE
-        ${LIGHTUSD_ALLOCATOR_LIB} lightusd_core)
+        ${LIGHTUSD_ALLOCATOR_LIB} lightusd_core lightusd_c)
     if(LIGHTUSD_ALLOCATOR_LIB AND LIGHTUSD_CORE_ALLOC_JEMALLOC AND
        LIGHTUSD_JEMALLOC_CONF)
         # Compiled-in jemalloc options (see LIGHTUSD_JEMALLOC_CONF).
@@ -1075,6 +1096,7 @@ option(LIGHTUSD_WITH_TYDRA "Build render conversion and its C API" ON)
 option(LIGHTUSD_BUILD_SHARED_C_API
        "Build the portable shared C ABI in addition to static libraries"
        ON)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/lightusd-textools.cmake")
 if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tydra
                      ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
@@ -1092,7 +1114,7 @@ endif()
 
 if(LIGHTUSD_BUILD_EXAMPLES)
   add_executable(asset_resolution_example
-      ../examples/asset_resolution/asset-resolution-next.cc)
+      ../examples/asset_resolution/asset-resolution-example.cc)
   target_link_libraries(asset_resolution_example PRIVATE lightusd_core)
   set_target_properties(asset_resolution_example PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -1148,9 +1170,28 @@ endif()
 # a complete link interface instead of an unresolved lightusd_core archive.
 target_link_libraries(lightusd_c PUBLIC lightusd_core)
 set(LIGHTUSD_C_TARGETS lightusd_c lightusd_validation_c)
+option(LIGHTUSD_WITH_TOOL_USDA_PARSER "Build core USDA parser example" OFF)
+option(LIGHTUSD_WITH_TOOL_USDC_PARSER "Build core USDC parser example" OFF)
+if(NOT EMSCRIPTEN AND (LIGHTUSD_BUILD_EXAMPLES OR LIGHTUSD_WITH_TOOL_USDA_PARSER OR LIGHTUSD_WITH_TOOL_USDC_PARSER))
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/parser
+                     ${CMAKE_CURRENT_BINARY_DIR}/examples/parser)
+endif()
+option(LIGHTUSD_WITH_QJS "Build optional QuickJS scripting examples" OFF)
 if(LIGHTUSD_BUILD_EXAMPLES)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/usd_to_json
+                     ${CMAKE_CURRENT_BINARY_DIR}/examples/usd_to_json)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/progressive_composition
+                     ${CMAKE_CURRENT_BINARY_DIR}/examples/progressive_composition)
+    if(LIGHTUSD_WITH_QJS)
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/js-script
+                         ${CMAKE_CURRENT_BINARY_DIR}/examples/js-script)
+    endif()
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/variant-analyzer
+                     ${CMAKE_CURRENT_BINARY_DIR}/examples/variant-analyzer)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/large-scene-load
+                     ${CMAKE_CURRENT_BINARY_DIR}/examples/large-scene-load)
     add_executable(variant-lister
-        ../examples/variant-lister/variant-lister-next.cc)
+        ../examples/variant-lister/main.cc)
     target_include_directories(variant-lister PRIVATE c-api)
     target_link_libraries(variant-lister PRIVATE lightusd_c)
     set_target_properties(variant-lister PROPERTIES
@@ -1165,7 +1206,7 @@ if(LIGHTUSD_BUILD_EXAMPLES)
 endif()
 if(LIGHTUSD_BUILD_C_API_EXAMPLE)
     add_executable(core_c_api_example
-                   ../examples/c_api_example/next-c-api-example.c)
+                   ../examples/c_api_example/c-api-example-main.c)
     target_include_directories(core_c_api_example PRIVATE c-api)
     target_link_libraries(core_c_api_example PRIVATE lightusd_c)
     if(LIGHTUSD_BUILD_TESTS)
@@ -1238,12 +1279,13 @@ endif()
 
 # Native MJCF -> USD converter on the core converter and writers.
 if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/usd_to_gltf
+                   ${CMAKE_CURRENT_BINARY_DIR}/usd_to_gltf)
     add_executable(urdf-to-usd
         ../examples/urdf-to-usd/main.cc)
     target_include_directories(urdf-to-usd PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/external)
-    target_compile_definitions(urdf-to-usd PRIVATE LIGHTUSD_URDF_TO_USD_CORE=1)
     target_link_libraries(urdf-to-usd PRIVATE tydra lightusd_core)
     set_target_properties(urdf-to-usd PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -1256,8 +1298,6 @@ endif()
 # MCP server (next product): a public C API consumer that serves the MCP
 # tools/resources surface (tool schemas shared with the legacy server).
 option(LIGHTUSD_WITH_MCP_SERVER "Build the LightUSD MCP server library and stdio executable" OFF)
-# Legacy product trees include src/next for their own tools and keep the
-# legacy MCP server; the next server is built for the next product only.
 if(LIGHTUSD_WITH_MCP_SERVER)
     add_library(lightusd_mcp STATIC
         mcp/mcp-server.cc
@@ -1277,6 +1317,10 @@ if(LIGHTUSD_WITH_MCP_SERVER)
     # throwing, and the server converts them into tool errors.
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(lightusd_mcp PRIVATE -fexceptions)
+    endif()
+    if(LIGHTUSD_BUILD_EXAMPLES AND NOT TARGET mcp_server)
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/mcp_server
+                         ${CMAKE_CURRENT_BINARY_DIR}/examples/mcp_server)
     endif()
     add_executable(lightusd-mcp mcp/lightusd-mcp-main.cc)
     target_link_libraries(lightusd-mcp PRIVATE lightusd_mcp)
@@ -1349,8 +1393,10 @@ install(FILES c-api/lightusd-validation-c.h c-api/lightusd-validation-cpp.hh
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(LIGHTUSD_WITH_TYDRA)
     set_target_properties(lightusd_render_c PROPERTIES EXPORT_NAME render_c)
-    install(TARGETS tydra lightusd_render_c EXPORT LightUSDTargets
+    install(TARGETS tydra lightusd_render_c lightusd_rb_solver EXPORT LightUSDTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES tydra/rb-dynamics.h tydra/rb-collision.h tydra/rb-math.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/tydra)
     install(FILES c-api/lightusd-render-c.h c-api/lightusd-render-cpp.hh c-api/lightusd-import-c.h
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()

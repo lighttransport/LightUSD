@@ -1,4 +1,5 @@
 #usda 1.0
+# XFAIL: OpenUSD versions without spline syntax cannot parse this fixture
 (
     doc = "Spline (TsSpline) coverage: interpolation modes, curve types, value types, extrapolation."
 )

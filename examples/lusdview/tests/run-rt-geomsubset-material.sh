@@ -122,6 +122,15 @@ if command -v vulkaninfo >/dev/null 2>&1 &&
 fi
 
 ran=0
+python3 - "$OUT" <<'PY'
+import pathlib,sys,zipfile
+root=pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(root/"rt-geomsubset.usdz",'w',compression=zipfile.ZIP_STORED) as archive:
+ archive.write(root/"rt-geomsubset.usda","rt-geomsubset.usda")
+ for image in sorted(root.iterdir()):
+  if image.suffix.lower() in ('.png','.ppm','.jpg','.jpeg','.exr'): archive.write(image,image.name)
+PY
+
 fail=0
 for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
             "cuda:--cuda:CUDA RT wrote" "hip:--hip:HIP RT wrote"; do
@@ -131,15 +140,17 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
   marker="${rest#*:}"
   if [ "$backend" = vk ] && [ "$vk_software_only" -ne 0 ]; then
     echo "SKIP: next-vk RT unavailable (software Vulkan only)"
-    echo "SKIP: legacy-vk RT unavailable (software Vulkan only)"
+    echo "SKIP: packaged-vk RT unavailable (software Vulkan only)"
     continue
   fi
   next_ok=0
-  legacy_ok=0
-  for loader_spec in "next:--next" "legacy:--legacy-load"; do
+  packaged_ok=0
+  for loader_spec in "next:--next" "packaged:--next"; do
     loader="${loader_spec%%:*}"
     loader_args="${loader_spec#*:}"
     tag="$loader-$backend"
+    source="$OUT/rt-geomsubset.usda"
+    [ "$loader" != packaged ] || source="$OUT/rt-geomsubset.usdz"
     img="$OUT/rt-geomsubset-$tag.ppm"
     # shellcheck disable=SC2086
     if command -v timeout >/dev/null 2>&1; then
@@ -147,16 +158,16 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
       timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-60s}" \
         "$BIN" --headless $loader_args $args --frames 4 \
         --config "$OUT/config.json" --screenshot "$img" \
-        "$OUT/rt-geomsubset.usda" >"$OUT/rt-geomsubset-$tag.log" 2>&1
+        "$source" >"$OUT/rt-geomsubset-$tag.log" 2>&1
     else
       # shellcheck disable=SC2086
       "$BIN" --headless $loader_args $args --frames 4 \
         --config "$OUT/config.json" --screenshot "$img" \
-        "$OUT/rt-geomsubset.usda" >"$OUT/rt-geomsubset-$tag.log" 2>&1
+        "$source" >"$OUT/rt-geomsubset-$tag.log" 2>&1
     fi
     if grep -Fq "$marker" "$OUT/rt-geomsubset-$tag.log" && [ -s "$img" ]; then
       ran=$((ran + 1))
-      if [ "$loader" = next ]; then next_ok=1; else legacy_ok=1; fi
+      if [ "$loader" = next ]; then next_ok=1; else packaged_ok=1; fi
       probe "$img" "$tag" || {
         echo "FAIL: $tag GeomSubset materials"; fail=1;
       }
@@ -164,15 +175,15 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
       echo "SKIP: $tag RT unavailable"
     fi
   done
-  # If either loader proved this backend is available, the other loader must
-  # also reach RT and render. Otherwise a loader-specific failure would be
-  # mislabeled as an unavailable GPU and silently pass via the other loader.
-  if [ "$next_ok" -ne "$legacy_ok" ]; then
-    echo "FAIL: $backend RT available for only one scene loader"
+  # If either input format proved this backend is available, the other input format must
+  # also reach RT and render. Otherwise a format-specific failure would be
+  # mislabeled as an unavailable GPU and silently pass via the other input format.
+  if [ "$next_ok" -ne "$packaged_ok" ]; then
+    echo "FAIL: $backend RT available for only one input format"
     fail=1
   fi
 done
 
 [ "$ran" -gt 0 ] || exit "$SKIP"
 [ "$fail" -eq 0 ] || exit 1
-echo "PASS: per-triangle GeomSubset materials on $ran loader/backend runs"
+echo "PASS: per-triangle GeomSubset materials on $ran format/backend runs"

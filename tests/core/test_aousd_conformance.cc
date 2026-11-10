@@ -1919,8 +1919,10 @@ void TestSchemaFallbackAndValueClips() {
 }
 
 void TestRelationshipVariabilityFidelity() {
-  LoadResult loaded = Parse(
-      "def Xform \"P\" { varying rel r = </P> }\n");
+  const std::string source = "def Xform \"P\" {\n varying rel r = </P>\n}\n";
+  assert(!Parse(source, true).success);
+  LoadResult loaded = Parse(source, false);
+  assert(!loaded.warnings.empty());
   assert(loaded.success && loaded.stage.GetRootLayer());
   const PrimSpec* prim = loaded.stage.GetRootLayer()->prim_at_path("/P");
   assert(prim);

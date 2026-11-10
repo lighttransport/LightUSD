@@ -196,3 +196,78 @@
 
 
 }
+
+// Independent xatlas feature: counted POD input and owned output arrays.
+if (typeof Module['_lu_geometry_xatlas'] === 'function') {
+  Module['XAtlasNative'] = class XAtlasNative {
+    #deleted = false;
+    delete() { if(this.#deleted)throw new TypeError('XAtlasNative already deleted');this.#deleted=true; }
+    isDeleted() {return this.#deleted;}
+    generate(positions,indices,options={}) {
+      if(this.#deleted)throw new TypeError('XAtlasNative already deleted');
+      if(!(positions instanceof Float32Array) || !(indices instanceof Uint32Array))
+        throw new TypeError('xatlas requires Float32Array positions and Uint32Array indices');
+      if(!options || typeof options!=='object' || Array.isArray(options))
+        throw new TypeError('xatlas options must be an object');
+      const error=message=>({error:message});
+      if(positions.length<9 || positions.length%3 || indices.length<3 || indices.length%3 ||
+         positions.length>16777216 || indices.length>16777216)
+        return error('xatlas requires bounded nonempty triangular buffers');
+      const integer=(name,fallback,min,max)=>{
+        const value=options[name]??fallback;
+        if(!Number.isSafeInteger(value) || value<min || value>max)throw new RangeError('Invalid xatlas '+name);
+        return value;
+      };
+      const number=(name,fallback)=>{
+        const value=options[name]??fallback;
+        if(typeof value!=='number' || !Number.isFinite(value) || value<0 || value>1e6)
+          throw new RangeError('Invalid xatlas '+name);
+        return value;
+      };
+      const config=new ArrayBuffer(32),view=new DataView(config);
+      [integer('maxIterations',1,1,100),integer('resolution',0,0,16384),
+       integer('padding',0,0,1024),integer('maxChartSize',0,0,16384)]
+        .forEach((value,index)=>view.setUint32(index*4,value,true));
+      let flags=0;
+      for(const [index,name] of ['rotateChartsToAxis','rotateCharts','blockAlign','bruteForce'].entries()){
+        const value=options[name]??(index<2);
+        if(typeof value!=='boolean')throw new TypeError('Invalid xatlas '+name);
+        if(value)flags|=1<<index;
+      }
+      view.setUint32(16,flags,true);
+      [number('maxCost',2),number('textureSeamWeight',0.5),number('texelsPerUnit',0)]
+        .forEach((value,index)=>view.setFloat32(20+index*4,value,true));
+      const sourcePos=positions.buffer===Module.HEAPU8.buffer?positions.slice():positions;
+      const sourceIdx=indices.buffer===Module.HEAPU8.buffer?indices.slice():indices;
+      const size=32+sourcePos.byteLength+sourceIdx.byteLength;
+      const allocation=Module['_lu_feature_alloc'](size);
+      if(!allocation)return error('xatlas input allocation failed');
+      const base=Number(allocation),ptr=offset=>typeof allocation==='bigint'?BigInt(offset):offset;
+      let output=0;
+      try {
+        Module.HEAPU8.set(new Uint8Array(config),base);
+        Module.HEAPU8.set(new Uint8Array(sourcePos.buffer,sourcePos.byteOffset,sourcePos.byteLength),base+32);
+        Module.HEAPU8.set(new Uint8Array(sourceIdx.buffer,sourceIdx.byteOffset,sourceIdx.byteLength),base+32+sourcePos.byteLength);
+        output=Module['_lu_geometry_xatlas'](ptr(base+32),sourcePos.length,
+          ptr(base+32+sourcePos.byteLength),sourceIdx.length,ptr(base));
+        if(!output)return error('xatlas rejected the mesh/options or could not generate an atlas');
+        const start=Number(output);
+        if(start<0 || start>Module.HEAPU8.length-40 || start%4)throw new RangeError('Invalid xatlas result');
+        const h=new Uint32Array(Module.HEAPU8.buffer,start,10);
+        const [bytes,width,height,atlasCount,chartCount,vertexCount,indexCount,sourceVertexCount]=h;
+        if(bytes!==40+vertexCount*32+indexCount*4 || bytes>536870912 ||
+           bytes>Module.HEAPU8.length-start || sourceVertexCount!==sourcePos.length/3)
+          throw new RangeError('Invalid xatlas result spans');
+        let offset=start+40;
+        const copy=(Type,count)=>{const result=new Type(Module.HEAPU8.buffer,offset,count).slice();offset+=count*4;return result;};
+        return {width,height,atlasCount,chartCount,vertexCount,indexCount,sourceVertexCount,
+          positions:copy(Float32Array,vertexCount*3),uvs:copy(Float32Array,vertexCount*2),
+          indices:copy(Uint32Array,indexCount),xref:copy(Uint32Array,vertexCount),
+          chartIndices:copy(Int32Array,vertexCount),atlasIndices:copy(Int32Array,vertexCount)};
+      } finally {
+        if(output)Module['_lu_feature_free'](output);
+        Module['_lu_feature_free'](allocation);
+      }
+    }
+  };
+}

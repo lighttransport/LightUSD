@@ -424,7 +424,7 @@ intended for refcounts / type tags / cache-coherency flags.
 | `src/tydra/render-data.cc` | RenderMesh/RenderScene estimation, tangent quantization |
 | `src/tydra/tangent-quantize.hh` | packed tangent/normal formats |
 | `web/binding.cc` | WASM memory config, tangent cache, deferred computation |
-| `examples/lusdcat/main.cc` | mmap loading, `--memstat` |
+| `src/legacy/examples/lusdcat/main.cc` | mmap loading, `--memstat` |
 | `examples/tydra_to_renderscene/to-renderscene-main.cc` | per-mesh/-buffer `--memstat` |
 | `tests/feat/tangent/bench_tangent.cc` | tangent memory/quality benchmark |
 | `tests/feat/hash/hash_bench.cc` | XXH3 vs FNV-1a hash benchmark |

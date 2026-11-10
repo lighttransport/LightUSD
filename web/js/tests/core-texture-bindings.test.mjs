@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import {NextTextureLoadingManager} from '../src/lightusd/NextRenderSceneUtils.js';
+import {installTextureColorTransform} from '../src/lightusd/ColorSpaceUtils.js';
+import {OpenPBRMaterial} from '../src/lightusd/LightUSDOpenPBRSimple.js';
+const manager=new NextTextureLoadingManager();
+let finish;
+manager.loadTexture=()=>new Promise(resolve=>{finish=resolve;});
+const source=new THREE.MeshPhysicalMaterial();
+manager.queueTexture(source,'map',{},'texture.png','color');
+const colored=source.clone();
+manager.cloneMaterialBindings(source,colored);
+manager.cloneMaterialBindings(source,colored);
+assert.equal(manager.tasks[0].bindings.length,2);
+const loading=manager.startLoading();
+const replacement=new OpenPBRMaterial();
+replacement.normalScale=new THREE.Vector2(0.2,0.3);
+assert.deepEqual(replacement.uniforms.normalScale.value.toArray(),[0.2,0.3]);
+manager.replaceMaterials(new Map([[colored,replacement]]));
+const texture=new THREE.Texture();
+finish(texture);
+await loading;
+assert.equal(source.map,texture);
+assert.equal(replacement.map,texture);
+assert.equal(colored.map,null);
+const transform={sourceColorSpace:'lin_ap1_scene',targetColorSpace:'lin_rec709_scene',
+  matrix:[1,0,0,0,1,0,0,0,1]};
+installTextureColorTransform(replacement,'map',transform);
+installTextureColorTransform(replacement,'emissiveMap',transform);
+const shader={fragmentShader:replacement.fragmentShader};
+replacement.onBeforeCompile(shader,{});
+assert.notEqual(shader.fragmentShader,replacement.fragmentShader);
+assert.match(shader.fragmentShader,/texelColor.rgb =/);
+assert.ok(!shader.fragmentShader.includes('emission *= texture2D(emissiveMap, vUv).rgb;'));
+manager.reset();
+console.log('PASS: pending textures follow material clones and replacements');

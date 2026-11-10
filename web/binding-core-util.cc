@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-core-common.hh"
+#include "layer/asset-anchor.hh"
 #include <cstring>
 #include <limits>
 #include "resolver/asset-resolver.hh"
@@ -300,7 +301,10 @@ std::unique_ptr<tn::Layer> ParseNextLayerBytes(
       return nullptr;
     }
     std::unique_ptr<tn::Layer> layer = rr.stage.ReleaseRootLayer();
-    if (layer) layer->build_path_index();  // compositor looks prims up by path
+    if (layer) {
+      tn::StampLayerAssetAnchor(layer.get(),key,true);
+      layer->build_path_index();  // compositor looks prims up by path
+    }
     return layer;
   }
 
@@ -319,6 +323,7 @@ std::unique_ptr<tn::Layer> ParseNextLayerBytes(
     return nullptr;
   }
   std::unique_ptr<tn::Layer> layer(new tn::Layer(std::move(*loaded)));
+  tn::StampLayerAssetAnchor(layer.get(),key,true);
   layer->build_path_index();
   return layer;
 }

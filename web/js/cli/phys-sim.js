@@ -131,7 +131,7 @@ async function loadLightUSDPhysics(usdaPath) {
   const text = fs.readFileSync(usdaPath, 'utf8');
   const bytes = new TextEncoder().encode(text);
   const lightusd = await LightUSDFactory();
-  const native = new lightusd.LightUSDLoaderNative();
+  const native = new lightusd.NextUSDZConverterNative();
   try {
     if (!native.loadFromBinary(bytes, path.basename(usdaPath))) {
       throw new Error(native.error() || 'LightUSD loadFromBinary failed');

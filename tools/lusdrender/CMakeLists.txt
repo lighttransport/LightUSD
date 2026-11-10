@@ -314,9 +314,12 @@ set_source_files_properties(
 
 # When the project is built with QuickJS, enable lusdrender's -js (scripting)
 # and -mcp (MCP stdio control) modes for memory-persistent / interactive
-# rendering. The library defines LIGHTUSD_WITH_QJS PRIVATEly, so re-declare it
-# for the tool. The JS engine + MCP plumbing come from lightusd_static.
+# rendering. Enable the tool's script host and link the stage-independent
+# vendored JavaScript runtime.
 if(LIGHTUSD_WITH_QJS)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/lightusd-quickjs.cmake)
+  lightusd_add_quickjs(${CMAKE_CURRENT_SOURCE_DIR}/../../src/external/quickjs-ng)
+  target_link_libraries(lusdrender lightusd_quickjs)
   target_compile_definitions(lusdrender PRIVATE LIGHTUSD_WITH_QJS)
 endif()
 
@@ -719,4 +722,11 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-alpha-blend-sort-external
                          PROPERTIES SKIP_RETURN_CODE 77)
   endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND LIGHTUSD_WITH_QJS AND LUSDR_PYTHON)
+  add_test(NAME tool-lusdrender-qjs
+    COMMAND ${LUSDR_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/check_qjs.py
+      $<TARGET_FILE:lusdrender>)
+  set_tests_properties(tool-lusdrender-qjs PROPERTIES LABELS "tools;scripting;core" TIMEOUT 120)
 endif()

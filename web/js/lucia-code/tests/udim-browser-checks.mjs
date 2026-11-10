@@ -6,7 +6,7 @@ export async function runUDIMBrowserChecks(page) {
     const {validateUSDZArchive} = await import('/lucia-code/src/usd-doctor.js');
     const check=(condition,message)=>{if(!condition)throw new Error(message);};
     const source=`#usda 1.0
-(defaultPrim = "World" upAxis = "Y")
+(defaultPrim = "World"; upAxis = "Y")
 def Xform "World" {
  def Mesh "Panel" {
   point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)]

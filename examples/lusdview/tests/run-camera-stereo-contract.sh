@@ -130,31 +130,6 @@ PY
   fi
 
   if xvfb-run -a env \
-      XDG_CONFIG_HOME="$OUT/config-home" "$BIN" \
-      --legacy-load --backend gl --frames 1 --size 64x48 --stereo \
-      --camera /World/Rig/Left --render-report "$OUT/gl-legacy.json" \
-      --screenshot "$OUT/gl-legacy.ppm" "$OUT/stereo.usda" \
-      >"$OUT/gl-legacy.log" 2>&1; then
-    python3 - "$OUT/gl-legacy.json" "$OUT/gl-legacy.ppm" <<'PY'
-import json, pathlib, sys
-report = json.load(open(sys.argv[1], encoding="utf-8"))
-if report.get("stereo", {}).get("live_viewport") is not True:
-    raise SystemExit("FAIL: legacy OpenGL live stereo viewport was not composed")
-data = pathlib.Path(sys.argv[2]).read_bytes()
-header, pixels = data.split(b"\n255\n", 1)
-width, height = map(int, header.splitlines()[1].split())
-if width != 128 or len(pixels) != width * height * 3:
-    raise SystemExit("FAIL: legacy OpenGL live stereo dimensions are wrong")
-print("PASS: legacy OpenGL live stereo viewport")
-PY
-  elif grep -Eqi 'OpenGL.*(unavailable|failed)|GLFW.*failed|failed to open display|xvfb-run: error' "$OUT/gl-legacy.log"; then
-    echo "INFO: legacy OpenGL stereo leg skipped because no usable X/GL context is available"
-  else
-    cat "$OUT/gl-legacy.log"
-    exit 1
-  fi
-
-  if xvfb-run -a env \
       XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next \
       --backend vk --frames 1 --size 64x48 --stereo \
       --camera /World/Rig/Left --render-report "$OUT/vk-live.json" \

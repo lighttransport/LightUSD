@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Both scene loaders must preserve OpenPBR surface and volume inputs without
+# The core loader must preserve OpenPBR surface and volume inputs without
 # emitting a stale unsupported-lobe diagnostic.
 set -uo pipefail
 SKIP=77
@@ -10,11 +10,17 @@ ASSET="$ROOT/tests/usda/lusdview-unsupported-realtime-lobes.usda"
 TMP="$(mktemp -d /tmp/lusdview-unsupported-lobes.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
-for loader in next legacy; do
+python3 - "$ASSET" "$TMP/scene.usdz" <<'PY'
+import pathlib,sys,zipfile
+source=pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(sys.argv[2],'w',compression=zipfile.ZIP_STORED) as archive: archive.write(source,source.name)
+PY
+for loader in loose packaged; do
   args=()
-  if [ "$loader" = legacy ]; then args+=(--legacy-load); fi
+  source="$ASSET"
+  [ "$loader" != packaged ] || source="$TMP/scene.usdz"
   log="$(timeout 30s "$LUSDVIEW" --headless --backend vk --frames 1 \
-    --screenshot "$TMP/$loader.ppm" "${args[@]}" "$ASSET" 2>&1)"
+    --screenshot "$TMP/$loader.ppm" "${args[@]}" "$source" 2>&1)"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     if grep -Eiq 'no Vulkan|Vulkan.*unavailable|renderer init failed|no suitable GPU' \
@@ -33,15 +39,15 @@ for loader in next legacy; do
       exit 1
     fi
   else
-    echo "INFO: $loader loader has no legacy load-summary line; pixel parity is authoritative"
+    echo "INFO: $loader loader has no load-summary line; archive pixel parity is checked"
   fi
 done
 
 # The supported surface and volume material must still be extracted identically
-# by both scene loaders. Keep
+# by both input formats. Keep
 # this a modest decoded-pixel tolerance: it catches a material-record or texture
 # binding drift without depending on byte-identical driver math.
-python3 - "$TMP/next.ppm" "$TMP/legacy.ppm" <<'PY'
+python3 - "$TMP/loose.ppm" "$TMP/packaged.ppm" <<'PY'
 import re, sys
 
 def read_ppm(path):
@@ -58,8 +64,8 @@ def read_ppm(path):
 a, b = read_ppm(sys.argv[1]), read_ppm(sys.argv[2])
 mean = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 if mean > 2.0:
-    raise SystemExit(f"FAIL: next/legacy supported-material drift (mean={mean:.3f})")
-print(f"PASS: next/legacy supported-material parity mean={mean:.3f}")
+    raise SystemExit(f"FAIL: loose/USDZ supported-material drift (mean={mean:.3f})")
+print(f"PASS: loose/USDZ supported-material parity mean={mean:.3f}")
 PY
 
-echo "PASS: default and legacy loaders support OpenPBR surface and volume output"
+echo "PASS: loose and USDZ core inputs support OpenPBR surface and volume output"

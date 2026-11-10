@@ -347,6 +347,10 @@ class RenderSceneConverter {
   // hole handling without constructing a complete RenderScene.
   bool TriangulateMesh(RenderMesh* mesh);
 
+  // Compute tangent frames for an already-converted mesh using this
+  // converter's configured method. Useful for material-driven/deferred work.
+  bool ComputeVertexTangents(RenderMesh* mesh);
+
   // Texture loading
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
 

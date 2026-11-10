@@ -56,6 +56,7 @@
 #include "reader/usdz-reader.hh"
 
 // Writers
+#include "writer/layer-json.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 

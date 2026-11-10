@@ -20,7 +20,7 @@ function parseArgs() {
     pretty: true,
     verbose: false,
     summary: false,
-    backend: 'legacy',
+    backend: 'next',
     maxMemoryMB: 500
   };
 
@@ -94,7 +94,7 @@ Options:
   --mesh [id]             Dump mesh vertex data (all meshes or specific mesh by ID)
   --no-pretty             Disable pretty-printing for JSON/YAML
   --summary               Print counts/timing only; do not dump material payloads
-  --backend <name>        Loader backend: legacy, next, or auto (default: legacy)
+  --backend <name>        Loader backend: legacy, next, or auto (default: next)
   --max-memory-mb <n>     Native loader memory limit, 0 disables (default: 500)
   -v, --verbose           Enable verbose logging
   -h, --help              Show this help message

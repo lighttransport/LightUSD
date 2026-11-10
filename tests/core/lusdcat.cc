@@ -326,7 +326,11 @@ bool DumpPcpJson(pcp::Cache &cache, const Stage &stage, const char *filename,
 
 }  // namespace
 
+int ExplainProperty(int argc, char** argv);
+
 int main(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i)
+    if (std::strcmp(argv[i], "--explain") == 0) return ExplainProperty(argc, argv);
   bool flatten = false;
   // --dump-pcp-json [<out.json>|-]: after composing, emit the corpus-shaped
   // provenance JSON instead of the flattened USDA.
@@ -610,6 +614,7 @@ int main(int argc, char **argv) {
                          "[--max-memory-mib N] "
                          "[--no-async-arrays] [--no-parallel-prims] "
                          "[--require-prim /Path] "
+                         "[--explain /Prim.attribute [--time default|NUMBER] [--json]] "
                          "[--dump-pcp-json [out.json|-]] [--pcp-json-version 1|2] "
                          "file.usd[acz]\n");
     return 2;

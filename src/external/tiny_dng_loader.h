@@ -5760,7 +5760,8 @@ static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
         // std::cout << "height " << image->height << "\n";
         // std::cout << "bps " << image->bits_per_sample << "\n";
 
-        if (((image->width * image->height * image->bits_per_sample) % 8) ==
+        if (((uint64_t(image->width) * uint64_t(image->height) *
+              uint64_t(image->bits_per_sample)) % 8) ==
             0) {
           // OK
         } else {
@@ -6089,7 +6090,8 @@ static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
         image->bits_per_sample = 16;
 
         TINY_DNG_CHECK_AND_RETURN(
-            ((image->width * image->height * image->bits_per_sample) % 8) == 0,
+            ((uint64_t(image->width) * uint64_t(image->height) *
+              uint64_t(image->bits_per_sample)) % 8) == 0,
             "Image size must be multiple of 8.", err);
         const size_t len =
             static_cast<size_t>((image->samples_per_pixel * image->width *
@@ -6348,7 +6350,8 @@ static bool LoadDNGFromMemoryImpl(const char* mem, size_t size,
         TINY_DNG_DPRINTF("image.spp = %d\n", image->samples_per_pixel);
 
         TINY_DNG_CHECK_AND_RETURN(
-            ((image->width * image->height * image->bits_per_sample) % 8) == 0,
+            ((uint64_t(image->width) * uint64_t(image->height) *
+              uint64_t(image->bits_per_sample)) % 8) == 0,
             "Image must be multiple of 8.", err);
         const uint64_t len = uint64_t(image->samples_per_pixel) * uint64_t(image->width) * uint64_t(image->height) * uint64_t(image->bits_per_sample / 8);
         // For 32bit

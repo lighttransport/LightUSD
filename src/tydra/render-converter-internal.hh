@@ -32,6 +32,7 @@ bool ConvertParticleField(const ::lightusd::Stage& stage,
                           RenderParticleField* out);
 
 class RenderSceneConverter::Impl {
+  friend class RenderSceneConverter;
  public:
   explicit Impl(const ConverterConfig& config = {});
   ~Impl();

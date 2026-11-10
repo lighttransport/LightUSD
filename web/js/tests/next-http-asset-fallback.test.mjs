@@ -7,6 +7,8 @@ const requested = [];
 let provided = false;
 
 class FlattenSession {
+  setRebaseAssetPaths(enabled) { assert.equal(enabled,true); }
+  setAssetPathRemap(remap) { this.remap=remap; }
   begin() { return { success: true }; }
   step() {
     return provided

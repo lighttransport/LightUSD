@@ -1,238 +1,114 @@
-// All-in-one LightUSD core
-#include "lightusd.hh"
-#include "layer.hh"
-#include "core/prim.hh"
-
-// Import to_string() and operator<< features
+// SPDX-License-Identifier: Apache-2.0
+// Adapt a custom binary format to core layers before composition. The adapter
+// and its byte source belong to the embedding application; no DLL plugins or
+// legacy file-format objects are needed.
+#include "layer/layer.hh"
+#include "load-usd.hh"
+#include "pcp/cache.hh"
+#include "reader/usda-reader.hh"
+#include "resolver/asset-resolver.hh"
+#include "writer/usda-writer.hh"
+#include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <map>
+#include <memory>
+#include <vector>
 
-#include "pprinter.hh"
-#include "prim-pprint.hh"
-#include "value-pprint.hh"
-
-//
-// To read asset in custom format, this example provides
-//
-// - AssetResolution handler(for AssetResolution::open_asset)
-//   - Optional. Create on-memory asset system
-//   - You can use built-in file based AssetResolution handler if you provide
-//   .my file
-// - File format API(read/write data with custom format)
-//   - Simple 4 byte binary storing a float value.
-//
-
-//
-// def "muda" ( references = @bora.my@ ) {
-// }
-//
-// =>
-//
-// def "muda" () {
-//    uniform float myval = 3.14
-// }
-//
-
-static std::map<std::string, float> g_map;
-
-//
-// Asset resolution handlers
-//
-static int MyARResolve(const char *asset_name,
-                       const std::vector<std::string> &search_paths,
-                       std::string *resolved_asset_name, std::string *err,
-                       void *userdata) {
-  (void)err;
-  (void)userdata;
-  (void)search_paths;
-
-  std::cout << "Resolve " << asset_name << "\n";
-
-  if (!asset_name) {
-    return -2;  // err
+// The .my wire format is one little-endian IEEE-754 binary32 number.
+static std::shared_ptr<lightusd::Layer> DecodeMy(
+    const std::vector<uint8_t>& bytes, std::string* error) {
+  if (bytes.size() != 4) {
+    *error = "A .my asset must contain exactly four bytes";
+    return {};
   }
-
-  if (!resolved_asset_name) {
-    return -2;  // err
+  const uint32_t bits = uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) |
+      (uint32_t(bytes[2]) << 16) | (uint32_t(bytes[3]) << 24);
+  float value;
+  static_assert(sizeof(value) == sizeof(bits), "binary32 required");
+  std::memcpy(&value, &bits, sizeof(value));
+  if (!std::isfinite(value)) {
+    *error = "A .my asset must contain a finite value";
+    return {};
   }
-
-  if (g_map.count(asset_name)) {
-    (*resolved_asset_name) = asset_name;
-    std::cout << "Resolved as " << resolved_asset_name << "\n";
-    return 0;  // OK
-  }
-  std::cerr << "Can't resolve asset: " << asset_name << "\n";
-
-  return -1;  // failed to resolve.
+  auto layer = std::make_shared<lightusd::Layer>();
+  lightusd::LayerBuilder builder(*layer);
+  builder.define_prim("Asset", "Scope");
+  builder.add_property("myval", lightusd::Value(value));
+  builder.end_prim();
+  builder.finalize();
+  layer->meta().defaultPrim = "Asset";
+  layer->meta().defaultPrim_set = true;
+  return layer;
 }
 
-// AssetResoltion handlers
-static int MyARSize(const char *asset_name, uint64_t *nbytes, std::string *err,
-                    void *userdata) {
-  (void)userdata;
-
-  if (!asset_name) {
-    if (err) {
-      (*err) += "asset_name arg is nullptr.\n";
-    }
-    return -1;
-  }
-
-  if (!nbytes) {
-    if (err) {
-      (*err) += "nbytes arg is nullptr.\n";
-    }
-    return -1;
-  }
-
-  std::cout << "Asset size " << sizeof(float) << "\n";
-
-  (*nbytes) = sizeof(float);
-  return 0;  // OK
+static std::vector<uint8_t> EncodeMy(float value) {
+  uint32_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return {uint8_t(bits), uint8_t(bits >> 8), uint8_t(bits >> 16), uint8_t(bits >> 24)};
 }
 
-int MyARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
-             uint64_t *nbytes, std::string *err, void *userdata) {
-  if (!asset_name) {
-    if (err) {
-      (*err) += "asset_name arg is nullptr.\n";
-    }
-    return -3;
-  }
+int main(int argc, char** argv) {
+  using namespace lightusd;
+  const std::map<std::string, std::vector<uint8_t>> assets = {
+      {"bora.my", EncodeMy(3.14f)}, {"dora.my", EncodeMy(6.14f)}};
+  AssetResolver resolver;
+  for (const auto& asset : assets) resolver.RegisterMemoryAsset(asset.first, asset.second);
 
-  if (!nbytes) {
-    if (err) {
-      (*err) += "nbytes arg is nullptr.\n";
-    }
-    return -3;
-  }
-
-  if (req_nbytes < sizeof(float)) {
-    return -2;
-  }
-
-  if (g_map.count(asset_name)) {
-    float val = g_map[asset_name];
-    memcpy(out_buf, &val, sizeof(float));
-
-    (*nbytes) = sizeof(float);
-    return 0;
-  }
-
-  //
-  return -1;
-}
-
-//
-// custom File-format handlers
-//
-static bool MyCheck(const lightusd::legacy::Asset &asset, std::string *warn,
-                    std::string *err, void *user_data) {
-  if (asset.size() != 4) {
-    return false;
-  }
-
-  return true;
-}
-
-static bool MyRead(const lightusd::legacy::Asset &asset,
-                   lightusd::legacy::PrimSpec &ps /* inout */, std::string *warn,
-                   std::string *err, void *user_data) {
-  //
-  // `lightusd::legacy::Asset` is a simple buffer: data() : bytes buffer, size() :
-  // buffer size
-  //
-
-  if (asset.size() != 4) {
-    return false;
-  }
-
-  //
-  // Create a PrimSpec:
-  //
-  // def "my01" {
-  //   uniform float myval = ...
-  // }
-  //
-
-  float val;
-  memcpy(&val, asset.data(), 4);
-
-  lightusd::legacy::Attribute attr;
-  attr.set_value(std::move(val));
-  attr.set_name("myval");
-  attr.variability() = lightusd::legacy::Variability::Uniform;
-
-  ps.props()["myval"] = lightusd::legacy::Property(attr, /* custom */ false);
-
-  ps.name() = "my01";  // must set PrimSpec name
-
-  return true;
-}
-
-static bool MyWrite(const lightusd::legacy::PrimSpec &ps, lightusd::legacy::Asset *asset_out,
-                    std::string *warn, std::string *err, void *user_data) {
-  // TOOD
-  return false;
-}
-
-int main(int argc, char **argv) {
-  g_map["bora.my"] = 3.14f;
-  g_map["dora.my"] = 6.14f;
-
-  lightusd::legacy::FileFormatHandler my_handler;
-  my_handler.extension = "my";
-  my_handler.description = "Custom fileformat example.";
-  my_handler.checker = MyCheck;
-  my_handler.reader = MyRead;
-  my_handler.writer = MyWrite;
-  my_handler.userdata = nullptr;
-
-  lightusd::legacy::Stage stage;  // empty scene
-
-  // path to <lightusd>/data/fileformat_my.usda
-  std::string input_usd_filepath = "../data/fileformat_my.usda";
+  Stage root;
+  std::string warning, error;
   if (argc > 1) {
-    input_usd_filepath = argv[1];
+    if (!LoadUSD(argv[1], &root, &warning, &error)) {
+      std::cerr << error << '\n';
+      return 1;
+    }
+  } else {
+    auto parsed = LoadUSDAFromString(R"USD(#usda 1.0
+      def Scope "Root" {
+        def "Bora" ( references = @bora.my@</Asset> ) {}
+        def "Dora" ( references = @dora.my@</Asset> ) {}
+      }
+    )USD");
+    if (!parsed.success) return 1;
+    root = std::move(parsed.stage);
   }
-
-  std::string warn, err;
-
-  lightusd::legacy::Layer layer;
-  bool ret =
-      lightusd::legacy::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
-
-  if (warn.size()) {
-    std::cout << "WARN: " << warn << "\n";
+  auto opened = pcp::Cache::Open(resolver, root.ReleaseRootLayer(),
+      argc > 1 ? resolver.Resolve(argv[1]).resolved_path : std::string());
+  if (!opened) {
+    std::cerr << opened.error() << '\n';
+    return 1;
   }
-
-  if (!ret) {
-    std::cerr << err << "\n";
-    exit(-1);
+  auto cache = std::move(opened.value());
+  for (const auto& asset : assets) {
+    auto decoded = DecodeMy(asset.second, &error);
+    if (!decoded) {
+      std::cerr << error << '\n';
+      return 1;
+    }
+    // Preload under the resolver's identifier. Reference composition consumes
+    // this core layer and does not attempt to parse the .my bytes as USD.
+    const auto resolved = resolver.Resolve(asset.first);
+    if (!resolved.exists) return 1;
+    cache.PreloadLayer(resolved.resolved_path, std::move(decoded));
   }
-
-  lightusd::legacy::AssetResolutionResolver resolver;
-  // Register on-memory filesystem handler for `.my` asset.
-  lightusd::legacy::AssetResolutionHandler ar_handler;
-  ar_handler.resolve_fun = MyARResolve;
-  ar_handler.size_fun = MyARSize;
-  ar_handler.read_fun = MyARRead;
-  ar_handler.write_fun = nullptr;  // not used in this example.
-  ar_handler.userdata = nullptr;   // not used in this example;
-  resolver.register_asset_resolution_handler("my", ar_handler);
-
-  lightusd::legacy::ReferencesCompositionOptions options;
-  options.fileformats["my"] = my_handler;
-
-  // Do `references` composition to materialize `references = @***.my@`
-  lightusd::legacy::Layer composited_layer;
-  if (!lightusd::legacy::CompositeReferences(resolver, layer, &composited_layer, &warn,
-                                     &err, options)) {
-    std::cerr << "Failed to composite `references`: " << err << "\n";
-    return -1;
+  Stage composed;
+  if (!cache.BuildStage(&composed, &warning, &error) || !error.empty()) {
+    std::cerr << error << '\n';
+    return 1;
   }
-
-  // Print USD scene as Ascii.
-  std::cout << composited_layer << "\n";
-
-  return EXIT_SUCCESS;
+  if (argc == 1) {
+    for (const auto& item : {std::pair<const char*, float>{"/Root/Bora", 3.14f},
+                             {"/Root/Dora", 6.14f}}) {
+      const auto prim = composed.GetPrimAtPath(item.first);
+      const Value* value = prim.GetPropertyValue("myval");
+      if (!value || !value->as_float() || *value->as_float() != item.second) {
+        std::cerr << "Custom-format reference did not compose: " << item.first << '\n';
+        return 1;
+      }
+    }
+  }
+  if (!warning.empty()) std::cerr << warning << '\n';
+  std::cout << WriteUSDAToString(composed);
+  return 0;
 }

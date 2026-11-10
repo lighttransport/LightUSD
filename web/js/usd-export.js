@@ -159,10 +159,10 @@ btnGenerate.addEventListener('click', async () => {
 
   // Create native instance
   if (usd) usd.delete();
-  usd = new native.LightUSDLoaderNative();
+  usd = new native.NextUSDZConverterNative();
 
   // Pass texture to WASM asset cache
-  // Embind accepts Uint8Array for std::string without UTF-8 string mangling.
+  // The core converter copies the typed bytes into its asset cache.
   usd.setAsset('textures/checkerboard.png', pngBytes);
   log('Texture set in asset cache.');
 
@@ -191,9 +191,9 @@ fileInput.addEventListener('change', async (e) => {
   const fileData = new Uint8Array(await file.arrayBuffer());
 
   if (usd) usd.delete();
-  usd = new native.LightUSDLoaderNative();
+  usd = new native.NextUSDZConverterNative();
 
-  const ok = usd.loadAsLayerFromBinary(fileData, file.name);
+  const ok = usd.loadFromBinary(fileData, file.name);
   if (!ok) {
     log('ERROR loading file: ' + usd.error());
     return;

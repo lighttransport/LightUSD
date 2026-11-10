@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 #include "usdz/usdz-converter.hh"
+#include "material-optimize.hh"
+#include "image-convert.hh"
+#include "geometry-optimize.hh"
+#include "udim-convert.hh"
 
 #include <algorithm>
 #include <cstdio>
@@ -51,11 +55,8 @@ std::string LowerExt(const std::string& path) {
 }
 
 bool IsTextureExt(const std::string& ext) {
-  return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "exr"
-#if defined(LIGHTUSD_WITH_TEXTOOLS)
-         || ext == "ktx2"
-#endif
-      ;
+  return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "exr" ||
+         ext == "ktx2";
 }
 
 bool IsARKitTextureExt(const std::string& ext) {
@@ -207,6 +208,7 @@ struct Texture {
   std::string archive;   // archive entry name (USDZ)
   std::vector<uint8_t> bytes;
   std::string ext;
+  bool generated{false};
 };
 
 void PassThrough(Texture* t, UsdzConvertStats* stats) {
@@ -217,7 +219,7 @@ void PassThrough(Texture* t, UsdzConvertStats* stats) {
 // Resize / transcode / re-encode one texture in place.
 void ProcessTexture(const UsdzConvertOptions& opts, Texture* t,
                     UsdzConvertStats* stats, std::string* warn) {
-  std::string target = t->ext;
+  std::string target = t->ext == "ktx2" ? "png" : t->ext;
   if (opts.texture_format == OutputTextureFormat::PNG) target = "png";
   if (opts.texture_format == OutputTextureFormat::JPEG) target = "jpg";
   if (opts.arkit_compatible && !IsARKitTextureExt(target)) target = "png";
@@ -229,68 +231,19 @@ void ProcessTexture(const UsdzConvertOptions& opts, Texture* t,
                      (target == "png" || target == "jpg" || target == "jpeg"));
   if (!want) return PassThrough(t, stats);
 
-  auto decoded = image::LoadImageFromMemory(t->bytes.data(), t->bytes.size(),
-                                            t->authored);
-  if (!decoded) {
-    *warn += "Could not decode texture (" + t->authored +
-             "): " + decoded.error() + " - copying through unchanged.\n";
-    return PassThrough(t, stats);
+  image::ConvertOptions convert;
+  convert.max_size=opts.max_texture_size;
+  convert.format=target=="jpg" || target=="jpeg"?"jpeg":target;
+  convert.png_encoder=opts.png_encoder==image::PngEncoder::Fpng?"fpng":opts.png_encoder==image::PngEncoder::Fpnge?"fpnge":"auto";
+  convert.jpeg_quality=opts.jpeg_quality;
+  auto output=image::ConvertImage(t->bytes.data(),t->bytes.size(),convert,t->authored);
+  if(!output) {
+    *warn+="Texture conversion failed for "+t->authored+": "+output.error()+" - copying through unchanged.\n";
+    return PassThrough(t,stats);
   }
-  Image img = std::move(decoded.value().image);
-  if (img.bpp != 8 || img.width <= 0 || img.height <= 0 || img.channels < 1 ||
-      img.channels > 4 || img.width > kMaxDimension ||
-      img.height > kMaxDimension)
-    return PassThrough(t, stats);
-
-  bool resized = false;
-  if (resize) {
-    const int longest = std::max(img.width, img.height);
-    if (longest > opts.max_texture_size) {
-      const double s = double(opts.max_texture_size) / double(longest);
-      const int nw = std::max(1, int(img.width * s + 0.5));
-      const int nh = std::max(1, int(img.height * s + 0.5));
-      Image out;
-      std::string rerr;
-      if (tydra::ResizeImage(img, nw, nh, &out, tydra::ResizeFilter::Auto,
-                             &rerr)) {
-        img = std::move(out);
-        resized = true;
-      } else {
-        *warn += "Resize failed for " + t->authored + ": " + rerr + "\n";
-      }
-    }
-  }
-
-  image::WriteOption wopt;
-  wopt.png_encoder = opts.png_encoder;
-  wopt.jpeg_quality = opts.jpeg_quality;
-  if (target == "png") {
-    wopt.format = image::WriteImageFormat::PNG;
-  } else if (target == "jpg" || target == "jpeg") {
-    wopt.format = image::WriteImageFormat::JPEG;
-    if (img.channels == 4) {  // JPEG cannot carry alpha
-      const size_t npix = size_t(img.width) * size_t(img.height);
-      if (img.data.size() < npix * 4) return PassThrough(t, stats);
-      Image rgb = img;
-      rgb.channels = 3;
-      rgb.data.resize(npix * 3);
-      for (size_t i = 0; i < npix; ++i)
-        for (size_t c = 0; c < 3; ++c) rgb.data[3 * i + c] = img.data[4 * i + c];
-      img = std::move(rgb);
-    }
-  } else {
-    return PassThrough(t, stats);
-  }
-  auto enc = image::WriteImageToMemory(img, wopt);
-  if (!enc) {
-    *warn += "Encode failed for " + t->authored + ": " + enc.error() +
-             " - copying through unchanged.\n";
-    return PassThrough(t, stats);
-  }
-  t->bytes = std::move(enc.value());
-  t->ext = target;
-  if (resized) stats->num_textures_resized++;
+  if(output->resized)stats->num_textures_resized++;
   stats->num_textures_reencoded++;
+  t->bytes=std::move(output->data);t->ext=target;
 }
 
 // Fit the reencodable textures into `target_texture_bytes`.
@@ -408,12 +361,19 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
   std::string& warn = warn_out ? *warn_out : local_warn;
   std::string& err = err_out ? *err_out : local_err;
 
-  if (opts.material_optimization != MaterialOptimizationMode::Off ||
-      opts.geometry_optimization != GeometryOptimizationMode::Off ||
-      opts.udim_bake != UDIMBakeMode::Off) {
-    err = "material optimization, geometry optimization and UDIM baking are "
-          "not supported by the native converter; use the JavaScript "
-          "usdzconvert (web/js/cli/usdzconvert.js)";
+  if (opts.material_optimization != MaterialOptimizationMode::Off &&
+      opts.material_optimization != MaterialOptimizationMode::Dedupe &&
+      opts.material_optimization != MaterialOptimizationMode::Preview &&
+      opts.material_optimization != MaterialOptimizationMode::Atlas) {
+    err = "the requested material optimization mode has not yet been "
+          "migrated to the core converter";
+    return false;
+  }
+  if (opts.material_optimization == MaterialOptimizationMode::Atlas)
+    warn += "Material atlas generation is unavailable; applying PreviewSurface graph deduplication.\n";
+  if ((opts.material_optimization != MaterialOptimizationMode::Off ||
+       opts.geometry_optimization != GeometryOptimizationMode::Off) && !opts.flatten) {
+    err = "material/geometry optimization requires flattening";
     return false;
   }
   if (opts.input.empty() || opts.output.empty()) {
@@ -458,9 +418,29 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
   Log(opts.verbose, "loaded " + opts.input);
   ApplyMetadata(opts, &stage);
 
+
+  // --- UDIM layer edits and generated atlas assets. ---
+  std::map<std::string, std::vector<uint8_t>> atlases;
+  if (opts.udim_bake != UDIMBakeMode::Off &&
+      !BakeUDIMs(*stage.GetRootLayer(), opts, root_dir, &atlases, &err)) return false;
+  // Match the web converter: bake UV/texture edits before material optimization.
+  if (opts.material_optimization == MaterialOptimizationMode::Dedupe ||
+      opts.material_optimization == MaterialOptimizationMode::Preview ||
+      opts.material_optimization == MaterialOptimizationMode::Atlas)
+    DedupeMaterials(stage.GetRootLayer(), opts.material_optimization != MaterialOptimizationMode::Dedupe);
+  if (opts.geometry_optimization == GeometryOptimizationMode::MergeMeshes) {
+    MeshMergeOptions merge;
+    merge.max_input_faces = static_cast<size_t>(opts.mesh_merge_max_input_faces);
+    merge.max_input_points = static_cast<size_t>(opts.mesh_merge_max_input_points);
+    merge.max_aggregate_faces = static_cast<size_t>(opts.mesh_merge_max_aggregate_faces);
+    merge.min_group_size = static_cast<size_t>(opts.mesh_merge_min_group_size);
+    if (!MergeMeshes(&stage, merge, nullptr, &warn, &err)) return false;
+  }
+
   // --- Textures. ---
   std::vector<Texture> textures;
   for (const std::string& authored : CollectTexturePaths(stage)) {
+    if (atlases.count(authored)) continue;
     if (authored.find("<UDIM>") != std::string::npos ||
         authored.find("<udim>") != std::string::npos) {
       warn += "UDIM texture left as an external reference: " + authored + "\n";
@@ -502,14 +482,28 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
       stats.num_unused_textures_included++;
     }
   }
+  const size_t regular_textures = textures.size();
+  for (auto& atlas : atlases) {
+    Texture texture;
+    texture.authored = atlas.first;
+    texture.archive = atlas.first;
+    texture.ext = LowerExt(atlas.first);
+    texture.generated = true;
+    texture.bytes = std::move(atlas.second);
+    textures.push_back(std::move(texture));
+    ++stats.num_textures_reencoded;
+  }
+  // Reserve generated names first so ordinary texture collisions cannot force
+  // a second rename inside inline variant contents.
+  std::rotate(textures.begin(), textures.begin() + static_cast<std::ptrdiff_t>(regular_textures), textures.end());
   stats.num_textures = textures.size();
 
   const bool process_textures = to_usdz && opts.flatten;
   if (!process_textures &&
       (opts.max_texture_size > 0 || opts.target_texture_bytes > 0 ||
        opts.texture_format != OutputTextureFormat::KeepOriginal)) {
-    warn += "texture processing applies to flattened USDZ output only; "
-            "textures are kept unchanged\n";
+    warn += "ordinary texture processing applies to flattened USDZ output only; "
+            "UDIM tiles are handled separately by the baking options\n";
   }
 
   std::map<std::string, std::string> remap;
@@ -518,6 +512,14 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
     const std::string out_dir = io::GetBaseDir(AbsolutePath(opts.output));
     for (const Texture& t : textures) {
       if (t.authored.empty()) continue;
+      if (t.generated) {
+        const std::string path = io::JoinPath(out_dir, t.authored);
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::u8path(path).parent_path(), ec);
+        if (ec) { err = "cannot create atlas output directory: " + ec.message(); return false; }
+        if (!WriteFile(path, t.bytes.data(), t.bytes.size(), &err)) return false;
+        continue;
+      }
       const std::string rel = RelativePath(out_dir, t.resolved);
       if (rel != t.authored) remap[t.authored] = rel;
       stats.num_textures_passthrough++;
@@ -534,6 +536,7 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
 
   // Read and (optionally) process texture bytes.
   for (Texture& t : textures) {
+    if (t.generated) continue;
     if (!ReadFile(t.resolved, &t.bytes)) {
       warn += "failed to read texture: " + t.resolved + "\n";
       t.bytes.clear();
@@ -544,27 +547,40 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
                  textures.end());
   if (process_textures) {
     if (opts.target_texture_bytes > 0) {
+      // The budget fitter accepts ordinary images, so decode KTX2 first.
+      for (Texture& t : textures)
+        if (t.ext == "ktx2") ProcessTexture(opts, &t, &stats, &warn);
       if (!FitTextures(opts, &textures, &stats, &warn, &err)) return false;
     } else {
-      for (Texture& t : textures) ProcessTexture(opts, &t, &stats, &warn);
+      for (Texture& t : textures)
+        if (!t.generated) ProcessTexture(opts, &t, &stats, &warn);
+    }
+    for (const Texture& t : textures) {
+      if (t.ext == "ktx2") {
+        err = "KTX2 texture could not be transcoded: " + t.authored +
+              "; enable LIGHTUSD_WITH_TEXTOOLS and use a supported codec";
+        return false;
+      }
     }
   } else {
-    stats.num_textures_passthrough += textures.size();
+    for (const Texture& texture : textures)
+      if (!texture.generated) ++stats.num_textures_passthrough;
   }
 
   std::map<std::string, std::vector<uint8_t>> assets;
   std::set<std::string> taken;
   std::map<std::string, std::string> by_resolved;  // resolved -> archive
   for (Texture& t : textures) {
-    auto seen = by_resolved.find(t.resolved);
+    const std::string key = t.generated ? "udim-generated:" + t.authored : t.resolved;
+    auto seen = by_resolved.find(key);
     if (seen != by_resolved.end()) {
       if (!t.authored.empty()) remap[t.authored] = seen->second;
       continue;
     }
-    std::string name = ArchiveNameFor(root_dir, t.resolved);
+    std::string name = t.generated ? t.archive : ArchiveNameFor(root_dir, t.resolved);
     if (t.ext != LowerExt(name)) name = ReplaceExtension(name, t.ext);
     name = UniqueName(name, &taken);
-    by_resolved.emplace(t.resolved, name);
+    by_resolved.emplace(key, name);
     if (!t.authored.empty() && t.authored != name) remap[t.authored] = name;
     assets.emplace(name, std::move(t.bytes));
   }

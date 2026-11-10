@@ -84,7 +84,7 @@ int RenderStream::meshField(int mesh_id, uint8_t field) {
                             : (built_source ? (wantsTangents_(source_index) && computeScratchTangents_() ? 1 : 0)
                                             : (source ? (!source->tangents.empty() ? 1 : 0) : -1));
       case 6: return source ? (!source->texcoords_1.empty() ? 1 : 0) : 0;
-      case 7: return source ? (!source->colors.empty() ? 1 : 0) : 0;
+      case 7: return output ? (!output->colors.empty() ? 1 : 0) : (source ? (!source->colors.empty() ? 1 : 0) : 0);
       case 8: return source ? (source->skin ? 1 : 0) : 0;
       case 9: return source ? (source->has_bbox ? 1 : 0) : 0;
       case 10: return source && source->skin ? source->skin->skeleton_id : -1;
@@ -147,7 +147,9 @@ int RenderStream::meshBufferCopy(int mesh_id, uint8_t kind, uint8_t* out,
         case 1: count = output->indices.size(); element_size = sizeof(uint32_t); contiguous = output->indices.data(); break;
         case 2: count = output->normals.size(); element_size = sizeof(float); contiguous = output->normals.data(); break;
         case 3: count = output->uv.size(); element_size = sizeof(float); contiguous = output->uv.data(); break;
-        case 4: case 5: case 6: case 7: case 8: case 9:
+        case 5: count = output->colors.size(); element_size = sizeof(float); contiguous = output->colors.data(); break;
+        case 6: count = output->opacities.size(); element_size = sizeof(float); contiguous = output->opacities.data(); break;
+        case 4: case 7: case 8: case 9:
           count = 0; element_size = sizeof(float); break;
         default: return -1;
       }

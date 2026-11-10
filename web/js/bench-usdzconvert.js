@@ -14,6 +14,7 @@ import {
   convertSourceToUSDZStreaming,
   loadWasm,
   parseByteSize,
+  parseUSDZEntries,
 } from './src/usdzconvert.js';
 import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
@@ -181,10 +182,16 @@ async function main() {
     status('validate: skipped (output exceeds in-heap reload size)');
   } else {
     try {
-      const usd = new native.LightUSDLoaderNative();
-      validate.ok = usd.loadAsLayerFromBinary(usdz, 'bench.usdz');
-      if (!validate.ok) validate.error = String(usd.error());
-      usd.delete();
+      const entries = parseUSDZEntries(usdz);
+      if (!entries.length || !/\.usd[ac]?$/i.test(entries[0].name)) {
+        throw new Error('USDZ first entry is not a USD root layer');
+      }
+      const document = new native.LayerDocument();
+      try {
+        const loaded = document.load(entries[0].data);
+        validate.ok = !!loaded.success;
+        if (!validate.ok) validate.error = loaded.error || document.error();
+      } finally { document.delete(); }
     } catch (err) {
       validate.error = String(err && err.message ? err.message : err);
     }

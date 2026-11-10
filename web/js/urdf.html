@@ -249,11 +249,7 @@
     <div id="title">LightUSD Robot Physics</div>
     <label class="btn">Import URDF/MJCF<input id="urdfInput" type="file" accept=".urdf,.xml"></label>
     <label class="btn secondary">Assets<input id="assetInput" type="file" multiple webkitdirectory></label>
-    <select id="backendSelect" class="control" title="USD backend">
-      <option value="legacy">legacy</option>
-      <option value="next">next</option>
-      <option value="auto">auto</option>
-    </select>
+
     <button id="exportSource" class="btn export" disabled>Export XML</button>
     <label class="btn">Import USD<input id="usdInput" type="file" accept=".usd,.usda,.usdc,.usdz"></label>
     <button id="convertToUSD" class="btn convert" disabled>URDF/MJCF -> USD</button>
@@ -270,7 +266,7 @@
     <div id="panelBody">
       <div id="loadStats">
         <span>File</span><span id="currentFile">-</span>
-        <span>Backend</span><span id="backendName">legacy</span>
+        <span>Backend</span><span id="backendName">core</span>
         <span>FPS</span><span id="fpsValue">--</span>
         <span>Size</span><span id="fileSize">--</span>
         <span>Read/fetch</span><span id="readTime">--</span>

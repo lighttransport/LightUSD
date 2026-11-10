@@ -30,14 +30,35 @@ make -C build -j16 lusdzconvert
 ```
 
 The converter is `src/usdz/usdz-converter.{hh,cc}` on the core library.
-`-optimizeMaterials`, `-optimizeGeometry`/`-optimizeMeshes` (other than `off`)
-and `--bake-udim` (other than `off`) are implemented by the JavaScript
-converter only (`web/js/cli/usdzconvert.js`); the native tool rejects them with
-an error. Their tuning flags are still accepted. Textures are processed
+`-optimizeMaterials dedupe` merges identical material subtrees and retargets
+bindings on the core. It requires flattening. `-optimizeGeometry mergeMeshes`
+(or `-optimizeMeshes mergeMeshes`) aggregates compatible static meshes on core,
+including subdivision topology, indexed numeric primvars, transformed normals,
+and face material subsets. Public root prims stay in place; aggregates live
+under the same root as their sources. Merged mesh paths change. Animated,
+instanced, or unsupported meshes stay intact. The mesh-merge tuning flags limit
+source sizes, aggregate face counts, and minimum group size.
+`-optimizeMaterials preview` also merges equivalent supported PreviewSurface
+graphs with different surface shader names or unused shader children. It keeps
+unsupported graphs, cycles and extra material outputs on the exact comparison
+path. `atlas` mode preserves the legacy fallback to preview deduplication and emits a
+warning; it does not generate texture atlases.
+`--bake-udim grid|dense` uses the same atlas/geometry algorithms and core layer
+adapter as WASM. It supports flat USDA/USDC and both USDZ root formats, including
+root-layer variant contents with `-noFlatten`. Floating-point tiles remain EXR;
+16-bit PNG tiles retain their precision. `LIGHTUSD_WITH_EXR` enables the optional
+vendored native EXR backend (on by default). Ordinary textures are processed
 serially (`-numThreads` and `--texture-memory-budget` are accepted and ignored).
-With `-noFlatten` the root layer and its resolved dependency layers inside the
-input directory are packaged unchanged; texture processing applies to
-flattened USDZ output only.
+Without UDIM baking, `-noFlatten` packages the root and its resolved dependency
+layers inside the input directory unchanged. Ordinary texture processing
+applies to flattened USDZ output only; UDIM baking also supports flat outputs
+and non-flattened root-layer contents.
+
+Core builds enable `LIGHTUSD_WITH_TEXTOOLS` by default. With it, KTX2
+textures are decoded and packaged as PNG (or JPEG when requested). A KTX2
+texture that cannot be decoded fails conversion with a diagnostic instead
+of silently producing an incomplete package. Disable the optional vendored
+texture stack with `-DLIGHTUSD_WITH_TEXTOOLS=OFF`.
 
 ## Usage
 
@@ -81,8 +102,8 @@ but root-layer discovery itself is not recursive.
 supports non-flattened layers, including variant contents. `--bake-udim dense`
 packs sorted tile IDs into a compact atlas with gutters and a reserved blank
 cell, then authors separate face-varying UVs for each texture layout. Original
-UVs and other texture consumers remain intact. Dense mode requires flattened
-native output.
+UVs and other texture consumers remain intact. Both modes support baking
+root-layer variant contents with `-noFlatten`.
 
 ```sh
 lusdzconvert scene.usda scene.usdz --bake-udim grid --udim-max-tiles 32

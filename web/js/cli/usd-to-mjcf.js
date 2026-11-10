@@ -8,15 +8,17 @@
 //   - Mesh / GeomSphere / GeomCube ... prims -> <geom>
 //   - NewtonActuator prims                   -> <actuator><position .../>
 //
-// Mesh geoms are written out as companion .obj files (geometry is carried as
-// raw vertices/indices through the physics JSON; the original file identity
-// is not preserved by this path) so the emitted MJCF is self-contained and
+// Mesh geoms are written out as companion .obj files using owned RenderStream
+// geometry. The physics snapshot contains topology counts and metadata; the
+// original file identity is not preserved by this path so the emitted MJCF is self-contained and
 // re-parseable. Pass --no-meshes to reference mesh names without writing OBJs.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import {Matrix4} from 'three';
 import LightUSDFactory from '../src/lightusd/lightusd.js';
+import {NextRenderSceneAdapter} from '../src/lightusd/LightUSDLoader.js';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -188,23 +190,49 @@ function jointTypeToMujoco(type) {
   return 'fixed';
 }
 
-// Recover real mesh geometry from the render scene (populated by loadFromBinary)
-// via getMesh(), keyed by absolute prim path. getMesh returns typed_memory_view
-// windows into the WASM heap, so we copy them out before the native object is
-// deleted. Points are link-local (the prim transform is baked by the render
-// scene converter).
-function collectRenderMeshes(native, warnings = []) {
+// Recover owned triangulated geometry from the core render adapter, keyed by
+// absolute prim path. Bake the prim transform before emitting link-local OBJs.
+function collectRenderMeshes(native, warnings = [], linkPaths = []) {
   const map = new Map();
+  const worlds = new Map((native.nodes || []).map(node => [node.primPath,node.worldMatrix]));
   const count = native.numMeshes ? native.numMeshes() : 0;
   for (let i = 0; i < count; i++) {
     try {
       const m = native.getMeshCopy(i);
       if (!m || !m.absPath || !m.points || m.points.length < 9) continue;
-      map.set(m.absPath, {
-        points: Float32Array.from(m.points),
-        indices: Int32Array.from(m.faceVertexIndices || []),
-        counts: Int32Array.from(m.faceVertexCounts || [])
-      });
+      const points = Float32Array.from(m.points);
+      // Bake every intermediate xform into the owning rigid body's frame,
+      // keeping body/world transforms out of the OBJ vertices.
+      const linkPath = ownerLinkPath(m.absPath,linkPaths);
+      if (!linkPath) continue;
+      const linkWorld = worlds.get(linkPath);
+      if (!Array.isArray(linkWorld) || linkWorld.length !== 16 || !Array.isArray(m.worldMatrix))
+        throw new Error(`Cannot resolve the owning body frame for ${m.absPath}`);
+      const bodyMatrix = new Matrix4().fromArray(linkWorld);
+      if (!Number.isFinite(bodyMatrix.determinant()) || bodyMatrix.determinant() === 0)
+        throw new Error(`Singular owning body transform for ${m.absPath}`);
+      const matrix = bodyMatrix.invert().multiply(new Matrix4().fromArray(m.worldMatrix)).toArray();
+      if (Array.isArray(matrix) && matrix.length === 16) {
+        for (let vertex = 0; vertex < points.length; vertex += 3) {
+          const [x,y,z] = points.subarray(vertex,vertex+3);
+          points[vertex] = matrix[0]*x+matrix[4]*y+matrix[8]*z+matrix[12];
+          points[vertex+1] = matrix[1]*x+matrix[5]*y+matrix[9]*z+matrix[13];
+          points[vertex+2] = matrix[2]*x+matrix[6]*y+matrix[10]*z+matrix[14];
+        }
+      }
+      if (!points.every(Number.isFinite)) throw new Error(`Non-finite transformed mesh ${m.absPath}`);
+      const sourceIndices = m.indices || m.faceVertexIndices;
+      const indices = sourceIndices?.length ? Int32Array.from(sourceIndices)
+        : Int32Array.from({length:points.length/3},(_,index)=>index);
+      if (matrix?.length === 16) {
+        const determinant = matrix[0]*(matrix[5]*matrix[10]-matrix[9]*matrix[6])
+          -matrix[4]*(matrix[1]*matrix[10]-matrix[9]*matrix[2])
+          +matrix[8]*(matrix[1]*matrix[6]-matrix[5]*matrix[2]);
+        if (determinant < 0) for (let i=0;i<indices.length;i+=3)
+          [indices[i+1],indices[i+2]]=[indices[i+2],indices[i+1]];
+      }
+      map.set(m.absPath, {points,indices,
+        counts:Int32Array.from({length:indices.length/3},()=>3)});
     } catch (error) {
       // Physics JSON remains usable when a malformed render-only UV array
       // prevents one mesh from materializing. The corresponding MJCF geom is
@@ -566,7 +594,7 @@ async function main() {
   opts.modelName = opts.modelName || baseName;
 
   const lightusd = await LightUSDFactory();
-  const native = new lightusd.LightUSDLoaderNative();
+  const native = new lightusd.NextUSDZConverterNative();
   let extracted;
   let renderMeshes = new Map();
   const renderWarnings = [];
@@ -575,18 +603,21 @@ async function main() {
     // load eagerly runs Tydra conversion, so one malformed render-only UV
     // array would incorrectly make a structurally valid physics return-leg
     // conversion fail before extractPhysicsSceneJSON can run.
-    if (!native.loadAsLayerFromBinary(bytes, path.basename(inputPath))) {
+    if (!native.loadFromBinary(bytes, path.basename(inputPath))) {
       throw new Error(native.error() || `Failed to load ${inputPath}`);
     }
     const jsonText = native.extractPhysicsSceneJSON();
     if (!jsonText) throw new Error(native.error() || 'extractPhysicsSceneJSON failed');
     extracted = JSON.parse(jsonText);
     if (opts.emitMeshes && !opts.placeholderMeshes) {
-      if (native.layerToRenderScene()) {
-        renderMeshes = collectRenderMeshes(native, renderWarnings);
-      } else {
-        renderWarnings.push(native.error() || 'LayerToRenderScene failed');
-      }
+      let render;
+      try {
+        render = await NextRenderSceneAdapter.create(lightusd, bytes, path.basename(inputPath));
+        renderMeshes = collectRenderMeshes(render, renderWarnings,
+          extracted.prims.filter(prim => hasApi(prim, 'PhysicsRigidBodyAPI')).map(prim => prim.path));
+      } catch (error) {
+        renderWarnings.push(error.message || 'Core render conversion failed');
+      } finally { render?.delete(); }
     }
   } finally {
     native.delete();

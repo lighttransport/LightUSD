@@ -1,40 +1,16 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache 2.0
-// Test EM_JS synchronous progress callbacks in Node.js CLI
-//
-// This test verifies that progress callbacks are called synchronously
-// from C++ during Tydra scene conversion via EM_JS.
+// Exercise core adapter progress and completion from Node.js.
 
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {LightUSDLoader} from '../src/lightusd/LightUSDLoader.js';
+import createLightUSD from '../src/lightusd/lightusd.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// ============================================================================
-// Progress Tracking State
-// ============================================================================
-
-const progressState = {
-  callbackCount: 0,
-  lastMeshCurrent: 0,
-  lastMeshTotal: 0,
-  stages: new Set(),
-  meshNames: [],
-  completeInfo: null,
-  errors: []
-};
-
-function resetProgressState() {
-  progressState.callbackCount = 0;
-  progressState.lastMeshCurrent = 0;
-  progressState.lastMeshTotal = 0;
-  progressState.stages = new Set();
-  progressState.meshNames = [];
-  progressState.completeInfo = null;
-  progressState.errors = [];
-}
 
 // ============================================================================
 // Synthetic USD Generation
@@ -121,151 +97,40 @@ def Xform "Root"
 // Test Runner
 // ============================================================================
 
-async function runTest(testName, usdData, filename = 'test.usda') {
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`Test: ${testName}`);
-  console.log('='.repeat(60));
+const nativePromise = createLightUSD();
 
-  resetProgressState();
-
-  // Dynamic import to allow callbacks to be set
-  const createLightUSD = (await import('../src/lightusd/lightusd.js')).default;
-
-  // Initialize WASM module with EM_JS callbacks
-  const lightusd = await createLightUSD({
-    onTydraProgress: (info) => {
-      progressState.callbackCount++;
-      progressState.lastMeshCurrent = info.meshCurrent;
-      progressState.lastMeshTotal = info.meshTotal;
-      progressState.stages.add(info.stage);
-      if (info.meshName) {
-        progressState.meshNames.push(info.meshName);
-      }
-
-      // Print progress
-      const pct = info.meshTotal > 0
-        ? Math.round((info.meshCurrent / info.meshTotal) * 100)
-        : Math.round(info.progress * 100);
-      const meshInfo = info.meshTotal > 0
-        ? `${info.meshCurrent}/${info.meshTotal}`
-        : '';
-      const meshName = info.meshName ? path.basename(info.meshName) : '';
-
-      console.log(`  [Progress] ${pct}% | ${info.stage} | ${meshInfo} ${meshName}`);
-    },
-    onTydraStage: (info) => {
-      console.log(`  [Stage] ${info.stage}: ${info.message || ''}`);
-    },
-    onTydraComplete: (info) => {
-      progressState.completeInfo = info;
-      console.log(`  [Complete] ${info.meshCount} meshes, ${info.materialCount} materials, ${info.textureCount} textures`);
-    }
-  });
-
-  // Create native loader
-  const loader = new lightusd.LightUSDLoaderNative();
-
-  // Convert string to binary
-  const encoder = new TextEncoder();
-  const binary = encoder.encode(usdData);
-
-  console.log(`\nLoading ${filename} (${binary.length} bytes)...`);
-  console.log('-'.repeat(40));
-
-  const startTime = performance.now();
-  const ok = loader.loadFromBinary(binary, filename);
-  const elapsed = performance.now() - startTime;
-
-  console.log('-'.repeat(40));
-
-  if (!ok) {
-    console.log(`\n❌ FAILED: ${loader.error()}`);
-    progressState.errors.push(loader.error());
+async function runTest(testName, usdData, filename = 'test.usda', expectedMeshes = null) {
+  console.log(`\nTest: ${testName}`);
+  const loader = new LightUSDLoader();
+  loader.native_ = await nativePromise;
+  const bytes = typeof usdData === 'string' ? new TextEncoder().encode(usdData) : usdData;
+  const events = [];
+  let scene;
+  try {
+    scene = await loader.parseWithProgress(bytes, filename, {onProgress: info => {
+      assert.ok(Number.isFinite(info.percentage));
+      events.push(info);
+      console.log(`  [Progress] ${Math.round(info.percentage)}% | ${info.stage}`);
+    }});
+    assert.ok(scene.numMeshes() > 0);
+    if (expectedMeshes !== null) assert.equal(scene.numMeshes(), expectedMeshes);
+    assert.ok(events.some(info => info.stage === 'native-load'));
+    assert.ok(events.some(info => info.stage === 'mesh-copy'));
+    assert.equal(events.at(-1)?.stage, 'complete');
+    assert.equal(events.at(-1)?.percentage, 100);
+    console.log(`  SUCCESS: ${scene.numMeshes()} meshes, ${events.length} progress events`);
+    return true;
+  } catch (error) {
+    console.error(`  FAILED: ${error.message}`);
     return false;
+  } finally {
+    scene?.delete();
   }
-
-  console.log(`\n✅ SUCCESS in ${elapsed.toFixed(1)}ms`);
-  console.log(`   Callback count: ${progressState.callbackCount}`);
-  console.log(`   Stages seen: ${[...progressState.stages].join(', ')}`);
-  console.log(`   Unique meshes: ${new Set(progressState.meshNames).size}`);
-
-  if (progressState.completeInfo) {
-    console.log(`   Final counts: ${progressState.completeInfo.meshCount} meshes`);
-  }
-
-  // Cleanup
-  loader.delete();
-
-  return true;
 }
 
 async function runFileTest(filePath) {
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(`Test: Load from file - ${filePath}`);
-  console.log('='.repeat(60));
-
-  if (!fs.existsSync(filePath)) {
-    console.log(`⚠️  SKIPPED: File not found`);
-    return null;
-  }
-
-  const data = fs.readFileSync(filePath);
-  const filename = path.basename(filePath);
-
-  resetProgressState();
-
-  const createLightUSD = (await import('../src/lightusd/lightusd.js')).default;
-
-  const lightusd = await createLightUSD({
-    onTydraProgress: (info) => {
-      progressState.callbackCount++;
-      progressState.lastMeshCurrent = info.meshCurrent;
-      progressState.lastMeshTotal = info.meshTotal;
-      progressState.stages.add(info.stage);
-      if (info.meshName) {
-        progressState.meshNames.push(info.meshName);
-      }
-
-      const pct = info.meshTotal > 0
-        ? Math.round((info.meshCurrent / info.meshTotal) * 100)
-        : Math.round(info.progress * 100);
-      const meshInfo = info.meshTotal > 0
-        ? `${info.meshCurrent}/${info.meshTotal}`
-        : '';
-      const meshName = info.meshName ? path.basename(info.meshName) : '';
-
-      console.log(`  [Progress] ${pct}% | ${info.stage} | ${meshInfo} ${meshName}`);
-    },
-    onTydraComplete: (info) => {
-      progressState.completeInfo = info;
-      console.log(`  [Complete] ${info.meshCount} meshes, ${info.materialCount} materials, ${info.textureCount} textures`);
-    }
-  });
-
-  const loader = new lightusd.LightUSDLoaderNative();
-
-  console.log(`\nLoading ${filename} (${data.length} bytes)...`);
-  console.log('-'.repeat(40));
-
-  const startTime = performance.now();
-  const ok = loader.loadFromBinary(data, filename);
-  const elapsed = performance.now() - startTime;
-
-  console.log('-'.repeat(40));
-
-  if (!ok) {
-    console.log(`\n❌ FAILED: ${loader.error()}`);
-    return false;
-  }
-
-  console.log(`\n✅ SUCCESS in ${elapsed.toFixed(1)}ms`);
-  console.log(`   Callback count: ${progressState.callbackCount}`);
-  console.log(`   Stages seen: ${[...progressState.stages].join(', ')}`);
-  console.log(`   Unique meshes: ${new Set(progressState.meshNames).size}`);
-
-  loader.delete();
-
-  return true;
+  if (!fs.existsSync(filePath)) return null;
+  return runTest(filePath, fs.readFileSync(filePath), path.basename(filePath));
 }
 
 // ============================================================================
@@ -274,7 +139,7 @@ async function runFileTest(filePath) {
 
 async function main() {
   console.log('╔════════════════════════════════════════════════════════════╗');
-  console.log('║     EM_JS Progress Callback Test (Node.js CLI)             ║');
+  console.log('║     Core Progress Callback Test (Node.js CLI)             ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
   const results = {
@@ -287,7 +152,7 @@ async function main() {
   const result1 = await runTest(
     'Synthetic USDA - 3 Meshes',
     generateSyntheticUSDA(3),
-    'synthetic-3mesh.usda'
+    'synthetic-3mesh.usda', 3
   );
   if (result1) results.passed++; else results.failed++;
 
@@ -295,7 +160,7 @@ async function main() {
   const result2 = await runTest(
     'Synthetic USDA - 10 Meshes',
     generateSyntheticUSDA(10),
-    'synthetic-10mesh.usda'
+    'synthetic-10mesh.usda', 10
   );
   if (result2) results.passed++; else results.failed++;
 
@@ -303,7 +168,7 @@ async function main() {
   const result3 = await runTest(
     'Mixed Geometry (Mesh + Cube + Sphere)',
     generateMixedGeometryUSDA(),
-    'mixed-geometry.usda'
+    'mixed-geometry.usda', 3
   );
   if (result3) results.passed++; else results.failed++;
 

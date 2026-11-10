@@ -861,7 +861,7 @@ declare -A prerendered_log=()
 # and Vulkan device creation, which is ~90% of a small case's cost.
 sweep_prerender() {
   local tag="$1" source="$2" prefix="$3" modes="$4"; shift 4
-  local backend_key="${tag%-legacy}"
+  local backend_key="$tag"
   if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
   [ -n "$modes" ] || return
   # Only backends whose screenshot comes from the in-loop viewport capture can
@@ -896,10 +896,10 @@ sweep_prerender() {
 
 case_run() {
   local tag="$1" marker="$2" source="$3" mode="$4" kind="$5" case_id="$6"; shift 6
-  local backend_key="${tag%-legacy}"
+  local backend_key="$tag"
   if [ "${backend_unavailable[$backend_key]:-0}" = 1 ]; then return; fi
   # The main AOV shards exercise every requested semantic on ordinary external
-  # textures.  Loader parity is a separate shard and owns the duplicated UDIM
+  # textures.  Package parity is a separate shard and owns the duplicated UDIM
   # and USDZ cases.  Keeping the switches here lets focused/manual runs retain
   # the historical exhaustive matrix while CI avoids paying renderer startup
   # cost twice for equivalent semantic evaluation.
@@ -954,12 +954,6 @@ case_run() {
   fi
   [[ "$tag" = vk-raster* ]] && grep -Eqi 'llvmpipe|lavapipe|\(cpu, driver|software rasterizer' "$log" && vk_software=1
   ran=$((ran+1)); probe "$img" "$kind" || { echo "FAIL: $tag $kind"; fail=1; }
-  if [[ "$tag" = *-legacy ]] && [ "$kind" != coat ]; then
-    local default_img="$OUT/${tag%-legacy}-$case_id.ppm"
-    [ -s "$default_img" ] && compare "$default_img" "$img" || {
-      echo "FAIL: $tag $case_id default/legacy parity"; fail=1;
-    }
-  fi
   if [ "${LUSDVIEW_SEMANTIC_PACKAGE_PARITY:-1}" != 0 ] &&
      [ "$case_id" = preview-vector ]; then
     local packed="$OUT/$tag-vector-usdz.ppm"
@@ -1008,8 +1002,7 @@ case_run() {
 }
 for loader in ${LUSDVIEW_SEMANTIC_LOADERS:-default}; do
   case "$loader" in
-    default) loader_args=(); loader_suffix=;;
-    legacy) loader_args=(--legacy-load); loader_suffix=-legacy;;
+    default|core) loader_args=(); loader_suffix=;;
     *) echo "unknown loader: $loader" >&2; exit 2;;
   esac
   for backend in ${LUSDVIEW_SEMANTIC_BACKENDS:-gl vk-raster vk-rt cuda hip}; do

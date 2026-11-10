@@ -1615,8 +1615,8 @@ def "P" (variantSets = "v"
   const Layer* binary_layer = binary.stage.GetRootLayer();
   const PrimSpec* binary_prim = binary_layer->prim_at_path("/P");
   assert(binary_prim && binary_prim->authored_property_names() == root_names);
-  const PrimSpec* holder = binary_layer->prim_at_path("/P/{v=x}");
-  assert(holder && holder->authored_property_names() == variant_names);
+  assert(!binary_layer->prim_at_path("/P/{v=x}"));
+  assert(binary_prim->meta().variantSets()[0].variants[0].property_names() == variant_names);
   const std::string from_binary = WriteLayerToString(*binary_layer, options);
   LoadResult binary_ascii = LoadUSDAFromString(from_binary.data(), from_binary.size());
   assert(binary_ascii.success);

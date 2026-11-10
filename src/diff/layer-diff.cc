@@ -4,6 +4,7 @@
 // LightUSD Next - Layer / PrimSpec diff (see layer-diff.hh).
 
 #include "layer-diff.hh"
+#include "parser/extension-field.hh"
 #include "layer-diff-internal.hh"
 
 #include <algorithm>
@@ -284,6 +285,29 @@ bool ExtensionFieldsEqual(const std::vector<DecodedExtensionField>& lhs,
   return true;
 }
 
+// USDA retains unknown source opinions, whereas Crate stores decoded fields.
+// Compare their union, preserving every field name, list-op qualifier and raw
+// spelling, rather than mistaking the storage representation for a change.
+using RawFields = std::vector<std::pair<std::string, std::string>>;
+std::vector<DecodedExtensionField> CanonicalExtensions(
+    const RawFields& raw, const std::vector<DecodedExtensionField>& typed) {
+  auto fields = typed;
+  for (const auto& item : raw) {
+    if (std::any_of(fields.begin(), fields.end(), [&](const DecodedExtensionField& field) {
+          return field.name == item.first;
+        })) continue;
+    fields.push_back(ParseExtensionField(item.first, item.second));
+  }
+  return fields;
+}
+
+bool ExtensionOpinionsEqual(const RawFields& lr,
+    const std::vector<DecodedExtensionField>& lt, const RawFields& rr,
+    const std::vector<DecodedExtensionField>& rt, const DiffOptions& options) {
+  return ExtensionFieldsEqual(CanonicalExtensions(lr, lt),
+                              CanonicalExtensions(rr, rt), options);
+}
+
 bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
                       const DiffOptions &opts,
                       std::vector<std::string> *reasons) {
@@ -356,7 +380,7 @@ bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
     note(DictsHaveTypeConflict(l.sdrMetadata, r.sdrMetadata) ? "sdrMetadata(type-conflict)"
                                       : "sdrMetadata");
   }
-  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
+  if (!ExtensionOpinionsEqual(l.unknownMeta, l.unknownFields, r.unknownMeta, r.unknownFields, opts)) {
     note("extensionFields");
   }
   return equal;
@@ -528,7 +552,7 @@ bool VariantSetsEqual(const std::vector<PrimVariantSetData> &l,
     if (reason && reason->empty()) *reason = r_;
     return false;
   };
-  if (depth > 64) return true;  // matches the parser's nesting cap
+  if (depth > 64) return fail("variantSets:depth");
   if (l.size() != r.size()) return fail("variantSets:count");
   for (const PrimVariantSetData &ls : l) {
     const PrimVariantSetData *rs = nullptr;
@@ -571,17 +595,18 @@ bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
     if (reason && reason->empty()) *reason = r_;
     return false;
   };
-  if (l.active != r.active) return fail("active");
-  if (l.hidden != r.hidden) return fail("hidden");
+  if (l.active != r.active || l.active_authored != r.active_authored) return fail("active");
+  if (l.hidden != r.hidden || l.hidden_authored != r.hidden_authored) return fail("hidden");
   if (l.doc != r.doc) return fail("doc");
+  if (l.kind != r.kind) return fail("kind");
   if (l.references != r.references) return fail("references");
   if (l.payloads != r.payloads) return fail("payload");
   if (l.inherits != r.inherits) return fail("inherits");
   if (l.specializes != r.specializes) return fail("specializes");
   if (l.variantSelections != r.variantSelections) return fail("variants");
-  if (l.unknownMeta != r.unknownMeta) return fail("unknownMeta");
-  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
-    return fail("extensionFields");
+  if (!ExtensionOpinionsEqual(l.unknownMeta, l.unknownFields, r.unknownMeta, r.unknownFields, opts)) {
+    return fail(l.unknownFields.empty() && r.unknownFields.empty()
+                    ? "unknownMeta" : "extensionFields");
   }
   if (l.properties.size() != r.properties.size()) return fail("properties");
   for (const VariantProperty &lp : l.properties) {
@@ -605,22 +630,32 @@ bool VariantOptionEqual(const PrimVariantData &l, const PrimVariantData &r,
       return fail("relationships");
     }
   }
-  if (l.relationshipFlags != r.relationshipFlags) {
-    return fail("relationships");
+  // USD relationships are uniform by definition. Crate records that field
+  // even when USDA omitted the redundant qualifier, as for ordinary prims.
+  for (const auto& relationship : l.relationships) {
+    const auto lf = l.relationshipFlags.find(relationship.first);
+    const auto rf = r.relationshipFlags.find(relationship.first);
+    constexpr uint16_t mask = PropSlot::kFlagCustom | PropSlot::kFlagVarying;
+    const uint16_t left = lf == l.relationshipFlags.end() ? 0 : lf->second & mask;
+    const uint16_t right = rf == r.relationshipFlags.end() ? 0 : rf->second & mask;
+    if (left != right) return fail("relationships");
   }
-  // Content subtrees compare structurally (prim count + paths): a full
-  // recursive layer diff here would recurse into this same machinery.
-  const size_t lc = l.content ? l.content->prim_count() : 0;
-  const size_t rc = r.content ? r.content->prim_count() : 0;
-  if (lc != rc) return fail("content");
+  // A variant body is authored data even when its option is unselected.
+  // Compare values and metadata, not merely the body prim paths/count.
+  if (bool(l.content) != bool(r.content)) return fail("content");
   if (l.content && r.content) {
-    for (size_t i = 0; i < lc; ++i) {
-      const PrimSpec *lp = l.content->prim(static_cast<uint32_t>(i));
-      const PrimSpec *rp = r.content->prim(static_cast<uint32_t>(i));
-      if (!lp || !rp || lp->path().str() != rp->path().str()) {
-        return fail("content");
-      }
-    }
+    static thread_local unsigned content_depth = 0;
+    if (content_depth >= 64) return fail("content:depth");
+    struct DepthGuard {
+      unsigned& depth;
+      explicit DepthGuard(unsigned& value) : depth(value) { ++depth; }
+      ~DepthGuard() { --depth; }
+    } guard(content_depth);
+    std::unordered_map<std::string, PrimSpecDiff> prims;
+    std::unordered_map<std::string, PropDiff> properties;
+    LayerMetaDiff metadata;
+    Diff(*l.content, *r.content, prims, properties, opts, &metadata);
+    if (!prims.empty() || !properties.empty() || metadata.changed()) return fail("content");
   }
   std::string nested;
   if (!VariantSetsEqual(l.variantSets, r.variantSets, opts, &nested,
@@ -756,7 +791,7 @@ bool ComparePrimMeta(const PrimMetadata &l, const PrimMetadata &r,
   if (!CompareDictValues(l.clips(), r.clips(), opts, nullptr)) {
     note("meta:clips");
   }
-  if (!ExtensionFieldsEqual(l.unknownFields(), r.unknownFields(), opts)) {
+  if (!ExtensionOpinionsEqual(l.unknownMeta(), l.unknownFields(), r.unknownMeta(), r.unknownFields(), opts)) {
     note("meta:extensionFields");
   }
   const StringListOps& lc = l.clipSetEdits();
@@ -1045,7 +1080,7 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
       }
     }
   }
-  if (!ExtensionFieldsEqual(lhs.unknownFields, rhs.unknownFields, opts)) {
+  if (!ExtensionOpinionsEqual(lhs.unknownMeta, lhs.unknownFields, rhs.unknownMeta, rhs.unknownFields, opts)) {
     noteField("extensionFields", std::to_string(lhs.unknownFields.size()),
               std::to_string(rhs.unknownFields.size()));
   }

@@ -53,11 +53,10 @@ import {
 let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
 let loader = null; // reused LightUSDLoader instance
-let loaderModuleBackend = null; // 'legacy' combined module or 'next' next-only module
+let loaderModuleBackend = null; // Core module, retained across loads.
 let currentUsd = null; // current native scene (embind object)
 let raycaster, pointerNdc;
 let pickedObject = null;
-let legacyAsyncSupport = null;
 
 let rawBytes = null; // Uint8Array of the active model
 let currentName = 'sample scene';
@@ -278,7 +277,7 @@ function updateTextureLoadStats(info = {}) {
 
 // Optimization + scene-transform parameters (driven by lil-gui).
 const params = {
-	backend: 'legacy',
+	backend: 'next',
 
 	// Tydra render-scene optimizations.
 	materialDedup: true,
@@ -547,8 +546,8 @@ function setupCameraMovementKeys() {
 // Conversion + scene build
 // ---------------------------------------------------------------------------
 
-async function ensureLoader(backend = 'legacy') {
-	const moduleBackend = backend === 'next' ? 'next' : 'legacy';
+async function ensureLoader(_backend = 'next') {
+	const moduleBackend = 'next';
 	if (loader && loaderModuleBackend === moduleBackend) return loader;
 	loader = new LightUSDLoader();
 	await loader.init({
@@ -557,24 +556,7 @@ async function ensureLoader(backend = 'legacy') {
 		backend: moduleBackend
 	});
 	loaderModuleBackend = moduleBackend;
-	legacyAsyncSupport = null;
 	return loader;
-}
-
-function hasLegacyAsyncSupport() {
-	if (legacyAsyncSupport !== null) return legacyAsyncSupport;
-	legacyAsyncSupport = false;
-	try {
-		const native = loader?.native_;
-		if (native && typeof native.LightUSDLoaderNative === 'function') {
-			const usd = new native.LightUSDLoaderNative();
-			legacyAsyncSupport = typeof usd.loadFromBinaryAsync === 'function';
-			if (typeof usd.delete === 'function') usd.delete();
-		}
-	} catch (_) {
-		legacyAsyncSupport = false;
-	}
-	return legacyAsyncSupport;
 }
 
 function formatNativeProgressMessage(label, info = {}) {
@@ -651,7 +633,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 	const label = progressOptions.label || 'Converting';
 	const base = Number.isFinite(progressOptions.base) ? progressOptions.base : 20;
 	const range = Number.isFinite(progressOptions.range) ? progressOptions.range : 30;
-	const backend = options.backend || params.backend || 'legacy';
+	const backend = 'next';
 	let syntheticStep = 0;
 	const report = (info = {}) => {
 		let localPct = Number(info.localPercentage);
@@ -689,8 +671,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 		}
 	}
 
-	if (backend === 'legacy' && typeof loader.parseAsync === 'function' &&
-			hasLegacyAsyncSupport()) {
+	if (typeof loader.parseAsync === 'function') {
 		return loader.parseAsync(bytes, name, {
 			...options,
 			onLightUSDDebug: report,
@@ -1304,7 +1285,7 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 // Convert `bytes` with the given optimization options and return the native
 // scene + counts. Does NOT mount it into the Three.js scene.
 async function convertScene(bytes, name, opts) {
-	const requestedBackend = opts.backend || params.backend || 'legacy';
+	const requestedBackend = 'next';
 	const backend = requestedBackend;
 	await ensureLoader(backend);
 	const usd = await parseWithOptions(bytes, name, {
@@ -1712,7 +1693,7 @@ async function reapplyThreePostProcess() {
 
 function describeOptions() {
 	const on = [];
-	const backend = currentUsd?.__backend || params.backend || 'legacy';
+	const backend = currentUsd?.__backend || 'next';
 	const workerNote = currentUsd?.__workerConverted ? '/worker' : '';
 	const backendNote = `backend ${backend}` +
 		workerNote +
@@ -1966,7 +1947,7 @@ function buildGui() {
 	gui = new GUI({ title: 'Dedup / Optimization' });
 
 	const backendFolder = gui.addFolder('Backend');
-	guiControllers.push(backendFolder.add(params, 'backend', ['legacy', 'next', 'auto'])
+	guiControllers.push(backendFolder.add(params, 'backend', ['next'])
 		.name('Loader Backend').onChange(rebuild));
 	guiControllers.push(backendFolder.add(params, 'useWorker')
 		.name('Worker Conversion').onChange(rebuild));
@@ -2139,7 +2120,7 @@ async function main() {
 	params.useWorker = flag('worker', params.useWorker);
 	const backend = search.get('backend');
 	if (backend === 'legacy' || backend === 'next' || backend === 'auto') {
-		params.backend = backend;
+		params.backend = 'next';
 	}
 	params.materialDedup = flag('dedup', params.materialDedup);
 	params.mergeMeshes = flag('merge', params.mergeMeshes);

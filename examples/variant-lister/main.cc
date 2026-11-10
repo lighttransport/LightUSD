@@ -1,236 +1,144 @@
-﻿#include <iostream>
-#include <iomanip>
-#include <map>
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <algorithm>
+#include <iostream>
 #include <string>
+#include <vector>
 
-#include "lightusd.hh"
-#include "tydra/render-data.hh"
-#include "tydra/variant-converter.hh"
-#include "tydra/variant-support.hh"
+#include "lightusd-c.h"
 
-using namespace lightusd;
+namespace {
+struct VariantSet {
+  std::string name;
+  std::string selection;
+  std::vector<std::string> options;
+};
+struct VariantGroup {
+  std::string path;
+  std::vector<VariantSet> sets;
+};
 
-using namespace lightusd::legacy;  // NOLINT
-using namespace lightusd::tydra;
-using namespace lightusd::legacy::tydra;  // NOLINT
-
-void print_help() {
-  std::cout << "Usage: variant-lister [options] input.usda/usdc/usdz\n\n";
-  std::cout << "List all variant sets and options in a USD file.\n\n";
-  std::cout << "Options:\n";
-  std::cout << "  -h, --help              Show this help message\n";
-  std::cout << "  -v, --verbose           Show detailed variant information\n";
-  std::cout << "  -s, --summary           Show summary statistics\n";
-  std::cout << "  --json                  Output in JSON format\n";
+std::string copy(lightusd_sv value) {
+  return value.data ? std::string(value.data, value.len) : std::string();
 }
 
-void print_variant_tree(const VariantGroup& group, int indent = 0) {
-  std::string prefix(indent, ' ');
-  std::cout << prefix << "├─ Prim: " << group.prim_path << "\n";
-
-  for (size_t i = 0; i < group.variant_sets.size(); ++i) {
-    const auto& vs = group.variant_sets[i];
-    bool is_last_vs = (i == group.variant_sets.size() - 1);
-    std::string vs_prefix = is_last_vs ? "└─" : "├─";
-    std::string vs_indent = is_last_vs ? "   " : "│  ";
-
-    std::cout << prefix << vs_prefix << " VariantSet: \"" << vs.name << "\"\n";
-    std::cout << prefix << vs_indent << "├─ Default: "
-              << (vs.default_option_index >= 0 &&
-                  vs.default_option_index < static_cast<int32_t>(vs.options.size()) ?
-                  vs.options[vs.default_option_index].name : "none") << "\n";
-
-    for (size_t j = 0; j < vs.options.size(); ++j) {
-      const auto& opt = vs.options[j];
-      bool is_last = (j == vs.options.size() - 1);
-      std::string opt_prefix = is_last ? "└─" : "├─";
-      std::string opt_indent = is_last ? "   " : "│  ";
-
-      std::cout << prefix << vs_indent << opt_prefix << " \"" << opt.name << "\"";
-
-      if (!opt.nested_variant_sets.empty()) {
-        std::cout << " [+nested: " << opt.nested_variant_sets.size() << "]";
-      }
-
-      if (!opt.description.empty()) {
-        std::cout << " - " << opt.description;
-      }
-      std::cout << "\n";
-
-      // Show nested variants (max 3 for readability)
-      size_t nested_count = std::min(opt.nested_variant_sets.size(), size_t(3));
-      for (size_t k = 0; k < nested_count; ++k) {
-        const auto nested_vs_ptr = opt.nested_variant_sets[k];
-        bool is_last_nested = (k == nested_count - 1);
-        std::string nested_prefix = is_last_nested ? "└─" : "├─";
-        std::string nested_indent = is_last_nested ? "   " : "│  ";
-
-        std::cout << prefix << vs_indent << opt_indent << nested_prefix
-                  << " VariantSet: \"" << nested_vs_ptr->name << "\" ("
-                  << nested_vs_ptr->options.size() << " options)\n";
-      }
-
-      if (opt.nested_variant_sets.size() > 3) {
-        std::cout << prefix << vs_indent << opt_indent << "└─ ... and "
-                  << (opt.nested_variant_sets.size() - 3) << " more nested variant sets\n";
-      }
-    }
+void collect(const lightusd_stage* stage, lightusd_prim prim,
+             std::vector<VariantGroup>* groups) {
+  VariantGroup group;
+  group.path = copy(lightusd_prim_path(prim));
+  // Query the stage view by path: root-prim traversal returns authored layer
+  // handles, while variant metadata belongs to the composed prim view.
+  const lightusd_prim composed = lightusd_stage_prim_at_path(stage, group.path.c_str());
+  const size_t set_count = lightusd_prim_variant_set_count(composed);
+  for (size_t i = 0; i < set_count; ++i) {
+    VariantSet set;
+    set.name = copy(lightusd_prim_variant_set_name(composed, i));
+    set.selection = copy(lightusd_variant_selection(composed, set.name.c_str()));
+    const size_t option_count = lightusd_variant_count(composed, set.name.c_str());
+    for (size_t j = 0; j < option_count; ++j)
+      set.options.push_back(copy(lightusd_variant_name(composed, set.name.c_str(), j)));
+    group.sets.push_back(std::move(set));
   }
+  if (!group.sets.empty()) groups->push_back(std::move(group));
+  for (size_t i = 0, n = lightusd_prim_child_count(prim); i < n; ++i)
+    collect(stage, lightusd_prim_child(prim, i), groups);
 }
 
-void print_summary(const std::vector<VariantGroup>& groups) {
-  std::cout << "\n=== Summary ===\n";
-  std::cout << "Total variant groups: " << groups.size() << "\n";
-
-  size_t total_sets = 0;
-  size_t total_options = 0;
-  uint32_t max_depth = 0;
-
-  for (const auto& group : groups) {
-    total_sets += group.variant_sets.size();
-
-    for (const auto& vs : group.variant_sets) {
-      total_options += vs.options.size();
-
-      // Calculate depth (simplified - just check if nested exists)
-      for (const auto& opt : vs.options) {
-        if (!opt.nested_variant_sets.empty()) {
-          max_depth = std::max(max_depth, 2u);
-        }
-      }
+void json_string(const std::string& value) {
+  std::cout << '"';
+  for (unsigned char c : value) {
+    switch (c) {
+      case '"': std::cout << "\\\""; break;
+      case '\\': std::cout << "\\\\"; break;
+      case '\n': std::cout << "\\n"; break;
+      case '\r': std::cout << "\\r"; break;
+      case '\t': std::cout << "\\t"; break;
+      default:
+        if (c < 0x20) std::cout << "?";
+        else std::cout << static_cast<char>(c);
     }
   }
-
-  std::cout << "Total variant sets: " << total_sets << "\n";
-  std::cout << "Total variant options: " << total_options << "\n";
-  std::cout << "Max nesting depth: " << max_depth << "\n";
+  std::cout << '"';
+}
 }
 
 int main(int argc, char** argv) {
-  if (argc < 2) {
-    print_help();
-    return 1;
-  }
-
-  std::string filepath;
-  bool verbose = false;
-  bool show_summary = false;
-  bool json_output = false;
-
+  bool json = false, summary = false, verbose = false;
+  std::string filename;
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-
+    const std::string arg(argv[i]);
     if (arg == "-h" || arg == "--help") {
-      print_help();
+      std::cout << "Usage: variant-lister [--json] [--summary] [--verbose] input.usda/usdc/usdz\n";
       return 0;
-    } else if (arg == "-v" || arg == "--verbose") {
-      verbose = true;
-    } else if (arg == "-s" || arg == "--summary") {
-      show_summary = true;
-    } else if (arg == "--json") {
-      json_output = true;
-    } else {
-      filepath = arg;
-    }
+    } else if (arg == "--json") json = true;
+    else if (arg == "-s" || arg == "--summary") summary = true;
+    else if (arg == "-v" || arg == "--verbose") verbose = true;
+    else filename = arg;
   }
-
-  if (filepath.empty()) {
+  if (filename.empty()) {
     std::cerr << "Error: No input file specified\n";
-    print_help();
     return 1;
   }
 
-  // Load USD file
-  Stage stage;
-  std::string warn, err;
-
-  bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err);
-  if (!warn.empty()) {
-    std::cerr << "WARN: " << warn << "\n";
-  }
-  if (!ret) {
-    std::cerr << "Error: Failed to load USD file\n";
-    std::cerr << err << "\n";
+  lightusd_stage* stage = nullptr;
+  lightusd_load_options load_options;
+  lightusd_load_options_init(&load_options);
+  // Variant inspection describes the authored root layer. Composition can
+  // flatten away that layer-level authoring metadata, so keep this load raw.
+  load_options.composed = 0;
+  const lightusd_status status =
+      lightusd_stage_load(filename.c_str(), &load_options, &stage);
+  if (status != LIGHTUSD_OK) {
+    std::cerr << "Error: Failed to load USD file: " << lightusd_last_error() << '\n';
     return 1;
   }
+  std::vector<VariantGroup> groups;
+  for (size_t i = 0, n = lightusd_stage_root_prim_count(stage); i < n; ++i)
+    collect(stage, lightusd_stage_root_prim(stage, i), &groups);
 
-  // Convert variants
-  RenderScene scene;
-  VariantConverter converter;
-  if (!converter.ConvertVariants(stage, &scene, &err)) {
-    std::cerr << "Error: Failed to extract variants\n";
-    std::cerr << err << "\n";
-    return 1;
-  }
-
-  if (scene.variant_groups.empty()) {
-    std::cout << "No variants found in file: " << filepath << "\n";
-    return 0;
-  }
-
-  // Create variant manager for statistics
-  DefaultVariantManager manager;
-  auto& mutable_groups = manager.GetMutableVariantGroups();
-  mutable_groups = scene.variant_groups;
-
-  // Output
-  if (json_output) {
-    std::cout << "{\n";
-    std::cout << "  \"file\": \"" << filepath << "\",\n";
-    std::cout << "  \"variant_groups\": [\n";
-
-    for (size_t i = 0; i < scene.variant_groups.size(); ++i) {
-      const auto& group = scene.variant_groups[i];
-      std::cout << "    {\n";
-      std::cout << "      \"prim_path\": \"" << group.prim_path << "\",\n";
-      std::cout << "      \"variant_sets\": [\n";
-
-      for (size_t j = 0; j < group.variant_sets.size(); ++j) {
-        const auto& vs = group.variant_sets[j];
-        std::cout << "        {\n";
-        std::cout << "          \"name\": \"" << vs.name << "\",\n";
-        std::cout << "          \"options\": [";
-
-        for (size_t k = 0; k < vs.options.size(); ++k) {
-          if (k > 0) std::cout << ", ";
-          std::cout << "\"" << vs.options[k].name << "\"";
+  size_t sets = 0, options = 0;
+  if (json) {
+    std::cout << "{\n  \"file\": "; json_string(filename);
+    std::cout << ",\n  \"variant_groups\": [";
+    for (size_t i = 0; i < groups.size(); ++i) {
+      const auto& group = groups[i];
+      std::cout << (i ? "," : "") << "\n    {\n      \"prim_path\": "; json_string(group.path);
+      std::cout << ",\n      \"variant_sets\": [";
+      for (size_t j = 0; j < group.sets.size(); ++j) {
+        const auto& set = group.sets[j];
+        std::cout << (j ? "," : "") << "{\"name\":"; json_string(set.name);
+        std::cout << ",\"selection\":"; json_string(set.selection);
+        std::cout << ",\"options\":[";
+        for (size_t k = 0; k < set.options.size(); ++k) {
+          if (k) std::cout << ',';
+          json_string(set.options[k]);
         }
-
-        std::cout << "]\n";
-        std::cout << "        }";
-        if (j < group.variant_sets.size() - 1) std::cout << ",";
-        std::cout << "\n";
+        std::cout << "]}";
       }
-
-      std::cout << "      ]\n";
-      std::cout << "    }";
-      if (i < scene.variant_groups.size() - 1) std::cout << ",";
-      std::cout << "\n";
+      std::cout << "]\n    }";
     }
-
-    std::cout << "  ]\n";
-    std::cout << "}\n";
+    std::cout << "\n  ]\n}\n";
   } else {
-    std::cout << "=== Variants in " << filepath << " ===\n\n";
-
-    for (const auto& group : scene.variant_groups) {
-      print_variant_tree(group);
-      std::cout << "\n";
+    std::cout << "=== Variants in " << filename << " ===\n\n";
+    for (const auto& group : groups) {
+      std::cout << "Prim: " << group.path << '\n';
+      for (const auto& set : group.sets) {
+        ++sets; options += set.options.size();
+        std::cout << "  VariantSet: \"" << set.name << "\" (selected: "
+                  << (set.selection.empty() ? "none" : set.selection) << ")\n";
+        for (const auto& option : set.options) std::cout << "    \"" << option << "\"\n";
+      }
+      std::cout << '\n';
     }
-
-    if (show_summary) {
-      print_summary(scene.variant_groups);
+    if (groups.empty()) std::cout << "No variants found in file: " << filename << '\n';
+    if (summary || verbose) {
+      if (sets == 0) for (const auto& g : groups) for (const auto& s : g.sets) {
+        ++sets; options += s.options.size();
+      }
+      std::cout << "=== Summary ===\nTotal variant groups: " << groups.size()
+                << "\nTotal variant sets: " << sets
+                << "\nTotal variant options: " << options << "\n";
     }
   }
-
-  if (verbose && !json_output) {
-    auto stats = manager.GetStatistics();
-    std::cout << "\n=== Statistics ===\n";
-    std::cout << "Variant groups: " << stats.num_variant_groups << "\n";
-    std::cout << "Variant sets: " << stats.num_variant_sets << "\n";
-    std::cout << "Variant options: " << stats.num_variant_options << "\n";
-    std::cout << "Max nesting depth: " << stats.max_nesting_depth << "\n";
-  }
-
+  lightusd_stage_destroy(stage);
   return 0;
 }

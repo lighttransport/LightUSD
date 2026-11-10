@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Driver-level regression coverage for the native lusdzconvert executable.
-# (Material dedupe/-optimizeMaterials is JS-converter only and not covered.)
+# Includes core material deduplication and binding retargeting.
 #
 # Usage: run-lusdzconvert-regression.sh <lusdzconvert> <lusdcat> <project-source-dir>
 
@@ -43,7 +43,7 @@ OUT_USDZ="${WORK}/out.usdz"
 OUT_USDA="${WORK}/out.usda"
 
 if ! "${LUSDZCONVERT}" "${WORK}/scene.usda" "${OUT_USDZ}" \
-    -textureFormat jpeg >/dev/null 2>&1; then
+    -textureFormat jpeg -optimizeMaterials dedupe >/dev/null 2>&1; then
   echo "FAIL: lusdzconvert conversion failed"
   exit 1
 fi
@@ -67,6 +67,16 @@ fi
 if grep -q 'Texture.png' "${OUT_USDA}"; then
   echo "FAIL: converted layer retained stale PNG texture reference"
   grep 'inputs:file' "${OUT_USDA}" || true
+  exit 1
+fi
+
+if grep -q 'def Material "MatB"' "${OUT_USDA}" ||
+   grep -q '</Root/MatB' "${OUT_USDA}"; then
+  echo "FAIL: duplicate material or stale binding remains"
+  exit 1
+fi
+if [ "$(grep -c 'def Material ' "${OUT_USDA}")" -ne 1 ]; then
+  echo "FAIL: expected exactly one deduplicated material"
   exit 1
 fi
 

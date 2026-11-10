@@ -64,21 +64,7 @@ if [ "$vk_rc" -ne 0 ]; then
   echo "$vk_log"; echo "FAIL: Vulkan linked-light render failed"; exit 1
 fi
 
-# The legacy Tydra converter must resolve the same CollectionAPI records. This
-# used to silently leave every mesh linked to every light because collection
-# resolution ran neither before the streaming completion callback nor for
-# non-Sphere light schema types.
-legacy_log="$(timeout 45s "$LUSDVIEW" --config "$TMP/config.json" --backend vk \
-  --headless --legacy-load --camera /World/Camera --frames 3 \
-  --screenshot "$TMP/legacy-vk.ppm" "$asset" 2>&1)"
-legacy_rc=$?
-if [ "$legacy_rc" -ne 0 ]; then
-  echo "$legacy_log"
-  echo "FAIL: legacy Vulkan linked-light render failed"
-  exit 1
-fi
-
-python3 - "$TMP/gl.ppm" "$TMP/vk.ppm" "$TMP/legacy-vk.ppm" <<'PY'
+python3 - "$TMP/gl.ppm" "$TMP/vk.ppm" <<'PY'
 import sys
 
 def read_ppm(path):
@@ -115,7 +101,6 @@ def classes(path):
 
 gl_counts, gl_means = classes(sys.argv[1])
 vk_counts, vk_means = classes(sys.argv[2])
-legacy_counts, legacy_means = classes(sys.argv[3])
 for name in gl_means:
     error = max(abs(gl_means[name][c] - vk_means[name][c]) for c in range(3))
     if error > 12:
@@ -123,13 +108,5 @@ for name in gl_means:
             f"FAIL: GL/VK {name} response differs by {error:.1f} levels "
             f"({gl_means[name]} vs {vk_means[name]})"
         )
-    loader_error = max(abs(vk_means[name][c] - legacy_means[name][c])
-                       for c in range(3))
-    if loader_error > 2:
-        raise SystemExit(
-            f"FAIL: next/legacy Vulkan {name} response differs by "
-            f"{loader_error:.1f} levels ({vk_means[name]} vs "
-            f"{legacy_means[name]})"
-        )
-print("PASS: linked raster multi-light", gl_counts, vk_counts, legacy_counts)
+print("PASS: linked raster multi-light", gl_counts, vk_counts )
 PY

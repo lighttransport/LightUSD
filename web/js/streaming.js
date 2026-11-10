@@ -1,58 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-present Light Transport Entertainment, Inc.
 //
-// streaming.js — low-memory, streaming USD/USDZ renderer for the browser.
+// Core WebGL2 USD/USDZ preview with browser-side image decoding. RenderStream
+// materializes one mesh at a time; GL uploads finish before its scratch is
+// reused. Both entry points support USDA, USDC and composed USDZ packages.
+// loadBytes retains core scene inspection metadata through texture/mesh upload;
+// loadBytesIncremental uploads geometry first and then resolves archive textures.
+// Image bytes remain in JS; only texture identifiers enter the native resolver.
+// Per-phase statistics report WASM heap reservation, which is distinct from live
+// native allocations and browser/GPU memory. end() frees the native scene after
+// upload; repeated loads and dispose() release the renderer's GL resources.
 //
-// Goal: render a USD/USDZ scene (geometry + textures + basic UsdPreviewSurface /
-// MaterialX PBR shading) while keeping the WASM linear heap close to the INPUT
-// FILE SIZE — not the 5–10x blow-up of a full typed-stage import.
-//
-// How it stays low-memory:
-//   1. Input is streamed into the WASM heap once (chunked HEAPU8.set into a
-//      zero-copy buffer), so the input exists in the heap exactly once.
-//   2. Textures are NOT decoded in WASM (loadTextureInNative=false): images stay
-//      as their original encoded bytes (PNG/JPEG/...) in the heap — roughly the
-//      same size they occupy inside the .usdz — and are decoded per-texture in JS
-//      via createImageBitmap (off the WASM heap, GPU-accelerated).
-//   3. Geometry is read through the binding's ZERO-COPY descriptors
-//      (getMeshPtr -> {ptr,length,dtype}) as typed-array views into the heap and
-//      uploaded straight to GL buffers. Nothing is copied into JS first.
-//   4. As soon as every mesh and texture is on the GPU, usd.reset() frees the
-//      entire WASM-side render scene (geometry + encoded images + input). The GL
-//      buffers/textures live in GPU memory, independent of the WASM heap, so the
-//      resident WASM working set drops to ~0 while rendering.
-//
-// Two load paths:
-//   - loadBytesIncremental() (DEFAULT): the low-memory path. JS extracts the root
-//     crate (textures stay in JS) and the C++ RenderStream binding loads it over
-//     the next-pipeline LAZY crate, materializing ONE mesh's geometry at a time.
-//     Peak WASM heap ~= crate size (≈ input) — e.g. geometry-scene 264 MB crate ->
-//     ~335 MB peak (1.27x), vs the eager path's ~5-10x. Renders geometry + UVs +
-//     textured UsdPreviewSurface / MaterialX PBR; textures are decoded in JS from
-//     the archive (off the WASM heap) and uploaded to the GPU.
-//   - loadBytes(): the eager path. loadFromBinary() builds the whole typed Stage
-//     + RenderScene at once (transient peak ~5-10x input; emscripten never
-//     returns grown heap to the OS), but supports textures + full materials.
-// The memory panel reports the honest per-phase heap for whichever path ran.
-//
-// The renderer is self-contained raw WebGL2 (no Three.js): a compact GGX + Smith
-// + Schlick direct light plus a hemispheric ambient term, with base-color /
-// normal / metallic-roughness / occlusion / emissive texture support. Material
-// parameters come from getMaterial(matId), which tydra resolves identically for
-// UsdPreviewSurface AND MaterialX networks — so "basic MaterialX shading" needs
-// no JS-side network evaluation here.
-//
-// Usage (module):
-//   import { StreamingUSDRenderer, mountStreamingDemo } from './streaming.js';
-//   const r = new StreamingUSDRenderer(canvas);
-//   await r.init();
-//   const stats = await r.loadBytes(new Uint8Array(buf), 'scene.usdz');
-//   // stats.memory has the per-phase heap readout; r.onMemory(cb) for live polls.
-//
-// or just include streaming.html, which calls mountStreamingDemo().
+// import {StreamingUSDRenderer} from './streaming.js';
+// const renderer=new StreamingUSDRenderer(canvas); await renderer.init();
+// await renderer.loadBytesIncremental(bytes,'scene.usdz');
 
 import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
-import { parseUSDZEntries } from './src/usdzconvert.js';
+import { createCoreRenderInspector } from './src/lightusd/CoreRenderInspector.js';
+import { parseUSDZEntries,isImageName } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
 // Small math helpers (column-major mat4, like WebGL/GLSL).
@@ -88,11 +53,13 @@ const M = {
     o[15] = 1;
     return o;
   },
-  // Normal matrix = transpose(inverse(upper-left 3x3 of model)). Models here are
-  // a uniform scale+translate, so the upper-left is orthogonal up to scale; pass
-  // the model's 3x3 (good enough for non-skewed transforms).
   normalMat3(m) {
-    return new Float32Array([m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]]);
+    const a=[m[0],m[1],m[2]], b=[m[4],m[5],m[6]], c=[m[8],m[9],m[10]];
+    const x=cross3(b,c), y=cross3(c,a), z=cross3(a,b);
+    const determinant=dot3(a,x);
+    return Math.abs(determinant)>1e-20
+      ?new Float32Array([...x,...y,...z].map(value=>value/determinant))
+      :new Float32Array([1,0,0,0,1,0,0,0,1]);
   },
 };
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -367,35 +334,28 @@ export class StreamingUSDRenderer {
   // scene (textures left encoded), uploads every mesh + texture to the GPU, then
   // frees the WASM render scene. Returns { meshes, textures, materials, memory }.
   async loadBytes(bytes, filename = 'scene.usdz') {
-    const gl = this.gl;
-    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    this._inputSize = u8.length;
+    const u8=ArrayBuffer.isView(bytes)
+      ?new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength):new Uint8Array(bytes);
+    this._inputSize=u8.length;
     this._disposeScene();
-
-    const mem = { input: u8.length, phases: [] };
-    const snap = (label) => this._snapMem(mem, label);
-
-    // Fresh native loader; keep textures ENCODED in the heap (JS decodes them),
-    // so decoded RGBA never lands in the WASM heap.
-    this.usd = new this.native.LightUSDLoaderNative();
-    if (typeof this.usd.setLoadTextureInNative === 'function') {
-      this.usd.setLoadTextureInNative(false);
-    }
+    const mem={input:u8.length,phases:[],incremental:false};
+    const snap=label=>this._snapMem(mem,label);
     snap('baseline');
-
-    // Build the render scene. NOTE: loadFromBinary currently converts the WHOLE
-    // scene eagerly (parse Stage + convert to RenderScene), so the transient peak
-    // is several× the input — see the memory panel. The streaming wins below
-    // (encoded textures, zero-copy upload, reset) bound the RESIDENT footprint,
-    // not this conversion peak; bounding the peak to ~input needs an incremental
-    // converter (tracked in the header notes).
-    if (!this.usd.loadFromBinary(u8, filename)) {
-      const err = this.usd.error ? this.usd.error() : 'unknown';
-      throw new Error('Failed to load USD: ' + err);
-    }
-    snap('render scene built (peak)');
-
-    return this._uploadRenderScene(mem, snap);
+    try {
+      this.usd=await createCoreRenderInspector(this.native,u8,filename,{loadTextures:false,omitTexturePayloads:true});
+      this._composedTexBytes=new Map();
+      if(u8[0]===0x50 && u8[1]===0x4b) {
+        const entries=new Map(parseUSDZEntries(u8).map(entry=>[this._normTexPath(entry.name),entry.data]));
+        for(let i=0;i<this.usd.numImages();i++) {
+          const image=this.usd.getImageCopy(i);
+          const bytes=entries.get(this._normTexPath(image.uri));
+          if(bytes)this._composedTexBytes.set(i,bytes);
+        }
+      }
+      snap('core scene loaded');
+      return await this._uploadRenderScene(mem,snap);
+    } catch(error) {this._disposeScene();throw error;}
+    finally {this._composedTexBytes=null;}
   }
 
   // Render an EXTERNALLY composed native instance. The instance must already be
@@ -453,7 +413,7 @@ export class StreamingUSDRenderer {
     snap('meshes uploaded to GPU');
 
     // Free the entire WASM-side render scene + input. The GPU keeps the data.
-    this.usd.reset();
+    this.usd.end();
     snap('WASM render scene freed (reset)');
 
     this._frameCamera();
@@ -483,34 +443,20 @@ export class StreamingUSDRenderer {
     return p;
   }
 
-  // Incremental low-memory load via the C++ RenderStream (next-pipeline lazy
-  // crate). JS keeps the .usdz archive (and texture entries) off the WASM heap;
-  // only the root crate is streamed in, and the converter materializes ONE mesh's
-  // geometry at a time. Peak WASM heap stays ~= crate size (≈ input), vs the
-  // eager loadFromBinary() path's ~5-10x. Renders geometry + per-material PBR
-  // params (base color / metallic / roughness / emissive). Textures + UVs in this
-  // path await next-reader Float2-array + texture-connection support, so it falls
-  // back to loadBytes() if you need textured output. Returns the same shape.
+  // Keep geometry scratch native and encoded texture data in JS throughout.
   async loadBytesIncremental(bytes, filename = 'scene.usdz') {
-    if (typeof this.native.RenderStream !== 'function') {
-      return this.loadBytes(bytes, filename); // old wasm without RenderStream
-    }
-    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    this._inputSize = u8.length;
+    const u8=ArrayBuffer.isView(bytes)
+      ?new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength):new Uint8Array(bytes);
+    this._inputSize=u8.length;
     this._disposeScene();
-
-    // Extract the root crate; textures stay in JS, never entering the WASM heap.
-    let crate = u8;
-    let texEntries = new Map(); // normalized asset path -> encoded bytes (Uint8Array)
-    if (/\.usdz$/i.test(filename)) {
-      let entries;
-      try { entries = parseUSDZEntries(u8); } catch (_) { return this.loadBytes(u8, filename); }
-      const root = entries.find((e) => /\.usdc$/i.test(e.name));
-      if (!root) return this.loadBytes(u8, filename); // usda root etc.
-      crate = root.data;
-      for (const e of entries) texEntries.set(this._normTexPath(e.name), e.data);
-    } else if (!/\.usdc$/i.test(filename)) {
-      return this.loadBytes(u8, filename); // raw .usda: no crate to stream
+    let crate=u8,sourceURI=filename;
+    const texEntries=new Map();
+    if(u8[0]===0x50 && u8[1]===0x4b && u8[2]===3 && u8[3]===4) {
+      const entries=parseUSDZEntries(u8);
+      const root=entries[0];
+      if(!root||!/\.(usd|usda|usdc)$/i.test(root.name))throw Error('USDZ has no root layer');
+      crate=root.data;sourceURI=root.name;
+      for(const entry of entries)texEntries.set(this._normTexPath(entry.name),entry.data);
     }
     this._texEntries = texEntries;
     this._texCache = new Map(); // normalized path -> GL texture
@@ -522,12 +468,21 @@ export class StreamingUSDRenderer {
     const rs = new this.native.RenderStream();
     let r;
     try {
-      r = rs.begin(crate);
-      if (!r || !r.success) {
-        rs.end();
-        return this.loadBytes(u8, filename); // not a next-readable crate -> fall back
+      if(texEntries.size) {
+        const store=new this.native.NextAssetStore();
+        try {
+          const slash=sourceURI.lastIndexOf('/');
+          if(slash>=0)store.setBaseWorkingPath(sourceURI.slice(0,slash));
+          for(const [name,data] of texEntries) {
+            if(name!==sourceURI)store.registerMemoryAsset(name,
+              isImageName(name)?new Uint8Array():data);
+          }
+          rs.importAssetStore(store);
+        } finally {store.delete();}
       }
-      snap('crate loaded (lazy)');
+      r=rs.begin(crate,sourceURI);
+      if(!r?.success)throw Error(r?.error||'Core render stream failed');
+      snap('core layer loaded');
 
       this.glTextures = [];
       this.drawables = [];
@@ -541,6 +496,9 @@ export class StreamingUSDRenderer {
         }
       }
       snap('all meshes uploaded to GPU');
+    } catch(error) {
+      this._disposeScene();
+      throw error;
     } finally {
       rs.end();   // free the crate + scratch
       rs.delete();
@@ -549,7 +507,9 @@ export class StreamingUSDRenderer {
 
     // Resolve textures from the JS-held archive (off the WASM heap): decode each
     // unique referenced image once via createImageBitmap and bind to materials.
-    await this._resolveStreamTextures();
+    try { await this._resolveStreamTextures(); }
+    catch(error) {this._disposeScene();throw error;}
+    this._texEntries=null;
     const textured = this.drawables.reduce((a, d) => a + (d.material.baseMap ? 1 : 0), 0);
 
     this._frameCamera();
@@ -563,7 +523,7 @@ export class StreamingUSDRenderer {
     };
     this._lastMemory = mem;
     this._emitMemory();
-    return { meshes: this.drawables.length, textures: this._texCache.size, materials: this.drawables.length, memory: mem };
+    return { meshes: this.drawables.length, textures: [...this._texCache.values()].filter(Boolean).length, materials: this.drawables.length, memory: mem };
   }
 
   _normTexPath(p) { return String(p || '').replace(/^[./]+/, ''); }
@@ -575,11 +535,12 @@ export class StreamingUSDRenderer {
     if (!this._texEntries || !this._texEntries.size) return;
     const get = async (path, srgb) => {
       if (!path) return null;
-      const key = this._normTexPath(path);
+      const assetKey = this._normTexPath(path);
+      const key=assetKey+'|'+srgb;
       if (this._texCache.has(key)) return this._texCache.get(key);
-      let bytes = this._texEntries.get(key);
+      let bytes = this._texEntries.get(assetKey);
       if (!bytes) { // suffix match fallback
-        for (const [k, v] of this._texEntries) { if (k.endsWith('/' + key) || key.endsWith('/' + k)) { bytes = v; break; } }
+        for (const [k, v] of this._texEntries) { if (k.endsWith('/' + assetKey) || assetKey.endsWith('/' + k)) { bytes = v; break; } }
       }
       const tex = bytes ? await this._decodeArchiveTexture(bytes, srgb) : null;
       this._texCache.set(key, tex);
@@ -623,7 +584,7 @@ export class StreamingUSDRenderer {
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     this._uploadAttrib(0, m.points, 3);
-    this._growBBox(heapView(this.native, m.points));
+    this._growBBox(heapView(this.native, m.points),m.worldMatrix);
     if (m.normals && m.normals.length) this._uploadAttrib(1, m.normals, 3);
     else { gl.disableVertexAttribArray(1); gl.vertexAttrib3f(1, 0, 1, 0); }
     if (m.uv0 && m.uv0.length) this._uploadAttrib(2, m.uv0, 2);
@@ -631,7 +592,7 @@ export class StreamingUSDRenderer {
 
     let count, mode = 'arrays';
     if (m.indices && m.indices.length) {
-      const ib = gl.createBuffer();
+      const ib = this._createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, heapView(this.native, m.indices), gl.STATIC_DRAW);
       count = m.indices.length; mode = 'elements';
@@ -658,7 +619,7 @@ export class StreamingUSDRenderer {
         ao: mt.occlusionTexture, emissive: mt.emissiveTexture,
       },
     };
-    return { vao, count, indexType: gl.UNSIGNED_INT, mode, material, doubleSided: false };
+    return { vao, count, indexType: gl.UNSIGNED_INT, mode, material, doubleSided: !!m.doubleSided, model:m.worldMatrix||M.ident() };
   }
 
   // Parse getMaterial(matId) (a JSON string) into a normalized shader record.
@@ -762,14 +723,14 @@ export class StreamingUSDRenderer {
   async _uploadImage(imgId, srgb) {
     const gl = this.gl;
     let desc;
-    try { desc = this.usd.getImagePtr(imgId); } catch (_) { return null; }
+    try { desc = this.usd.getImageCopy(imgId); } catch (_) { return null; }
     if (!desc) return null;
 
     // Image the WASM side left unresolved (buffer_id == -1, no heap bytes) — e.g.
     // an HTTP-referenced texture. Decode externally-supplied encoded bytes
     // (fetched in JS, off the WASM heap) keyed by image id. Same orientation /
     // params as the heap encoded path below.
-    if (!desc.byteLength) {
+    if (!desc.data?.byteLength) {
       const ext = this._composedTexBytes && this._composedTexBytes.get(imgId);
       return ext ? this._decodeEncodedTexture(ext, srgb) : null;
     }
@@ -781,14 +742,14 @@ export class StreamingUSDRenderer {
 
     if (desc.decoded) {
       // Raw pixels in the heap. Normalize to RGBA8.
-      const view = new Uint8Array(this.native.HEAPU8.buffer, Number(desc.ptr), desc.byteLength);
+      const view = desc.data;
       const rgba = this._toRGBA8(view, desc.width, desc.height, desc.channels);
       gl.texImage2D(gl.TEXTURE_2D, 0, internal, desc.width, desc.height, 0,
         gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     } else {
       // Encoded bytes (PNG/JPEG/...). Copy out of the heap into a Blob, decode
       // off-heap via the browser, upload. The heap copy is transient (one image).
-      const view = new Uint8Array(this.native.HEAPU8.buffer, Number(desc.ptr), desc.byteLength);
+      const view = desc.data;
       const bytes = view.slice(); // detach from heap before any async/alloc
       let bmp;
       try {
@@ -851,7 +812,7 @@ export class StreamingUSDRenderer {
   _uploadMesh(meshId, numMaterials) {
     const gl = this.gl;
     let m;
-    try { m = this.usd.getMeshPtr(meshId); } catch (_) { return null; }
+    try { m = this.usd.getMesh(meshId); } catch (_) { return null; }
     if (!m || !m.points || !m.points.length) return null;
 
     const vao = gl.createVertexArray();
@@ -859,14 +820,14 @@ export class StreamingUSDRenderer {
 
     // Positions (attrib 0). Accumulate the scene bbox while the view is live.
     this._uploadAttrib(0, m.points, 3);
-    this._growBBox(heapView(this.native, m.points));
+    this._growBBox(heapView(this.native, m.points),m.worldMatrix);
 
     // Normals (attrib 1) — from the mesh, or computed if absent.
     if (m.normals && m.normals.length) {
       this._uploadAttrib(1, m.normals, 3);
     } else {
       const normals = this._computeNormals(m);
-      const nb = gl.createBuffer();
+      const nb = this._createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, nb);
       gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
       gl.enableVertexAttribArray(1);
@@ -889,7 +850,7 @@ export class StreamingUSDRenderer {
       if (!m.triangulated && m.faceVertexCounts && m.faceVertexCounts.length) {
         idx = this._triangulate(idx, heapView(this.native, m.faceVertexCounts));
       }
-      const ib = gl.createBuffer();
+      const ib = this._createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
       count = idx.length;
@@ -900,13 +861,20 @@ export class StreamingUSDRenderer {
 
     gl.bindVertexArray(null);
     const material = this._resolveMaterial(m.materialId, numMaterials);
-    return { vao, count, indexType, mode, material, doubleSided: !!m.doubleSided };
+    return { vao, count, indexType, mode, material, doubleSided: !!m.doubleSided, model:m.worldMatrix||M.ident() };
+  }
+
+  _createBuffer() {
+    const buffer=this.gl.createBuffer();
+    if(!this._glBuffers)this._glBuffers=new Set();
+    this._glBuffers.add(buffer);
+    return buffer;
   }
 
   _uploadAttrib(location, desc, comps) {
     const gl = this.gl;
     const view = heapView(this.native, desc);
-    const b = gl.createBuffer();
+    const b = this._createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, b);
     gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW); // GL copies into GPU now
     const at = glAttrType(gl, desc.dtype);
@@ -914,12 +882,12 @@ export class StreamingUSDRenderer {
     gl.vertexAttribPointer(location, desc.comps || comps, at.type, at.normalized, 0, 0);
   }
 
-  _growBBox(positions) {
+  _growBBox(positions,model=M.ident()) {
     let bb = this.bbox;
     if (!bb) { bb = this.bbox = { min: [1e30, 1e30, 1e30], max: [-1e30, -1e30, -1e30] }; }
     for (let i = 0; i < positions.length; i += 3) {
       for (let c = 0; c < 3; c++) {
-        const v = positions[i + c];
+        const v = model[c]*positions[i]+model[4+c]*positions[i+1]+model[8+c]*positions[i+2]+model[12+c];
         if (v < bb.min[c]) bb.min[c] = v;
         if (v > bb.max[c]) bb.max[c] = v;
       }
@@ -1081,6 +1049,9 @@ export class StreamingUSDRenderer {
     gl.uniform3fv(this.loc.uAmbientGround, [0.12, 0.11, 0.10]);
 
     for (const d of this.drawables) {
+      const model=d.model||M.ident();
+      gl.uniformMatrix4fv(this.loc.uModel,false,model);
+      gl.uniformMatrix3fv(this.loc.uNormalMat,false,M.normalMat3(model));
       const mt = d.material;
       gl.uniform3fv(this.loc.uBaseColor, mt.baseColor);
       gl.uniform1f(this.loc.uMetallic, mt.metallic);
@@ -1157,9 +1128,15 @@ export class StreamingUSDRenderer {
     for (const d of this.drawables) { try { gl.deleteVertexArray(d.vao); } catch (_) {} }
     for (const t of this.glTextures) { if (t) { try { gl.deleteTexture(t); } catch (_) {} } }
     if (this._texCache) { for (const t of this._texCache.values()) { if (t) { try { gl.deleteTexture(t); } catch (_) {} } } }
+    for(const buffer of this._glBuffers||[])gl.deleteBuffer(buffer);
+    this._glBuffers?.clear();
     this.drawables = []; this.glTextures = []; this.bbox = null;
     this._texCache = null; this._texEntries = null;
-    if (this.usd) { try { this.usd.reset(); this.usd.delete(); } catch (_) {} this.usd = null; }
+    if(this.usd) {
+      try {this.usd.end?.();} catch(_) {}
+      try {this.usd.delete();} catch(_) {}
+      this.usd=null;
+    }
   }
 
   dispose() {
@@ -1243,8 +1220,8 @@ export async function mountStreamingDemo(opts = {}) {
   renderer.onMemory(renderPanel);
   renderer.startMemoryPolling(500);
 
-  // Default to the incremental low-memory path; eager mode (textured) is opt-in
-  // via opts.eager / a ?eager=1 query param.
+  // Default uploads geometry first; standard scene inspection is opt-in
+  // via the retained opts.eager / ?eager=1 compatibility switch.
   const useEager = !!opts.eager;
   async function loadFile(file) {
     setStatus(`Loading ${file.name} (${fmtMB(file.size)})…`);

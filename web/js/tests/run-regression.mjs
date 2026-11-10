@@ -16,8 +16,29 @@ const REPO_ROOT = path.resolve(WEB_JS_DIR, '../..');
 const NODE = process.execPath;
 
 const NODE_TESTS = [
+  ['core WebGPU texture uploads', 'tests/core-webgpu-texture.test.mjs'],
+  ['core streaming transfer', 'tests/core-stream-transfer.test.mjs'],
+  ['core export CLI', 'tests/core-export-cli.test.mjs'],
+  ['core usdcat CLI', 'tests/usdcat-cli.test.mjs'],
+  ['core memory diagnostic', 'cli/memory-usage-test.js'],
+  ['core physics roundtrip CLI', 'cli/usd-urdf-roundtrip.js'],
+  ['core image textures', 'tests/core-image-texture.test.mjs'],
+  ['core render inspector', 'tests/core-render-inspector.test.mjs'],
+  ['core progress CLI', 'cli/test-progress-cli.js'],
+  ['core loader progress', 'tests/core-loader-progress.test.mjs'],
+  ['core texture bindings', 'tests/core-texture-bindings.test.mjs'],
   ['WebGPU MaterialX graph and scene', 'tests/webgpu-mtlx.test.mjs'],
   ['WebGPU MaterialX USD graph snapshot', 'tests/webgpu-mtlx-usd-graph.mjs'],
+  ['core physics CLI', 'tests/core-physics-cli.test.mjs'],
+  ['core public composer', 'tests/core-composer.test.mjs'],
+  ['core compact physics snapshots', 'tests/core-physics-snapshot.test.mjs'],
+  ['core generated colors', 'tests/core-generated-colors.test.mjs'],
+  ['core xatlas', 'tests/core-xatlas.test.mjs'],
+  ['core image conversion', 'tests/core-image-convert.test.mjs'],
+  ['core converter textures', 'tests/core-converter-textures.test.mjs'],
+  ['core converter orchestration', 'tests/core-converter-orchestration.test.mjs'],
+  ['core converter geometry', 'tests/core-converter-geometry.test.mjs'],
+  ['core converter materials', 'tests/core-converter-materials.test.mjs'],
   ['usdzconvert helpers', 'tests/test-usdzconvert.js'],
   ['combined RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
   ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
@@ -265,6 +286,22 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('MaterialX core inspectors', NODE,
+    ['tests/core-materialx-demos.test.mjs'], {}));
+  results.push(await run('Core codec and colorspace demos', NODE,
+    ['tests/core-codec-colorspace-demos.test.mjs'], {}));
+  results.push(await run('Standalone core demos', NODE,
+    ['tests/standalone-core-demos.test.mjs'], {}));
+  results.push(await run('Core ShaderBall adapter', NODE,
+    ['tests/core-shaderball-adapter.test.mjs'], {}));
+  results.push(await run('Core OpenPBR WebGPU demo', NODE,
+    ['tests/core-openpbr-webgpu-demo.test.mjs'], {}));
+  results.push(await run('Core material-dedup demo', NODE,
+    ['tests/core-material-dedup-demo.test.mjs'], {}));
+  results.push(await run('Core HTTP asset demo', NODE,
+    ['tests/core-http-demo.test.mjs'], {}));
+  results.push(await run('Core streaming demo', NODE,
+    ['tests/core-streaming-demo.test.mjs'], {}));
   results.push(await run('Independent features in browser and Worker', NODE,
     ['tests/next-features-browser.test.mjs'], {}));
   results.push(await run('USD validation demos', NODE,

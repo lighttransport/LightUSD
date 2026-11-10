@@ -67,7 +67,7 @@ const sceneState = {
 // Settings
 const settings = {
     applyUpAxisConversion: false,
-    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'legacy')
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'next')
 };
 
 // Progress state for tracking stages

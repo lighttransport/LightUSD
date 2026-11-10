@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Native property snapshot checks; these do not assert rendering support.
 export async function validateUSDGraphSnapshot(moduleOptions = {}) {
-  const { default: createModule } = await import('../lightusd/lightusd_combined.js');
-  const native = await createModule(moduleOptions), layer = new native.LightUSDLoaderNative();
+  const { default: createModule } = await import('../lightusd/lightusd.js');
+  const native = await createModule(moduleOptions), layer = new native.LayerDocument();
   const source = `#usda 1.0
 def Material "Mat" (
     prepend apiSchemas = ["ColorSpaceAPI"]
@@ -32,7 +32,7 @@ over "AssetOverride" {
     asset inputs:file = @../maps/override.exr@
 }`;
   try {
-    if (!layer.loadAsLayerFromBinary(new TextEncoder().encode(source), 'shading-snapshot.usda')) throw new Error(layer.error());
+    if (!layer.load(new TextEncoder().encode(source)).success) throw new Error(layer.error());
     const text = layer.getShadingGraphJSON();
     if (!text) throw new Error(layer.error());
     const graph = JSON.parse(text);
@@ -70,8 +70,8 @@ export async function validateUSDMaterialTranslation(renderer) {
   const { materialXFromUSD } = await import('./usd-graph.js');
   const { fetchResource } = await import('./resources.js');
   const library = parseMaterialX(new TextDecoder().decode(await fetchResource('/__mtlx/libraries/pbrlib/pbrlib_defs.mtlx')));
-  const { default: createModule } = await import('../lightusd/lightusd_combined.js');
-  const native = await createModule(), layer = new native.LightUSDLoaderNative();
+  const { default: createModule } = await import('../lightusd/lightusd.js');
+  const native = await createModule(), layer = new native.LayerDocument();
   const source = `#usda 1.0
 def Material "M" (
     prepend apiSchemas = ["ColorSpaceAPI"]
@@ -99,7 +99,7 @@ def Material "M" (
     }
 }`;
   try {
-    if (!layer.loadAsLayerFromBinary(new TextEncoder().encode(source), 'material-translation.usda')) throw new Error(layer.error());
+    if (!layer.load(new TextEncoder().encode(source)).success) throw new Error(layer.error());
     const doc = materialXFromUSD(JSON.parse(layer.getShadingGraphJSON()), '/M', { library });
     const scene = { positions: [-10,-10,0,10,-10,0,10,10,0,-10,10,0], indices: [0,1,2,0,2,3], materials: [doc],
       camera: { origin: [0,0,1], target: [0,0,0], fov: 45 }, lighting: { environment: [0,0,0], directional: { radiance: [0,0,0] } } };

@@ -1,16 +1,10 @@
-set(EXAMPLE_TARGET legacy-urdf-to-usd)
-
-set(SOURCES
-  main.cc
-)
-
-add_executable(${EXAMPLE_TARGET} ${SOURCES})
-
-add_sanitizers(${EXAMPLE_TARGET})
-
-target_include_directories(${EXAMPLE_TARGET} PRIVATE
-  ${PROJECT_SOURCE_DIR}/src
-  ${PROJECT_SOURCE_DIR}/src/external
-)
-
-target_link_libraries(${EXAMPLE_TARGET} lightusd_static)
+# The root and standalone core projects register this example from src/.
+if(NOT TARGET urdf-to-usd)
+  add_executable(urdf-to-usd main.cc)
+  target_link_libraries(urdf-to-usd PRIVATE tydra lightusd_core)
+  set_target_properties(urdf-to-usd PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+  if(NOT MSVC)
+    target_compile_options(urdf-to-usd PRIVATE -fexceptions)
+  endif()
+endif()

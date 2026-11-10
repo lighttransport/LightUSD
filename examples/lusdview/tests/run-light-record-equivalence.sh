@@ -134,34 +134,40 @@ def Xform "World" {
 }
 USDA
 
+python3 - "$OUT" "lights" <<'PY'
+import pathlib,sys,zipfile
+root=pathlib.Path(sys.argv[1]); name=sys.argv[2]
+with zipfile.ZipFile(root/(name+'.usdz'),'w',compression=zipfile.ZIP_STORED) as archive:
+ archive.write(root/(name+'.usda'),name+'.usda')
+ for image in sorted(root.glob('*.ppm')): archive.write(image,image.name)
+PY
+
 run_loader() {
-  local name="$1"; shift
+  local name="$1"; local scene="$2"; shift 2
   local attempt
   for attempt in 1 2; do
     LUSDVIEW_DUMP_LIGHT_RECORDS=1 timeout --kill-after=5s 30s \
       "$BIN" --headless --backend vk \
       --config "$OUT/config.json" --frames 1 --no-grid "$@" \
-      "$OUT/lights.usda" >"$OUT/$name.log" 2>&1 && break
+      "$scene" >"$OUT/$name.log" 2>&1 && break
     [ "$attempt" = 1 ] || return 1
   done
   sed -n 's/^\[lusdview-light\] //p' "$OUT/$name.log" > "$OUT/$name.records"
   [ -s "$OUT/$name.records" ]
 }
-run_loader next || { echo "FAIL: default light extraction"; exit 1; }
-run_loader legacy --legacy-load || { echo "FAIL: legacy light extraction"; exit 1; }
+run_loader next "$OUT/lights.usda" || { echo "FAIL: default light extraction"; exit 1; }
+run_loader packaged "$OUT/lights.usdz" || { echo "FAIL: packaged light extraction"; exit 1; }
 
-python3 - "$OUT/next.records" "$OUT/legacy.records" <<'PY'
+python3 - "$OUT/next.records" "$OUT/packaged.records" <<'PY'
 import math,sys
 def read(p): return [[float(x) for x in line.split()] for line in open(p) if line.strip()]
 a,b=read(sys.argv[1]),read(sys.argv[2])
 if len(a)!=8 or len(b)!=8 or any(len(x)!=len(y) for x,y in zip(a,b)):
  print('light record shape mismatch',a,b); raise SystemExit(1)
 for li,(x,y) in enumerate(zip(a,b)):
- # Mesh indices are loader-layout-specific (the next loader batches geometry),
- # so collection membership is pinned separately by lighting_test. Compare the
- # shared authored/derived light record here, including the collection-all flags.
- for fi,(u,v) in enumerate(zip(x[:-2],y[:-2])):
+ # The same core conversion must preserve all light/link fields in USDZ.
+ for fi,(u,v) in enumerate(zip(x,y)):
   if not math.isclose(u,v,rel_tol=1e-5,abs_tol=1e-5):
-   print(f'light {li} field {fi}: next={u} legacy={v}'); raise SystemExit(1)
-print('PASS: default/legacy light records equivalent')
+   print(f'light {li} field {fi}: next={u} packaged={v}'); raise SystemExit(1)
+print('PASS: loose/USDZ light records equivalent')
 PY

@@ -67,6 +67,9 @@ struct FlattenOptions {
   // Asset-valued property rewrite applied after composition and before writing.
   // Used by USDZ texture conversion when packed texture names change.
   std::map<std::string, std::string> asset_path_remap;
+  // Prefer source-layer-resolved keys so equal relative names in separate
+  // layers can map to different packaged assets.
+  bool anchor_relative_asset_remap = false;
 
   // Compose with the parallel `pcp::Cache` engine (as `next_usdcat -f`)
   // instead of the serial `Compositor`: much faster on multi-reference scenes

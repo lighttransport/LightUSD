@@ -9,6 +9,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <utility>
 namespace lightusd { namespace tydra {
 using ::lightusd::UsdPrim; using ::lightusd::Value;
 namespace {
@@ -329,6 +330,26 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
     ApplyAxis(&points, &normals, axis);
   }
   FillGeneratedMesh(prim, points, face_counts, face_indices, normals, uvs, out);
+  // Extraction appends streams into an empty mesh. Keep generated defaults
+  // when no usable authored stream exists, without doubling UV/normal arrays.
+  auto generated_normals = std::move(out->normals);
+  auto generated_uvs = std::move(out->texcoords_0);
+  const auto generated_normals_interp = out->normals_interp;
+  const auto generated_uv_interp = out->texcoords_0_interp;
+  out->normals.clear();
+  out->texcoords_0.clear();
+  ExtractMeshPrimvars(prim, out);
+  if (out->normals.empty()) {
+    out->normals = std::move(generated_normals);
+    out->normals_interp = generated_normals_interp;
+  }
+  // Plane generation already maps the authored texture domain to its canonical
+  // quad corners. Preserve that mapping instead of reinterpreting it as Mesh
+  // vertex order.
+  if (out->texcoords_0.empty() || type == "Plane") {
+    out->texcoords_0 = std::move(generated_uvs);
+    out->texcoords_0_interp = generated_uv_interp;
+  }
   SanitizeMeshTopology(out);
   if (config_.mesh.triangulate && !out->is_triangulated) {
     TriangulateMesh(out);

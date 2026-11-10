@@ -209,10 +209,10 @@ before exporting; it does not run Sdr, renderer plugins, or shader code.
 ## Compiled validators
 
 Link a custom executable to `lusdchecker_lib`, construct a caller-owned
-`lightusd::next::ValidationRegistry`, register callbacks, then call
+`lightusd::ValidationRegistry`, register callbacks, then call
 `lusdchecker::RunChecker(argc, argv, registry)`. See
 [custom-checker-example.cc](custom-checker-example.cc) and
-[validation-context.hh](../../src/next/validation/validation-context.hh).
+[validation-context.hh](../../src/validation/validation-context.hh).
 The stock executable loads no dynamic plugins.
 
 Callbacks select Layer, Stage, or Prim scope, keywords, optional prim schema
@@ -261,7 +261,7 @@ npm run dev:validation
 ```
 
 ```js
-import createModule from './lightusd_next.js';
+import createModule from './lightusd.js';
 const usd = await createModule();
 const assets = new usd.NextAssetStore();
 try {

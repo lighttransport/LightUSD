@@ -58,9 +58,7 @@
       <button id="btn-demo1">① Local USDA (HTTP texture)</button>
       <button id="btn-file">Load USD</button>
       <select id="backend" title="Backend">
-        <option value="legacy">legacy</option>
-        <option value="next">next</option>
-        <option value="auto">auto</option>
+        <option value="core">core</option>
       </select>
       <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz" hidden />
     </div>
@@ -91,10 +89,12 @@
   </div>
 
   <script type="module">
-    import { mountHttpAssetResolverDemo } from './http-asset-resolver.js';
+    import { mountHttpAssetResolverDemo, flattenNextOverHttp, HttpAssetResolver } from './http-asset-resolver.js';
     const fileInput = document.getElementById('file-input');
     document.getElementById('btn-file').addEventListener('click', () => fileInput.click());
-    mountHttpAssetResolverDemo({ fileInput }).catch((e) => {
+    mountHttpAssetResolverDemo({ fileInput }).then(demo => {
+      window.httpAssetDemo = {...demo, flattenNextOverHttp, HttpAssetResolver};
+    }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
       window.renderError = e.message || String(e);
       window.renderComplete = true;

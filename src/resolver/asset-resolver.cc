@@ -1378,6 +1378,13 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(anchor_dir, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    const std::string canonical = CanonicalPath(candidate);
+    if (HasMemoryAsset(canonical)) {
+      result.resolved_path = candidate;
+      result.canonical_path = canonical;
+      result.exists = true;
+      return result;
+    }
     if (FileExists(candidate, &device, &inode)) {
       result.resolved_path = candidate;
       result.exists = true;
@@ -1391,6 +1398,13 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(config_.working_directory, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    const std::string canonical = CanonicalPath(candidate);
+    if (HasMemoryAsset(canonical)) {
+      result.resolved_path = candidate;
+      result.canonical_path = canonical;
+      result.exists = true;
+      return result;
+    }
     if (FileExists(candidate, &device, &inode)) {
       result.resolved_path = candidate;
       result.exists = true;
@@ -1406,6 +1420,13 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(search_path, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    const std::string canonical = CanonicalPath(candidate);
+    if (HasMemoryAsset(canonical)) {
+      result.resolved_path = candidate;
+      result.canonical_path = canonical;
+      result.exists = true;
+      return result;
+    }
     if (FileExists(candidate, &device, &inode)) {
       result.resolved_path = candidate;
       result.exists = true;
@@ -1581,6 +1602,24 @@ bool IsNormalizedPath(const std::string& path) {
 
 std::string AssetResolver::NormalizePath(const std::string& path) {
   if (path.empty()) return path;
+  // URI authorities are identifiers, not filesystem components. Keep the
+  // scheme separator intact and normalize only the hierarchical path.
+  const std::string scheme = GetIdentifierScheme(path);
+  if (!scheme.empty()) {
+    const size_t colon = path.find(':');
+    if (path.compare(colon + 1, 2, "//") != 0) return path;
+    const size_t authority_end = path.find_first_of("/?#", colon + 3);
+    if (authority_end == std::string::npos || path[authority_end] != '/')
+      return path;
+    const size_t suffix = path.find_first_of("?#", authority_end);
+    std::string uri_path = NormalizePath(path.substr(
+        authority_end, suffix == std::string::npos ? std::string::npos
+                                                  : suffix - authority_end));
+    std::replace(uri_path.begin(), uri_path.end(), '\\', '/');
+    return path.substr(0, authority_end) + uri_path +
+        (suffix == std::string::npos ? std::string() : path.substr(suffix));
+  }
+
   if (IsNormalizedPath(path)) return path;
 
   std::string result = path;

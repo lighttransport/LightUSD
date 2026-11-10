@@ -373,8 +373,14 @@ static void test_variant_roundtrip() {
   const PrimSpec* root2 = l2 ? l2->prim_at_path("/Root") : nullptr;
   CHECK(root2 && !root2->meta().variantSets().empty(),
         "variant set + selection survived the unflattened write");
-  CHECK(l2 && l2->prim_at_path("/Root/{geo=hi}/Body") != nullptr,
-        "variant child prim survived in the layer");
+  const PrimSpec* body = nullptr;
+  if (root2) for (const auto& set : root2->meta().variantSets())
+    for (const auto& option : set.variants)
+      if (set.name == "geo" && option.name == "hi" && option.content)
+        body = option.content->prim_at_path("/__self__/Body");
+  CHECK(body != nullptr, "variant child prim survived in inline content");
+  CHECK(l2 && !l2->prim_at_path("/Root/{geo=hi}/Body"),
+        "Crate holder specs are hidden from the public layer");
 
   // Composing the re-read layer must still bake the selected variant.
   Compositor comp;
@@ -1437,7 +1443,61 @@ static void test_dictionary_type_conflict_diagnostic() {
   CHECK(saw, "type conflict surfaces a diagnostic naming the key");
 }
 
+static void test_partial_composition() {
+  std::cout << "[partial composition retains disabled arcs]\n";
+  const std::string source = R"USD(#usda 1.0
+(subLayers=[@sub.usda@])
+class Scope "IB" { float inherited=1 }
+class Scope "SB" { float specialized=2 }
+def Scope "RB" { float referenced=3 }
+def Scope "PB" { float payloadValue=4 }
+def Scope "P" (prepend inherits=</IB>; prepend specializes=</SB>;
+ prepend references=</RB>; prepend payload=</PB>) {}
+)USD";
+  auto parsed = LoadUSDAFromString(source.data(), source.size());
+  CHECK(parsed.success, "partial root parses");
+  if (!parsed.success) return;
+  CompositionOptions options;
+  options.resolve_sublayers = false;
+  options.resolve_references = false;
+  options.resolve_specializes = false;
+  options.resolve_variants = false;
+  options.load_payloads = false;
+  options.preserve_unresolved_arcs = true;
+  Compositor partial;
+  partial.SetOptions(options);
+  auto first = partial.Compose(*parsed.stage.GetRootLayer());
+  CHECK(first && partial.GetErrors().empty(), "disabled external sublayer does not load");
+  if (!first) return;
+  CHECK(PropOf(*first, "/P", "inherited"), "enabled inheritance is applied");
+  CHECK(!PropOf(*first, "/P", "referenced") && !PropOf(*first, "/P", "payloadValue") &&
+        !PropOf(*first, "/P", "specialized"), "disabled arcs do not contribute opinions");
+  const auto* p = first->prim_at_path("/P");
+  CHECK(p && p->meta().inherits.empty() && !p->meta().references.empty() &&
+        !p->meta().payloads.empty() && !p->meta().specializes.empty(), "disabled arc values survive");
+  const auto* edits = p ? p->meta().arc_edits() : nullptr;
+  CHECK(edits && edits->references.has_authored_opinion() &&
+        edits->payloads.has_authored_opinion() && edits->specializes.has_authored_opinion() &&
+        !edits->inherits.has_authored_opinion(), "only consumed list-op qualifiers are dropped");
+  CHECK(first->meta().subLayers.size() == 1, "disabled sublayer remains authored");
+  Compositor final;
+  final.SetLayerLoader([](const std::string&, std::string*) {
+    const std::string sub = "#usda 1.0\ndef Scope \"Sub\" {}\n";
+    auto loaded = LoadUSDAFromString(sub.data(), sub.size());
+    return loaded.stage.ReleaseRootLayer();
+  });
+  auto last = final.Compose(*first);
+  CHECK(last && final.GetErrors().empty(), "retained arcs can be composed in a later pass");
+  if (!last) return;
+  CHECK(PropOf(*last, "/P", "referenced") && PropOf(*last, "/P", "payloadValue") &&
+        PropOf(*last, "/P", "specialized") && last->prim_at_path("/Sub"),
+        "later pass resolves references, payloads, specializes and sublayers");
+  CHECK(last->prim_at_path("/P")->meta().references.empty() && last->meta().subLayers.empty(),
+        "final flatten consumes arcs");
+}
+
 int main() {
+  test_partial_composition();
   test_inherits();
   test_internal_reference();
   test_external_reference();

@@ -117,7 +117,7 @@ drawn_meshes() {
 }
 
 status=0
-for loader in "" "--legacy-load"; do
+for loader in "--next"; do
   name="${loader:---next}"
 
   got="$(drawn_meshes "$TMP/both.usda" "$loader")" || { status=1; continue; }

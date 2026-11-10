@@ -10,6 +10,7 @@
 #include "resolver/asset-resolver.hh"
 #include "writer/usdc-writer.hh"
 #include "image-loader.hh"
+#include "layer/asset-anchor.hh"
 #include "core/safe-arithmetic.hh"
 #include "c/storage.h"
 #include <cmath>
@@ -97,7 +98,7 @@ void RenderStream::setTangentMethod(const std::string &method) {
                    [](unsigned char c) { return char(std::tolower(c)); });
   }
 
-bool RenderStream::beginOwned(std::string &&crate) {
+bool RenderStream::beginOwned(std::string &&crate, const std::string& source_uri) {
     // The next-only WASM surface accepts bytes, not filesystem paths. USDC
     // lazy arrays retain this owned input buffer rather than an mmap.
     end();
@@ -168,6 +169,9 @@ bool RenderStream::beginOwned(std::string &&crate) {
       warning_ = std::move(warn);
     }
     stats_.stage_load_ms = emscripten_get_now() - stage_load_start_ms;
+    const std::string root_identifier = source_uri.empty() ? "memory-root" : source_uri;
+    if (!source_uri.empty())
+      lightusd::StampLayerAssetAnchor(stage_.GetRootLayer(), source_uri, true);
     bool authored_has_inherits = false;
     bool authored_has_specializes = false;
     if (const lightusd::Layer* root = stage_.GetRootLayer()) {
@@ -184,9 +188,8 @@ bool RenderStream::beginOwned(std::string &&crate) {
     }
     // Record authored variant sets (consumed by composition below), then
     // compose in place when the layer carries composition arcs — variants,
-    // internal references, inherits/specializes. External arcs cannot anchor
-    // for memory roots and surface as warnings (multi-layer scenes go through
-    // NextFlattenSession instead).
+    // internal references, inherits/specializes and external layers from the
+    // imported resolver, anchored to the named root identifier.
     const double composition_start_ms = emscripten_get_now();
     collectVariantSets_();
     // In-place composition consumes the root layer's arcs; snapshot the
@@ -220,7 +223,7 @@ bool RenderStream::beginOwned(std::string &&crate) {
       composition_options.limits.max_input_bytes = max_input_bytes_;
       composition_options.limits.max_resident_bytes = load_resident_limit;
       if (!lightusd::ComposeLoadedStage(
-              &stage_, asset_resolver_, "memory-root", composition_options,
+              &stage_, asset_resolver_, root_identifier, composition_options,
               &cwarn, &cerr, &copts, &composition_report_)) {
         error_ = cerr.empty() ? std::string("in-memory composition failed")
                               : cerr;
@@ -314,7 +317,8 @@ int RenderStream::preflightBeginInput(uint32_t size) {
     return 1;
 }
 
-int RenderStream::beginBytes(const uint8_t* bytes, uint32_t size) {
+int RenderStream::beginBytes(const uint8_t* bytes, uint32_t size,
+                             const std::string& source_uri) {
     const double input_copy_start_ms = emscripten_get_now();
     if (!bytes && size) {
       error_ = "Invalid input buffer";
@@ -325,7 +329,7 @@ int RenderStream::beginBytes(const uint8_t* bytes, uint32_t size) {
     if (size) s.assign(reinterpret_cast<const char*>(bytes), size);
     pending_input_copy_ms_ = emscripten_get_now() - input_copy_start_ms;
     pending_input_bytes_ = size;
-    return beginOwned(std::move(s)) ? 1 : 0;
+    return beginOwned(std::move(s), source_uri) ? 1 : 0;
 }
 
 int RenderStream::beginFromLayerDocument(NextLayerDocument& document) {

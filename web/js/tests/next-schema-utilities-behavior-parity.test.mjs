@@ -126,7 +126,7 @@ function layer(usda) {
     note('setVisualMesh', 'match');
 
     // extractPhysicsSceneJSON: next's physics JSON is its own contract (schema
-    // fallbacks and geometry arrays instead of legacy's flags and matrices);
+    // fallbacks instead of legacy's flags and matrices);
     // both describe the same prims in the same order.
     const legacyPhysics = JSON.parse(loader.extractPhysicsSceneJSON());
     const nextPhysics = JSON.parse(converter.extractPhysicsSceneJSON());

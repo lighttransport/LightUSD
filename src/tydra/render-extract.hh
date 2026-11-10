@@ -53,6 +53,7 @@ struct RenderPrimRecord {
   // True when this prim or any transform ancestor has time-varying xform
   // opinions. The extractor carries this down its traversal so consumers do
   // not repeatedly walk the same ancestry for every mesh.
+  // Time-varying xform or a rigid-body ancestor; retain a mutable world matrix.
   bool animated_world = false;
   double local[16];
   double world[16];

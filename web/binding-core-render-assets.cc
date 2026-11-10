@@ -162,7 +162,8 @@ int RenderStream::beginCachedAsset(NextAssetStore& store,
       return 0;
     }
     if (importAssetStore(store) != 0) return 0;
-    return beginBytes(bytes, byte_size);
+    return beginBytes(bytes, byte_size, std::string(
+        reinterpret_cast<const char*>(identifier), identifier_size));
 }
 
 int RenderStream::clearImportedAssetStore() {
@@ -456,7 +457,7 @@ int RenderStream::beginStreamingAssetAsRoot(const uint8_t* name,
     streaming_assets_.erase(it);
     pending_input_copy_ms_ = 0.0;
     pending_input_bytes_ = root.size();
-    return beginOwned(std::move(root)) ? 1 : 0;
+    return beginOwned(std::move(root), key) ? 1 : 0;
 }
 
 int RenderStream::setProvidedAssetByteLimit(uint32_t limit) {

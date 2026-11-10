@@ -1,21 +1,7 @@
 import { defineConfig } from 'vite'
 import path from 'path'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { copyLocalWasmProducts } from '../build-utils.mjs'
 import { compression } from 'vite-plugin-compression2'
-
-function copyLocalWasmProducts(sourceDir) {
-  return {
-    name: 'copy-local-wasm-products',
-    apply: 'build',
-    async writeBundle(output) {
-      const assetsDir = path.join(output.dir || path.resolve(__dirname, 'dist'), 'assets');
-      await mkdir(assetsDir, { recursive: true });
-      for (const filename of ['lightusd.js', 'lightusd.wasm', 'lightusd.js', 'lightusd.wasm']) {
-        await copyFile(path.join(sourceDir, filename), path.join(assetsDir, filename));
-      }
-    },
-  };
-}
 
 // Do not minify(we want to make demo website simple)
 // base: "./" => make asset path relative(required for static hosting of lightusd demo page at github pages)

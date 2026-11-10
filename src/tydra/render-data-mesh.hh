@@ -57,6 +57,9 @@ struct RenderMesh {
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
   Interpolation tangents_interp = Interpolation::Vertex;
+  // Computed face-varying tangents can follow triangulated corners rather
+  // than authored polygon corners, even when both counts happen to agree.
+  bool tangents_triangulated = false;
   Interpolation texcoords_0_interp = Interpolation::Vertex;
   Interpolation texcoords_1_interp = Interpolation::Vertex;
   Interpolation colors_interp = Interpolation::Vertex;
@@ -77,6 +80,7 @@ struct RenderMesh {
     uint32_t face_start;
     uint32_t face_count;
     int32_t material_id;
+    std::string name{};  // Authored GeomSubset name, shared by split runs.
   };
   std::vector<MaterialSubset> material_subsets;
 

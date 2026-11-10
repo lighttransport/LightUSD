@@ -1112,50 +1112,6 @@ bool BuildKeptCompressedFromKtx2(const uint8_t* data, size_t size,
 
 namespace {  // (resume the file-local helpers)
 
-// --- Shared per-element builders (used by both BuildDrawScene and the
-// streaming path so the two produce identical output) ---------------------
-
-// Build the renderable textures (dedup by texture_image_id) and a mapping
-// drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
-#if defined(LUSDVIEW_WITH_TEXTOOLS)
-// Map a tydra block format to the lusdview draw format (UNI is handled via the
-// srcIsUni flag, not this map). Returns None for formats with no draw mapping.
-static DrawCompressedFormat MapTydraBlockFormat(tydra::TextureBlockFormat f) {
-  switch (f) {
-    case tydra::TextureBlockFormat::BC1: return DrawCompressedFormat::BC1;
-    case tydra::TextureBlockFormat::BC3: return DrawCompressedFormat::BC3;
-    case tydra::TextureBlockFormat::BC5: return DrawCompressedFormat::BC5;
-    case tydra::TextureBlockFormat::BC6H: return DrawCompressedFormat::BC6H;
-    case tydra::TextureBlockFormat::BC7: return DrawCompressedFormat::BC7;
-    case tydra::TextureBlockFormat::ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
-    case tydra::TextureBlockFormat::ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
-    case tydra::TextureBlockFormat::ASTC_4x4: return DrawCompressedFormat::ASTC_4x4;
-    case tydra::TextureBlockFormat::UNI: return DrawCompressedFormat::ASTC_4x4;  // uni ~ astc4x4
-    default: return DrawCompressedFormat::None;  // EAC_R11/RG11, None
-  }
-}
-
-// Bytes per 4x4 (or codec-native) block, for splitting a packed mip chain.
-static int BlockFormatBytes(tydra::TextureBlockFormat f) {
-  switch (f) {
-    case tydra::TextureBlockFormat::BC1:
-    case tydra::TextureBlockFormat::ETC2_RGB:
-    case tydra::TextureBlockFormat::EAC_R11: return 8;
-    default: return 16;  // BC3/5/6H/7, ETC2_RGBA, EAC_RG11, ASTC_4x4, UNI
-  }
-}
-
-#endif  // LUSDVIEW_WITH_TEXTOOLS
-
-
-
-
-
-
-
-
-
-
 bool Normalize3(float v[3]) {
   const float len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
   if (len2 <= 1.0e-12f) return false;

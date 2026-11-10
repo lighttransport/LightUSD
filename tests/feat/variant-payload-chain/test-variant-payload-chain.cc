@@ -26,7 +26,7 @@
 // deep default won. The fix DEFERS variant resolution until references &
 // payloads have settled (AOUSD Core Spec 10.3.2.5), so the local selection is
 // still present when the real variantSet content is composed in. The flatten()
-// helper below mirrors the fixed lusdcat driver (examples/lusdcat/main.cc).
+// helper below mirrors the fixed lusdcat driver (src/legacy/examples/lusdcat/main.cc).
 //
 // (Note: reference/payload composition already keeps the local variant
 // SELECTION strongest across the merge -- this test confirms that too.)
@@ -83,7 +83,7 @@ nonstd::optional<std::string> stringProp(const PrimSpec &ps,
 
 // Iteratively compose references -> payload -> variants, DEFERRING variant
 // resolution until references & payloads have settled. Mirrors the fixed
-// lusdcat driver (examples/lusdcat/main.cc) and CompositeAllArcs().
+// lusdcat driver (src/legacy/examples/lusdcat/main.cc) and CompositeAllArcs().
 bool flatten(AssetResolutionResolver &resolver, Layer layer, Layer *out,
              std::string *warn, std::string *err) {
   Layer cur = std::move(layer);

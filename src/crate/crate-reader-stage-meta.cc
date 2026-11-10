@@ -1,3 +1,4 @@
+#include "parser/extension-field.hh"
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "crate-reader-internal.hh"
@@ -25,26 +26,7 @@ DecodedExtensionField MakeTypedExtensionField(std::string name,
   extension.unregistered = unregistered;
   if (!unregistered) return extension;
   if (auto source = extension.value.as_string()) {
-    extension.unregistered_source = *source;
-    Value dictionary = ParseDictText(*source);
-    if (dictionary.is_dictionary()) {
-      extension.value = std::move(dictionary);
-    } else {
-      // The raw text is the authored USDA spelling (quotes included for
-      // strings). Reduce it to a typed value when it parses cleanly so the
-      // USDA writer's PrintValue quotes once instead of re-quoting the raw
-      // text; unparseable text (e.g. "$Side") keeps the string as-is.
-      // unregistered_source stays verbatim — the crate rewrite contract.
-      Lexer value_lexer(extension.unregistered_source.data(),
-                        extension.unregistered_source.size());
-      TypeId inferred = TypeId::Invalid;
-      ParseResult parsed = ParseGenericValue(value_lexer, inferred);
-      if (parsed.success && inferred != TypeId::Invalid &&
-          !value_lexer.has_error() && !value_lexer.has_fatal_error() &&
-          value_lexer.peek().type == TokenType::Eof) {
-        extension.value = std::move(parsed.value);
-      }
-    }
+    return ParseExtensionField(std::move(extension.name), std::string(*source));
   }
   return extension;
 }

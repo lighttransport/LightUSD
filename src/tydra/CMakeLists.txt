@@ -22,6 +22,9 @@ set(TYDRA_SOURCES
     chunk-storage.cc
     render-data.cc
     gltf-export.cc
+    mesh-index.cc
+    obj-export.cc
+    usd-export.cc
     scene-access.cc
     render-extract.cc
     render-converter.cc
@@ -79,6 +82,9 @@ set(TYDRA_HEADERS
     scene-preview.hh
     chunked-array.hh
     render-data.hh
+    mesh-index.hh
+    obj-export.hh
+    usd-export.hh
     scene-access.hh
     render-extract.hh
     render-converter.hh
@@ -113,7 +119,8 @@ endif()
 
 # Link to lightusd_core
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-asset-import.cmake")
-target_link_libraries(tydra PUBLIC lightusd_asset_import lightusd_core)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-rb-solver.cmake)
+target_link_libraries(tydra PUBLIC lightusd_asset_import lightusd_core lightusd_rb_solver)
 
 if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
   add_executable(lusdpreview "${CMAKE_CURRENT_LIST_DIR}/../../tools/lusdpreview/main.cc")
@@ -125,6 +132,7 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
     # decoder/resize implementation without introducing a legacy Stage link.
     add_library(lightusd_preview_images STATIC
       "${CMAKE_CURRENT_LIST_DIR}/../image-loader.cc"
+      "${CMAKE_CURRENT_LIST_DIR}/../image-convert.cc"
       "${CMAKE_CURRENT_LIST_DIR}/../image-writer.cc"
       "${CMAKE_CURRENT_LIST_DIR}/../imageio/png-stream.cc"
       "${CMAKE_CURRENT_LIST_DIR}/../io-util.cc"
@@ -132,6 +140,23 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
       "${CMAKE_CURRENT_LIST_DIR}/../../tools/lusdpreview/image-resize-impl.cc")
     target_include_directories(lightusd_preview_images PRIVATE "${CMAKE_CURRENT_LIST_DIR}/..")
     target_compile_features(lightusd_preview_images PRIVATE cxx_std_17)
+    option(LIGHTUSD_WITH_TIFF "Build native TIFF/DNG image support" ON)
+    if(LIGHTUSD_WITH_TIFF)
+      target_sources(lightusd_preview_images PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/../external/tiny_dng_loader.cc")
+      target_compile_definitions(lightusd_preview_images PRIVATE LIGHTUSD_WITH_TIFF=1)
+      # TinyDNG ZIP uses the shared miniz owner, not a second codec copy.
+      target_link_libraries(lightusd_preview_images PUBLIC lightusd_tinyvdb)
+    endif()
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/lightusd-native-exr.cmake")
+    if(LIGHTUSD_WITH_EXR)
+      target_compile_definitions(lightusd_preview_images PUBLIC LIGHTUSD_WITH_EXR=1 LIGHTUSD_EXR_V3=1)
+      target_link_libraries(lightusd_preview_images PUBLIC lightusd_exr_codec)
+    endif()
+    if(LIGHTUSD_WITH_TEXTOOLS)
+      target_compile_definitions(lightusd_preview_images PUBLIC LIGHTUSD_WITH_TEXTOOLS=1)
+      target_link_libraries(lightusd_preview_images PUBLIC lightusd_textools)
+    endif()
     target_link_libraries(lusdpreview PRIVATE lightusd_preview_images)
   endif()
   set_target_properties(lusdpreview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -144,6 +169,11 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
       target_link_libraries(test_scene_preview PRIVATE ${LIGHTUSD_TARGET_STATIC})
     endif()
     add_test(NAME core_test_scene_preview COMMAND test_scene_preview)
+    if(LIGHTUSD_WITH_TIFF AND TARGET lightusd_preview_images)
+      add_executable(test_native_tiff "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_native_tiff.cc")
+      target_link_libraries(test_native_tiff PRIVATE tydra lightusd_preview_images)
+      add_test(NAME core_test_native_tiff COMMAND test_native_tiff)
+    endif()
     add_executable(test_scene_preview_compute "${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_scene_preview_compute.cc")
     target_link_libraries(test_scene_preview_compute PRIVATE ${LIGHTUSD_ALLOCATOR_LIB} tydra)
     if(TARGET lightusd_preview_images)
@@ -271,6 +301,15 @@ if(LIGHTUSD_BUILD_FUZZERS)
 endif()
 
 if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
+  add_executable(test_mesh_index ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_mesh_index.cc)
+  target_link_libraries(test_mesh_index PRIVATE tydra)
+  add_test(NAME core_mesh_index COMMAND test_mesh_index)
+  add_executable(test_usd_export ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_usd_export.cc)
+  target_link_libraries(test_usd_export PRIVATE tydra)
+  add_test(NAME core_usd_export COMMAND test_usd_export)
+  add_executable(test_obj_export ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_obj_export.cc)
+  target_link_libraries(test_obj_export PRIVATE tydra)
+  add_test(NAME core_obj_export COMMAND test_obj_export)
   add_executable(test_gltf_export ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_gltf_export.cc)
   target_link_libraries(test_gltf_export PRIVATE tydra)
   add_test(NAME core_gltf_export COMMAND test_gltf_export)
@@ -304,4 +343,36 @@ if(NOT EMSCRIPTEN AND LIGHTUSD_PREVIEW_GPU_COMPUTE)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS scene-preview-kernel.inc)
   endif()
   target_include_directories(tydra PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
+if(LIGHTUSD_BUILD_EXAMPLES)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../examples/tydra_api
+                   ${CMAKE_CURRENT_BINARY_DIR}/examples/tydra_api)
+endif()
+
+if(NOT EMSCRIPTEN AND LIGHTUSD_BUILD_EXAMPLES AND TARGET lightusd_textools)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../examples/usd-texcomp
+                   ${CMAKE_CURRENT_BINARY_DIR}/examples/usd-texcomp)
+endif()
+
+if(NOT EMSCRIPTEN AND LIGHTUSD_BUILD_EXAMPLES)
+  add_executable(triangulation_method_example
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/triangulation_method_example.cc)
+  target_link_libraries(triangulation_method_example PRIVATE tydra)
+  set_target_properties(triangulation_method_example PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+  if(LIGHTUSD_BUILD_TESTS)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME core_triangulation_example
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/test-triangulation-example.py
+          $<TARGET_FILE:triangulation_method_example>)
+      set_tests_properties(core_triangulation_example PROPERTIES LABELS "core;examples;tydra")
+    endif()
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  add_executable(test_rb_solver ${CMAKE_CURRENT_LIST_DIR}/../../tests/core/test_rb_solver.cc)
+  target_link_libraries(test_rb_solver PRIVATE lightusd_rb_solver)
+  add_test(NAME core_test_rb_solver COMMAND test_rb_solver)
 endif()

@@ -13,8 +13,8 @@ case "$BACKEND" in
 esac
 case "$LOADER_MODE" in
   next) LOADER_ARGS=(--next); COMPANION_LOADER_ARGS=(--next) ;;
-  legacy) LOADER_ARGS=(--legacy-load); COMPANION_LOADER_ARGS=(--viewer-arg=--legacy-load) ;;
-  *) echo "FAIL: loader must be next or legacy"; exit 1 ;;
+  static) LOADER_ARGS=(--next); COMPANION_LOADER_ARGS=(--next) ;;
+  *) echo "FAIL: loader must be next or static"; exit 1 ;;
 esac
 [ -x "$BIN" ] || { echo "SKIP: lusdview not found"; exit "$SKIP"; }
 OUT="${LUSDVIEW_TEST_OUT:-$(mktemp -d)}"
@@ -24,7 +24,7 @@ mkdir -p "$OUT/config-home"
 write_scene() {
   local path="$1" open="$2" close="$3"
   local mesh_xform='double3 xformOp:translate.timeSamples = { 0: (-2, 0, 0), 2: (2, 0, 0) }'
-  if [ "$LOADER_MODE" = legacy ]; then
+  if [ "$LOADER_MODE" = static ]; then
     mesh_xform='double3 xformOp:translate = (0, 0, 0)'
   fi
   cat >"$path" <<USDA

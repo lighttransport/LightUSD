@@ -11,8 +11,8 @@ import {
   transformLinearColor
 } from './src/lightusd/ColorSpaceUtils.js';
 import { loadWasm } from './src/usdzconvert.js';
-import { LightUSDLoaderUtils } from './src/lightusd/LightUSDLoaderUtils.js';
-import { createNextMaterial } from './src/lightusd/NextRenderSceneUtils.js';
+import { NextRenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
+import { buildNextThreeNode, createNextMaterial } from './src/lightusd/NextRenderSceneUtils.js';
 
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
@@ -148,7 +148,7 @@ const textureComparison = comparePixelSamples(
 const customDefinitionComparison = comparePixelSamples(
   [textureSamples[3].actual], [textureSamples[0].actual], tolerance);
 
-// Exercise the actual legacy and next WASM material converters, followed by
+// Exercise the core scene adapter and direct stream material paths, followed by
 // their production Three.js material adapters and float render-target
 // readback. The source value is untagged MaterialX/AP1; MaterialXConfigAPI is
 // therefore the only source-space opinion, while RenderSettings keeps the
@@ -194,29 +194,23 @@ def Xform "World" {
 
 async function createBackendThreeMaterials() {
   const bytes = new TextEncoder().encode(BACKEND_MTLX_USDA);
-  const legacy = await loadWasm(() => import(/* @vite-ignore */
-    new URL('./src/lightusd/lightusd.js', import.meta.url).href));
   const next = await loadWasm(() => import(/* @vite-ignore */
-    new URL('./src/lightusd/lightusd.js', import.meta.url).href), {
-    locateFile: (file) => new URL('./src/lightusd/' + file,
-      import.meta.url).href
-  });
-
-  const legacyScene = new legacy.LightUSDLoaderNative();
-  let legacyMaterial;
+    new URL('./src/lightusd/lightusd.js', import.meta.url).href));
+  const adapter = await NextRenderSceneAdapter.create(next, bytes, 'colorspace-browser.usda');
+  let adapterMaterial;
   try {
-    if (!legacyScene.loadFromBinary(bytes, 'colorspace-browser-legacy.usda')) {
-      throw new Error(legacyScene.error());
-    }
-    const record = legacyScene.getMaterialWithFormat(0, 'json');
-    if (record.error) throw new Error(record.error);
-    legacyMaterial = await LightUSDLoaderUtils.convertMaterial(
-      JSON.parse(record.data), legacyScene, {
-        preferredMaterialType: 'openpbr', skipTextures: true
-      });
-  } finally {
-    legacyScene.delete();
-  }
+    const {node} = buildNextThreeNode(adapter, {skipTextures:true});
+    node.traverse(object => {
+      object.geometry?.dispose();
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (!adapterMaterial) adapterMaterial = material.clone();
+        material.dispose();
+      }
+    });
+    if (!adapterMaterial) throw new Error('Core adapter produced no material');
+  } finally {adapter.delete();}
 
   const stream = new next.RenderStream();
   let nextMaterial;
@@ -233,13 +227,13 @@ async function createBackendThreeMaterials() {
     stream.end();
     stream.delete();
   }
-  return { legacy: legacyMaterial, next: nextMaterial };
+  return { adapter: adapterMaterial, stream: nextMaterial };
 }
 
 function renderBackendMaterialPixels(materials) {
   const backendScene = new THREE.Scene();
   const geometry = new THREE.PlaneGeometry(0.8, 0.8);
-  const backendNames = ['legacy', 'next'];
+  const backendNames = ['adapter', 'stream'];
   const previewMaterials = [];
   for (let i = 0; i < backendNames.length; ++i) {
     const source = materials[backendNames[i]];
@@ -270,6 +264,7 @@ function renderBackendMaterialPixels(materials) {
   return pixels;
 }
 
+async function finishRegression() {
 const backendMaterials = await createBackendThreeMaterials();
 const backendPixels = renderBackendMaterialPixels(backendMaterials);
 const backendExpectedLinear = transformLinearColor(
@@ -281,8 +276,8 @@ const backendComparison = comparePixelSamples(backendPixels,
   [backendExpected, backendExpected], tolerance);
 const backendParityComparison = comparePixelSamples(
   [backendPixels[0]], [backendPixels[1]], tolerance);
-backendMaterials.legacy.dispose();
-backendMaterials.next.dispose();
+backendMaterials.adapter.dispose();
+backendMaterials.stream.dispose();
 renderer.setRenderTarget(null);
 renderer.render(scene, camera);
 
@@ -301,7 +296,7 @@ const result = {
   backendFailures: backendComparison.failures,
   backendParityFailures: backendParityComparison.failures,
   backendPixels: {
-    legacy: backendPixels[0], next: backendPixels[1],
+    adapter: backendPixels[0], stream: backendPixels[1],
     expected: backendExpected
   },
   textureSamples,
@@ -314,3 +309,12 @@ document.documentElement.dataset.regressionReady = 'true';
 status.textContent = result.pass ? 'PASS' : 'FAIL';
 status.className = result.pass ? 'pass' : 'fail';
 report.textContent = JSON.stringify(result, null, 2);
+
+}
+finishRegression().catch(error => {
+  window.__colorRegression = {pass:false,error:String(error)};
+  document.documentElement.dataset.regressionReady = 'true';
+  status.textContent = 'FAIL'; status.className = 'fail';
+  report.textContent = String(error.stack || error);
+  console.error(error);
+});

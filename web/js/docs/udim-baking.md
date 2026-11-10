@@ -17,13 +17,15 @@ const {usdz, stats} = await convertFolderToUSDZ(native, assets, {
 });
 ```
 
-The next-only converter retains its single-root, asset-passthrough contract:
-use `flatten: false`; external dependency-layer composition and variant
-selection overrides require the combined product. Authored variants are
-preserved and grid baking edits their texture definitions. Dense baking can
-update authored prototype geometry consumed through internal references.
-Instances that override prototype geometry require composition before dense
-baking, so next-only conversion diagnoses them explicitly.
+The core converter composes dependency layers and applies variant selection
+overrides by default. Texture paths are rebased against their authoring layers
+before composition, including animated paths and UDIM patterns. Material dedupe
+and mesh merging run after UDIM baking. `flatten: false` preserves single-root
+authoring, including variant definitions; optimization or variant overrides
+require composition and enable it automatically. Non-flattened dependency-layer
+packaging is still being migrated. Dense baking can update authored prototype
+geometry consumed through internal references; geometry overrides on instances
+require composition before dense baking.
 
 The browser converter exposes layout, tile cap, atlas edge, memory budget,
 crossing-face policy, gutter, and subdivision controls. The CLI accepts

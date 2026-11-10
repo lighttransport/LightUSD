@@ -16,6 +16,7 @@
 #include <set>
 
 #include "layer/layer.hh"
+#include "layer/asset-anchor.hh"
 #include "../pcp/layer-registry.hh"
 #if defined(LIGHTUSD_PIPELINE_PCP_COMPOSE)
 #include "../pcp/cache.hh"  // pcp::ComposeStageFromLayer (parallel compose)
@@ -94,6 +95,16 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     return false;
   }
 
+  bool rebase_before_compose = opts.anchor_relative_asset_remap;
+#if defined(LIGHTUSD_PIPELINE_PCP_COMPOSE)
+  rebase_before_compose = rebase_before_compose && !opts.use_pcp_compose;
+#endif
+  size_t asset_paths_remapped = 0;
+  if (opts.anchor_relative_asset_remap)
+    StampLayerAssetAnchor(root_owner.get(), opts.root_anchor_path, true);
+  if (rebase_before_compose)
+    asset_paths_remapped +=
+        RebaseLayerAssetPaths(root_owner.get(), opts.asset_path_remap);
   std::unique_ptr<Layer> composed;
   const Layer* layer = root;
   const auto compose_begin = Clock::now();
@@ -135,8 +146,20 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     Compositor comp;
     comp.SetOptions(opts.composition);
     if (opts.resolver) comp.SetResolver(opts.resolver);
-    if (opts.layer_loader) comp.SetLayerLoader(opts.layer_loader);
-    composed = comp.Compose(*root, opts.root_anchor_path);  // structural: moves lazy refs, no decode
+    if (opts.layer_loader) {
+      comp.SetLayerLoader([&](const std::string& key, std::string* error) {
+        auto loaded = opts.layer_loader(key, error);
+        if (loaded && rebase_before_compose) {
+          StampLayerAssetAnchor(loaded.get(), key, true);
+          asset_paths_remapped +=
+              RebaseLayerAssetPaths(loaded.get(), opts.asset_path_remap);
+        }
+        return loaded;
+      });
+    }
+    composed = comp.Compose(
+        *root,
+        opts.root_anchor_path);  // structural: moves lazy refs, no decode
     if (!composed) {
       if (err) *err = "composition failed";
       return false;
@@ -167,14 +190,14 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   const auto after_compose = Clock::now();
   FlattenMemLog("after-compose");
 
-  size_t asset_paths_remapped = 0;
-  if (!opts.asset_path_remap.empty()) {
+  if (!opts.asset_path_remap.empty() && !rebase_before_compose) {
     Layer* mutable_layer = composed ? composed.get() : root_owner.get();
     if (mutable_layer) {
       for (size_t i = 0; i < mutable_layer->prim_count(); ++i) {
         PrimSpec* prim = mutable_layer->prim_mutable(static_cast<uint32_t>(i));
         if (!prim) continue;
-        asset_paths_remapped += prim->remap_asset_paths(opts.asset_path_remap);
+        asset_paths_remapped += prim->remap_asset_paths(
+            opts.asset_path_remap, opts.anchor_relative_asset_remap);
       }
     }
   }

@@ -150,6 +150,7 @@ bool RenderSceneConverter::Impl::ComputeVertexTangents(RenderMesh* mesh) {
   mesh->tangents.clear();
   mesh->tangents.append_exact(out_tan.data(), out_tan.size());
   mesh->tangents_interp = Interpolation::Vertex;
+  mesh->tangents_triangulated = false;
   return true;
   }
 
@@ -285,10 +286,12 @@ bool RenderSceneConverter::Impl::ComputeVertexTangents(RenderMesh* mesh) {
     mesh->tangents.clear();
     mesh->tangents.append_exact(vertex_out.data(), vertex_out.size());
     mesh->tangents_interp = Interpolation::Vertex;
+  mesh->tangents_triangulated = false;
   } else {
     mesh->tangents.clear();
     mesh->tangents.append_exact(fv_out.data(), fv_out.size());
     mesh->tangents_interp = Interpolation::FaceVarying;
+    mesh->tangents_triangulated = true;
   }
   return true;
 }

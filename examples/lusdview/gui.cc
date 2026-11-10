@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
 #include "public_stage_queries.hh"
+#include "scene_gizmos.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <map>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -2271,9 +2273,63 @@ void Gui::drawHierarchy() {
       }
       ImGui::Separator();
     }
+    ImGui::Checkbox("Render scene", &renderHierarchy_);
     hierFilter_.Draw("Search", -1.0f);  // name / type / path
     ImGui::Separator();
-    if (nextStage_) {
+    if (draw_ && (renderHierarchy_ || !nextStage_)) {
+      // The draw records retain composed prim paths, including instanced and
+      // procedural geometry. Build ancestors iteratively to avoid recursive
+      // traversal of arbitrarily deep scene paths.
+      std::map<std::string, std::string> nodes;
+      const auto collect = [&](const auto& records, const char* type) {
+        for (const auto& record : records) {
+          const std::string& path = record.absPath;
+          if (path.empty() || path[0] != '/' ||
+              !hierFilter_.PassFilter((path + " " + type).c_str())) continue;
+          nodes[path] = type;
+          size_t slash = path.find_last_of('/');
+          while (slash != std::string::npos && slash > 0) {
+            nodes.emplace(path.substr(0, slash), "Group");
+            slash = path.find_last_of('/', slash - 1);
+          }
+        }
+      };
+      collect(draw_->meshes, "Mesh");
+      collect(draw_->points, "Points");
+      collect(draw_->curves, "Curves");
+      collect(draw_->lights, "Light");
+      collect(draw_->cameras, "Camera");
+      std::vector<std::string> openPaths;
+      const auto descendant = [](const std::string& child, const std::string& parent) {
+        return child.size() > parent.size() &&
+               child.compare(0, parent.size(), parent) == 0 &&
+               child[parent.size()] == '/';
+      };
+      for (auto it = nodes.begin(); it != nodes.end();) {
+        const auto& path = it->first;
+        while (!openPaths.empty() && !descendant(path, openPaths.back())) {
+          ImGui::TreePop();
+          openPaths.pop_back();
+        }
+        auto next = std::next(it);
+        const bool branch = next != nodes.end() && descendant(next->first, path);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                   ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (!branch) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
+        if (revealSelectionInHierarchy_ && descendant(selPath_, path))
+          ImGui::SetNextItemOpen(true);
+        const bool open = ImGui::TreeNodeEx(path.c_str(), flags, "%s (%s)",
+            path.substr(path.find_last_of('/') + 1).c_str(), it->second.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) selectByPath(path, -1);
+        if (branch && open) openPaths.push_back(path);
+        if (branch && !open)
+          while (next != nodes.end() && descendant(next->first, path)) ++next;
+        it = next;
+      }
+      while (!openPaths.empty()) { ImGui::TreePop(); openPaths.pop_back(); }
+      if (nodes.empty()) HintWrapped("No matching render objects.");
+    } else if (nextStage_) {
       for (size_t i = 0; i < lightusd_stage_root_prim_count(nextStage_.get()); ++i) {
         drawNextPrimTree(lightusd_stage_root_prim(nextStage_.get(), i));
       }
@@ -6947,6 +7003,8 @@ void Gui::buildHelpers() {
     addLine(0, 0, 0, 0, L, 0, 0.20f, 0.85f, 0.25f);  // Y green
     addLine(0, 0, 0, 0, 0, L, 0.30f, 0.50f, 1.00f);  // Z blue
   }
+  if (draw_) AppendSceneGizmos(*draw_, showLights_, showCameras_,
+                               std::max(half * 0.1f, 0.1f), addLine);
   if (showSceneBbox_ && draw_ && draw_->hasBounds) {
     addBox(draw_->aabbMin, draw_->aabbMax, 0.90f, 0.90f, 0.30f);
   }

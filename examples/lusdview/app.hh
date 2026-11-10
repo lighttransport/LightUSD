@@ -33,6 +33,7 @@
 #include "cuda/cuda_raytracer.hh"
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
+#include "physics_preview.hh"
 #include "gui.hh"
 #include "hip/hip_raytracer.hh"
 #include "lightusd-render-cpp.hh"
@@ -603,6 +604,11 @@ class App
   // document recomposes on the loader thread.
   lightusd::api::Stage nextStageSnapshot_;
   uint64_t nextStageRevision_{0};
+  const lightusd_stage* animatedStage() const {
+    return physicsPreview_.stage() && physicsSceneGen_ == sceneGen_ &&
+           physicsRevision_ == nextStageRevision_
+        ? physicsPreview_.stage() : nextStageSnapshot_.get();
+  }
   bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
@@ -1190,6 +1196,9 @@ class App
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};
+  PhysicsPreview physicsPreview_;
+  std::uint64_t physicsSceneGen_{~std::uint64_t(0)}, physicsRevision_{0};
+  bool physicsPreviewVisible_{false};
 #if defined(LUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
   double mcpCpuFrameSeconds_{0.0};

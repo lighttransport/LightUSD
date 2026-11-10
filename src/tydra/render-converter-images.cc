@@ -49,6 +49,18 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
           file, dir.empty() ? std::string()
                             : (::lightusd::AssetResolver::IsPackagePath(dir)
                                    ? dir : dir + "/"));
+      // Registered memory identifiers are exact matches in AssetResolver.
+      // Prefer the authoring-layer-relative key before a bare identifier can
+      // match a different package entry with the same authored name.
+      if (!dir.empty() && !::lightusd::AssetResolver::IsPackagePath(dir) &&
+          (config_.asset_resolver->GetAllowParentPaths() || resolved.exists)) {
+        const std::string anchored = ::lightusd::AssetResolver::NormalizePath(
+            ::lightusd::AssetResolver::JoinPath(dir, file));
+        if (config_.asset_resolver->GetMemoryAssetView(anchored)) {
+          if (exists) *exists = true;
+          return anchored;
+        }
+      }
       if (exists) *exists = resolved.exists && !resolved.resolved_path.empty();
       return resolved.resolved_path;
     }

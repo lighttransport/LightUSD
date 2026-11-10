@@ -4,6 +4,7 @@
 // Variant holder materialization for the crate writer (see header).
 
 #include "variant-holders.hh"
+#include "composition/composition.hh"
 
 #include <algorithm>
 #include <string>
@@ -85,6 +86,12 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
     if (const std::vector<Path>* targets = src.relationship(rel)) {
       dst->set_relationship_targets(rel, *targets);
     }
+    dst->set_relationship_flags(rel, src.relationship_flags(rel));
+    if (const PropMeta* meta = src.property_meta(rel)) dst->ensure_property_meta(rel) = *meta;
+    const auto edit = src.relationship_edits().find(rel);
+    if (edit != src.relationship_edits().end()) dst->ensure_relationship_edit(rel) = edit->second;
+    if (const auto* opinions = src.relationship_opinion_stack(rel))
+      dst->set_relationship_opinion_stack(rel, *opinions);
   }
   if (!src.type_name().empty() && dst->type_name().empty()) {
     dst->set_type_name(src.type_name());
@@ -95,6 +102,14 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   if (!sm.apiSchemas().empty()) dst->meta().apiSchemas() = sm.apiSchemas();
   if (sm.customData().is_dictionary()) {
     dst->meta().customData() = sm.customData();
+  }
+  // Preserve the less common authored metadata and property opinions too.
+  // The option's own metadata is already on dst and remains stronger.
+  Compositor::CopyLocalOpinions(*dst, src);
+  if (const ArcListOps* edits = sm.arc_edits()) dst->meta().ensure_arc_edits() = *edits;
+  for (const PropSlot& slot : src.properties().slots()) {
+    if (const ArcListOp* edit = src.connection_edit(slot.name_id))
+      dst->ensure_connection_edit(std::string(names.get(slot.name_id))) = *edit;
   }
 }
 

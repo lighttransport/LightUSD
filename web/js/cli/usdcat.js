@@ -2,7 +2,7 @@
 // usdcat CLI — LightUSD WASM
 //
 // Load a USD asset, (optionally) flatten/compose it, and write USDA / USDC / USDZ.
-// A JS/WASM counterpart to the native `lusdcat` tool (examples/lusdcat/main.cc),
+// A JS/WASM counterpart to the native `lusdcat` tool (tests/core/lusdcat.cc),
 // reusing the same compose-to-fixed-point flatten path as usdzconvert.
 //
 // Usage:
@@ -37,18 +37,17 @@ import {
   unpackUSDZ,
   rootUsdFromMap,
   isUsdName,
-  composeToFixedPoint,
 } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
 // CLI runs with plain `node`. Honors LIGHTUSD_WASM64=1 like usdzconvert.js.
 function selectWasmGlue() {
   if (process.env.LIGHTUSD_WASM64 === '1') {
-    const url64 = new URL('../src/lightusd/lightusd_legacy_64.js', import.meta.url);
+    const url64 = new URL('../src/lightusd/lightusd_64.js', import.meta.url);
     if (fs.existsSync(url64)) return url64.href;
-    console.error('[usdcat] LIGHTUSD_WASM64=1 but lightusd_legacy_64.js not found; using wasm32.');
+    console.error('[usdcat] LIGHTUSD_WASM64=1 but lightusd_64.js not found; using wasm32.');
   }
-  return new URL('../src/lightusd/lightusd_legacy.js', import.meta.url).href;
+  return new URL('../src/lightusd/lightusd.js', import.meta.url).href;
 }
 
 function printUsage() {
@@ -156,6 +155,8 @@ export function buildInput(inputPath, preferredRoot) {
   } else if (/\.usdz$/i.test(inputPath)) {
     const { entries } = unpackUSDZ(fs.readFileSync(inputPath));
     map = entries;
+    if (!preferredRoot) preferredRoot = entries.keys().next().value;
+    if (!isUsdName(preferredRoot)) throw new Error("The first USDZ entry must be a USD layer.");
   } else {
     // Single layer: read its sibling directory so external refs/sublayers resolve.
     const base = path.basename(inputPath);
@@ -174,7 +175,43 @@ export function buildInput(inputPath, preferredRoot) {
 // Exported so tests can drive it without spawning a process.
 export function runUsdcat(native, { map, rootName, flatten = true, format = 'usda',
                                     maxUsdcMb = 0, maxMemMb = 0, log = () => {} }) {
-  const usd = new native.LightUSDLoaderNative();
+  let rootBytes = map.get(rootName);
+  if (!rootBytes) throw new Error(`Missing root layer: ${rootName}`);
+  if (flatten) {
+    const session = new native.NextFlattenSession();
+    try {
+      if (maxMemMb > 0) {
+        const limit = session.setMaxInputBytes(maxMemMb * 1024 * 1024);
+        if (!limit.success) throw new Error(limit.error);
+      }
+      if (maxUsdcMb > 0) {
+        const limit = session.setMaxOutputBytes(maxUsdcMb * 1024 * 1024);
+        if (!limit.success) throw new Error(limit.error);
+      }
+      const begun = session.begin(rootBytes, rootName, true);
+      if (!begun.success) throw new Error(begun.error);
+      session.setAssetPathRemap(Object.fromEntries([...map.keys()].map(key => [key, key])));
+      const provided = new Set();
+      for (;;) {
+        const step = session.step(null);
+        if (!step.success) throw new Error(step.error || 'Composition failed');
+        if (step.status === 'done') {
+          if (step.compositionErrors?.length) throw new Error(step.compositionErrors.join('\n'));
+          if (!step.data?.length) throw new Error('Composition produced an empty layer');
+          rootBytes = new Uint8Array(step.data);
+          break;
+        }
+        if (step.status === 'ready') continue;
+        if (step.status !== 'need-layer') throw new Error(`Unexpected composition status: ${step.status}`);
+        if (!map.has(step.key)) throw new Error(`Missing USD dependency: ${step.key}`);
+        if (provided.has(step.key)) throw new Error(`Repeated USD dependency: ${step.key}`);
+        const result = session.provideLayer(step.key, map.get(step.key));
+        if (!result.success) throw new Error(result.error);
+        provided.add(step.key);
+      }
+    } finally { session.delete(); }
+  }
+  const usd = new native.NextUSDZConverterNative();
   try {
     if ((maxUsdcMb > 0 || maxMemMb > 0) && typeof usd.setUSDCExportLimitMB === 'function') {
       usd.setUSDCExportLimitMB(maxUsdcMb, maxMemMb);
@@ -185,12 +222,10 @@ export function runUsdcat(native, { map, rootName, flatten = true, format = 'usd
       if (name === rootName || /\.usdz$/i.test(name)) continue;
       usd.setAsset(name, bytes);
     }
-    const rootBytes = map.get(rootName);
-    if (!usd.loadAsLayerFromBinary(rootBytes, rootName.split('/').pop())) {
+    if (!usd.loadFromBinary(rootBytes, rootName)) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
-    if (flatten) composeToFixedPoint(usd);
 
     if (format === 'usda') {
       const text = usd.exportAsUSDA();

@@ -18,42 +18,17 @@
 //     pulled over HTTP — composition arcs first (references/payloads/sublayers),
 //     then textures — so the whole scene resolves from the remote location.
 //
-// How resolution works (reusing the existing pieces):
-//   - HttpAssetResolver rewrites a USD asset path (relative, or already
-//     absolute http(s)/data/blob) to an absolute URL against a configurable
-//     base, fetches it, and caches it under the path AS WRITTEN in the USD.
-//   - LightUSDComposer.progressiveComposition() runs the LIVRPS loop:
-//     extract*AssetPaths() -> resolver.resolveAsync() (fetch) -> layer.setAsset()
-//     -> compose*(). We inject HttpAssetResolver via composer.setAssetResolver().
-//   - Textures are resolved in a second pass: layerToRenderScene() leaves remote
-//     textures unresolved (image.bufferId == -1); we read each unresolved image's
-//     authored path via getImagePtr().uri, fetch it over HTTP, setAsset(), and
-//     re-convert. tydra resolves MaterialX and UsdPreviewSurface into the SAME
-//     material record, so "simple MaterialX shading" needs no JS network eval.
-//
-// Memory: the legacy path keeps textures encoded in WASM until JS decodes them
-// and resets the scene after upload. The next path resolves dependency layers
-// with NextFlattenSession and packages the composed layer with fetched assets
-// before the RenderStream loader builds the scene.
-//
-// Usage (module): include http-asset-resolver.html, which calls
-// mountHttpAssetResolverDemo().
+// Core composition requests missing layers through NextFlattenSession. Asset
+// paths retain their authoring-layer anchors, then fetched bytes are packaged
+// under safe archive names for the incremental RenderStream renderer.
 
 import { StreamingUSDRenderer } from './streaming.js';
-import { LightUSDComposer } from './src/lightusd/LightUSDComposer.js';
 import { parseUSDZEntries, ZipStreamWriter } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
 // HttpAssetResolver — fetch + base-URL rewrite, keyed by the authored path.
 // ---------------------------------------------------------------------------
 
-// Implements the resolver interface LightUSDComposer expects:
-//   resolveAsync(assetPath, { parentAssetPath? }) -> Promise<[assetPath, ArrayBuffer, resolvedUrl]>
-//   getAsset / hasAsset / setAsset / clearCache
-// plus rewrite(): relative paths resolve against `baseUrl`, absolute ones
-// (http(s)/data/blob) pass through unchanged. resolveAsync RETURNS THE ORIGINAL
-// authored path as the key, so layer.setAsset(path, bytes) stores it under the
-// name the native composer/converter looks it up by (a direct cache hit).
 export class HttpAssetResolver {
   constructor({ baseUrl = '' } = {}) {
     this.baseUrl = baseUrl;
@@ -114,6 +89,7 @@ export class HttpAssetResolver {
     const url = this.rewrite(assetPath, opts);
     let resolvedUrl = url;
     let bytes;
+    let transferred = false;
     const candidates = [url, ...this.fallbackUrls(assetPath, url)];
     for (let i = 0; i < candidates.length; i++) {
       resolvedUrl = candidates[i];
@@ -129,6 +105,7 @@ export class HttpAssetResolver {
           throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
         }
         bytes = await resp.arrayBuffer();
+        transferred = true;
         break;
       } catch (e) {
         if (i + 1 === candidates.length) {
@@ -142,7 +119,7 @@ export class HttpAssetResolver {
       this.assetCache.set(key, bytes);
       this.urlCache.set(key, resolvedUrl);
     }
-    this.bytesFetched += bytes.byteLength;
+    if (transferred) this.bytesFetched += bytes.byteLength;
     this.fetchLog.push({ path: assetPath, url: resolvedUrl, bytes: bytes.byteLength, ok: true });
     return [assetPath, bytes, resolvedUrl];
   }
@@ -166,53 +143,6 @@ export class HttpAssetResolver {
 }
 
 // ---------------------------------------------------------------------------
-// Texture resolution over HTTP (two-pass).
-// ---------------------------------------------------------------------------
-
-// Convert the composed layer to a render scene, then fetch — in JS, off the
-// WASM heap — the encoded bytes for every texture the WASM side left unresolved
-// (image.bufferId < 0). We deliberately do NOT round-trip texture bytes back
-// through the native asset resolver: SanitizeAssetPath() collapses URL-ish and
-// `..` paths (e.g. `https://` -> `https:/`), so a setAsset(path)/re-convert
-// would never match. Instead we hand the encoded bytes to the renderer keyed by
-// image id; it decodes them with createImageBitmap (off-heap) and binds them to
-// the materials that already reference that image. Returns
-// { textureBytesById: Map<imageId, Uint8Array>, fetched, missing }.
-export async function resolveTexturesOverHttp(usd, resolver, { onStatus } = {}) {
-  if (!usd.layerToRenderScene()) {
-    throw new Error('layerToRenderScene failed: ' + (usd.error ? usd.error() : 'unknown'));
-  }
-  const textureBytesById = new Map();
-  let fetched = 0;
-  let missing = 0;
-
-  let n = 0;
-  try { n = usd.numImages(); } catch (_) { n = 0; }
-  for (let i = 0; i < n; i++) {
-    let m;
-    try { m = usd.getImagePtr(i); } catch (_) { continue; }
-    // Already resolved into the WASM heap (e.g. a .usdz-embedded texture) — the
-    // renderer reads it straight from the heap; nothing to fetch.
-    if (!m || (typeof m.byteLength === 'number' && m.byteLength > 0)) continue;
-    const uri = m.uri;
-    if (!uri) { missing++; continue; }
-    try {
-      const [, bytes] = await resolver.resolveAsync(uri); // rewritten onto the host
-      textureBytesById.set(i, new Uint8Array(bytes));
-      fetched++;
-      onStatus && onStatus(`Fetched texture: ${uri}`);
-    } catch (e) {
-      missing++;
-      onStatus && onStatus(`Texture missing (skipped): ${uri}`);
-    }
-  }
-  return { textureBytesById, fetched, missing };
-}
-
-// ---------------------------------------------------------------------------
-// Compose a (possibly remote) USD over HTTP and hand it to the renderer.
-// ---------------------------------------------------------------------------
-
 // Heuristic: does this root reference a MaterialX material? Used only to label
 // the shading mode — tydra unifies MaterialX and UsdPreviewSurface into one
 // material record, so both render through the same path.
@@ -228,12 +158,8 @@ export function detectMaterialX(bytes) {
 }
 
 function isUsdz(name) { return /\.usdz$/i.test(name || ''); }
-function isUsdc(name) { return /\.usdc$/i.test(name || ''); }
 function isUsdName(name) { return /\.(usd|usda|usdc)$/i.test(name || ''); }
-function isTextureName(name) { return /\.(png|jpe?g|webp|gif|bmp|tiff?|exr|hdr)$/i.test(String(name || '').split(/[?#]/)[0]); }
-function normalizeBackend(value, fallback = 'legacy') {
-  return (value === 'next' || value === 'auto' || value === 'legacy') ? value : fallback;
-}
+function normalizeBackend() { return 'core'; }
 
 function preferredUrlParam(params) {
   return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || '';
@@ -253,30 +179,7 @@ function findAssetByKey(assetMap, key) {
   const norm = normalizeAssetKey(key);
   if (assetMap.has(norm)) return assetMap.get(norm);
   if (assetMap.has(key)) return assetMap.get(key);
-  for (const [candidate, value] of assetMap) {
-    const c = normalizeAssetKey(candidate);
-    if (c === norm || c.endsWith('/' + norm) || norm.endsWith('/' + c)) {
-      return value;
-    }
-  }
   return null;
-}
-
-function allocateNextInput(native, usd, bytes) {
-  if (typeof usd.allocateZeroCopyBuffer !== 'function') {
-    throw new Error('next HTTP composition requires allocateZeroCopyBuffer in the WASM module');
-  }
-  const info = usd.allocateZeroCopyBuffer('__next_http_root__', bytes.length, 0);
-  if (!info || !info.success) {
-    throw new Error(`next input allocation failed: ${info?.error || 'unknown'}`);
-  }
-  const ptr = Number(info.bufferPtr);
-  const chunk = 16 * 1024 * 1024;
-  for (let off = 0; off < bytes.length; off += chunk) {
-    const end = Math.min(off + chunk, bytes.length);
-    native.HEAPU8.set(bytes.subarray(off, end), ptr + off);
-  }
-  return info.uuid;
 }
 
 function buildUsdzFromEntries(rootName, rootBytes, entries) {
@@ -300,15 +203,12 @@ function buildUsdzFromEntries(rootName, rootBytes, entries) {
   return out;
 }
 
-function prepareNextRoot(rootBytes, filename) {
+function prepareNextRoot(rootBytes, filename, resolver) {
   const seedAssets = new Map();
   if (isUsdz(filename)) {
     const entries = parseUSDZEntries(rootBytes);
-    // Root layer: first .usdc entry, else first .usda entry (the next loader
-    // content-sniffs, so either format works as a session root).
-    const root = entries.find((entry) => isUsdc(entry.name)) ||
-      entries.find((entry) => isUsdName(entry.name));
-    if (!root) {
+    const root = entries[0];
+    if (!root || !isUsdName(root.name)) {
       throw new Error('next HTTP composition requires a USD root layer in USDZ input');
     }
     for (const entry of entries) {
@@ -327,45 +227,19 @@ function prepareNextRoot(rootBytes, filename) {
   const bytes = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
   return {
     rootBytes: bytes,
-    rootName: normalizeAssetKey(filename.split('/').pop() || 'root.usd'),
+    rootName: resolver.baseUrl ? new URL(filename, resolver.baseUrl).href : filename || 'root.usd',
     seedAssets
   };
 }
 
-// Session handle abstraction over the two WASM flavors:
-// - next-only module: instance-based `NextFlattenSession` class
-// - legacy module: `LightUSDLoaderNative.nextFlattenAsync*` session-id protocol
-function openNextFlattenSession(native, usd, prepared) {
-  if (usd && typeof usd.nextFlattenAsyncBegin === 'function') {
-    const uuid = allocateNextInput(native, usd, prepared.rootBytes);
-    const begin = usd.nextFlattenAsyncBegin(uuid, prepared.rootName, true);
-    if (!begin || !begin.success) {
-      throw new Error(`next flatten begin failed: ${begin?.error || 'unknown'}`);
-    }
-    const session = begin.session;
-    return {
-      step: () => usd.nextFlattenAsyncStep(session, null),
-      provideLayer: (key, bytes) => usd.nextFlattenAsyncProvideLayer(session, key, bytes),
-      close: () => usd.nextFlattenAsyncEnd(session)
-    };
-  }
-  if (typeof native.NextFlattenSession === 'function') {
-    const session = new native.NextFlattenSession();
+function openNextFlattenSession(native, prepared) {
+  const session = new native.NextFlattenSession();
+  try {
     const begin = session.begin(prepared.rootBytes, prepared.rootName, true);
-    if (!begin || !begin.success) {
-      session.delete();
-      throw new Error(`next flatten begin failed: ${begin?.error || 'unknown'}`);
-    }
-    return {
-      step: () => session.step(null),
-      provideLayer: (key, bytes) => session.provideLayer(key, bytes),
-      close: () => {
-        session.end();
-        if (typeof session.delete === 'function') session.delete();
-      }
-    };
-  }
-  throw new Error('next flatten bindings are unavailable in this WASM module');
+    if (!begin?.success) throw new Error(`Core flatten begin failed: ${begin?.error || 'unknown'}`);
+    session.setRebaseAssetPaths(true);
+    return session;
+  } catch (error) { session.delete(); throw error; }
 }
 
 async function resolveNextAsset(resolver, assetPath) {
@@ -389,260 +263,95 @@ async function resolveNextAsset(resolver, assetPath) {
   throw lastError || new Error(`Could not resolve ${assetPath}`);
 }
 
-export async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
+export async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus, preloadedAssets = [], packageAssets = true, variantOverrides = {} }) {
   const native = renderer.native;
-  if (!native) {
-    throw new Error('next HTTP composition requires a LightUSD WASM module');
+  if (!native?.NextFlattenSession) throw new Error('Core HTTP composition requires NextFlattenSession');
+  const prepared = prepareNextRoot(rootBytes, filename, resolver);
+  for (const asset of preloadedAssets) {
+    if (!asset?.key || !asset.bytes) continue;
+    const url = asset.url || resolver.rewrite(asset.key);
+    resolver.setAsset(asset.key, asset.bytes, url);
+    resolver.setAsset(url, asset.bytes, url);
+    prepared.seedAssets.set(asset.key, asset.bytes);
+    prepared.seedAssets.set(url, asset.bytes);
   }
-  const usd = typeof native.LightUSDLoaderNative === 'function'
-    ? new native.LightUSDLoaderNative() : null;
+  const session = openNextFlattenSession(native, prepared);
   try {
-    const prepared = prepareNextRoot(rootBytes, filename);
-    const handle = openNextFlattenSession(native, usd, prepared);
-    let result = null;
-    try {
-      for (;;) {
-        const step = handle.step();
-        if (!step || !step.success) {
-          throw new Error(`next flatten failed: ${step?.error || 'unknown'}`);
-        }
-        if (step.status === 'need-layer') {
-          const key = normalizeAssetKey(step.key);
-          let bytes = findAssetByKey(prepared.seedAssets, key);
-          if (!bytes) {
-            const [, fetched, url] = await resolveNextAsset(resolver, key);
-            bytes = new Uint8Array(fetched);
-            resolver.setAsset(key, bytes, url || '');
-            onStatus && onStatus(`Fetched next dependency layer: ${key}`);
-          } else {
-            onStatus && onStatus(`Using in-archive next dependency layer: ${key}`);
-          }
-          // Dependency layers may be USDC, USDA, or USDZ — the native loader
-          // content-sniffs the bytes.
-          const provided = handle.provideLayer(key, bytes);
-          if (!provided || !provided.success) {
-            throw new Error(`next flatten provide failed for ${key}: ${provided?.error || 'unknown'}`);
-          }
-          continue;
-        }
-        if (step.status === 'done' || step.status === 'ready') {
-          result = step;
-          break;
-        }
-        throw new Error(`next flatten returned unexpected status: ${step.status}`);
-      }
-    } finally {
-      handle.close();
+    for(const [key,selection] of Object.entries(variantOverrides))session.setVariantOverride(key,selection);
+    let result;
+    for (;;) {
+      const step = session.step(null);
+      if (!step?.success) throw new Error(`Core flatten failed: ${step?.error || 'unknown'}`);
+      if (step.status === 'need-layer') {
+        const key = step.key;
+        const bytes = findAssetByKey(prepared.seedAssets, key) || (await resolveNextAsset(resolver, key))[1];
+        const provided = session.provideLayer(key, bytes);
+        if (!provided?.success) throw new Error(`Core dependency failed: ${key}: ${provided?.error || 'unknown'}`);
+        onStatus?.(`Resolved dependency layer: ${key}`);
+      } else if (step.status === 'done' || step.status === 'ready') { result = step; break; }
+      else throw new Error(`Unexpected core flatten status: ${step.status}`);
     }
-    if (!result || !result.data) {
-      throw new Error('next flatten produced no root layer');
-    }
-
-    const rootOut = new Uint8Array(result.data);
-    const passthrough = [];
-    const added = new Set();
-    const addEntry = (name, data) => {
-      const key = normalizeAssetKey(name);
-      if (!key || added.has(key) || isUsdName(key)) return;
-      added.add(key);
-      passthrough.push({ name: key, data: data instanceof Uint8Array ? data : new Uint8Array(data) });
-    };
-
-    for (const [name, data] of prepared.seedAssets) {
-      if (!isUsdName(name)) addEntry(name, data);
-    }
-
-    const referencedAssets = Array.isArray(result.assetPaths) ? result.assetPaths : [];
+    const referencedAssets = Array.from(result.assetPaths || []);
+    if(!packageAssets)return {rootBytes:new Uint8Array(result.data),stats:result,
+      fetchedAssets:0,packagedAssets:0,referencedAssets:referencedAssets.length};
+    const entries = [];
+    const remap = {};
+    const packaged = new Map();
     let fetchedAssets = 0;
-    const fetchedByUrl = new Map();  // canonical URL -> bytes, shared by aliases
     for (const assetPath of referencedAssets) {
-      if (!assetPath || isUsdName(assetPath) || !isTextureName(assetPath)) continue;
-      const key = normalizeAssetKey(assetPath);
-      if (added.has(key)) continue;
-      let bytes = findAssetByKey(prepared.seedAssets, key);
-      let resolvedUrl = '';
+      if (!assetPath || isUsdName(assetPath)) continue;
+      let bytes = findAssetByKey(prepared.seedAssets, assetPath);
+      let identity = assetPath;
+      let fetchedPayload = false;
       if (!bytes) {
         try {
           const [, fetched, url] = await resolveNextAsset(resolver, assetPath);
-          resolvedUrl = url || '';
-          const shared = resolvedUrl ? fetchedByUrl.get(resolvedUrl) : null;
-          if (shared) {
-            bytes = shared;
-          } else {
-            bytes = new Uint8Array(fetched);
-            if (resolvedUrl) fetchedByUrl.set(resolvedUrl, bytes);
-            fetchedAssets++;
-          }
-          resolver.setAsset(assetPath, bytes, resolvedUrl);
-          onStatus && onStatus(`Fetched next texture asset: ${assetPath}`);
-        } catch (e) {
-          onStatus && onStatus(`Next texture missing (skipped): ${assetPath}`);
+          bytes = fetched;
+          identity = url || assetPath;
+          fetchedPayload = true;
+        } catch (error) {
+          onStatus?.(`Asset missing (skipped): ${assetPath}`);
           continue;
         }
       }
-      addEntry(assetPath, bytes);
+      let name = packaged.get(identity);
+      if (!name) {
+        if(fetchedPayload)fetchedAssets++;
+        const extension = /\.([a-zA-Z0-9]{1,8})(?:[?#].*)?$/.exec(assetPath)?.[1] || 'bin';
+        name = `assets/${entries.length}.${extension}`;
+        entries.push({name, data: bytes});
+        packaged.set(identity, name);
+      }
+      remap[assetPath] = name;
     }
-
-    const usdz = buildUsdzFromEntries('root.usdc', rootOut, passthrough);
+    session.setAssetPathRemap(remap);
+    const final = session.step(null);
+    if (!final?.success || !final.data) throw new Error(`Core asset remap failed: ${final?.error || final?.status || 'unknown'}`);
     return {
-      usdz,
-      stats: result,
-      fetchedAssets,
-      packagedAssets: passthrough.length,
+      usdz: buildUsdzFromEntries('root.usdc', new Uint8Array(final.data), entries),
+      stats: final, fetchedAssets, packagedAssets: entries.length,
       referencedAssets: referencedAssets.length
     };
-  } finally {
-    if (usd && typeof usd.delete === 'function') usd.delete();
-  }
+  } finally { session.delete(); }
 }
 
-// Build a composed native Layer instance from root bytes, fetching every
-// external arc + texture over HTTP via `resolver`. Returns
-// { usd, textureBytesById } — the native instance (already through
-// layerToRenderScene; caller renders then owns/frees it) plus the JS-held
-// encoded bytes for HTTP textures keyed by image id.
-export async function composeOverHttp({ renderer, rootBytes, filename, resolver, onStatus, preloadedAssets = [] }) {
-  const native = renderer.native;
-  const u8 = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
+// Compose to a portable, core-renderable package without retaining a native handle.
+export const composeOverHttp = flattenNextOverHttp;
 
-  const layer = new native.LightUSDLoaderNative();
-  // Keep textures ENCODED in the heap (JS decodes them off-heap) — low memory.
-  if (typeof layer.setLoadTextureInNative === 'function') layer.setLoadTextureInNative(false);
-  // Allow USD `../` parent-dir references during composition (resolved by the
-  // sandboxed in-memory resolver). On by default in recent WASM builds; opt in
-  // explicitly so older builds that default off still get it where available.
-  if (typeof layer.setAllowParentRelativeAssetPaths === 'function') {
-    layer.setAllowParentRelativeAssetPaths(true);
-  }
-
-  // Seed the in-archive assets for a .usdz root, then load the root crate.
-  let rootForLoad = u8;
-  if (isUsdz(filename)) {
-    let entries;
-    try { entries = parseUSDZEntries(u8); } catch (e) { entries = null; }
-    if (entries && entries.length) {
-      const root = entries.find((e) => /\.usd[ac]?$/i.test(e.name)) || entries[0];
-      for (const e of entries) layer.setAsset(e.name, e.data); // in-archive textures/layers
-      rootForLoad = root.data;
-      filename = root.name;
-      onStatus && onStatus(`USDZ: seeded ${entries.length} in-archive assets`);
-    }
-  }
-
-  if (!layer.loadAsLayerFromBinary(rootForLoad, filename)) {
-    const err = layer.error ? layer.error() : 'unknown';
-    if (typeof layer.delete === 'function') layer.delete();
-    throw new Error(`loadAsLayerFromBinary failed for ${filename}: ${err}`);
-  }
-
-  for (const asset of preloadedAssets) {
-    if (!asset || !asset.key || !asset.bytes) continue;
-    resolver.setAsset(asset.key, asset.bytes, asset.url || '');
-    const aliases = typeof resolver.aliases === 'function' ? resolver.aliases(asset.key) : [asset.key];
-    for (const key of aliases) layer.setAsset(key, asset.bytes);
-  }
-
-  // Composition arcs (references/payloads/sublayers) over HTTP, reusing the
-  // proven LIVRPS loop with our HTTP resolver injected.
-  const composer = new LightUSDComposer();
-  composer.setLayer(layer);
-  composer.setUSDLoader(renderer.loader);
-  composer.setAssetResolver(resolver);
-  composer.setBaseWorkingPath('./');
-  composer.setAssetSearchPaths(['./']);
-  try {
-    await composer.progressiveComposition();
-  } catch (e) {
-    onStatus && onStatus(`Composition note: ${e.message}`);
-  }
-
-  // Textures over HTTP: convert once, then fetch each unresolved image's bytes
-  // in JS (off the WASM heap) keyed by image id for the renderer to decode.
-  const tex = await resolveTexturesOverHttp(layer, resolver, { onStatus });
-  onStatus && onStatus(
-    `Resolved ${tex.fetched} texture(s) over HTTP` +
-    (tex.missing ? `, ${tex.missing} unresolved` : ''));
-
-  return { usd: layer, textureBytesById: tex.textureBytesById };
-}
-
-export async function renderHttpUSD({
-  renderer,
-  rootBytes,
-  filename,
-  baseUrl,
-  label,
-  backend = 'legacy',
-  onStatus,
-  preloadedAssets = []
-}) {
-  const requestedBackend = normalizeBackend(backend);
+export async function renderHttpUSD({ renderer, rootBytes, filename, baseUrl, label, onStatus, preloadedAssets = [] }) {
   const loadStart = performance.now();
   const jsStart = jsHeapBytes();
-  const inputRootBytes = rootBytes.byteLength || 0;
-  const shadeLabel = detectMaterialX(rootBytes) ? 'MaterialX/tydra' : 'UsdPreviewSurface';
-
-  if (requestedBackend === 'next' || requestedBackend === 'auto') {
-    try {
-      const resolver = new HttpAssetResolver({ baseUrl });
-      onStatus && onStatus(`Loading ${label} with next HTTP composition...`);
-      const flattened = await flattenNextOverHttp({
-        renderer,
-        rootBytes,
-        filename,
-        resolver,
-        onStatus
-      });
-      const result = await renderer.loadBytesIncremental(flattened.usdz, 'next-http-composed.usdz');
-      const isNextResult = !!result?.memory?.summary?.incremental;
-      if (isNextResult) {
-        return {
-          backend: 'next',
-          requestedBackend,
-          result,
-          inputBytes: inputRootBytes + resolver.bytesFetched,
-          fetchedBytes: resolver.bytesFetched,
-          fetches: resolver.fetchLog.length,
-          fetchLog: resolver.fetchLog,
-          shadeLabel: 'next render scene',
-          loadMs: performance.now() - loadStart,
-          jsHeapDelta: jsHeapBytes() - jsStart,
-          note: `next HTTP composition: ${flattened.packagedAssets} packaged asset(s), ` +
-            `${flattened.referencedAssets} referenced asset path(s)`
-        };
-      }
-      if (requestedBackend === 'next') {
-        throw new Error('next backend did not produce an incremental render scene result');
-      }
-      onStatus && onStatus('next backend not applicable; falling back to legacy HTTP composition...');
-    } catch (e) {
-      if (requestedBackend === 'next') throw e;
-      onStatus && onStatus(`next backend failed; falling back to legacy HTTP composition: ${e.message}`);
-    }
-  }
-
-  const resolver = new HttpAssetResolver({ baseUrl });
-  const { usd, textureBytesById } = await composeOverHttp({
-    renderer,
-    rootBytes,
-    filename,
-    resolver,
-    onStatus,
-    preloadedAssets,
-  });
-  const inputBytes = inputRootBytes + resolver.bytesFetched;
-  const result = await renderer.renderComposedNative(usd, label, { inputBytes, textureBytesById });
+  const resolver = new HttpAssetResolver({baseUrl});
+  onStatus?.(`Loading ${label} with core HTTP composition...`);
+  const flattened = await flattenNextOverHttp({renderer, rootBytes, filename, resolver, onStatus, preloadedAssets});
+  const result = await renderer.loadBytesIncremental(flattened.usdz, 'http-composed.usdz');
   return {
-    backend: 'legacy',
-    requestedBackend,
-    result,
-    inputBytes,
-    fetchedBytes: resolver.bytesFetched,
-    fetches: resolver.fetchLog.length,
-    fetchLog: resolver.fetchLog,
-    shadeLabel,
-    loadMs: performance.now() - loadStart,
-    jsHeapDelta: jsHeapBytes() - jsStart,
+    backend: 'core', requestedBackend: 'core', result,
+    inputBytes: rootBytes.byteLength + resolver.bytesFetched,
+    fetchedBytes: resolver.bytesFetched, fetches: resolver.fetchLog.length,
+    fetchLog: resolver.fetchLog, shadeLabel: 'core render scene',
+    loadMs: performance.now() - loadStart, jsHeapDelta: jsHeapBytes() - jsStart,
+    note: `Core HTTP composition: ${flattened.packagedAssets} packaged asset(s), ${flattened.referencedAssets} referenced asset path(s)`
   };
 }
 
@@ -650,7 +359,7 @@ export async function renderHttpUSD({
 // Demo bootstrap.
 // ---------------------------------------------------------------------------
 
-const LOCAL_HTTP_TEXTURE_USDA = './assets/http-cat-plane.usda';
+const LOCAL_HTTP_TEXTURE_USDA = new URL('./assets/http-cat-plane.usda', import.meta.url).href;
 
 // A few usd-wg/assets test_assets (raw GitHub serves permissive CORS). These are
 // editable in the UI; pick the one that exists / renders best for your build.
@@ -855,7 +564,7 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
   // Optional auto-run via ?demo=1|2&url=…
   if (opts.autoRun !== false && typeof location !== 'undefined') {
     const q = new URLSearchParams(location.search);
-    const backend = normalizeBackend(q.get('backend'), 'legacy');
+    const backend = normalizeBackend(q.get('backend'));
     if (backendSelect) backendSelect.value = backend;
     const url = preferredUrlParam(q);
     if (q.get('demo') === '1') loadLocalHttpTexture();
@@ -867,7 +576,7 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
     }
   }
 
-  return { renderer, loadLocalHttpTexture, loadOverHttp, loadLocalFile };
+  return { renderer, loadLocalHttpTexture, loadOverHttp, loadLocalFile, parseUSDZEntries };
 }
 
 export default mountHttpAssetResolverDemo;

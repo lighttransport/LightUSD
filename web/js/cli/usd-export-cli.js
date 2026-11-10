@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // USD Export CLI Tool — LightUSD WASM
 // Load a USD file, export as USDA / USDC / USDZ.
-// Usage: vite-node cli/usd-export-cli.js <input-file> [options]
+// Usage: node cli/usd-export-cli.js <input-file> [options]
 
-import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -14,7 +14,7 @@ function printHelp() {
 USD Export CLI — LightUSD WASM
 
 Usage:
-  vite-node cli/usd-export-cli.js <input-file> [options]
+  node cli/usd-export-cli.js <input-file> [options]
 
 Options:
   --format <fmt>   Export format: usda, usdc, usdz, all (default: usda)
@@ -24,9 +24,9 @@ Options:
   -h, --help       Show this help
 
 Examples:
-  vite-node cli/usd-export-cli.js model.usdc --format usda
-  vite-node cli/usd-export-cli.js model.usdc --format all -o exported
-  vite-node cli/usd-export-cli.js --sample --format usdz -o sample.usdz
+  node cli/usd-export-cli.js model.usdc --format usda
+  node cli/usd-export-cli.js model.usdc --format all -o exported
+  node cli/usd-export-cli.js --sample --format usdz -o sample.usdz
 `);
 }
 
@@ -147,7 +147,7 @@ async function main() {
   await loader.init({ useMemory64: false });
   if (opts.verbose) console.log('WASM module loaded.');
 
-  const usd = new loader.native_.LightUSDLoaderNative();
+  const usd = new loader.native_.NextUSDZConverterNative();
 
   if (opts.sample) {
     // Generate sample scene (no texture in CLI mode — just geometry)
@@ -170,7 +170,7 @@ async function main() {
 
     if (opts.verbose) console.log(`Loading ${filename} (${(fileData.length / 1024).toFixed(1)} KB)...`);
 
-    const ok = usd.loadAsLayerFromBinary(fileData, filename);
+    const ok = usd.loadFromBinary(fileData, filename);
     if (!ok) {
       console.error('Load failed:', usd.error());
       process.exit(1);

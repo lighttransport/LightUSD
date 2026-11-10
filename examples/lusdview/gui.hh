@@ -757,6 +757,7 @@ class Gui {
   bool resetLayoutRequested_{false};
 
   ImGuiTextFilter hierFilter_;
+  bool renderHierarchy_{false};
   ImGuiTextFilter propFilter_;
   ImGuiTextFilter metaFilter_;
 

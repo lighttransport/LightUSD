@@ -27,7 +27,9 @@ redo actions when a text field or dialog is not active.
 
 ## Start locally
 
-Prepare the generated LightUSD modules when they are not already present, then
+Lucia uses the core scene distribution and the separate core MCP server for
+authoring. The UV-unwrapping worker loads xatlas from the independent core geometry
+feature and transfers owned output buffers. Prepare the generated LightUSD modules when they are not already present, then
 start Vite from `web/js`:
 
 ```bash

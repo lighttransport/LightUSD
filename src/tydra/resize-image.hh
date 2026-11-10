@@ -20,9 +20,9 @@ namespace tydra {
 enum class ResizeFilter { Auto, Linear, SRGB };
 
 ///
-/// Resize an 8-bit `Image` to (dstWidth, dstHeight).
+/// Resize an `Image` to (dstWidth, dstHeight).
 ///
-/// Only 8-bit per channel images are supported (bpp == 8), 1-4 channels.
+/// Supports uint8/uint16 LDR and fp16/fp32 HDR, with 1-4 channels.
 /// The output preserves channels/format/colorspace of the source.
 ///
 bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,

@@ -1,3 +1,4 @@
+import {hasImageBytes,createDecodedImageTexture} from './CoreImageTexture.js';
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
@@ -857,7 +858,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
         // 2. Texture is loaded from USDZ file, but not yet decoded(Use Three.js or JS library to decode)
         // 3. Texture is decoded and ready to use in Three.js.
 
-        if (texImage.uri && (texImage.bufferId == -1)) {
+        if (texImage.uri && !hasImageBytes(texImage)) {
             // Case 1: URI only
             const lowerUri = uri.toLowerCase();
 
@@ -881,7 +882,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
                     .then((texture) => this.applyTextureSampler(texture, tex));
             }
 
-        } else if (texImage.bufferId >= 0 && texImage.data) {
+        } else if (hasImageBytes(texImage)) {
 
             if (texImage.decoded) {
 
@@ -891,22 +892,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
                     return Promise.resolve(this.applyTextureSampler(compressed, tex));
                 }
 
-                const image8Array = new Uint8ClampedArray(texImage.data);
-                const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
-                if (texImage.channels == 1) {
-                    texture.format = THREE.RedFormat;
-                } else if (texImage.channels == 2) {
-                    texture.format = THREE.RGFormat;
-                } else if (texImage.channels == 3) {
-                    // Recent three.js does not support RGBFormat.
-                    return Promise.reject(new Error("RGB image is not supported"));
-                } else if (texImage.channels == 4) {
-                    texture.format = THREE.RGBAFormat;
-                } else {
-                    return Promise.reject(new Error("Unsupported image channels: " + texImage.channels));
-                }
-                texture.flipY = true;
-                texture.needsUpdate = true;
+                const texture = createDecodedImageTexture(texImage);
 
                 return Promise.resolve(this.applyTextureSampler(texture, tex));
 

@@ -19,6 +19,7 @@
 #include <unordered_map>
 
 #include "app.hh"
+#include "next_scene_loader.hh"
 #include "light3d/math.h"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
@@ -339,9 +340,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                               {"kinematic_stage_to_solver", true},
                               {"dynamic_solver_to_stage", true},
                               {"mesh_writeback", true},
-                              {"visualization", json::array(
-                                  {"bodies", "colliders", "joints", "contacts"})},
-                              {"loader", "legacy"}}},
+                              {"visualization", json::array({"bodies", "colliders", "joints", "contacts"})},
+                              {"loader", "core"}}},
             {"skin", json{{"material_model", "openpbr-multilobe"},
                             {"profile", "human-skin-v1"},
                             {"sss", true}, {"fuzz", true}, {"coat", true}}},
@@ -634,10 +634,152 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
   }
 
   if (tool == "vchar_physics") {
-    // The rigid-body preview was built on the legacy Stage and is not
-    // available on the core document.
-    err = "vchar_physics is not supported by the core loader";
-    return json::object();
+    const std::string op = args.value("op", std::string());
+    if (op != "status" && op != "initialize" && op != "step" && op != "reset" && op != "hide") {
+      err = "vchar_physics op must be status, initialize, step, reset, or hide";
+      return json::object();
+    }
+    auto snapshot = nextSession_ ? nextSession_->PublicSnapshot() : lightusd::api::DocumentSnapshot{};
+    lightusd::api::Stage authored;
+    const uint64_t revision = lightusd::api::DocumentSnapshotRevision(snapshot);
+    if (physicsSceneGen_ != sceneGen_ || physicsRevision_ != revision) {
+      physicsPreview_.clear(); physicsPreviewVisible_ = false;
+      gui_.setPhysicsDebugLines({});
+    }
+    if (op == "hide") {
+      physicsPreviewVisible_ = false;
+      gui_.setPhysicsDebugLines({});
+      return {{"visible", false}, {"initialized", physicsPreview_.stage() != nullptr}};
+    }
+    if (op != "status") {
+      if (lightusd::api::DocumentSnapshotStage(snapshot, &authored) != LIGHTUSD_OK) {
+        err = "vchar_physics requires a loaded core document"; return json::object();
+      }
+      if (op == "initialize" || op == "reset" || !physicsPreview_.stage()) {
+        if (!physicsPreview_.initialize(authored.get(), animTime_, &err)) return json::object();
+        physicsSceneGen_ = sceneGen_; physicsRevision_ = revision;
+      }
+      if (op == "step") {
+        if (args.contains("steps") && !args["steps"].is_number_integer()) {
+          err = "vchar_physics steps must be an integer"; return json::object();
+        }
+        const auto requestedSteps = args.value("steps", int64_t(1));
+        if (requestedSteps < 1 || requestedSteps > 600) {
+          err = "vchar_physics steps must be in [1,600]"; return json::object();
+        }
+        if (args.contains("timestep") && !args["timestep"].is_number()) {
+          err = "vchar_physics timestep must be numeric"; return json::object();
+        }
+        const float dt = args.value("timestep", physicsPreview_.world().timestep);
+        if (!physicsPreview_.step(authored.get(), animTime_, static_cast<int>(requestedSteps), dt, &err)) return json::object();
+      }
+      UpdateNextAnimatedMeshWorlds(physicsPreview_.stage(), &draw_, animTime_);
+      std::vector<std::pair<int, std::array<float, 16>>> uploads;
+      for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+        if (!draw_.meshes[i].animatedWorld) continue;
+        std::array<float, 16> matrix;
+        std::copy_n(draw_.meshes[i].world, 16, matrix.begin());
+        uploads.push_back({static_cast<int>(i), matrix});
+      }
+      postGpu([this, uploads = std::move(uploads)]() {
+        if (renderer_) for (const auto& upload : uploads)
+          renderer_->updateMeshWorld(upload.first, upload.second.data());
+      });
+      nextTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
+      physicsPreviewVisible_ = true;
+    }
+    const auto& world = physicsPreview_.world();
+    std::vector<HelperVertex> lines;
+    if (physicsPreview_.stage() && physicsPreviewVisible_) {
+      const float extent = draw_.hasBounds
+                               ? std::max(0.01f, (draw_.aabbMax[0] - draw_.aabbMin[0] +
+                                                draw_.aabbMax[1] - draw_.aabbMin[1] +
+                                                draw_.aabbMax[2] - draw_.aabbMin[2]) /
+                                                   300.0f)
+                               : 0.05f;
+      auto addLine = [&](float ax, float ay, float az, float bx, float by,
+                         float bz, float r, float g, float b) {
+        if (lines.size() >= 131072) return;
+        for (float v : {ax, ay, az, bx, by, bz}) if (!std::isfinite(v)) return;
+        lines.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+        lines.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+      };
+      auto addBox = [&](const TydraPhysAABB& box, float r, float g, float b) {
+        const float x0 = box.min.x, y0 = box.min.y, z0 = box.min.z;
+        const float x1 = box.max.x, y1 = box.max.y, z1 = box.max.z;
+        addLine(x0,y0,z0,x1,y0,z0,r,g,b); addLine(x0,y1,z0,x1,y1,z0,r,g,b);
+        addLine(x0,y0,z1,x1,y0,z1,r,g,b); addLine(x0,y1,z1,x1,y1,z1,r,g,b);
+        addLine(x0,y0,z0,x0,y1,z0,r,g,b); addLine(x1,y0,z0,x1,y1,z0,r,g,b);
+        addLine(x0,y0,z1,x0,y1,z1,r,g,b); addLine(x1,y0,z1,x1,y1,z1,r,g,b);
+        addLine(x0,y0,z0,x0,y0,z1,r,g,b); addLine(x1,y0,z0,x1,y0,z1,r,g,b);
+        addLine(x0,y1,z0,x0,y1,z1,r,g,b); addLine(x1,y1,z0,x1,y1,z1,r,g,b);
+      };
+      for (int32_t i = 0; i < world.num_bodies; ++i) {
+        const TydraPhysBody& body = world.bodies[i];
+        const float x = body.xform.position.x;
+        const float y = body.xform.position.y;
+        const float z = body.xform.position.z;
+        const bool sleeping = (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u;
+        const float r = sleeping ? 0.3f : 1.0f;
+        const float g = sleeping ? 0.6f : 0.45f;
+        addLine(x - extent, y, z, x + extent, y, z, r, g, 0.1f);
+        addLine(x, y - extent, z, x, y + extent, z, r, g, 0.1f);
+        addLine(x, y, z - extent, x, y, z + extent, r, g, 0.1f);
+      }
+      for (int32_t i = 0; i < world.num_colliders; ++i) {
+        const TydraPhysCollider& collider = world.colliders[i];
+        if (collider.shape.type == TYDRA_PHYS_SHAPE_PLANE) continue;
+        if (collider.body_index < 0 ||
+            collider.body_index >= world.num_bodies) continue;
+        TydraPhysAABB box;
+        tydra_phys_collider_aabb(&collider,
+            &world.bodies[collider.body_index].xform, &box);
+        addBox(box, 0.15f, 0.75f, 1.0f);
+      }
+      for (int32_t i = 0; i < world.num_joints; ++i) {
+        const TydraPhysJoint& joint = world.joints[i];
+        TydraPhysTransform a = joint.local_anchor_a;
+        TydraPhysTransform b = joint.local_anchor_b;
+        if (joint.body_a >= 0 && joint.body_a < world.num_bodies) {
+          a = tp_xform_mul(world.bodies[joint.body_a].xform, a);
+        }
+        if (joint.body_b >= 0 && joint.body_b < world.num_bodies) {
+          b = tp_xform_mul(world.bodies[joint.body_b].xform, b);
+        }
+        addLine(a.position.x, a.position.y, a.position.z,
+                b.position.x, b.position.y, b.position.z, 0.9f, 0.2f, 0.9f);
+        const TydraPhysVec3 axis = tp_q_rotate(a.rotation, joint.axis);
+        addLine(a.position.x, a.position.y, a.position.z,
+                a.position.x + axis.x * extent * 2.0f,
+                a.position.y + axis.y * extent * 2.0f,
+                a.position.z + axis.z * extent * 2.0f, 1.0f, 0.2f, 0.8f);
+      }
+      for (int32_t i = 0; i < world.num_contacts; ++i) {
+        const TydraPhysContact& contact = world.contacts[i];
+        const float length = std::max(extent, contact.depth * 4.0f);
+        addLine(contact.point.x, contact.point.y, contact.point.z,
+                contact.point.x + contact.normal.x * length,
+                contact.point.y + contact.normal.y * length,
+                contact.point.z + contact.normal.z * length, 1.0f, 0.1f, 0.1f);
+      }
+      gui_.setPhysicsDebugLines(std::move(lines));
+    }
+    json bodies = json::array();
+    for (int32_t i = 0; i < world.num_bodies; ++i) {
+      const auto& body = world.bodies[i];
+      bodies.push_back({{"index", i}, {"path", physicsPreview_.bodyPaths()[static_cast<size_t>(i)]},
+          {"type", body.body_type == TYDRA_PHYS_BODY_DYNAMIC ? "dynamic" : body.body_type == TYDRA_PHYS_BODY_KINEMATIC ? "kinematic" : "static"},
+          {"position", json::array({body.xform.position.x, body.xform.position.y, body.xform.position.z})},
+          {"linear_velocity", json::array({body.linear_velocity.x, body.linear_velocity.y, body.linear_velocity.z})},
+          {"angular_velocity", json::array({body.angular_velocity.x, body.angular_velocity.y, body.angular_velocity.z})},
+          {"sleeping", (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0}});
+    }
+    return {{"initialized", physicsPreview_.stage() != nullptr}, {"visible", physicsPreviewVisible_},
+        {"body_count", world.num_bodies}, {"collider_count", world.num_colliders},
+        {"joint_count", world.num_joints}, {"contact_count", world.num_contacts},
+        {"timestep", world.timestep}, {"bodies", std::move(bodies)},
+        {"mesh_sync", physicsPreview_.stage() != nullptr}, {"loader", "core"},
+        {"note", "diagnostic solver writes an independent core preview stage; reset restores the document pose"}};
   }
 
   if (tool == "vchar_hair_diagnostics") {

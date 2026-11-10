@@ -74,7 +74,7 @@ const viewer = process.argv[2];
 const config = process.argv[3];
 const packagePath = process.argv[4];
 const loader = process.argv[5];
-const loaderArg = loader === 'legacy' ? '--legacy-load' : '--next';
+const loaderArg = '--next';
 const child = spawn(viewer, [
   '--config', config, '--headless', '--backend', 'vk', loaderArg,
   '--defer-payloads', '--frames', '100000', '--mcp-stdio', packagePath

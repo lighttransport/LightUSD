@@ -3,6 +3,8 @@
 #include "crate-reader-internal.hh"
 #include "layer/array-edit.hh"
 #include "types/type-info.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
 #include <algorithm>
 #include <map>
 #include <string>
@@ -396,6 +398,24 @@ bool CrateReader::Impl::CollectPropertyRecords(
           base.resize(base.size() - 2);
         }
         TypeId declared = GetTypeIdFromName(base.c_str());
+        // OpenUSD stores unsigned vectors as UnregisteredValue source text.
+        // Decode that spelling using the same checked parser as USDA.
+        if (declared == TypeId::UInt2 || declared == TypeId::UInt3 ||
+            declared == TypeId::UInt4) {
+          if (auto text = ai.default_value.as_string()) {
+            Lexer lexer(text->data(), text->size());
+            const bool array = ai.type_name.size() >= 2 &&
+                ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
+            ParseResult parsed = array ? ParseArrayValue(lexer, declared)
+                                       : ParseValue(lexer, declared);
+            if (parsed.success && lexer.peek().type == TokenType::Eof) {
+              ai.default_value = std::move(parsed.value);
+            } else {
+              AddWarning("Invalid unsigned vector value on " + prim_path +
+                         "." + ai.name);
+            }
+          }
+        }
         if (declared != TypeId::Invalid) ai.default_value.retag_role(declared);
       }
       const uint32_t owner = owning_entry(prim_path, spec.path_index.value);

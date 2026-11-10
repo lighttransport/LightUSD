@@ -1,6 +1,6 @@
 # Small next API workflows
 
-These examples use `lightusd::next` and `lightusd::tydra::next`. Inputs are
+These examples use `lightusd` and `lightusd::tydra`. Inputs are
 caller-supplied; generated files go to explicitly named output paths.
 
 Build from the repository root:

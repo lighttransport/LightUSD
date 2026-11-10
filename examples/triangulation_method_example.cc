@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Example demonstrating the new triangulation method option in LightUSD Tydra
 //
 // This example shows how to use either:
@@ -7,12 +8,13 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include "lightusd.hh"
+#include <map>
+#include "load-usd.hh"
 #include "tydra/render-data.hh"
-#include "tydra/scene-access.hh"
+#include "tydra/render-converter.hh"
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
+    if (argc < 2 || argc > 3) {
         std::cout << "Usage: " << argv[0] << " <input.usd> [fan|earcut]\n";
         std::cout << "\nTriangulation methods:\n";
         std::cout << "  earcut (default): Robust algorithm for complex polygons\n";
@@ -39,9 +41,9 @@ int main(int argc, char** argv) {
     }
 
     // Load USD file
-    lightusd::legacy::Stage stage;
+    lightusd::Stage stage;
     std::string warn, err;
-    bool ret = lightusd::legacy::LoadUSDFromFile(filename, &stage, &warn, &err);
+    bool ret = lightusd::LoadUSDComposed(filename, &stage, &warn, &err);
 
     if (!warn.empty()) {
         std::cerr << "Warning: " << warn << "\n";
@@ -52,30 +54,19 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Set up render scene converter with triangulation method
-    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
-
-    // Configure mesh conversion
-    env.mesh_config.triangulate = true;  // Enable triangulation
-
-    // Set the triangulation method
-    if (use_fan) {
-        env.mesh_config.triangulation_method =
-            lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::TriangleFan;
-    } else {
-        env.mesh_config.triangulation_method =
-            lightusd::legacy::tydra::MeshConverterConfig::TriangulationMethod::Earcut;
-    }
-
-    // Convert to render scene
-    lightusd::legacy::tydra::RenderSceneConverter converter;
-    lightusd::legacy::tydra::RenderScene render_scene;
-
-    if (!converter.ConvertToRenderScene(env, &render_scene)) {
-        std::cerr << "Failed to convert to render scene: "
-                  << converter.GetError() << "\n";
+    lightusd::tydra::ConverterConfig config;
+    config.mesh.triangulate = true;
+    config.mesh.triangulation_method = use_fan
+        ? lightusd::tydra::MeshConfig::TriangulationMethod::Fan
+        : lightusd::tydra::MeshConfig::TriangulationMethod::Earcut;
+    lightusd::tydra::RenderSceneConverter converter(config);
+    auto result = converter.Convert(stage);
+    for (const auto& warning : result.warnings) std::cerr << warning << "\n";
+    if (!result.success) {
+        std::cerr << "Failed to convert to render scene: " << result.error << "\n";
         return 1;
     }
+    const auto& render_scene = result.scene;
 
     // Print statistics
     std::cout << "\nConversion complete!\n";
@@ -85,20 +76,20 @@ int main(int argc, char** argv) {
     size_t total_original_faces = 0;
 
     for (const auto& mesh : render_scene.meshes) {
-        if (!mesh.triangulatedFaceVertexIndices.empty()) {
-            size_t num_triangles = mesh.triangulatedFaceVertexIndices.size() / 3;
-            size_t num_original_faces = mesh.usdFaceVertexCounts.size();
+        if (!mesh.triangulated_indices.empty()) {
+            size_t num_triangles = mesh.triangulated_indices.size() / 3;
+            size_t num_original_faces = mesh.face_vertex_counts.size();
 
             total_triangles += num_triangles;
             total_original_faces += num_original_faces;
 
-            std::cout << "\nMesh: " << mesh.prim_name << "\n";
+            std::cout << "\nMesh: " << mesh.name << "\n";
             std::cout << "  Original faces: " << num_original_faces << "\n";
             std::cout << "  Triangulated faces: " << num_triangles << "\n";
 
             // Count polygon types
             std::map<uint32_t, size_t> poly_counts;
-            for (auto count : mesh.usdFaceVertexCounts) {
+            for (auto count : mesh.face_vertex_counts.flatten()) {
                 poly_counts[count]++;
             }
 

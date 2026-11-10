@@ -71,7 +71,7 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // authored order (earlier sublayers are stronger). Arc-free scenes are
   // fully composed by this pass alone.
   ComposeLayer(*result, root_layer, anchor_path, 0);
-  if (!root_layer.meta().subLayers.empty()) {
+  if (options_.resolve_sublayers && !root_layer.meta().subLayers.empty()) {
     auto sublayer_base = ComposeSublayers(root_layer, anchor_path);
     if (sublayer_base) {
       ComposeLayer(*result, *sublayer_base, anchor_path, 0);
@@ -144,7 +144,10 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // metadata comes from the ROOT layer only — pxr does not fall back to
   // sublayer-authored stage fields (verified against the 26.05 oracle) —
   // so the consumed list is dropped without any gap-fill.
-  result->meta().subLayers.clear();
+  if (options_.resolve_sublayers || !options_.preserve_unresolved_arcs) {
+    result->meta().subLayers.clear();
+    result->meta().subLayerOffsets.clear();
+  }
 
   // The crate writer's compressed-paths encoding requires ancestors before
   // descendants with contiguous subtrees; grafted prims were appended at the
@@ -439,9 +442,11 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // its descendant subtree. Arcs deleted by a STRONGER layer are skipped
   // (visible here via pending_arc_deletes_ during sublayer composition).
   const size_t arc_pending_begin = pending_graft_.size();
-  for (const auto& ref_str : prim.meta().references) {
-    if (ArcDeletedByStronger(self, ref_str)) continue;
-    ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
+  if (options_.resolve_references) {
+    for (const auto& ref_str : prim.meta().references) {
+      if (ArcDeletedByStronger(self, ref_str)) continue;
+      ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
+    }
   }
   if (options_.load_payloads) {
     for (const auto& pl_str : prim.meta().payloads) {
@@ -480,16 +485,22 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
     }
   }
 
-  // Flatten: drop the now-resolved arcs so they are not re-emitted.
-  prim.meta().references.clear();
-  prim.meta().payloads.clear();
-  prim.meta().inherits.clear();
-  prim.meta().specializes.clear();
-  // Also drop the list-op EDITS: the writers re-emit arcs from surviving
-  // qualifiers, so a flattened layer would otherwise carry phantom
-  // `prepend references = ...` metadata (pxr then errors on it and would
-  // re-compose on top of the baked content).
-  prim.meta().clear_arc_edits();
+  // Drop consumed arcs, including list-op qualifiers. Partial composition
+  // retains disabled opinions so a later pass can still resolve them.
+  const bool drop_all = !options_.preserve_unresolved_arcs;
+  if (drop_all || options_.resolve_references) prim.meta().references.clear();
+  if (drop_all || options_.load_payloads) prim.meta().payloads.clear();
+  if (drop_all || options_.resolve_inherits) prim.meta().inherits.clear();
+  if (drop_all || options_.resolve_specializes) prim.meta().specializes.clear();
+  if (drop_all) {
+    prim.meta().clear_arc_edits();
+  } else if (prim.meta().arc_edits()) {
+    auto& edits = prim.meta().ensure_arc_edits();
+    if (options_.resolve_references) edits.references = ArcListOp{};
+    if (options_.load_payloads) edits.payloads = ArcListOp{};
+    if (options_.resolve_inherits) edits.inherits = ArcListOp{};
+    if (options_.resolve_specializes) edits.specializes = ArcListOp{};
+  }
   // Variant sets/selection are consumed ONLY when variants were actually baked
   // (resolve_variants). When variant resolution is DEFERRED (a referenced layer
   // composed by GetComposedExternalLayer, whose variant selection belongs to the

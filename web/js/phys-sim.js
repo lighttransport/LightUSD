@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
+import { buildNextThreeNode } from 'lightusd/NextRenderSceneUtils.js';
 import {
   createConfiguredLightUSDLoader,
   parseUSDSceneFromArrayBuffer
@@ -10,7 +10,7 @@ const configuredMujocoDir = import.meta.env.VITE_MUJOCO_WASM_DIR || '';
 const MUJOCO_DIST = configuredMujocoDir ? `/@fs${configuredMujocoDir}` : './assets/mujoco';
 const MUJOCO_JS = `${MUJOCO_DIST}/mujoco_physics.js`;
 const MUJOCO_WASM = `${MUJOCO_DIST}/mujoco_physics.wasm`;
-const USDA_ASSET_URL = './assets/physics-robot-arm.usda';
+const USDA_ASSET_URL = new URL('./assets/physics-robot-arm.usda', import.meta.url).href;
 
 const state = {
   lightusdLoader: null,
@@ -187,21 +187,14 @@ async function usdaText() {
 
 async function loadLightUSDScene() {
   setStatus('Loading LightUSD WASM...');
-  // Still on the legacy product: physics extraction reads LightUSDLoaderNative's
-  // physics JSON contract. Pinned while next is the default.
-  state.lightusdLoader = await createConfiguredLightUSDLoader({ backend: 'legacy' });
-  LightUSDLoaderUtils.setLightUSD(state.lightusdLoader.native_);
-  state.lightusdNative = new state.lightusdLoader.native_.LightUSDLoaderNative();
+  state.lightusdLoader = await createConfiguredLightUSDLoader();
+  state.lightusdNative = new state.lightusdLoader.native_.NextUSDZConverterNative();
 
   const text = await usdaText();
   const bytes = new TextEncoder().encode(text);
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const sceneData = await parseUSDSceneFromArrayBuffer(state.lightusdLoader, arrayBuffer, 'embedded_robot.usda');
-  const rootNode = sceneData.getDefaultRootNode();
-  const defaultMaterial = LightUSDLoaderUtils.createDefaultMaterial();
-  state.usdObject = await LightUSDLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, {
-    overrideMaterial: false,
-  });
+  state.usdObject = buildNextThreeNode(sceneData, { skipTextures: true }).node;
   state.usdObject.name = 'USD rest pose';
   setRestObjectStyle(state.usdObject);
   restRoot.add(state.usdObject);

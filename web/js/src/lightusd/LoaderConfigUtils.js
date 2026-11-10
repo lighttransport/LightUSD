@@ -1,61 +1,16 @@
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
-export function getBackendFromURL(params = new URLSearchParams(window.location.search), fallback = 'next') {
-  const backend = params.get('backend');
-  return (backend === 'next' || backend === 'auto' || backend === 'legacy')
-    ? backend
-    : fallback;
-}
-
-export const LOADER_BACKEND_CHOICES = ['legacy', 'next', 'auto'];
-
-export function normalizeBackend(value, fallback = 'next') {
-  return LOADER_BACKEND_CHOICES.includes(value) ? value : fallback;
-}
-
-/**
- * Rewrite ?backend= in the page URL and reload.
- *
- * A reload (rather than a live re-parse) is the correct backend switch: the
- * loader picks its WASM module at init() time (backend=next selects the
- * next-only module), so switching in place would keep running on the module
- * chosen for the previous backend.
- */
-export function setBackendAndReload(backend) {
-  const value = normalizeBackend(backend);
+// Compatibility entry points for old demo URLs/imports. Only core is shipped.
+export function getBackendFromURL(_params, _fallback = 'next') { return 'next'; }
+export const LOADER_BACKEND_CHOICES = ['next'];
+export function normalizeBackend(_value, _fallback = 'next') { return 'next'; }
+export function setBackendAndReload(_backend) {
   const url = new URL(window.location.href);
-  url.searchParams.set('backend', value);
+  url.searchParams.set('backend','next');
   window.location.href = url.toString();
 }
-
-/**
- * Mount a small "Backend" <select> reflecting the current URL backend into
- * `container` (prepended). Switching rewrites ?backend= and reloads the page.
- * For lil-gui pages prefer a gui dropdown wired to setBackendAndReload().
- */
-export function mountBackendSelector(container, options = {}) {
-  if (!container) return null;
-  const current = options.current || getBackendFromURL();
-  const wrap = document.createElement('label');
-  wrap.style.cssText = options.style ||
-    'display:inline-flex;gap:6px;align-items:center;font-size:13px;margin:2px 0';
-  const caption = document.createElement('span');
-  caption.textContent = options.label || 'Backend';
-  const select = document.createElement('select');
-  for (const value of LOADER_BACKEND_CHOICES) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = value;
-    if (value === current) opt.selected = true;
-    select.appendChild(opt);
-  }
-  select.addEventListener('change', () => setBackendAndReload(select.value));
-  wrap.appendChild(caption);
-  wrap.appendChild(select);
-  if (options.append) container.appendChild(wrap);
-  else container.prepend(wrap);
-  return select;
-}
+// Retain the helper for demo imports without presenting an unavailable choice.
+export function mountBackendSelector(_container, _options = {}) { return null; }
 
 /**
  * Read a USD asset URI from URL query parameters.

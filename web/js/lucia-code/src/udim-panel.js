@@ -114,7 +114,7 @@ export function renderUDIMPanel(app) {
     try {await app.hideUDIMPreview();app.udimOptions=read();app.setBusy(true,'Stitching UDIM preview…',0);
       if (lease.cancelled) throw new LuciaError('LUCIA_CANCELLED','Scene replacement cancelled preview.');
       const result=await state.bake({...app.udimOptions,udimShaderPaths:[...app.udimSelection].sort()},progress);
-      const render=app.session.createRender(result.usda,state.stagedAssets(result));
+      const render=await app.session.createRender(result.usda,state.stagedAssets(result));
       try {app.udimViewportPreview=true;await app.bridge.rebuild(render);} finally {render.delete();}
       app.setBusy(false);
     }catch(e){await app.hideUDIMPreview();state.discard();error(e);}finally{end();}

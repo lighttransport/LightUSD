@@ -58,6 +58,11 @@ struct CompositionOptions {
   bool strict_aousd_conformance = false;
   ExpressionVariablePolicy expression_variable_policy =
       ExpressionVariablePolicy::Evaluate;
+  bool resolve_sublayers = true;
+  bool resolve_references = true;
+  // Partial composition tools can leave disabled arc types authored for a
+  // later pass. Default flattening retains its historical arc-removal policy.
+  bool preserve_unresolved_arcs = false;
   bool load_payloads = true;              // Load payloads (false = unloaded)
   bool resolve_inherits = true;           // Resolve inherits
   bool resolve_specializes = true;        // Resolve specializes

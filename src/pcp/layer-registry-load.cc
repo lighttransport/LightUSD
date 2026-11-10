@@ -82,7 +82,11 @@ std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
   for (const auto &w : r.warnings) {
     if (warn) *warn += w + "\n";
   }
-  return r.stage.ReleaseRootLayer();
+  std::shared_ptr<Layer> layer = r.stage.ReleaseRootLayer();
+  // Callback/memory layers need the same provenance as filesystem layers.
+  // Composition otherwise loses the directory that authored texture assets.
+  StampLayerAssetAnchor(layer.get(), label, true);
+  return layer;
 }
 
 std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
@@ -100,7 +104,11 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
   for (const auto &w : r.warnings) {
     if (warn) *warn += "USDC layer " + label + ": " + w + "\n";
   }
-  return r.stage.ReleaseRootLayer();
+  std::shared_ptr<Layer> layer = r.stage.ReleaseRootLayer();
+  // Callback/memory layers need the same provenance as filesystem layers.
+  // Composition otherwise loses the directory that authored texture assets.
+  StampLayerAssetAnchor(layer.get(), label, true);
+  return layer;
 }
 
 ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {

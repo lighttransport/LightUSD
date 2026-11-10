@@ -68,3 +68,33 @@ def Xform "Root" {
             ${LUSDDIFF_TESTDATA_DIR}/composed.usda
             ${LUSDDIFF_TESTDATA_DIR}/flattened.usda)
 endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  foreach(fixture uint2-type-001 uint2-array-001 sceneLibrary-001)
+    add_test(NAME core_reader_parity_${fixture}
+      COMMAND $<TARGET_FILE:lusddiff>
+        ${PROJECT_SOURCE_DIR}/tests/usda/${fixture}.usda
+        ${PROJECT_SOURCE_DIR}/tests/usdc/${fixture}.usdc)
+    set_tests_properties(core_reader_parity_${fixture} PROPERTIES LABELS "core;readers")
+  endforeach()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME core_reader_extension_parity
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-reader-extension-parity.py
+        $<TARGET_FILE:lusddiff> ${PROJECT_SOURCE_DIR})
+    set_tests_properties(core_reader_extension_parity PROPERTIES LABELS "core;readers;diff")
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusdcat)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME core_reader_variant_parity
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-reader-variant-parity.py
+        $<TARGET_FILE:lusddiff> $<TARGET_FILE:lusdcat> ${PROJECT_SOURCE_DIR})
+    set_tests_properties(core_reader_variant_parity PROPERTIES LABELS "core;readers;variants")
+  endif()
+endif()

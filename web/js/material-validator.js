@@ -106,9 +106,8 @@ export class MaterialValidator {
             name: 'Base Color Colorspace',
             severity: 'error',
             check: (material) => {
-                if (material.map && material.map.encoding !== undefined) {
-                    if (material.map.encoding !== THREE.sRGBEncoding &&
-                        material.map.colorSpace !== THREE.SRGBColorSpace) {
+                if (material.map) {
+                    if (material.map.colorSpace !== THREE.SRGBColorSpace) {
                         return {
                             pass: false,
                             message: 'Base color map should use sRGB encoding/colorspace'
@@ -125,9 +124,8 @@ export class MaterialValidator {
             name: 'Normal Map Colorspace',
             severity: 'error',
             check: (material) => {
-                if (material.normalMap && material.normalMap.encoding !== undefined) {
-                    if (material.normalMap.encoding === THREE.sRGBEncoding ||
-                        material.normalMap.colorSpace === THREE.SRGBColorSpace) {
+                if (material.normalMap) {
+                    if (material.normalMap.colorSpace === THREE.SRGBColorSpace) {
                         return {
                             pass: false,
                             message: 'Normal map incorrectly using sRGB encoding (should be Linear)'
@@ -148,9 +146,8 @@ export class MaterialValidator {
                 const issues = [];
 
                 dataTextures.forEach(prop => {
-                    if (material[prop] && material[prop].encoding !== undefined) {
-                        if (material[prop].encoding === THREE.sRGBEncoding ||
-                            material[prop].colorSpace === THREE.SRGBColorSpace) {
+                    if (material[prop]) {
+                        if (material[prop].colorSpace === THREE.SRGBColorSpace) {
                             issues.push(`${prop} using sRGB (should be Linear)`);
                         }
                     }

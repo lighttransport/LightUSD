@@ -3933,7 +3933,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   // authored string, and for a look layer nested below the root that is relative
   // to THAT layer (`../../texture/foo.png`) -- it does not resolve against the
   // scene file. `resolved_path` has been anchored to the authoring layer by the
-  // converter (see next/layer/asset-anchor.hh). Preserve a raw `<UDIM>` token,
+  // converter (see layer/asset-anchor.hh). Preserve a raw `<UDIM>` token,
   // though: the converter resolves the image id to the first tile, and using
   // that concrete path here silently turns a sparse UDIM texture into a plain
   // 2D texture. Rebuild the pattern beside the resolved first tile so it keeps

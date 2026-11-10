@@ -497,10 +497,19 @@ export class OpenPBRMaterial extends THREE.ShaderMaterial {
         this.type = 'OpenPBRMaterial';
         this.isOpenPBRMaterial = true;
         this.isMeshStandardMaterial = true; // For Three.js compatibility
+        this.envMapRotation = new THREE.Euler();
+        this.aoMapIntensity = 1;
+        this.lightMapIntensity = 1;
+        this.reflectivity = 0.5;
+        this.refractionRatio = 0.98;
+        this.normalMapType = THREE.TangentSpaceNormalMap;
 
         // Define uniforms
         this.uniforms = THREE.UniformsUtils.merge([
-            THREE.UniformsLib.common,
+            // isMeshStandardMaterial enables PMREM/environment integration.
+            // Three also refreshes the standard uniform set for that flag,
+            // even though this material uses a custom fragment shader.
+            THREE.ShaderLib.standard.uniforms,
             THREE.UniformsLib.envmap,
             THREE.UniformsLib.normalmap,
             THREE.UniformsLib.lights,
@@ -659,6 +668,9 @@ export class OpenPBRMaterial extends THREE.ShaderMaterial {
         }
         this.needsUpdate = true;
     }
+
+    get normalScale() { return this.uniforms.normalScale.value; }
+    set normalScale(v) { this.uniforms.normalScale.value.copy(v); }
 
     get normalMap() { return this.uniforms.normalMap.value; }
     set normalMap(v) {

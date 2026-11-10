@@ -18,6 +18,8 @@ globalThis.fetch = async () => {
 const resolver = new HttpAssetResolver({ baseUrl: 'https://example.test/' });
 
 class FlattenSession {
+  setRebaseAssetPaths(enabled) { assert.equal(enabled,true); }
+  setAssetPathRemap(remap) { this.remap=remap; }
   begin() { return { success: true }; }
   step() {
     return {
@@ -43,12 +45,13 @@ try {
   });
 
   assert.equal(fetches, 1, 'aliased texture URLs share one network transfer');
+  assert.equal(resolver.bytesFetched, PNG.length, 'byte statistics count actual network transfers');
   assert.equal(resolver.fetchLog.length, 2, 'both authored paths were resolved');
   assert.equal(result.fetchedAssets, 1, 'flatten counts one fetched payload');
 
   const entries = parseUSDZEntries(result.usdz);
   const textures = entries.filter((entry) => entry.name.endsWith('.png'));
-  assert.equal(textures.length, 2, 'both authored aliases stay packaged');
+  assert.equal(textures.length, 1, 'aliases remap to one safe packaged payload');
   for (const texture of textures) {
     assert.deepEqual(new Uint8Array(texture.data), PNG);
   }

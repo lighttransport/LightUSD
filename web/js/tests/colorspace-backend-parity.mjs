@@ -7,7 +7,7 @@ import { transformLinearColor } from '../src/lightusd/ColorSpaceUtils.js';
 
 const encoder = new TextEncoder();
 const legacy = await loadWasm(() => import(
-  new URL('../src/lightusd/lightusd.js', import.meta.url).href));
+  new URL('../src/lightusd/lightusd_combined.js', import.meta.url).href));
 const next = await loadWasm(() => import(
   new URL('../src/lightusd/lightusd.js', import.meta.url).href), {
   locateFile: (file) => new URL('../src/lightusd/' + file,

@@ -1198,7 +1198,7 @@ lightusd::tydra::TextureDecoder &DecoderFor(TextureCache &tc) {
 // authored string -- which in a look layer nested below the root is relative to
 // THAT layer (`../../texture/foo.png`) and does not resolve against the scene
 // file. Prims carry their authoring layer's directory through composition; see
-// next/layer/asset-anchor.hh. Prims with no anchor (root layer, USDZ entries)
+// layer/asset-anchor.hh. Prims with no anchor (root layer, USDZ entries)
 // return the path untouched, preserving the previous behavior.
 std::string AnchorAssetNext(const lightusd::UsdPrim &prim,
                             const std::string &path) {

@@ -5,6 +5,7 @@
 
 #include "int64-listop.hh"
 #include "prim-spec.hh"
+#include "asset-anchor.hh"
 #include "prim/identifier.hh"
 #include "core/safe-arithmetic.hh"
 #include <algorithm>
@@ -496,21 +497,33 @@ size_t PrimSpec::release_static_array_value(PropNameId name_id,
 
 size_t PrimSpec::remap_asset_paths(
     const std::map<std::string, std::string>& remap) {
-  if (remap.empty()) return 0;
+  return remap_asset_paths(remap, false);
+}
+
+size_t PrimSpec::remap_asset_paths(
+    const std::map<std::string, std::string>& remap, bool anchor_relative) {
+  if (remap.empty() && !anchor_relative) return 0;
   size_t count = 0;
   for (const PropSlot& slot : props_.slots()) {
     const Value* value = property_value(slot.name_id);
     if (!value) continue;
     auto path = value->as_asset_path();
     if (!path) continue;
-    const std::string* mapped = FindAssetPathRemap(remap, *path);
-    if (!mapped) continue;
-    if (set_property_value(slot.name_id, Value::MakeAssetPath(*mapped))) {
+    const std::string* mapped = FindAnchoredAssetPathRemap(
+        remap, *path, anchor_relative ? asset_anchor_id() : 0);
+    const std::string rebased =
+        mapped ? *mapped
+               : (anchor_relative
+                      ? ResolveAssetAnchorPath(*path, asset_anchor_id())
+                      : std::string(*path));
+    if (!mapped && rebased == *path) continue;
+    if (set_property_value(slot.name_id, Value::MakeAssetPath(rebased))) {
       ++count;
     }
   }
   if (time_samples_) {
-    count += time_samples_->remap_asset_paths(remap);
+    count += time_samples_->remap_asset_paths(
+        remap, anchor_relative ? asset_anchor_id() : 0);
   }
   return count;
 }

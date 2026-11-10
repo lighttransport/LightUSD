@@ -1,112 +1,42 @@
-// Memory usage test for LightUSD WebAssembly module
-// Tests the estimate_memory_usage() function exposed from web/binding.cc
-// Usage: bun run cli memory-usage-test.js or npm run cli memory-usage-test.js
+// SPDX-License-Identifier: Apache-2.0
+// Core WASM asset-store allocation and release diagnostic.
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+import {LightUSDLoader} from '../src/lightusd/LightUSDLoader.js';
 
-import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
+export function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!n) return '0 Bytes';
+  const i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${Number((n / 1024 ** i).toFixed(2))} ${['Bytes', 'KB', 'MB', 'GB'][i]}`;
+}
 
-async function testMemoryUsage() {
-    console.log('LightUSD Memory Usage Test');
-    console.log('==========================\n');
-
-    try {
-        // Initialize the WASM module
-        console.log('Initializing LightUSD WASM module...');
-        const loader = new LightUSDLoader();
-        await loader.init({useMemory64: false});
-        console.log('WASM module initialized successfully\n');
-
-        // Create a LightUSDLoaderNative instance to access test functions
-        const usd = new loader.native_.LightUSDLoaderNative();
-
-        // Check if the memory usage test function is available
-        if (typeof usd.testValueMemoryUsage === 'function') {
-            console.log('Running memory usage tests with different array sizes...\n');
-
-            // Test with different array sizes
-            const defaultArraySize = 10000;
-            const arraySizes = [100, 10000, 100000, 10000000];
-
-            for (const arraySize of arraySizes) {
-                console.log(`\n${'='.repeat(60)}`);
-                console.log(`Testing with array size: ${arraySize.toLocaleString()}`);
-                console.log('='.repeat(60));
-
-                try {
-                    // Call the C++ testValueMemoryUsage function with specific array size
-                    const testResults = usd.testValueMemoryUsage(arraySize);
-
-                    if (testResults && testResults.tests) {
-                        // Show only array-related tests for brevity
-                        const arrayTests = testResults.tests.filter(test =>
-                            test.name.includes('array'));
-
-                        console.log('\nArray-related memory usage:');
-                        arrayTests.forEach(test => {
-                            console.log(`  ${test.name}: ${formatBytes(test.bytes)}`);
-                        });
-
-                        console.log(`\nTotal memory for all ${testResults.totalTests} tests: ${formatBytes(testResults.totalMemory)}`);
-                    } else {
-                        console.log('Test completed - check console for detailed output');
-                    }
-                } catch (error) {
-                    console.error(`Error testing with array size ${arraySize}:`, error.message);
-                }
-            }
-
-            // Also run one test with default size to show all test types
-            console.log(`\n${'='.repeat(60)}`);
-            console.log('Full test with default array size (showing all value types)');
-            console.log('='.repeat(60));
-
-            const defaultResults = usd.testValueMemoryUsage(defaultArraySize);
-            if (defaultResults && defaultResults.tests) {
-                defaultResults.tests.forEach((test, index) => {
-                    console.log(`${index + 1}. ${test.name}: ${formatBytes(test.bytes)}`);
-                });
-                console.log(`\nTotal tests: ${defaultResults.totalTests}`);
-                console.log(`Total memory: ${formatBytes(defaultResults.totalMemory)}`);
-            }
-
-        } else {
-            console.log('Memory usage test function not found');
-            console.log('Available methods on LightUSDLoaderNative:', Object.getOwnPropertyNames(Object.getPrototypeOf(usd)).filter(name => name !== 'constructor'));
-        }
-
-        // Additional manual tests using the Value API if available
-        console.log('\n=== Manual Value Creation Tests ===');
-
-        // Test basic memory reporting for the process
-        if (typeof process !== 'undefined' && process.memoryUsage) {
-            const memUsage = process.memoryUsage();
-            console.log('\nNode.js Memory Usage:');
-            console.log(`RSS: ${(memUsage.rss / 1024 / 1024).toFixed(2)} MB`);
-            console.log(`Heap Used: ${(memUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`);
-            console.log(`Heap Total: ${(memUsage.heapTotal / 1024 / 1024).toFixed(2)} MB`);
-            console.log(`External: ${(memUsage.external / 1024 / 1024).toFixed(2)} MB`);
-        }
-
-    } catch (error) {
-        console.error('Error during memory usage test:', error);
-        process.exit(1);
+export async function testMemoryUsage() {
+  const loader = new LightUSDLoader();
+  await loader.init({useMemory64: process.env.LIGHTUSD_WASM64 === '1'});
+  const store = new loader.native_.NextAssetStore();
+  try {
+    const baseline = store.memoryStats();
+    console.log('Core WASM asset-store memory usage');
+    for (const size of [100, 10000, 100000, 10000000]) {
+      const id = store.registerMemoryAsset(`memory-test-${size}.bin`, new Uint8Array(size));
+      try {
+        const stats = store.memoryStats();
+        assert.equal(Number(stats.assetCount), Number(baseline.assetCount) + 1);
+        assert.ok(Number(stats.bytesUsed) >= Number(baseline.bytesUsed) + size);
+        assert.equal(store.readMemoryAsset(id).byteLength, size);
+        console.log(`${size} input bytes: ${formatBytes(stats.bytesUsed)} tracked`);
+      } finally { store.unregisterMemoryAsset(id); }
+      const released = store.memoryStats();
+      assert.equal(Number(released.assetCount), Number(baseline.assetCount));
+      assert.equal(Number(released.bytesUsed), Number(baseline.bytesUsed));
     }
+    console.log(`WASM linear memory: ${formatBytes(loader.native_.HEAPU8.byteLength)}`);
+    if (process.memoryUsage) console.log(`Node RSS: ${formatBytes(process.memoryUsage().rss)}`);
+    console.log('PASS core memory allocation, readback and release');
+  } finally { store.delete(); }
 }
 
-// Helper function to format bytes
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 Bytes';
-
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  testMemoryUsage().catch(error => { console.error(error); process.exitCode = 1; });
 }
-
-
-// Run the test
-//uif (import.meta.url === `file://${process.argv[1]}`) {
-    testMemoryUsage();
-//}
-
-export { testMemoryUsage, formatBytes };

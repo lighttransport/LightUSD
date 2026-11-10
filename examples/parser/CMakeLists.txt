@@ -1,0 +1,23 @@
+# Format-specific reader examples share CLI handling and core composition.
+foreach(format IN ITEMS usda usdc)
+  string(TOUPPER "${format}" format_upper)
+  if(LIGHTUSD_BUILD_EXAMPLES OR LIGHTUSD_WITH_TOOL_${format_upper}_PARSER)
+    if(format STREQUAL "usda")
+      set(parser_source ../usda_parser/parser-main.cc)
+    else()
+      set(parser_source ../usdc_parser/usdc-parser-main.cc)
+    endif()
+    add_executable(${format}_parser ${parser_source})
+    target_link_libraries(${format}_parser PRIVATE lightusd_core)
+    set_target_properties(${format}_parser PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    if(LIGHTUSD_BUILD_TESTS AND TARGET lusdcat)
+      find_package(Python3 COMPONENTS Interpreter QUIET)
+      if(Python3_Interpreter_FOUND)
+        add_test(NAME core_${format}_parser_example
+          COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/test-parser-example.py
+            $<TARGET_FILE:${format}_parser> $<TARGET_FILE:lusdcat> ${format})
+        set_tests_properties(core_${format}_parser_example PROPERTIES LABELS "core;examples;readers")
+      endif()
+    endif()
+  endif()
+endforeach()

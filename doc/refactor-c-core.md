@@ -547,7 +547,7 @@ Native scene stats report the same full memory total as the explicit memory
 query, including lazily materialized buffer caches.
 Native C and C++ consumers now have matching point-cloud and curve payload
 buffer queries, including authored and tessellated curve vertex counts.
-`examples/c_api_example/next-c-api-example.c` is a small consumer fixture that
+`examples/c_api_example/c-api-example-main.c` is a small consumer fixture that
 uses only the installed `lightusd-c.h` surface for loading, traversal, and
 USDA export; it is enabled when the next C target is present.
 The standalone next project can compile it with

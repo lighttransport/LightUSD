@@ -353,12 +353,12 @@ if ! binary_opacity "$TMP/vk_opacity-aov.ppm"; then
 fi
 
 # 4) Generated raster mesh coverage for unsupported-but-renderable schemas.
-run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --legacy-load --time 0
+run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --legacy-load --time 0
+run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc

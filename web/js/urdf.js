@@ -85,7 +85,7 @@ const state = {
     showTendons: true,
     showSensors: true,
     renderSensorView: true,
-    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'legacy'),
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'next'),
     // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
     // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
     // visual/auxiliary split). Geoms with no group fall back to showVisuals/
@@ -4904,8 +4904,7 @@ function buildGeneratedSourceFromUSD(model) {
 async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    const Exporter = loader.native_.LightUSDLoaderNative ||
-      loader.native_.NextUSDZConverterNative;
+    const Exporter = loader.native_.NextUSDZConverterNative;
     if (typeof Exporter !== 'function') {
       throw new Error('The selected LightUSD backend does not provide the URDF/MJCF exporter.');
     }

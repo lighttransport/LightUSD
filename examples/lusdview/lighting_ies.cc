@@ -2,7 +2,7 @@
 // App-side adapter over the shared preview photometry parser. The GL and RT
 // paths consume raw LM-63 tables and normalize by maximum candela, so this file
 // keeps that storage contract while delegating parsing (LM-63, TILT, limits) to
-// src/tydra/next/scene-preview-photometry.cc: one parser for the app and the
+// src/tydra/scene-preview-photometry.cc: one parser for the app and the
 // preview caches.
 #include "lighting_ies.hh"
 

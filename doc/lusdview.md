@@ -576,7 +576,7 @@ passes `--no-raster-motion` to each viewer process so its explicit temporal
 samples do not trigger native accumulation a second time. The
 `lusdview-camera-motion-raster-{export,gl}` regressions compare the native and
 companion results and verify closed-shutter behavior; the
-`lusdview-camera-motion-raster-legacy` case checks loader parity, while
+`lusdview-camera-motion-raster-static` case checks static-scene shutter behavior, while
 `lusdview-camera-motion-vulkan` checks that Vulkan RT's accumulated sample count
 advances across the cycle.
 

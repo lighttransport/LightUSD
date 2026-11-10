@@ -1,108 +1,80 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
+#include "core/minijson.hh"
+#include "load-usd.hh"
+#include "reader/usdz-reader.hh"
+#include "writer/layer-json.hh"
+#include "json-assets.hh"
+#include "runtime-json.hh"
 
-#include "io-util.hh"
-#include "stream-reader.hh"
-#include "usd-to-json.hh"
-#include "usda-reader.hh"
-
-void print_usage(const char* program_name) {
-  std::cout << "Usage: " << program_name << " <input.usdz> [output_prefix]\n";
-  std::cout << "\nConverts USDZ to separate JSON files:\n";
-  std::cout << "  - <output_prefix>_usd.json    : USD scene content\n";
-  std::cout << "  - <output_prefix>_assets.json : Asset data (base64 encoded)\n";
-  std::cout << "\nExample:\n";
-  std::cout << "  " << program_name << " model.usdz output\n";
-  std::cout << "  -> creates output_usd.json and output_assets.json\n";
+namespace {
+void Usage(const char* program) {
+  std::cout << "Usage: " << program << " [--layer-json] <input.usdz> [output_prefix]\n"
+               "Writes <prefix>_usd.json (runtime scene; --layer-json for authored layer) and <prefix>_assets.json\n"
+               "(archive entries with filename, byte size and base64 data).\n";
 }
-
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    print_usage(argv[0]);
-    return 1;
+}  // namespace
+int main(int argc, char** argv) {
+  const char* program = argv[0];
+  bool authored = false;
+  if (argc > 1 && std::string(argv[1]) == "--layer-json") { authored = true; --argc; ++argv; }
+  if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
+    Usage(program); return 0;
   }
-
-  std::string filename = argv[1];
-
-  // Check if file is USDZ
-  std::string ext = lightusd::io::GetFileExtension(filename);
-  bool is_usdz = (ext == "usdz" || ext == "USDZ");
-
-  if (!is_usdz) {
-    std::cerr << "This tool is specifically for USDZ files. For other USD formats, use the regular USD to JSON converter.\n";
-    return 1;
+  if (argc < 2 || argc > 3) { Usage(program); return 1; }
+  const std::filesystem::path input(argv[1]);
+  std::string extension = input.extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (extension != ".usdz") { std::cerr << "Expected a USDZ file\n"; return 1; }
+  const std::string prefix = argc == 3 ? argv[2] : input.stem().string();
+  lightusd::USDZReader archive;
+  if (!archive.OpenFile(input.string())) { std::cerr << archive.Error() << '\n'; return 1; }
+  const int root_index = archive.FindRootLayer();
+  if (root_index < 0) { std::cerr << "USDZ has no valid root layer\n"; return 1; }
+  const size_t root = static_cast<size_t>(root_index);
+  lightusd::Stage stage;
+  std::string warning, error;
+  if (!lightusd::LoadUSDFromMemory(archive.EntryData(root), archive.EntrySize(root),
+                                  &stage, &warning, &error)) {
+    std::cerr << error << '\n'; return 1;
   }
-
-  // Determine output prefix
-  std::string output_prefix;
-  if (argc >= 3) {
-    output_prefix = argv[2];
-  } else {
-    // Use input filename without extension as prefix
-    size_t dot_pos = filename.find_last_of('.');
-    size_t slash_pos = filename.find_last_of("/\\");
-    if (slash_pos == std::string::npos) slash_pos = 0; else slash_pos++;
-
-    if (dot_pos != std::string::npos && dot_pos > slash_pos) {
-      output_prefix = filename.substr(slash_pos, dot_pos - slash_pos);
-    } else {
-      output_prefix = filename.substr(slash_pos);
-    }
+  if (!warning.empty()) std::cerr << warning << '\n';
+  auto scene = lightusd::WriteLayerToJSON(*stage.GetRootLayer());
+  if (!scene) { std::cerr << scene.error() << '\n'; return 1; }
+  if (!authored) scene = lightusd_examples::RuntimeSceneJSON(*stage.GetRootLayer(), scene.value());
+  if (!scene) { std::cerr << scene.error() << '\n'; return 1; }
+  std::ofstream usd(prefix + "_usd.json", std::ios::binary);
+  std::ofstream assets(prefix + "_assets.json", std::ios::binary);
+  if (!usd || !assets) { std::cerr << "Unable to create output JSON files\n"; return 1; }
+  usd << scene.value();
+  usd.close();
+  assets << "{\n";
+  bool first = true;
+  size_t count = 0;
+  for (size_t i = 0; i < archive.NumEntries(); ++i) {
+    const auto& name = archive.EntryName(i);
+    if (!name.empty() && name.back() == '/') continue;
+    if (!first) assets << ",\n";
+    first = false;
+    const auto quoted = lightusd::minijson::Value(name).dump();
+    assets << quoted << ":{\"filename\":" << quoted << ",\"size\":"
+           << archive.EntrySize(i) << ",\"data\":\"";
+    lightusd_examples::Base64(assets, archive.EntryData(i), archive.EntrySize(i));
+    assets << "\"}";
+    ++count;
   }
-
-  std::cout << "Converting USDZ to JSON: " << filename << std::endl;
-
-  // Convert USDZ to JSON
-  lightusd::legacy::USDZToJSONResult result;
-  std::string warn, err;
-  lightusd::legacy::USDToJSONOptions options;
-
-  bool success = lightusd::legacy::USDZToJSON(filename, &result, &warn, &err, options);
-
-  if (!warn.empty()) {
-    std::cerr << "Warnings: " << warn << std::endl;
-  }
-
-  if (!success) {
-    std::cerr << "Failed to convert USDZ to JSON: " << err << std::endl;
-    return 1;
-  }
-
-  std::cout << "Successfully converted USDZ!" << std::endl;
-  std::cout << "Main USD file: " << result.main_usd_filename << std::endl;
-  std::cout << "Total assets: " << result.asset_filenames.size() << std::endl;
-
-  // Write USD content to JSON file
-  std::string usd_json_filename = output_prefix + "_usd.json";
-  std::ofstream usd_file(usd_json_filename);
-  if (!usd_file.is_open()) {
-    std::cerr << "Failed to create USD JSON file: " << usd_json_filename << std::endl;
-    return 1;
-  }
-
-  usd_file << result.usd_json;
-  usd_file.close();
-  std::cout << "USD content written to: " << usd_json_filename << std::endl;
-
-  // Write assets to JSON file
-  std::string assets_json_filename = output_prefix + "_assets.json";
-  std::ofstream assets_file(assets_json_filename);
-  if (!assets_file.is_open()) {
-    std::cerr << "Failed to create assets JSON file: " << assets_json_filename << std::endl;
-    return 1;
-  }
-
-  assets_file << result.assets_json;
-  assets_file.close();
-  std::cout << "Assets written to: " << assets_json_filename << std::endl;
-
-  // Print summary
-  std::cout << "\nAsset summary:" << std::endl;
-  for (const auto& asset_filename : result.asset_filenames) {
-    std::cout << "  - " << asset_filename << std::endl;
-  }
-
-  std::cout << "\nConversion complete!" << std::endl;
-
+  assets << "\n}\n";
+  assets.close();
+  if (!usd || !assets) { std::cerr << "Unable to write output JSON files\n"; return 1; }
+  std::cout << "Main USD file: " << archive.EntryName(root) << '\n'
+            << "Total assets: " << count << '\n'
+            << "Wrote " << prefix << "_usd.json and " << prefix << "_assets.json\n";
   return 0;
 }

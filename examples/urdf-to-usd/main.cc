@@ -1,21 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Shared native OBJ/URDF/MJCF frontends; no Python or Node dependency.
 #include "tydra/asset-import/import.hh"
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
 #include "load-usd.hh"
 #include "stage/stage.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
 #include "writer/usdz-writer.hh"
-#include "../../src/tydra/urdf-to-usd.hh"
-using OutputStage = lightusd::Stage;
-#else
-#include "lightusd.hh"
 #include "tydra/urdf-to-usd.hh"
-#include "usda-writer.hh"
-#include "usdc-writer.hh"
-using OutputStage = lightusd::legacy::Stage;
-#endif
+using OutputStage = lightusd::Stage;
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
@@ -45,37 +37,24 @@ void Help() {
          "         --flex-tetrahedralize mujoco|stuffing --flex-tet-spacing H\n"
          "         --volumetric-device cpu|cuda|hip|auto (level sets and tets;\n"
          "           CUDA/HIP need a LIGHTUSD_TINYVDB_GPU build)\n"
-         "         --profile newton|openusd|legacy (next-core writer; the "
-         "legacy writer always emits legacy)\n";
+         "         --profile newton|openusd|legacy\n";
 }
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
 using MeshBuffers = std::map<std::string, lightusd::tydra::URDFMeshBuffer>;
-#else
-using MeshBuffers = std::map<std::string, int>;  // the legacy converter takes JSON meshes
-#endif
 
 // `consume`: the payload is converted only once, so its mesh buffers may be
 // moved into the stage.
 bool Convert(const ia::Json& payload, MeshBuffers& meshes, bool consume, OutputStage* stage,
              std::string* warn, std::string* err) {
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   if (consume)
     return lightusd::tydra::ConvertURDFPayloadToUSDStageConsuming(payload, &meshes, stage,
                                                                         warn, err);
   return lightusd::tydra::ConvertURDFPayloadToUSDStage(payload, &meshes, stage,
                                                           warn, err);
-#else
-  (void)meshes;
-  (void)consume;
-  return lightusd::legacy::tydra::ConvertURDFPayloadToUSDStage(payload, stage, warn,
-                                                    err);
-#endif
 }
 bool Save(const OutputStage& stage, const std::string& path,
           const std::string& format,
           const ia::AssetMap& assets,
           std::string* err) {
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   if (format == "usda") return lightusd::WriteUSDA(stage, path, err);
   if (format == "usdc") return lightusd::WriteUSDC(stage, path, err);
   std::vector<uint8_t> crate, zip;
@@ -101,17 +80,6 @@ bool Save(const OutputStage& stage, const std::string& path,
     return false;
   }
   return true;
-#else
-  std::string warn;
-  if (format == "usda")
-    return lightusd::legacy::usda::SaveAsUSDA(path, stage, &warn, err);
-  if (format == "usdc")
-    return lightusd::legacy::usdc::SaveAsUSDCToFile(path, stage, &warn, err);
-  std::map<std::string, std::vector<uint8_t>> owned;
-  for (const auto& asset : assets)
-    if (asset.second) owned[asset.first] = *asset.second;
-  return lightusd::legacy::SaveAsUSDZToFile(path, stage, owned, &warn, err);
-#endif
 }
 }  // namespace
 int main(int argc, char** argv) {
@@ -227,11 +195,9 @@ int main(int argc, char** argv) {
     std::cerr << "urdf-to-usd: " << err << "\n";
     return 1;
   }
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   // Large mesh arrays travel as typed buffers (as through the C API) unless
   // the JSON dump needs them inline: one value per scalar costs far more.
   opts.typed_meshes = dump.empty();
-#endif
   ia::Result result;
   if (!ia::BuildPayloadFile(input, opts, &result, &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";
@@ -247,7 +213,6 @@ int main(int argc, char** argv) {
   }
   if (!result.warnings.empty()) std::cerr << result.warnings;
   MeshBuffers meshes;
-#if defined(LIGHTUSD_URDF_TO_USD_CORE)
   for (auto& entry : result.meshes) {
     auto& buffer = meshes[entry.first];
     buffer.positions = std::move(entry.second.positions);
@@ -256,7 +221,6 @@ int main(int argc, char** argv) {
     buffer.indices = std::move(entry.second.indices);
   }
   result.meshes.clear();
-#endif
   for (const char* kind : {"usda", "usdc", "usdz"}) {
     if (format != "all" && format != kind) continue;
     fs::path path = output.empty() ? fs::path(input) : fs::path(output);

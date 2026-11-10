@@ -4,8 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WEB_DIR="$(cd "${DEMO_DIR}/.." && pwd)"
-LEGACY_BUILD_DIR="${WEB_DIR}/build_ninja"
-NEXT_BUILD_DIR="${WEB_DIR}/build_next_ninja"
+CORE_BUILD_DIR="${WEB_DIR}/build_ninja"
 BUILD_TYPE="${CMAKE_BUILD_TYPE:-MinSizeRel}"
 JOBS="${JOBS:-16}"
 export EM_CACHE="${EM_CACHE:-${WEB_DIR}/build_ninja/emscripten-cache}"
@@ -33,41 +32,27 @@ configure_build() {
   cmake --build "${build_dir}" --target "${target}" --parallel "${JOBS}"
 }
 
-# Build the next product for the demo's default backend. Keep the combined
-# product for explicit legacy comparison and compatibility checks.
-configure_build "${LEGACY_BUILD_DIR}" lightusd_combined \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
-  -DLIGHTUSD_WASM_PRODUCT=combined \
-  -DLIGHTUSD_WASM_DEMODEV=OFF \
-  -DLIGHTUSD_WASM64=OFF
-configure_build "${NEXT_BUILD_DIR}" lightusd_wasm_distribution \
-  -DLIGHTUSD_NATIVE_PRODUCT=next \
-  -DLIGHTUSD_WASM_PRODUCT=next \
+# Build the published core distribution, including its optional feature modules.
+configure_build "${CORE_BUILD_DIR}" lightusd_core_distribution \
+  -DLIGHTUSD_WASM_PRODUCT=core \
   -DLIGHTUSD_WASM_DEMODEV=OFF \
   -DLIGHTUSD_WASM64=OFF
 
-for artifact in lightusd_combined.js lightusd_combined.wasm lightusd.js lightusd.wasm lightusd_validator.js lightusd_validator.wasm lightusd_exr.js lightusd_exr.wasm; do
+# Lucia authors through the independently built core MCP server module.
+configure_build "${CORE_BUILD_DIR}/mcp" lightusd_mcp_wasm \
+  -DLIGHTUSD_WASM_PRODUCT=mcp \
+  -DLIGHTUSD_WASM_DEMODEV=OFF \
+  -DLIGHTUSD_WASM64=OFF
+
+for artifact in lightusd_mcp.js lightusd_mcp.wasm lightusd.js lightusd.wasm lightusd_validator.js lightusd_validator.wasm lightusd_exr.js lightusd_exr.wasm lightusd_geometry.js lightusd_geometry.wasm lightusd_raytrace.js lightusd_raytrace.wasm; do
   if [[ ! -f "${WEB_DIR}/js/src/lightusd/${artifact}" ]]; then
     echo "error: local LightUSD build did not produce ${artifact}." >&2
     exit 1
   fi
 done
 
-# The combined CMake target has a descriptive output name, while the browser
-# loader's stable entrypoint is lightusd.js. Rewrite only the generated glue's
-# adjacent WASM filename; both generated files remain ignored build artifacts.
-cp -f "${WEB_DIR}/js/src/lightusd/lightusd_combined.wasm" \
-  "${WEB_DIR}/js/src/lightusd/lightusd.wasm"
-sed -i 's/lightusd_combined\.wasm/lightusd.wasm/g' \
-  "${WEB_DIR}/js/src/lightusd/lightusd_combined.js"
-cp -f "${WEB_DIR}/js/src/lightusd/lightusd_combined.js" \
-  "${WEB_DIR}/js/src/lightusd/lightusd.js"
+# The standalone texture codec demo has its own small C11 WASM module.
+# It shares textools sources with core but does not link the USD library.
+bash "${WEB_DIR}/js/texcomp/build.sh"
 
-for artifact in lightusd.js lightusd.wasm; do
-  if [[ ! -f "${WEB_DIR}/js/src/lightusd/${artifact}" ]]; then
-    echo "error: combined WASM compatibility artifact missing ${artifact}." >&2
-    exit 1
-  fi
-done
-
-echo "Local LightUSD next and legacy compatibility modules are ready."
+echo "Local LightUSD core, MCP and texture codec modules are ready."

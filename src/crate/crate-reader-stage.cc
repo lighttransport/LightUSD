@@ -5,6 +5,7 @@
 
 #include "crate-reader-internal.hh"
 #include "crate-timing.hh"
+#include "variant-holders.hh"
 #include "layer/layer.hh"
 #include "execution.hh"
 
@@ -232,7 +233,7 @@ bool CrateReader::Impl::BuildStage() {
 
   // Process prim specs to build prims with hierarchy from paths
 
-  // Variant content lives in the layer as bracketed holder/child prims
+  // During reconstruction, variant content uses bracketed holder/child prims
   // ("/Prim/{vset=sel}" + descendants); their attributes attach to those prims
   // via attr_map (so the layer fully represents the variants, enabling both the
   // compositor — which reads the selected holder — and unflattened round-trip).
@@ -266,8 +267,8 @@ bool CrateReader::Impl::BuildStage() {
       // at "/Prim/{vset=sel}" / "/Prim/{vset=}"). The holders are needed so that
       // variant CHILD prims ("/Prim/{vset=sel}/Geo") get a correct path from the
       // depth-stack builder (begin_prim recomputes path from its parent). Holders
-      // and variant sub-prims are grafted onto the owning prim by the compositor
-      // on selection and skipped by the writer (their paths contain '{').
+      // and their sub-prims are converted to inline option data after decoding,
+      // before the layer is exposed to callers.
       const bool is_prim = spec.spec_type == SpecType::Prim;
       const bool is_variant = spec.spec_type == SpecType::Variant ||
                               spec.spec_type == SpecType::VariantSet;
@@ -663,6 +664,8 @@ bool CrateReader::Impl::BuildStage() {
 #endif
 
   lap("reorder");
+  // Expose the same inline variant model as the USDA parser.
+  InlineVariantHolders(&layer);
   // Create stage from layer
   result_.stage.SetRootLayer(std::move(layer));
   lap("set_root");

@@ -28,6 +28,8 @@ endif()
 #
 # find_package(Vulkan) is still probed (QUIET) purely so vulkan.cmake can fall
 # back to the SDK's glslangValidator when no local/system one is found.
+option(LIGHTUSD_WITH_ZSTD_COMPRESSION
+       "Enable Zstd-supercompressed KTX2 upload in the viewer" ON)
 option(LUSDVIEW_WITH_VULKAN "Build the Vulkan backend (runtime-loaded via volk)" ON)
 set(LUSDVIEW_RT_PTEXTURE_IMAGE_CAP "256" CACHE STRING
     "Maximum source texture slots available to Vulkan RT compressed Ptex sampling")
@@ -101,6 +103,7 @@ set(LUSDVIEW_SOURCES
     next_mesh_adapter.cc
     viewer_document.cc
     public_stage_queries.cc
+    physics_preview.cc
     preview_cache.cc
     texture_residency_policy.cc
     dome_light.cc
@@ -690,19 +693,24 @@ if(LIGHTUSD_WITH_TEXTOOLS)
   if(LIGHTUSD_BUILD_TESTS)
     list(APPEND LUSDVIEW_TEXTOOLS_CONSUMERS
         lusdview_lightrt_bridge_test
-        lusdview_openpbr_material_test
-        lusdview_lighting_test
-        lusdview_geometry_primvar_test
-        lusdview_texture_pipeline_test)
+        lusdview_scene_safety_test)
+  endif()
+  # The core library no longer carries the legacy bundled Zstd object.
+  # Compressed KTX2 upload still needs it in the viewer's texture helpers.
+  if(LIGHTUSD_WITH_ZSTD_COMPRESSION AND NOT TARGET lusdview_zstd)
+    add_library(lusdview_zstd STATIC ${PROJECT_SOURCE_DIR}/src/external/zstd.c)
+    target_compile_definitions(lusdview_zstd PRIVATE ZSTD_DISABLE_ASM=1)
+    if(NOT MSVC)
+      target_compile_options(lusdview_zstd PRIVATE -w)
+    endif()
   endif()
   foreach(tt_consumer IN LISTS LUSDVIEW_TEXTOOLS_CONSUMERS)
     target_link_libraries(${tt_consumer} PRIVATE lightusd_textools)
     target_compile_definitions(${tt_consumer} PRIVATE LUSDVIEW_WITH_TEXTOOLS=1)
-    # Zstd-supercompressed KTX2 (scheme 2) is what usd-texcomp writes by default;
-    # the core lib defines this PRIVATEly, so mesh_build.cc needs its own copy.
-    # ZSTD_decompress itself comes from lightusd_static (src/external/zstd.c).
+    # Zstd-supercompressed KTX2 (scheme 2) is emitted by usd-texcomp.
     if(LIGHTUSD_WITH_ZSTD_COMPRESSION)
       target_compile_definitions(${tt_consumer} PRIVATE LIGHTUSD_WITH_ZSTD_COMPRESSION)
+      target_link_libraries(${tt_consumer} PRIVATE lusdview_zstd)
     endif()
   endforeach()
 endif()

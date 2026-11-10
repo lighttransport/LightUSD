@@ -1279,18 +1279,159 @@ static bool ExpandPackedTIFFSamples(const tinydng::DNGImage &source,
   return true;
 }
 
-bool DecodeImageTIFF(const uint8_t *bytes, const size_t size,
-                    const std::string &uri, Image *image,
-                    std::string *err) {
+// Read only JPEG frame markers (baseline, progressive, or lossless). TIFF
+// IFD dimensions need not match an embedded JPEG's actual allocation size.
+bool TIFFJPEGFrame(const uint8_t* data, size_t size, size_t* width,
+                   size_t* height, size_t* channels, bool* lossless) {
+  if (size < 4 || data[0] != 0xff || data[1] != 0xd8) return false;
+  size_t pos = 2;
+  bool found = false;
+  while (pos < size) {
+    if (data[pos++] != 0xff) return false;
+    while (pos < size && data[pos] == 0xff) ++pos;
+    if (pos >= size) return false;
+    const uint8_t marker = data[pos++];
+    if (marker == 0xd9 || marker == 0xda) return found;
+    if (marker == 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (size - pos < 2) return false;
+    const size_t length = (size_t(data[pos]) << 8) | data[pos + 1];
+    if (length < 2 || length > size - pos) return false;
+    if (marker >= 0xc0 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 &&
+        marker != 0xcc) {
+      if (length < 8 || found) return false;
+      *height = (size_t(data[pos + 3]) << 8) | data[pos + 4];
+      *width = (size_t(data[pos + 5]) << 8) | data[pos + 6];
+      *channels = data[pos + 7];
+      *lossless = marker != 0xc0 && marker != 0xc1 && marker != 0xc2;
+      if (!*width || !*height || !*channels || *channels > 4) return false;
+      found = true;
+    }
+    pos += length;
+  }
+  return false;
+}
 
+// TinyDNG decodes every IFD, even for the single-image API. Check their
+// aggregate dimensions before allocating pixel/strip buffers. Header parsing
+// alone is bounded by TinyDNG's image/field limits and never decodes strips.
+bool PreflightTIFFDecode(const uint8_t* bytes, size_t size, std::string* err) {
+  if (size > kMaxDecodedImageBytes) {
+    if (err) *err += "TIFF input exceeds decode budget\n";
+    return false;
+  }
+  std::vector<tinydng::FieldInfo> fields;
+  std::vector<tinydng::DNGImage> headers;
+  std::string warning, error;
+  if (!tinydng::LoadDNGMetadataFromMemory(reinterpret_cast<const char*>(bytes),
+                                          size, fields, &headers, &warning,
+                                          &error) ||
+      headers.empty()) {
+    if (err) *err += "Failed to preflight TIFF headers: " + error;
+    return false;
+  }
+  size_t total = size, metadata = 0;
+  if (!safe::mul(headers.size(), sizeof(tinydng::DNGImage), &metadata) ||
+      !safe::add(total, metadata, &total))
+    return false;
+  size_t jpeg_scratch_reserved = 0;
+  const auto reserve_pixels = [&](size_t width, size_t height, size_t channels,
+                                  size_t sample_bytes) {
+    size_t pixels = 0, samples = 0, decoded = 0, scratch = 0;
+    return safe::mul(width, height, &pixels) &&
+           safe::mul(pixels, channels, &samples) &&
+           safe::mul(samples, sample_bytes, &decoded) &&
+           safe::mul(decoded, size_t(4), &scratch) &&
+           safe::add(total, scratch, &total) && total <= kMaxDecodedImageBytes;
+  };
+  for (const auto& header : headers) {
+    const int bits = header.bits_per_sample_original > 0
+                         ? header.bits_per_sample_original
+                         : header.bits_per_sample;
+    // Packed 10/12/14-bit samples normalize to uint16. Reserve decoder strip
+    // scratch and conversion copies conservatively, not just final pixels.
+    const size_t sample_bytes = bits <= 8 ? 1 : bits <= 16 ? 2 : 4;
+    if (header.width <= 0 || header.height <= 0 ||
+        header.samples_per_pixel <= 0 || header.samples_per_pixel > 4 ||
+        bits <= 0 || bits > 32 ||
+        !reserve_pixels(size_t(header.width), size_t(header.height),
+                        size_t(header.samples_per_pixel), sample_bytes)) {
+      if (err) *err += "TIFF dimensions exceed decode budget\n";
+      return false;
+    }
+    // A tile/strip can exceed the visible image dimensions (e.g. a tiny
+    // cropped image stored in a full-size tile). Account its decoder scratch.
+    if ((header.tile_width > 0 && header.tile_length > 0 &&
+         !reserve_pixels(size_t(header.tile_width), size_t(header.tile_length),
+                         size_t(header.samples_per_pixel), sample_bytes)) ||
+        (header.rows_per_strip > 0 &&
+         !reserve_pixels(size_t(header.width), size_t(header.rows_per_strip),
+                         size_t(header.samples_per_pixel), sample_bytes))) {
+      if (err) *err += "TIFF strip/tile exceeds decode budget\n";
+      return false;
+    }
+    if (header.compression == tinydng::COMPRESSION_OLD_JPEG ||
+        header.compression == tinydng::COMPRESSION_NEW_JPEG ||
+        header.compression == tinydng::COMPRESSION_LOSSY) {
+      const auto check_jpeg = [&](uint64_t offset, uint64_t length) {
+        if (offset > size || length > size - size_t(offset)) return false;
+        size_t width = 0, height = 0, channels = 0;
+        bool lossless = false;
+        if (!TIFFJPEGFrame(bytes + size_t(offset),
+                           length ? size_t(length) : size - size_t(offset),
+                           &width, &height, &channels, &lossless))
+          return false;
+        // Fixed JPEG context / lossless Huffman LUTs are independent of pixel
+        // count. Strips decode sequentially, so reserve their maximum once.
+        const size_t fixed_scratch =
+            lossless ? size_t(4) * 1024 * 1024 : size_t(64) * 1024;
+        if (fixed_scratch > jpeg_scratch_reserved) {
+          if (!safe::add(total, fixed_scratch - jpeg_scratch_reserved,
+                         &total) ||
+              total > kMaxDecodedImageBytes)
+            return false;
+          jpeg_scratch_reserved = fixed_scratch;
+        }
+        return reserve_pixels(width, height, channels, 4);
+      };
+      bool valid = true;
+      if (!header.tile_offsets.empty()) {
+        for (size_t i = 0; valid && i < header.tile_offsets.size(); ++i)
+          valid = check_jpeg(header.tile_offsets[i],
+                             i < header.tile_byte_counts.size()
+                                 ? header.tile_byte_counts[i]
+                                 : 0);
+      } else if (!header.strip_offsets.empty()) {
+        for (size_t i = 0; valid && i < header.strip_offsets.size(); ++i)
+          valid = check_jpeg(header.strip_offsets[i],
+                             i < header.strip_byte_counts.size()
+                                 ? header.strip_byte_counts[i]
+                                 : 0);
+      } else
+        valid = check_jpeg(header.offset, header.jpeg_byte_count > 0
+                                              ? uint64_t(header.jpeg_byte_count)
+                                              : 0);
+      if (!valid) {
+        if (err)
+          *err += "TIFF JPEG frame is invalid or exceeds decode budget\n";
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
-  std::vector<tinydng::FieldInfo> custom_fields; // no custom fields
+bool DecodeImageTIFF(const uint8_t* bytes, const size_t size,
+                     const std::string& uri, Image* image, std::string* err) {
+  std::vector<tinydng::FieldInfo> custom_fields;  // no custom fields
   std::vector<tinydng::DNGImage> images;
 
   std::string warn;
   std::string dngerr;
 
-  bool ret = tinydng::LoadDNGFromMemory(reinterpret_cast<const char *>(bytes), size, custom_fields, &images, &warn, &dngerr);
+  if (!PreflightTIFFDecode(bytes, size, err)) return false;
+  bool ret =
+      tinydng::LoadDNGFromMemory(reinterpret_cast<const char*>(bytes), size,
+                                 custom_fields, &images, &warn, &dngerr);
 
   if (!dngerr.empty()) {
     (*err) += dngerr;
@@ -1423,6 +1564,9 @@ LoadImageLayersFromMemory(const uint8_t *addr, size_t sz,
   if (!addr || sz == 0) {
     return nonstd::make_unexpected("TIFF layer input is empty: " + uri + "\n");
   }
+  std::string preflight_error;
+  if (!PreflightTIFFDecode(addr, sz, &preflight_error))
+    return nonstd::make_unexpected(preflight_error);
   std::vector<tinydng::FieldInfo> custom_fields;
   std::vector<tinydng::DNGImage> images;
   std::string warn;
@@ -1895,6 +2039,26 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
     }
     ret.warning.clear();
   }
+
+#if defined(LIGHTUSD_WITH_TEXTOOLS)
+  if (IsKTX2FromMemory(addr, sz)) {
+    // Read only the fixed header for allocation planning. The decoder validates
+    // the level index, DFD, codec and payload before consuming image data.
+    if (sz < 80)
+      return nonstd::make_unexpected("KTX2: truncated header: " + uri);
+    const auto read32 = [addr](size_t offset) -> uint32_t {
+      return uint32_t(addr[offset]) | (uint32_t(addr[offset + 1]) << 8) |
+             (uint32_t(addr[offset + 2]) << 16) |
+             (uint32_t(addr[offset + 3]) << 24);
+    };
+    ret.width = read32(20);
+    ret.height = read32(24);
+    ret.channels = 4;
+    if (!ret.width || !ret.height)
+      return nonstd::make_unexpected("KTX2: invalid 2D dimensions: " + uri);
+    return ret;
+  }
+#endif
 
 #if defined(LIGHTUSD_EXR_EXTERNAL) || (defined(LIGHTUSD_WITH_EXR) && defined(LIGHTUSD_EXR_V3))
   if (addr && sz >= 4 && addr[0] == 0x76 && addr[1] == 0x2f && addr[2] == 0x31 && addr[3] == 1) {

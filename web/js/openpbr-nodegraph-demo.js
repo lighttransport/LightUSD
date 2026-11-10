@@ -47,7 +47,7 @@ function getBackendFromURL(params = new URLSearchParams(window.location.search))
     const backend = params.get('backend');
     return (backend === 'next' || backend === 'auto' || backend === 'legacy')
         ? backend
-        : 'legacy';
+        : 'next';
 }
 
 function staticNextParseOptions() {

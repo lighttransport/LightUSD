@@ -161,11 +161,12 @@ class RenderStream {
 
   // Adopt the root bytes by move. USDC lazy arrays and USDA lazy slices retain
   // this buffer directly instead of copying it again inside the loader.
-  bool beginOwned(std::string &&crate);
+  bool beginOwned(std::string &&crate, const std::string& source_uri = {});
 
   // Begin from a JS Uint8Array (one copy into the WASM heap, then adopted).
   int preflightBeginInput(uint32_t size);
-  int beginBytes(const uint8_t* bytes, uint32_t size);
+  int beginBytes(const uint8_t* bytes, uint32_t size,
+                 const std::string& source_uri = {});
   int beginFromLayerDocument(NextLayerDocument& document);
   int exportStageUSDC();
   int stageUSDCSize() const;
@@ -608,6 +609,8 @@ class RenderStream {
     std::vector<float> points;
     std::vector<float> normals;
     std::vector<float> uv;
+    std::vector<float> colors;
+    std::vector<float> opacities;
     std::vector<uint32_t> indices;
     bool soup = false;
     int32_t material_id = -1;

@@ -73,6 +73,9 @@ public:
 
   /// Rewrite scalar asset path sample values.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+  size_t remap_asset_paths(const std::map<std::string, std::string>& remap,
+                          uint32_t asset_anchor_id);
+
 
   /// Check if property has time samples
   bool has(PropNameId name_id) const;
@@ -149,3 +152,8 @@ std::string NormalizeAssetPathForRemap(std::string path);
 const std::string* FindAssetPathRemap(
     const std::map<std::string, std::string>& remap,
     const std::string& path);
+
+// Resolve against the authoring layer when anchored; otherwise use the authored spelling.
+const std::string* FindAnchoredAssetPathRemap(
+    const std::map<std::string, std::string>& remap,
+    const std::string& path, uint32_t asset_anchor_id);

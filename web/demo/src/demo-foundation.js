@@ -6,7 +6,6 @@ import { GUI } from 'lil-gui';
 
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
-import { LightUSDComposer } from 'lightusd/LightUSDComposer.js';
 import {
   NodeGraphOptimizationLevel,
   analyzeNodeGraph,
@@ -57,7 +56,7 @@ function escapeHTML(value) {
     .replaceAll('"', '&quot;');
 }
 
-const BACKEND_CHOICES = ['next', 'legacy', 'auto'];
+const BACKEND_CHOICES = ['next'];
 
 function selectedBackend() {
   const value = new URLSearchParams(window.location.search).get('backend');
@@ -276,7 +275,7 @@ class DemoApp {
     this.gui.add({ open: () => this.fileInput.click() }, 'open').name('Open USD');
     this.gui.add({ sample: () => this.loadDefaultAsset() }, 'sample').name('Load sample');
     this.gui.add({ fit: () => this.fitScene() }, 'fit').name('Fit scene (F)');
-    this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Backend').onChange(setBackendAndReload);
+    this.gui.add(this.params, 'backend', BACKEND_CHOICES).name('Core backend').onChange(setBackendAndReload);
     this.gui.add(this.params, 'grid').name('Grid').onChange((value) => {
       this.grid.visible = value;
     });
@@ -381,11 +380,7 @@ class DemoApp {
       this.currentSourceUrl = url;
       let usd;
       if (this.config.useComposition) {
-        usd = this.params.backend === 'legacy'
-          ? await this.loadComposedLayer(url)
-          : await this.loadComposedNext(data, url);
-      } else if (this.config.useLayerExport && this.params.backend === 'legacy') {
-        usd = await this.loadLayerForExport(url);
+        usd = await this.loadComposedNext(data, url);
       } else {
         Report.progress(40, 'Parsing USD');
         usd = await this.parseUSD(data, this.currentSourceName);
@@ -408,9 +403,7 @@ class DemoApp {
       this.currentSourceBytes = new Uint8Array(data);
       this.currentSourceName = file.name;
       this.currentSourceUrl = '';
-      const usd = this.config.useLayerExport && this.params.backend === 'legacy'
-        ? this.parseLayerForExport(data, file.name)
-        : await this.parseUSD(data, file.name);
+      const usd = await this.parseUSD(data, file.name);
       await this.displayUSD(usd, file.name);
       Report.done();
     } catch (error) {
@@ -490,19 +483,6 @@ class DemoApp {
     return new Promise((resolve, reject) => {
       this.loader.parse(data, filename, resolve, reject, this.nextParseOptions(extra));
     });
-  }
-
-  async loadComposedLayer(url) {
-    const layer = await this.loader.loadAsLayerAsync(url);
-    const composer = new LightUSDComposer();
-    composer.setLayer(layer);
-    composer.setUSDLoader(this.loader);
-    composer.setBaseWorkingPath('./assets');
-    composer.setAssetSearchPaths(['./assets']);
-    await composer.progressiveComposition();
-    const composed = composer.getLayer();
-    composed.layerToRenderScene();
-    return composed;
   }
 
   async loadComposedNext(rootBytes, rootUrl) {
@@ -590,24 +570,6 @@ class DemoApp {
       }
     }
     throw lastError || new Error(`Could not resolve dependency layer ${key}.`);
-  }
-
-  async loadLayerForExport(url) {
-    const layer = await this.loader.loadAsLayerAsync(url);
-    layer.layerToRenderScene();
-    return layer;
-  }
-
-  parseLayerForExport(data, filename) {
-    const layer = new this.loader.native_.LightUSDLoaderNative();
-    layer.setMaxMemoryLimitMB(512);
-    this.loader._applySkinningLoadOptions?.(layer);
-    const ok = layer.loadAsLayerFromBinary(data, filename);
-    if (!ok) {
-      throw new Error(layer.error?.() || `Failed to load ${filename} as USD layer.`);
-    }
-    layer.layerToRenderScene();
-    return layer;
   }
 
   async displayUSD(usd, label) {
@@ -1212,7 +1174,7 @@ class DemoApp {
 
     const stats = {
       Source: label,
-      Backend: isNextScene(usd) ? 'next' : 'legacy',
+      Backend: 'core',
       'Up axis': this.currentUpAxis || this.getSceneUpAxis(usd),
       Meshes: nextCounts?.meshes ?? countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
       Materials: nextCounts?.materials ?? countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),

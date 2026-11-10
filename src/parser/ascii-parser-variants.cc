@@ -13,7 +13,16 @@ namespace lightusd {
 bool AsciiParser::Impl::ParseVariantSetBody(const std::string& variant_set_name) {
   PrimSpec* prim = builder_->current();
   if (!prim) return false;
-  return ParseVariantSetBodyInto(variant_set_name, prim->meta().variantSets(), 0);
+  if (!ParseVariantSetBodyInto(variant_set_name, prim->meta().variantSets(), 0)) return false;
+  // Keep the effective selection cache consistent with Crate reconstruction.
+  // The authored selection dictionary remains the source of truth; a dangling
+  // selection must not synthesize a local variant-set declaration.
+  for (auto& set : prim->meta().variantSets()) {
+    for (const auto& selection : prim->meta().variantSelections()) {
+      if (set.name == selection.first) set.selected = selection.second;
+    }
+  }
+  return true;
 }
 
 bool AsciiParser::Impl::ParseVariantSetBodyInto(
@@ -455,6 +464,13 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
             std::unique_ptr<LayerBuilder> host_builder = std::move(builder_);
             layer_ = std::move(content_layer);
             builder_ = std::move(content_builder);
+            if (PrimSpec* self = builder_->current()) {
+              const PropNameId id = GetPropNameTable().intern(prop_name);
+              if (!self->property(id)) self->add_property_slot(
+                  id, tid, vflags | PropSlot::kFlagTimeSampled);
+              self->set_property_type_name(prop_name,
+                  type_name + (arr && type_name.find("[]") == std::string::npos ? "[]" : ""));
+            }
             bool ok = ParseTimeSamples(prop_name, tid, arr);
             content_layer = std::move(layer_);
             content_builder = std::move(builder_);

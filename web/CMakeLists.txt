@@ -37,7 +37,7 @@ elseif (LIGHTUSD_WASM_LEGACY_ONLY)
   set(LIGHTUSD_WASM_PRODUCT "legacy")
   message(DEPRECATION "LIGHTUSD_WASM_LEGACY_ONLY is deprecated; use -DLIGHTUSD_WASM_PRODUCT=legacy")
 endif()
-if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
+if (LIGHTUSD_WASM_PRODUCT STREQUAL "next")
   set(LIGHTUSD_WASM_PRODUCT "core")
   message(DEPRECATION "LIGHTUSD_WASM_PRODUCT=next is deprecated; use core (output lightusd[_64].js)")
 endif()
@@ -404,6 +404,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
 
   add_executable(lightusd_core_wasm binding-udim.cc binding-core-udim.cc
     ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
+    ${PROJECT_SOURCE_DIR}/../src/udim-core-layer.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer-geometry.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-bake.cc
@@ -412,10 +413,13 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     binding-core-layer.cc
     binding-core-layer-json-import.cc
     binding-core-layer-json-export.cc
-    binding-core-layer-json-values.cc
     binding-core-layer-inspect.cc
     binding-core-api.cc
     binding-core-image.cc
+    binding-image-convert.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-convert.cc
+    ${PROJECT_SOURCE_DIR}/../src/tydra/texture-util.cc
+    ${PROJECT_SOURCE_DIR}/../tools/lusdpreview/image-resize-impl.cc
     binding-core-assets.cc
     binding-core-util.cc
     binding-core-render-lifecycle.cc
@@ -490,6 +494,12 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexcodec.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vertexfilter.cpp
     ${PROJECT_SOURCE_DIR}/../src/external/meshoptimizer/vfetchoptimizer.cpp)
+  if(LIGHTUSD_WITH_XATLAS)
+    target_sources(lightusd_geometry_wasm PRIVATE binding-xatlas.cc
+      ${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/external/xatlas/xatlas.cpp
+      PROPERTIES COMPILE_DEFINITIONS "XA_MULTITHREADED=0")
+  endif()
   add_executable(lightusd_raytrace_wasm EXCLUDE_FROM_ALL
     lightrt-wasm.cc binding-feature.c
     ../src/external/lightrt/lightrt_c.c ../src/external/lightrt/lightrt_c_tri.c)
@@ -502,6 +512,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   endforeach()
   target_link_libraries(lightusd_core_wasm PRIVATE
     tydra lightusd_c lightusd_core)
+  if(TARGET lightusd_textools)
+    target_link_libraries(lightusd_core_wasm PRIVATE lightusd_textools)
+    target_compile_definitions(lightusd_core_wasm PRIVATE LIGHTUSD_WITH_TEXTOOLS=1)
+  endif()
   target_include_directories(lightusd_core_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(lightusd_core_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_core_wasm APPEND PROPERTY LINK_DEPENDS

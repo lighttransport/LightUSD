@@ -1,449 +1,153 @@
+// SPDX-License-Identifier: Apache-2.0
 #include <algorithm>
-#include <cctype>
+#include <array>
 #include <cstdlib>
+#include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <vector>
 
-#include "lightusd.hh"
-#include "layer.hh"
-#include "core/prim.hh"
-#include "core/prim-spec.hh"
-#include "pprinter.hh"
-#include "str-util.hh"
-#include "io-util.hh"
-#include "usdGeom.hh"
+#include "composition/composition.hh"
+#include "layer/asset-anchor.hh"
+#include "load-usd.hh"
+#include "pipeline/flatten.hh"
+#include "writer/usda-writer.hh"
 
-struct CompositionFeatures {
-  bool subLayers{true};
-  bool inherits{true};
-  bool variantSets{true};
-  bool references{true};
-  bool payload{true}; // Not 'payloads'
-  bool specializes{true};
-};
+namespace {
+constexpr std::array<const char*, 6> names = {
+    "subLayers", "inherits", "variantSets", "references", "payload", "specializes"};
+constexpr std::array<const char*, 6> aliases = {"l", "i", "v", "r", "p", "s"};
 
-static void CollectMeshPaths(const lightusd::legacy::Prim& root,
-                             std::vector<std::string>* paths) {
-  struct Frame {
-    const lightusd::legacy::Prim* prim;
-    size_t child_index;
-    size_t parent_path_length;
-  };
-  std::vector<Frame> stack;
-  std::string path = "/" + root.local_path().full_path_name();
-  if (root.is<lightusd::legacy::GeomMesh>()) paths->push_back(path);
-  if (!root.children().empty()) stack.push_back({&root, 0, 0});
-  while (!stack.empty()) {
-    Frame& frame = stack.back();
-    if (frame.child_index >= frame.prim->children().size()) {
-      path.resize(frame.parent_path_length);
-      stack.pop_back();
-      continue;
-    }
-    const lightusd::legacy::Prim& child = frame.prim->children()[frame.child_index++];
-    const size_t current_path_length = path.size();
-    path += "/";
-    path += child.local_path().full_path_name();
-    if (child.is<lightusd::legacy::GeomMesh>()) paths->push_back(path);
-    if (!child.children().empty()) {
-      stack.push_back({&child, 0, current_path_length});
-    } else {
-      path.resize(current_path_length);
-    }
+void Help() {
+  std::cout << "Usage: progressive_composition [options] input.usda/usdc/usdz\n"
+               "  --noflatten          Print the authored root layer\n"
+               "  -l, --loadOnly       Validate the root layer without composition\n"
+               "  --composition=LIST  Select comma-separated LIVRPS arc types\n"
+               "                       subLayers,inherits,variantSets,references,payload,specializes\n"
+               "                       (short names: l,i,v,r,p,s; default: all)\n"
+               "  --extract-variants  Print authored variant names as JSON\n"
+               "  --relative          Print mesh diagnostic paths without leading slash\n"
+               "  -h, --help          Show this help\n";
+}
+
+std::string Quoted(const std::string& value) {
+  std::ostringstream out;
+  out << '"';
+  for (unsigned char c : value) {
+    if (c == '"' || c == '\\') out << '\\' << c;
+    else if (c < 32) out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << unsigned(c) << std::dec;
+    else out << c;
   }
+  out << '"';
+  return out.str();
 }
 
-static std::string GetFileExtension(const std::string &filename) {
-  if (filename.find_last_of('.') != std::string::npos)
-    return filename.substr(filename.find_last_of('.') + 1);
-  return "";
-}
-
-static std::string str_tolower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return std::tolower(c); }
-  );
-  return s;
-}
-
-void print_help() {
-    std::cout << "Usage progressive_composition [--noflatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
-    std::cout << "\n --noflatten Do not do composition";
-    std::cout << "  --composition: Specify which composition feature to be "
-                 "enabled(valid when `--flatten` is supplied). Comma separated "
-                 "list. \n    l "
-                 "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
-                 "p `payload`, s `specializes`. \n    Example: "
-                 "--composition=r,p --composition=references,subLayers\n";
-    std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
-    std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
-    std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
-
-}
-
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    print_help();
-    return EXIT_FAILURE;
-  }
-
-  bool has_flatten{true};
-  bool has_relative{false};
-  bool has_extract_variants{false};
-  bool load_only{false};
-
-  constexpr int kMaxIteration = 128;
-
-  std::string filepath;
-
-  int input_index = -1;
-  CompositionFeatures comp_features;
-
-  for (size_t i = 1; i < argc; i++) {
-    std::string arg = argv[i];
-    if ((arg.compare("-h") == 0) || (arg.compare("--help") ==0)) {
-      print_help();
-      return EXIT_FAILURE;
-    } else if ((arg.compare("-f") == 0) || (arg.compare("--noflatten") == 0)) {
-      has_flatten = false;
-    } else if (arg.compare("--relative") == 0) {
-      has_relative = true;
-    } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
-      load_only = true;
-    } else if (arg.compare("--extract-variants") == 0) {
-      has_extract_variants = true;
-    } else if (lightusd::legacy::startsWith(arg, "--composition=")) {
-      std::string value_str = lightusd::legacy::removePrefix(arg, "--composition=");
-      if (value_str.empty()) {
-        std::cerr << "No values specified to --composition.\n";
-        exit(-1);
+void Variants(const lightusd::Layer& layer) {
+  std::cout << "# authored variants\n[";
+  bool first = true;
+  for (const auto& prim : layer.prims()) {
+    for (const auto& set : prim.meta().variantSets()) {
+      if (!first) std::cout << ',';
+      first = false;
+      std::cout << "{\"prim\":" << Quoted(prim.path().str())
+                << ",\"set\":" << Quoted(set.name) << ",\"variants\":[";
+      for (size_t i = 0; i < set.variants.size(); ++i) {
+        if (i) std::cout << ',';
+        std::cout << Quoted(set.variants[i].name);
       }
-
-      std::vector<std::string> items = lightusd::legacy::split(value_str, ",");
-      comp_features.subLayers = false;
-      comp_features.inherits = false;
-      comp_features.variantSets = false;
-      comp_features.references = false;
-      comp_features.payload = false;
-      comp_features.specializes = false;
-
-      for (const auto &item : items) {
-        if ((item == "l") || (item == "subLayers")) {
-          comp_features.subLayers = true;
-        } else if ((item == "i") || (item == "inherits")) {
-          comp_features.inherits = true;
-        } else if ((item == "v") || (item == "variantSets")) {
-          comp_features.variantSets = true;
-        } else if ((item == "r") || (item == "references")) {
-          comp_features.references = true;
-        } else if ((item == "p") || (item == "payload")) {
-          comp_features.payload = true;
-        } else if ((item == "s") || (item == "specializes")) {
-          comp_features.specializes = true;
-        } else {
-          std::cerr << "Invalid string for --composition : " << item << "\n";
-          exit(-1);
-        }
-      }
-
-    } else {
-      filepath = arg;
-      input_index = i;
+      std::cout << "]}";
     }
   }
+  std::cout << "]\n";
+}
 
-  if (filepath.empty() || (input_index < 0)) {
-    std::cout << "Input USD filename missing.\n";
-    return EXIT_FAILURE;
+lightusd::CompositionOptions Options(const std::array<bool, 6>& enabled) {
+  lightusd::CompositionOptions options;
+  options.resolve_sublayers = enabled[0];
+  options.resolve_inherits = enabled[1];
+  options.resolve_variants = enabled[2];
+  options.resolve_references = enabled[3];
+  options.load_payloads = enabled[4];
+  options.resolve_specializes = enabled[5];
+  options.preserve_unresolved_arcs = true;
+  return options;
+}
+}  // namespace
+
+int main(int argc, char** argv) {
+  std::array<bool, 6> selected{{true, true, true, true, true, true}};
+  bool flatten = true, load_only = false, relative = false, variants = false;
+  std::string input;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg(argv[i]);
+    if (arg == "-h" || arg == "--help") { Help(); return EXIT_SUCCESS; }
+    if (arg == "--noflatten" || arg == "-f") flatten = false;
+    else if (arg == "--loadOnly" || arg == "-l") load_only = true;
+    else if (arg == "--relative") relative = true;
+    else if (arg == "--extract-variants") variants = true;
+    else if (arg.compare(0, 14, "--composition=") == 0) {
+      selected.fill(false);
+      std::string list = arg.substr(14);
+      if (list.empty() || list.back() == ',') { std::cerr << "Empty composition selection\n"; return EXIT_FAILURE; }
+      std::istringstream values(list);
+      for (std::string value; std::getline(values, value, ',');) {
+        size_t index = 0;
+        for (; index < names.size(); ++index)
+          if (value == names[index] || value == aliases[index]) break;
+        if (index == names.size()) { std::cerr << "Unknown composition type: " << value << '\n'; return EXIT_FAILURE; }
+        selected[index] = true;
+      }
+    } else if (arg.empty() || arg[0] == '-' || !input.empty()) {
+      std::cerr << "Unexpected argument: " << arg << '\n'; return EXIT_FAILURE;
+    } else input = arg;
   }
+  if (input.empty()) { Help(); return EXIT_FAILURE; }
+  lightusd::Stage stage;
+  std::string warn, error;
+  if (!lightusd::LoadUSD(input, &stage, &warn, &error)) {
+    std::cerr << error << '\n'; return EXIT_FAILURE;
+  }
+  if (!warn.empty()) std::cerr << warn << '\n';
+  if (load_only) return EXIT_SUCCESS;
+  const auto& root = *stage.GetRootLayer();
+  if (variants) Variants(root);
+  if (!flatten) { std::cout << lightusd::WriteLayerToString(root); return EXIT_SUCCESS; }
 
-  std::string warn;
-  std::string err;
-
-  std::string ext = str_tolower(GetFileExtension(filepath));
-  std::string base_dir;
-  base_dir = lightusd::io::GetBaseDir(filepath);
-
-  if (has_flatten) {
-
-    if (load_only) {
-      std::cerr << "--flatten and --loadOnly cannot be specified at a time\n";
+  // Recompose from the authored root for every cumulative pass. Reusing a
+  // partially flattened layer would change strength ordering across arc types.
+  std::error_code ec;
+  std::string anchor = std::filesystem::absolute(input, ec).generic_string();
+  if (ec) { std::cerr << ec.message() << '\n'; return EXIT_FAILURE; }
+  const auto& package_anchor = lightusd::AssetAnchorPath(root.source_asset_anchor_id());
+  if (lightusd::AssetResolver::IsPackagePath(package_anchor)) anchor = package_anchor;
+  lightusd::AssetResolver resolver;
+  resolver.SetWorkingDirectory(lightusd::AssetResolver::GetDirectory(anchor));
+  std::array<bool, 6> enabled{};
+  std::unique_ptr<lightusd::Layer> composed;
+  std::cout << "# input\n" << lightusd::WriteLayerToString(root);
+  for (size_t pass = 0; pass < selected.size(); ++pass) {
+    if (!selected[pass]) continue;
+    enabled[pass] = true;
+    lightusd::Compositor compositor(&resolver);
+    compositor.SetOptions(Options(enabled));
+    compositor.SetLayerLoader(lightusd::pipeline::MakeFileSystemLayerLoader());
+    composed = compositor.Compose(root, anchor);
+    if (!composed || !compositor.GetErrors().empty()) {
+      for (const auto& diagnostic : compositor.GetErrors())
+        std::cerr << diagnostic.message << " (" << diagnostic.prim_path << ")\n";
       return EXIT_FAILURE;
     }
-
-    // TODO: flatten for USDZ
-    if (lightusd::legacy::IsUSDZ(filepath)) {
-
-      std::cout << "--flatten is ignored for USDZ at the moment.\n";
-
-      lightusd::legacy::Stage stage;
-
-      bool ret = lightusd::legacy::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-      if (!warn.empty()) {
-        std::cerr << "WARN : " << warn << "\n";
-      }
-      if (!err.empty()) {
-        std::cerr << "ERR : " << err << "\n";
-        //return EXIT_FAILURE;
-      }
-
-      if (!ret) {
-        std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-        return EXIT_FAILURE;
-      }
-
-      std::cout << to_string(stage) << "\n";
-
-      return EXIT_SUCCESS;
-    }
-
-    lightusd::legacy::Layer root_layer;
-    bool ret = lightusd::legacy::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
-    if (warn.size()) {
-      std::cout << "WARN: " << warn << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to read USD data as Layer: \n";
-      std::cerr << err << "\n";
-      return -1;
-    }
-
-    std::cout << "# input\n";
-    std::cout << root_layer << "\n";
-
-    lightusd::legacy::Stage stage;
-    stage.metas() = root_layer.metas();
-
-    std::string warn;
-
-    lightusd::legacy::AssetResolutionResolver resolver;
-    resolver.set_current_working_path(base_dir);
-    resolver.set_search_paths({base_dir});
-
-    //
-    // LIVRPS strength ordering
-    // - [x] Local(subLayers)
-    // - [x] Inherits
-    // - [x] VariantSets
-    // - [x] References
-    // - [x] Payload
-    // - [ ] Specializes
-    //
-
-    lightusd::legacy::Layer src_layer = root_layer;
-    if (comp_features.subLayers) {
-
-      // NOTE: subLayers are resolved recursively.
-
-      std::vector<std::string> subLayerAssetPaths = lightusd::legacy::ExtractSublayerAssetPaths(src_layer);
-      for (size_t i = 0; i < subLayerAssetPaths.size(); i++) {
-          std::cout << "subLayer asset path: " << subLayerAssetPaths[i] << "\n";
-      }
-
-      lightusd::legacy::Layer composited_layer;
-      if (!lightusd::legacy::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
-        std::cerr << "Failed to composite subLayers: " << err << "\n";
-        return -1;
-      }
-
-      if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
-      }
-
-      std::cout << "# `subLayers` composited\n";
-      std::cout << composited_layer << "\n";
-
-      src_layer = std::move(composited_layer);
-    }
-
-    // TODO: Find more better way to Recursively resolve references/payload/variants
-    for (int i = 0; i < kMaxIteration; i++) {
-
-      bool has_unresolved = false;
-
-      if (comp_features.references) {
-        if (!src_layer.check_unresolved_references()) {
-          std::cout << "# iter " << i << ": no unresolved references.\n";
-        } else {
-          has_unresolved = true;
-
-          lightusd::legacy::Layer composited_layer;
-          if (!lightusd::legacy::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
-            std::cerr << "Failed to composite `references`: " << err << "\n";
-            return -1;
-          }
-
-          if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
-          }
-
-          std::cout << "# `references` composited\n";
-          std::cout << composited_layer << "\n";
-
-          src_layer = std::move(composited_layer);
-        }
-      }
-
-      if (comp_features.payload) {
-        if (!src_layer.check_unresolved_payload()) {
-          std::cout << "# iter " << i << ": no unresolved payload.\n";
-        } else {
-          has_unresolved = true;
-
-          lightusd::legacy::Layer composited_layer;
-          if (!lightusd::legacy::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
-            std::cerr << "Failed to composite `payload`: " << err << "\n";
-            return -1;
-          }
-
-          if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
-          }
-
-          std::cout << "# `payload` composited\n";
-          std::cout << composited_layer << "\n";
-
-          src_layer = std::move(composited_layer);
-        }
-      }
-
-      if (comp_features.inherits) {
-        if (!src_layer.check_unresolved_inherits()) {
-          std::cout << "# iter " << i << ": no unresolved inherits.\n";
-        } else {
-          has_unresolved = true;
-
-          lightusd::legacy::Layer composited_layer;
-          if (!lightusd::legacy::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
-            std::cerr << "Failed to composite `inherits`: " << err << "\n";
-            return -1;
-          }
-
-          if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
-          }
-
-          std::cout << "# `inherits` composited\n";
-          std::cout << composited_layer << "\n";
-
-          src_layer = std::move(composited_layer);
-        }
-      }
-
-      if (comp_features.variantSets) {
-        // AOUSD Core Spec 10.3.2.5: defer variant composition until references
-        // and payloads are resolved (see ShouldDeferVariantComposition).
-        if (!src_layer.check_unresolved_variant()) {
-          std::cout << "# iter " << i << ": no unresolved variant.\n";
-        } else if (lightusd::legacy::ShouldDeferVariantComposition(
-                       src_layer, comp_features.references,
-                       comp_features.payload)) {
-          std::cout << "# iter " << i
-                    << ": variant resolution deferred (refs/payloads pending).\n";
-          has_unresolved = true;
-        } else {
-          has_unresolved = true;
-
-          lightusd::legacy::Layer composited_layer;
-          if (!lightusd::legacy::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
-            std::cerr << "Failed to composite `variantSet`: " << err << "\n";
-            return -1;
-          }
-
-          if (warn.size()) {
-            std::cout << "WARN: " << warn << "\n";
-          }
-
-          std::cout << "# `variantSet` composited\n";
-          std::cout << composited_layer << "\n";
-
-          src_layer = std::move(composited_layer);
-        }
-      }
-
-      // TODO
-      // - [ ] specializes
-      // - [ ] `class` Prim?
-
-      std::cout << "# has_unresolved_references: " << src_layer.check_unresolved_references() << "\n";
-      std::cout << "# all resolved? " << !has_unresolved << "\n";
-
-      if (!has_unresolved) {
-        std::cout << "# of composition iteration to resolve fully: " << (i + 1) << "\n";
-        break;
-      }
-
-    }
-
-    if (has_extract_variants) {
-      lightusd::legacy::Dictionary dict;
-      if (!lightusd::legacy::ExtractVariants(src_layer, &dict, &err)) {
-        std::cerr << "Failed to extract variants info: " << err;
-      } else {
-        std::cout << "== Variants info ==\n" << lightusd::legacy::to_string(dict) << "\n";
-      }
-
-    }
-
-    lightusd::legacy::Stage comp_stage;
-    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
-    if (warn.size()) {
-      std::cout << warn<< "\n";
-    }
-
-    if (!ret) {
-      std::cerr << err << "\n";
-    }
-
-    std::cout << comp_stage.ExportToString() << "\n";
-
-    std::vector<std::string> mesh_paths;
-    for (const lightusd::legacy::Prim& root : comp_stage.root_prims()) {
-      CollectMeshPaths(root, &mesh_paths);
-    }
-    std::sort(mesh_paths.begin(), mesh_paths.end());
-    for (const std::string& path : mesh_paths) std::cout << "Prim : " << path << "\n";
-
-  } else {
-
-    lightusd::legacy::Stage stage;
-
-    lightusd::legacy::USDLoadOptions options;
-
-    // auto detect format.
-    bool ret = lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USD file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-
-    if (load_only) {
-      return EXIT_SUCCESS;
-    }
-
-    std::string s = stage.ExportToString(has_relative);
-    std::cout << s << "\n";
-
-    if (has_extract_variants) {
-      lightusd::legacy::Dictionary dict;
-      if (!lightusd::legacy::ExtractVariants(stage, &dict, &err)) {
-        std::cerr << "Failed to extract variants info: " << err;
-      } else {
-        std::cout << "== Variants info ==\n" << lightusd::legacy::to_string(dict) << "\n";
-      }
-
-    }
+    std::cout << "# composed " << names[pass] << '\n' << lightusd::WriteLayerToString(*composed);
   }
-
+  if (!composed) return EXIT_FAILURE;
+  std::cout << "# final\n" << lightusd::WriteLayerToString(*composed);
+  std::vector<std::string> meshes;
+  for (const auto& prim : composed->prims())
+    if (prim.type_name() == "Mesh" && composed->prim_at_path(prim.path().str()))
+      meshes.push_back(prim.path().str());
+  std::sort(meshes.begin(), meshes.end());
+  for (const auto& path : meshes) std::cout << "Prim : " << (relative ? path.substr(1) : path) << '\n';
   return EXIT_SUCCESS;
 }

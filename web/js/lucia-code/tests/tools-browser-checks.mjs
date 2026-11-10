@@ -11,7 +11,7 @@ export async function runToolsBrowserChecks(page) {
     const n = 21, points = [], faces = [];
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) points.push(`(${(i / (n - 1) * 2 - 1).toFixed(3)}, 0, ${(j / (n - 1) * 2 - 1).toFixed(3)})`);
     for (let j = 0; j < n - 1; j++) for (let i = 0; i < n - 1; i++) { const a = j * n + i; faces.push(a, a + n, a + n + 1, a + 1); }
-    const source = `#usda 1.0\n(defaultPrim = "World" upAxis = "Y")\ndef Xform "World" {\n def Mesh "Plane" {\n  point3f[] points = [${points.join(', ')}]\n  int[] faceVertexCounts = [${faces.map(() => 4).slice(0, faces.length / 4).join(', ')}]\n  int[] faceVertexIndices = [${faces.join(', ')}]\n  uniform token subdivisionScheme = "none"\n }\n}\n`;
+    const source = `#usda 1.0\n(defaultPrim = "World"; upAxis = "Y")\ndef Xform "World" {\n def Mesh "Plane" {\n  point3f[] points = [${points.join(', ')}]\n  int[] faceVertexCounts = [${faces.map(() => 4).slice(0, faces.length / 4).join(', ')}]\n  int[] faceVertexIndices = [${faces.join(', ')}]\n  uniform token subdivisionScheme = "none"\n }\n}\n`;
     await app.openFile(new File([source], 'tools.usda'));
     const path = '/World/Plane', before = await app.session.getMeshPoints(path);
     app.select(path); app.currentInspectorTab = 'sculpt'; app.renderInspector();
@@ -78,7 +78,7 @@ export async function runToolsBrowserChecks(page) {
     check(!/PointInstancer/.test(app.session.exportUSDA()), 'Undo did not remove the PointInstancer');
     // Authored invisibility survives the per-frame LOD visibility update.
     const quad = (name, extra = '') => ` def Mesh "${name}" {\n${extra}  point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]\n  int[] faceVertexCounts = [4]\n  int[] faceVertexIndices = [0, 1, 2, 3]\n }\n`;
-    await app.openFile(new File([`#usda 1.0\n(defaultPrim = "World" upAxis = "Y")\ndef Xform "World" {\n${quad('Rock', '  token visibility = "invisible"\n')}${quad('Rock_LOD1')}}\n`], 'lod.usda'));
+    await app.openFile(new File([`#usda 1.0\n(defaultPrim = "World"; upAxis = "Y")\ndef Xform "World" {\n${quad('Rock', '  token visibility = "invisible"\n')}${quad('Rock_LOD1')}}\n`], 'lod.usda'));
     const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     check(app.bridge.lodGroups.get('/World/Rock')?.length === 2, 'LOD group was not discovered');
     for (const preview of [false, true]) {

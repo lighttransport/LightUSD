@@ -281,8 +281,8 @@ export const DEMOS = [
   },
   {
     id: 'backend-compare',
-    title: 'Backend Comparison',
-    subtitle: 'Compare legacy vs next rendering backends side by side with synchronized cameras and per-backend stats.',
+    title: 'Core Roundtrip Comparison',
+    subtitle: 'Compare a source scene with its USDC roundtrip using synchronized cameras and scene counts.',
     defaultAsset: './assets/suzanne-pbr.usda',
     preferredMaterialType: 'auto',
     image: './assets/previews/backend-compare.svg',

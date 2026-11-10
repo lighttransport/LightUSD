@@ -322,6 +322,13 @@ subdivision, variants, instances, and streaming. Run it with
 `LIGHTUSD_UDIM_COMBINED=1` as well as the default next-only selection on each
 pointer width. `LIGHTUSD_UDIM_GLUE` selects an isolated artifact; setting
 `LIGHTUSD_NATIVE_USDZCONVERT` includes native output/sidecar checks.
+`tests/core-converter-orchestration.test.mjs` checks the public core folder and
+streaming conversion paths: composition, variants, source-layer texture anchors,
+animated asset paths, material/mesh optimization, ZIP sinks, missing dependencies,
+input limits, texture-free defaults, and embedded assets with the legacy repack
+shortcut disabled. `tests/core-converter-materials.test.mjs` and
+`tests/core-converter-geometry.test.mjs` exercise the configured native export API
+without high-level orchestration. All three honor `LIGHTUSD_WASM64=1`.
 See [UDIM baking](udim-baking.md) for API controls and source requirements.
 
 The full runner writes temporary output under `web/js/.regression`. Successful
@@ -468,3 +475,86 @@ the typed composition issue report. A successful empty/partial scene is not an
 acceptable result for these cases. The USDA composition, C dispatch and loading
 parity suites assert this contract; legacy parse-only loads may still succeed.
 Incremental dependency discovery belongs to the flatten-session workflow.
+
+### Core converter image regressions
+
+`npm run test:core-image-convert` exercises the counted image bridge: owned result
+buffers, invalid inputs and memory limits, scanline PNG fallback for a decoded
+image larger than its working budget, uint16 PNG preservation/resizing, linear
+and sRGB resize controls, optional EXR decoding/encoding and HDR tonemapping,
+channel packing, and global size/quality fitting.
+
+`npm run test:core-converter-textures` exercises ordinary folder and streaming
+package conversion with USDA and USDC roots. It checks image format remapping,
+root asset opinions, global fitting, and collision-safe archive filenames. Both
+are included in the Node regression profile. Set `LIGHTUSD_WASM64=1` to exercise
+the independently rebuilt memory64 distribution.
+
+Native `core_lusdzconvert_images` checks ordinary uint16 texture resize and JPEG
+conversion/remapping. This complements UDIM atlas precision tests, which do not
+exercise the ordinary texture processing path.
+
+`npm run test:core-xatlas` verifies the counted optional geometry API, normalized
+charting at tiny/large finite scales, source-vertex mapping, UV triangles,
+options, owned buffers, and the real Lucia worker handler. It is part of the
+Node profile. `npm run test:core-generated-colors` covers generated-shape constant
+and indexed uniform colors, opacity, welding at color discontinuities, and
+Three.js attributes/material flags.
+
+`npm run test:standalone-core-demos -- --production` checks the built `web/js/dist`
+exports, validator Worker, Lucia startup and bundled xatlas Worker. Both Vite
+projects share the runtime feature JS/WASM copy helper, including the core MCP
+module for Lucia. Without `--production`, `npm run test:standalone-core-demos` starts a private Vite server and headless
+Chromium. It checks USDA/USDC/USDZ downloads from the core export demo and the
+independent validator Worker, including compatibility with an old backend URL.
+`npm run test:lucia:browser` checks the full core editor workflow, including UDIM,
+sculpting, geometry nodes, persistence and the 131,072-triangle performance scene.
+The browser fixtures use valid USDA metadata/prim separators; their import
+assertions must fail on a bad source instead of accidentally reusing the previous
+scene.
+
+`npm run test:core-physics-cli` checks the core USD-to-MJCF command against loose
+USDA and nested USDZ inputs, including intermediate transforms and mirrored
+winding in body-local OBJ geometry. Physics extraction remains independent of
+render-only UV failures. The `physics` profile runs the core-backed `phys-sim`
+robot-arm test with the configured MuJoCo physics-only module.
+
+The standalone production smoke includes the MaterialX GL inspector on the core
+loader, structured parameter edits, material implementation changes, live
+OpenPBR uniform edits and shader compilation. `core-texture-bindings.test.mjs`
+checks delayed texture completion across material clones/replacements and color
+transform installation on the custom OpenPBR shader.
+
+`npm run test:progress` now exercises the core adapter rather than the removed
+native legacy constructor. The Node profile also includes
+`core-loader-progress.test.mjs`: completion, AbortSignal (including timer-driven
+cancellation without a progress callback), memory limits, concurrent loads,
+callback exceptions and native cleanup. Optional external progress-CLI assets
+may skip; its three generated scenes must all pass.
+
+The MaterialX GL, WebGPU and debug inspectors are production Vite entries.
+Run `npm run test:core-materialx-demos-browser` for the WebGPU/debug pair, or build
+with `npm run build` and run
+`node tests/core-materialx-demos.test.mjs --production` against the bundled pages.
+This gate supplies a generated textured USDZ and HDR environment, checks metadata
+and Z-up conversion, renders both physical/OpenPBR TSL modes, and requires a live
+GPU device with no browser errors. Linux forces SwiftShader for Vulkan, ANGLE
+and WebGPU together; forcing only a WebGL SwiftShader backend can leave Chromium
+without a compatible WebGPU swapchain backing. See
+[Chromium's SwiftShader configuration](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/gpu/swiftshader.md).
+The browser profile includes this gate and the standalone export/validation/GL
+inspector gate before any optional Menagerie assets.
+
+`core-render-inspector.test.mjs` runs with either WASM width
+(`LIGHTUSD_WASM64=1` selects memory64 and needs Node 23+). It checks nested roots,
+same-name texture collisions, named/cached/streamed root anchoring, byte-view
+inputs, owned image data and malformed native/source-name records.
+`core-image-texture.test.mjs` covers RGB expansion, 16-bit integer normalization,
+Float16/Float32 HDR pixels and texture storage ownership.
+
+The core streaming preview has its own pixel/resource regression:
+`npm run test:core-streaming-demo-browser`. Add `-- --production` after building
+the Vite distribution to test the bundled page. Both standard and incremental
+paths exercise loose USDA, nested USDZ image resolution, transformed bounds,
+non-uniform normal matrices, and native/GL resource cleanup. The browser profile
+runs this check automatically.

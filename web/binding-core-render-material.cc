@@ -35,6 +35,13 @@ RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
                                                         param.texture_id);
           if (!texture) return meta;
           meta.path = texture->asset_path;
+          // Browser archive lookup needs the authoring-layer-resolved key.
+          // Keep sparse UDIM patterns intact; image_id names only one tile.
+          if (!isUdimPath_(meta.path) && texture->image_id >= 0 &&
+              static_cast<size_t>(texture->image_id) < render_scene_.images.size()) {
+            const auto& image = render_scene_.images[static_cast<size_t>(texture->image_id)];
+            if (!image.resolved_path.empty()) meta.path = image.resolved_path;
+          }
           meta.source_color_space = texture->source_color_space;
           meta.color_transform_valid = texture->color_transform_valid;
           meta.color_transform_bypass = texture->color_transform_bypass;

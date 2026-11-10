@@ -1,4 +1,5 @@
 #usda 1.0
+# XFAIL: OpenUSD versions without USD 1.2 array-edit syntax cannot parse this fixture
 def Xform "B"
 {
     custom int[] a = [10, 20, 30]

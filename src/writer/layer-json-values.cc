@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-#include "binding-core-layer.hh"
-#include "binding-core-layer-json-internal.hh"
-#include "binding-core-scene.hh"
+#include "writer/layer-json-internal.hh"
 #include "types/type-info.hh"
 #include "types/value.hh"
 #include <cmath>
@@ -13,7 +11,6 @@ namespace tn = lightusd;
 #include "writer/value-printer.hh"
 
 namespace lightusd {
-namespace web_core {
 namespace layer_json_detail {
 bool ParseLayerJSONValue(const minijson::Value& encoded,
                          const std::string& type_name, tn::Value* out,
@@ -160,7 +157,7 @@ bool ParseLayerJSONMetadataValue(const minijson::Value& encoded,
 }
 
 minijson::Value LayerMetadataPayloadJSON(tn::ValueView value) {
-  minijson::Value flat = NextValueJSON(value);
+  minijson::Value flat = ValueJSON(value);
   if (flat.is_null() && !value.is_array()) {
     if (value.type_id() == tn::TypeId::Half) {
       float number = 0.0f;
@@ -285,7 +282,7 @@ minijson::Value LayerMetadataValueJSON(tn::ValueView value) {
     out["value"] = LayerMetadataPayloadJSON(value);
     return out;
   }
-  return NextValueJSON(value);
+  return ValueJSON(value);
 }
 
 size_t MetadataValueEntryCount(tn::ValueView value) {
@@ -308,5 +305,4 @@ size_t MetadataValueEntryCount(tn::ValueView value) {
 
 }  // namespace layer_json_detail
 
-}  // namespace web_core
 }  // namespace lightusd

@@ -1,15 +1,7 @@
-# Assume this cmake is called from lightusd root(../../)
-set(EXAMPLE_TARGET "legacy-asset-resolution-example")
-
-set(LIGHTUSD_API_TUTORIAL_SOURCES
-    asset-resolution-example.cc
-    )
-
-add_executable(${EXAMPLE_TARGET} ${LIGHTUSD_API_TUTORIAL_SOURCES})
-add_sanitizers(${EXAMPLE_TARGET})
-
-target_include_directories(${EXAMPLE_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(${EXAMPLE_TARGET} lightusd_static)
-
-
-set_target_properties(${EXAMPLE_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+# The root and standalone core projects register this example from src/.
+if(NOT TARGET asset_resolution_example)
+  add_executable(asset_resolution_example asset-resolution-example.cc)
+  target_link_libraries(asset_resolution_example PRIVATE lightusd_core)
+  set_target_properties(asset_resolution_example PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+endif()

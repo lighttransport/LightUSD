@@ -3,7 +3,7 @@ import { GraphError } from './graph.js';
 
 const udimPattern = /<UDIM>|<UVTILE>|%04d|%\(UDIM\)d/i;
 
-/** Conservative source-layer index collected before composition remaps prims.
+/** Source-layer index for raw snapshots or core-composed, rebased asset paths.
  * An authored key is usable only if every observed source agrees on its URL.
  * This is not a replacement for a full USD property-stack asset resolver.
  */

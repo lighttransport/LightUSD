@@ -1,10 +1,12 @@
 #include "texture-util.hh"
+#include "image-convert.hh"
 #include "core/safe-arithmetic.hh"
 
 #include <algorithm>
 #include <cctype>
 #include <climits>
 #include <cmath>
+#include <cstring>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -313,10 +315,11 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
       (src.bpp == 32) && (src.format == Image::PixelFormat::Float);
   const bool is_half =
       (src.bpp == 16) && (src.format == Image::PixelFormat::Float);
-  if (src.bpp != 8 && !is_float && !is_half) {
+  const bool is_uint16=src.bpp==16 && src.format==Image::PixelFormat::UInt;
+  if (src.bpp != 8 && !is_float && !is_half && !is_uint16) {
     if (err) {
       (*err) =
-          "ResizeImage: only 8-bit, fp16 or fp32 per-channel images are "
+          "ResizeImage: only 8-bit, uint16, fp16 or fp32 per-channel images are "
           "supported.";
     }
     return false;
@@ -341,6 +344,7 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: source size overflow.";
     return false;
   }
+  if(src_elems>SIZE_MAX/bytes_per_channel) {if(err)*err="ResizeImage: source byte size overflow";return false;}
   const size_t src_expected = src_elems * bytes_per_channel;
   if (src.data.size() < src_expected) {
     if (err) (*err) = "ResizeImage: source buffer too small.";
@@ -362,6 +366,7 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
     if (err) (*err) = "ResizeImage: destination size overflow.";
     return false;
   }
+  if(dst_elems>SIZE_MAX/bytes_per_channel) {if(err)*err="ResizeImage: destination byte size overflow";return false;}
   const size_t dst_size = dst_elems * bytes_per_channel;
   out.data.resize(dst_size);
 
@@ -383,7 +388,32 @@ bool ResizeImage(const Image &src, int dstWidth, int dstHeight, Image *dst,
   }
 
   void *r = nullptr;
-  if (is_half) {
+  if(is_uint16 && use_srgb) {
+    Image linear=src;linear.bpp=32;linear.format=Image::PixelFormat::Float;
+    linear.data.resize(src_elems*sizeof(float));
+    for(size_t i=0;i<src_elems;++i) {
+      uint16_t sample;std::memcpy(&sample,src.data.data()+i*2,2);
+      float value=float(sample)/65535.0f;
+      const size_t c=i%size_t(src.channels);
+      const bool alpha=(src.channels==2 && c==1) || (src.channels==4 && c==3);
+      if(!alpha)value=value<=0.04045f?value/12.92f:std::pow((value+0.055f)/1.055f,2.4f);
+      std::memcpy(linear.data.data()+i*4,&value,4);
+    }
+    Image resized;
+    if(!ResizeImage(linear,dstWidth,dstHeight,&resized,ResizeFilter::Linear,err))return false;
+    for(size_t i=0;i<dst_elems;++i) {
+      float value;std::memcpy(&value,resized.data.data()+i*4,4);
+      const size_t c=i%size_t(src.channels);
+      const bool alpha=(src.channels==2 && c==1) || (src.channels==4 && c==3);
+      if(!alpha)value=value<=0.0031308f?12.92f*value:1.055f*std::pow(value,1.0f/2.4f)-0.055f;
+      const uint16_t sample=uint16_t(std::lround(std::clamp(value,0.0f,1.0f)*65535));
+      std::memcpy(out.data.data()+i*2,&sample,2);
+    }
+    *dst=std::move(out);return true;
+  } else if(is_uint16) {
+    r=stbir_resize(src.data.data(),src.width,src.height,0,out.data.data(),dstWidth,dstHeight,0,
+                   layout,STBIR_TYPE_UINT16,STBIR_EDGE_CLAMP,STBIR_FILTER_DEFAULT);
+  } else if (is_half) {
     // fp16 HDR resize in linear space (stbir handles half<->float internally).
     r = stbir_resize(src.data.data(), src.width, src.height, 0,
                      out.data.data(), dstWidth, dstHeight, 0, layout,
@@ -562,54 +592,17 @@ bool EncodeFitTexture(const FitTextureInput &in, const FitTextureOptions &opts,
   wopt.png_encoder = opts.png_encoder;
 
   std::string ext;
-  if (strategy == FitStrategy::Quality) {
-    // Transcode to JPEG.
-    wopt.format = image::WriteImageFormat::JPEG;
-    wopt.jpeg_quality = quality;
-    ext = "jpg";
-    if (img.channels == 4) {
-      const size_t npix = size_t(img.width) * size_t(img.height);
-      if (img.data.size() < npix * 4) return false;
-      Image rgb;
-      rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
-      rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
-      rgb.data.resize(npix * 3);
-      for (size_t i = 0; i < npix; i++) {
-        rgb.data[3 * i + 0] = img.data[4 * i + 0];
-        rgb.data[3 * i + 1] = img.data[4 * i + 1];
-        rgb.data[3 * i + 2] = img.data[4 * i + 2];
-      }
-      img = std::move(rgb);
-    }
-  } else {
-    // Size strategy: keep the source format (png stays png, jpg stays jpg).
-    if (in.ext == "jpg" || in.ext == "jpeg") {
-      wopt.format = image::WriteImageFormat::JPEG;
-      wopt.jpeg_quality = opts.jpeg_quality;
-      ext = "jpg";
-      if (img.channels == 4) {
-        const size_t npix = size_t(img.width) * size_t(img.height);
-        if (img.data.size() < npix * 4) return false;
-        Image rgb;
-        rgb.width = img.width; rgb.height = img.height; rgb.channels = 3;
-        rgb.bpp = 8; rgb.format = img.format; rgb.colorspace = img.colorspace;
-        rgb.data.resize(npix * 3);
-        for (size_t i = 0; i < npix; i++) {
-          rgb.data[3 * i + 0] = img.data[4 * i + 0];
-          rgb.data[3 * i + 1] = img.data[4 * i + 1];
-          rgb.data[3 * i + 2] = img.data[4 * i + 2];
-        }
-        img = std::move(rgb);
-      }
-    } else if (in.ext == "exr") {
-      // Keep HDR data: resize-only, re-encode as EXR.
-      wopt.format = image::WriteImageFormat::EXR;
-      ext = "exr";
-    } else {
-      wopt.format = image::WriteImageFormat::PNG;
-      ext = "png";
-    }
-  }
+  std::string format;
+  if(strategy==FitStrategy::Quality || in.ext=="jpg" || in.ext=="jpeg") {
+    wopt.format=image::WriteImageFormat::JPEG;wopt.jpeg_quality=quality;
+    format="jpeg";ext="jpg";
+  } else if(in.ext=="exr" || in.ext=="hdr") {
+    wopt.format=image::WriteImageFormat::EXR;format="exr";ext="exr";
+  } else {wopt.format=image::WriteImageFormat::PNG;format="png";ext="png";}
+  if(strategy==FitStrategy::Size)wopt.jpeg_quality=opts.jpeg_quality;
+  auto prepared=image::PrepareImageForEncoding(std::move(img),format,size_t(512)<<20);
+  if(!prepared)return false;
+  img=std::move(*prepared);
 
   auto enc = image::WriteImageToMemory(img, wopt);
   if (!enc) {

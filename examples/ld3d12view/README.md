@@ -17,15 +17,14 @@ lightui's `HWND`.
 :: from a "x64 Native Tools Command Prompt for VS 2022" (or any shell where
 :: cl.exe and the Windows SDK are on the path)
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
-      -DLIGHTUSD_NATIVE_PRODUCT=next ^
-      -DLIGHTUSD_NEXT_BUILD_EXAMPLES=ON ^
-      -DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON
+      -DLIGHTUSD_BUILD_EXAMPLES=ON ^
+      -DLIGHTUSD_BUILD_LD3D12VIEW=ON
 cmake --build build --target ld3d12view
 
 build\src\next\ld3d12view_example\ld3d12view.exe models\suzanne-pbr.usda
 ```
 
-`LIGHTUSD_NEXT_BUILD_LD3D12VIEW` defaults to `LIGHTUSD_NEXT_BUILD_EXAMPLES`, is
+`LIGHTUSD_BUILD_LD3D12VIEW` defaults to `LIGHTUSD_BUILD_EXAMPLES`, is
 only available on Windows and only in the `next` product. Enabling it also
 builds `lmetalview_core` (the portable half of lmetalview), but not the Swift
 app. Nothing needs installing beyond Visual Studio's C++ workload and the
@@ -144,7 +143,7 @@ specular environment prefilter, for A/B comparisons).
 
 | Layer | Source | Notes |
 | --- | --- | --- |
-| USD load + conversion | `lmetalview/core` (`lmv.h`) over `lightusd_next` + `tydra_next` | Shared with the Metal viewer; the same flat scene, packed OpenPBR materials, decoded images, lights and cameras |
+| USD load + conversion | `lmetalview/core` (`lmv.h`) over `lightusd_core` + `tydra` | Shared with the Metal viewer; the same flat scene, packed OpenPBR materials, decoded images, lights and cameras |
 | Camera | `examples/common/light3d/camera-nav.*` through `lmv_camera_*` | The `OrbitCamera` lusdview and lmetalview use; 0..1 depth projection |
 | Window, input, HUD | vendored `examples/common/lightui` | `lui_window_native_handle()` gives the `HWND`; `lui_window_set_external_render()` stops lightui painting over D3D12 |
 | Device + swapchain | `d3d12/device.*` | One direct queue, flip-model swapchain, 3 buffers, per-buffer allocators and fences, resize, synchronous capture |

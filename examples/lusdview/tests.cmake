@@ -755,14 +755,14 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                   LABELS "lusdview;camera;raster")
 
   add_test(
-    NAME lusdview-camera-motion-raster-legacy
+    NAME lusdview-camera-motion-raster-static
     COMMAND bash
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
-            "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" vk legacy
+            "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" vk static
   )
-  set_tests_properties(lusdview-camera-motion-raster-legacy
+  set_tests_properties(lusdview-camera-motion-raster-static
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
-                                  LABELS "lusdview;camera;raster;legacy")
+                                  LABELS "lusdview;camera;raster;static")
 
   add_test(
     NAME lusdview-camera-motion-vulkan
@@ -1061,7 +1061,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
               "LUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
-              # The loader-parity shards below own UDIM/USDZ and both-loader
+              # The package-parity shards below own UDIM/USDZ and archive
               # coverage. Keep the main shards focused on every OpenPBR AOV;
               # this removes duplicate process/device startup and bounds each
               # hardware backend to roughly 13 viewer launches.
@@ -1093,14 +1093,14 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                        SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview"
                        RESOURCE_LOCK lusdview_semantic_gpu)
 
-  # Keep the RT texture-table path loader-neutral without repeating the full
+  # Check the RT texture-table archive path without repeating the full
   # semantic matrix above. One textured OpenPBR albedo case still exercises
-  # external, UDIM, and USDZ resolution through both loaders and compares the
+  # external, UDIM, and USDZ resolution through the core loader and compares the
   # resulting images, while reducing this shard from ~162 viewer launches to
-  # six.
+  # three.
   set(_lightusd_semantic_rt_backends vk-rt cuda hip)
   foreach(_backend IN LISTS _lightusd_semantic_rt_backends)
-    set(_test_name "lusdview-texture-semantic-rt-loader-parity-${_backend}")
+    set(_test_name "lusdview-texture-semantic-rt-package-parity-${_backend}")
     set(_semantic_rt_timeout_env)
     if(_backend STREQUAL "vk-rt")
       set(_semantic_rt_timeout_env "LUSDVIEW_RENDER_TIMEOUT=240s")
@@ -1116,7 +1116,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_SEMANTIC_BACKENDS=${_backend}"
-            "LUSDVIEW_SEMANTIC_LOADERS=default legacy"
+            "LUSDVIEW_SEMANTIC_LOADERS=core"
             "LUSDVIEW_SEMANTIC_FAMILIES=openpbr"
             "LUSDVIEW_SEMANTIC_MODES=albedo"
             ${_semantic_rt_timeout_env}
@@ -1213,7 +1213,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
   endif()
 
   # Deferred package payloads must survive the async recomposition handoff in
-  # both loaders. Drive the actual MCP action so the test covers the same
+  # the core loader. Drive the actual MCP action so the test covers the same
   # lifetime boundary as the interactive "Load payload" UI.
   add_test(
     NAME lusdview-usdz-deferred-payload
@@ -1405,7 +1405,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
   # Second UV set (multi-UV): a texture whose UsdPrimvarReader names `st1`
   # must sample the second set, matching the equivalent pre-transformed `st`
   # lookup, with an identity-st control that must differ.
-  # The oracle renders the same scenes through lusdrender (legacy converter)
+  # The oracle renders the same scenes through the core lusdrender converter
   # as well as the viewer, so it needs both binaries.
   if(TARGET lusdrender)
     add_test(
@@ -1778,4 +1778,12 @@ if(_lightusd_hip_ld_library_path)
                            PROPERTIES ENVIRONMENT "${_lightusd_test_env}")
     endif()
   endforeach()
+endif()
+
+if(LUSDVIEW_ENABLE_MCP)
+  add_test(NAME lusdview-core-physics-preview COMMAND ${CMAKE_COMMAND} -E env
+    "LUSDVIEW=$<TARGET_FILE:lusdview>"
+    bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-physics-preview.sh")
+  set_tests_properties(lusdview-core-physics-preview PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "lusdview;core;physics")
 endif()

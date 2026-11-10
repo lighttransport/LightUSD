@@ -2787,6 +2787,9 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     // runs must not mutate the user's config).
     if (!headless_ && !loaded_.filepath.empty()) addRecentScene(loaded_.filepath);
     ++sceneGen_;  // invalidate the MCP library-tool Stage snapshot
+    physicsPreview_.clear();
+    physicsPreviewVisible_ = false;
+    gui_.setPhysicsDebugLines({});
     readAnimationRange();  // start/end/fps; resets playback to paused at start
     if (std::isfinite(loadOpts_.timecode)) {
       animTime_ = loadOpts_.timecode;
@@ -5036,7 +5039,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
   {
     if (nextStageSnapshot_ && loaded_.ok && !progressiveActive_ &&
         renderer_->meshCount() == static_cast<int>(draw_.meshes.size())) {
-      if (UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_)) {
+      if (UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, animTime_)) {
         std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
         for (size_t i = 0; i < draw_.meshes.size(); ++i) {
           if (!draw_.meshes[i].animatedWorld) continue;
@@ -6052,7 +6055,7 @@ bool App::renderHipViewport() {
       animTime_ != nextTracerPosedTime_) {
     if (nextStageSnapshot_) {
       if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_);
+      UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, animTime_);
       if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
@@ -6163,7 +6166,7 @@ bool App::renderHipViewport() {
   if (pathTrace_.enabled && cameraShutter_.enabled() && hipSceneDynamic &&
       hipCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
     if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-    UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_,
+    UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_,
                                  hipCameraSample.time);
     if (sceneIsNextDeformable()) poseNextDrawForTracer(hipCameraSample.time);
     std::string refitError;
@@ -6375,7 +6378,7 @@ bool App::renderCudaViewport() {
       animTime_ != nextTracerPosedTime_) {
     if (nextStageSnapshot_) {
       if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_);
+      UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, animTime_);
       if (sceneIsNextDeformable()) poseNextDrawForTracer(animTime_);
       std::string e;
       const float dispScale = gui_.displacementScale();
@@ -6476,7 +6479,7 @@ bool App::renderCudaViewport() {
   if (pathTrace_.enabled && cameraShutter_.enabled() && cudaSceneDynamic &&
       cudaCameraSample.time != nextTracerPosedTime_ && nextStageSnapshot_) {
     if (sceneIsNextDeformable()) restoreNextDrawRestPose();
-    UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_,
+    UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_,
                                  cudaCameraSample.time);
     if (sceneIsNextDeformable()) poseNextDrawForTracer(cudaCameraSample.time);
     std::string refitError;
@@ -8952,7 +8955,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     const double cudaFirstTime = cudaMotion.sampleTime(0);
     if (nextStageSnapshot_) {
       restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, cudaFirstTime);
+      UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, cudaFirstTime);
       poseNextDrawForTracer(cudaFirstTime);
     }
     ensureRtTexturePayloads();  // raster frames may have released them
@@ -9028,7 +9031,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = cudaMotion.sampleTime(sampleIndex);
         if (sampleIndex > 0) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
           if (!buildCudaScene()) {
             LOGW("CUDA ray tracing build failed at shutter time %.6f: %s",
@@ -9168,7 +9171,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     const double hipFirstTime = hipMotion.sampleTime(0);
     if (nextStageSnapshot_) {
       restoreNextDrawRestPose();
-      UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, hipFirstTime);
+      UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, hipFirstTime);
       poseNextDrawForTracer(hipFirstTime);
     }
     ensureRtTexturePayloads();         // as CUDA above
@@ -9232,7 +9235,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = hipMotion.sampleTime(sampleIndex);
         if (sampleIndex > 0) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
           if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                                 gui_.displacementScale(), nullptr, false,
@@ -9394,7 +9397,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       // simple, reference-quality motion-blur path and, more importantly, an
       // oracle for the GPU backends.  The stage evaluator supplies both animated
       // object transforms and skinned/morphed vertices at the same sample time.
-      // A closed shutter, legacy-loader scene, or static next scene keeps the
+      // A closed shutter or static core scene keeps the
       // original one-build/one-trace behavior.
       const ShutterMotionPlan cpuMotion = MakeShutterMotionPlan(
           draw_, nextStageSnapshot_.get(),
@@ -9407,7 +9410,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = cpuMotion.sampleTime(sampleIndex);
         if (nextStageSnapshot_) {
           restoreNextDrawRestPose();
-          UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, sampleTime);
+          UpdateNextAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
           poseNextDrawForTracer(sampleTime);
         }
         OrbitCamera sampleCamera = camera_;

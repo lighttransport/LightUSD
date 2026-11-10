@@ -2043,14 +2043,13 @@ await testAsync('browser usdzconvert worker selects next-only WASM', async () =>
   }
 });
 
-await testAsync('next-only converter rejects flattening and variant overrides', async () => {
+await testAsync('core converter supports flattening and variant overrides', async () => {
   const map = new Map([['scene.usda', new TextEncoder().encode(SCENE_USDA)]]);
-  await assert.rejects(convertFolderToUSDZ(native, map, {
-    rootPath: 'scene.usda', flatten: true,
-  }), /flattening and variant overrides/);
-  await assert.rejects(convertFolderToUSDZ(native, map, {
-    rootPath: 'scene.usda', variantSelections: { lod: 'high' },
-  }), /flattening and variant overrides/);
+  for (const options of [{flatten: true}, {variantSelections: {lod: 'high'}}]) {
+    const result = await convertFolderToUSDZ(native, map, {rootPath: 'scene.usda', ...options});
+    assert.equal(result.stats.flatten, true);
+    assert.ok(unpackUSDZ(result.usdz).entries.has('root.usdc'));
+  }
 });
 
 await testAsync('next-only WASM exposes next scene entities to web adapters', async () => {

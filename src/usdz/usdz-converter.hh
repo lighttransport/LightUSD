@@ -7,9 +7,10 @@
 // metadata fixups, collects referenced textures, optionally resizes /
 // re-encodes / fits them to a byte budget, and writes the package.
 //
-// Material optimization, geometry (mesh merge) optimization and UDIM baking
-// are implemented by the JavaScript converter (web/js usdzconvert) only; the
-// native converter rejects those options with an explicit error.
+// Exact material deduplication is shared with the core WASM converter.
+// UDIM grid/dense baking shares its algorithms and layer adapter with WASM.
+// PreviewSurface graph deduplication is shared with the core WASM converter.
+// Atlas mode preserves the legacy preview-dedupe fallback with a warning.
 #pragma once
 
 #include <cstddef>
@@ -56,7 +57,9 @@ struct UsdzConvertOptions {
   int fit_min_texture_size{64};
   int fit_min_jpeg_quality{30};
 
-  // Not implemented natively (see the file comment); non-default values fail.
+  // Material dedupe and both UDIM modes are supported natively.
+  // Static whole-mesh merging is shared with the core WASM exporter.
+  // Preview canonicalizes supported PreviewSurface graphs; Atlas warns and uses Preview.
   MaterialOptimizationMode material_optimization{MaterialOptimizationMode::Off};
   GeometryOptimizationMode geometry_optimization{GeometryOptimizationMode::Off};
   UDIMBakeMode udim_bake{UDIMBakeMode::Off};

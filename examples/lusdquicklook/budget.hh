@@ -3,7 +3,7 @@
 // lusdquicklook — the preview memory budget.
 //
 // Thin policy layer over the shared tracking budget in
-// src/tydra/next/mem-budget.hh: it owns the split of the single --max-mem number
+// src/tydra/mem-budget.hh: it owns the split of the single --max-mem number
 // into the per-phase shares that the loader, the scene sink and the renderer
 // each check against.
 #pragma once

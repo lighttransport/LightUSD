@@ -178,8 +178,48 @@ if(LIGHTUSD_BUILD_TOOLS)
     add_subdirectory(tools/lusdrender)
   endif()
 endif()
+if(LIGHTUSD_BUILD_EXAMPLES)
+  add_subdirectory(examples/save_usda)
+  add_subdirectory(examples/api_tutorial)
+  add_subdirectory(examples/file_format)
+  if(TARGET lightusd_c)
+    add_subdirectory(examples/c_api_example)
+  endif()
+endif()
+
 if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
   add_subdirectory(examples/workflows)
+  add_subdirectory(examples/tydra_to_renderscene)
+endif()
+
+option(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH
+       "Build the standalone headless Vulkan/CUDA/HIP texture benchmark" OFF)
+if(LIGHTUSD_BUILD_TEXTURE_GPU_BENCH)
+  if(NOT TARGET lightusd_preview_images OR NOT TARGET lightusd_textools)
+    message(FATAL_ERROR "Texture benchmark requires LIGHTUSD_WITH_TYDRA=ON and LIGHTUSD_WITH_TEXTOOLS=ON")
+  endif()
+  add_subdirectory(tools/lusdview-texture-bench)
+endif()
+
+# Scene overlays use core records and can be checked without a GUI/GPU build.
+if(LIGHTUSD_BUILD_TESTS AND LIGHTUSD_WITH_TYDRA)
+  add_executable(lusdview_scene_gizmos_test
+    examples/lusdview/tests/scene_gizmos_test.cc)
+  target_compile_features(lusdview_scene_gizmos_test PRIVATE cxx_std_17)
+  target_include_directories(lusdview_scene_gizmos_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/examples/common
+    ${PROJECT_SOURCE_DIR}/examples/lusdview)
+  add_executable(lusdview_physics_preview_test
+    examples/lusdview/tests/physics_preview_test.cc
+    examples/lusdview/physics_preview.cc
+    examples/lusdview/public_stage_queries.cc)
+  target_compile_features(lusdview_physics_preview_test PRIVATE cxx_std_17)
+  target_include_directories(lusdview_physics_preview_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/examples/lusdview)
+  target_link_libraries(lusdview_physics_preview_test PRIVATE lightusd_c lightusd_render_c lightusd_rb_solver)
+  add_test(NAME lusdview_physics_preview_test COMMAND lusdview_physics_preview_test)
+  add_test(NAME lusdview_scene_gizmos_test COMMAND lusdview_scene_gizmos_test)
+  set_tests_properties(lusdview_scene_gizmos_test lusdview_physics_preview_test PROPERTIES LABELS "lusdview;core")
 endif()
 
 # End-to-end workflow over the core CLI tools.

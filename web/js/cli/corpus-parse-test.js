@@ -74,7 +74,7 @@ async function main() {
   await loader.init({ useMemory64: a.useMemory64 });
   loader.setMaxMemoryLimitMB(2048);
   const native = loader.native_;
-  const layerType = loader.nextOnlyNative_ ? 'LayerDocument' : 'LightUSDLoaderNative';
+  const layerType = 'LayerDocument';
   if (!native || typeof native[layerType] !== 'function') {
     console.error(`WASM module / ${layerType} not available.`);
     process.exit(2);
@@ -88,15 +88,9 @@ async function main() {
     const u = new native[layerType]();
     let ok = false, err = '';
     try {
-      if (layerType === 'LayerDocument') {
-        const result = u.load(bytes);
-        ok = result.success;
-        if (!ok) err = result.error || 'unknown';
-      } else {
-        u.setMaxMemoryLimitMB(2048);
-        ok = u.loadAsLayerFromBinary(bytes, path.basename(f));
-        if (!ok) err = (typeof u.error === 'function') ? u.error() : 'unknown';
-      }
+      const result = u.load(bytes);
+      ok = result.success;
+      if (!ok) err = result.error || 'unknown';
     } catch (e) {
       ok = false; err = String(e && e.message || e);
     } finally {

@@ -210,6 +210,13 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export(
   return lightusd::web_core::NextConverterExport(slot->object, kind);
 }
 
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_configured(
+    uint32_t handle, const uint8_t* data, uint32_t size) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 1 || (!data && size)) return -1;
+  return lightusd::web_core::NextConverterExportConfigured(slot->object, data, size);
+}
+
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_with_options(
     uint32_t handle, uint8_t kind, uint8_t root_format) {
   const Slot* slot = Lookup(handle);
@@ -337,6 +344,21 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_add_prim_arc(
   return lightusd::web_core::NextFlattenAddPrimArc(
       slot->object, kind, list_op, prim_path, prim_size, asset_path, asset_size,
       target_path, target_size);
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_composition_mask(
+    uint32_t handle, uint32_t mask) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 3 || mask > 63) return -1;
+  return lightusd::web_core::NextFlattenSetCompositionMask(slot->object, mask);
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_rebase_asset_paths(
+    uint32_t handle, uint8_t enabled) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 3 || enabled > 1) return -1;
+  return lightusd::web_core::NextFlattenSetRebaseAssetPaths(
+      slot->object, enabled != 0);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_asset_path_remap(
@@ -751,6 +773,20 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_begin(
   if (!slot || slot->kind != 4) return -1;
   return static_cast<lightusd::web_core::RenderStream*>(slot->object)
       ->beginBytes(bytes, size);
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_begin_named(
+    uint32_t handle, const uint8_t* bytes, uint32_t size,
+    const uint8_t* source_uri, uint32_t source_uri_size) {
+  const Slot* slot = Lookup(handle);
+  if (!slot || slot->kind != 4 || source_uri_size > (uint32_t{1} << 20) ||
+      (source_uri_size && !source_uri)) return -1;
+  const std::string identifier = source_uri_size
+      ? std::string(reinterpret_cast<const char*>(source_uri), source_uri_size)
+      : std::string();
+  if (identifier.find('\0') != std::string::npos) return -1;
+  return static_cast<lightusd::web_core::RenderStream*>(slot->object)
+      ->beginBytes(bytes, size, identifier);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_begin_layer_document(

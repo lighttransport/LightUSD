@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseArgs, resolveFormat, buildInput, runUsdcat } from '../cli/usdcat.js';
-import { loadWasm } from '../src/usdzconvert.js';
+import { buildUSDZWithNewRoot, parseUSDZEntries, loadWasm } from '../src/usdzconvert.js';
 
 function test(name, fn) {
   try { fn(); console.log(`ok - ${name}`); }
@@ -88,7 +88,7 @@ await testAsync('buildInput: folder picks root + collects siblings', () => withT
   assert.equal(rootName, 'main.usda'); // shallow non-usdz root
 }));
 
-const glueUrl = new URL('../src/lightusd/lightusd_legacy.js', import.meta.url).href;
+const glueUrl = new URL(process.env.LIGHTUSD_WASM64 === '1' ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js', import.meta.url).href;
 const native = await loadWasm(() => import(glueUrl));
 
 await testAsync('runUsdcat: flatten inlines referenced prim (USDA)', () => withTempDir((dir) => {
@@ -119,10 +119,31 @@ await testAsync('runUsdcat: USDC export reloads cleanly', () => withTempDir((dir
   // PXR-USDC magic header.
   assert.equal(Buffer.from(res.bytes.slice(0, 8)).toString('latin1'), 'PXR-USDC');
   // Reload the produced crate to confirm it parses.
-  const usd = new native.LightUSDLoaderNative();
+  const usd = new native.NextUSDZConverterNative();
   try {
-    assert.ok(usd.loadAsLayerFromBinary(res.bytes, 'flat.usdc'), 'produced USDC should reload: ' + usd.error());
+    assert.ok(usd.loadFromBinary(res.bytes, 'flat.usdc'), 'produced USDC should reload: ' + usd.error());
   } finally { usd.delete(); }
+}));
+
+await testAsync('runUsdcat: anchored textures and first-entry nested USDZ root', () => withTempDir((dir) => {
+  const encoder = new TextEncoder();
+  const root = encoder.encode('#usda 1.0\ndef Xform "World" (references=@../deps/sub.usda@</Geo>) {}\n');
+  const sub = encoder.encode('#usda 1.0\ndef Xform "Geo" { asset texture=@same.png@ }\n');
+  const packed = buildUSDZWithNewRoot('nested/root.usda', root, [
+    {name:'deps/sub.usda',data:sub}, {name:'deps/same.png',data:new Uint8Array([1,2,3])},
+    {name:'same.png',data:new Uint8Array([9])}]);
+  const input = path.join(dir, 'scene.usdz'); fs.writeFileSync(input, packed);
+  const prepared = buildInput(input);
+  assert.equal(prepared.rootName, 'nested/root.usda');
+  const result = runUsdcat(native, {...prepared,format:'usdz'});
+  const entries = parseUSDZEntries(result.bytes);
+  const document = new native.LayerDocument();
+  try {
+    assert.equal(document.load(entries[0].data).success,true);
+    assert.match(document.exportUSDA().text, /@deps\/same.png@/);
+    assert.deepEqual([...entries.find(entry=>entry.name==='deps/same.png').data],[1,2,3]);
+  } finally {document.delete();}
+  assert.throws(()=>runUsdcat(native,{map:new Map([['root.usda',root]]),rootName:'root.usda'}),/Missing USD dependency/);
 }));
 
 console.log('usdcat-cli tests done');
