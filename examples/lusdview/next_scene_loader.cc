@@ -62,8 +62,8 @@
 #include "ptx-loader.hh"                  // lazy Ptex metadata validation
 #include "ptex_atlas.hh"                  // bounded rectangular face atlas
 #include "../../src/tydra/scene-access.hh"  // ComputeWorldTransform
-#include "value-types.hh"              // value::matrix4d / quatf / double3
-#include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
+#include "lightusd-value-math.hh"      // lvmath::value::matrix4d, to_matrix, inverse
+#include "c/lightusd-core-c.h"           // lu_float_to_half
 #include "io-util.hh"                  // io::GetBaseDir / SplitUDIMPath
 #include "tydra/texture-util.hh"       // tydra::ResizeImage (UDIM tile normalize)
 #include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
@@ -81,7 +81,7 @@ namespace lusdview {
 
 namespace tydn = ::lightusd::tydra;
 namespace tnext = ::lightusd;
-using matrix4d = ::lightusd::value::matrix4d;
+using matrix4d = lvmath::value::matrix4d;
 
 namespace {
 class PreviewCacheWriters {
@@ -754,18 +754,18 @@ std::string PreviewFingerprint(const LoadOptions& options) {
 // upside down, which is exactly what a PointInstancer of an oriented prototype did.
 inline matrix4d InstanceTRS(const float* pos, const float* q_wxyz,
                             const float* s3) {
-  ::lightusd::value::quatf q;
+  lvmath::value::quatf q;
   q.real = q_wxyz[0];
   q.imag[0] = q_wxyz[1];
   q.imag[1] = q_wxyz[2];
   q.imag[2] = q_wxyz[3];
-  ::lightusd::value::matrix3d rot = ::lightusd::to_matrix3x3(q);
+  lvmath::value::matrix3d rot = lvmath::to_matrix3x3(q);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= static_cast<double>(s3[i]);
-  ::lightusd::value::double3 t{static_cast<double>(pos[0]),
+  lvmath::value::double3 t{static_cast<double>(pos[0]),
                                static_cast<double>(pos[1]),
                                static_cast<double>(pos[2])};
-  return ::lightusd::to_matrix(rot, t);
+  return lvmath::to_matrix(rot, t);
 }
 
 template <class T>
@@ -2284,9 +2284,9 @@ void RecomputeSmoothNormalsNext(DrawMeshCPU* dm) {
 }
 
 // Joint-local transform from TRS (row-vector; matches skinning.cc MakeLocal).
-matrix4d SkinMakeLocal(const float t[3], const ::lightusd::value::quatf& r,
+matrix4d SkinMakeLocal(const float t[3], const lvmath::value::quatf& r,
                        const float s[3]) {
-  matrix4d m = ::lightusd::to_matrix(r);
+  matrix4d m = lvmath::to_matrix(r);
   m.m[0][0] *= s[0]; m.m[0][1] *= s[0]; m.m[0][2] *= s[0];
   m.m[1][0] *= s[1]; m.m[1][1] *= s[1]; m.m[1][2] *= s[1];
   m.m[2][0] *= s[2]; m.m[2][1] *= s[2]; m.m[2][2] *= s[2];
@@ -2557,11 +2557,11 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
         if (it == skelIdx.end()) continue;
         const int j = it->second;
         float t3[3] = {0, 0, 0}, s3[3] = {1, 1, 1};
-        ::lightusd::value::quatf q;
+        lvmath::value::quatf q;
         q.imag[0] = q.imag[1] = q.imag[2] = 0.0f; q.real = 1.0f;
-        ::lightusd::value::double3 dt, ds;
-        ::lightusd::value::quatd dq;
-        if (::lightusd::decompose(restLocal[j], &dt, &dq, &ds)) {
+        lvmath::value::double3 dt, ds;
+        lvmath::value::quatd dq;
+        if (lvmath::decompose(restLocal[j], &dt, &dq, &ds)) {
           t3[0] = float(dt[0]); t3[1] = float(dt[1]); t3[2] = float(dt[2]);
           s3[0] = float(ds[0]); s3[1] = float(ds[1]); s3[2] = float(ds[2]);
           q.imag[0] = float(dq.imag[0]); q.imag[1] = float(dq.imag[1]);
@@ -2606,7 +2606,7 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
   }
 
   std::vector<matrix4d> world;
-  if (!lightusd::tydra::ConcatJointTransforms(topo, local, &world) ||
+  if (!lvmath::ConcatJointTransforms(topo, local, &world) ||
       world.size() != nj) {
     return false;
   }
@@ -2616,7 +2616,7 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
     std::vector<matrix4d> restWorld;
-    if (lightusd::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+    if (lvmath::ConcatJointTransforms(topo, restLocal, &restWorld) &&
         restWorld.size() == nj) {
       bindWorld = std::move(restWorld);
     }
@@ -2626,14 +2626,14 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
     // space used by the point samples; matching the Tydra path here prevents
     // the inverse-bind step from magnifying the mesh.
     std::vector<matrix4d> restWorld;
-    if (lightusd::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+    if (lvmath::ConcatJointTransforms(topo, restLocal, &restWorld) &&
         restWorld.size() == nj) {
       bindWorld = std::move(restWorld);
     }
   }
   skinMat->assign(nj, matrix4d::identity());
   for (size_t j = 0; j < nj; ++j)
-    (*skinMat)[j] = ::lightusd::inverse(bindWorld[j]) * world[j];
+    (*skinMat)[j] = lvmath::inverse(bindWorld[j]) * world[j];
   return true;
 }
 
@@ -2675,19 +2675,19 @@ bool BakeSkinning(const lightusd_stage* stageHandle, const std::string& meshPath
   const matrix4d meshWorld = Mat4dFromArray(meshWorldData);
   const matrix4d skeletonWorld = Mat4dFromArray(skeletonWorldData);
   const matrix4d skeletonToMesh =
-      skeletonWorld * ::lightusd::inverse(meshWorld) * bind.geomBind;
+      skeletonWorld * lvmath::inverse(meshWorld) * bind.geomBind;
   std::vector<matrix4d> meshLocalSkin(skinMat.size());
   for (size_t j = 0; j < skinMat.size(); ++j)
     meshLocalSkin[j] = skinMat[j] * skeletonToMesh;
 
-  std::vector<::lightusd::value::point3f> rest(nv), skinned;
+  std::vector<lvmath::value::point3f> rest(nv), skinned;
   for (size_t i = 0; i < nv; ++i) {
     rest[i].x = dm->vertices[i].px;
     rest[i].y = dm->vertices[i].py;
     rest[i].z = dm->vertices[i].pz;
   }
   std::string lerr;
-  if (!lightusd::tydra::SkinPointsLBS(rest, bind.geomBind, meshLocalSkin, bind.vidx,
+  if (!lvmath::SkinPointsLBS(rest, bind.geomBind, meshLocalSkin, bind.vidx,
                                       bind.vwgt, bind.numInfl, &skinned, &lerr) ||
       skinned.size() != nv) {
     return false;
@@ -2696,7 +2696,7 @@ bool BakeSkinning(const lightusd_stage* stageHandle, const std::string& meshPath
   // rather than regenerating a smooth normal field from the posed positions:
   // the two disagree wherever the pose bends the surface, and the CPU and GPU
   // skinning paths must render the same image (lusdview-skinning-screenshot-diff).
-  const matrix4d invGeomBind = ::lightusd::inverse(bind.geomBind);
+  const matrix4d invGeomBind = lvmath::inverse(bind.geomBind);
   std::vector<matrix4d> composed(meshLocalSkin.size());
   for (size_t j = 0; j < meshLocalSkin.size(); ++j)
     composed[j] = bind.geomBind * meshLocalSkin[j] * invGeomBind;
@@ -2868,7 +2868,7 @@ bool BuildGpuSkinAttributes(const lightusd_stage* stageHandle,
     const matrix4d skeletonStage = Mat4dFromArray(skeletonStageWorld);
     const matrix4d outputStage = Mat4dFromArray(outputSpaceWorldM);
     const matrix4d skeletonOutput =
-        skeletonStage * ::lightusd::inverse(outputStage);
+        skeletonStage * lvmath::inverse(outputStage);
     for (int r = 0; r < 4; ++r)
       for (int c = 0; c < 4; ++c)
         nb.skeletonWorld[r * 4 + c] = skeletonOutput.m[r][c];
@@ -3024,7 +3024,7 @@ void BuildMorphChannelsNext(const lightusd_stage* stage,
   }
   // Pass 2: scatter [channelId, dx, dy, dz] halfs + the uint16 channelId side
   // buffer (the shader's active-channel skip pre-check).
-  auto h = [](float f) { return lightusd::value::float_to_half_full(f).value; };
+  auto h = [](float f) { return lu_float_to_half(f); };
   dm->morphDeltaHalf.assign(total * 4, 0);
   dm->morphChannelId.assign(total, 0);
   std::vector<uint32_t> cursor(nv, 0u);
@@ -3251,7 +3251,7 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
   }
   double pr16[16];
   if (!ReadPublicWorldTransform(stageHandle, protoRootPath, time, pr16)) return;
-  const matrix4d inv_proto = ::lightusd::inverse(Mat4dFromArray(pr16));
+  const matrix4d inv_proto = lvmath::inverse(Mat4dFromArray(pr16));
 
   std::vector<std::string> directMeshes, nestedInstancers;
   SplitProtoSubtree(stageHandle, protoRootPath, &directMeshes,
@@ -5110,7 +5110,7 @@ bool FindNextCamera(const lightusd_stage* stage, const std::string& name,
 }
 
 static DrawCameraCPU MakeDrawCameraFromNext(
-    const lightusd::value::matrix4d& worldMatrix,
+    const lvmath::value::matrix4d& worldMatrix,
     float focalLength, float horizontalAperture, float verticalAperture,
     float horizontalApertureOffset, float verticalApertureOffset,
     float exposure, int projection,
@@ -5353,7 +5353,7 @@ static void GatherNextCamerasRec(const lightusd_stage* stage,
 }
 
 static DrawCameraCPU MakeDrawCameraFromNext(
-    const lightusd::value::matrix4d& worldMatrix,
+    const lvmath::value::matrix4d& worldMatrix,
     float focalLength, float horizontalAperture, float verticalAperture,
     float horizontalApertureOffset, float verticalApertureOffset,
     float exposure, int projection,
@@ -5406,238 +5406,6 @@ void GatherNextCameras(const lightusd_stage* stage, double time,
   GatherNextCameras(stage, time, std::string(), nullptr, nullptr, out);
 }
 
-// The legacy loader has no next Stage, only the converted RenderScene -- so
-// `--camera` was silently unavailable there. The camera's world matrix is already
-// baked into its Node (Tydra composes the hierarchy), and its lens lives in the
-// parallel RenderCamera the node's id indexes.
-bool FindLegacyCameraRec(const lightusd::tydra::RenderScene& scene,
-                         const lightusd::tydra::Node& node,
-                         const std::string& name, NextCameraPose* out) {
-  // scene.nodes is the ROOTS of a tree, not a flat list -- a camera is almost
-  // always nested under an Xform (Blender writes /root/Camera/Camera), so a
-  // top-level-only scan finds nothing.
-  if (node.nodeType == lightusd::tydra::NodeType::Camera) {
-    // Match by exact name, exact path, or a "/<name>" path suffix -- the same
-    // three ways ReadPublicCameraPose matches, so one --camera argument means the
-    // same thing to both loaders.
-    const std::string& path = node.abs_path;
-    const bool match =
-        name.empty() || node.prim_name == name || path == name ||
-        (path.size() > name.size() &&
-         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
-         path[path.size() - name.size() - 1] == '/');
-    if (!match) {
-      for (const lightusd::tydra::Node& c : node.children)
-        if (FindLegacyCameraRec(scene, c, name, out)) return true;
-      return false;
-    }
-
-    // Row-major (p*M): translation in row 3, local axes in rows 0..2. USD cameras
-    // look down local -Z with local +Y up.
-    const lightusd::value::matrix4d& m = node.global_matrix;
-    float up[3] = {float(m.m[1][0]), float(m.m[1][1]), float(m.m[1][2])};
-    float fwd[3] = {-float(m.m[2][0]), -float(m.m[2][1]), -float(m.m[2][2])};
-    auto norm3 = [](float v[3]) {
-      const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-      if (l > 1e-12f) { v[0] /= l; v[1] /= l; v[2] /= l; }
-    };
-    norm3(up);
-    norm3(fwd);
-    for (int k = 0; k < 3; ++k) {
-      out->eye[k] = float(m.m[3][k]);
-      out->up[k] = up[k];
-      out->forward[k] = fwd[k];
-    }
-    out->fovYDeg = 60.0f;
-    if (node.id >= 0 && size_t(node.id) < scene.cameras.size()) {
-      const lightusd::tydra::RenderCamera& cam = scene.cameras[size_t(node.id)];
-      out->fovYDeg = 2.0f *
-                     std::atan(0.5f * cam.verticalAperture /
-                               std::max(1.0e-6f, cam.focalLength)) *
-                     (180.0f / 3.14159265358979323846f);
-      out->zNear = std::max(1.0e-4f, cam.znear);
-      out->zFar = std::max(out->zNear + 1.0e-3f, cam.zfar);
-      out->projection =
-          cam.projection == lightusd::GeomCamera::Projection::Orthographic
-              ? CameraProjection::Orthographic
-              : CameraProjection::Perspective;
-      out->horizontalAperture = cam.horizontalAperture;
-      out->focalLength = cam.focalLength;
-      out->verticalAperture = cam.verticalAperture;
-      out->horizontalApertureOffset = cam.horizontalApertureOffset;
-      out->verticalApertureOffset = cam.verticalApertureOffset;
-      out->exposure = cam.exposure;
-      out->focusDistance = cam.focusDistance;
-      out->fStop = cam.fStop;
-      out->shutterOpen = cam.shutterOpen;
-      out->shutterClose = cam.shutterClose;
-      switch (cam.stereoRole) {
-        case lightusd::GeomCamera::StereoRole::Left:
-          out->stereoRole = DrawCameraCPU::StereoRole::Left;
-          break;
-        case lightusd::GeomCamera::StereoRole::Right:
-          out->stereoRole = DrawCameraCPU::StereoRole::Right;
-          break;
-        default:
-          out->stereoRole = DrawCameraCPU::StereoRole::Mono;
-          break;
-      }
-      out->clippingPlanes.clear();
-      out->clippingPlanes.reserve(cam.clippingPlanes.size() * 4);
-      for (const lightusd::value::float4& plane : cam.clippingPlanes) {
-        for (size_t i = 0; i < 4; ++i) out->clippingPlanes.push_back(plane[i]);
-      }
-    }
-    return true;
-  }
-  for (const lightusd::tydra::Node& c : node.children)
-    if (FindLegacyCameraRec(scene, c, name, out)) return true;
-  return false;
-}
-
-bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
-                      const std::string& name, NextCameraPose* out) {
-  if (!out) return false;
-  for (const lightusd::tydra::Node& root : scene.nodes)
-    if (FindLegacyCameraRec(scene, root, name, out)) return true;
-  return false;
-}
-
-// The scene's absolute bone rows at `time`, indexed exactly as DrawMeshCPU::
-// jointIdx indexes them. Shared by the raster bone-texture upload
-// (BuildNextSkinningFrame) and the RT vertex re-pose (BuildNextRtDeformedVertices),
-// which must agree row-for-row or the two backends pose differently.
-namespace {
-
-bool FindLegacyCameraAtTimeRec(const lightusd::tydra::XformNode& node,
-                               const std::string& name, double time,
-                               NextCameraPose* out) {
-  const lightusd::GeomCamera* camera =
-      node.prim ? node.prim->as<lightusd::GeomCamera>() : nullptr;
-  if (camera) {
-    const std::string path = node.absolute_path.full_path_name();
-    const bool match =
-        name.empty() || node.element_name == name || path == name ||
-        (path.size() > name.size() &&
-         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
-         path[path.size() - name.size() - 1] == '/');
-    if (match) {
-      const lightusd::value::matrix4d& matrix = node.get_world_matrix();
-      float up[3] = {float(matrix.m[1][0]), float(matrix.m[1][1]),
-                     float(matrix.m[1][2])};
-      float forward[3] = {-float(matrix.m[2][0]), -float(matrix.m[2][1]),
-                          -float(matrix.m[2][2])};
-      auto normalize = [](float v[3]) {
-        const float length =
-            std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-        if (length > 1.0e-12f) {
-          v[0] /= length;
-          v[1] /= length;
-          v[2] /= length;
-        }
-      };
-      normalize(up);
-      normalize(forward);
-      for (int k = 0; k < 3; ++k) {
-        out->eye[k] = float(matrix.m[3][k]);
-        out->up[k] = up[k];
-        out->forward[k] = forward[k];
-      }
-
-      float focalLength = 50.0f;
-      float horizontalAperture = 20.965f;
-      float verticalAperture = 15.2908f;
-      float horizontalApertureOffset = 0.0f;
-      float verticalApertureOffset = 0.0f;
-      float exposure = 0.0f;
-      float focusDistance = 5.0f;
-      float fStop = 0.0f;
-      lightusd::value::float2 clippingRange({0.1f, 1000000.0f});
-      lightusd::GeomCamera::Projection projection =
-          lightusd::GeomCamera::Projection::Perspective;
-      double shutterOpen = 0.0;
-      double shutterClose = 0.0;
-      camera->focalLength.get_value().get(time, &focalLength);
-      camera->horizontalAperture.get_value().get(time, &horizontalAperture);
-      camera->verticalAperture.get_value().get(time, &verticalAperture);
-      camera->horizontalApertureOffset.get_value().get(
-          time, &horizontalApertureOffset);
-      camera->verticalApertureOffset.get_value().get(
-          time, &verticalApertureOffset);
-      camera->exposure.get_value().get(time, &exposure);
-      camera->focusDistance.get_value().get(time, &focusDistance);
-      camera->fStop.get_value().get(time, &fStop);
-      camera->clippingRange.get_value().get(time, &clippingRange);
-      camera->projection.get_value().get(time, &projection);
-      camera->shutterOpen.get_value().get(time, &shutterOpen);
-      camera->shutterClose.get_value().get(time, &shutterClose);
-
-      out->focalLength = focalLength;
-      out->horizontalAperture = horizontalAperture;
-      out->verticalAperture = verticalAperture;
-      out->horizontalApertureOffset = horizontalApertureOffset;
-      out->verticalApertureOffset = verticalApertureOffset;
-      out->exposure = exposure;
-      out->focusDistance = focusDistance;
-      out->fStop = fStop;
-      out->projection =
-          projection == lightusd::GeomCamera::Projection::Orthographic
-              ? CameraProjection::Orthographic
-              : CameraProjection::Perspective;
-      out->zNear = std::max(1.0e-4f, clippingRange[0]);
-      out->zFar = std::max(out->zNear + 1.0e-3f, clippingRange[1]);
-      out->fovYDeg =
-          2.0f * std::atan(0.5f * verticalAperture /
-                           std::max(1.0e-6f, focalLength)) *
-          (180.0f / 3.14159265358979323846f);
-      out->shutterOpen = shutterOpen;
-      out->shutterClose = shutterClose;
-      switch (camera->stereoRole.get_value()) {
-        case lightusd::GeomCamera::StereoRole::Left:
-          out->stereoRole = DrawCameraCPU::StereoRole::Left;
-          break;
-        case lightusd::GeomCamera::StereoRole::Right:
-          out->stereoRole = DrawCameraCPU::StereoRole::Right;
-          break;
-        default:
-          out->stereoRole = DrawCameraCPU::StereoRole::Mono;
-          break;
-      }
-      out->clippingPlanes.clear();
-      std::vector<lightusd::value::float4> clippingPlanes;
-      const auto clippingValue = camera->clippingPlanes.get_value();
-      if (clippingValue && clippingValue->get(time, &clippingPlanes)) {
-        out->clippingPlanes.reserve(clippingPlanes.size() * 4);
-        for (const lightusd::value::float4& plane : clippingPlanes) {
-          for (size_t i = 0; i < 4; ++i) {
-            out->clippingPlanes.push_back(plane[i]);
-          }
-        }
-      }
-      return true;
-    }
-  }
-  for (const lightusd::tydra::XformNode& child : node.children) {
-    if (FindLegacyCameraAtTimeRec(child, name, time, out)) return true;
-  }
-  return false;
-}
-
-}  // namespace
-
-bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
-                            const std::string& name, double time,
-                            NextCameraPose* out) {
-  if (!out) return false;
-  lightusd::tydra::XformNode root;
-  if (!lightusd::tydra::BuildXformNodeFromStage(stage, &root, time)) {
-    return false;
-  }
-  for (const lightusd::tydra::XformNode& child : root.children) {
-    if (FindLegacyCameraAtTimeRec(child, name, time, out)) return true;
-  }
-  return false;
-}
 
 bool BuildNextSkeletonOverlay(const lightusd_stage* stage, const std::string& path,
                               double time, NextSkeletonOverlay* output) {
@@ -5693,8 +5461,8 @@ static bool ComputeNextBoneRows(const lightusd_stage* stage, const DrawScene& dr
     const matrix4d W = Mat4dFromArray(nb.world);
     const matrix4d R = Mat4dFromArray(nb.renderWorld);
     const matrix4d S = Mat4dFromArray(nb.skeletonWorld);
-    const matrix4d invW = ::lightusd::inverse(W);
-    const matrix4d invR = ::lightusd::inverse(R);
+    const matrix4d invW = lvmath::inverse(W);
+    const matrix4d invR = lvmath::inverse(R);
     const size_t nj =
         std::min(sm.size(), static_cast<size_t>(std::max(0, nb.numJoints)));
     for (size_t j = 0; j < nj; ++j) {
@@ -8340,12 +8108,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
               !std::isfinite(sz) || sx <= 1.0e-8f || sy <= 1.0e-8f ||
               !std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz))
             continue;
-          lightusd::value::quatf q;
+          lvmath::value::quatf q;
           q.real = haveQ ? orientations.begin()[i * 4] : 1.0f;
           q.imag[0] = haveQ ? orientations.begin()[i * 4 + 1] : 0.0f;
           q.imag[1] = haveQ ? orientations.begin()[i * 4 + 2] : 0.0f;
           q.imag[2] = haveQ ? orientations.begin()[i * 4 + 3] : 0.0f;
-          const auto r = lightusd::to_matrix3x3(q);
+          const auto r = lvmath::to_matrix3x3(q);
           dp.points.insert(dp.points.end(), {px, py, pz});
           dp.widths.push_back(2.0f * std::max(sx, std::max(sy, sz)));
           const float support = rec.type_name == "ParticleField" ? 1.0f : 2.0f;
@@ -10347,7 +10115,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         M[10] == 1.0f;
     if (loc.morphChannelCount > 0 && !linIdentity) {
       auto toHalf = [](float f) {
-        return lightusd::value::float_to_half_full(f).value;
+        return lu_float_to_half(f);
       };
       for (size_t e = 0; e + 3 < loc.morphDeltaHalf.size(); e += 4) {
         const float d[3] = {NextHalfToFloat(loc.morphDeltaHalf[e + 1]),

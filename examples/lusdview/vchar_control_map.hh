@@ -19,7 +19,6 @@ struct VcharControl {
   float defaultValue{0.0f};
 };
 
-std::vector<VcharControl> ReadVcharControls(const lightusd::legacy::Stage& stage);
 std::vector<VcharControl> ReadVcharControls(const lightusd_stage* stage);
 
 }  // namespace lusdview

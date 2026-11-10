@@ -95,7 +95,6 @@ set(LUSDVIEW_SOURCES
     main.cc
     app.cc
     config.cc
-    scene_loader.cc
     scene_optimize.cc
     incremental_scene_update.cc
     next_scene_loader.cc
@@ -108,9 +107,7 @@ set(LUSDVIEW_SOURCES
     mesh_build.cc
     gpu_budget_lod.cc
     rt_lod.cc
-    gizmo_build.cc
     parametric_tess.cc
-    skinning.cc
     ${PROJECT_SOURCE_DIR}/examples/vchar/autorigger_client.cc
     vchar_control_map.cc
     ${COMMON_DIR}/light3d/camera-nav.cc
@@ -118,7 +115,6 @@ set(LUSDVIEW_SOURCES
     frame_packet.cc
     gui.cc
     compare_panel.cc
-    gui_stringify.cc
     gui_style.cc
     gl/gl_util.cc
     gl/gl_renderer.cc
@@ -314,7 +310,7 @@ if(NOT MSVC)
       ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
-    ${LIGHTUSD_TARGET_STATIC}
+    lightusd_preview_images tydra lightusd_core
     tydra
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
@@ -438,7 +434,7 @@ if(LIGHTUSD_BUILD_TESTS)
   target_compile_definitions(lusdview_ptex_atlas_test PRIVATE
       LIGHTUSD_PTEX_MIP_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/usdc/ptex-mip")
   target_link_libraries(lusdview_ptex_atlas_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      tydra lightusd_core lightusd_preview_images)
 
   add_executable(lusdview_lightrt_bridge_test
       tests/lightrt_bridge_test.cc
@@ -466,103 +462,6 @@ if(LIGHTUSD_BUILD_TESTS)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(lusdview_openpbr_material_test
-      tests/openpbr_material_test.cc
-      mesh_build.cc
-      texture_tools.cc
-      lighting_ies.cc
-      displacement_bake.cc
-      skinning.cc
-      ${LUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
-      ${COMMON_DIR}/light3d/math.cpp
-      $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
-  target_compile_features(lusdview_openpbr_material_test PRIVATE cxx_std_17)
-  lusdview_set_warning_flags(lusdview_openpbr_material_test)
-  target_include_directories(lusdview_openpbr_material_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}
-      ${PROJECT_SOURCE_DIR}/src
-      ${PROJECT_SOURCE_DIR}/src/external
-      ${COMMON_DIR})
-  target_link_libraries(lusdview_openpbr_material_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC}
-      tydra)
-  if(UNIX AND NOT APPLE)
-    target_link_libraries(lusdview_openpbr_material_test PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(lusdview_lighting_test
-      tests/lighting_test.cc
-      dome_light.cc
-      lighting_ies.cc
-      mesh_build.cc
-      texture_tools.cc
-      rt_scene_build.cc
-      rt_bvh.cc
-      ptex_atlas.cc
-      displacement_bake.cc
-      skinning.cc
-      ${COMMON_DIR}/light3d/math.cpp
-      $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
-  target_compile_features(lusdview_lighting_test PRIVATE cxx_std_17)
-  lusdview_set_warning_flags(lusdview_lighting_test)
-  target_include_directories(lusdview_lighting_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}
-      ${PROJECT_SOURCE_DIR}/src
-      ${PROJECT_SOURCE_DIR}/src/external
-      ${COMMON_DIR})
-  target_link_libraries(lusdview_lighting_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC}
-      tydra)
-  if(UNIX AND NOT APPLE)
-    target_link_libraries(lusdview_lighting_test PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(lusdview_geometry_primvar_test
-      tests/geometry_primvar_test.cc
-      mesh_build.cc
-      texture_tools.cc
-      lighting_ies.cc
-      displacement_bake.cc
-      skinning.cc
-      ${COMMON_DIR}/light3d/math.cpp
-      $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
-  target_compile_features(lusdview_geometry_primvar_test PRIVATE cxx_std_17)
-  lusdview_set_warning_flags(lusdview_geometry_primvar_test)
-  target_include_directories(lusdview_geometry_primvar_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}
-      ${PROJECT_SOURCE_DIR}/src
-      ${PROJECT_SOURCE_DIR}/src/external
-      ${COMMON_DIR})
-  target_link_libraries(lusdview_geometry_primvar_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC}
-      tydra)
-  if(UNIX AND NOT APPLE)
-    target_link_libraries(lusdview_geometry_primvar_test PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(lusdview_texture_pipeline_test
-      tests/texture_pipeline_test.cc
-      mesh_build.cc
-      texture_tools.cc
-      lighting_ies.cc
-      displacement_bake.cc
-      skinning.cc
-      ${COMMON_DIR}/light3d/math.cpp
-      $<TARGET_OBJECTS:lusdview_lightrt_mtlx_const>)
-  target_compile_features(lusdview_texture_pipeline_test PRIVATE cxx_std_17)
-  lusdview_set_warning_flags(lusdview_texture_pipeline_test)
-  target_include_directories(lusdview_texture_pipeline_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}
-      ${PROJECT_SOURCE_DIR}/src
-      ${PROJECT_SOURCE_DIR}/src/external
-      ${COMMON_DIR})
-  target_link_libraries(lusdview_texture_pipeline_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC}
-      tydra)
-  if(UNIX AND NOT APPLE)
-    target_link_libraries(lusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()
 
   add_executable(lusdview_lightrt_mtlx_eval_test
@@ -647,7 +546,7 @@ if(LIGHTUSD_BUILD_TESTS)
   lusdview_set_warning_flags(lusdview_vchar_control_map_test)
   target_include_directories(lusdview_vchar_control_map_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
-  target_link_libraries(lusdview_vchar_control_map_test PRIVATE lightusd_c ${LIGHTUSD_TARGET_STATIC})
+  target_link_libraries(lusdview_vchar_control_map_test PRIVATE lightusd_c lightusd_preview_images tydra lightusd_core)
 
   add_executable(lusdview_public_stage_queries_test
       tests/public_stage_queries_test.cc public_stage_queries.cc)
@@ -729,15 +628,13 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_scene_safety_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      lightusd_preview_images tydra lightusd_core)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_scene_safety_test PRIVATE Threads::Threads)
   endif()
 
   foreach(material_test
-      lusdview_lightrt_bridge_test lusdview_openpbr_material_test
-      lusdview_lighting_test lusdview_geometry_primvar_test
-      lusdview_texture_pipeline_test lusdview_scene_safety_test)
+      lusdview_lightrt_bridge_test lusdview_scene_safety_test)
     target_sources(${material_test} PRIVATE $<TARGET_OBJECTS:lusdview_material_objects>)
   endforeach()
 
@@ -749,10 +646,6 @@ if(LIGHTUSD_BUILD_TESTS)
   foreach(tv_test
       lusdview_ptex_atlas_test
       lusdview_lightrt_bridge_test
-      lusdview_openpbr_material_test
-      lusdview_lighting_test
-      lusdview_geometry_primvar_test
-      lusdview_texture_pipeline_test
       lusdview_lightrt_mtlx_eval_test
       lusdview_lightrt_mtlx_graph_connection_test
       lusdview_lightrt_mtlx_graph_evaluation_test
@@ -863,7 +756,7 @@ target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     lightusd_gpu_rt_common
-    ${LIGHTUSD_TARGET_STATIC}
+    lightusd_preview_images tydra lightusd_core
     glfw
     OpenGL::GL
     ${CMAKE_DL_LIBS})
@@ -1034,7 +927,9 @@ endif()
 option(LUSDVIEW_ENABLE_MCP "Build the embedded MCP server (stdio + HTTP)" ON)
 if(LUSDVIEW_ENABLE_MCP)
   target_sources(${EXAMPLE_TARGET} PRIVATE
-      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc)
+      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+      # Core MCP tool schemas (a static table) for the document tools.
+      ${PROJECT_SOURCE_DIR}/src/mcp/mcp-tool-schemas.cc)
   target_compile_definitions(${EXAMPLE_TARGET} PRIVATE LUSDVIEW_HAVE_MCP=1)
   # The MCP server uses try/catch around JSON-RPC; it needs C++ exceptions even
   # when the rest of lusdview is built -fno-exceptions.
@@ -1123,4 +1018,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   # Release optimization level.
   set_source_files_properties(lightrt_mtlx_graph_compile.cc PROPERTIES
     COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O0>")
+endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  include(${CMAKE_CURRENT_LIST_DIR}/tests.cmake)
 endif()

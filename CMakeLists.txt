@@ -141,6 +141,32 @@ endif()
 add_library(lightusd::core ALIAS lightusd_core)
 # Pre-1.1 alias; remove after one release.
 add_library(lightusd::next ALIAS lightusd_core)
+# Default external USD asset corpus for regression tests.  The repository-local
+# symlink is intentionally the default so a checkout with `usd-assets` present
+# exercises the asset gates without machine-specific paths; callers can point
+# this at another corpus with -DLIGHTUSD_USD_ASSETS_ROOT=... .
+set(_lightusd_default_usd_assets_root "${PROJECT_SOURCE_DIR}/usd-assets")
+if(IS_DIRECTORY "${_lightusd_default_usd_assets_root}")
+  get_filename_component(_lightusd_default_usd_assets_root
+                         "${_lightusd_default_usd_assets_root}" REALPATH)
+endif()
+set(LIGHTUSD_USD_ASSETS_ROOT "${_lightusd_default_usd_assets_root}" CACHE PATH
+    "Root directory for lusdview/lusdrender USD asset regressions")
+unset(_lightusd_default_usd_assets_root)
+option(LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD
+       "Apply NVIDIA PRIME/GLVND offload variables to lusdview CTest cases when the NVIDIA device is visible"
+       OFF)
+option(LIGHTUSD_BUILD_GUI_VIEWER
+       "Build the interactive GUI USD viewer example 'lusdview' (requires OpenGL/GLFW; Vulkan optional). Pulls in window-system deps; keep OFF for headless CI."
+       OFF)
+# lusdview defines the full shared GPU-RT library, so it precedes lusdrender
+# (which adds a GUI-free variant only when lusdview is absent).
+if(LIGHTUSD_BUILD_GUI_VIEWER AND LIGHTUSD_WITH_TYDRA)
+  if(APPLE)
+    enable_language(OBJC OBJCXX)
+  endif()
+  add_subdirectory(examples/lusdview)
+endif()
 option(LIGHTUSD_BUILD_TOOLS "Build command-line tools (lusdchecker, ...)" OFF)
 if(LIGHTUSD_BUILD_TOOLS)
   add_subdirectory(tools/lusdchecker)

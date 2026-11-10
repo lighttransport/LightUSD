@@ -705,8 +705,7 @@ int main(int argc, char** argv) {
       useNextExplicit = true;
     } if (std::strcmp(argv[i], "--legacy-load") == 0 ||
                std::strcmp(argv[i], "--legacyLoad") == 0) {
-      useNextLoader = false;
-      useNextExplicit = true;
+      LOGW("--legacy-load was removed; every scene uses the core loader");
     } if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
     } if (std::strcmp(argv[i], "--no-grid") == 0) {
@@ -1413,7 +1412,7 @@ int main(int argc, char** argv) {
           "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
           "  --next        Use the default next-core + tydra-next loader "
           "(compatibility flag).\n"
-          "  --legacy-load Use the legacy eager loader.\n"
+          "  --legacy-load Ignored (removed; prints a warning).\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"
           "  --defer-payloads  Lazy payloads: skip payload arcs on load and load "
           "them on demand from the GUI.\n"

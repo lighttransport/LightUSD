@@ -98,23 +98,6 @@ void GatherNextCameras(const lightusd_stage* stage, double time,
 bool FindNextCamera(const lightusd_stage* stage, const std::string& name,
                     double time, NextCameraPose* out);
 
-// Same, for the LEGACY loader, which has no next Stage -- only the converted
-// Tydra RenderScene. `--camera` used to be silently unavailable there ("need
-// --next"), which meant the two loaders could not be pointed at one camera and so
-// could not be compared frame-to-frame at all. The pose comes from the camera
-// node's world matrix, so it is already evaluated at the load time code (Tydra
-// bakes it); `time` is not re-sampled.
-bool FindLegacyCamera(const lightusd::tydra::RenderScene& scene,
-                      const std::string& name, NextCameraPose* out);
-
-// Evaluate a legacy-loader camera directly from the retained Stage at `time`.
-// This keeps authored camera motion available to the native temporal raster and
-// Vulkan paths without reconverting the scene's geometry for every shutter
-// midpoint. The RenderScene overload above remains the load-time camera query.
-bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
-                            const std::string& name, double time,
-                            NextCameraPose* out);
-
 // Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
 // draw mesh that carries morph channels, resolve its blendshape weights from
 // `stage` at `time` (manual `blendOverride` weights, when set, replace animated

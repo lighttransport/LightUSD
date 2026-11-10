@@ -6,9 +6,9 @@
 
 #include "log.hh"
 #include "mcp/mcp_host.hh"
-#include "tydra/js-script.hh"    // complete JSEngineState (held in Context by value)
-#include "tydra/mcp-context.hh"  // lightusd::legacy::tydra::mcp::Context
-#include "tydra/mcp-tools.hh"    // GetToolsList (library tool schemas)
+#include <set>
+
+#include "mcp/mcp-tool-schemas.hh"  // core MCP tool schemas
 
 namespace lusdview {
 
@@ -289,18 +289,20 @@ json MCPServer::buildToolsList() const {
        {"timeout_ms", {{"type", "integer"}, {"minimum", 100}, {"maximum", 600000}}}},
       json::array({"op"})));
 
-  // Append the lightusd library's USD tools (stage/prim/attr query, composition,
-  // search, run_script, ...). GetToolsList emits static schemas (no stage), so it
-  // is safe to call here on the transport thread.
-  try {
-    lightusd::legacy::tydra::mcp::Context ctx;
-    json libList;
-    if (lightusd::legacy::tydra::mcp::GetToolsList(ctx, libList) && libList.contains("tools") &&
-        libList["tools"].is_array()) {
-      for (auto& t : libList["tools"]) tools.push_back(t);
+  // USD document tools answered from the loaded core document (see
+  // App::callLibraryTool); schemas come from the core MCP server.
+  {
+    static const std::set<std::string> kDocumentTools = {
+        "attr_get", "attr_list", "inspect_prim", "prim_get", "prim_list",
+        "query_prims_by_type", "search", "stage_info", "variant_get_selection",
+        "variant_list_sets", "variant_set_selection"};
+    json core;
+    lightusd::mcp_schema::AppendToolSchemas(core);
+    if (core.contains("tools") && core["tools"].is_array()) {
+      for (auto& t : core["tools"])
+        if (t.is_object() && kDocumentTools.count(t.value("name", std::string())))
+          tools.push_back(t);
     }
-  } catch (const std::exception& e) {
-    LOGD("MCP: GetToolsList failed: %s", e.what());
   }
   return tools;
 }

@@ -251,6 +251,7 @@ target_include_directories(lusdrender PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/src/external/lightrt
+  ${PROJECT_SOURCE_DIR}/examples/common
 )
 
 # Warning flags (same policy as the core library)

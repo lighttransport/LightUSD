@@ -31,6 +31,7 @@ struct RenderContext {
   std::vector<lightusd::tydra::LightRtOpenPBRParams> flat_openpbr_mats;
   std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
+  std::vector<float> tri_uvs1;  // second UV set, parallel to tri_uvs; or empty
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
   std::vector<VolumeData> volumes;  // UsdVol volumes (OpenVDB) for raymarching

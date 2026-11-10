@@ -19,7 +19,6 @@
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
 #include "light3d/camera.h"  // light3d::Frustum (cull worker)
-#include "gui_stringify.hh"
 #include "imgui.h"  // ImGuiTextFilter
 #include "load_control.hh"
 #include "renderer.hh"
@@ -561,10 +560,8 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawPrimTree(const lightusd::legacy::Prim& prim);
   bool drawNextPrimTree(lightusd_prim prim);
   void drawNextInspector();
-  bool drawNodeTree(const lightusd::legacy::tydra::Node& node);
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
@@ -602,7 +599,6 @@ class Gui {
   void isolateSelection();
   void setSelectionVisibility(bool visible);
   void buildViewVisibilityMask();
-  void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
   void setSelectionListFromMeshes(std::vector<int> meshIndices);
   void setSelectionListFromPaths(std::vector<std::string> paths);
@@ -679,7 +675,6 @@ class Gui {
     std::string selectedPath;
   };
 
-  const lightusd::legacy::Prim* selPrim_{nullptr};
   lightusd::api::Stage nextStage_;
   std::vector<std::string> nextSkeletonPaths_;
   bool nextSkeletonPathsReady_{false};
@@ -758,7 +753,6 @@ class Gui {
   bool gizmoActive_{false};   // currently dragging the gizmo
   ImVec2 gizmoMouseStart_;    // mouse position at drag start
   float gizmoStartPos_[3];    // world position at drag start
-  bool showRenderNodes_{false};
   bool dockBuilt_{false};
   bool resetLayoutRequested_{false};
 
@@ -953,21 +947,7 @@ class Gui {
   bool releaseSelectedTextures_{false};
   bool revealSelectionInHierarchy_{false};
 
-  struct InspectorPropRow {
-    std::string name;
-    std::string value;
-    std::string typeStr;
-    std::string attrMeta;
-    bool gotProperty{false};
-    bool hasColor{false};
-    float color[4]{0.0f, 0.0f, 0.0f, 1.0f};
-  };
-  const lightusd::legacy::Prim* inspectorCachePrim_{nullptr};
   std::string inspectorCachePath_;
-  std::string inspectorCacheType_;
-  std::string inspectorCacheMeta_;
-  std::string inspectorCacheError_;
-  std::vector<InspectorPropRow> inspectorCacheRows_;
 
   bool vpHovered_{false};
   int navMode_{0};

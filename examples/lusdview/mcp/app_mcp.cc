@@ -22,7 +22,6 @@
 #include "light3d/math.h"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
-#include "tydra/mcp-tools.hh"  // lightusd::legacy::tydra::mcp::CallTool
 #include "vchar_control_map.hh"
 #include "../../vchar/autorigger_client.hh"
 
@@ -632,192 +631,13 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
     lightusd::api::Stage view;
     if (lightusd::api::DocumentSnapshotStage(snapshot, &view) == LIGHTUSD_OK)
       authoredControls = ReadVcharControls(view.get());
-  } else if (loaded_.ok) {
-    authoredControls = ReadVcharControls(loaded_.stage);
   }
 
   if (tool == "vchar_physics") {
-    const std::string op = args.value("op", std::string());
-    if (op == "hide") {
-      gui_.setPhysicsDebugLines({});
-      return {{"visible", false}, {"initialized", physicsWorldReady_}};
-    }
-    if (op == "reset" && physicsWorldReady_) {
-      if (physicsInitialStage_) {
-        loaded_.stage = *physicsInitialStage_;
-        if (UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_) && renderer_) {
-          for (size_t i = 0; i < draw_.meshes.size(); ++i) {
-            renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
-          }
-        }
-      }
-      lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
-      physicsWorldReady_ = false;
-      physicsSceneGen_ = ~std::uint64_t(0);
-      gui_.setPhysicsDebugLines({});
-    }
-    if ((op == "initialize" || op == "step" || op == "reset") &&
-        (!physicsWorldReady_ || physicsSceneGen_ != sceneGen_)) {
-      if (nextSession_) {
-        err = "vchar_physics simulation currently requires --legacy-load; "
-              "next-core physics annotation playback is not bridged yet";
-        return json::object();
-      }
-      if (!loaded_.ok) {
-        err = "vchar_physics requires a loaded USD scene";
-        return json::object();
-      }
-      if (physicsWorldReady_) lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
-      lightusd::legacy::tydra::PhysWorldBuildOptions options;
-      options.max_memory_limit_mb = 64;
-      if (!lightusd::legacy::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
-                                           options)) {
-        physicsWorldReady_ = false;
-        return json::object();
-      }
-      physicsWorldReady_ = true;
-      physicsSceneGen_ = sceneGen_;
-      physicsInitialStage_ = std::make_unique<lightusd::legacy::Stage>(loaded_.stage);
-    }
-    if (op == "step") {
-      int steps = args.value("steps", 1);
-      steps = std::max(1, std::min(600, steps));
-      if (args.contains("timestep")) {
-        if (!args["timestep"].is_number()) {
-          err = "vchar_physics timestep must be numeric";
-          return json::object();
-        }
-        physicsWorld_.timestep = std::max(
-            1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
-      }
-      if (!lightusd::legacy::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
-                                                 &err)) {
-        return json::object();
-      }
-      for (int i = 0; i < steps; ++i) {
-        if (tydra_phys_step(&physicsWorld_) != TYDRA_PHYS_OK) {
-          err = "vchar_physics solver step failed";
-          return json::object();
-        }
-      }
-      if (!lightusd::legacy::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
-                                                  &err)) {
-        return json::object();
-      }
-      if (UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_) && renderer_) {
-        for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
-          renderer_->updateMeshWorld(static_cast<int>(meshIndex),
-                                     draw_.meshes[meshIndex].world);
-        }
-      }
-    } else if (op != "status" && op != "initialize" && op != "reset") {
-      err = "vchar_physics op must be status, initialize, step, reset, or hide";
-      return json::object();
-    }
-
-    std::vector<HelperVertex> lines;
-    if (physicsWorldReady_) {
-      const float extent = draw_.hasBounds
-                               ? std::max(0.01f, (draw_.aabbMax[0] - draw_.aabbMin[0] +
-                                                draw_.aabbMax[1] - draw_.aabbMin[1] +
-                                                draw_.aabbMax[2] - draw_.aabbMin[2]) /
-                                                   300.0f)
-                               : 0.05f;
-      auto addLine = [&](float ax, float ay, float az, float bx, float by,
-                         float bz, float r, float g, float b) {
-        lines.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
-        lines.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
-      };
-      auto addBox = [&](const TydraPhysAABB& box, float r, float g, float b) {
-        const float x0 = box.min.x, y0 = box.min.y, z0 = box.min.z;
-        const float x1 = box.max.x, y1 = box.max.y, z1 = box.max.z;
-        addLine(x0,y0,z0,x1,y0,z0,r,g,b); addLine(x0,y1,z0,x1,y1,z0,r,g,b);
-        addLine(x0,y0,z1,x1,y0,z1,r,g,b); addLine(x0,y1,z1,x1,y1,z1,r,g,b);
-        addLine(x0,y0,z0,x0,y1,z0,r,g,b); addLine(x1,y0,z0,x1,y1,z0,r,g,b);
-        addLine(x0,y0,z1,x0,y1,z1,r,g,b); addLine(x1,y0,z1,x1,y1,z1,r,g,b);
-        addLine(x0,y0,z0,x0,y0,z1,r,g,b); addLine(x1,y0,z0,x1,y0,z1,r,g,b);
-        addLine(x0,y1,z0,x0,y1,z1,r,g,b); addLine(x1,y1,z0,x1,y1,z1,r,g,b);
-      };
-      for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
-        const TydraPhysBody& body = physicsWorld_.bodies[i];
-        const float x = body.xform.position.x;
-        const float y = body.xform.position.y;
-        const float z = body.xform.position.z;
-        const bool sleeping = (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u;
-        const float r = sleeping ? 0.3f : 1.0f;
-        const float g = sleeping ? 0.6f : 0.45f;
-        addLine(x - extent, y, z, x + extent, y, z, r, g, 0.1f);
-        addLine(x, y - extent, z, x, y + extent, z, r, g, 0.1f);
-        addLine(x, y, z - extent, x, y, z + extent, r, g, 0.1f);
-      }
-      for (int32_t i = 0; i < physicsWorld_.num_colliders; ++i) {
-        const TydraPhysCollider& collider = physicsWorld_.colliders[i];
-        if (collider.body_index < 0 ||
-            collider.body_index >= physicsWorld_.num_bodies) continue;
-        TydraPhysAABB box;
-        tydra_phys_collider_aabb(&collider,
-            &physicsWorld_.bodies[collider.body_index].xform, &box);
-        addBox(box, 0.15f, 0.75f, 1.0f);
-      }
-      for (int32_t i = 0; i < physicsWorld_.num_joints; ++i) {
-        const TydraPhysJoint& joint = physicsWorld_.joints[i];
-        TydraPhysTransform a = joint.local_anchor_a;
-        TydraPhysTransform b = joint.local_anchor_b;
-        if (joint.body_a >= 0 && joint.body_a < physicsWorld_.num_bodies) {
-          a = tp_xform_mul(physicsWorld_.bodies[joint.body_a].xform, a);
-        }
-        if (joint.body_b >= 0 && joint.body_b < physicsWorld_.num_bodies) {
-          b = tp_xform_mul(physicsWorld_.bodies[joint.body_b].xform, b);
-        }
-        addLine(a.position.x, a.position.y, a.position.z,
-                b.position.x, b.position.y, b.position.z, 0.9f, 0.2f, 0.9f);
-        const TydraPhysVec3 axis = tp_q_rotate(a.rotation, joint.axis);
-        addLine(a.position.x, a.position.y, a.position.z,
-                a.position.x + axis.x * extent * 2.0f,
-                a.position.y + axis.y * extent * 2.0f,
-                a.position.z + axis.z * extent * 2.0f, 1.0f, 0.2f, 0.8f);
-      }
-      for (int32_t i = 0; i < physicsWorld_.num_contacts; ++i) {
-        const TydraPhysContact& contact = physicsWorld_.contacts[i];
-        const float length = std::max(extent, contact.depth * 4.0f);
-        addLine(contact.point.x, contact.point.y, contact.point.z,
-                contact.point.x + contact.normal.x * length,
-                contact.point.y + contact.normal.y * length,
-                contact.point.z + contact.normal.z * length, 1.0f, 0.1f, 0.1f);
-      }
-      gui_.setPhysicsDebugLines(std::move(lines));
-    }
-    json bodies = json::array();
-    if (physicsWorldReady_) {
-      for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
-        const TydraPhysBody& body = physicsWorld_.bodies[i];
-        bodies.push_back({{"index", i},
-                          {"type", body.body_type == TYDRA_PHYS_BODY_DYNAMIC
-                                       ? "dynamic"
-                                       : (body.body_type == TYDRA_PHYS_BODY_KINEMATIC
-                                              ? "kinematic" : "static")},
-                          {"position", json::array({body.xform.position.x,
-                                                    body.xform.position.y,
-                                                    body.xform.position.z})},
-                          {"linear_velocity", json::array({body.linear_velocity.x,
-                                                            body.linear_velocity.y,
-                                                            body.linear_velocity.z})},
-                          {"angular_velocity", json::array({body.angular_velocity.x,
-                                                             body.angular_velocity.y,
-                                                             body.angular_velocity.z})},
-                          {"sleeping", (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u}});
-      }
-    }
-    return {{"initialized", physicsWorldReady_},
-            {"visible", physicsWorldReady_},
-            {"body_count", physicsWorldReady_ ? physicsWorld_.num_bodies : 0},
-            {"collider_count", physicsWorldReady_ ? physicsWorld_.num_colliders : 0},
-            {"joint_count", physicsWorldReady_ ? physicsWorld_.num_joints : 0},
-            {"contact_count", physicsWorldReady_ ? physicsWorld_.num_contacts : 0},
-            {"timestep", physicsWorldReady_ ? physicsWorld_.timestep : 0.0f},
-            {"bodies", std::move(bodies)},
-            {"mesh_sync", physicsWorldReady_ && !nextSession_},
-            {"note", "solver bodies and authored USD transforms are synchronized"}};
+    // The rigid-body preview was built on the legacy Stage and is not
+    // available on the core document.
+    err = "vchar_physics is not supported by the core loader";
+    return json::object();
   }
 
   if (tool == "vchar_hair_diagnostics") {
@@ -2167,24 +1987,8 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
     return json::object();
   }
 
-  // Lazily snapshot the loaded Stage into the library-tool Context (copied at
-  // most once per loaded scene; the viewer's Stage is never disturbed).
-  if (loaded_.ok) {
-    if (mcpCtxGen_ != sceneGen_ || !mcpCtx_.stage) {
-      mcpCtx_.stage = std::make_unique<lightusd::legacy::Stage>(loaded_.stage);
-      mcpCtx_.stage_loaded = true;
-      mcpCtxGen_ = sceneGen_;
-    }
-  } else {
-    mcpCtx_.stage.reset();
-    mcpCtx_.stage_loaded = false;
-  }
-  json result;
-  if (!lightusd::legacy::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
-    if (err.empty()) err = "unknown tool: " + name;
-    return json::object();
-  }
-  return result;
+  err = loaded_.ok ? "unknown tool: " + name : std::string("No scene loaded");
+  return json::object();
 }
 
 }  // namespace lusdview

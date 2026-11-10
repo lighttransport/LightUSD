@@ -376,7 +376,11 @@ void AddRTPreviewMeshNext(const lightusd::UsdPrim &prim,
                           float displacement_tex_scale = 1.0f,
                           float displacement_tex_bias = 0.0f,
                           const lightusd::EvalOptions *evaluation = nullptr,
-                          bool opacity_presence = true) {
+                          bool opacity_presence = true,
+                          // Second UV set (material lanes flagged in
+                          // uv_set_bits): 6 floats/tri parallel to tri_uvs.
+                          FVec *tri_uvs1 = nullptr,
+                          const std::string &uv_primvar1 = std::string()) {
   auto readFloatCopy = [&](const lightusd::UsdPrim& p, const char* name, double t) {
     if (!evaluation) return ReadFloatArrayLazy(p, name, t);
     lightusd::tydra::ValueArrayRead<float> values;
@@ -663,6 +667,19 @@ void AddRTPreviewMeshNext(const lightusd::UsdPrim &prim,
     const size_t face = st.interpolation == "uniform" ? face_for_corner(fv) : 0;
     if (!st.TupleIndex(size_t(pi), fv, face, &tuple)) return {0.0f, 0.0f};
     return {st.values[tuple * 2], st.values[tuple * 2 + 1]};
+  };
+  MeshFloatAttribute st1;
+  const bool have_st1 =
+      tri_uvs1 && want_uvs && !analytic && !uv_primvar1.empty() &&
+      ReadMeshFloatAttribute(prim, "primvars:" + uv_primvar1,
+                             attribute_evaluation, 2, npts, indices.size(),
+                             &st1);
+  auto uv1_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
+    if (!have_st1 || pi < 0) return uv_at(fv, pi);
+    size_t tuple = 0;
+    const size_t face = st1.interpolation == "uniform" ? face_for_corner(fv) : 0;
+    if (!st1.TupleIndex(size_t(pi), fv, face, &tuple)) return {0.0f, 0.0f};
+    return {st1.values[tuple * 2], st1.values[tuple * 2 + 1]};
   };
 
   // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
@@ -1077,6 +1094,16 @@ void AddRTPreviewMeshNext(const lightusd::UsdPrim &prim,
         uv_xform.apply(&uv2.first, &uv2.second);
         tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
                                          uv1.second, uv2.first, uv2.second});
+        if (tri_uvs1) {
+          auto s0 = uv1_at(cursor + 0, i0);
+          auto s1 = uv1_at(corner1, i1);
+          auto s2 = uv1_at(corner2, i2);
+          uv_xform.apply(&s0.first, &s0.second);
+          uv_xform.apply(&s1.first, &s1.second);
+          uv_xform.apply(&s2.first, &s2.second);
+          tri_uvs1->insert(tri_uvs1->end(), {s0.first, s0.second, s1.first,
+                                             s1.second, s2.first, s2.second});
+        }
       }
       if (want_colors) {
         // Per-corner RGBA8 parallel to tris (12 bytes/tri), fan order matching
@@ -5334,12 +5361,16 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                     // == 0 disables it (then renders are byte-identical to before).
                     const std::vector<Texture> *tex_pool = nullptr,
                     float disp_scale = 0.0f,
-                    const lightusd::ValueClipStageLoader& clip_loader = {}) {
+                    const lightusd::ValueClipStageLoader& clip_loader = {},
+                    // Second UV set stream (6 floats/tri, parallel to
+                    // out_tri_uvs); filled only when a material uses it.
+                    FVec *out_tri_uvs1 = nullptr) {
   const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
     TVec t;
     FVec uv;
+    FVec uv1;
     ByteVec col;  // per-corner RGBA8 (12 bytes/tri) when want_colors
     FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
     FVec uvv;  // unique verts (3 floats each) when indexed
@@ -5431,8 +5462,27 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 indexed ? &jvb : nullptr, job.displacement,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
-                job.displacement_tex.bias, &evaluation, job.opacity_presence);
+                job.displacement_tex.bias, &evaluation, job.opacity_presence,
+                (want_uvs && out_tri_uvs1 && !indexed) ? &r.uv1 : nullptr,
+                job.uv_primvar1);
             r.mat.capture_prim_id = CapturePrimId(job.prim.GetPath().str());
+            if (!r.uv1.empty()) {
+              // Material lanes (RtTexUvLane) -> CPU shader lane slots.
+              static const std::pair<uint32_t, uint32_t> kLaneMap[] = {
+                  {kRtTexUvBase, kUvLaneDiffuse},
+                  {kRtTexUvEmissive, kUvLaneEmissive},
+                  {kRtTexUvNormal, kUvLaneNormal},
+                  {kRtTexUvRoughness, kUvLaneRough},
+                  {kRtTexUvMetallic, kUvLaneMetal},
+                  {kRtTexUvOcclusion, kUvLaneOcc},
+                  {kRtTexUvOpacity, kUvLaneOpacity},
+                  {kRtTexUvCoatWeight, kUvLaneClearcoat},
+                  {kRtTexUvCoatRoughness, kUvLaneClearcoatRough},
+                  {kRtTexUvSpecular, kUvLaneSpecular}};
+              for (const auto &m : kLaneMap)
+                SetUvLaneSlot(&r.mat.uv_lane_slot, m.second,
+                              RtTexUvSet(job.uv_set_bits, m.first) ? 1u : 0u);
+            }
             r.has_openpbr = job.has_openpbr;
             r.openpbr = job.openpbr;
             if (job.back_material) {
@@ -5503,6 +5553,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
         if (want_uvs)
           out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
+        if (want_uvs && out_tri_uvs1 && !indexed)
+          out_tri_uvs1->insert(out_tri_uvs1->end(), r.uv1.begin(), r.uv1.end());
         if (want_colors && out_tri_colors)
           out_tri_colors->insert(out_tri_colors->end(), r.col.begin(),
                                  r.col.end());
@@ -5577,6 +5629,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.flat_openpbr_mats.clear();
   ctx.textures.clear();
   ctx.tri_uvs.clear();
+  ctx.tri_uvs1.clear();
   ctx.tri_colors.clear();
   ctx.tri_normals.clear();
   ctx.blas.clear();
@@ -5683,7 +5736,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                         &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
                         /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
                         /*out_indices=*/static_cast<IdxVec *>(nullptr),
-                        &ctx.textures, disp_scale, ctx.clip_stage_loader)) {
+                        &ctx.textures, disp_scale, ctx.clip_stage_loader,
+                        std::any_of(base_jobs.begin(), base_jobs.end(),
+                                    [](const MeshJobNext &j) {
+                                      return j.uv_set_bits != 0;
+                                    })
+                            ? &ctx.tri_uvs1
+                            : nullptr)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -7382,7 +7441,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.ibl.valid ? &ctx.ibl : nullptr, ctx.camera, ctx.opt, ctx.height,
       ctx.textures.empty() ? nullptr : &ctx.textures,
       ctx.tri_uvs.empty() ? nullptr : &ctx.tri_uvs,
-      /*tri_uvs1*/ nullptr,
+      ctx.tri_uvs1.size() == ctx.tri_uvs.size() && !ctx.tri_uvs1.empty()
+          ? &ctx.tri_uvs1 : nullptr,
       ctx.use_tlas ? ctx.tlas : nullptr,
       ctx.use_tlas ? &ctx.blas : nullptr,
       ctx.use_tlas ? &ctx.instances : nullptr,

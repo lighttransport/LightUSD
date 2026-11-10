@@ -16,16 +16,15 @@ namespace {
 
 using namespace lightusd::tydra;
 
-using namespace lightusd::legacy::tydra;  // NOLINT
 
 // Convert ParamPrimType to the appropriate Generate*Mesh call.
 // Returns true if tessellation was performed.
 bool TessellatePrim(const ParametricPrim& prim, int segments,
-                    std::vector<lightusd::legacy::value::float3>& points,
+                    std::vector<std::array<float, 3>>& points,
                     std::vector<int>& faceVertexCounts,
                     std::vector<int>& faceVertexIndices,
-                    std::vector<lightusd::legacy::value::float3>& normals,
-                    std::vector<lightusd::legacy::value::float2>& uvs) {
+                    std::vector<std::array<float, 3>>& normals,
+                    std::vector<std::array<float, 2>>& uvs) {
   switch (prim.type) {
     case ParamPrimType::Sphere: {
       // Adaptive: use icosphere with subdivisions based on segments
@@ -75,11 +74,11 @@ bool TessellatePrim(const ParametricPrim& prim, int segments,
 // Build a DrawMeshCPU from tessellated parametric primitive data.
 bool BuildDrawMeshFromParam(const ParametricPrim& prim, int segments,
                             DrawMeshCPU* out) {
-  std::vector<lightusd::legacy::value::float3> points;
+  std::vector<std::array<float, 3>> points;
   std::vector<int> faceVertexCounts;
   std::vector<int> faceVertexIndices;
-  std::vector<lightusd::legacy::value::float3> normals;
-  std::vector<lightusd::legacy::value::float2> uvs;
+  std::vector<std::array<float, 3>> normals;
+  std::vector<std::array<float, 2>> uvs;
 
   if (!TessellatePrim(prim, segments, points, faceVertexCounts,
                       faceVertexIndices, normals, uvs)) {

@@ -4,55 +4,16 @@
 #include <algorithm>
 
 #include "lightusd-cpp.hh"
-#include "stage.hh"
 #include "tydra/scene-access.hh"
 
 namespace lusdview {
 namespace {
 struct ControlVisit { std::vector<VcharControl> controls; };
 
-template <typename T>
-bool CustomValue(const lightusd::legacy::Dictionary& data, const std::string& key,
-                 T* value) {
-  lightusd::legacy::MetaVariable variable;
-  return lightusd::legacy::GetCustomDataByKey(data, key, &variable) &&
-         variable.get_value<T>(value);
-}
 
-bool VisitControls(const lightusd::legacy::Path&, const lightusd::legacy::Prim& prim,
-                   const int32_t, void* userdata, std::string*) {
-  auto* visit = static_cast<ControlVisit*>(userdata);
-  if (!visit || !visit->controls.empty() || !prim.metas().has_customData()) return true;
-  const lightusd::legacy::Dictionary data = prim.metas().get_customData();
-  std::vector<std::string> names, mappings;
-  std::vector<lightusd::legacy::value::float2> ranges;
-  std::vector<float> defaults;
-  if (!CustomValue(data, "vchar:controlNames", &names)) return true;
-  CustomValue(data, "vchar:controlMappings", &mappings);
-  CustomValue(data, "vchar:controlRanges", &ranges);
-  CustomValue(data, "vchar:controlDefaults", &defaults);
-  for (size_t i = 0; i < names.size(); ++i) {
-    VcharControl c;
-    c.name = names[i];
-    c.blendshape = i < mappings.size() ? mappings[i] : names[i];
-    if (i < ranges.size()) {
-      c.minimum = ranges[i][0]; c.maximum = ranges[i][1];
-      if (c.minimum > c.maximum) std::swap(c.minimum, c.maximum);
-    }
-    if (i < defaults.size()) c.defaultValue = defaults[i];
-    visit->controls.push_back(std::move(c));
-  }
-  return true;
-}
 
 }  // namespace
 
-std::vector<VcharControl> ReadVcharControls(const lightusd::legacy::Stage& stage) {
-  ControlVisit visit;
-  std::string ignored;
-  lightusd::legacy::tydra::VisitPrims(stage, VisitControls, &visit, &ignored);
-  return visit.controls;
-}
 
 std::vector<VcharControl> ReadVcharControls(const lightusd_stage* stage) {
   using lightusd::api::StringList;

@@ -279,13 +279,10 @@ bool CameraPoseDiffers(const NextCameraPose& a, const NextCameraPose& b) {
 }
 
 bool FindCameraPoseAtTime(const lightusd_stage* stage,
-                          const lightusd::legacy::Stage* legacyStage,
                           const std::string& cameraName, double time,
                           NextCameraPose* out) {
-  if (!out || cameraName.empty()) return false;
-  if (stage) return FindNextCamera(stage, cameraName, time, out);
-  return legacyStage &&
-         FindLegacyCameraAtTime(*legacyStage, cameraName, time, out);
+  if (!out || cameraName.empty() || !stage) return false;
+  return FindNextCamera(stage, cameraName, time, out);
 }
 
 struct ShutterMotionPlan {
@@ -305,33 +302,23 @@ struct ShutterMotionPlan {
 ShutterMotionPlan MakeShutterMotionPlan(
     const DrawScene& draw, const lightusd_stage* stage,
     const std::string& cameraName, double frameTime,
-    const RtCameraShutter& shutter, uint32_t requestedSamples,
-    const lightusd::legacy::Stage* legacyStage = nullptr) {
+    const RtCameraShutter& shutter, uint32_t requestedSamples) {
   ShutterMotionPlan plan;
   plan.frameTime = frameTime;
   plan.shutter = shutter;
-  if ((!stage && !legacyStage) || !shutter.enabled()) return plan;
-  // The retained `next` stage can re-pose geometry in the caller. Legacy
-  // temporal support here is deliberately camera-only: its converted geometry
-  // remains at the loaded time while the lightweight Stage xform evaluator
-  // supplies authored camera poses at each midpoint.
-  plan.sceneMotion = stage && std::any_of(
+  if (!stage || !shutter.enabled()) return plan;
+  // The retained stage re-poses geometry in the caller.
+  plan.sceneMotion = std::any_of(
       draw.meshes.begin(), draw.meshes.end(), [](const DrawMeshCPU& mesh) {
         return mesh.animatedWorld || !mesh.jointIdx.empty() ||
                !mesh.morphDeltaHalf.empty();
       });
   if (!cameraName.empty()) {
     NextCameraPose openPose, closePose;
-    const bool haveOpen =
-        stage ? FindNextCamera(stage, cameraName, frameTime + shutter.open,
-                               &openPose)
-              : FindLegacyCameraAtTime(*legacyStage, cameraName,
-                                       frameTime + shutter.open, &openPose);
-    const bool haveClose =
-        stage ? FindNextCamera(stage, cameraName, frameTime + shutter.close,
-                               &closePose)
-              : FindLegacyCameraAtTime(*legacyStage, cameraName,
-                                       frameTime + shutter.close, &closePose);
+    const bool haveOpen = FindNextCamera(stage, cameraName,
+                                         frameTime + shutter.open, &openPose);
+    const bool haveClose = FindNextCamera(stage, cameraName,
+                                          frameTime + shutter.close, &closePose);
     if (haveOpen && haveClose) {
       plan.cameraMotion = CameraPoseDiffers(openPose, closePose);
     }
@@ -1345,50 +1332,6 @@ bool EstimateAutoSubdivisionLevels(
   return !autoPrimLevels->empty();
 }
 
-bool LoadUsdMaybeAutoSubdivision(
-    const std::string& path, LoadOptions opts, LoadedScene* out, DrawScene* draw,
-    bool rtPath, LoadControl* ctrl, const AutoSubdivisionView& view) {
-  bool ok = LoadUSD(path, opts, out, draw, rtPath, ctrl);
-  if (!ok || !draw || !opts.subdivisionAuto || (ctrl && ctrl->cancel.load())) {
-    return ok;
-  }
-
-  std::map<std::string, int> autoPrimLevels;
-  if (!EstimateAutoSubdivisionLevels(*draw, view, opts.subdivisionLevel,
-                                     opts.subdivisionAutoMaxLevel,
-                                     opts.subdivisionPrimLevels,
-                                     &autoPrimLevels)) {
-    return ok;
-  }
-
-  LoadOptions refinedOpts = opts;
-  refinedOpts.subdivisionAuto = false;
-  for (const auto& kv : autoPrimLevels) {
-    refinedOpts.subdivisionPrimLevels.emplace(kv.first, kv.second);
-  }
-
-  int maxApplied = 0;
-  for (const auto& kv : refinedOpts.subdivisionPrimLevels) {
-    maxApplied = std::max(maxApplied, kv.second);
-  }
-  LOGI("auto subdivision: %zu prim override(s), max level %d",
-       autoPrimLevels.size(), maxApplied);
-
-  LoadedScene refined;
-  DrawScene refinedDraw;
-  if (LoadUSD(path, refinedOpts, &refined, &refinedDraw, rtPath, ctrl)) {
-    *out = std::move(refined);
-    *draw = std::move(refinedDraw);
-    return true;
-  }
-
-  if (!refined.err.empty()) {
-    out->warn += "Auto subdivision retry failed; using base mesh: " +
-                 refined.err + "\n";
-  }
-  return ok;
-}
-
 std::string ShellQuote(const std::string& value) {
 #if defined(_WIN32)
   std::string quoted = "\"";
@@ -1886,7 +1829,6 @@ App::~App() {
   // its members are being destroyed.
   if (mcp_) mcp_->stop();
 #endif
-  if (physicsWorldReady_) lightusd::legacy::tydra::FreePhysWorld(&physicsWorld_);
   cancelAndJoinLoad();  // must run before members the worker writes into are destroyed
   // Finish any in-flight RT build: std::thread's destructor calls
   // std::terminate() if it is destroyed still joinable (e.g. a headless
@@ -2895,7 +2837,7 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     } else {
       LOGI("skinning: CPU (%s)", skinningReason_.c_str());
     }
-    const std::string& up = loaded_.render.meta.upAxis;
+    const std::string& up = loaded_.meta.upAxis;
     camera_.setUpAxis((up == "Z" || up == "z") ? 2 : 1);
   }
 
@@ -3133,18 +3075,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
              stereoError.c_str());
       }
     }
-    // Either loader can be framed on a named USD camera. The legacy path reads the
-    // camera out of the converted RenderScene (FindLegacyCamera); it used to just
-    // warn "need --next" and auto-fit instead, which meant the two loaders could
-    // never be pointed at the same camera -- and so could not be compared.
     const bool haveCamera =
-        !cameraName_.empty() &&
-        (useNextLoader_ && nextStageSnapshot_
-             ? FindNextCamera(nextStageSnapshot_.get(), cameraName_, animTime_,
-                              &campose)
-             : (loaded_.ok &&
-                FindLegacyCameraAtTime(loaded_.stage, cameraName_, animTime_,
-                                       &campose)));
+        !cameraName_.empty() && nextStageSnapshot_ &&
+        FindNextCamera(nextStageSnapshot_.get(), cameraName_, animTime_,
+                       &campose);
     framedAuthoredCamera = haveCamera;
     if (haveCamera) framedFocalLength = campose.focalLength;
     if (framedAuthoredCamera) {
@@ -3262,7 +3196,8 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     applyDomeLightRequest(request);
     gui_.setDomeRequestState(request);
   }
-  gui_.setFacialControls(ReadVcharControls(loaded_.stage));
+  if (nextStageSnapshot_)
+    gui_.setFacialControls(ReadVcharControls(nextStageSnapshot_.get()));
   if (lensFocusOverride_ > 0.0f)
     cameraLens_.focusDistance = lensFocusOverride_;
   if (lensFStopOverride_ > 0.0f) {
@@ -4141,7 +4076,7 @@ void App::loadFileBlocking(const std::string& path) {
   // Only meaningful on the --next path (the only one that composes huge scenes
   // like Scene C). The original `path` stays as the displayed filename.
   std::string effPath = path;
-  if (lodStream_ && useNextLoader_) {
+  if (lodStream_) {
     LodStreamOptions lo;
     lo.camera = cameraName_;
     lo.maxMemGiB = lodMaxMemGiB_;
@@ -4150,22 +4085,56 @@ void App::loadFileBlocking(const std::string& path) {
     std::string wrapper = PrepareLodStream(path, lo);
     if (!wrapper.empty()) effPath = wrapper;
   }
-  if (useNextLoader_) {
+  {
     std::shared_ptr<ViewerDocument> session;
     const bool ok = LoadUSDViaNext(effPath, opts, &drawTmp, &tmp.warn, &tmp.err,
                                    &loadCtrl_, &session);
+    // --subdiv-auto: refine prims by projected size, then reload with the
+    // per-prim levels.
+    std::map<std::string, int> autoPrimLevels;
+    if (ok && opts.subdivisionAuto) {
+      int autoW = 0, autoH = 0;
+      getRequestedWindowSize(&autoW, &autoH);
+      const AutoSubdivisionView view{
+          camera_.fovYDeg(),
+          autoH > 0 ? static_cast<float>(std::max(1, autoW)) /
+                          static_cast<float>(autoH)
+                    : camera_.aspect(),
+          camera_.yaw(), camera_.pitch(), tessQuality_, camDolly_,
+          std::max(1, autoH)};
+      if (EstimateAutoSubdivisionLevels(drawTmp, view, opts.subdivisionLevel,
+                                        opts.subdivisionAutoMaxLevel,
+                                        opts.subdivisionPrimLevels,
+                                        &autoPrimLevels)) {
+        LoadOptions refined = opts;
+        refined.subdivisionAuto = false;
+        for (const auto& kv : autoPrimLevels)
+          refined.subdivisionPrimLevels.emplace(kv.first, kv.second);
+        LOGI("auto subdivision: %zu prim override(s)", autoPrimLevels.size());
+        DrawScene refinedDraw;
+        std::shared_ptr<ViewerDocument> refinedSession;
+        std::string w, e;
+        if (LoadUSDViaNext(effPath, refined, &refinedDraw, &w, &e, &loadCtrl_,
+                           &refinedSession)) {
+          drawTmp = std::move(refinedDraw);
+          session = std::move(refinedSession);
+        } else {
+          tmp.warn += "Auto subdivision retry failed; using base mesh: " + e + "\n";
+        }
+      }
+    }
     tmp.ok = ok;
     tmp.filepath = path;
-    tmp.render.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
+    tmp.meta.upAxis = drawTmp.upAxis;  // drive camera/grid up-axis
     PublicStageInfo info;
     if (session && ReadDocumentInfo(*session, &info)) {
       const double s = info.startTimeCode;
       const double e = info.endTimeCode;
       const double fps = info.timeCodesPerSecond;
-      if (fps > 0.0) tmp.render.meta.timeCodesPerSecond = fps;
+      if (fps > 0.0) tmp.meta.timeCodesPerSecond = fps;
       if (e > s) {
-        tmp.render.meta.startTimeCode = s;
-        tmp.render.meta.endTimeCode = e;
+        tmp.meta.startTimeCode = s;
+        tmp.meta.endTimeCode = e;
       }
     }
     loaded_ = std::move(tmp);
@@ -4198,64 +4167,7 @@ void App::loadFileBlocking(const std::string& path) {
     nextStageRevision_ = nextStageSnapshot_
         ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
     applyLoaded(ok, /*progressive=*/false);
-    return;
   }
-  // Load the REST pose whenever the deform may be re-applied downstream -- which is
-  // whenever GPU skinning could win, i.e. Auto as much as an explicit GPU. Gating
-  // this on an explicit GPU alone (as it did) left the DEFAULT, Auto, baking the
-  // pose into the geometry at load (DeformSkinnedMeshes) and then letting
-  // updateSkinningEffective pick GPU anyway -- so the vertex shader, and the RT
-  // vertex re-pose, deformed the ALREADY-DEFORMED geometry. Every animated
-  // `--time` screenshot on the legacy loader was posed twice. If GPU turns out to
-  // be ineligible, the block below re-renders with the CPU bake, so Auto still
-  // lands on a correctly posed scene either way.
-  const bool gpuRestLoad =
-      std::isfinite(loadOpts_.timecode) && wantsGpuSkinningLoad();
-  if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
-  int autoW = 0, autoH = 0;
-  getRequestedWindowSize(&autoW, &autoH);
-  const AutoSubdivisionView autoSubdivView{
-      camera_.fovYDeg(),
-      autoH > 0 ? static_cast<float>(std::max(1, autoW)) /
-                      static_cast<float>(autoH)
-                : camera_.aspect(),
-      camera_.yaw(),
-      camera_.pitch(),
-      tessQuality_,
-      camDolly_,
-      std::max(1, autoH)};
-  // Streaming convert+build in one pass (also fully populates tmp.render).
-  bool ok = LoadUsdMaybeAutoSubdivision(path, opts, &tmp, &drawTmp, rtPath_,
-                                        &loadCtrl_, autoSubdivView);
-  if (ok && gpuRestLoad) {
-    const bool skeletal = SceneHasSkeletalSkinning(tmp.render);
-    const bool morph = SceneHasBlendShapes(tmp.render);
-    const int maxInfluences = MaxSkinInfluenceCount(tmp.render);
-    const bool gpuEligible =
-        renderer_ && renderer_->caps().supportsGpuSkinning &&
-        (skeletal || morph) &&
-        (!skeletal || (drawTmp.boneMatrixCount > 0 &&
-                       (maxInfluences <= 4 ||
-                        (renderer_->caps().supportsExtendedGpuSkinning &&
-                         maxInfluences <= kMaxGpuTextureInfluences))));
-    if (!gpuEligible) {
-      DrawScene cpuDraw;
-      std::string w, e;
-      if (RenderSceneAtTime(tmp, loadOpts_.timecode, rtPath_, &cpuDraw, &w, &e,
-                            &loadCtrl_)) {
-        cpuDraw.materials = drawTmp.materials;
-        cpuDraw.textures = drawTmp.textures;
-        drawTmp = std::move(cpuDraw);
-      } else {
-        tmp.warn += w;
-        tmp.err = e;
-        ok = false;
-      }
-    }
-  }
-  loaded_ = std::move(tmp);
-  draw_ = ok ? std::move(drawTmp) : DrawScene{};
-  applyLoaded(ok, /*progressive=*/false);
 }
 
 void App::addRecentScene(const std::string& path) {
@@ -4377,14 +4289,39 @@ void App::startLoadAsync(const std::string& path) {
       tessQuality_,
       camDolly_,
       std::max(1, autoH)};
-  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext, stream,
+  loadThread_ = std::thread([this, path, opts, lp, dp, rt, stream,
                              autoSubdivView, requestedTime, gpuRestLoad,
                              rendererGpuSkinning,
                              rendererExtendedGpuSkinning]() {
-    if (useNext) {
+    {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
                               &pendingNextSession_, &pendingNextChanges_,
                               stream.get());
+      // --subdiv-auto: refine prims by projected size, then reload with the
+      // per-prim levels (non-streamed; the first pass already framed).
+      std::map<std::string, int> autoPrimLevels;
+      if (lp->ok && opts.subdivisionAuto && !stream &&
+          !loadCtrl_.cancel.load() &&
+          EstimateAutoSubdivisionLevels(*dp, autoSubdivView,
+                                        opts.subdivisionLevel,
+                                        opts.subdivisionAutoMaxLevel,
+                                        opts.subdivisionPrimLevels,
+                                        &autoPrimLevels)) {
+        LoadOptions refined = opts;
+        refined.subdivisionAuto = false;
+        for (const auto& kv : autoPrimLevels)
+          refined.subdivisionPrimLevels.emplace(kv.first, kv.second);
+        LOGI("auto subdivision: %zu prim override(s)", autoPrimLevels.size());
+        DrawScene refinedDraw;
+        std::string w, e;
+        if (LoadUSDViaNext(path, refined, &refinedDraw, &w, &e, &loadCtrl_,
+                           &pendingNextSession_, &pendingNextChanges_,
+                           nullptr)) {
+          *dp = std::move(refinedDraw);
+        } else {
+          lp->warn += "Auto subdivision retry failed; using base mesh: " + e + "\n";
+        }
+      }
       if (lp->ok) prepareNextRenderTransaction(*dp);
       lp->filepath = path;
       // Surface the stage's animation range so --next gets a timeline (the Tydra
@@ -4392,43 +4329,14 @@ void App::startLoadAsync(const std::string& path) {
       if (pendingNextSession_) {
         PublicStageInfo info;
         if (ReadDocumentInfo(*pendingNextSession_, &info)) {
-          lp->render.meta.upAxis = info.upAxis;
+          lp->meta.upAxis = info.upAxis;
           const double s = info.startTimeCode;
           const double e = info.endTimeCode;
           const double fps = info.timeCodesPerSecond;
-          if (fps > 0.0) lp->render.meta.timeCodesPerSecond = fps;
+          if (fps > 0.0) lp->meta.timeCodesPerSecond = fps;
           if (e > s) {
-            lp->render.meta.startTimeCode = s;
-            lp->render.meta.endTimeCode = e;
-          }
-        }
-      }
-    } else {
-      LoadUsdMaybeAutoSubdivision(path, opts, lp, dp, rt, &loadCtrl_,
-                                  autoSubdivView);
-      if (lp->ok && gpuRestLoad) {
-        const bool skeletal = SceneHasSkeletalSkinning(lp->render);
-        const bool morph = SceneHasBlendShapes(lp->render);
-        const int maxInfluences = MaxSkinInfluenceCount(lp->render);
-        const bool gpuEligible =
-            rendererGpuSkinning && (skeletal || morph) &&
-            (!skeletal ||
-             (dp->boneMatrixCount > 0 &&
-              (maxInfluences <= 4 ||
-               (rendererExtendedGpuSkinning &&
-                maxInfluences <= kMaxGpuTextureInfluences))));
-        if (!gpuEligible) {
-          DrawScene cpuDraw;
-          std::string warning, error;
-          if (RenderSceneAtTime(*lp, requestedTime, rt, &cpuDraw, &warning,
-                                &error, &loadCtrl_)) {
-            cpuDraw.materials = dp->materials;
-            cpuDraw.textures = dp->textures;
-            *dp = std::move(cpuDraw);
-          } else {
-            lp->warn += warning;
-            lp->err = error;
-            lp->ok = false;
+            lp->meta.startTimeCode = s;
+            lp->meta.endTimeCode = e;
           }
         }
       }
@@ -4464,13 +4372,13 @@ void App::startLayerReloadAsync(const std::string& resolvedLayerId) {
             resolvedLayerId);
         if (loaded->ok) prepareNextRenderTransaction(*draw);
         loaded->filepath = path;
-        loaded->render.meta.upAxis = draw->upAxis;
+        loaded->meta.upAxis = draw->upAxis;
         loadFinished_.store(true, std::memory_order_release);
       });
 }
 
 void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
-  if (useNextLoader_ && nextSession_) {
+  if (nextSession_) {
     if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
     cancelAndJoinLoad();
     loadCtrl_.resetProgress();
@@ -4521,47 +4429,10 @@ void App::startRecomposeAsync(const std::set<std::string>& addPrimPaths) {
                               &pendingNextSession_, &pendingNextChanges_);
       if (lp->ok) prepareNextRenderTransaction(*dp);
       lp->filepath = path;
-      lp->render.meta.upAxis = dp->upAxis;
+      lp->meta.upAxis = dp->upAxis;
       loadFinished_.store(true, std::memory_order_release);
     });
-    return;
   }
-
-  if (!loaded_.comp.composed || !loaded_.comp.rootLayer) return;
-  if (addPrimPaths.empty() && loadOpts_.variantOverrides.empty()) return;
-  cancelAndJoinLoad();
-  loadCtrl_.resetProgress();
-  loadingPath_ = loaded_.filepath;
-  loadStart_ = std::chrono::steady_clock::now();
-  loadFinished_.store(false);
-  loadActive_ = true;
-  pendingLoaded_ = std::make_unique<LoadedScene>();
-  pendingDraw_ = std::make_unique<DrawScene>();
-  LoadedScene* lp = pendingLoaded_.get();
-  DrawScene* dp = pendingDraw_.get();
-
-  // Snapshot composition state for the worker: the root layer is shared
-  // (read-only) and the whitelist is the union of already-loaded payloads and
-  // the new requests.
-  CompositionInfo prev;
-  prev.composed = true;
-  prev.rootLayer = loaded_.comp.rootLayer;
-  prev.searchPaths = loaded_.comp.searchPaths;
-  // Package-internal payloads resolve through this retained archive. Keep the
-  // shared backing alive across the worker handoff just like rootLayer.
-  prev.usdzAsset = loaded_.comp.usdzAsset;
-  LoadOptions opts = loadOpts_;
-  opts.gpuSkinning = wantsNextGpuSkinning();
-  opts.payloadPolicy = PayloadPolicy::Whitelist;
-  opts.payloadWhitelist = loaded_.comp.loadedPayloads;
-  opts.payloadWhitelist.insert(addPrimPaths.begin(), addPrimPaths.end());
-
-  const std::string path = loaded_.filepath;
-  const bool rt = rtPath_;
-  loadThread_ = std::thread([this, path, prev, opts, lp, dp, rt]() {
-    RecomposeWithPayloads(path, prev, opts, lp, dp, rt, &loadCtrl_);
-    loadFinished_.store(true, std::memory_order_release);
-  });
 }
 
 void App::prepareNextRenderTransaction(const DrawScene& next) {
@@ -5031,7 +4902,7 @@ void App::cancelAndJoinLoad() {
 }
 
 void App::readAnimationRange() {
-  const auto& m = loaded_.render.meta;
+  const auto& m = loaded_.meta;
   animFps_ = m.timeCodesPerSecond > 0.0 ? m.timeCodesPerSecond : 24.0;
   if (m.startTimeCode.has_value() && m.endTimeCode.has_value() &&
       m.endTimeCode.value() > m.startTimeCode.value()) {
@@ -5118,30 +4989,17 @@ void App::updateSkinningEffective() {
   const bool rtActive = renderer_->rayTracingActive();
   // --next has no RenderScene: what it can deform is recorded in the DrawScene
   // (a bone-matrix layout for skinning, morph channels for blendshapes).
-  const bool skeletal = useNextLoader_
-                            ? draw_.boneMatrixCount > 0
-                            : SceneHasSkeletalSkinning(loaded_.render);
-  const bool morph = useNextLoader_ ? DrawSceneHasMorphChannels(draw_)
-                                    : SceneHasBlendShapes(loaded_.render);
+  const bool skeletal = draw_.boneMatrixCount > 0;
+  const bool morph = DrawSceneHasMorphChannels(draw_);
   if (!loaded_.ok || (!skeletal && !morph)) {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
-  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so the raster
-  // vertex shader's deform never reaches them: they would trace the rest pose.
-  // Under the LEGACY loader the only way to pose them is the CPU bake, which the
-  // reconvert path writes into draw_ before the tracer builds its BVH. The next
-  // loader instead re-poses the retained rest vertices straight into draw_
-  // (poseNextDrawForTracer), so it keeps the GPU deform data -- one deform
-  // implementation for every backend, and no converter re-run per time code.
-  if ((cudaRt_ || hipRt_) && !useNextLoader_) {
-    skinningReason_ = "CPU skinning (legacy loader + CUDA/HIP tracer reads CPU geometry)";
-    return;
-  }
-  // The next loader renormalizes onto the 4 strongest influences per vertex, so
-  // it never needs the extended (texture) influence path.
-  const int maxInfluences =
-      useNextLoader_ ? 0 : MaxSkinInfluenceCount(loaded_.render);
+  // The CUDA/HIP ray tracers read CPU-side draw_ geometry; the loader re-poses
+  // the retained rest vertices straight into draw_ (poseNextDrawForTracer), so
+  // every backend keeps the GPU deform data. Skinning renormalizes onto the 4
+  // strongest influences per vertex, so the extended influence path is unused.
+  const int maxInfluences = 0;
   if (maxInfluences > 4 &&
       (!renderer_->caps().supportsExtendedGpuSkinning ||
        maxInfluences > kMaxGpuTextureInfluences)) {
@@ -5174,9 +5032,8 @@ void App::updateSkinningEffective() {
 }
 
 void App::updateGpuSkinningFrameIfNeeded() {
-  // --next has no RenderScene for Tydra to pose from; it re-poses from its
-  // retained Stage instead (bone matrices + GPU morph coefficients).
-  if (useNextLoader_) {
+  // Re-pose from the retained Stage (bone matrices + GPU morph coefficients).
+  {
     if (nextStageSnapshot_ && loaded_.ok && !progressiveActive_ &&
         renderer_->meshCount() == static_cast<int>(draw_.meshes.size())) {
       if (UpdateNextAnimatedMeshWorlds(nextStageSnapshot_.get(), &draw_, animTime_)) {
@@ -5194,149 +5051,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
       }
     }
     updateNextDeformFrameIfNeeded();
-    return;
   }
-  if (skinningEffective_ != SkinningMode::GPU || !loaded_.ok) return;
-  const bool hasMorph = SceneHasBlendShapes(loaded_.render);
-  const bool mixed = SceneHasNonSkeletalAnimation(loaded_.render);
-  // Per-mesh morph/world updates need the meshes present in the renderer; wait
-  // for progressive streaming to finish (the bone texture alone is safe early).
-  if (progressiveActive_ && (hasMorph || mixed)) return;
-  // Manual blendshape weights (Maya-like editor) force a re-pose even at the same
-  // time code, since the weights changed rather than the animation clock.
-  const bool blendDirty = hasMorph && gui_.consumeBlendDirty();
-  // Per-mesh vertex/world updates index the renderer by DrawScene mesh order;
-  // that only holds when the renderer uploaded exactly these meshes. Guard it so
-  // a future divergence degrades gracefully (rest pose) instead of posing the
-  // wrong mesh.
-  const bool idxOk =
-      renderer_->meshCount() == static_cast<int>(draw_.meshes.size());
-  if (!idxOk && !warnedMeshIndexMismatch_) {
-    LOGW("GPU skinning: renderer mesh count (%d) != draw mesh count (%zu); "
-         "skipping per-mesh morph/world updates.",
-         renderer_->meshCount(), draw_.meshes.size());
-    warnedMeshIndexMismatch_ = true;
-  }
-
-  // Node/xform animation alongside skinning: re-evaluate the animated mesh world
-  // transforms (no geometry re-pack) and push them to the renderer. All renderer
-  // uploads here go through postGpu(): on the threaded path the render thread
-  // owns the GL context (the main thread has released it), so a direct GL call
-  // from this main-thread function would hit no current context / race the
-  // render thread. postGpu runs inline when single-threaded (no behavior change).
-  // Xform samples under a SkelRoot are not represented as non-skeletal
-  // AnimationClip channels. Re-evaluate worlds unconditionally so a skinned
-  // mesh with an animated parent is not left at the load-time identity world.
-  if (idxOk && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
-    std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
-    worldUploads.reserve(draw_.meshes.size());
-    for (size_t i = 0; i < draw_.meshes.size(); ++i) {
-      std::array<float, 16> w;
-      std::memcpy(w.data(), draw_.meshes[i].world, sizeof(w));
-      worldUploads.push_back({static_cast<int>(i), w});
-    }
-    postGpu([this, ups = std::move(worldUploads)]() {
-      for (const auto& u : ups) renderer_->updateMeshWorld(u.first, u.second.data());
-    });
-  }
-  if (skinFrameTime_ == animTime_ && !blendDirty) return;  // already posed
-
-  if (renderer_->rayTracingActive()) {
-    if (!idxOk) return;
-    // LUSDVIEW_RT_TIMING: the CPU side of the RT pose (morph + LBS + normal
-    // regen + displacement bake), the counterpart of the [vk_rt] AS lines.
-    static const bool kRtTiming = std::getenv("LUSDVIEW_RT_TIMING") != nullptr;
-    const auto skinT0 = std::chrono::steady_clock::now();
-
-    // OPT-IN (LUSDVIEW_RT_GPU_SKIN=1) GPU compute skinning for the eligible
-    // class (pure <=4-influence skeletal, no morph/displacement): composed
-    // matrices upload + in-place skin of the RT vertex stream + BLAS refit, no
-    // CPU per-vertex work. Off by default for two measured reasons (200k-tri
-    // probe, RTX 3070): (1) the RT vertex/joint/weight buffers are HOST-VISIBLE
-    // (mapped for the CPU-fallback upload), so the compute pass streams over
-    // PCIe and loses to the CPU path (~30 ms vs ~7 ms) — flipping the default
-    // needs device-local RT streams + a staging upload path; (2) it skins
-    // NORMALS with the weighted joint matrices (the raster deform.glsl
-    // convention) while the CPU path regenerates smooth normals on the posed
-    // surface, so shading differs on smooth meshes (~3% of pixels beyond a
-    // 32/255 delta on the probe). Also: the skeleton overlay's dense
-    // point-joint samples fall back to rest-pose display for GPU-skinned
-    // meshes (no CPU-skinned helper points). Runs inline (not postGpu): the
-    // dispatch's return value gates the CPU fallback, and the RT path never
-    // runs on the threaded-GL build.
-    static const bool kGpuSkinOptIn =
-        std::getenv("LUSDVIEW_RT_GPU_SKIN") != nullptr;
-    std::unordered_set<int> gpuHandled;
-    if (kGpuSkinOptIn) {
-      std::vector<RtGpuSkinUpdate> gpuUpdates;
-      std::unordered_set<int> eligible;
-      BuildRtGpuSkinUpdates(loaded_.render, &draw_, animTime_, &gpuUpdates,
-                            &eligible);
-      for (const RtGpuSkinUpdate& u : gpuUpdates) {
-        // A refused dispatch (no RT stream / shader unavailable) simply stays
-        // out of gpuHandled, so the CPU pass below picks the mesh up.
-        if (renderer_->updateMeshSkinningGpu(u.meshIndex, u.mats.data(),
-                                             u.jointCount, u.matrixBase,
-                                             u.aabbMin, u.aabbMax)) {
-          gpuHandled.insert(u.meshIndex);
-        }
-      }
-      if (kRtTiming && !gpuHandled.empty()) {
-        std::fprintf(stderr, "[rt-skin] gpu compute skin: %.2f ms (%zu meshes)\n",
-                     std::chrono::duration<double, std::milli>(
-                         std::chrono::steady_clock::now() - skinT0).count(),
-                     gpuHandled.size());
-      }
-    }
-
-    std::vector<RtSkinnedMeshUpload> uploads;
-    if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
-                                   animTime_, gui_.blendOverrides(),
-                                   gui_.showSkeletonOverlay(), &uploads,
-                                   gpuHandled.empty() ? nullptr : &gpuHandled)) {
-      if (kRtTiming) {
-        size_t verts = 0;
-        for (const RtSkinnedMeshUpload& u : uploads) verts += u.vertices.size();
-        std::fprintf(stderr, "[rt-skin] cpu pose: %.2f ms (%zu meshes, %zu verts)\n",
-                     std::chrono::duration<double, std::milli>(
-                         std::chrono::steady_clock::now() - skinT0).count(),
-                     uploads.size(), verts);
-      }
-      postGpu([this, ups = std::move(uploads)]() {
-        const auto upT0 = std::chrono::steady_clock::now();
-        for (const RtSkinnedMeshUpload& upload : ups) {
-          renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
-        }
-        if (kRtTiming) {
-          std::fprintf(stderr, "[rt-skin] vbo upload: %.2f ms\n",
-                       std::chrono::duration<double, std::milli>(
-                           std::chrono::steady_clock::now() - upT0).count());
-        }
-      });
-    }
-    skinFrameTime_ = animTime_;
-    return;
-  }
-
-  // Bone matrices for GPU skinning. Blendshapes are applied in the vertex shader
-  // (GPU morph, via updateMorphWeights below), not by CPU-morphing the VBO.
-  if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_,
-                            gui_.showSkeletonOverlay(), &loaded_.stage,
-                            gui_.blendOverrides())) {
-    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
-  }
-  // GPU blendshape morph: upload only the tiny per-channel coefficient array per
-  // morphed mesh (the vertex shader sums coeff*delta). No VBO re-upload, no GPU
-  // stall. Meshes whose weights fall to 0 get a zero coefficient array (no morph).
-  if (hasMorph && idxOk) {
-    std::vector<std::pair<int, std::vector<float>>> coeffs;
-    BuildMorphChannelWeights(loaded_.stage, draw_, animTime_,
-                             gui_.blendOverrides(), &coeffs);
-    postGpu([this, mc = std::move(coeffs)]() {
-      for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
-    });
-  }
-  skinFrameTime_ = animTime_;
 }
 
 void App::updateNextDeformFrameIfNeeded() {
@@ -5588,15 +5303,8 @@ bool App::poseNextDrawForTracer(double time) {
 }
 
 void App::maybeReconvertForManualBlend() {
-  // The GPU path repools live in updateGpuSkinningFrameIfNeeded(); only the
-  // ray-traced / CPU-skinned path needs a geometry+BLAS rebuild here.
-  if (skinningEffective_ == SkinningMode::GPU) return;
-  if (!loaded_.ok || !SceneHasBlendShapes(loaded_.render)) return;
-  if (gui_.consumeBlendDirty()) blendReconvNeeded_ = true;
-  if (blendReconvNeeded_ && !reconvActive_ && !loadActive_ && !progressiveActive_) {
-    blendReconvNeeded_ = false;
-    requestReconvert(animTime_);  // starts immediately (no reconvert in flight)
-  }
+  // Manual blendshape weights re-pose in place (updateGpuSkinningFrameIfNeeded
+  // / the tracer re-pose); there is no converted scene to rebuild.
 }
 
 void App::advancePlayback(float dtSec) {
@@ -5618,63 +5326,16 @@ void App::advancePlayback(float dtSec) {
 }
 
 void App::requestReconvert(double t) {
-  // Skip while a fresh file load is streaming (loaded_/draw_ are in flux); the
-  // worker would also race the load writing loaded_.
+  // Animation is applied in place on the resident scene (world-transform
+  // uploads and GPU / tracer re-posing); only the time stamps move.
   if (!loaded_.ok || loadActive_) return;
-
-  // The next loader keeps the render scene resident and applies animation in
-  // place (world-transform uploads and, when supported, GPU deformation).
-  // Sending its timeline through RenderSceneAtTime is incorrect: that worker
-  // consumes the legacy RenderScene representation, which is intentionally
-  // empty for a next-loader load.  Apart from doing needless work, swapping
-  // that failed result during playback makes the viewport report that there
-  // are no renderable meshes.
-  if (useNextLoader_) {
-    reconvApplied_ = t;
-    skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
-    return;
-  }
-
-  if (skinningEffective_ == SkinningMode::GPU) {
-    reconvApplied_ = t;
-    skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
-    return;
-  }
-  reconvRequested_ = t;
-  reconvHasRequest_ = true;
-  if (!reconvActive_) startReconvertAsync(t);
+  reconvApplied_ = t;
+  skinFrameTime_ = std::numeric_limits<double>::quiet_NaN();
 }
 
 void App::startReconvertAsync(double t) {
-  reconvActive_ = true;
-  reconvInFlight_ = t;
-  reconvHasRequest_ = false;
-  reconvFinished_.store(false);
-  reconvOk_.store(false);
-  reconvCtrl_.cancel.store(false);
-  reconvCtrl_.resetProgress();
-  reconvDraw_ = std::make_unique<DrawScene>();
-  DrawScene* dp = reconvDraw_.get();
-  const bool rt = rtPath_;
-  // Snapshot the manual blendshape weights on the main thread (gui_ is only
-  // touched here); the worker bakes them into the deformed/BLAS geometry.
-  std::unordered_map<std::string, float> ovr;
-  if (const auto* o = gui_.blendOverrides()) ovr = *o;
-  // Worker reads loaded_ (stage/mmap/filepath) read-only; the main thread keeps
-  // loaded_ alive and joins this worker (cancelAndJoinReconvert) before any
-  // reload. RenderSceneAtTime skips texture decode and fills only dp->meshes.
-  // The rest cache only pays off for repeated same-timecode reconverts (dragging
-  // a blendshape weight while paused). During playback the timecode changes every
-  // frame, so it would never hit and the per-frame copy-into-cache would be pure
-  // overhead -- skip it then.
-  RestSceneCache* cache = animPlaying_ ? nullptr : &reconvRestCache_;
-  reconvThread_ = std::thread([this, t, dp, rt, cache, ovrMoved = std::move(ovr)]() {
-    std::string w, e;
-    const bool ok = RenderSceneAtTime(loaded_, t, rt, dp, &w, &e, &reconvCtrl_,
-                                      ovrMoved.empty() ? nullptr : &ovrMoved, cache);
-    reconvOk_.store(ok, std::memory_order_relaxed);
-    reconvFinished_.store(true, std::memory_order_release);
-  });
+  (void)t;
+  reconvActive_ = false;
 }
 
 void App::finishReconvertIfReady() {
@@ -5719,10 +5380,6 @@ void App::cancelAndJoinReconvert() {
   reconvFinished_.store(false);
   reconvHasRequest_ = false;
   reconvDraw_.reset();
-  // The cached rest scene belongs to the (possibly outgoing) scene; drop it now
-  // that the worker is joined. Called on reload + skinning-mode switch, not during
-  // interactive blendshape reconverts (those queue), so this doesn't defeat it.
-  reconvRestCache_ = RestSceneCache{};
 }
 
 void App::openFileDialog() {
@@ -7829,11 +7486,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     gui_.setDomeRequestState(request);
   }
   gui_.setNextStage(nextStageSnapshot_);
-  if (nextStageSnapshot_) {
+  if (nextStageSnapshot_)
     gui_.setFacialControls(ReadVcharControls(nextStageSnapshot_.get()));
-  } else {
-    gui_.setFacialControls(ReadVcharControls(loaded_.stage));
-  }
   gui_.setDeferredPayloadPaths({});
   gui_.setBudget(&loadCtrl_);
   gui_.setLoadOptions(&loadOpts_);
@@ -8503,10 +8157,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     int vulkanRtMotionWidth = 0, vulkanRtMotionHeight = 0;
     gui_.viewportPixelSize(&vulkanRtMotionWidth, &vulkanRtMotionHeight);
     const ShutterMotionPlan vulkanRtMotion = MakeShutterMotionPlan(
-        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        draw_, nextStageSnapshot_.get(), cameraName_,
         animTime_,
-        cameraShutter_, pathTrace_.motionSegments,
-        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+        cameraShutter_, pathTrace_.motionSegments);
     if (vulkanRtMotionInline && renderer_ && renderer_->rayTracingActive() &&
         !hipInteractive_ && !cudaInteractive_ && !cpuInteractive_ &&
         !animPlaying_ &&
@@ -8559,8 +8212,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       const double sampleTime = vulkanRtMotion.sampleTime(segment);
       NextCameraPose samplePose;
       if (FindCameraPoseAtTime(
-              useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-              useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr),
+              nextStageSnapshot_.get(),
               cameraName_, sampleTime, &samplePose)) {
         ApplyAuthoredCameraPose(samplePose, draw_, &camera_);
         cameraLens_ = MakeRtCameraLens(
@@ -8591,10 +8243,9 @@ int App::run(const std::string& initialFile, int maxFrames,
     int rasterMotionWidth = 0, rasterMotionHeight = 0;
     gui_.viewportPixelSize(&rasterMotionWidth, &rasterMotionHeight);
     const ShutterMotionPlan rasterMotion = MakeShutterMotionPlan(
-        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
+        draw_, nextStageSnapshot_.get(), cameraName_,
         animTime_,
-        cameraShutter_, pathTrace_.motionSegments,
-        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+        cameraShutter_, pathTrace_.motionSegments);
     if (rasterMotionEnabled_ && rasterMotionInline && renderer_ &&
         !renderer_->rayTracingActive() &&
         !pathTrace_.enabled && !hipInteractive_ && !cudaInteractive_ &&
@@ -8641,8 +8292,7 @@ int App::run(const std::string& initialFile, int maxFrames,
         const double sampleTime = rasterMotion.sampleTime(segment);
         NextCameraPose samplePose;
         if (FindCameraPoseAtTime(
-                useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-                useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr),
+                nextStageSnapshot_.get(),
                 cameraName_, sampleTime, &samplePose)) {
           ApplyAuthoredCameraPose(samplePose, draw_, &camera_);
           cameraLens_ = MakeRtCameraLens(
@@ -8750,12 +8400,8 @@ int App::run(const std::string& initialFile, int maxFrames,
                 eyeCamera.absPath.empty() ? eyeCamera.name : eyeCamera.absPath;
             NextCameraPose eyePose;
             const bool havePose =
-                useNextLoader_ && nextStageSnapshot_
-                    ? FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_,
-                                     &eyePose)
-                    : (loaded_.ok &&
-                       FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,
-                                              &eyePose));
+                nextStageSnapshot_ &&
+                FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_, &eyePose);
             if (!havePose) {
               stereoError = "could not evaluate eye camera '" + eyeName + "'";
               eyesOk = false;
@@ -9098,8 +8744,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     // Variant switch: recompose with the user's variant selections.
     if (!loadActive_ && variantSwitch &&
-        ((useNextLoader_ && nextSession_) ||
-         (loaded_.comp.composed && loaded_.comp.rootLayer))) {
+        nextSession_) {
       loadOpts_.variantOverrides = variantOverrides;
       startRecomposeAsync(std::set<std::string>());
     }
@@ -9301,9 +8946,8 @@ int App::run(const std::string& initialFile, int maxFrames,
     // The tracer builds from draw_ geometry, which the next loader hands over in
     // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
     const ShutterMotionPlan cudaMotion = MakeShutterMotionPlan(
-        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
-        animTime_, cameraShutter_, pathTrace_.motionSegments,
-        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+        draw_, nextStageSnapshot_.get(), cameraName_,
+        animTime_, cameraShutter_, pathTrace_.motionSegments);
     const uint32_t cudaMotionSamples = cudaMotion.sampleCount;
     const double cudaFirstTime = cudaMotion.sampleTime(0);
     if (nextStageSnapshot_) {
@@ -9399,9 +9043,7 @@ int App::run(const std::string& initialFile, int maxFrames,
             !cameraName_.empty()) {
           NextCameraPose samplePose;
           if (FindCameraPoseAtTime(
-                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-                  useNextLoader_ ? nullptr
-                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  nextStageSnapshot_.get(),
                   cameraName_, sampleTime, &samplePose)) {
             ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
             sampleLens = MakeRtCameraLens(
@@ -9520,9 +9162,8 @@ int App::run(const std::string& initialFile, int maxFrames,
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
     const ShutterMotionPlan hipMotion = MakeShutterMotionPlan(
-        draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr, cameraName_,
-        animTime_, cameraShutter_, pathTrace_.motionSegments,
-        useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+        draw_, nextStageSnapshot_.get(), cameraName_,
+        animTime_, cameraShutter_, pathTrace_.motionSegments);
     const uint32_t hipMotionSamples = hipMotion.sampleCount;
     const double hipFirstTime = hipMotion.sampleTime(0);
     if (nextStageSnapshot_) {
@@ -9608,9 +9249,7 @@ int App::run(const std::string& initialFile, int maxFrames,
             !cameraName_.empty()) {
           NextCameraPose samplePose;
           if (FindCameraPoseAtTime(
-                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-                  useNextLoader_ ? nullptr
-                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  nextStageSnapshot_.get(),
                   cameraName_, sampleTime, &samplePose)) {
             ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
             sampleLens = MakeRtCameraLens(
@@ -9758,9 +9397,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       // A closed shutter, legacy-loader scene, or static next scene keeps the
       // original one-build/one-trace behavior.
       const ShutterMotionPlan cpuMotion = MakeShutterMotionPlan(
-          draw_, useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-          cameraName_, animTime_, cameraShutter_, pathTrace_.motionSegments,
-          useNextLoader_ ? nullptr : (loaded_.ok ? &loaded_.stage : nullptr));
+          draw_, nextStageSnapshot_.get(),
+          cameraName_, animTime_, cameraShutter_, pathTrace_.motionSegments);
       const uint32_t motionSamples = cpuMotion.sampleCount;
       std::vector<float> motionAccum;
       bool traced = true;
@@ -9778,9 +9416,7 @@ int App::run(const std::string& initialFile, int maxFrames,
             !cameraName_.empty()) {
           NextCameraPose samplePose;
           if (FindCameraPoseAtTime(
-                  useNextLoader_ ? nextStageSnapshot_.get() : nullptr,
-                  useNextLoader_ ? nullptr
-                                 : (loaded_.ok ? &loaded_.stage : nullptr),
+                  nextStageSnapshot_.get(),
                   cameraName_, sampleTime, &samplePose)) {
             ApplyAuthoredCameraPose(samplePose, draw_, &sampleCamera);
             sampleLens = MakeRtCameraLens(
@@ -9934,12 +9570,8 @@ int App::run(const std::string& initialFile, int maxFrames,
             eyeCamera.absPath.empty() ? eyeCamera.name : eyeCamera.absPath;
         NextCameraPose eyePose;
         const bool havePose =
-            useNextLoader_ && nextStageSnapshot_
-                ? FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_,
-                                 &eyePose)
-                : (loaded_.ok &&
-                   FindLegacyCameraAtTime(loaded_.stage, eyeName, animTime_,
-                                          &eyePose));
+            nextStageSnapshot_ &&
+                FindNextCamera(nextStageSnapshot_.get(), eyeName, animTime_, &eyePose);
         if (!havePose) {
           LOGW("stereo: could not evaluate eye camera '%s'", eyeName.c_str());
           eyesOk = false;

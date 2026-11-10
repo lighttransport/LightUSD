@@ -59,7 +59,7 @@ PACKAGE="$TMP/deferred-payload.usdz"
 
 # Distinguish an unavailable Vulkan runtime from a composition regression.
 PROBE_LOG="$TMP/probe.log"
-if ! "$LUSDVIEW" --config "$CONFIG" --headless --backend vk --legacy-load \
+if ! "$LUSDVIEW" --config "$CONFIG" --headless --backend vk \
      --frames 1 "$ARCHIVE/root.usda" >"$PROBE_LOG" 2>&1; then
   echo "SKIP: headless Vulkan is unavailable"
   exit $SKIP
@@ -187,5 +187,4 @@ child.on('exit', (code, signal) => {
 NODE
 }
 
-run_case legacy || exit $?
 run_case next

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include "lightusd-c.h"
@@ -25,6 +27,9 @@ bool ReadPublicPreviewExtent(lightusd_prim prim, float min[3], float max[3]);
 // SkelRoot. Samples named blend weights with linear interpolation; no connections.
 std::unordered_map<std::string, float> ReadPublicBlendWeights(
     const lightusd_stage* stage, lightusd_prim mesh, double time);
+// Face indices of a GeomSubset prim with elementType "face" (the default).
+// False for other prims/element types or when `indices` is unauthored.
+bool ReadPublicGeomSubsetFaces(lightusd_prim prim, std::set<uint32_t>* faces);
 std::string PublicString(lightusd_sv value);
 // Compact inspector display; arrays use only type/count, never their buffers.
 std::string PublicDefaultSummary(const lightusd_value_view& value, lightusd_sv text);

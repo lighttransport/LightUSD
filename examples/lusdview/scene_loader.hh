@@ -5,6 +5,7 @@
 #include <atomic>
 #include <limits>
 #include <map>
+#include <optional>
 #include <memory>
 #include <condition_variable>
 #include <deque>
@@ -17,13 +18,8 @@
 #include "gpu_scene.hh"
 #include "lightusd-render-c.h"
 #include "preview_cache.hh"
-#include "io-util.hh"  // lightusd::io::MMapFileHandle
-#include "layer.hh"
 #include "load_control.hh"
-#include "stage.hh"
-#include "tydra/render-data.hh"
 
-namespace lightusd { struct USDZAsset; }
 
 namespace lusdview {
 
@@ -236,110 +232,31 @@ struct DeferredArc {
   const char* arc;        // "payload" | "reference"
 };
 
-// Composition state retained for on-demand payload loading. `rootLayer` is the
-// post-sublayer snapshot of the opened file; recomposition restarts from it
-// (CompositePayload strips payload metadata even for deferred arcs, so the
-// composed Stage alone is not enough to load payloads later).
+// Payload state of the composed scene. The core loader defers payloads and
+// recomposes through its document session, so only the bookkeeping remains.
 struct CompositionInfo {
   bool composed{false};
-  std::shared_ptr<const lightusd::legacy::Layer> rootLayer;
-  std::vector<std::string> searchPaths;
-  // Retained package backing for composition and later payload recomposition.
-  std::shared_ptr<lightusd::legacy::USDZAsset> usdzAsset;
-  // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
-  // RenderScene conversion applies the same '..' policy to texture/light asset
-  // resolution that composition used (the tydra asset resolver defaults to
-  // rejecting parent-relative paths).
-  bool allowParentRelativePaths{false};
   std::vector<DeferredArc> deferred;         // still-unloaded payload/reference arcs
   std::set<std::string> loadedPayloads;      // whitelist accumulated so far
 };
 
-// Holds both the parsed Stage (for the hierarchy browser / property inspector)
-// and the converted RenderScene (for rendering). Both must stay alive together.
+// Stage-level metadata surfaced to the timeline / camera framing.
+struct SceneMeta {
+  std::string upAxis{"Y"};
+  double timeCodesPerSecond{24.0};
+  std::optional<double> startTimeCode;  // authored animation range
+  std::optional<double> endTimeCode;
+};
+
+// Result of a scene load. Geometry lives in the DrawScene; the composed stage
+// is owned by the core document session.
 struct LoadedScene {
-  lightusd::legacy::Stage stage;
-  lightusd::legacy::tydra::RenderScene render;
+  SceneMeta meta;
   std::string filepath;
   std::string warn;
   std::string err;
   bool ok{false};
-  int subdivisionLevel{0};
-  std::map<std::string, int> subdivisionPrimLevels;
-  // Memory-mapped file handle kept alive for the Stage's lifetime (zero-copy
-  // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
-  // Null on the composition path (composition copies specs, so zero-copy
-  // offsets would dangle).
-  std::shared_ptr<lightusd::io::MMapFileHandle> mmap;
   CompositionInfo comp;
 };
-
-// Load `path` (usd/usda/usdc/usdz), convert to a RenderScene configured for
-// single-index OpenGL/Vulkan rendering, and build the backend-neutral
-// `DrawScene` (`draw`) in the same streaming pass (Tydra
-// ConvertToRenderSceneStreaming): mesh geometry is interleaved as each mesh
-// converts, world placement applied when the node hierarchy is built, and
-// textures/materials decoded on completion. Returns false with `out->err`
-// filled on failure (out->stage may still be partially populated for inspection).
-//
-// `opts` controls composition: by default the file's composition arcs are
-// resolved (LIVRPS) with payloads deferred; deferred payloads are listed in
-// `out->comp.deferred` and can be loaded later via RecomposeWithPayloads().
-// USDZ composition arcs resolve against the retained archive backing, including
-// deferred package-internal payloads loaded by RecomposeWithPayloads().
-//
-// `ctrl` (optional) enables cancellation, progress reporting, a conversion time
-// budget and a draw-side triangle/vertex budget. Safe to call on a worker
-// thread (no GPU access).
-//
-// `rtPath` selects ray-tracer-friendly conversion: it disables the
-// rasterization-only single-index dedup (build_vertex_indices=false), yielding a
-// triangle-soup vertex/index layout that a BLAS consumes directly (still
-// renderable by the raster path too).
-bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
-             DrawScene* draw, bool rtPath = false, LoadControl* ctrl = nullptr);
-
-// Recompose `prev`'s retained root layer with `opts` (typically
-// PayloadPolicy::Whitelist with an enlarged whitelist) and rebuild the
-// Stage/RenderScene/DrawScene. `path` is the original file path (used for
-// asset resolution and labeling). Worker-thread safe: `prev.rootLayer` is
-// only read.
-bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
-                           const LoadOptions& opts, LoadedScene* out,
-                           DrawScene* draw, bool rtPath = false,
-                           LoadControl* ctrl = nullptr);
-
-// Re-evaluate an already-loaded scene at `timecode` and build geometry into
-// `draw` (animation playback / scrubbing). Reads `src.stage` only (const) — safe
-// to call on a worker thread while the main thread keeps `src` alive and does
-// not reload it. Texture image loading is skipped (load_texture_assets=false):
-// materials/textures don't animate, so only mesh geometry/transforms/skinning
-// are rebuilt; callers keep the textures from the initial load. `draw->materials`
-// and `draw->textures` are therefore left empty — only `draw->meshes` (+ bounds)
-// are produced. Returns false with `*err` set on failure.
-// `blendOverride` (optional, by BlendShape name) applies manual blendshape
-// weights (the blend editor) when deforming -- the ray-traced / CPU-skinned
-// equivalent of the GPU path's override; honors in-between shapes.
-//
-// Optional `restCache`: the un-deformed Tydra scene from the last conversion,
-// keyed by timecode. When the requested `timecode` matches the cache, the stage
-// re-conversion (the heavy `ConvertStageToSceneImpl`) is skipped and the cached
-// rest scene is reused -- only the CPU deform + pack re-run. This lets interactive
-// blendshape edits (same timecode, only weights changing) on the RT/CPU path avoid
-// a full re-conversion. The caller owns the cache and must clear it on reload (the
-// geometry belongs to the old scene). NOT thread-safe: only one RenderSceneAtTime
-// may touch a given cache at a time (the app gates reconverts to one in flight).
-struct RestSceneCache {
-  lightusd::legacy::tydra::RenderScene scene;
-  double timecode = 0.0;
-  bool valid = false;
-};
-
-bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
-                       DrawScene* draw, std::string* warn, std::string* err,
-                       LoadControl* ctrl = nullptr,
-                       const std::unordered_map<std::string, float>* blendOverride =
-                           nullptr,
-                       RestSceneCache* restCache = nullptr);
 
 }  // namespace lusdview

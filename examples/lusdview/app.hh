@@ -47,13 +47,10 @@
 #include "stream/stream_server.hh"
 #include "tydra/scene-preview-compute.hh"
 #include "tydra/scene-preview.hh"
-#include "tydra/rb-dynamics.hh"
 #include "viewer_document.hh"
 #if defined(LUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
-#include "tydra/js-script.hh"    // complete JSEngineState (held in Context)
-#include "tydra/mcp-context.hh"  // lightusd::legacy::tydra::mcp::Context (library tool bridge)
 #endif
 
 struct GLFWwindow;
@@ -410,10 +407,6 @@ class App
   std::future<vchar::AutoriggerResult> autoriggerFuture_;
   std::string autoriggerOutput_;
   std::future<vchar::AutoriggerResult> dnaWorkerFuture_;
-  TydraPhysWorld physicsWorld_{};
-  bool physicsWorldReady_{false};
-  std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
-  std::unique_ptr<lightusd::legacy::Stage> physicsInitialStage_;
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
@@ -1091,7 +1084,6 @@ class App
   // Rest-pose scene cache so a same-timecode reconvert (interactive blendshape
   // edit on the RT/CPU path) reuses the conversion instead of re-running it.
   // Touched only by the reconvert worker; cleared on reload (worker joined first).
-  RestSceneCache reconvRestCache_;
 
   // Progressive GPU upload (interactive path): stream meshes then textures.
   bool progressiveActive_{false};
@@ -1214,8 +1206,6 @@ class App
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.
-  lightusd::legacy::tydra::mcp::Context mcpCtx_;
-  std::uint64_t mcpCtxGen_{~std::uint64_t(0)};
 #endif
 };
 
