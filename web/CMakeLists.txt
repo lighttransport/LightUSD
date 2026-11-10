@@ -408,6 +408,7 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer-geometry.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-bake.cc
+    ${PROJECT_SOURCE_DIR}/../src/usdz/material-atlas.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-mesh.cc
     binding-core.cc binding-core-scene.cc
     binding-core-layer.cc

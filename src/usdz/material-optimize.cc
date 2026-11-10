@@ -138,6 +138,14 @@ bool Equal(const Layer& lhs, const Layer& rhs) {
 }
 }  // namespace
 
+Layer NormalizeMaterialSubtree(const Layer& layer, uint32_t index) {
+  return Normalize(layer, index);
+}
+
+bool EqualNormalizedMaterials(const Layer& lhs, const Layer& rhs) {
+  return Equal(lhs, rhs);
+}
+
 size_t DedupeMaterials(Layer* layer, bool preview) {
   if (!layer) return 0;
   std::map<std::string, std::vector<Candidate>> groups;

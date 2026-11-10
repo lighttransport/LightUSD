@@ -135,6 +135,16 @@ std::string LayoutKey(const std::string& pattern, bool srgb, const udim::Layout&
 }
 }
 
+bool ReadNativeAtlasImage(const std::string& path, std::vector<uint8_t>* bytes,
+                          std::string* error, size_t limit) {
+  NativeAssets assets(limit);
+  std::string package, entry;
+  if (AssetResolver::ParsePackagePath(path, &package, &entry) &&
+      !assets.package(package, error))
+    return false;
+  return assets.read(path, bytes, error, limit - assets.retained());
+}
+
 bool BakeUDIMs(Layer& layer, const UsdzConvertOptions& options, const std::string& root_dir,
                std::map<std::string, std::vector<uint8_t>>* assets, std::string* error) {
   if (options.udim_bake == UDIMBakeMode::Off) return true;

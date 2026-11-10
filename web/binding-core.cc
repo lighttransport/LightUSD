@@ -9,6 +9,7 @@
 #include <new>
 #include "binding-core-api.h"
 #include "usdz/material-optimize.hh"
+#include "usdz/material-atlas.hh"
 #include "usdz/geometry-optimize.hh"
 #include "binding-core-udim.hh"
 #include "binding-core-assets.hh"
@@ -1170,19 +1171,38 @@ class NextUSDZConverterNative {
       return false;
     }
     merge.memory_budget_bytes = max_retained_payload_bytes_;
-    if (material == "atlas")
-      warn_ += "Material atlas generation is unavailable; applying PreviewSurface graph deduplication.\n";
+    lightusd::usdz::MaterialAtlasOptions atlas;
+    if (material == "atlas") {
+      const std::pair<const char*, int*> limits[] = {
+          {"materialAtlasSize", &atlas.edge},
+          {"materialAtlasTileSize", &atlas.tile},
+          {"materialAtlasPadding", &atlas.padding},
+          {"materialAtlasMinGroupSize", &atlas.minimum}};
+      for (const auto& limit : limits) {
+        const auto* value = config.find(limit.first);
+        if (!value) continue;
+        const double number = value->is_number() ? value->get<double>() : -1;
+        if (!std::isfinite(number) || number < 0 || number > 32768 ||
+            std::floor(number) != number) {
+          error_ = "Material atlas options must be bounded integers";
+          return false;
+        }
+        *limit.second = static_cast<int>(number);
+      }
+    }
     const auto* remap = config.find("remap");
     const std::string json = remap ? remap->dump() : "{}";
     return exportAsUSDZWithRemapJSON(
         reinterpret_cast<const uint8_t*>(json.data()),
         static_cast<uint32_t>(json.size()), format == "usda" && !arkit, material != "off",
-        geometry == "mergeMeshes" ? &merge : nullptr, material == "preview" || material == "atlas", arkit);
+        geometry == "mergeMeshes" ? &merge : nullptr, material == "preview" || material == "atlas", arkit,
+        material == "atlas" ? &atlas : nullptr);
   }
 
   bool exportAsUSDZWithRemapJSON(const uint8_t* data, uint32_t size,
                                  bool usda_root, bool dedupe = false,
-                                 const lightusd::usdz::MeshMergeOptions* merge = nullptr, bool preview = false, bool arkit = false) {
+                                 const lightusd::usdz::MeshMergeOptions* merge = nullptr, bool preview = false, bool arkit = false,
+                                 const lightusd::usdz::MaterialAtlasOptions* atlas = nullptr) {
     if (!has_stage_) {
       error_ = "No stage loaded";
       return false;
@@ -1260,7 +1280,24 @@ class NextUSDZConverterNative {
         root->meta().upAxis_set = true;
       }
     }
+    std::map<std::string, std::vector<uint8_t>> generated;
     if (dedupe && root) lightusd::usdz::DedupeMaterials(root, preview);
+    if (atlas && root) {
+      auto options = *atlas;
+      options.memory_budget = working_budget - estimated_working_set;
+      const lightusd::udim::Fetch fetch = [&](const std::string& path,
+          std::vector<uint8_t>* bytes, std::string* message, size_t limit) {
+        const auto found = assets_.find(path);
+        if (found == assets_.end() || found->second.size() > limit) {
+          *message = "missing image or image exceeds budget: " + path;
+          return false;
+        }
+        *bytes = found->second;
+        return true;
+      };
+      if (!lightusd::usdz::BakeMaterialAtlases(*root, options, fetch, &generated,
+                                               &warn_, &error_)) return false;
+    }
     if (merge && !lightusd::usdz::MergeMeshes(&remapped, *merge, nullptr, &warn_, &error_))
       return false;
     if (root) {
@@ -1270,7 +1307,7 @@ class NextUSDZConverterNative {
         }
       }
     }
-    std::map<std::string, std::vector<uint8_t>> remapped_assets;
+    auto remapped_assets = std::move(generated);
     for (const auto& asset : assets_) {
       const auto mapped = remap.find(asset.first);
       const std::string& name = mapped == remap.end() ? asset.first : mapped->second;

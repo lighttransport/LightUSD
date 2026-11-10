@@ -156,7 +156,7 @@ void PrintUsage(const char *prog) {
       "  -optimizeMaterials <off|dedupe|preview|atlas>\n"
       "                            Optimize flattened material/shader networks for realtime delivery.\n"
       "                            preview canonicalizes supported UsdPreviewSurface graphs;\n"
-      "                            atlas applies preview dedupe without atlas images yet.\n"
+      "                            atlas combines compatible diffuse textures and remaps UVs.\n"
       "  -materialAtlasSize <N>    Max generated atlas edge (default 4096).\n"
       "  -materialAtlasTileSize <N> Tile edge for atlas mode (default 512).\n"
       "  -materialAtlasPadding <N> Gutter padding pixels for atlas mode (default 2).\n"

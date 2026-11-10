@@ -2,6 +2,7 @@
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 #include "usdz/usdz-converter.hh"
 #include "material-optimize.hh"
+#include "material-atlas.hh"
 #include "image-convert.hh"
 #include "geometry-optimize.hh"
 #include "udim-convert.hh"
@@ -256,7 +257,7 @@ bool FitTextures(const UsdzConvertOptions& opts, std::vector<Texture>* texs,
     in.ext = t.ext;
     in.original_bytes = t.bytes;
     in.reencodable = false;
-    if (t.ext == "png" || t.ext == "jpg" || t.ext == "jpeg") {
+    if (!t.generated && (t.ext == "png" || t.ext == "jpg" || t.ext == "jpeg")) {
       auto d = image::LoadImageFromMemory(t.bytes.data(), t.bytes.size(),
                                           t.authored);
       if (d && d.value().image.bpp == 8) {
@@ -286,7 +287,7 @@ bool FitTextures(const UsdzConvertOptions& opts, std::vector<Texture>* texs,
   for (size_t i = 0; i < texs->size() && i < outs.size(); ++i) {
     Texture& t = (*texs)[i];
     if (!outs[i].changed) {
-      stats->num_textures_passthrough++;
+      if (!t.generated) stats->num_textures_passthrough++;
       continue;
     }
     t.bytes = std::move(outs[i].bytes);
@@ -369,8 +370,6 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
           "migrated to the core converter";
     return false;
   }
-  if (opts.material_optimization == MaterialOptimizationMode::Atlas)
-    warn += "Material atlas generation is unavailable; applying PreviewSurface graph deduplication.\n";
   if ((opts.material_optimization != MaterialOptimizationMode::Off ||
        opts.geometry_optimization != GeometryOptimizationMode::Off) && !opts.flatten) {
     err = "material/geometry optimization requires flattening";
@@ -428,6 +427,37 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
       opts.material_optimization == MaterialOptimizationMode::Preview ||
       opts.material_optimization == MaterialOptimizationMode::Atlas)
     DedupeMaterials(stage.GetRootLayer(), opts.material_optimization != MaterialOptimizationMode::Dedupe);
+  if (opts.material_optimization == MaterialOptimizationMode::Atlas) {
+    MaterialAtlasOptions atlas;
+    atlas.edge = opts.material_atlas_size;
+    atlas.tile = opts.max_texture_size > 0
+        ? std::min(opts.material_atlas_tile_size, opts.max_texture_size)
+        : opts.material_atlas_tile_size;
+    atlas.padding = opts.material_atlas_padding;
+    atlas.minimum = opts.material_atlas_min_group_size;
+    if (opts.texture_memory_budget_bytes) atlas.memory_budget = opts.texture_memory_budget_bytes;
+    const udim::Fetch fetch = [&](const std::string& path, std::vector<uint8_t>* bytes,
+                                  std::string* message, size_t limit) {
+      if (!limit) return false;
+      const std::string resolved = IsAbsolutePath(path) ? path : io::JoinPath(root_dir, path);
+      return ReadNativeAtlasImage(resolved, bytes, message, limit);
+    };
+    if (!BakeMaterialAtlases(*stage.GetRootLayer(), atlas, fetch, &atlases, &warn, &err))
+      return false;
+    if (!to_usdz) {
+      const std::string out_dir = io::GetBaseDir(AbsolutePath(opts.output));
+      for (const auto& entry : atlases) {
+        const std::string path = io::JoinPath(out_dir, entry.first);
+        if (!io::FileExists(path)) continue;
+        std::vector<uint8_t> existing;
+        if (!ReadNativeAtlasImage(path, &existing, &err, entry.second.size()) ||
+            existing != entry.second) {
+          err = "generated atlas would overwrite a different file: " + path;
+          return false;
+        }
+      }
+    }
+  }
   if (opts.geometry_optimization == GeometryOptimizationMode::MergeMeshes) {
     MeshMergeOptions merge;
     merge.max_input_faces = static_cast<size_t>(opts.mesh_merge_max_input_faces);
@@ -571,7 +601,7 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
   std::set<std::string> taken;
   std::map<std::string, std::string> by_resolved;  // resolved -> archive
   for (Texture& t : textures) {
-    const std::string key = t.generated ? "udim-generated:" + t.authored : t.resolved;
+    const std::string key = t.generated ? "generated:" + t.authored : t.resolved;
     auto seen = by_resolved.find(key);
     if (seen != by_resolved.end()) {
       if (!t.authored.empty()) remap[t.authored] = seen->second;

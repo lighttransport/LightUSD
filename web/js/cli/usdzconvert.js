@@ -124,7 +124,7 @@ Convert options:
   --optimize-materials <mode>
                            Material optimization: off, dedupe, preview, atlas.
                            preview canonicalizes supported UsdPreviewSurface graphs;
-                           atlas applies preview dedupe without atlas images yet.
+                           atlas combines compatible diffuse textures and remaps UVs.
   --material-atlas-size <N>       Max generated atlas edge (default 4096)
   --material-atlas-tile-size <N>  Tile edge for atlas mode (default 512)
   --material-atlas-padding <N>    Gutter padding pixels for atlas mode (default 2)

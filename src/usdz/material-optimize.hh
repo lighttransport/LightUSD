@@ -5,6 +5,12 @@
 #include "layer/layer.hh"
 
 namespace lightusd::usdz {
+// Shared exact comparison for optimization passes. The supplied index is the
+// root of the material subtree.
+Layer NormalizeMaterialSubtree(const Layer& layer, uint32_t index);
+bool EqualNormalizedMaterials(const Layer& lhs, const Layer& rhs);
+
+
 // Deduplicate identical material subtrees in a composed layer. Connections and
 // relationship targets are rewritten structurally; asset/string values remain
 // untouched. Returns the number of removed materials.

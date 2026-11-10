@@ -968,14 +968,18 @@ async function coreFlattenSource(native, source, rootPath, opts) {
   }
 }
 
-function coreExportRoot(converter, opts, rootLayerFormat, remap = null) {
+function coreExportRoot(converter, opts, rootLayerFormat, remap, stagedImages) {
   if (opts.arkitCompatible || (remap && Object.keys(remap).length) || isMaterialOptimizationEnabled(opts) || isGeometryOptimizationEnabled(opts)) {
     const packageBytes = exportUSDZ(converter, remap, {...opts, rootLayerFormat});
     if (!packageBytes?.length) throw new Error(converter.error() || 'Core optimized export failed');
     const archive = unpackUSDZ(packageBytes);
-    return archive.entries.get(archive.order[0]);
+    const atlases = archive.order.slice(1).filter(name => !stagedImages.has(name))
+      .map(name => ({name, data:archive.entries.get(name)}));
+    return {data:archive.entries.get(archive.order[0]), atlases};
   }
-  return rootLayerFormat === 'usda' ? new TextEncoder().encode(converter.exportAsUSDA()) : converter.exportAsUSDC();
+  const data = rootLayerFormat === 'usda'
+    ? new TextEncoder().encode(converter.exportAsUSDA()) : converter.exportAsUSDC();
+  return {data, atlases:[]};
 }
 
 function configureCoreConverter(converter, opts) {
@@ -1250,10 +1254,19 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
     const selected=baked?passthroughEntries.filter(entry=>opts.includeUnusedTextures===true || !baked.consumed.has(entry.path))
       .concat(baked.assets.map(entry=>({...entry,generated:true}))):passthroughEntries;
     const processed=await coreProcessAssets(native,selected,baseRoot,opts,log,reportProgress);
-    const data=coreExportRoot(converter,opts,rootLayerFormat,processed.remap);
+    const stagedImages = new Set();
+    if (isMaterialAtlasEnabled(opts)) {
+      for (const entry of selected) {
+        if (!isImageName(entry.name)) continue;
+        if (!converter.setAsset(entry.name, entry.data))
+          throw new Error(converter.error() || `Could not stage image ${entry.name}`);
+        stagedImages.add(processed.remap[entry.name] || entry.name);
+      }
+    }
+    const {data, atlases} = coreExportRoot(converter, opts, rootLayerFormat, processed.remap, stagedImages);
     if(!data?.length)throw new Error(converter.error() || 'Core root export failed');
     if(converter.warn?.())log('WARN: '+converter.warn());
-    const rewrittenRoot=new Uint8Array(data),rootName='root.'+rootLayerFormat,entries=processed.entries;
+    const rewrittenRoot=new Uint8Array(data),rootName='root.'+rootLayerFormat,entries=processed.entries.concat(atlases);
     reportProgress('package',0,1,'Writing USDZ package',rootName);
     let usdz = null;
     if (opts.zipSink) {
@@ -1310,14 +1323,25 @@ async function convertSourceToUSDZNextOnly(native, source, opts, rootPath) {
     }}));
     const original=keys.filter(key=>!isUsdName(key) && (!baked.consumed.has(key) || opts.includeUnusedTextures===true))
       .map(key=>({path:key,name:flatten?coreSourceKey(key):(rootDir && key.startsWith(rootDir)?key.slice(rootDir.length):key),
-        fetch:()=>source.fetch(key)}));
+        fetch:maxBytes=>source.fetch(key,maxBytes === undefined ? undefined : {maxBytes})}));
     const plans=coreAssetPlans(generated.concat(original),streamingOpts);
     const baseRoot=rootLayerFormat==='usda'?new TextEncoder().encode(converter.exportAsUSDA()):converter.exportAsUSDC();
     const pick=makeResizeCsPicker(native,baseRoot,opts),log=opts.log || (()=>{});
     const fit=await coreFitAssetPlans(native,plans,streamingOpts,pick,log);
     const chosen=coreUniqueAssetNames(plans);const remap={};
     for(let i=0;i<plans.length;i++){plans[i].outName=chosen[i];if(plans[i].name!==chosen[i])remap[plans[i].name]=chosen[i];}
-    const root=coreExportRoot(converter,opts,rootLayerFormat,remap);
+    const stagedImages = new Set();
+    if (isMaterialAtlasEnabled(opts)) {
+      for (const plan of plans) {
+        if (!plan.image) continue;
+        const budget = converter.maxAssetBytes() - converter.assetBytes();
+        const data = await plan.fetch(budget);
+        if (!converter.setAsset(plan.name, data))
+          throw new Error(converter.error() || `Could not stage image ${plan.name}`);
+        stagedImages.add(plan.outName);
+      }
+    }
+    const {data:root, atlases} = coreExportRoot(converter, opts, rootLayerFormat, remap, stagedImages);
     if(!root?.length)throw new Error(converter.error() || 'Root export failed');
     if(converter.warn?.())log('WARN: '+converter.warn());
     const chunks=[],writer=new ZipStreamWriter(opts.zipSink || (bytes=>chunks.push(bytes.slice())));
@@ -1328,6 +1352,10 @@ async function convertSourceToUSDZNextOnly(native, source, opts, rootPath) {
       writer.addEntry(result.name,result.data);
       if(plan.image)textures++;else if(isAudioName(plan.name))audio++;else otherAssets++;
       if(result.resized)resized++;if(result.reencoded)reencoded++;
+    }
+    for (const atlas of atlases) {
+      writer.addEntry(atlas.name,atlas.data);
+      textures++;
     }
     writer.finalize();
     let usdz = null;
@@ -1343,6 +1371,10 @@ async function convertSourceToUSDZNextOnly(native, source, opts, rootPath) {
 
 // Convert an asset map (Map<path, Uint8Array>) into a USDZ Uint8Array.
 //
+function isMaterialAtlasEnabled(opts) {
+  return String(opts.optimizeMaterials || opts.materialOptimization || '').toLowerCase() === 'atlas';
+}
+
 function isMaterialOptimizationEnabled(opts) {
   const mode = String((opts && (opts.optimizeMaterials || opts.materialOptimization)) || 'off').toLowerCase();
   return mode !== 'off' && mode !== 'none';
@@ -1366,10 +1398,10 @@ function exportUSDZ(usd, remap, opts) {
     arkitCompatible: !!opts.arkitCompatible,
     optimizeMaterials,
     optimizeGeometry,
-    materialAtlasSize: opts.materialAtlasSize || 4096,
-    materialAtlasTileSize: opts.materialAtlasTileSize || 512,
+    materialAtlasSize: opts.materialAtlasSize ?? 4096,
+    materialAtlasTileSize: opts.materialAtlasTileSize ?? 512,
     materialAtlasPadding: opts.materialAtlasPadding == null ? 2 : opts.materialAtlasPadding,
-    materialAtlasMinGroupSize: opts.materialAtlasMinGroupSize || 2,
+    materialAtlasMinGroupSize: opts.materialAtlasMinGroupSize ?? 2,
     meshMergeMaxInputFaces: opts.meshMergeMaxInputFaces || 2048,
     meshMergeMaxInputPoints: opts.meshMergeMaxInputPoints || 4096,
     meshMergeMaxAggregateFaces: opts.meshMergeMaxAggregateFaces || 65536,

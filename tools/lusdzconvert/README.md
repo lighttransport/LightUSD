@@ -41,8 +41,26 @@ source sizes, aggregate face counts, and minimum group size.
 `-optimizeMaterials preview` also merges equivalent supported PreviewSurface
 graphs with different surface shader names or unused shader children. It keeps
 unsupported graphs, cycles and extra material outputs on the exact comparison
-path. `atlas` mode preserves the legacy fallback to preview deduplication and emits a
-warning; it does not generate texture atlases.
+path.
+
+`-optimizeMaterials atlas` applies preview deduplication, then packs compatible
+diffuse textures into shared PNG atlases. Compatible materials use the same
+UsdPreviewSurface graph with one clamp-wrapped UsdUVTexture, explicit `sRGB` or
+`raw` color space, and a reader for `primvars:st`. The diffuse texture can also
+supply opacity. Directly bound leaf meshes with static UVs in [0, 1] receive a
+dedicated atlas UV primvar, including the original interpolation and indices.
+Graphs with additional texture inputs, other wrapping modes, or unsupported
+bindings keep their original materials. Native conversion packages the generated
+images into USDZ or writes them beside a flat USDA/USDC file.
+
+`-materialAtlasSize` caps the atlas edge, `-materialAtlasTileSize` sets the
+square tile size, and `-materialAtlasPadding` sets the replicated border
+(defaults 4096, 512 and 2 respectively). Atlas mode requires at least one
+padding pixel. `-materialAtlasMinGroupSize` defaults to two materials.
+The core JS folder and streaming converters accept the corresponding camelCase
+options and package the generated atlases alongside their source assets.
+Streaming atlas generation stages source images within the converter's
+configured asset budget.
 `--bake-udim grid|dense` uses the same atlas/geometry algorithms and core layer
 adapter as WASM. It supports flat USDA/USDC and both USDZ root formats, including
 root-layer variant contents with `-noFlatten`. Floating-point tiles remain EXR;

@@ -12,6 +12,7 @@ endif()
 add_library(lightusd_usdz_convert STATIC
   ${PROJECT_SOURCE_DIR}/src/usdz/usdz-converter.cc
   ${PROJECT_SOURCE_DIR}/src/usdz/udim-convert.cc
+  ${PROJECT_SOURCE_DIR}/src/usdz/material-atlas.cc
   ${PROJECT_SOURCE_DIR}/src/udim-core-layer.cc
   ${PROJECT_SOURCE_DIR}/src/udim-layer.cc
   ${PROJECT_SOURCE_DIR}/src/udim-layer-geometry.cc
