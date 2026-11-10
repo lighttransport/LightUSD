@@ -523,9 +523,18 @@ void RunVirtualFallbackDownsample() {
   light3d::Image atlas;
   std::vector<lusdview::DrawPtexFaceRectCPU> rects;
   lusdview::PtexAtlasBuildStats stats;
-  CHECK(lusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
-                                 &stats, &error));
+  // Each face needs ten RGBA table texels in addition to its fallback
+  // pixel. A budget that covers only the table must fail.
+  CHECK(!lusdview::BuildPtexAtlas(reader, options, false, &atlas, &rects,
+                                  &stats, &error));
+  CHECK(!error.empty());
+  options.maxAtlasBytes += 2u * 4u;
+  error.clear();
+  const bool built = lusdview::BuildPtexAtlas(reader, options, false, &atlas,
+                                             &rects, &stats, &error);
+  CHECK(built);
   CHECK(rects.size() == 2);
+  if (!built || rects.size() != 2) return;
   CHECK(rects[0].reserved == 1 || rects[1].reserved == 1);
   CHECK(atlas.data.size() <= options.maxAtlasBytes);
 }

@@ -61,7 +61,7 @@ render_one() {
   local mode="$1" asset="$2" shot="$3" log
   local a; a="$(backend_args "$mode")"
   # shellcheck disable=SC2086
-  log="$("${RUN[@]}" "$LUSDVIEW" $a --frames "$FRAMES" --size "$SIZE" \
+  log="$("${RUN[@]}" "$LUSDVIEW" --headless $a --frames "$FRAMES" --size "$SIZE" \
          --screenshot "$shot" "$asset" 2>&1)"
   if echo "$log" | grep -Eiq 'CUDA ray tracing unavailable|no CUDA|NVRTC.*failed|renderer init failed: no Vulkan|no Vulkan physical device|Vulkan (backend )?unavailable|Failed to create Vulkan'; then
     echo "UNAVAIL"; return

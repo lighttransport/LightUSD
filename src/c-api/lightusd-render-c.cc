@@ -1356,6 +1356,8 @@ lightusd_status lightusd_render_convert_material(
   td::ConverterConfig config;
   const lightusd_status config_status = BuildConverterConfig(stage, cfg, &config);
   if (config_status != LIGHTUSD_OK) return config_status;
+  lightusd::AssetResolver resolver;
+  ConfigureDefaultResolver(config, resolver, cfg && cfg->use_default_asset_resolver);
   td::RenderSceneConverter converter(config);
   td::RenderMaterial material;
   td::RenderScene converted;

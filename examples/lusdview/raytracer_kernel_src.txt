@@ -15,7 +15,14 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId;
               unsigned int directLightMask; unsigned int shadowLightMask; };
-struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip; int imageSlot; int udimLayer[100]; };
+// Must match HostTextureDesc in rt_scene_build.hh.
+struct TexDesc {
+  int offset, width, height, wrapS, wrapT, srgb, isUdim, isPtex;
+  int ptexCols, ptexRows, ptexTileEdge, ptexRectTexelOffset, ptexFaceCount;
+  int ptexMipLevels, mipCount, firstMip, imageSlot;
+  int udimLayer[100];
+};
+static_assert(sizeof(TexDesc) == 468, "RT texture descriptor layout mismatch");
 struct GeomPropDesc { unsigned int hash; unsigned int components; unsigned int valueOffset; };
 
 typedef struct { float x, y, z; } F3;

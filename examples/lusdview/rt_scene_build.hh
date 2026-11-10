@@ -109,6 +109,8 @@ struct HostTextureDesc {
   int imageSlot{-1};     // source VkImage slot for direct compressed Ptex sampling
   int udimLayer[100]{};  // texture descriptor ids for tiles 1001..1100
 };
+static_assert(sizeof(HostTextureDesc) == 468,
+              "RT texture descriptor layout mismatch");
 
 struct HostTextureTable {
   std::vector<uint8_t> texels;

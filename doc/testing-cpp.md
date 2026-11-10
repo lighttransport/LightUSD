@@ -4243,17 +4243,16 @@ The native build, optional viewer/texture benchmark, Node profile, and both
 production demo sites are checked independently; legacy is a separate
 compile-only product.
 
-Migration follow-ups and coverage limitations are tracked below. The remaining
-GPU failures listed explicitly as pre-existing also reproduce on `main`:
+Migration follow-ups and coverage are tracked below:
 
 | Area | Gap | Found by |
 |---|---|---|
 | lusdcat | Core `--explain` uses the public C API property tracer; workflow checks require sampled values, selected-variant provenance and connection chains | `workflow_tools` |
 | usd_to_gltf | Core C API example; workflow checks require GLB structure, strict loss refusal, UVs and embedded textures for loose files and USDZ | `workflow_tools` |
-| lusdzconvert | `-optimizeMaterials dedupe` is now shared core functionality with restored regression coverage; PreviewSurface graph deduplication now canonicalizes surface shader names and ignores unused shader children, with conservative exact comparison for unsupported graphs; atlas mode preserves the legacy warning and preview-dedupe fallback; true material-atlas generation remains unsupported; static whole-mesh geometry merging is now shared with the core WASM configured-export API; native UDIM grid/dense baking now shares the WASM implementation. High-level core JS composition/variant overrides and dedupe/mesh merging are wired; core image conversion, channel packing, size/quality fitting, folder/streaming texture remapping, and audio processor hooks are wired and covered by `core-image-convert.test.mjs` and `core-converter-textures.test.mjs`; core JS ARKit policy forces composition, a USDC root, Y-up metadata and PNG/JPEG textures; non-flattened dependency packaging preserves archive directories and source bytes | `tests/run-lusdzconvert-regression.sh` |
+| lusdzconvert | `-optimizeMaterials dedupe` is now shared core functionality with restored regression coverage; PreviewSurface graph deduplication now canonicalizes surface shader names and ignores unused shader children, with conservative exact comparison for unsupported graphs; atlas mode generates shared PNG diffuse atlases for compatible static PreviewSurface materials and preserves indexed UVs; static whole-mesh geometry merging is now shared with the core WASM configured-export API; native UDIM grid/dense baking now shares the WASM implementation. High-level core JS composition/variant overrides and dedupe/mesh merging are wired; core image conversion, channel packing, size/quality fitting, folder/streaming texture remapping, and audio processor hooks are wired and covered by `core-image-convert.test.mjs` and `core-converter-textures.test.mjs`; core JS ARKit policy forces composition, a USDC root, Y-up metadata and PNG/JPEG textures; non-flattened dependency packaging preserves archive directories and source bytes | `tests/run-lusdzconvert-regression.sh` |
 | lusdview | `lusdview_{lighting,texture_pipeline,geometry_primvar,openpbr_material}_test` exercised the removed legacy RenderScene -> DrawScene converter and were deleted; core-path coverage is the screenshot/backend suites in `examples/lusdview/tests.cmake` | removed with the legacy loader |
 | lusdview | Light/camera gizmos now use retained core records and the Render scene hierarchy uses composed draw-record paths. The MCP `vchar_physics` preview now uses public C API physics queries and an independent editable core stage | `lusdview_scene_gizmos_test`, `lusdview_physics_preview_test`, `lusdview-core-physics-preview` |
-| lusdview | `lusdview_ptex_atlas_test` segfaults (also on the pre-refactor `main` build); `lusdview-opacity-material`, `lusdview-cpu-ptex-routing`, `lusdview-backend-parity` (timeout) and the two HIP texture-semantic tests fail the same way on `main` | pre-existing |
+| lusdview | The opacity and both HIP texture-semantic tests pass with matching host and device texture descriptors. The backend parity test passes in headless mode. | `examples/lusdview/tests.cmake` |
 | lusdview | `lusdview-dome-orientation` passes with texture tools enabled; it checks that rotation changes core IBL and loose/USDZ renders agree. Camera/light record checks likewise compare loose input with USDZ instead of the ignored legacy-loader flag | `examples/lusdview/tests.cmake` |
 
 The multi-UV normal-map fixture uses an oblique key light so both tangent
@@ -4470,3 +4469,19 @@ loading. The Node regression profile passes 76 checks. Pixar comparison covers
 compares 499 inputs without failures. The optional texture benchmark passes
 all six Vulkan compression formats and native 8/16-bit TIFF inputs (hardware
 and software Vulkan smoke runs were checked separately).
+
+Material atlas regressions run through `core_lusdzconvert_materials` and
+`web/js/tests/core-converter-materials.test.mjs`. They check shared material
+bindings, atlas UVs and loose sidecars, and confirm that an incompatible
+repeat-wrapped material retains its texture. The web regression samples PNG
+tile and gutter pixels and reloads the folder and streaming packages with
+both root formats.
+
+The Ptex atlas fallback test covers both sides of its minimum byte budget.
+An 80-byte budget covers the two face-table records and rejects the build.
+An 88-byte budget also holds two fallback pixels and verifies virtual
+downsampling. The test checks that a build succeeded before indexing its output.
+CPU Ptex routing also checks that a texture forwarded through a referenced
+material interface resolves at the scene anchor when the inherited look-layer
+anchor has no matching file. The viewer enables the public material converter's
+default resolver for this lookup.

@@ -4202,6 +4202,10 @@ bool CopyPublicMaterial(const lightusd_stage* stage, const std::string& path,
       converterConfig.material.allow_missing_textures ? 1 : 0;
   config.target_color_space =
       static_cast<uint8_t>(converterConfig.material.target_color_space);
+  // A composed material interface can inherit its prim's anchor from a
+  // referenced look layer. Allow the native resolver to find the asset at
+  // the scene anchor when it does not exist at that inherited anchor.
+  config.use_default_asset_resolver = 1;
   config.max_threads = 1;
   lightusd::api::RenderScene publicScene;
   if (lightusd_render_convert_material(stage, prim, &config,
