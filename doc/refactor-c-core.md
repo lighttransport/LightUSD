@@ -1,5 +1,10 @@
 # C-style core consolidation
 
+> **Historical (pre-1.1).** This document describes the `src/next` / legacy
+> split before LightUSD 1.1 promoted `next` to the core (`src/`) and moved the
+> old implementation to `src/legacy/`. Paths and names below are as they were;
+> see [core.md](core.md#migrating-from-next) for the mapping.
+
 ## Consolidation scope
 
 The renewed consolidation work prioritizes native and WASM compile time and
@@ -456,7 +461,7 @@ build measured 95.27 wall seconds, 391.25 CPU seconds, and 277 MiB peak child
 RSS in the current build tree.
 
 The reproducible compile harness also measured the reduced WASM boundary after
-the latest exports: `binding-next-util.cc` compiles in 2.74 seconds at 206 MiB
+the latest exports: `binding-core-util.cc` compiles in 2.74 seconds at 206 MiB
 peak child RSS, while the render lifecycle unit compiles in 3.60 seconds at
 223 MiB. The report records the Emscripten version, command lines, object
 sizes, and working-tree fingerprint in
@@ -468,7 +473,7 @@ versus the prior single 3.60-second sample; that timing difference is
 directional, not a clean-build result. The current report is
 `/tmp/lightusd-binding-compile-current.json`.
 Moving `getLight()` to the typed boundary removes the separate
-`binding-next-render-scene.cc` translation unit. With the same Emscripten
+`binding-core-render-scene.cc` translation unit. With the same Emscripten
 command and two isolated runs per unit, the prior lifecycle-plus-scene objects
 totaled 180,004 bytes; the updated lifecycle object is 151,666 bytes (15.7%
 smaller). The serial per-unit medians sum to 5.29 seconds before versus 3.44
@@ -1394,7 +1399,7 @@ The exact next-only `RenderStream.prototype` surface is captured in
 `web/js/tests/renderstream-api-inventory.json` and checked against the live
 module by `usdzconvert-next-only.test.mjs` (348 methods, including compatibility
 getters and aliases). Typed operations map by family to the
-`lightusd_next_render_*` POD/checked-copy exports in `web/binding-next-api.h`;
+`lightusd_next_render_*` POD/checked-copy exports in `web/binding-core-api.h`;
 the corresponding native resource-info, buffer, and string-copy functions are
 the `lightusd_render_*` exports in `lightusd-render-c.h`. Compatibility getters
 are assembled in JS from those primitives and intentionally have no aggregate
@@ -2064,7 +2069,7 @@ subdivision, render-stream methods and aliases. Objects must still be explicitly
 `delete()`d; `isDeleted()` is supported. Embind-specific conveniences such as
 `clone()` and `deleteLater()` are not part of this API. Native IDs are uint32
 on both wasm32 and memory64, and exhausted generations retire instead of
-wrapping. The exports in `web/binding-next-api.h` are the internal browser C
+wrapping. The exports in `web/binding-core-api.h` are the internal browser C
 ABI, not the installed native C API. They use generation-checked uint32 handles
 and typed counted inputs, POD records, or bounded output copies; the next-only
 module has no emval object dispatcher. Do not call destruction directly from
@@ -2462,8 +2467,8 @@ inventory.
 An isolated three-run Emscripten 4.0.14 `-Oz` compile baseline for the
 post-migration dispatcher is in the ignored
 `web/build_next_ninja/render-dispatch-compile.json` report. Median wall time
-is 3.60 seconds for `binding-next.cc` and 1.99 seconds for
-`binding-next-api.cc`; their objects are 241,082 and 27,349 bytes. This
+is 3.60 seconds for `binding-core.cc` and 1.99 seconds for
+`binding-core-api.cc`; their objects are 241,082 and 27,349 bytes. This
 records current compile cost only, with no matched pre-change timing.
 
 `NextFlattenSession.begin()`, `provideLayer()`, variant overrides, and `end()`
@@ -2495,8 +2500,8 @@ The matched three-run isolated compile comparison uses the same Emscripten
 4.0.14 command lines before and after the flatten-session migration; reports
 are in the ignored `render-dispatch-compile.json` and
 `flatten-typed-compile.json` files under `web/build_next_ninja`. Median wall
-time changed from 3.60 to 3.59 seconds for `binding-next.cc` and 1.99 to
-1.94 seconds for `binding-next-api.cc`; those differences are too small to
+time changed from 3.60 to 3.59 seconds for `binding-core.cc` and 1.99 to
+1.94 seconds for `binding-core-api.cc`; those differences are too small to
 establish a compile-time improvement. The corresponding objects changed from
 241,082 to 234,195 bytes and 27,349 to 28,697 bytes, a net reduction of
 5,539 bytes across the two units.
@@ -2530,8 +2535,8 @@ memory64 next-only adapter passes. Linked sizes are 1,664,582 bytes
 preceding typed-validation state.
 
 The same-command three-run compile comparison against the earlier
-`flatten-typed-compile.json` report shows `binding-next.cc` unchanged at a
-3.59-second median and `binding-next-api.cc` at 1.94 versus 1.97 seconds.
+`flatten-typed-compile.json` report shows `binding-core.cc` unchanged at a
+3.59-second median and `binding-core-api.cc` at 1.94 versus 1.97 seconds.
 Their combined object size fell by 2,453 bytes. The current report is the
 ignored `web/build_next_ninja/global-typed-compile.json`; this is a code-size
 gain, not a demonstrated compile-time speedup.
@@ -2550,8 +2555,8 @@ class using generic emval dispatch.
 
 The matched three-run isolated compile comparison uses the same Emscripten
 4.0.14 commands as `global-typed-compile.json`. Median wall time moved from
-3.59 to 3.56 seconds for `binding-next.cc` and from 1.97 to 1.92 seconds for
-`binding-next-api.cc`; this small change is not a reliable compile-time gain.
+3.59 to 3.56 seconds for `binding-core.cc` and from 1.97 to 1.92 seconds for
+`binding-core-api.cc`; this small change is not a reliable compile-time gain.
 Their combined object size fell by 6,583 bytes. The ignored result is
 `web/build_next_ninja/subdiv-typed-compile.json`.
 
@@ -2566,7 +2571,7 @@ the next-only USDZ conversion suite. The full wasm32 Node profile passes
 24/24. Linked sizes are 1,662,918 bytes (wasm32) and 1,865,611 bytes
 (memory64), down 580 and 751 bytes from the subdivision checkpoint. The matched
 three-run isolated compile comparison (`rewrite-typed-compile.json`) has
-`binding-next.cc` at 3.59 seconds versus 3.56 and `binding-next-api.cc` at
+`binding-core.cc` at 3.59 seconds versus 3.56 and `binding-core-api.cc` at
 2.03 versus 1.92; this does not establish a compile-time gain. The combined
 object size fell by 12,028 bytes. The converter's remaining stage, asset,
 mesh-buffer, and export methods still use generic emval dispatch.
@@ -2582,8 +2587,8 @@ export kinds, and stale/wrong-class handles. Both next-only USDZ suites pass,
 as does the full wasm32 Node profile (24/24). The C header also passes a
 strict C11 syntax check. Linked sizes are 1,660,461 bytes (wasm32) and
 1,862,569 bytes (memory64), down 2,457 and 3,042 bytes from the typed-rewrite
-checkpoint. Matched three-run isolated compile medians for `binding-next.cc`
-and `binding-next-api.cc` are 3.45 and 1.89 seconds, versus 3.59 and 2.03
+checkpoint. Matched three-run isolated compile medians for `binding-core.cc`
+and `binding-core-api.cc` are 3.45 and 1.89 seconds, versus 3.59 and 2.03
 seconds before this step; their combined objects fell by 22,621 bytes. The
 ignored measurement is `web/build_next_ninja/converter-typed-compile.json`.
 The next-core converter, render, flatten, and subdivision adapter no longer
@@ -2942,21 +2947,21 @@ The two production next-only WASM binding translation units no longer include
 layer, resolver, schema, writer, and Stage dependencies. The next-only module
 relinks, and the C dispatch plus full next-only `usdzconvert` Node regressions
 pass. Same-tree three-run compile checks show unchanged object sizes and lower
-peak compiler RSS: 246,228 to 241,916 KiB for `binding-next.cc`, and 230,020 to
-218,912 KiB for `binding-next-render-lifecycle.cc`. Compile medians were 3.55
+peak compiler RSS: 246,228 to 241,916 KiB for `binding-core.cc`, and 230,020 to
+218,912 KiB for `binding-core-render-lifecycle.cc`. Compile medians were 3.55
 to 3.55 s and 3.39 to 3.51 s respectively, so these are memory/dependency
 boundary reductions rather than compile-time wins.
 
-`binding-next-common.hh` now keeps only its declaration-level standard
+`binding-core-common.hh` now keeps only its declaration-level standard
 headers and the Tydra render-data types it names. The Stage, mesh schema, JSON,
 and scene-helper headers no longer fan out through the shared header; the two
-material files that use scene helpers include `binding-next-scene.hh` directly,
+material files that use scene helpers include `binding-core-scene.hh` directly,
 and the render declaration header owns the Stage/mesh types it stores. This
-removes accidental standard-header dependencies from `binding-next-util.cc`,
+removes accidental standard-header dependencies from `binding-core-util.cc`,
 which now includes its own string-formatting, set, and memory-copy headers.
 Both wasm32 and memory64 modules build, and the next C-dispatch and next-only
 `usdzconvert` regressions pass on both widths. For
-`binding-next-render-merge.cc`, a same-tree three-run compile comparison was
+`binding-core-render-merge.cc`, a same-tree three-run compile comparison was
 2.70 to 2.48 s, peak RSS 185,092 to 184,568 KiB, with object size unchanged at
 69,426 bytes.
 
@@ -6169,8 +6174,8 @@ API, product switch, optimization flag, or WASM size target.
 | `crate/crate-reader-stage.cc` | Prim bodies, property records/metadata, pseudo-root metadata and extension decoding |
 | `render-converter-preview.cc` | Shader parameter/connection/color resolution and texture/UV/UDIM extraction |
 | `urdf-to-usd.cc` | Common JSON/authoring utilities, geometry, physics, extension entities, lights/cameras/materials |
-| `binding-next-render-lifecycle.cc` | Geometry, scene, shading and animation queries, plus asset streaming |
-| `binding-next-layer.cc` | JSON import, JSON export, shared JSON value conversion and inspection |
+| `binding-core-render-lifecycle.cc` | Geometry, scene, shading and animation queries, plus asset streaming |
+| `binding-core-layer.cc` | JSON import, JSON export, shared JSON value conversion and inspection |
 
 Session `Impl`, its locks, resolver/cache lifetime, and reentrancy tracking stay
 in one implementation TU. The crate coordinator retains scheduling and ordered

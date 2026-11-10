@@ -11,7 +11,7 @@ Version-bump, tagging, and publish procedure for LightUSD.
 
 | Component | File | How version is set |
 |---|---|---|
-| C++ library (compile-time constants) | `src/lightusd.hh` (the `version_major/minor/micro/rev` constants near line 51) | Hand-edit |
+| C++ library (compile-time constants) | `src/lightusd-core.hh` (`version_major/minor/micro`, `version_string`) and `lightusd_version_string()` in `src/c-api/lightusd-c.cc` (checked by `tests/c-api/test_lightusd_c.c`) | Hand-edit |
 | Python wheel (`lightusd` on PyPI) | derived from git tag via `setuptools_scm` (config in `pyproject.toml` `[tool.setuptools_scm]`; written to `python/lightusd/_version.py` at build time) | Automatic from tag |
 | NPM package (`lightusd` on npmjs.org) | `web/npm/package.json` `"version"` (source-of-truth) and `web/js/package.json` `"version"` | Hand-edit; workflow can override via `release_version` input |
 
@@ -25,16 +25,18 @@ audited commit on `main`.
 
 ### 1a. C++ version constants
 
-Edit `src/lightusd.hh`:
+Edit `src/lightusd-core.hh`:
 
 ```cpp
-constexpr int version_major = 0;
-constexpr int version_minor = 9;
-constexpr int version_micro = 9;    // bump
-constexpr auto version_rev = "rc6"; // e.g. "rc1" for pre-releases, "" for stable
+constexpr int version_major = 1;
+constexpr int version_minor = 1;
+constexpr int version_micro = 0;
+constexpr const char* version_string = "1.1.0";
 ```
 
-These are the only C++ version constants; `CMakeLists.txt` does not hardcode a version.
+and the matching string returned by `lightusd_version_string()` in
+`src/c-api/lightusd-c.cc` (plus its check in `tests/c-api/test_lightusd_c.c`).
+`CMakeLists.txt` does not hardcode a version.
 
 ### 1b. NPM package version
 
@@ -60,8 +62,10 @@ version_file = "python/lightusd/_version.py"
 ```bash
 git checkout main
 git pull
-# edit src/lightusd.hh, web/npm/package.json, web/js/package.json
-git add src/lightusd.hh web/npm/package.json web/js/package.json
+# edit src/lightusd-core.hh, src/c-api/lightusd-c.cc, tests/c-api/test_lightusd_c.c,
+# web/npm/package.json, web/js/package.json
+git add src/lightusd-core.hh src/c-api/lightusd-c.cc tests/c-api/test_lightusd_c.c \
+  web/npm/package.json web/js/package.json
 git commit -m "Bump version to x.y.z"
 git push origin main
 ```
@@ -118,7 +122,7 @@ The `v*.*.*` tag pattern matches pre-release tags too (`v1.0.0-rc4`). The
 normalizes the hyphenated Git tag to PEP 440 form, so `v1.0.0-rc4` is published
 to PyPI as `1.0.0rc4`. To publish an RC to both PyPI and npm:
 
-1. Set `version_rev = "rc4"` in `src/lightusd.hh` (cosmetic; C++ side only).
+1. Optionally set `version_string = "1.1.0-rc4"` in `src/lightusd-core.hh` and `lightusd_version_string()` (cosmetic; C++ side only).
 2. Set `"version": "1.0.0-rc4"` in `web/npm/package.json` and `web/js/package.json` (npm/semver uses the hyphenated pre-release form; do not strip the hyphen).
 3. Push tag `v1.0.0-rc4` from the audited release commit on `main`.
 4. After the trusted-publishing workflow succeeds, install it with `pip install --pre lightusd==1.0.0rc4`.
@@ -152,10 +156,10 @@ Inputs:
 The job:
 
 1. Sets up Node 24 with `registry-url: https://registry.npmjs.org`.
-2. Installs Emscripten 7.0.0 and builds the `next` and `mcp` WASM products, each as WASM32 + WASM64 (MinSizeRel). The package ships the next product only (`lightusd_next[_64]` plus the geometry / raytrace / validator / exr feature modules and the MCP module); the legacy `lightusd[_64]` module is not built or published.
+2. Installs Emscripten 7.0.0 and builds the `core` and `mcp` WASM products, each as WASM32 + WASM64 (MinSizeRel). The package ships the core module (`lightusd[_64]` plus the geometry / raytrace / validator / exr feature modules and the MCP module); the compile-only `lightusd_legacy[_64]` module is never built or published.
 3. `npm run build:stage -- --release-version=<input>` (runs `web/npm/scripts/stage-package.mjs`; legacy/combined glue in a developer checkout is excluded).
 4. `npm run validate` (runs `web/npm/scripts/validate-package.mjs`).
-5. `npm run test:usda` — loads the `tests/usda` corpus through the staged package on the next backend.
+5. `npm run test:usda` — loads the `tests/usda` corpus through the staged package.
 6. `npm stage publish --provenance --access public --tag <npm_tag>` from `web/npm/dist`; approve the staged version on npmjs.com to make it live.
 
 Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `lightusd` package must trust this workflow. No npm token in repo secrets.
@@ -163,7 +167,7 @@ Publishing requires npm provenance (OIDC, `id-token: write`) — the npmjs `ligh
 The npm staging scripts live in `web/npm/`:
 
 - `build-package.sh` — top-level: ensures Node/emsdk, runs `build-wasm.sh`, then stages + validates.
-- `build-wasm.sh` — emcmake/ninja build of the `next` and `mcp` products, WASM32 + WASM64, in MinSizeRel.
+- `build-wasm.sh` — emcmake/ninja build of the `core` and `mcp` products, WASM32 + WASM64, in MinSizeRel.
 - `scripts/stage-package.mjs` — copies wasm/js into `web/npm/dist`, rewrites manifest version.
 - `scripts/validate-package.mjs` — `npm pack --dry-run` + structural check on `dist/`.
 
@@ -196,13 +200,15 @@ Or via the GitHub UI on the tag page. The release-notes body is hand-written (no
 
 ## 6. Post-release
 
-- Bump `version_micro` (or `version_minor`) in `src/lightusd.hh` on `main` to the next pre-release (e.g. `1.0.1` with `version_rev = "dev1"`).
+- Bump `version_micro` (or `version_minor`) in `src/lightusd-core.hh` (and `lightusd_version_string()`) on `main` to the next pre-release (e.g. `1.1.1-dev1`).
 - Optionally bump `web/npm/package.json` + `web/js/package.json` to a `-dev` version to make accidental publishes of intermediate builds easy to spot.
 
 ## Summary: files touched per release
 
 ```
-src/lightusd.hh              # C++ version constants
+src/lightusd-core.hh         # C++ version constants
+src/c-api/lightusd-c.cc      # lightusd_version_string()
+tests/c-api/test_lightusd_c.c
 web/npm/package.json         # npm package version
 web/js/package.json          # JS module version (keep in sync with web/npm)
 ```

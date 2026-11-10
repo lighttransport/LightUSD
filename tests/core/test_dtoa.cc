@@ -20,7 +20,7 @@
 //   5. Buffer safety     -- the fast path never writes past kDtoaBufSize.
 //
 // `test_dtoa exhaustive` additionally sweeps all 2^32 float bit patterns
-// (registered as ctest next_test_dtoa_exhaustive when
+// (registered as ctest core_dtoa_exhaustive when
 // LIGHTUSD_DTOA_EXHAUSTIVE_TEST=ON; multithreaded when built with
 // LIGHTUSD_ENABLE_THREAD).
 

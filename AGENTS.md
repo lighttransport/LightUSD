@@ -9,80 +9,36 @@ LightUSD is a secure, portable, dependency-free C++17 library for parsing and wr
 ## Repository Layout
 
 ```
-src/                       Core library sources (~250 .cc/.hh files)
-  ascii-parser*.{hh,cc}      Hand-written USDA parser (split across
-                             entry / props / basetype / timesamples /
-                             timesamples-array translation units)
-  crate-reader*.{hh,cc}      USDC binary (Crate) reader (split across
-                             arrays, paths, timesamples, values)
-  crate-writer.{hh,cc}       USDC binary writer (experimental but
-                             increasingly fidelity-locked)
-  crate-format.{hh,cc}       Crate binary layout, ValueRep, indices
-  crate-dump.{hh,cc}         Low-level crate inspection (`lusdcat
-                             --dump-crate-fields`)
-  crate-path-utils/          Path encoding helpers shared by reader/
-                             writer
-  usda-reader.{hh,cc}        High-level USDA reading
-  usdc-reader*.{hh,cc}       High-level USDC reading (also -prim,
-                             -property)
-  usda-writer.{hh,cc}        USDA writer (production)
-  usdc-writer.{hh,cc}        USDC writer entry (delegates to
-                             crate-writer)
-  pprinter*.{hh,cc}          Pretty-printer (Stage/Prim -> USDA text);
-                             pprint-meta / pprint-shader / pprint-enum
-                             / pprint-detail
-  stage-converter.cc         Stage <-> CrateData (LayerSpec) bridge
-                             used by writer
-  composition*.{hh,cc}       Composition arcs (references, payloads,
-                             inherits, specializes, variants),
-                             reconstruction, graph
-  prim-reconstruct*          Per-schema field reconstruction tables
-  ascii-parser-entry.cc      Registers prim/attr meta names
-  lightusd.{hh,cc}           Main API (LoadUSDFromFile, etc.)
-  stage.{hh,cc}              USD Stage (scene graph)
-  prim-types.{hh,cc}         Primitive type definitions
-  value-types.{hh,cc}        Value type system + DEFINE_TYPE_TRAIT
-  attribute-eval*.cc         Animatable<T> attribute evaluation
-                             (split across many TUs to keep
-                             template-instantiation costs sane)
-  usdGeom.{hh,cc}            Geometry prims (Mesh, Sphere, etc.)
-  usdShade.{hh,cc}           Materials and shaders
-  usdSkel.{hh,cc}            Skeletal animation
-  usdLux.{hh,cc}             Lights
-  usdPhysics.{hh,cc}         UsdPhysics (rigid bodies, joints,
-                             colliders) — physics-2026 branch focus
-  usdMtlx.{hh,cc}            MaterialX nodegraphs
-  usdAR.{hh,cc}              UsdAR (anchor / image / face)
-  usdFbx, usdMedia, usdObj   Adjacent format/asset schemas
-  c-lightusd.{h}              C API surface (stable, MIT-friendly)
-  c-lightusd-helpers.{h,cc}   C API impl + helpers (composition arc
-                             authoring, variant content, attribute
-                             setters, etc.)
-  c-lightusd-tydra.{h,cc}     C API for Tydra scene access
-  python/module.c            CPython abi3 extension entry (lightusd
-                             Python module — Stage / Prim / Attribute
-                             / Value / RenderScene types). Backed by
-                             the C API in c-lightusd-helpers.
-  core/                      Schema-agnostic primitives split out for
-                             tighter dependency graphs:
-    attribute.hh, attr-metas.hh, prim-metas.hh, metadata-base.hh,
-    composition-types.hh, list-op.hh, variant-types.hh, prim.hh,
-    prim-spec.hh, layer-types.hh, animatable.hh, instance-key.{hh,cc},
-    extent.hh, collection-api.hh, …
-  tydra/                     Tydra framework (USD -> render-ready)
-    render-data.{hh,cc}        Convert Stage to OpenGL/Vulkan scene
-    scene-access.{hh,cc}       Scene traversal and query APIs (also
-                               provides the introspection used by the
-                               C / Python APIs — GetProperty,
-                               GetPropertyNames, …)
-    texture-util.{hh,cc}       Texture loading / colorspace
-    attribute-eval-*           Tydra-side animatable evaluation
-    variant-{converter,support}.cc  Variant authoring/dispatch helpers
-  external/, nonstd/         Vendored deps (header-only): nonstd::
-                             optional, expected, string_view, fmt,
-                             stb_image, base122, miniz, …
-  next/                      Stable standalone next-generation core library
-                             and tests (`src/next`, `tests/next`)
+src/                       Core library (CMake project; `cmake -S src` builds it
+                           standalone, the root project adds it). Namespace
+                           `lightusd::` (Tydra: `lightusd::tydra::`).
+  lightusd-core.{hh,cc}      Umbrella API + version
+  load-usd.hh                LoadUSD / LoadUSDComposed / LoadUSDFromMemory
+  parser/                    USDA parser (parallel, lazy arrays)
+  crate/                     USDC (Crate) reader + writer
+  reader/, writer/           Format readers / USDA, USDC, USDZ writers
+  layer/, prim/, types/      Layer + PrimSpec storage, paths, Value system
+  stage/                     Stage, UsdPrim, StageSession
+  pcp/, composition/         Composition engine (LIVRPS), flatten
+  pipeline/                  Streaming flatten / convert pipelines
+  schema/, eval/             Schema helpers, attribute / xform / clip eval
+  resolver/                  Asset resolver, dependency report
+  diff/                      Layer diff (lusddiff, JS usddiff)
+  usdz/                      USD -> USDZ converter (lusdzconvert)
+  tydra/                     Render-scene conversion, scene preview,
+                             texture cache / utilities, URDF/MJCF import
+  tsd/                       Subdivision (catmullClark / loop / bilinear)
+  c/, c-api/                 C core (`lu_*`) and the public C API
+                             (`lightusd-c.h`)
+  python/                    CPython extension sources (py-*.c)
+  mcp/                       MCP server (tools / resources over the C API)
+  validation/                Native validation
+  external/, nonstd/         Vendored third-party code
+  legacy/                    Pre-1.1 implementation (namespace
+                             `lightusd::legacy`). Compiled with
+                             `-DLIGHTUSD_BUILD_LEGACY=ON`, never tested or
+                             shipped; its test programs live in
+                             `tests/legacy/`.
 
 python/                    CPython abi3 wheel (built from
                            src/python/module.c via setuptools +
@@ -96,30 +52,25 @@ python/                    CPython abi3 wheel (built from
   README.md                  User-facing Python docs
 
 tests/                     C++ tests + roundtrip + Python harness
-  unit/                      Acutest-based unit tests (unit-*.cc, ~1020
-                             tests)
-  usda/                      USDA test fixture files
-  usdc/                      USDC test fixture files
-  parse_usd/                 Python-driven parse test runner
-  tydra_to_renderscene/      Tydra conversion tests
-  feat/                      Feature-specific test miniprograms
-  fuzzer/                    libFuzzer corpora + harness sources
-  compare-usda.js            Roundtrip comparison (lusdcat vs usdcat)
-  run-usdcat-compare.sh      Batch roundtrip test runner
+  core/                      Core unit tests and the `lusdcat` CLI
+  tydra/                     Tydra tests
+  c-api/                     C API tests
+  usda/, usdc/               Test fixture files
+  legacy/                    Legacy test programs (compiled, not run)
+  run-*.sh                   Shell regressions (registered against the
+                             core lusdcat)
 
 examples/                  Standalone example apps (separate builds):
-                           lusdcat (in the default `next` product, `lusdcat`
-                           is built from `tests/next/lusdcat.cc` by
-                           `src/next`; this directory is the legacy fallback),
+                           workflows (quickstart), lusdview (GL/Vulkan
+                           viewer), lusdquicklook,
                            api_tutorial, asset_resolution,
                            c_api_example, mcp_server, file_format,
                            js-script, progressive_composition,
-                           lmetalview (native macOS Swift + Metal viewer,
-                           next product only; build with
-                           `-DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`),
+                           lmetalview (native macOS Swift + Metal viewer;
+                           `-DLIGHTUSD_BUILD_LMETALVIEW=ON`),
                            ld3d12view (native Windows Direct3D 12 viewer on the
-                           lmetalview core + lightui; next product only; build
-                           with `-DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON`), etc.
+                           lmetalview core + lightui;
+                           `-DLIGHTUSD_BUILD_LD3D12VIEW=ON`), etc.
 examples/common/light3d/   Shared example math + camera (`camera-nav.*` is
                            used by both lusdview and lmetalview)
 models/                    Test USD files for development
@@ -182,8 +133,8 @@ cd python && python3 -m pytest tests/ -q
 - `LIGHTUSD_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
 - `LIGHTUSD_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
 - `LIGHTUSD_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `lusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
-- `LIGHTUSD_NEXT_BUILD_LMETALVIEW=ON` - Build the native macOS Swift + Metal viewer example `lmetalview` (next product only; requires a Swift toolchain). On Windows this option builds only its portable core (`lmetalview_core`).
-- `LIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON` - Build the native Windows Direct3D 12 viewer example `ld3d12view` (next product only; Windows only; needs only the Windows SDK; uses the vendored `examples/common/lightui` for the window and HUD). Also builds `lmetalview_core`.
+- `LIGHTUSD_BUILD_LMETALVIEW=ON` - Build the native macOS Swift + Metal viewer example `lmetalview` (requires a Swift toolchain). On Windows this option builds only its portable core (`lmetalview_core`).
+- `LIGHTUSD_BUILD_LD3D12VIEW=ON` - Build the native Windows Direct3D 12 viewer example `ld3d12view` (Windows only; needs only the Windows SDK; uses the vendored `examples/common/lightui` for the window and HUD). Also builds `lmetalview_core`.
   - `LUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
 
 ### GUI viewer (`lusdview`) + Vulkan debugging
@@ -260,7 +211,7 @@ there (e.g. `lusdview-skinning-screenshot-diff`, `lusdview-instanced-prototype-s
 (`XCTEST_REAL_DISPLAY=1 scripts/xctest.sh ...`). On macOS/Windows the script just runs the
 command.
 
-The stable `next` module (`src/next/`, `tests/next/`) is also a standalone CMake project with its own Debug test build. With the default native product (`LIGHTUSD_NATIVE_PRODUCT=next`), its tests are registered in the main native `ctest` tree and the unified `lusdcat` CLI is built there; the standalone project remains the way to run the full `next` Debug suite (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
+The core (`src/`, `tests/core/`) is also a standalone CMake project (`cmake -S src`) with its own Debug test build; the root project registers the same tests in the main `ctest` tree. The legacy implementation (`src/legacy/`) is compiled with `-DLIGHTUSD_BUILD_LEGACY=ON` but registers no tests (see [Legacy tests](doc/testing-cpp.md#legacy-tests-compiled-not-run)).
 
 ### Web/WASM regression procedure
 
@@ -277,21 +228,18 @@ Before merging refactors or feature branches, confirm all required checks pass:
 1. Validate clean build and native regression coverage
 
 ```bash
-cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
+cmake -S . -B build -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON \
+  -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build -j16
-cd build
-ctest --output-on-failure
-ctest -R unit --output-on-failure
-ctest -R roundtrip --output-on-failure
-ctest -R feat --output-on-failure
+scripts/xctest.sh ctest --test-dir build -j8 --output-on-failure
 ```
 
-2. Run stable `next` checks
+2. Confirm the legacy tree still compiles (no tests run)
 
 ```bash
-cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
+cmake -S . -B build_legacy -DLIGHTUSD_BUILD_LEGACY=ON -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
+cmake --build build_legacy -j16
 ```
 
 3. Run web/WASM checks when web or JS-facing code changed
@@ -329,20 +277,13 @@ cd "$ROOT_DIR"
 JOBS="${JOBS:-16}"
 
 cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build" \
-  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build "$ROOT_DIR/build" -j"$JOBS"
+scripts/xctest.sh ctest --test-dir "$ROOT_DIR/build" -j8 --output-on-failure
 
-cd "$ROOT_DIR/build"
-ctest --output-on-failure
-ctest -R unit --output-on-failure
-ctest -R roundtrip --output-on-failure
-ctest -R feat --output-on-failure
-
-cd "$ROOT_DIR"
-cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
-ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
+cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build_legacy" -DLIGHTUSD_BUILD_LEGACY=ON \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
+cmake --build "$ROOT_DIR/build_legacy" -j"$JOBS"
 
 cd "$ROOT_DIR/web/js"
 npm test

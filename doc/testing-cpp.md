@@ -66,12 +66,12 @@ this checkout, and the web gate against freshly built next and combined modules;
 a legacy-only `lightusd.js` lacks APIs required by the combined-module tests.
 
 After TU or include-boundary changes, also build next with
-`LIGHTUSD_NEXT_USE_PCH=OFF` and `TYDRA_NEXT_USE_PCH=OFF`. The threaded optimized
+`LIGHTUSD_USE_PCH=OFF` and `TYDRA_NEXT_USE_PCH=OFF`. The threaded optimized
 ASan/UBSan configuration above can serve this purpose. This checks actual
 dependencies that a precompiled header can otherwise conceal, including the
 session logger, USDA printer metadata/threading types, schema predicates, and
-shader texture extraction. Run both `next_test_tydra` and
-`next_test_urdf_to_usd` when splitting the next render/robot converters.
+shader texture extraction. Run both `core_tydra` and
+`core_urdf_to_usd` when splitting the next render/robot converters.
 For GCC sanitizer builds with the default RTTI-disabled libraries, add
 `-fno-sanitize=vptr` to the C++ flags: otherwise RTTI-enabled test TUs can emit
 references to library typeinfo that is deliberately absent. Address checking
@@ -184,8 +184,8 @@ The fixture root can also be supplied directly to a test executable with the
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The experimental `next` module (`src/next/`, `lightusd_next`) and
-> its tests under `tests/next/` are **not** part of this regression suite. They
+> **Scope:** The experimental `next` module (`src/`, `lightusd_core`) and
+> its tests under `tests/core/` are **not** part of this regression suite. They
 > are a standalone CMake project, are not built by the main `build/` (so they do
 > not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
 > treat `next` results as part of the regression gate. See
@@ -213,9 +213,9 @@ ctest --output-on-failure
 cd ..
 
 # 2. Run the stable next module tests. Keep this Debug: tests use assert().
-cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
+cmake -S src -B build-core -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-core -j16
+ctest --test-dir build-core --output-on-failure
 
 ## JSON backend
 
@@ -562,7 +562,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 The `lmetalview` example (native macOS Swift + Metal viewer, `next` product
 only) registers its own tests. Configure with
 `-DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON
--DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
+-DLIGHTUSD_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|
@@ -589,8 +589,8 @@ ctest -R '^lmetalview' --output-on-failure
 The `ld3d12view` example (native Windows Direct3D 12 viewer, `next` product
 only, Windows only) shares `lmetalview_core`, so `lmetalview_core_test` also runs
 on Windows. Configure with `-DLIGHTUSD_NATIVE_PRODUCT=next
--DLIGHTUSD_NEXT_BUILD_EXAMPLES=ON -DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON
--DLIGHTUSD_NEXT_BUILD_TESTS=ON`. Every `ld3d12view-*` test uses the WARP software
+-DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON
+-DLIGHTUSD_BUILD_TESTS=ON`. Every `ld3d12view-*` test uses the WARP software
 adapter and a hidden window, so none needs a GPU; the input and loading tests
 post real window messages (`WM_DROPFILES`, `WM_KEYDOWN`, mouse clicks, `WM_SIZE`)
 through the window procedure. Tests marked "log" also check the program's stderr
@@ -686,7 +686,7 @@ memory pipeline checks local array edits through both composition engines:
 
 ```sh
 ctest --test-dir build_ninja \
-  -R '^next_test_(pcp|memory_flatten)$' --output-on-failure
+  -R '^core_(pcp|memory_flatten)$' --output-on-failure
 ```
 
 The strict OpenUSD flatten runner additionally compares the complete USDA,
@@ -694,7 +694,7 @@ USDC and optional supplemental composition corpora without relaxing list-op
 semantics or numeric tolerances:
 
 ```sh
-PXR_WORK_THREAD_LIMIT=1 node tests/next/run-next-pxr-flatten-diff.mjs \
+PXR_WORK_THREAD_LIMIT=1 node tests/core/run-next-pxr-flatten-diff.mjs \
   --next-usdcat build_ninja/lusdcat \
   --usdcat ref/dist/bin/usdcat --jobs 4 \
   --suite-root /path/to/aousd/releases/1.0.1
@@ -720,7 +720,7 @@ Collection and material-binding writer regressions can be run with:
 ```sh
 ./build_ninja/unit-test-lightusd usdc_reader_collection_binding_roundtrip_test
 ctest --test-dir build_ninja -R '^scope-imageable-roundtrip$' --output-on-failure
-node tests/next/test-compare-usda-booleans.cjs
+node tests/core/test-compare-usda-booleans.cjs
 ```
 
 The writer test covers typed bindings and collections on Model, Scope, and
@@ -733,7 +733,7 @@ Explicit empty list-op regressions can be run with:
 
 ```sh
 ./build_ninja/unit-test-lightusd usdc_reader_prim_metadata_roundtrip_test
-node tests/next/test-compare-usda-listops.cjs
+node tests/core/test-compare-usda-listops.cjs
 ```
 
 AOUSD Core 1.0.1 makes `None` and `[]` equivalent for list ops. Both author an
@@ -840,7 +840,7 @@ raster/RT-renderable mesh conversion for both pipelines:
 - legacy `tydra::RenderSceneConverter::ConvertToRenderScene` (default target),
 - tydra-next `tydra::next::RenderSceneConverter::Convert` (when built with
   `PERFRC_ENABLE_NEXT`: the `bench-render-convert-next` target, or the
-  `bench_tydra_render` target in the standalone `src/next` tree).
+  `bench_tydra_render` target in the standalone `src` tree).
 
 It generates a deterministic synthetic multi-mesh scene (`--prims N`, mixed
 sizes; ~1.5M tris at the default 2048) or loads `--scene <file>`, runs
@@ -858,13 +858,13 @@ runs of the same build must print the same hash.
 ```
 
 Report-only: never fails on timings. Threading follows the repo-wide
-`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_NEXT_ENABLE_THREAD` CMake options. The
+`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_ENABLE_THREAD` CMake options. The
 **legacy** `LIGHTUSD_ENABLE_THREAD` stays opt-in (default OFF = fully serial);
-the **next core**'s `LIGHTUSD_NEXT_ENABLE_THREAD` now defaults **ON for native
+the **next core**'s `LIGHTUSD_ENABLE_THREAD` now defaults **ON for native
 builds** (WASM/Emscripten stays OFF, and `web/CMakeLists.txt` forces it off) —
 that switch enables the next parallel paths (source warm, arc-layer prefetch,
 parallel opinion fill, parallel crate-writer build). Pass
-`-DLIGHTUSD_NEXT_ENABLE_THREAD=OFF` to force the serial next path; without
+`-DLIGHTUSD_ENABLE_THREAD=OFF` to force the serial next path; without
 either switch the tool still runs and reports, just single-threaded.
 
 ## Fixture Coverage
@@ -1099,7 +1099,7 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
-### Stable `next` library tests
+### Core library tests
 
 CI builds the default `next` product with the MCP server enabled and with
 ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
@@ -1109,14 +1109,14 @@ also needs a configure check: the unified `lusdcat` target must be created
 only once. Keep compact writer-layout assertions valid on both 32-bit and
 64-bit targets.
 
-`next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
+`next` (`src/`, library `lightusd_core`) has a standalone regression suite.
 Run it explicitly when changing shared code or the next product:
 
-- It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
+- It is a **standalone CMake project** (`src/CMakeLists.txt` with its own
   `project()`). Its tests do not appear in the default legacy `ctest` tree.
   The root build can also select it with `LIGHTUSD_NATIVE_PRODUCT=next`; use a
   separate Ninja build tree for each product.
-- Its tests are gated behind `LIGHTUSD_NEXT_BUILD_TESTS` (**OFF by default**).
+- Its tests are gated behind `LIGHTUSD_BUILD_TESTS` (**OFF by default**).
 - These checks are a required regression gate in addition to the default
   native suite; passing one does not replace the other.
 
@@ -1134,7 +1134,7 @@ forwards the same core layout revision and value dimensions. Consumers must
 reject a mismatched core major/revision or target layout before passing value
 storage across a shared-library boundary.
 
-`next_test_int64_listop` checks signed 64-bit list-op metadata through USDA,
+`core_int64_listop` checks signed 64-bit list-op metadata through USDA,
 USDC, composition and PointInstancer masking. It covers all six authored runs,
 empty versus explicit clear, exact IDs beyond 2^53, malformed/count-limited
 payloads, three-layer edits, and deterministic comparisons with the string
@@ -1144,7 +1144,7 @@ Nested list-op values outside metadata are not covered by this codec.
 The CPU preview test checks inactiveIds visibility and rejection of preview
 cache version 3; current preview and source geometry versions are 4 and 2.
 
-`next_test_stream_residency` compares staged/streamed bytes for owned and
+`core_stream_residency` compares staged/streamed bytes for owned and
 observable mapped sources around the 32 MiB digest threshold. It checks serial
 and parallel encoders (9,001 prims), source-range and cross-source content
 deduplication, page advice before writing, bounded sink calls, lazy-value reuse
@@ -1194,8 +1194,8 @@ and export timings as well as size; investigate repeatable regressions above
 > Lean vectors against stock OpenUSD (`next_lean_build`, `next_lean_*_vectors`,
 > `next_lean_reflection_*`, `next_lean_axioms`, `next_lean_unicode_conformance`, ...)
 > now live in the separate `usdspec-conformance` repository. Only the C++
-> consumers (`next_test_lean_vectors*`, `next_test_name_order`) remain here, reading
-> the pinned copy in `tests/next/generated/lean/`. Paths and test names in the
+> consumers (`core_lean_vectors*`, `core_name_order`) remain here, reading
+> the pinned copy in `tests/core/generated/lean/`. Paths and test names in the
 > Lean-specific text below that refer to `verif/lean`, `scripts/*lean*` or
 > `next_lean_*` describe that repository.
 
@@ -1241,9 +1241,9 @@ Initial sublayer messages reach the CLI, session and composition helper outputs.
 #### Lean-generated conformance vectors
 
 `verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
-emits X-macro tables into `tests/next/generated/lean/` (committed). The
-`next_test_lean_vectors` ctest replays them against `src/next` and never
-skips; `next_test_lean_vectors_combine_chain` replays the corpus list-op
+emits X-macro tables into `tests/core/generated/lean/` (committed). The
+`core_lean_vectors` ctest replays them against `src` and never
+skips; `core_lean_vectors_combine_chain` replays the corpus list-op
 chains. When `lake` is on `PATH` or in `~/.elan/bin`, `next_lean_build`,
 `next_lean_test` and `next_lean_vectors_check` also run (the first build
 needs `lake exe cache get` for Mathlib). `next_lean_reflection_table`
@@ -1389,12 +1389,12 @@ ordinary prims and inline/content-backed variants, and reads LightUSD-written
 crate files through the pinned stock oracle. Native writer regressions cover raw
 property order through USDA (`sort_properties=false`), USDC and USDC-to-USDA,
 independently of authored `propertyOrder` metadata and sorted lookup slots.
-`next_test_name_order` checks the shared compatibility comparator and separates
+`core_name_order` checks the shared compatibility comparator and separates
 stage property ordering from raw PCP property children. The stock comparison
 also runs in Lean CI and can be reproduced with:
 
 ```bash
-python3 tests/next/test-name-order.py \
+python3 tests/core/test-name-order.py \
   --tool build_ninja/next_debug/test_name_order \
   --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
 ```
@@ -1416,7 +1416,7 @@ payload bytes and reader-retained vectors with the Lean expectations. Type-speci
 byte/index validation and allocation budgets remain in each production consumer.
 Non-canonical header semantics use the separate Lean `pxrRead` compatibility
 model: 256 generated mode vectors cover all 128 legal headers with empty and
-populated vectors. `tests/next/test-listop-modes.py` also compares 2,048 real crate
+populated vectors. `tests/core/test-listop-modes.py` also compares 2,048 real crate
 fields against stock 26.11 across Int64, token, string, path, reference and payload
 list ops, plus relationship targets and attribute connections. Discarded explicit vectors remain validated: malformed indices warn and drop the
 field in compatibility mode and reject strict AOUSD loads; memory/count limits
@@ -1424,7 +1424,7 @@ remain hard failures.
 Run it with:
 
 ```bash
-python3 tests/next/test-listop-modes.py \
+python3 tests/core/test-listop-modes.py \
   --tool build_ninja/next_debug/test_int64_listop \
   --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
 ```
@@ -1438,7 +1438,7 @@ arc survive and that no recursive child subtree appears.
 Regenerate after changing the model:
 
 ```bash
-cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
+cd verif/lean && lake exe usdspec-gen --out ../../tests/core/generated/lean
 ```
 
 See `doc/validation/lean-verification-2026-11-06.md` and `verif/lean/README.md`.
@@ -1454,8 +1454,8 @@ the standalone Debug suite at the release directory:
 git clone --depth 1 --branch release/1.0.1.post0 \
   https://github.com/aousd/core-spec-supplemental-public.git \
   build_ninja/aousd-supplemental
-cmake -S src/next -B build_ninja/next-debug -G Ninja \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
+cmake -S src -B build_ninja/next-debug -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
   -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$PWD/build_ninja/aousd-supplemental/releases/1.0.1"
 cmake --build build_ninja/next-debug -j16
 ctest --test-dir build_ninja/next-debug --output-on-failure
@@ -1468,7 +1468,7 @@ composition cases, and checks resolved samples in eight value-resolution cases.
 Three composition roots contain invalid text paths and must be rejected:
 `BasicInherits_root`, `ErrorRelocateWithVariantSelection_root`, and
 `SubrootReferenceAndVariants_root`. Their classification in
-`tests/next/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
+`tests/core/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
 accepted text, changed bytes, a different failure, or an unreadable binary
 dependency fails the gate. The release supplies no binary root for these three
 cases; all six available original binary dependencies are still required loads.
@@ -1502,10 +1502,10 @@ isolated directory and run:
 
 ```bash
 python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
-python3 tests/next/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
+python3 tests/core/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
   --oracle-python "$(command -v python3)" \
   --oracle-pythonpath build_ninja/stock-oracle
-python3 tests/next/run-aousd-supplemental.py \
+python3 tests/core/run-aousd-supplemental.py \
   --suite-root build_ninja/aousd-supplemental/releases/1.0.1 \
   --next-usdcat build_ninja/next-debug/lusdcat --category composition \
   --pcp-oracle-python "$(command -v python3)" \
@@ -1526,7 +1526,7 @@ dictionaries through USDA, USDC, and JSON exports.
 
 Regression coverage to keep in mind when touching `next`:
 
-- `test_tydra_next.cc` also covers the compiled chunk-storage engine: exact-tail
+- `test_tydra.cc` also covers the compiled chunk-storage engine: exact-tail
   compaction repeated under allocation accounting, self-append and COW,
   over-aligned POD elements, move/reuse, allocation-budget refusal, and
   read-only iteration/indexing without detachment. Writes now use
@@ -1547,7 +1547,7 @@ Regression coverage to keep in mind when touching `next`:
   render path — see `property-index.cc`).
 - `test_schemas.cc` — schema accessors (UsdGeomMesh etc.) must return empty /
   schema-fallback values on prims missing the queried arrays.
-- `test_tydra_next.cc` — the animation-extraction gate
+- `test_tydra.cc` — the animation-extraction gate
   (`animation.enabled && (HasTimeSamples() || HasValueClips())`) must keep
   emitting AnimationClips for value-clip-only stages (authored-time-sample
   stages, static stages, and `animation.enabled = false` are covered too,
@@ -1568,7 +1568,7 @@ Useful environment overrides:
 
 ```bash
 scripts/run-next-checks.sh --help
-BUILD_DIR=build-next-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
+BUILD_DIR=build-core-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
 ```
@@ -1577,15 +1577,15 @@ The equivalent manual commands are:
 
 ```bash
 # Configure the standalone next project with its tests enabled.
-cmake -S src/next -B build-next \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
-  -DLIGHTUSD_NEXT_ENABLE_THREAD=ON \
+cmake -S src -B build-core \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_ENABLE_THREAD=ON \
   -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
+cmake --build build-core -j16
+ctest --test-dir build-core --output-on-failure
 ```
 
-> **Caveat — use a Debug build.** The `tests/next/` programs validate via bare
+> **Caveat — use a Debug build.** The `tests/core/` programs validate via bare
 > `assert()`. Under `NDEBUG` (i.e. `Release`/`RelWithDebInfo`) `assert(expr)`
 > does not evaluate `expr`, so these tests check nothing — and any side effect
 > placed inside an `assert()` is silently dropped (this previously caused a
@@ -1595,7 +1595,7 @@ ctest --test-dir build-next --output-on-failure
 
 Current USDC-focused next coverage:
 
-- `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
+- `core_usdc_malformed` uses generated in-memory crate fixtures for bad
   magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
   counts, missing required sections, allocation caps, and malformed
   FIELD/FIELDSET/SPECS payloads. Generated valid compressed float/half arrays
@@ -1606,10 +1606,10 @@ Current USDC-focused next coverage:
   preserve deferred memory limits after reader destruction, and charge
   compressed bool integer scratch before allocation. Prefer compact cases when
   a malformed input can be described structurally.
-- `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
-  from `tests/next/crash_regressions/`. Prefer this only when the exact byte
+- `core_crash_regressions` replays minimized fuzzer-found binary inputs
+  from `tests/core/crash_regressions/`. Prefer this only when the exact byte
   sequence matters.
-- `next_test_usdc_roundtrip` includes focused roundtrip cases plus a dense
+- `core_usdc_roundtrip` includes focused roundtrip cases plus a dense
   generated fixture covering layer metadata, dictionaries, composition arcs,
   mesh arrays, per-property metadata, relationships, connection-flagged
   properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
@@ -1619,7 +1619,7 @@ Current USDC-focused next coverage:
   widening and bounded source views used by eager array decoding. Reference
   and payload offsets/scales retain binary64 precision through two crate cycles,
   including tiny scales that must not round to zero.
-- `next_test_lazy_array` checks that separate materializations share a cumulative
+- `core_lazy_array` checks that separate materializations share a cumulative
   allocation budget (including after source-owner release). Threaded builds
   race independent lazy copies under a budget admitting only one decode.
   The byte-backed bool factory must canonicalize nonzero lanes while adopting
@@ -1875,7 +1875,7 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings tests (`python/tests/`) are not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+- The experimental `next` module (`src/`, `tests/core/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
 
 `security_sha256_digest_test` checks empty/null handling, standard ASCII and
 binary SHA-256 vectors, and both padding/block boundaries. The asset-cache
@@ -1883,7 +1883,7 @@ fixture in `web/js/tests/apply-variant-selection-overload.test.mjs` compares
 against Node's crypto implementation on wasm32 and memory64, where native-only
 coverage would miss size_t-width bugs in bit-count encoding.
 
-## Workflow tools and next examples
+## Workflow tools and core examples
 
 `next_workflow_examples` generates small inputs and checks composition, typed
 queries, USDA/USDC reopening, payload/variant edits after snapshot publication,
@@ -1893,7 +1893,7 @@ All four C++ workflow examples consume the public ownership facade; the
 animation traversal keeps stage-retaining `Prim` objects through its work list.
 The interactive workflow exercises the installed-header C++ document/render
 session facade over the C boundary, including RAII snapshot ownership and
-retained-snapshot prim queries. `next_test_document_session_c` separately compiles as strict
+retained-snapshot prim queries. `core_document_session_c` separately compiles as strict
 C11 and checks retained snapshots, revisions, render updates, stale snapshots,
 prepare/abort/commit, and cancellation; it is registered when Tydra is enabled.
 
@@ -1906,12 +1906,12 @@ When `lusdrender` is built, it runs the two-camera synthetic capture and checks
 raw depth, world normals and source IDs numerically. Temporary assets are removed
 after the run. `next_gltf_export` tests API budget failures, invalid attribute
 indices, malformed corner mappings, non-finite values and cyclic node graphs.
-`next_test_render_session_c` also checks the public GLB export's binary result
+`core_render_session_c` also checks the public GLB export's binary result
 and output-limit validation through a strict C11 consumer. The GLB writer is
 isolated in its own object file; a render-only static consumer does not link it.
 `lusdview_lod_stream_test` covers the C/POD viewer pre-pass with a composed
 camera and two transformed districts, checking the generated promotion wrapper.
-`next_test_c_api` loads the instancing fixture in both holder and native modes
+`core_c_api` loads the instancing fixture in both holder and native modes
 to verify the new traversal option without changing the export default.
 
 ```sh
@@ -1935,13 +1935,13 @@ The `lusdcat --explain` path is also a public-C-API consumer and should be
 smoke-tested with a USDA fixture when changing property-trace behavior.
 
 ```sh
-cmake -S src/next -B build_ninja/next-core -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake -S src -B build_ninja/next-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=OFF
 cmake --build build_ninja/next-core
 ctest --test-dir build_ninja/next-core --output-on-failure
-cmake -S src/next -B build_ninja/next-render -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake -S src -B build_ninja/next-render -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=ON
 cmake --build build_ninja/next-render
 ctest --test-dir build_ninja/next-render --output-on-failure
@@ -1963,7 +1963,7 @@ with `find_package(LightUSD CONFIG)` using only the installed public headers.
 For comparable full compile measurements, use target `lightusd_render_c` after
 the split: measuring only `lightusd_c` would omit render functionality present
 in the old combined target. `scripts/bench-compile.py --target ... --changed
-src/next/stage/stage.hh` measures incremental rebuild time and compilation
+src/stage/stage.hh` measures incremental rebuild time and compilation
 count, restoring the input timestamp afterward. Run measurements without
 concurrent builds or regression workloads.
 
@@ -2162,7 +2162,7 @@ also validate C records, JS arguments, borrowed-output aliasing and bounds,
 exceptions without replay and receiver retention. Explicit copies survive
 reset; returned heap views retain the existing borrowed-buffer lifetime.
 
-`next_test_render_session_c` covers the render C configuration's extended
+`core_render_session_c` covers the render C configuration's extended
 controls: unchanged v4 layout/defaults, fan triangulation, each tangent method,
 animation suppression, geometry release, instancer arrays required for draw
 expansion, persistent resolver lifetime and rejected invalid control values.
@@ -2171,7 +2171,7 @@ with animation enabled/disabled and a mesh triangulation/tangent configuration;
 it checks both exit status and scene counts. The command's legacy conversion
 path remains separate.
 
-`next_test_volume_c` covers the UsdVol render C surface: volume/field info
+`core_volume_c` covers the UsdVol render C surface: volume/field info
 (binding, grid name, value type, components, bounds), dense voxels,
 `lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
 buffer identity), `lightusd_render_volume_field_sample` in world space
@@ -2192,7 +2192,7 @@ header and sparse decoder budget failures release partial allocations and
 rejects sampling below the retained grid-and-sampler footprint.
 
 On a 32-bit native build, `volumetric-tet-overflow-32` (legacy) or
-`next_test_tet_overflow_32` (next) checks that a lattice whose position buffer
+`core_tet_overflow_32` (next) checks that a lattice whose position buffer
 would overflow `size_t` is rejected before allocation or sampling. A standalone
 build against a 32-bit tinyvdb checkout can run the same fixture:
 
@@ -2271,12 +2271,12 @@ The `volumetric-tet-float-range` CPU test checks that both uniform and graded
 stuffing reject coordinates outside float range and tetrahedra that collapse
 when a small object is represented at a large world offset, while preserving
 the caller's existing output.
-`next_test_tydra` exercises bounded VDB decoding, grid-selection fallback and
+`core_tydra` exercises bounded VDB decoding, grid-selection fallback and
 allocator ownership across moves. The Python volumetric suite additionally
 tests that a compressed MJCF VDB exceeding the decoded-memory budget is
 rejected and that a larger budget succeeds.
 
-`volumetric-level-set-allocator` (legacy) and `next_test_level_set_allocator`
+`volumetric-level-set-allocator` (legacy) and `core_level_set_allocator`
 (next) sweep allocation failures through the CPU mesh-to-level-set pipeline.
 They verify unchanged existing outputs/reports, complete cleanup, exact-cap
 success and just-below-cap rejection, byte-identical serialized grids versus
@@ -2284,7 +2284,7 @@ normal allocation and multiple worker counts, and independent concurrent calls.
 The initial tetrahedron fixture covers 350 allocation sites. The sweep also
 passes Valgrind with zero errors and no leaked blocks.
 
-`next_test_tydra` additionally checks generated-field peak/retained accounting,
+`core_tydra` additionally checks generated-field peak/retained accounting,
 move ownership, bounded replacement failure and retry, and serialized identity.
 The Python volumetric suite exercises repeated distinct SDF assets within one
 import budget and successful retry after optional generation failures.
@@ -2324,7 +2324,7 @@ EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
 node /tmp/graded-refine-wasm.js
 EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
   tests/volumetric/test-graded-stencil.c src/lz4/lz4.c \
-  web/build_ninja/vol-next/lightusd_next_build/tydra_next_build/liblightusd_tinyvdb.a \
+  web/build_ninja/vol-next/lightusd_core_build/tydra_build/liblightusd_tinyvdb.a \
   -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-stencil-wasm.js
 node /tmp/graded-stencil-wasm.js
 ```
@@ -2395,7 +2395,7 @@ The `lusdview-incremental-*` Vulkan/OpenGL tests cover the viewer's temporary
 adapter from native next changes to those borrowed C records during real
 topology, layer-reload and texture updates.
 
-`next_test_document_session_c` also creates a temporary shader layer in its
+`core_document_session_c` also creates a temporary shader layer in its
 build directory, reloads property/stage-metadata edits, and verifies the full
 caller-owned snapshot change export. It checks required counts, flags,
 revisions, property names, short-buffer atomicity, invalid arguments, empty
@@ -2411,7 +2411,7 @@ snapshots. After transfer, snapshot access fails until reopen; transferred data
 remains valid and independently editable after reopen and session destruction.
 The interactive workflow also exercises the C++ memory query and stage transfer.
 
-`next_test_document_session_c` also tests batch variant replacement and payload
+`core_document_session_c` also tests batch variant replacement and payload
 loading on two sibling prims. It verifies single-revision publication, omitted
 override removal, empty batches, malformed paths, duplicate selections, count
 overflow, retained snapshots, and cancellation rollback followed by rebuild.
@@ -2533,7 +2533,7 @@ The incremental-topology regression also checks MCP `prim_get`, `attr_list` and
 `attr_get` through the public stage API, including schema fallback visibility and
 array type/count summaries. Variant queries preserve the empty enumeration of a
 flattened composed snapshot; subsequent topology/material edits still verify
-recomposition. `next_test_c_api` covers owned resolved property-name lists,
+recomposition. `core_c_api` covers owned resolved property-name lists,
 schema defaults, scalar/string views, array summaries without data buffers,
 blocked/missing defaults, invalid handles and list lifetime after stage destruction.
 
@@ -2570,7 +2570,7 @@ private native-snapshot retention adapter has been removed; its symbol should
 not appear in shared-library exports.
 
 The GUI scene hierarchy uses public prim handles and retains its own Stage
-owner. `next_test_c_api` covers its authored-payload presence query. Include
+owner. `core_c_api` covers its authored-payload presence query. Include
 reload/incremental, deferred-payload and camera/animation runtime tests when
 changing GUI Stage ownership; native inspector/deformation borrowers must remain
 valid across replacement and recomposition.
@@ -2729,8 +2729,8 @@ They compare native/WASM reports and exercise both existing web applications.
 
 ### Typed authoring and sampled-value follow-up
 
-The standalone `next_test_c_api` covers empty numeric arrays, integer-vector
-arrays, and authored custom flags. `next_test_aousd_conformance` generates 30
+The standalone `core_c_api` covers empty numeric arrays, integer-vector
+arrays, and authored custom flags. `core_aousd_conformance` generates 30
 round-trip cases from the elective-field inventory: explicit empty/default
 values must differ from unauthored fields through both USDA and USDC.
 Structural type/order fields retain their separate syntax-specific matrices.
@@ -2742,7 +2742,7 @@ names through both formats without inventing semantics for extension fields.
 Local unknown-metadata assignment folding is covered separately across layer,
 prim, variant and property scopes. Repeated qualifiers replace their earlier
 value; a bare assignment removes prior qualified opinions and suppresses later
-qualified edits. `tests/next/test-raw-metadata.py` retains all 36 fixtures against
+qualified edits. `tests/core/test-raw-metadata.py` retains all 36 fixtures against
 pinned stock OpenUSD 26.11: 32 accepted inputs produce 64 comparisons through
 USDA and native USDC round trips, and four qualified-empty-list inputs are
 explicitly classified as stock text rejections. Native conformance tests retain
@@ -2761,7 +2761,7 @@ relationship defaults to crate, and native crate preservation remains outstandin
 When the AOUSD checkout and pinned OpenUSD Python package are available,
 `next_aousd_sampled_value_pxrdiff` checks 304 DefaultTime/numeric queries across
 held/linear interpolation and clip transitions. Set
-`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
+`LIGHTUSD_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
 matches all 304 queries, with zero unexpected or classified timing differences.
 The harness retains explicit classifications for previously observed corpus
 timing differences; any unclassified mismatch fails. Held
@@ -2799,7 +2799,7 @@ render pins keep their immutable scene catalog alive.
 
 Run the standalone Debug suite as documented above. For a sanitizer pass without
 precompiled headers, configure a separate Ninja directory with
-`LIGHTUSD_NEXT_USE_PCH=OFF`, `LIGHTUSD_NEXT_ENABLE_THREAD=ON`, and ASan/UBSan on
+`LIGHTUSD_USE_PCH=OFF`, `LIGHTUSD_ENABLE_THREAD=ON`, and ASan/UBSan on
 both C and C++ compilation/linking. This repository disables C++ RTTI, so use
 `-fno-sanitize=vptr`. Leak detection may need disabling in sandbox environments.
 Check the individual `render-data*.hh` headers with `-fsyntax-only` and no PCH.
@@ -2814,7 +2814,7 @@ interfaces have been removed.
 
 The independent WASM feature contracts are in
 [web regression documentation](../web/js/docs/regression.md#independent-next-feature-modules).
-Build and ship the complete `lightusd_next_distribution`, including geometry,
+Build and ship the complete `lightusd_core_distribution`, including geometry,
 raytrace, validator and EXR for each pointer width. `loadFeature(name)` is the
 feature loader; constructors and functions belong to its returned module.
 
@@ -2831,9 +2831,9 @@ cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
   -DLIGHTUSD_WITH_TYDRA=ON -DLIGHTUSD_WITH_C_API=ON \
   -DLIGHTUSD_WITH_MCP_SERVER=ON -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF \
-  -DLIGHTUSD_NEXT_BUILD_C_API_EXAMPLE=OFF \
-  -DLIGHTUSD_ENABLE_THREAD=ON -DLIGHTUSD_NEXT_ENABLE_THREAD=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=OFF \
+  -DLIGHTUSD_BUILD_C_API_EXAMPLE=OFF \
+  -DLIGHTUSD_ENABLE_THREAD=ON -DLIGHTUSD_ENABLE_THREAD=ON
 cmake --build build_ninja --parallel 12
 ctest --test-dir build_ninja --parallel 4 --output-on-failure \
   -R '^lusdview_.*_test$|^lusdview-gpu-material-abi$|^lusdchecker_|^lusddiff_|^workflow_tools$|^next_(workflow_examples|comprehensive_example)$'
@@ -2882,9 +2882,9 @@ and runs Vulkan raster/RT plus renderer CPU/Vulkan. Keep `no_renderable` and
 warning statuses visible in the report. See [the viewer corpus procedure](lusdview.md#external-usd-assets-smoke-rendering)
 and [the WASM corpus parser](../web/js/docs/regression.md#usd-wg-corpus-parsing).
 
-### Large-scene next-core performance gates
+### Large-scene core performance gates
 
-Use `tests/next/bench-large-scene.py` with two saved Release `lusdcat` binaries
+Use `tests/core/bench-large-scene.py` with two saved Release `lusdcat` binaries
 built with the same compiler, flags, allocator, and thread support. Its JSON
 manifest is a list of local cases, for example:
 
@@ -2898,7 +2898,7 @@ manifest is a list of local cases, for example:
 ```
 
 ```sh
-python3 tests/next/bench-large-scene.py \
+python3 tests/core/bench-large-scene.py \
   --baseline /tmp/lusdcat.baseline --candidate /tmp/lusdcat.candidate \
   --manifest /tmp/scenes.json --output /tmp/scene-results
 ```
@@ -2937,7 +2937,7 @@ unchanged). The USDA and crate reader options expose the same threshold and
 use their actual input/source length without an extra filesystem probe. The
 USDA hint is restored after successful and failed parses for parser reuse.
 Timing is opt-in through options in the library and
-`LIGHTUSD_NEXT_TIMING=1` in the CLI.
+`LIGHTUSD_TIMING=1` in the CLI.
 
 Qualify Caldera proxy, one full district, then all 45 full districts before
 Island and the merged ALab techvar scene. Treat baked procedural frame 1004 as
@@ -2967,7 +2967,7 @@ hash against the saved original executable before measuring it.
 
 The reader decodes validated field value-representation tables directly into
 their final buffer, using an explicit decompression budget. The generic C
-blob decoder keeps its 1 GiB default cap. `next_test_crate_alloc_guard` checks
+blob decoder keeps its 1 GiB default cap. `core_crate_alloc_guard` checks
 explicit-budget rejection, truncated multi-chunk frames, and (on 64-bit native
 Unix) sparse mappings above 2 GiB without committing gigabytes of test RAM.
 Large-file readback must also exercise a real table above 1 GiB; the all-full
@@ -2976,8 +2976,8 @@ Caldera crate expands its value-representation table to 1,413,255,776 bytes.
 ## Native OBJ/robot imports and Python physics
 
 The native CLI and Python bindings share the C11 OBJ reader and native
-URDF/MJCF frontends. `next_test_asset_import` checks the public import C API;
-`next_test_urdf_to_usd` checks stage authoring, and
+URDF/MJCF frontends. `core_asset_import` checks the public import C API;
+`core_urdf_to_usd` checks stage authoring, and
 `physics_obj_c11_import_test` checks the legacy usdObj adapter.
 `python/tests/test_native_import.py` covers OBJ/MTL data and texture packaging,
 URDF/MJCF frames/inertia, include and package resolution, missing assets,
@@ -2986,8 +2986,8 @@ resource limits, physics snapshots, and authoring.
 Use isolated build trees when another checkout consumer is compiling:
 
 ```sh
-cmake -S src/next -B build_ninja/physics-import-next -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+cmake -S src -B build_ninja/physics-import-next -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON
 cmake --build build_ninja/physics-import-next -j8
 ctest --test-dir build_ninja/physics-import-next --output-on-failure
 LIGHTUSD_PY_BUILD_DIR="$PWD/build_ninja/physics-import-python/native" \
@@ -3001,7 +3001,7 @@ area regression. For sanitizer verification, build both C and C++ sources with
 AddressSanitizer/UBSan; environments running under ptrace require
 `ASAN_OPTIONS=detect_leaks=0` for the test process.
 
-`next_test_obj_reader` additionally checks both C11 precision families, strict
+`core_obj_reader` additionally checks both C11 precision families, strict
 `vw` errors, influence metadata and mixed Mesh/BasisCurves/Points imports. It
 also runs with `LIGHTUSD_WITH_TYDRA=OFF`; that configuration creates no XML
 frontend target. `LIGHTUSD_WITH_USDOBJ=OFF` removes the layer adapter entirely.
@@ -3020,7 +3020,7 @@ PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" \
 
 ### Generated large OBJ tests
 
-`next_test_obj_large` builds OBJ text entirely in memory and checks the C11
+`core_obj_large` builds OBJ text entirely in memory and checks the C11
 reader and typed USD conversion. It covers overflowed/invalid indices, global
 limits across groups and primitive types, allocation-failure cleanup, bounded
 blank-line handling, non-terminated guarded input, large-coordinate normals and
@@ -3038,7 +3038,7 @@ The generator has explicit size arguments and writes no asset files. Run the
 small case under ASan/UBSan as well as the ordinary native build; do not use the
 multi-gigabyte configuration as a routine sanitizer/CI requirement.
 
-`next_test_obj_materials` supplies generated MTL bytes to both C precision
+`core_obj_materials` supplies generated MTL bytes to both C precision
 families through standalone parsing, referenced OBJ materials and callbacks.
 It rejects malformed/non-finite numeric fields and overflowing integer options,
 checks optional transform components and numeric texture filenames, and sweeps
@@ -3056,10 +3056,10 @@ load. Allocation-failure sweeps cover both indexes in scene and callback paths.
 runs. Python cases preserve per-definition texture anchors and `Pr`/`Pm` flags
 for duplicate names across BOM and LF/CRLF/CR source variants.
 
-`next_test_obj_textures` checks request/canonical texture caching, separate
+`core_obj_textures` checks request/canonical texture caching, separate
 resolution and I/O, immutable shared ownership through layer cloning, per-import
 cache lifetimes, compatibility with combined read callbacks, resource limits
-and authoritative resolver failures. `next_test_usdz_writer` compares owning
+and authoritative resolver failures. `core_usdz_writer` compares owning
 and borrowed asset views byte-for-byte through memory and streaming writers,
 including empty assets, invalid pointers and budget failures.
 `python/tests/test_import_textures.py` checks OBJ/URDF/MJCF texture aliasing under
@@ -3068,7 +3068,7 @@ deletion. Both save methods must produce one texture entry and shader paths
 that reopen from the resulting USDZ without the original resolver. The source
 stage's paths remain unchanged.
 
-`next_test_asset_import` covers owned report queries, failure reports, option
+`core_asset_import` covers owned report queries, failure reports, option
 validation and the shared unsupported-feature policies through the C API.
 Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
 pin indices, and out-of-bounds reversed ranges; they also check valid tuples
@@ -3076,7 +3076,7 @@ split across pin elements and valid empty ranges. Direct flexcomp connectivity
 rejects fractional, out-of-range and missing vertex indices while accepting a
 valid triangle. `python/tests/test_mjcf_raw_flex.py` verifies raw flex index
 diagnostics in warn and error policies.
-`next_test_obj_textures` also checks native collector reuse, bounded diagnostic
+`core_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth
 limits, warning drainage, concurrent failed imports, resolver exception identity,
@@ -3084,7 +3084,7 @@ included XML policies, preservation budget failures and preserved metadata
 round trips through USDA/USDC/USDZ. Reports remain runtime data after reopening.
 The contract is documented in [import-report.md](import-report.md).
 
-`next_test_physics_query` checks the shared native C++/C typed snapshot path:
+`core_physics_query` checks the shared native C++/C typed snapshot path:
 coherent numeric time, overlapping groups, authored types/variability,
 relationship targets, owned array lifetime, shared immutable storage and
 snapshot memory limits. It links only `lightusd_c`.
@@ -3099,7 +3099,7 @@ provenance against the generated schema manifests. The descriptor
 lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
 C++ validation engine.
 
-`next_test_validation_report` checks the owned C/C++ report, native streaming
+`core_validation_report` checks the owned C/C++ report, native streaming
 issue/byte limits, merge accounting, input validation, stage-independent lifetime
 and explicit failure when all findings are omitted. Existing validation registry
 and semantic suites cover the shared engine. `python/tests/test_physics_validation.py`
@@ -3115,7 +3115,7 @@ to test explicit mesh colliders; see
 
 ### Updated Menagerie native/Python sweep
 
-`tests/next/run-menagerie-import.py` inventories git-tracked XML/OBJ files at the
+`tests/core/run-menagerie-import.py` inventories git-tracked XML/OBJ files at the
 local checkout's actual revision. It does not update or pin the dataset. XML
 fragments are accounted for separately, including the auxiliary Aloha actuator
 fragment that has worldbody sites but cannot compile without its parent bodies.
@@ -3132,7 +3132,7 @@ rebuild cannot replace a mapped binary. Reports contain per-file warnings,
 reference mismatches, timing and peak RSS; failed case artifacts are retained.
 
 ```sh
-PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/next/run-menagerie-import.py \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/core/run-menagerie-import.py \
   --menagerie "$MENAGERIE_ROOT" --out build_ninja/obj-skel-report/final \
   --cli "$LEGACY_IMPORT_CLI" --cli "$NEXT_IMPORT_CLI" \
   --usdcat "$OPENUSD_USDCAT" --workers 4
@@ -3146,7 +3146,7 @@ See [OBJ mapping and skinning](usdobj.md) for supported records and binding rule
 
 ### Downstream Newton and OpenUSD checks
 
-`tests/next/run-newton-compare.py` builds two Newton models per MJCF file in
+`tests/core/run-newton-compare.py` builds two Newton models per MJCF file in
 one process: `ModelBuilder.add_mjcf` on the source and `add_usd` (with
 `SchemaResolverMjc` and `SchemaResolverNewton`) on LightUSD's output for each
 `--profile`. It compares DOF, collider, site and body counts, per-body mass,
@@ -3158,7 +3158,7 @@ Newton needs `warp-lang`, `mujoco`, `mujoco-warp`, `usd-core` and
 `newton-usd-schemas`; CPU is sufficient.
 
 ```sh
-PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/next/run-newton-compare.py \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/core/run-newton-compare.py \
   --menagerie "$MENAGERIE_ROOT" --profile newton --out newton-compare.json
 ```
 
@@ -3177,7 +3177,7 @@ include fragments without `<worldbody>`, writes each input to a unique file
 D6 whose DOFs differ only in order as `dof_order` (Newton orders merged
 joints by sorted prim path, not authored order).
 
-`tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
+`tests/core/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including
 `usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
 recovers. It fails if the four physics validators are unavailable, a converted
@@ -3187,7 +3187,7 @@ example:
 
 ```sh
 PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
-  tests/next/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
+  tests/core/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
   --require-kind CubeShape=2 tests/feat/physics-oracle/hinge.urdf
 ```
 
@@ -3214,14 +3214,14 @@ includes heterogeneous nested arrays to protect builders holding PrimSpec
 pointers during layer growth. Run that case under ASan/UBSan with the same RTTI
 setting as the core (`-fno-rtti`).
 
-`tests/next/test-obj-wasm.mjs` checks the isolated WASM OBJ layer parser, changed
+`tests/core/test-obj-wasm.mjs` checks the isolated WASM OBJ layer parser, changed
 skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
 
 Parallel instance-claim repair (large-scene §10.91) needs fresh coverage in
-`next_test_pcp_parallel` and `next_test_instance_group`: compare serial and
+`core_pcp_parallel` and `core_instance_group`: compare serial and
 parallel prototype selection/child order when a discarded subtree owns a
 speculative claim, including nested repairs, donations and earlier-batch seeds.
 Check depth-limit/unresolved-source fallback as well. This qualification is
@@ -3401,7 +3401,7 @@ ordinary output with 1/4 compose threads, require preparation before Plan
 completion with no Run pass, and verify scratch-limit failure cleanup. See
 [planning/encoding overlap](large-scene.md#10117-planning-overlaps-writer-encoding-and-scratch-io).
 
-The `next_test_pcp` suite also checks opt-in immutable source snapshots:
+The `core_pcp` suite also checks opt-in immutable source snapshots:
 read-once callback replay, concurrent initial/replay loads, parsed-layer
 expiration, byte-limit failures, native-file removal, original asset anchors,
 pass-1 back references, retained mapped USDC values after registry cleanup and
@@ -3410,7 +3410,7 @@ POSIX disk directory; preloads and foreign dependency owners remain retained.
 See [large-scene snapshot details](large-scene.md#10116-immutable-source-snapshots-and-pass-1-eviction)
 for options, focused CLI parity evidence and remaining qualification.
 
-The `next_test_spill_array` test checks append/resolve equivalence with spilling
+The `core_spill_array` test checks append/resolve equivalence with spilling
 enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
 the test verifies that no bytes spill and no I/O failure is reported. The
 structural-column spill budget and directory have no effect on Windows.
@@ -3428,7 +3428,7 @@ checks are opt-in and are not part of the ordinary CPU regression suite.
 ### Cached large-scene preview regression
 
 Build `lusdpreview` and `test_scene_preview`, then run
-`ctest --test-dir build_ninja -R '^next_test_scene_preview$' --output-on-failure`.
+`ctest --test-dir build_ninja -R '^core_scene_preview$' --output-on-failure`.
 The generated fixtures cover all three representations, bounded outputs,
 portable export, cross-batch native instances, forward PointInstancers,
 texture baking, dependency invalidation, malformed/truncated cache recovery,
@@ -3459,11 +3459,11 @@ for shader/descriptor qualification. Keep large source assets, cached sidecars,
 images and measurement logs in ignored build directories.
 
 
-For extended previews, `next_test_scene_preview_compute` checks CPU conversion
+For extended previews, `core_scene_preview_compute` checks CPU conversion
 and direct UsdVol SDF/albedo rendering, rejects malformed compute buffers and
 verifies camera updates reuse immutable grid data. Run its executable with
 `vulkan` and `cuda` on hardware to compare each kernel against the CPU reference;
-an unavailable requested backend fails. `next_test_light_filter` checks the
+an unavailable requested backend fails. `core_light_filter` checks the
 portable light-filter registry, `lightusd:filter:kind`/parameter parsing with
 clamping, the fold into the render-ready light intensity/color, warnings for
 unknown kinds and missing targets, custom-kind registration/unregistration, and
@@ -3472,10 +3472,10 @@ preview light and shadow linking (mask exclusion/inclusion, independent light an
 shadow masks, CPU/lavapipe parity), and `check-source-refinement.py --software`
 runs the 12-capture refinement matrix against Mesa without NVIDIA probing.
 Custom filter kinds register through the C API
-(`lightusd_register_light_filter`, covered by `next_test_light_filter_c`) and
+(`lightusd_register_light_filter`, covered by `core_light_filter_c`) and
 through Python (`lightusd.register_light_filter`, covered by
 `python/tests/test_light_filter.py`); both surfaces share the C++ registry used
-by conversion and preview caches. `next_test_scene_preview` also checks
+by conversion and preview caches. `core_scene_preview` also checks
 that regional source resampling produces finer detail and retains the background,
 including PointInstancer targets inside native instances and nested prototype
 triangle/placement graphs.
@@ -3819,7 +3819,7 @@ one-sample clip files without `interpolateMissingClipValues`, plus held mode.
 `test_connection_to_clip_keeps_lazy_file_loader` requires the C API's stage-level
 value-clip stage cache to revalidate each cached clip against its file stamp, so a
 rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance test
-(`next_test_aousd_conformance`) separately requires a caller-owned
+(`core_aousd_conformance`) separately requires a caller-owned
 `ValueClipStageCache` to keep reusing stages across queries (`clip_load_count ==
 1`), which is why file-stamp revalidation is an opt-in cache property rather than
 unconditional. `TestConcurrentValueClipCache` runs eight threads against one
@@ -3829,7 +3829,7 @@ warmed cache must not load the clip again.
 requires a default (holder-flattened) load to expose the same mesh set as a
 native-instance load for shared and nested instances; the extracted-prototype
 writer representation keeps its deliberately orphaned members
-(`next_test_pcp`).
+(`core_pcp`).
 The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
 strength against direct child reference/payload/inherit arcs and a weaker
 referenced ancestor, in serial/parallel and expanded/native-instance modes.
@@ -3952,7 +3952,7 @@ explicit native thread,input-policy and array limits and fingerprint the
 frozen Python package as well as its extension/library. Trusted/mmap profiles
 must be reported separately from the unchanged untrusted default.
 
-The internal `next_test_c_api_lazy_view` regression requires numeric arrays to
+The internal `core_c_api_lazy_view` regression requires numeric arrays to
 remain undecoded during wrong-type probes and aliases validated uncompressed
 POD storage through a C buffer pin. A counting source verifies zero decodes,
 exact source-pointer identity and source retention after value destruction.
@@ -4032,12 +4032,12 @@ Focused no-I/O verification (the ordinary disk-fixture tests require native
 I/O and should run in the default build):
 
 ```sh
-cmake -S src/next -B build_ninja/no-native-io -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake -S src -B build_ninja/no-native-io -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_NATIVE_IO=OFF
 cmake --build build_ninja/no-native-io --target test_host_services test_host_services_c
 scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
-  -R 'next_test_host_services' --output-on-failure
+  -R 'core_host_services' --output-on-failure
 ```
 
 ## Legacy tests (compiled, not run)

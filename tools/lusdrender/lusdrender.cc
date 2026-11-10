@@ -49,7 +49,7 @@
 #include "usdVol.hh"  // OpenVDB (.vdb) loader for the `next` volume path
 
 // Experimental `next` lazy loader: fast, low-memory USDC parse used as the
-// default backend for the RT preview path. tydra_next provides bit-exact
+// default backend for the RT preview path. tydra provides bit-exact
 // world transforms (see src/tydra/next/scene-access.cc).
 #include "layer/prim-spec.hh"
 #include "pcp/prim-index.hh"

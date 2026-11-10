@@ -128,5 +128,5 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
   material, texture, skeleton, and animation data.
 
 The maintained next-core and Tydra-next API documentation is in
-[`doc/lightusd-next.md`](../../doc/lightusd-next.md). This README describes
+[`doc/core.md`](../../doc/core.md). This README describes
 the established legacy RenderScene API; it is not a release checklist.

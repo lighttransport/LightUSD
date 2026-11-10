@@ -89,11 +89,11 @@
 
 namespace lightusd {
 
-// Version info — keep in sync with src/lightusd.hh and web/{npm,js}/package.json
+// Version info — keep in sync with src/c-api/lightusd-c.cc (lightusd_version_string) and web/{npm,js}/package.json
 constexpr int version_major = 1;
-constexpr int version_minor = 0;
+constexpr int version_minor = 1;
 constexpr int version_micro = 0;
-constexpr const char* version_string = "1.0.0";
+constexpr const char* version_string = "1.1.0";
 
 
 }  // namespace lightusd

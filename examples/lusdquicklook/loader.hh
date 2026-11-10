@@ -2,7 +2,7 @@
 //
 // lusdquicklook — the loading worker.
 //
-// Runs ::lightusd::StageSession + tydra_next streaming conversion on a background
+// Runs ::lightusd::StageSession + tydra streaming conversion on a background
 // thread and publishes results through a bounded, byte-accounted queue. Nothing
 // here touches the UI, the window or any GPU state.
 //
@@ -34,7 +34,7 @@ enum class LoadPhase : int {
   Idle = 0,
   Open,      // reading the root layer
   Compose,   // resolving composition arcs
-  Extract,   // tydra_next -> QlScene
+  Extract,   // tydra -> QlScene
   Textures,  // decoding + downsampling
   Done,
   Failed,

@@ -95,7 +95,7 @@ notes are removed rather than archived; find them in Git history.
   roadmap (fuzzers, corpus gate, phase results).
 - [refactor-c-core.md](refactor-c-core.md) — C-style core consolidation,
   compile/object/WASM measurements, API migration, and remaining parity gates.
-- [lightusd-next.md](lightusd-next.md) — `src/next`, Next IO, and Tydra Next
+- [core.md](core.md) — `src/next`, Next IO, and Tydra Next
   overview.
 
 ## Build, Test, Release

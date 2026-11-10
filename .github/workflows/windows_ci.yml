@@ -18,7 +18,7 @@ jobs:
   build-windows-core:
 
     runs-on: windows-latest
-    name: Build for Windows(x64, MSVC, next backend)
+    name: Build for Windows(x64, MSVC, core)
 
     steps:
       - name: Checkout
@@ -33,7 +33,7 @@ jobs:
         run: ctest --test-dir build_core -C Release --output-on-failure
 
   # Native Direct3D 12 viewer example (examples/ld3d12view): a lightui window
-  # with a C++/HLSL renderer over the lmetalview core, `next` product only. The
+  # with a C++/HLSL renderer over the lmetalview core, core only. The
   # HLSL is compiled at startup with D3DCompile, so the only requirement beyond
   # MSVC is the Windows SDK. Every ld3d12view test runs on the WARP software
   # adapter with a hidden window, so the GPU-less runner is enough; the

@@ -9,8 +9,8 @@
 //
 // Pipeline selection at compile time:
 //   - PERFRC_ENABLE_LEGACY (=1 default): legacy tydra conversion.
-//   - PERFRC_ENABLE_CORE: tydra-next conversion (requires tydra_next +
-//     lightusd_next libs; the standalone src/next tree cannot build the
+//   - PERFRC_ENABLE_CORE: tydra conversion (requires tydra +
+//     lightusd_core libs; the standalone src tree cannot build the
 //     legacy pipeline, so it sets PERFRC_ENABLE_LEGACY=0).
 // When both are compiled into one binary they are measured back to back on
 // the same input.

@@ -1541,7 +1541,7 @@ int main(int argc, char** argv) {
   if (test_resolved_property_inspection()) return 1;
   CHECK(lightusd_api_version() == ((LIGHTUSD_API_VERSION_MAJOR << 16) |
       (LIGHTUSD_API_VERSION_MINOR << 8) | LIGHTUSD_API_VERSION_PATCH));
-  CHECK(strcmp(lightusd_version_string(), "1.0.0") == 0);
+  CHECK(strcmp(lightusd_version_string(), "1.1.0") == 0);
   CHECK(strcmp(lightusd_type_name(LIGHTUSD_TYPE_POINT3F), "point3f") == 0);
   CHECK(lightusd_type_from_name("float3") == LIGHTUSD_TYPE_FLOAT3);
   CHECK(lightusd_type_component_count(LIGHTUSD_TYPE_MATRIX4D) == 16);

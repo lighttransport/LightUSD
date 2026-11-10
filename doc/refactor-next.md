@@ -1,5 +1,10 @@
 # refactor-next: src/next Optimization & Hardening Roadmap
 
+> **Historical (pre-1.1).** This document describes the `src/next` / legacy
+> split before LightUSD 1.1 promoted `next` to the core (`src/`) and moved the
+> old implementation to `src/legacy/`. Paths and names below are as they were;
+> see [core.md](core.md#migrating-from-next) for the mapping.
+
 Status: **post-roadmap cleanup**. The original 10-phase roadmap has landed.
 Use `scripts/run-next-checks.sh` for a focused standalone validation pass before
 and after follow-up refactors.

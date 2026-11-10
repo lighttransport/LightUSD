@@ -109,7 +109,7 @@ uint64_t LoadStream::queued_bytes() const {
 // ---------------------------------------------------------------------------
 // Transform helpers
 //
-// tydra_next Matrix4 is row-major with USD's row-vector convention
+// tydra Matrix4 is row-major with USD's row-vector convention
 // (world = local * parent_world, translation in the last row), so a point
 // transforms as p' = p * M.
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ void XformNormal(const NormalMatrix& nm, const float v[3], float out[3]) {
 // ---------------------------------------------------------------------------
 // Texture bytes: filesystem, or an entry inside the USDZ package.
 //
-// tydra_next's built-in texture loader is metadata-only by design, so decoding
+// tydra's built-in texture loader is metadata-only by design, so decoding
 // is ours to do. For a USDZ root the "resolved" path points at an archive entry
 // that does not exist on disk, so the package is consulted first.
 // ---------------------------------------------------------------------------
@@ -613,7 +613,7 @@ QlCameraDesc ConvertCamera(const tyn::RenderCamera& src) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// QlSceneSink — the streaming tydra_next consumer.
+// QlSceneSink — the streaming tydra consumer.
 //
 // This is where "ok to skip large files" is actually implemented: not as a
 // whole-file verdict, but per geometry prim, against the running budget.

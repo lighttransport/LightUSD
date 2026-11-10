@@ -1,14 +1,14 @@
-# LightUSD Next, Next IO, and Tydra Next
+# LightUSD Core, Core IO, and Tydra
 
-This note explains the "next" stack in LightUSD and how it is used by the web
-`usdzconvert` pipeline.
+This note explains the LightUSD core stack (formerly "next") and how it is used
+by the web `usdzconvert` pipeline.
 
 Property metadata round trips preserve authored empty `allowedTokens` arrays
 and unknown USDA property metadata through USDC unregistered values. The writer
 test generates an attribute/relationship matrix for empty lists, dictionaries,
 strings, and authored default scalars.
 
-Tydra Next exposes `RenderScene::conversion_diagnostics` with preserved
+Tydra exposes `RenderScene::conversion_diagnostics` with preserved
 unsupported, approximated, and failed dispositions. `StreamConvertResult`
 also retains diagnostics produced after the scene catalog was emitted.
 `ConverterConfig::strict_conversion` requires warning-free full conversion;
@@ -22,37 +22,65 @@ The WASM `LayerDocument.setAttribute(path, name, type, value, isArray, options)`
 accepts optional `{uniform, custom}` boolean flags. Existing calls retain their
 custom-attribute default; explicit flags support schema-authored attributes.
 
+## Migrating from next
+
+LightUSD 1.1 promotes the former `next` implementation to the core and moves
+the pre-1.1 implementation to `src/legacy/` (compiled with
+`-DLIGHTUSD_BUILD_LEGACY=ON`, not tested or published).
+
+| Before (1.0) | 1.1 |
+|---|---|
+| `src/next/`, `src/tydra/next/` | `src/`, `src/tydra/` |
+| `#include "next/..."`, `#include "tydra/next/..."` | `#include "..."`, `#include "tydra/..."` |
+| `lightusd::next::`, `lightusd::tydra::next::` | `lightusd::`, `lightusd::tydra::` |
+| legacy `lightusd::` API | `lightusd::legacy::` (compile-only) |
+| CMake targets `lightusd_next`, `tydra_next` | `lightusd_core`, `tydra` (old names are aliases for one release) |
+| `LIGHTUSD_NEXT_*` options | `LIGHTUSD_*` (old names accepted with a deprecation warning) |
+| `-DLIGHTUSD_NATIVE_PRODUCT=next\|legacy` | core is always built; `-DLIGHTUSD_BUILD_LEGACY=ON` adds legacy |
+| `tests/next/`, ctest `next_test_*` | `tests/core/`, `core_*` (label `core`) |
+| WASM `LIGHTUSD_WASM_PRODUCT=next`, `lightusd_next[_64].js` | `LIGHTUSD_WASM_PRODUCT=core`, `lightusd[_64].js` (no `lightusd_next.js` shim) |
+| WASM legacy module `lightusd[_64].js` | `lightusd_legacy[_64].js` (compile-only, not published) |
+| WASM C ABI `lightusd_next_*` | `lightusd_wasm_*` |
+| `LightUSDLoader({backend: 'legacy'})` | ignored with a warning; the loader always uses the core module |
+| `lusdrender -legacyLoad`, `lusdview --legacy-load` | ignored with a warning |
+
+Removed with the legacy loader: lusdview's light/camera gizmos and
+RenderScene node tree, the lusdview MCP `vchar_physics` tool, and the
+native `lusdzconvert` material/geometry optimization and UDIM baking
+(use `web/js/cli/usdzconvert.js`). See
+[testing-cpp.md](testing-cpp.md#legacy-tests-compiled-not-run) for the
+known coverage gaps.
+
 ## Terminology
 
 LightUSD currently has two USD implementations:
 
-- **Legacy core**: the production `src/` Stage/Prim implementation used by the
-  original C++ API, Tydra, Python bindings, and most demos.
-- **Next core**: the newer implementation under `src/next/`. It is a cleaner,
+- **Core**: the implementation under `src/` (formerly `src/next/`): a
   lower-dependency USD core with flat layer storage, runtime type dispatch,
   lazy USDC arrays, and a lower-memory flatten/write path.
+- **Legacy**: the pre-1.1 Stage/Prim implementation, now `src/legacy/`
+  (compile-only).
 
 In this document:
 
-- **next-core** means the in-memory USD model in `src/next/`: `Stage`, `Layer`,
+- **core** means the in-memory USD model in `src/`: `Stage`, `Layer`,
   `PrimSpec`, `Value`, property indices, schema helpers, evaluation, and PCP
   composition.
-- **next-io** means next-core readers/writers: USDA, USDC/Crate, USDZ package
+- **core IO** means core readers/writers: USDA, USDC/Crate, USDZ package
   loading, lazy array decode, and streaming crate write.
-- **tydra-next** means the render conversion layer in `src/tydra/next/`, which
-  converts a `lightusd::next::Stage` into render-ready data.
+- **tydra** means the render conversion layer in `src/tydra/`, which
+  converts a `lightusd::Stage` into render-ready data.
 
-The next stack is the default document and render-conversion path for
-`lusdview`, and the default material-resolution path for `lusdrender`. Legacy
-paths remain available as explicit compatibility modes.
+The core stack is the only document and render-conversion path for every
+LightUSD app (lusdcat, lusdview, lusdrender, lusdzconvert, lusddiff, ...).
 
-## next-core
+## Core
 
-`src/next/` is a standalone next-generation LightUSD core. Its main public
+`src/` is a standalone LightUSD core (`cmake -S src`). Its main public
 header is:
 
 ```cpp
-#include "next/lightusd-next.hh"
+#include "lightusd-core.hh"
 ```
 
 The design differs from the legacy core in several important ways:
@@ -71,22 +99,22 @@ The design differs from the legacy core in several important ways:
 Basic C++ load/write example:
 
 ```cpp
-#include "next/lightusd-next.hh"
+#include "lightusd-core.hh"
 
 int main() {
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
 
-  lightusd::next::LoadUSDOptions opts;
+  lightusd::LoadUSDOptions opts;
   opts.limits.max_resident_bytes = 1024ull * 1024ull * 1024ull;
 
-  if (!lightusd::next::LoadUSDComposed("scene.usdc", &stage, opts, &warn, &err)) {
+  if (!lightusd::LoadUSDComposed("scene.usdc", &stage, opts, &warn, &err)) {
     // handle err
     return 1;
   }
 
-  if (!lightusd::next::WriteUSDC(stage, "flattened.usdc", &err)) {
+  if (!lightusd::WriteUSDC(stage, "flattened.usdc", &err)) {
     // handle err
     return 1;
   }
@@ -100,21 +128,21 @@ calling the one-shot loader. The session retains the resolver and PCP layer
 cache across payload and variant edits:
 
 ```cpp
-lightusd::next::StageSession session;
-lightusd::next::StageSessionOptions options;
+lightusd::StageSession session;
+lightusd::StageSessionOptions options;
 options.composition.load_payloads = false;
-options.progress_callback = [](const lightusd::next::ProgressEvent& event) {
+options.progress_callback = [](const lightusd::ProgressEvent& event) {
   return !ApplicationRequestedCancel(event);
 };
 
 if (!session.OpenFile("scene.usdc", options)) return 1;
-lightusd::next::StageSnapshot old = session.GetSnapshot();
-lightusd::next::StageEditResult edit =
+lightusd::StageSnapshot old = session.GetSnapshot();
+lightusd::StageEditResult edit =
     session.SetVariantSelection("/World/Model", "lod", "high");
 if (!edit) return 1;
 edit = session.LoadPayload("/World/Model");
 if (!edit) return 1;
-lightusd::next::StageSnapshot current = edit.snapshot;
+lightusd::StageSnapshot current = edit.snapshot;
 ```
 
 All public next loaders default to `InputPolicy::Untrusted` and finite
@@ -141,7 +169,7 @@ attempted reentrantly from progress, preview, or render-sink callbacks fail with
 after all published snapshots have been released.
 
 Persistent render consumers can feed those snapshots and change sets to
-`tydra::next::RenderSession`. Its `SceneUpdateSink` transaction reports stable
+`tydra::RenderSession`. Its `SceneUpdateSink` transaction reports stable
 resource IDs plus typed removals/upserts, allowing a renderer to retain GPU
 resources across payload, variant, and layer edits. Geometry-only topology and
 primvar changes clone the retained catalog with copy-on-write chunk storage and
@@ -165,9 +193,9 @@ API mirrors this as `lightusd_render_session_set_time_code` /
 older immutable render snapshots. Broader resync, material, hierarchy, light,
 camera, and animation changes currently take the full conversion path.
 
-## next-io
+## Core IO
 
-The next IO layer is the reader/writer portion of `src/next/`:
+The core IO layer is the reader/writer portion of `src/`:
 
 - `reader/usda-reader.*`
 - `reader/usdc-reader.*`
@@ -191,26 +219,26 @@ single-USDZ flattened rewrites below the wasm32 2 GB heap limit. The input crate
 is retained once, lazy arrays point into it, and the flattened root crate can be
 streamed into the USDZ archive.
 
-## Tydra Next
+## Tydra
 
 Tydra is LightUSD's USD-to-render-data layer. The legacy Tydra path converts the
-legacy `Stage` into `tydra::RenderScene`. Tydra Next does the same job for
-`lightusd::next::Stage` and lives under:
+legacy `Stage` into `tydra::RenderScene`. Tydra does the same job for
+`lightusd::Stage` and lives under:
 
 ```text
-src/tydra/next/
+src/tydra/
 ```
 
 Important files:
 
 - `render-data.hh`: GPU-oriented render scene, mesh, material, texture, light,
   camera, skeleton, and animation data.
-- `scene-access.hh`: traversal and query helpers for `next::Stage`.
+- `scene-access.hh`: traversal and query helpers for `lightusd::Stage`.
 - `render-extract.hh`: scene extraction helpers.
 - `render-converter.hh`: `RenderSceneConverter`, the main conversion entry.
-- `materialx.hh`: MaterialX/OpenPBR support for the next render path.
+- `materialx.hh`: MaterialX/OpenPBR support for the render path.
 
-Tydra Next is designed for fewer intermediate copies:
+Tydra is designed for fewer intermediate copies:
 
 - mesh arrays use chunked storage,
 - conversion can extract directly from next prim/value data,
@@ -227,23 +255,17 @@ lights, cameras, skeletons, animations, and point instancers. TetMesh conversion
 cancels shared tetrahedron faces and retains only the external triangle surface.
 Volume field loading remains application-owned because the host supplies the
 OpenVDB decoder and GPU representation. NurbsPatch remains an explicit
-unsupported renderable in tydra-next rather than being silently triangulated
+unsupported renderable in tydra rather than being silently triangulated
 with lossy assumptions.
 
 ## Application Defaults
 
-- `lusdcat`: the `next` CLI is the default `lusdcat` for native builds. The
-  former `next_usdcat` executable is now built as `lusdcat`, and
-  `next_usdcat` remains a CMake target alias for regression scripts. Select
-  the legacy CLI with `-DLIGHTUSD_NATIVE_PRODUCT=legacy` (deprecated).
-  `LIGHTUSD_NEXT_BUILD_TOOLS=OFF` disables the next CLI when it is not wanted.
-- `lusdview`: next-core and tydra-next are used by default. Use
-  `--legacy-load` only for compatibility investigation. `--next` remains an
-  accepted no-op for existing scripts.
-- `lusdrender`: next loading remains the primary render path and
-  `-materialResolver tydra-next` is the default. Use
-  `-materialResolver legacy` to compare against the former hand-written
-  material resolver.
+- `lusdcat`: built from `tests/core/lusdcat.cc` by the core project.
+- `lusdview`: core document session + tydra. `--next` is an accepted no-op;
+  `--legacy-load` is ignored with a warning.
+- `lusdrender`: every CPU and GPU render loads through the core;
+  `-materialResolver tydra-next` is the default (`legacy` selects the former
+  hand-written material resolver, which still runs on the core stage).
 - Parent-relative asset paths are enabled because USD resolves them relative to
   the authoring layer. Sandboxed hosts can disable them through
   `ResolverConfig::allow_parent_paths`.
@@ -251,19 +273,19 @@ with lossy assumptions.
 Minimal C++ conversion sketch:
 
 ```cpp
-#include "next/lightusd-next.hh"
-#include "tydra/next/render-converter.hh"
+#include "lightusd-core.hh"
+#include "tydra/render-converter.hh"
 
 int main() {
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   std::string warn;
   std::string err;
 
-  if (!lightusd::next::LoadUSDComposed("scene.usdc", &stage, &warn, &err)) {
+  if (!lightusd::LoadUSDComposed("scene.usdc", &stage, &warn, &err)) {
     return 1;
   }
 
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.mesh.triangulate = true;
   config.mesh.compute_normals = true;
   config.material.load_textures = true;
@@ -271,14 +293,14 @@ int main() {
     // report progress to UI/log
   };
 
-  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderSceneConverter converter(config);
   auto result = converter.Convert(stage);
   if (!result.success) {
     // handle result.error
     return 1;
   }
 
-  const lightusd::tydra::next::RenderScene& scene = result.scene;
+  const lightusd::tydra::RenderScene& scene = result.scene;
   // upload scene meshes/materials/textures to renderer
   return 0;
 }
@@ -291,7 +313,7 @@ The web converter exposes four flatten/package modes:
 | Mode | CLI/UI value | Core path | Best use |
 |------|--------------|-----------|----------|
 | Legacy | `legacy` | legacy core + legacy writer | Stable default, broad feature coverage. |
-| Next | `next` | next-core/next-io for a single top-level USDC-root `.usdz` | Low-memory flattened rewrite of existing USDZ. |
+| Next | `next` | core/core IO for a single top-level USDC-root `.usdz` | Low-memory flattened rewrite of existing USDZ. |
 | Stream | `stream` | legacy compose/write with lazy source fetching | Folder or URL-list input where textures should not be loaded all at once. |
 | Stream + Next | `stream-next` | streaming source + next multi-layer flatten | Folder or URL-list input with USDC layers, low-memory root flatten, streamed textures. |
 
@@ -518,7 +540,7 @@ Use this rule of thumb:
 - Use **stream** for folder/URL-list input when texture memory is the bottleneck
   but the legacy flatten path is acceptable.
 - Use **stream-next** for large folder/URL-list input with USDC layers when you
-  need next-core flattening plus streaming texture packaging.
+  need core flattening plus streaming texture packaging.
 
 The next paths are most effective when:
 
@@ -533,7 +555,7 @@ They are less effective or may fall back when:
 - the root is USDA and must be parsed into authored values,
 - the package has a nested root layout not supported by the optimized path,
 - texture or audio hooks force all assets through host-side processing,
-- a feature has not yet been implemented in next-core/next-io.
+- a feature has not yet been implemented in core/core IO.
 
 ## Testing
 

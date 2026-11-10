@@ -434,7 +434,7 @@ void AppendHermiteCurveStrands(const float *points, const float *tangents,
 // `next` lazy-loader RT preview backend (default for USDC inputs).
 //
 // Loads the USDC with the experimental `next` reader (fast, low-memory, lazy
-// arrays) and streams triangles using tydra_next's bit-exact world transforms.
+// arrays) and streams triangles using tydra's bit-exact world transforms.
 // Produces the byte-identical triangle stream of the former eager path (validated:
 // matching per-purpose triangle counts on large scenes). Falls back to the
 // ===========================================================================

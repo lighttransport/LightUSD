@@ -76,7 +76,7 @@ struct FlattenOptions {
   // pcp's own LayerRegistry, so `layer_loader` and `composition` are unused on
   // this path. Default off preserves the streaming Compositor path (e.g. the
   // WASM asset-cache loader). Only available where the pcp::Cache engine is
-  // linked (the lightusd_next library); elsewhere the Compositor path runs.
+  // linked (the lightusd_core library); elsewhere the Compositor path runs.
   bool use_pcp_compose = false;
   int compose_num_threads = -1;  // pcp worker hint (-1 = auto, 1 = serial)
 };

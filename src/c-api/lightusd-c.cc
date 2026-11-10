@@ -172,7 +172,7 @@ uint32_t lightusd_api_version(void) {
          uint32_t(LIGHTUSD_API_VERSION_PATCH);
 }
 
-const char* lightusd_version_string(void) { return "1.0.0"; }
+const char* lightusd_version_string(void) { return "1.1.0"; }
 
 const char* lightusd_last_error(void) {
   return lightusd_internal::t_last_error.c_str();
