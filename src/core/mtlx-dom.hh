@@ -18,6 +18,7 @@ class MtlxOutput;
 class MtlxNodeGraph;
 class MtlxMaterial;
 class MtlxDocument;
+class MtlxLibrary;
 
 using MtlxElementPtr = std::shared_ptr<MtlxElement>;
 using MtlxNodePtr = std::shared_ptr<MtlxNode>;
@@ -301,6 +302,11 @@ public:
   // Validate the parsed document's nodegraphs against embedded and standard
   // nodedefs. Returns nodegraphs in dependency-first order.
   bool ResolveNodeGraphs(std::vector<std::string>* graph_order,
+                         std::string* err) const;
+  // Resolve with definitions collected from the caller's loaded libraries in
+  // addition to definitions embedded in this document and the standard table.
+  bool ResolveNodeGraphs(const MtlxLibrary& external_library,
+                         std::vector<std::string>* graph_order,
                          std::string* err) const;
 
   // Document properties

@@ -163,6 +163,8 @@ class MtlxLibrary {
  public:
   // Append every <nodedef> child of `root`.
   void AddFrom(const MtlxElem &root);
+  // Append definitions from another library, preserving its document order.
+  void AddLibrary(const MtlxLibrary &library);
   // Append one <nodedef> element whose enclosing scope is `outer`.
   void AddNodeDef(const MtlxElem &e, const MtlxScope &outer);
 

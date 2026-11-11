@@ -486,6 +486,13 @@ bool MtlxDocument::ParseRoot(XMLNodePtr root) {
 
 bool MtlxDocument::ResolveNodeGraphs(
     std::vector<std::string> *graph_order, std::string *err) const {
+  const MtlxLibrary empty_library;
+  return ResolveNodeGraphs(empty_library, graph_order, err);
+}
+
+bool MtlxDocument::ResolveNodeGraphs(
+    const MtlxLibrary &external_library,
+    std::vector<std::string> *graph_order, std::string *err) const {
   if (!parsed_root_) {
     if (err) *err = "MaterialX document has not been parsed";
     return false;
@@ -493,6 +500,7 @@ bool MtlxDocument::ResolveNodeGraphs(
   MtlxElem root = XMLNodeToMtlxElem(parsed_root_);
   MtlxLibrary library;
   library.AddFrom(root);
+  library.AddLibrary(external_library);
   for (const MtlxElem &def : StandardMtlxNodeDefs())
     library.AddNodeDef(def, {});
   return ResolveMtlxGraphs(root, library, graph_order, err);

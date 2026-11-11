@@ -312,6 +312,12 @@ static void CheckTypedMtlxGraphResolution() {
   add_port(&add_def, "input", "in2", "float");
   add_port(&add_def, "output", "out", "float");
   library.AddNodeDef(add_def, {});
+  MtlxElem graph_def = elem("nodedef", "ND_test_graph");
+  graph_def.SetAttr("node", "testgraph");
+  graph_def.SetAttr("type", "float");
+  add_port(&graph_def, "input", "gain", "float");
+  add_port(&graph_def, "output", "out", "float");
+  library.AddNodeDef(graph_def, {});
 
   const auto constant_node = [&elem](const std::string &name) {
     MtlxElem node = elem("testconstant", name);
@@ -336,6 +342,7 @@ static void CheckTypedMtlxGraphResolution() {
   root.children.push_back(helper);
 
   MtlxElem graph = elem("nodegraph", "main");
+  graph.SetAttr("nodedef", "ND_test_graph");
   MtlxElem graph_input = elem("input", "gain");
   graph_input.SetAttr("type", "float");
   graph.children.push_back(graph_input);
@@ -472,6 +479,50 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_DOCUMENT_GRAPH_RESOLVE", 0,
          error.empty() ? parsed_document.GetError() : error);
   }
+
+  g_checks++;
+  MtlxDocument external_document;
+  MtlxLibrary external_library;
+  MtlxElem external_defs = elem("materialx", "");
+  MtlxElem external_constant = elem("nodedef", "ND_external_constant");
+  external_constant.SetAttr("node", "externalconstant");
+  external_constant.SetAttr("type", "float");
+  add_port(&external_constant, "output", "out", "float");
+  external_defs.children.push_back(external_constant);
+  MtlxElem external_passthrough = elem("nodedef", "ND_external_passthrough");
+  external_passthrough.SetAttr("node", "externalpassthrough");
+  external_passthrough.SetAttr("type", "float");
+  add_port(&external_passthrough, "input", "gain", "float");
+  add_port(&external_passthrough, "output", "out", "float");
+  external_defs.children.push_back(external_passthrough);
+  MtlxElem external_color = elem("nodedef", "ND_external_color");
+  external_color.SetAttr("node", "externalcolor");
+  external_color.SetAttr("type", "color3");
+  add_port(&external_color, "input", "value", "color3");
+  add_port(&external_color, "output", "out", "color3");
+  external_defs.children.push_back(external_color);
+  external_library.AddFrom(external_defs);
+  const std::string external_graph_xml = R"(<materialx version="1.39">
+  <implementation name="IM_external" nodedef="ND_external_passthrough" nodegraph="external_graph"/>
+  <nodegraph name="external_graph">
+    <input name="gain" type="float"/>
+    <externalpassthrough name="value" type="float" nodedef="ND_external_passthrough">
+      <input name="gain" type="float" interfacename="gain"/>
+    </externalpassthrough>
+    <externalcolor name="literal" type="color3" nodedef="ND_external_color">
+      <input name="value" type="color3" value="0.944 0.776 0.373"/>
+    </externalcolor>
+    <output name="out" type="float" nodename="value"/>
+  </nodegraph>
+</materialx>)";
+  if (!external_document.ParseFromXML(external_graph_xml) ||
+      !external_document.ResolveNodeGraphs(external_library, &parsed_order,
+                                           &error) ||
+      parsed_order != std::vector<std::string>({"external_graph"})) {
+    Fail("MTLX_DOCUMENT_EXTERNAL_LIBRARY", 0,
+         error.empty() ? external_document.GetError() : error);
+  }
+
 }
 
 static void CheckMtlxDocumentXInclude() {
