@@ -238,7 +238,9 @@ static int address_index(int x, int n, const char *mode, int *outside) {
         return p < n ? p : period - 1 - p;
     }
     if (!strcmp(mode, "constant")) {
-        if (x < 0 || x >= n) *outside = 1;
+        /* Out-of-range UVs are handled by the MaterialX image evaluator,
+         * which has access to the node's typed default. Filter taps at an
+         * in-range edge clamp to the edge texel. */
         return x < 0 ? 0 : (x >= n ? n - 1 : x);
     }
     return wrap(x, n);

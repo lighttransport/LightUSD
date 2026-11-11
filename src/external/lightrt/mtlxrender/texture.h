@@ -29,8 +29,8 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb);
 void texcache_sample(TextureCache *tc, int id, float u, float v, float out[4]);
 
 /* Address-aware variant. Modes are MaterialX names: periodic, clamp, mirror,
- * and constant (constant currently returns the same neutral value as a
- * missing texture for out-of-range coordinates). */
+ * and constant. The evaluator applies a constant mode's node default before
+ * sampling an out-of-range UV, since the cache does not know the node default. */
 void texcache_sample_address(TextureCache *tc, int id, float u, float v,
                              const char *wrap_s, const char *wrap_t,
                              float out[4]);
@@ -44,7 +44,7 @@ void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
                                   float out[4]);
 
 /* Nearest-neighbor counterpart used by MaterialX image nodes that request
- * filtertype="nearest". */
+ * filtertype="closest". */
 void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
                                     const char *wrap_s, const char *wrap_t,
                                     float out[4]);

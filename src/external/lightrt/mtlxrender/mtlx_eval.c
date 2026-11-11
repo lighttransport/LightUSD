@@ -568,28 +568,35 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     const MtlxInput *vs = find_input(n, "vaddressmode");
     const MtlxInput *filter = find_input(n, "filtertype");
     const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "nearest");
+                        !strcmp(filter->value.s, "closest");
+    const char *u_mode = us && us->has_value && us->value.s
+                             ? us->value.s : "periodic";
+    const char *v_mode = vs && vs->has_value && vs->value.s
+                             ? vs->value.s : "periodic";
+    /* MaterialX constant addressing returns this image node's typed default,
+     * not a renderer-wide border color. Coordinates on the domain boundary
+     * remain sampleable. */
+    const int outside_constant =
+        ((!strcmp(u_mode, "constant")) && (u < 0.0f || u > 1.0f)) ||
+        ((!strcmp(v_mode, "constant")) && (v < 0.0f || v > 1.0f));
     int sampled = 0;
-    if (path && !strstr(path, "<UDIM>")) {
+    if (!outside_constant && path && !strstr(path, "<UDIM>")) {
         int id = texcache_get(ctx->tex, path, srgb);
         if (id >= 0) {
             if (nearest) {
                 texcache_sample_nearest_address(ctx->tex, id, u, v,
-                    us ? us->value.s : "periodic",
-                    vs ? vs->value.s : "periodic", s);
+                    u_mode, v_mode, s);
             } else if (ctx->has_uv_derivatives) {
                 texcache_sample_address_grad(ctx->tex, id, u, v,
                     ctx->uv_dx[0], ctx->uv_dx[1], ctx->uv_dy[0], ctx->uv_dy[1],
-                    us ? us->value.s : "periodic",
-                    vs ? vs->value.s : "periodic", s);
+                    u_mode, v_mode, s);
             } else {
                 texcache_sample_address(ctx->tex, id, u, v,
-                    us ? us->value.s : "periodic",
-                    vs ? vs->value.s : "periodic", s);
+                    u_mode, v_mode, s);
             }
             sampled = 1;
         }
-    } else if (path) {
+    } else if (!outside_constant && path) {
         if (nearest) {
             sampled = texcache_sample_file_nearest(ctx->tex, path, srgb, u, v, s);
         } else if (ctx->has_uv_derivatives) {
@@ -631,7 +638,7 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
     float s[4];
     const MtlxInput *filter = find_input(n, "filtertype");
     const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "nearest");
+                        !strcmp(filter->value.s, "closest");
     if (id >= 0) {
         if (nearest) texcache_sample_nearest_address(
             ctx->tex, id, u, v, "periodic", "mirror", s);
@@ -681,7 +688,7 @@ static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
     MtlxValue sample[3];const char *files[3]={"filex","filey","filez"};
     const MtlxInput *filter=find_input(n,"filtertype");
     const int nearest=filter&&filter->has_value&&filter->value.s&&
-                      !strcmp(filter->value.s,"nearest");
+                      !strcmp(filter->value.s,"closest");
     for(int axis=0;axis<3;axis++){
         const MtlxInput *file=find_input(n,files[axis]);const char *path=file&&file->value.s?file->value.s:NULL;int id=path?texcache_get(ctx->tex,path,file?file->colorspace_srgb:0):-1;float s[4];
         if(id>=0){
@@ -726,7 +733,7 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
     if (id < 0) return in_or(ctx, n, "default", mv_zero(n->type));
     const MtlxInput *filter = find_input(n, "filtertype");
     const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "nearest");
+                        !strcmp(filter->value.s, "closest");
 
     MtlxValue tv = in_or(ctx, n, "tiling", mv_vec2(1, 1));
     float tile_x = tv.v[0], tile_y = (tv.v[1] != 0.0f ? tv.v[1] : tv.v[0]);
