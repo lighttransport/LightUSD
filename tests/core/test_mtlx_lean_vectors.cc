@@ -523,6 +523,54 @@ static void CheckTypedMtlxGraphResolution() {
          error.empty() ? external_document.GetError() : error);
   }
 
+  g_checks++;
+  MtlxDocument legacy_document;
+  const std::string legacy_xml = R"(<materialx version="1.37">
+  <nodegraph name="legacy">
+    <diffuse_brdf name="diffuse" type="BSDF"/>
+  </nodegraph>
+</materialx>)";
+  if (!legacy_document.ParseFromXML(legacy_xml) ||
+      legacy_document.GetVersion() != "1.39" ||
+      !legacy_document.FindNodeGraph("legacy") ||
+      !legacy_document.FindNodeGraph("legacy")->GetNode("diffuse") ||
+      legacy_document.FindNodeGraph("legacy")->GetNode("diffuse")->GetCategory() !=
+          "oren_nayar_diffuse_bsdf") {
+    Fail("MTLX_VERSION_UPGRADE_137", 0,
+         "legacy diffuse_brdf node was not upgraded to 1.39");
+  }
+
+  g_checks++;
+  MtlxDocument legacy_bsdf_document;
+  const std::string legacy_bsdf_xml = R"(<materialx version="1.37">
+  <nodegraph name="legacy_bsdf">
+    <diffuse_brdf name="base" type="BSDF"/>
+    <dielectric_brdf name="coat" type="BSDF">
+      <input name="base" type="BSDF" nodename="base"/>
+    </dielectric_brdf>
+    <conductor_brdf name="metal" type="BSDF">
+      <input name="reflectivity" type="color3" value="0.5, 0.5, 0.5"/>
+      <input name="edge_color" type="color3" value="1, 1, 1"/>
+    </conductor_brdf>
+  </nodegraph>
+</materialx>)";
+  MtlxNodeGraphPtr legacy_bsdf_graph;
+  if (!legacy_bsdf_document.ParseFromXML(legacy_bsdf_xml) ||
+      !(legacy_bsdf_graph = legacy_bsdf_document.FindNodeGraph("legacy_bsdf")) ||
+      !legacy_bsdf_graph->GetNode("coat") ||
+      legacy_bsdf_graph->GetNode("coat")->GetCategory() != "layer" ||
+      !legacy_bsdf_graph->GetNode("coat__layer_top") ||
+      legacy_bsdf_graph->GetNode("coat__layer_top")->GetCategory() !=
+          "dielectric_bsdf" ||
+      !legacy_bsdf_graph->GetNode("metal") ||
+      legacy_bsdf_graph->GetNode("metal")->GetCategory() != "conductor_bsdf" ||
+      !legacy_bsdf_graph->GetNode("metal__artistic_ior") ||
+      legacy_bsdf_graph->GetNode("metal__artistic_ior")->GetCategory() !=
+          "artistic_ior") {
+    Fail("MTLX_VERSION_UPGRADE_BSDF", 0,
+         "legacy BSDF layering or conductor inputs were not upgraded");
+  }
+
 }
 
 static void CheckMtlxDocumentXInclude() {

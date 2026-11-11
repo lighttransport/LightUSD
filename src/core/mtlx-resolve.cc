@@ -24,6 +24,27 @@ inline bool IsSpace(char c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
+bool MtlxChannelConversionMatches(const MtlxElem &input,
+                                  const std::string &source_type,
+                                  const std::string &input_type) {
+  const std::string channels = input.AttrOr("channels");
+  if (channels.empty() || source_type != "float") return false;
+  const size_t expected_count = input_type == "color3" || input_type == "vector3"
+                                    ? 3
+                                    : input_type == "color4" || input_type == "vector4"
+                                          ? 4
+                                          : input_type == "vector2" ? 2 : 0;
+  if (expected_count == 0 || channels.size() != expected_count) return false;
+  const char first = channels[0];
+  if (first != 'r' && first != 'g' && first != 'b' && first != 'a' &&
+      first != 'x' && first != 'y' && first != 'z' && first != 'w')
+    return false;
+  for (char channel : channels) {
+    if (channel != first) return false;
+  }
+  return true;
+}
+
 std::string Trim(const std::string &s) {
   size_t b = 0;
   size_t e = s.size();
@@ -1300,7 +1321,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
         if (!MtlxNodeOutputType(library, *source, graph_scope,
                                 input.AttrOr("output"), &source_type, err))
           return false;
-        if (source_type != input_type) {
+        if (source_type != input_type &&
+            !MtlxChannelConversionMatches(input, source_type, input_type)) {
           if (err) *err = "connection to input '" + input_name + "' on node '" +
                           node.Name() + "' has type " + source_type +
                           ", expected " + input_type;
@@ -1389,7 +1411,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                           "' of nodegraph '" + *graph_name + "'";
           return false;
         }
-        if (resolved_graph_type != input_type) {
+        if (resolved_graph_type != input_type &&
+            !MtlxChannelConversionMatches(input, resolved_graph_type, input_type)) {
           if (err) *err = "nodegraph connection to input '" + input_name +
                           "' has type " + resolved_graph_type + ", expected " + input_type;
           return false;
@@ -1418,7 +1441,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                           "' disagrees with its nodedef input type";
           return false;
         }
-        if (interface_type != input_type) {
+        if (interface_type != input_type &&
+            !MtlxChannelConversionMatches(input, interface_type, input_type)) {
           if (err) *err = "graph interface '" + *interface_name + "' has type " +
                           interface_type + ", expected " + input_type;
           return false;

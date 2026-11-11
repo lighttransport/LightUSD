@@ -34,6 +34,192 @@ MtlxElem XMLNodeToMtlxElem(XMLNodePtr node) {
   return elem;
 }
 
+void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
+                         MtlxElem *parent = nullptr) {
+  if (!elem) return;
+  if (elem->AttrOr("type") == "color2") elem->SetAttr("type", "vector2");
+
+  const size_t original_child_count = elem->children.size();
+  std::vector<MtlxElem> generated;
+  auto make_input = [](const char *name, const char *type,
+                       const std::string &node_name,
+                       const std::string &output = std::string()) {
+    MtlxElem input;
+    input.tag = "input";
+    input.SetAttr("name", name);
+    input.SetAttr("type", type);
+    input.SetAttr("nodename", node_name);
+    if (!output.empty()) input.SetAttr("output", output);
+    return input;
+  };
+  auto unique_name = [&](const std::string &base_name) {
+    std::string candidate = base_name;
+    for (size_t suffix = 1;; ++suffix) {
+      const bool exists = parent &&
+          std::any_of(parent->children.begin(), parent->children.end(),
+                      [&](const MtlxElem &child) {
+                        return child.Name() == candidate;
+                      });
+      if (!exists) return candidate;
+      candidate = base_name + "_" + std::to_string(suffix);
+    }
+  };
+
+  for (size_t i = 0; i < original_child_count; ++i)
+    UpgradeMtlxElements(&elem->children[i], minor_version, elem);
+
+  if (minor_version == 38 && IsMtlxNodeElem(*elem)) {
+    static const std::pair<const char *, const char *> kNodeRenames[] = {
+        {"diffuse_brdf", "oren_nayar_diffuse_bsdf"},
+        {"burley_diffuse_brdf", "burley_diffuse_bsdf"},
+        {"diffuse_btdf", "translucent_bsdf"},
+        {"subsurface_brdf", "subsurface_bsdf"},
+        {"sheen_brdf", "sheen_bsdf"},
+        {"generalized_schlick_brdf", "generalized_schlick_bsdf"},
+        {"thin_film_brdf", "thin_film_bsdf"},
+        {"dielectric_brdf", "dielectric_bsdf"},
+        {"dielectric_btdf", "dielectric_bsdf"}};
+    const std::string old_category = elem->tag;
+    const bool was_dielectric_btdf = old_category == "dielectric_btdf";
+    const bool needs_layer = old_category == "dielectric_brdf" ||
+                             old_category == "generalized_schlick_brdf" ||
+                             old_category == "sheen_brdf" ||
+                             old_category == "thin_film_brdf";
+    const bool was_conductor = old_category == "conductor_brdf";
+    for (const auto &rename : kNodeRenames) {
+      if (elem->tag == rename.first) {
+        elem->tag = rename.second;
+        break;
+      }
+    }
+    if (was_dielectric_btdf) {
+      elem->children.erase(
+          std::remove_if(elem->children.begin(), elem->children.end(),
+                         [](const MtlxElem &child) {
+                           return child.tag == "input" &&
+                                  child.AttrOr("name") == "interior";
+                         }),
+          elem->children.end());
+      bool has_scatter_mode = false;
+      for (const MtlxElem &child : elem->children) {
+        if (child.tag == "input" &&
+            child.AttrOr("name") == "scatter_mode") {
+          has_scatter_mode = true;
+          break;
+        }
+      }
+      if (!has_scatter_mode) {
+        MtlxElem scatter_mode;
+        scatter_mode.tag = "input";
+        scatter_mode.SetAttr("name", "scatter_mode");
+        scatter_mode.SetAttr("type", "string");
+        scatter_mode.SetAttr("value", "T");
+        elem->children.push_back(std::move(scatter_mode));
+      }
+    }
+    if (was_conductor) {
+      elem->tag = "conductor_bsdf";
+      const std::string node_name = elem->AttrOr("name");
+      const std::string artistic_name =
+          unique_name(node_name + "__artistic_ior");
+      MtlxElem artistic;
+      artistic.tag = "artistic_ior";
+      artistic.SetAttr("name", artistic_name);
+      artistic.SetAttr("type", "multioutput");
+      artistic.children.push_back(MtlxElem{});
+      artistic.children.back().tag = "output";
+      artistic.children.back().SetAttr("name", "ior");
+      artistic.children.back().SetAttr("type", "color3");
+      artistic.children.push_back(MtlxElem{});
+      artistic.children.back().tag = "output";
+      artistic.children.back().SetAttr("name", "extinction");
+      artistic.children.back().SetAttr("type", "color3");
+      for (const char *input_name : {"reflectivity", "edge_color"}) {
+        for (const MtlxElem &child : elem->children) {
+          if (child.tag == "input" && child.AttrOr("name") == input_name) {
+            artistic.children.push_back(child);
+            break;
+          }
+        }
+      }
+      elem->children.erase(
+          std::remove_if(elem->children.begin(), elem->children.end(),
+                         [](const MtlxElem &child) {
+                           return child.tag == "input" &&
+                                  (child.AttrOr("name") == "reflectivity" ||
+                                   child.AttrOr("name") == "edge_color");
+                         }),
+          elem->children.end());
+      elem->children.push_back(make_input("ior", "color3", artistic_name, "ior"));
+      elem->children.push_back(
+          make_input("extinction", "color3", artistic_name, "extinction"));
+      generated.push_back(std::move(artistic));
+    }
+    if (needs_layer) {
+      auto base = std::find_if(elem->children.begin(), elem->children.end(),
+                               [](const MtlxElem &child) {
+                                 return child.tag == "input" &&
+                                        child.AttrOr("name") == "base";
+                               });
+      if (base != elem->children.end()) {
+        const bool has_binding = base->Attr("nodename") ||
+                                 base->Attr("nodegraph") ||
+                                 base->Attr("interfacename");
+        MtlxElem layer_base = *base;
+        layer_base.SetAttr("name", "base");
+        layer_base.SetAttr("type", "BSDF");
+        elem->children.erase(base);
+        if (has_binding) {
+          const std::string layer_name = elem->AttrOr("name");
+          const std::string top_name =
+              unique_name(layer_name + "__layer_top");
+          elem->SetAttr("name", top_name);
+          MtlxElem layer;
+          layer.tag = "layer";
+          layer.SetAttr("name", layer_name);
+          layer.SetAttr("type", "BSDF");
+          layer.children.push_back(make_input("top", "BSDF", top_name));
+          layer.children.push_back(std::move(layer_base));
+          generated.push_back(std::move(layer));
+        }
+      }
+    }
+    if (elem->tag == "atan2") {
+      for (MtlxElem &child : elem->children) {
+        if (child.tag != "input") continue;
+        const std::string name = child.AttrOr("name");
+        if (name == "in1") child.SetAttr("name", "iny");
+        else if (name == "in2") child.SetAttr("name", "inx");
+      }
+    }
+    for (MtlxElem &child : elem->children) {
+      if (child.tag == "input" && child.Attr("value") &&
+          (child.Attr("nodename") || child.Attr("nodegraph") ||
+           child.Attr("interfacename") || child.Attr("output"))) {
+        child.attrs.erase(
+            std::remove_if(child.attrs.begin(), child.attrs.end(),
+                           [](const auto &attr) { return attr.first == "value"; }),
+            child.attrs.end());
+      }
+    }
+  }
+
+  MtlxElem *owner = parent ? parent : elem;
+  for (MtlxElem &child : generated)
+    owner->children.push_back(std::move(child));
+}
+
+void UpgradeMtlxVersion(MtlxElem *root) {
+  if (!root || root->tag != "materialx") return;
+  uint64_t major = 0, minor = 0;
+  if (!ParseMtlxVersion(root->AttrOr("version"), &major, &minor) ||
+      major != 1 || (minor != 37 && minor != 38)) {
+    return;
+  }
+  UpgradeMtlxElements(root, 38);
+  root->SetAttr("version", "1.39");
+}
+
 void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,
                               const MtlxScope &outer) {
   if (!elem) return;
@@ -414,6 +600,7 @@ bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
 
   warning_ = parser.GetWarning();
   MtlxElem root = XMLNodeToMtlxElem(parser.GetDocument().GetRoot());
+  UpgradeMtlxVersion(&root);
   InheritMtlxAttributes(&root);
   ApplyMtlxNodeDefDefaults(&root);
   return ParseRoot(MtlxElemToXMLNode(root));
@@ -453,6 +640,7 @@ bool MtlxDocument::ParseFromXML(const std::string &xml_string,
     return false;
   }
 
+  UpgradeMtlxVersion(&root);
   InheritMtlxAttributes(&root);
   ApplyMtlxNodeDefDefaults(&root);
   return ParseRoot(MtlxElemToXMLNode(root));
