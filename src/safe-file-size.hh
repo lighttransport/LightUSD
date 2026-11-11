@@ -25,7 +25,7 @@ constexpr uint64_t kMaxReadableFileBytes = 16ull << 30;  // 16 GiB
 /// `std::string(n, '\0')` or `vector::resize(n)`, which throws length_error --
 /// uncaught, so the process terminates. A USD file referencing
 /// `@./somedir.mtlx@` where that path is a directory was enough to kill the
-/// process; fuzz_next_compose found it in minutes.
+/// process; fuzz_core_compose found it in minutes.
 ///
 /// The existing caps did not help because every one of them was conditional
 /// (`if (max_memory > 0) ...`), so the default configuration left the path

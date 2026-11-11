@@ -9,11 +9,11 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import {
-    buildNextThreeNode,
-    isNextScene,
-    nextCountsFromScene,
-    readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+    buildThreeNode,
+    isScene,
+    countsFromScene,
+    readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 import {
     getAssetUriFromURL
 } from 'lightusd/LoaderConfigUtils.js';
@@ -51,7 +51,7 @@ const TONE_MAPPINGS = {
 
 const TRACE_LOAD = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
 const TRACE_LOAD_T0 = performance.now();
-const LOADER_BACKEND = 'next';
+const LOADER_BACKEND = 'core';
 
 function traceLoadPhase(name, detail = '') {
     if (!TRACE_LOAD) {
@@ -107,7 +107,7 @@ function describeNativeOptimizations() {
     return enabled.length ? enabled.join(', ') : 'no native optimizations';
 }
 
-function describeNextNativeStats(stats) {
+function describeCoreNativeStats(stats) {
     if (!stats) return '';
     const parts = [];
     if (Number.isFinite(stats.sourceMeshes) && Number.isFinite(stats.optimizedMeshes)) {
@@ -568,7 +568,7 @@ const loaderState = {
 // Scene state
 const sceneState = {
     root: null,
-    nextNodeIndexMap: null,
+    coreNodeIndexMap: null,
     materials: [],
     materialData: [],
     textureCache: new Map(),
@@ -1298,10 +1298,10 @@ function convertUSDAnimationsToThreeJS(usdLoader, root) {
 
     if (numAnimations === 0) return clips;
 
-    // Next animation target_node is a RenderScene node-table index; use the
-    // table map from buildNextThreeNode when present, not a DFS walk (the
-    // next tree inserts wrapper groups, so DFS indices drift).
-    const nodeIndexMap = sceneState.nextNodeIndexMap || buildNodeIndexMap(root);
+    // Core animation target_node is a RenderScene node-table index; use the
+    // table map from buildThreeNode when present, not a DFS walk (the
+    // The core tree inserts wrapper groups, so DFS indices drift).
+    const nodeIndexMap = sceneState.coreNodeIndexMap || buildNodeIndexMap(root);
 
     for (let i = 0; i < numAnimations; i++) {
         const usdAnimation = usdLoader.getAnimation(i);
@@ -2109,7 +2109,7 @@ async function loadUSDFromData(data, filename, stats = null) {
     clearScene();
     traceLoadPhase('loadUSDFromData:clearScene-done');
 
-    if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
+    if (LOADER_BACKEND === 'core' || LOADER_BACKEND === 'auto') {
         const parseStart = performance.now();
         const usdScene = await new Promise((resolve, reject) => {
             loaderState.loader.parse(data, filename, resolve, reject, {
@@ -2118,9 +2118,9 @@ async function loadUSDFromData(data, filename, stats = null) {
             });
         });
         stats.parseMs = performance.now() - parseStart;
-        if (isNextScene(usdScene)) {
+        if (isScene(usdScene)) {
             const processStart = performance.now();
-            const meta = readNextSceneMeta(usdScene);
+            const meta = readSceneMeta(usdScene);
             sceneState.upAxis = meta.upAxis || 'Y';
             sceneState.metadata = {
                 upAxis: sceneState.upAxis,
@@ -2128,15 +2128,15 @@ async function loadUSDFromData(data, filename, stats = null) {
                 framesPerSecond: 24.0,
                 timeCodesPerSecond: 24.0
             };
-            const built = buildNextThreeNode(usdScene, {
+            const built = buildThreeNode(usdScene, {
                 skipTextures: settings.skipTextures,
                 lazyTextures: !settings.skipTextures
             });
             sceneState.root = built.node;
-            sceneState.nextNodeIndexMap = built.nodeIndexMap || null;
+            sceneState.coreNodeIndexMap = built.nodeIndexMap || null;
             threeState.scene.add(sceneState.root);
             if (built.textureManager && !settings.skipTextures) {
-                startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
+                startTrackedTextureLoading(built.textureManager, stats, 'coreTextureQueue');
             }
             collectMaterialsFromScene();
             updateMaterialUI();
@@ -2144,7 +2144,7 @@ async function loadUSDFromData(data, filename, stats = null) {
             applyUpAxisConversion();
             fitCameraToScene();
             updateHelpersSize();
-            const counts = nextCountsFromScene(usdScene);
+            const counts = countsFromScene(usdScene);
             const meshCount = counts.meshes;
             const materialCount = sceneState.materials.length || counts.materials;
             document.getElementById('model-info').style.display = 'block';
@@ -2153,7 +2153,7 @@ async function loadUSDFromData(data, filename, stats = null) {
             document.getElementById('material-count').textContent = materialCount;
             setSceneEntityCountsFromScene(counts);
             updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials ` +
-                `(backend: next · MaterialX/OpenPBR material data · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
+                `(backend: core · MaterialX/OpenPBR material data · ${describeNativeOptimizations()})${describeCoreNativeStats(counts.stats)}`);
             if (typeof usdScene.releaseBuildData === 'function') {
                 usdScene.releaseBuildData();
             }
@@ -2274,7 +2274,7 @@ async function buildSceneGraph() {
 
     // Build Three.js scene graph from USD hierarchy
     traceLoadPhase('buildSceneGraph:buildThreeNode:start');
-    sceneState.nextNodeIndexMap = null;
+    sceneState.coreNodeIndexMap = null;
     sceneState.root = await LightUSDLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
@@ -2743,7 +2743,7 @@ async function convertMaterial(matData, index) {
         material.userData.typeInfo = typeInfo;
         material.userData.typeString = typeString + (useOpenPBRMaterial ? ' [OpenPBRMaterial]' : ' [MeshPhysicalMaterial]');
         material.userData.rawData = matData;
-        if (matData?.__nextMaterial && previousMaterial) {
+        if (matData?.__coreMaterial && previousMaterial) {
             copyCoreMaterialTextures(previousMaterial, material);
         }
         return material;
@@ -3089,8 +3089,8 @@ function convertToOpenPBRMaterial(matData, nativeLoader = null) {
 }
 
 function copyCoreMaterialTextures(previousMaterial, material) {
-            material.userData.nextTexturePaths = {...previousMaterial.userData.nextTexturePaths};
-            material.userData.nextTextureMetadata = {...previousMaterial.userData.nextTextureMetadata};
+            material.userData.coreTexturePaths = {...previousMaterial.userData.coreTexturePaths};
+            material.userData.coreTextureMetadata = {...previousMaterial.userData.coreTextureMetadata};
             // Reuse decoded core archive textures across implementation changes.
             // Material disposal does not own these shared texture objects.
             for (const key of ['map','normalMap','roughnessMap','metalnessMap','aoMap',
@@ -3143,7 +3143,7 @@ async function reloadMaterials() {
     // A texture may finish while an asynchronous material conversion yields.
     // Refresh completed maps, then redirect all still-pending bindings.
     for (const [oldMat, newMat] of oldToNewMaterialMap) {
-        if (oldMat !== newMat && oldMat.userData?.rawData?.__nextMaterial)
+        if (oldMat !== newMat && oldMat.userData?.rawData?.__coreMaterial)
             copyCoreMaterialTextures(oldMat, newMat);
     }
     sceneState.textureLoadingManager?.replaceMaterials(oldToNewMaterialMap);
@@ -3233,7 +3233,7 @@ function clearScene() {
 
     sceneState.materials = [];
     sceneState.materialData = [];
-    sceneState.nextNodeIndexMap = null;
+    sceneState.coreNodeIndexMap = null;
 
     // Dispose texture cache
     sceneState.textureCache.forEach(texture => {
@@ -3563,7 +3563,7 @@ function addSpecularWeightControl(folder, mat) {
     let specularWeightValue;
     const rawData = mat.userData?.rawData;
 
-    // Next-backend OpenPBR params are objects ({value, texture, ...}) or
+    // Core-backend OpenPBR params are objects ({value, texture, ...}) or
     // vectors; unwrap to the scalar lil-gui needs.
     const unwrapScalar = (v) => {
         if (v && typeof v === 'object' && !Array.isArray(v)) v = v.value;

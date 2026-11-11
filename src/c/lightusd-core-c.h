@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
- * lightusd-core-c.h -- C11 core for the `next` product.
+ * lightusd-core-c.h -- internal C11 core for the core library.
  *
- * This is the C11 boundary for algorithmic core modules that the `next` build
+ * This is the C11 boundary for algorithmic core modules that the core build
  * shares with C++ consumers. The first module ported here is the SdfPathExpression
  * parser / serializer / matcher; further leaf modules follow the same shape.
  *
- * Design (mirrors src/c-api/lightusd-c.h, but internal to the next build):
+ * Design (mirrors src/c-api/lightusd-c.h, but internal to the core build):
  * - C11 only: no C++ types, no exceptions, no RTTI cross this boundary.
  * - Counted views (lu_view) instead of NUL-terminated strings; every buffer is
  *   bounded by an explicit capacity and every length is size_t.
@@ -95,7 +95,7 @@ LU_CORE_API lu_view lu_view_from_cstr(const char *s);
 /* ============================================================
  * Structural limits
  *
- * These mirror the historical next-side limits. They are unconditional: an
+ * These mirror the limits of the current implementation. They are unconditional: an
  * expression that exceeds them is rejected rather than parsed further, so a
  * hostile input cannot drive unbounded work or memory use.
  * ============================================================ */
@@ -247,7 +247,7 @@ LU_CORE_API int lu_path_expr_match_pattern(const lu_path_expr *expr,
                                            void *user);
 
 /* ============================================================
- * Generated checker tables (src/next/c/generated-schema-tables.c)
+ * Generated checker tables (src/c/generated-schema-tables.c)
  *
  * The AOUSD schema inventory: 134 schemas, 403 properties, 691 shaders and the
  * checker rule -> specification mapping. All of it is a NUL-separated string
@@ -323,7 +323,7 @@ LU_CORE_API int lu_validation_ref_error_item(size_t rule_index, size_t item,
                                              lu_view *out);
 
 /* ============================================================
- * Integer formatting (src/next/c/strfmt.c)
+ * Integer formatting (src/c/strfmt.c)
  *
  * Locale-independent, libc-free decimal formatting. Byte-identical to
  * `ss << v` under the classic locale. `buf` needs >= 20 bytes for lu_uint_to
@@ -335,14 +335,14 @@ LU_CORE_API size_t lu_uint_to(char *buf, uint64_t v);
 LU_CORE_API size_t lu_int_to(char *buf, int64_t v);
 
 /* ============================================================
- * IEEE 754 half <-> float (src/next/c/half.c)
+ * IEEE 754 half <-> float (src/c/half.c)
  * ============================================================ */
 
 LU_CORE_API float lu_half_to_float(uint16_t h);
 LU_CORE_API uint16_t lu_float_to_half(float value);
 
 /* ============================================================
- * USDA lexer token types (src/next/c/lexer.c)
+ * USDA lexer token types (src/c/lexer.c)
  *
  * Mirror of ::lightusd::TokenType (parser/lexer.hh); the numeric values must stay in
  * sync. Used by lu_lex_lookup_keyword.
@@ -386,7 +386,7 @@ typedef enum lu_token_type {
 } lu_token_type;
 
 /* ============================================================
- * Built-in USD type metadata (src/next/c/type-names.c)
+ * Built-in USD type metadata (src/c/type-names.c)
  *
  * The USD<->TypeId mapping and per-type layout. Metadata only: no per-type
  * executable callbacks. C++ TypeInfo descriptors are constructed field by
@@ -492,9 +492,9 @@ LU_CORE_API uint16_t lu_type_component_type(uint16_t id);
 LU_CORE_API uint8_t lu_type_component_count(uint16_t id);
 
 /* ============================================================
- * Time-sample interpolation primitives (src/next/c/interpolation.c)
+ * Time-sample interpolation primitives (src/c/interpolation.c)
  *
- * Value-free numeric core of src/next/types/interpolation.cc: the
+ * Value-free numeric core of src/types/interpolation.cc: the
  * linearly-interpolatable type predicate and the scalar/vector lerp and
  * quaternion slerp kernels. The Value-typed InterpolateValues stays C++.
  * ============================================================ */
@@ -513,9 +513,9 @@ LU_CORE_API void lu_slerp_quatd(double *out, const double *a, const double *b,
                                 double t);
 
 /* ============================================================
- * Value array/storage type queries (src/next/c/value-storage.c)
+ * Value array/storage type queries (src/c/value-storage.c)
  *
- * Value-free type predicates of src/next/types/value.cc and value-view.cc:
+ * Value-free type predicates of src/types/value.cc and value-view.cc:
  * which backing storage an array element type uses, the scalar-component and
  * byte-size mapping, and the array-size validity checks. Pure functions of
  * lu_type_id.
@@ -541,9 +541,9 @@ LU_CORE_API int lu_requires_lazy_component_reorder(uint16_t id);
 LU_CORE_API size_t lu_scalar_byte_size(uint16_t comp);
 
 /* ============================================================
- * SIMD byte scanning for the USDA parser (src/next/c/simd-scan.c)
+ * SIMD byte scanning for the USDA parser (src/c/simd-scan.c)
  *
- * Bulk-skip "boring" array/prim bytes to the next structurally-interesting
+ * Bulk-skip "boring" array/prim bytes to the next interesting region
  * byte. Byte-identical to the scalar scan; the SIMD kernels only change speed.
  * `newlines`/`commas` accumulate tallies over the scanned-over prefix.
  * ============================================================ */
@@ -559,7 +559,7 @@ LU_CORE_API const char *lu_simd_scan_prim_structural(const char *p,
 LU_CORE_API const char *lu_simd_scan_backend(void);
 
 /* ============================================================
- * USDA lexical primitives (src/next/c/lexer.c)
+ * USDA lexical primitives (src/c/lexer.c)
  *
  * Byte classification, the inf/infinity/nan special-float word matcher, the
  * keyword table lookup and the numeric-literal length scanner. The stateful
@@ -601,7 +601,7 @@ LU_CORE_API uint8_t lu_lex_lookup_keyword(const char *p, size_t n);
 LU_CORE_API size_t lu_lex_scan_number(const char *p, const char *end);
 
 /* ============================================================
- * Identifier / path validation (src/next/c/identifier.c)
+ * Identifier / path validation (src/c/identifier.c)
  *
  * AOUSD Core Spec section 8 identifier, namespaced-property and textual path
  * grammar, plus UTF-8 decoding. All allocation-free.
@@ -617,7 +617,7 @@ LU_CORE_API int lu_is_valid_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_namespaced_identifier(const char *data, size_t size);
 LU_CORE_API int lu_is_valid_path_string(const char *data, size_t size);
 /* ============================================================
- * Decimal integer parsing (src/next/c/decimal.c)
+ * Decimal integer parsing (src/c/decimal.c)
  *
  * ASCII-parser numeric helpers. NUL-terminated input, optional leading sign,
  * saturation (or overflow failure for the checked variants).
@@ -634,7 +634,7 @@ LU_CORE_API int lu_decimal_to_u64_checked(const char *s, uint64_t *out);
 LU_CORE_API int lu_is_decimal_int_token(const char *s, size_t len,
                                         int allow_neg);
 /* ============================================================
- * 4x4 double transform math (src/next/c/mat4.c)
+ * 4x4 double transform math (src/c/mat4.c)
  *
  * Row-vector (USD/legacy) convention, bit-identical to the legacy evaluator:
  * reduced-argument sin_pi/cos_pi rather than sin/cos of deg*pi/180. Pure
@@ -657,7 +657,7 @@ LU_CORE_API void lu_mat4_orient(double *m, double w, double x, double y,
 /* Invert; identity when singular. out may alias a. */
 LU_CORE_API void lu_mat4_invert(const double *a, double *out);
 /* ============================================================
- * USD path string algorithms (src/next/c/path.c)
+ * USD path string algorithms (src/c/path.c)
  *
  * Counted-buffer decomposition of a USD path. Each function writes at most
  * `cap` bytes and sets *out_len to the full length; it returns 0 (with
@@ -685,7 +685,7 @@ LU_CORE_API int lu_path_make_relative_to(const char *p, size_t n,
                                          const char *base, size_t bn, char *out,
                                          size_t cap, size_t *out_len);
 /* ============================================================
- * Cubic spline segment math (src/next/c/spline.c)
+ * Cubic spline segment math (src/c/spline.c)
  *
  * Hermite basis, cubic Bezier evaluation/derivative, the Bezier time solver and
  * anti-regression from src/spline-eval.hh. Pure double math; the templated knot
@@ -729,7 +729,7 @@ typedef struct lu_spline_knot {
 LU_CORE_API void lu_spline_compute_auto_ease(lu_spline_knot *knots, size_t n);
 
 /* ============================================================
- * Crate integer decode (src/next/c/crate-int.c)
+ * Crate integer decode (src/c/crate-int.c)
  *
  * pxrUSD crate integer sections: the common-prefix and delta-coded formats,
  * plus the packed code-table size. The decode side turns untrusted crate bytes
@@ -738,7 +738,7 @@ LU_CORE_API void lu_spline_compute_auto_ease(lu_spline_knot *knots, size_t n);
  * ============================================================ */
 
 /* ============================================================
- * LZ4 + crate blob framing (src/next/c/crate-blob.c)
+ * LZ4 + crate blob framing (src/c/crate-blob.c)
  *
  * The pxrUSD TfFastCompression layout and raw LZ4 wrappers. All functions
  * write into a caller buffer bounded by `dst_cap`/`dst_size` and report the
@@ -760,7 +760,7 @@ LU_CORE_API int lu_lz4_compress(const uint8_t *src, size_t src_size,
                                 const char **out_error);
 
 /* ============================================================
- * Crate value-type metadata (src/next/c/crate-typeid.c)
+ * Crate value-type metadata (src/c/crate-typeid.c)
  *
  * Wire values of the SdfValueTypeName byte and per-type fixed sizes. Keep in
  * sync with ::lightusd::CrateTypeId (crate-format.hh).
@@ -876,7 +876,7 @@ LU_CORE_API int lu_crate_encode_integers(const uint32_t *values, size_t count,
                                          size_t *out_size,
                                          const char **out_error);
 
-/* Delta-coded integer encode (src/next/c/crate-delta-encode.c). The bound is
+/* Delta-coded integer encode (src/c/crate-delta-encode.c). The bound is
  * the worst case: 4 + code bytes + one full-width value per element
  * (u32 -> i32, s32 -> i64). *out_size is the exact written size. */
 LU_CORE_API int lu_crate_encode_delta_u32_bound(size_t count,
@@ -894,7 +894,7 @@ LU_CORE_API int lu_crate_encode_delta_s32(const int32_t *values, size_t count,
 
 
 /* ============================================================
- * C11 semi-any value core (src/next/c/value.c)
+ * C11 semi-any value core (src/c/value.c)
  *
  * One C11 implementation owns inline values and retained, copy-on-write
  * strings, arrays, dictionaries, boxes and lazy decoder contexts. C++ and

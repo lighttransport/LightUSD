@@ -3,7 +3,7 @@
 # Regression test: the DEFAULT (tydra) load path renders UsdGeomPointInstancer
 # instances. Before BuildDrawInstances was wired into mesh_build.cc, tydra loaded
 # a PointInstancer's prototype as a single mesh and ignored RenderScene::instances
-# entirely ("instances 0/0 visible"); only the --next loader placed instances.
+# entirely ("instances 0/0 visible"); only the --core loader placed instances.
 # This asserts the tydra path now emits one instance per authored placement AND
 # that the auto-fit camera frames all of them (world-space prototype bounds), so
 # none get frustum-culled. A reference-based prototype covers composed scenes.
@@ -84,7 +84,7 @@ run_case() {
   local asset="$2"
   local out="$TMP_DIR/${label}.png"
   local log
-  # NOTE: default (tydra) loader -- no --next.
+  # NOTE: default (tydra) loader -- no --core.
   log="$(timeout --kill-after=5s 30s "${RUN[@]}" "$LUSDVIEW" --headless \
          --backend "$BACKEND" --config "$CONFIG" --frames 1 \
          --screenshot "$out" "$asset" 2>&1)"

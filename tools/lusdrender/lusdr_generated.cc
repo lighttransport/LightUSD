@@ -9,7 +9,7 @@
 
 namespace lusdr {
 
-void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
+void ExpandGeneratedMeshCornersCore(const GeneratedMeshCore &mesh,
                                     std::vector<float> *points,
                                     std::vector<float> *normals,
                                     std::vector<float> *uvs,
@@ -41,18 +41,18 @@ void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
   }
 }
 
-bool IsTriangleMeshNext(const lightusd::UsdPrim &prim) {
+bool IsTriangleMeshCore(const lightusd::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   return type == "Mesh" ||
          lightusd::tydra::IsAnalyticGeomTypeName(type);
 }
 
-bool GenerateAnalyticMeshNext(const lightusd::Stage &stage,
+bool GenerateAnalyticMeshCore(const lightusd::Stage &stage,
                               const lightusd::UsdPrim &prim, double time,
-                              GeneratedMeshNext *out) {
+                              GeneratedMeshCore *out) {
   if (!out || !lightusd::tydra::IsAnalyticGeomTypeName(
                   prim.GetTypeName())) return false;
-  *out = GeneratedMeshNext{};
+  *out = GeneratedMeshCore{};
   lightusd::tydra::ConverterConfig config;
   config.time_code = time;
   // Keep polygon corners so generated face-varying normals/UVs stay aligned.
@@ -71,7 +71,7 @@ bool GenerateAnalyticMeshNext(const lightusd::Stage &stage,
     if (!std::isfinite(point)) {
       std::cerr << "Non-finite generated geometry: " << prim.GetPath().str()
                 << "\n";
-      *out = GeneratedMeshNext{};
+      *out = GeneratedMeshCore{};
       return false;
     }
   }

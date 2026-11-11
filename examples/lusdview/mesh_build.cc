@@ -170,7 +170,7 @@ void NormalizeUdimTiles(DrawTextureCPU* tex, bool srgb, DrawScene* out) {
   // uploads udimTiles as a 2D array requiring all layers to be exactly
   // udimTileWidth/Height, so a leftover wrong-sized tile rendered as a
   // black/garbage layer instead of the intended "missing" sentinel. Mirrors the
-  // --next loader (LoadNextUdimTexture); the dropped tile's UDIM id stays
+  // --core loader (LoadCoreUdimTexture); the dropped tile's UDIM id stays
   // unmapped in the LUT rebuilt by InitUdimLookup below.
   std::vector<DrawUdimTileCPU> sized;
   sized.reserve(tex->udimTiles.size());
@@ -439,10 +439,10 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
   EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map);
 }
 
-}  // namespace  (the texture post-passes below are shared with the --next loader)
+}  // namespace  (the texture post-passes below are shared with the --core loader)
 
 // GPU block-compression pass over already-decoded DrawScene textures. Split out
-// of ApplyTextureRuntimeOptions so the `--next` loader — which does its own size
+// of ApplyTextureRuntimeOptions so the `--core` loader — which does its own size
 // cap / byte budget inside its texture decoder and must not re-run those passes —
 // can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
 // live outside the anonymous namespace (external linkage).
@@ -1122,7 +1122,7 @@ bool Normalize3(float v[3]) {
   return true;
 }
 
-// (definition moved below the anonymous namespace so the `next` loader can
+// (definition moved below the anonymous namespace so the `core` loader can
 // derive the preview key light from its own lights too; see UpdatePreviewLight)
 
 

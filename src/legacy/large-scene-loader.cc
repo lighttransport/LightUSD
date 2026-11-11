@@ -344,7 +344,7 @@ namespace {
 // callback compatible with ::lightusd::pcp::CompositionOptions::payload_policy.
 // Signature: bool(const ::lightusd::Path &prim_path, const std::string &asset_path).
 
-struct NextBudgetPolicyState {
+struct CoreBudgetPolicyState {
   uint64_t loaded_bytes{0};
   double loaded_extent_coverage{0.0};
   uint64_t budget_bytes{0};
@@ -388,7 +388,7 @@ bool ExtentCoverage(const ::lightusd::PrimSpec &owner, double *coverage) {
 
 std::function<bool(const ::lightusd::Path &, const std::string &,
                    const ::lightusd::PrimSpec &)>
-MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
+MakeCorePayloadPolicy(const LargeSceneLoadOptions &opts,
                       ::lightusd::AssetResolver *resolver,
                       bool *load_payloads) {
   if (load_payloads) *load_payloads = false;
@@ -400,7 +400,7 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
       return [](const ::lightusd::Path &, const std::string &,
                 const ::lightusd::PrimSpec &) { return false; };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
-      auto st = std::make_shared<NextBudgetPolicyState>();
+      auto st = std::make_shared<CoreBudgetPolicyState>();
       st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
       st->extent_budget = opts.payload_extent_budget;
       st->resolver = resolver;
@@ -489,7 +489,7 @@ bool LargeSceneLoader::Load(const std::string &filename,
   //    according to options).
   ::lightusd::pcp::CompositionOptions copts;
   copts.payload_policy_with_prim =
-      MakeNextPayloadPolicy(options, _resolver.get(), &copts.load_payloads);
+      MakeCorePayloadPolicy(options, _resolver.get(), &copts.load_payloads);
   copts.detect_instances = options.detect_instances;
   copts.max_depth = options.max_composition_depth;
   copts.max_namespace_depth = options.max_composition_depth;
@@ -516,12 +516,12 @@ bool LargeSceneLoader::Load(const std::string &filename,
 }
 
 /// Helper: convert lightusd::legacy::Path (old) to lightusd::Path (new).
-static ::lightusd::Path ToNextPath(const Path &p) {
+static ::lightusd::Path ToCorePath(const Path &p) {
   return ::lightusd::Path(p.full_path_name());
 }
 
 /// Helper: convert lightusd::Path (new) to lightusd::legacy::Path (old).
-static Path FromNextPath(const ::lightusd::Path &np) {
+static Path FromCorePath(const ::lightusd::Path &np) {
   return Path(np.str(), "");
 }
 
@@ -531,7 +531,7 @@ std::vector<Path> LargeSceneLoader::deferred_payload_paths() const {
   const std::vector<::lightusd::Path> npaths = _cache->GetDeferredPayloadPaths();
   std::vector<Path> out;
   out.reserve(npaths.size());
-  for (const auto &np : npaths) out.push_back(FromNextPath(np));
+  for (const auto &np : npaths) out.push_back(FromCorePath(np));
   return out;
 }
 
@@ -553,7 +553,7 @@ bool LargeSceneLoader::load_payload(const Path &prim_path, std::string *warn,
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
   }
-  if (!_cache->LoadPayload(ToNextPath(prim_path), warn, err)) {
+  if (!_cache->LoadPayload(ToCorePath(prim_path), warn, err)) {
     return false;
   }
   // Rebuild the stage to materialize the loaded payload.
@@ -570,7 +570,7 @@ bool LargeSceneLoader::unload_payload(const Path &prim_path, std::string *warn,
     if (err) *err = "LargeSceneLoader: not loaded.";
     return false;
   }
-  if (!_cache->UnloadPayload(ToNextPath(prim_path))) {
+  if (!_cache->UnloadPayload(ToCorePath(prim_path))) {
     if (err) *err = "UnloadPayload failed.";
     return false;
   }

@@ -19,7 +19,7 @@
 
 ## Analytic geometry regression
 
-The next-loader CPU and GPU paths tessellate Cube, Sphere, Cone, Cylinder,
+The core loader CPU and GPU paths tessellate Cube, Sphere, Cone, Cylinder,
 Capsule, and Plane primitives through the shared Tydra converter. Schema defaults,
 time-sampled dimensions, generated normals/UVs, payload transforms, and native
 and point instancing are preserved. Animated dimensions invalidate CPU geometry
@@ -94,7 +94,7 @@ texture data, OpenPBR constants, and lights for both `-gpuShade preview` and
 `--path-trace`; it needs no window system. `-vk` and `-gpuShade cpu` retain the
 older LightRT compute/shade-after-hit reference paths.
 
-The default `next` material converter retains connected MaterialX NodeGraphs
+The default `core` material converter retains connected MaterialX NodeGraphs
 as executable IR rather than reducing them to constant/image fallbacks. The
 Vulkan path evaluates the graph once per surface hit, routes 48 canonical and
 advanced OpenPBR inputs (including live anisotropy, thin-film, dispersion,

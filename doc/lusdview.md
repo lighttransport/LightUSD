@@ -23,7 +23,7 @@ cmake --build build_ninja -j16 --target lusdview
 
 The viewer is currently configured by the compatibility product. It also builds
 and links the core `lightusd_core`, `tydra` and public C API libraries;
-the viewer's default next loader uses those libraries. The next-only top-level
+the viewer's default core loader uses those libraries. The next-only top-level
 product does not create the `lusdview` target.
 
 - **Vulkan** is ON by default (`-DLUSDVIEW_WITH_VULKAN=ON`) and needs **no Vulkan
@@ -73,7 +73,7 @@ product does not create the `lusdview` target.
 ## Native Metal on macOS
 
 On macOS, `-DLUSDVIEW_WITH_METAL=ON` (the default) builds a native Metal
-renderer and selects it by default, including with the next loader. It uses the
+renderer and selects it by default, including with the core loader. It uses the
 already vendored Apple `examples/common/metalcpp/Metal/Metal.hpp` C++ binding
 ([Apple metal-cpp](https://developer.apple.com/metal/cpp/)). GPU commands dispatch
 directly through the Objective-C runtime. A small Objective-C++ file attaches a
@@ -543,7 +543,7 @@ deterministic depth-aware postprocess; AOV and wireframe modes stay unfiltered.
 capability-skip when their backend is unavailable.
 
 An authored open shutter (`shutter:close > shutter:open`) drives the headless
-CPU, CUDA, and HIP tracers when the next loader is active. Each tracer evaluates
+CPU, CUDA, and HIP tracers when the core loader is active. Each tracer evaluates
 animated camera transforms, object transforms, skinning, and blend shapes at
 deterministic midpoint-stratified times; `--pt-motion-segments` selects the
 number of temporal samples (two by default). Each pose gets its own conservative
@@ -567,7 +567,7 @@ either GL or Vulkan, and averages PPM samples in linear light:
 
 ```sh
 python3 examples/lusdview/render-motion.py \
-  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --lusdview ./build_ninja/lusdview --core --backend vk --camera Shot \
   --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
 ```
 
@@ -602,7 +602,7 @@ Python packages:
 
 ```sh
 python3 examples/lusdview/render-stereo.py \
-  --lusdview ./build_ninja/lusdview --next --backend vk \
+  --lusdview ./build_ninja/lusdview --core --backend vk \
   --size 960x540 --output stereo.ppm scene.usda
 ```
 
@@ -953,7 +953,7 @@ a per-frame cost forever.
 Every load prints the decision, so it is diagnosable from a log:
 
 ```
-next: texture-fit=default (66% of VRAM) 507 textures, 2028.0 MiB decoded +
+core: texture-fit=default (66% of VRAM) 507 textures, 2028.0 MiB decoded +
   827.2 MiB geometry = 2855.2 MiB vs 10765.3 MiB threshold (VRAM 16311.0 MiB,
   comfort 1920.0 MiB); skip compression, keep mips; decoder max_edge=0,
   0 downscaled
@@ -1566,7 +1566,7 @@ fallback is running instead of the multi-draw-indirect batch".
 
 `LUSDVIEW_DEBUG_BATCH=1` explains the loader's draw count from the other side:
 it counts the per-mesh features that force a batch of their own and prints
-`next: batch keys: plain=... skin=... geomProps=... -> N draws`. A scene that
+`core: batch keys: plain=... skin=... geomProps=... -> N draws`. A scene that
 reports one draw per mesh there is a batching regression, not a renderer
 problem.
 
@@ -1679,7 +1679,7 @@ not add `LUSDVIEW_VK_DEVICE=nvidia` manually when that probe fails: verify the
 driver/ICD visibility first, or let the test skip/fall back to its normal
 software-device policy. To run the entire native CTest matrix under the same
 headless display, replace `-R '^lusdview'` with no `ctest` filter; the standalone
-`next` and OpenUSD comparison commands remain as shown in
+`core` and OpenUSD comparison commands remain as shown in
 [`doc/testing-cpp.md`](testing-cpp.md).
 
 ### External usd-assets smoke rendering
@@ -2012,7 +2012,7 @@ descriptor empty → device loss).
 
 ### Bounded native Ptex residency
 
-The `--next` texture path keeps a coarse face-complete Ptex atlas inside
+The `--core` texture path keeps a coarse face-complete Ptex atlas inside
 `--texture-budget-mb`. If fitting all requested face mips would exceed that
 budget, it also reserves a fixed physical page cache (up to 32 MiB per texture,
 and always inside the same total budget). Requested-quality faces are decoded

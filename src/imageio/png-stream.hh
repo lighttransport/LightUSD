@@ -141,7 +141,7 @@ bool ResizePNG(const uint8_t* data, size_t size, uint32_t out_w, uint32_t out_h,
 // preserving color type / bit depth / palette / ancillary chunks. Peak memory
 // is ~a few scanlines + the compressed output. Returns false (caller falls back
 // to a whole-image codec) for unsupported PNGs. Byte-equivalent to the previous
-// web/binding.cc transcodePNGStreaming().
+// web/binding-legacy.cc transcodePNGStreaming().
 bool TranscodePNG(const uint8_t* data, size_t size, std::vector<uint8_t>& out);
 
 // Bounded overloads retain the original entry points for native consumers.

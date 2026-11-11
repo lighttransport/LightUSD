@@ -61,7 +61,7 @@ scene 0.9  > "$TMP/rough.usda"
 
 R() {
   "$LUSDRENDER" "$1" "$2" -rtPreview -materialShading lightrt-bsdf \
-      -materialResolver tydra-next -autoframe -w 48 -height 48 -samples 8 \
+      -materialResolver tydra -autoframe -w 48 -height 48 -samples 8 \
       > "$TMP/log" 2>&1 || fail "render failed for $1: $(cat "$TMP/log")"
 }
 R "$TMP/smooth.usda" "$TMP/smooth.png"

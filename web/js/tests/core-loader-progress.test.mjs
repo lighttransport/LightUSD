@@ -22,7 +22,7 @@ loader.native_=native;
 assert.equal(loader.hasAsyncSupport(),true);
 const bytes=new TextEncoder().encode('#usda 1.0\ndef Cube "Box" {}\n');
 const previous=()=>{};
-native.onNextCrateProgress=previous;
+native.onCrateProgress=previous;
 const phases=[];
 const [first,second]=await Promise.all([
   loader.parseWithProgress(bytes,'box.usda',{onProgress:info=>phases.push(info.stage)}),
@@ -31,7 +31,7 @@ const [first,second]=await Promise.all([
 assert.equal(first.numMeshes(),1);assert.equal(second.numMeshes(),1);
 assert.ok(phases.includes('native-load') && phases.includes('mesh-copy'));
 assert.equal(phases.at(-1),'complete');
-assert.equal(native.onNextCrateProgress,previous);
+assert.equal(native.onCrateProgress,previous);
 first.delete();second.delete();
 const aborted=new AbortController();aborted.abort();
 const before=created;
@@ -43,7 +43,7 @@ for(const stage of ['archive','native-load','mesh-copy']) {
     signal:controller.signal,onProgress:info=>{if(info.stage===stage)controller.abort();}
   }),{name:'AbortError'});
   assert.equal(created,released);
-  assert.equal(native.onNextCrateProgress,previous);
+  assert.equal(native.onCrateProgress,previous);
 }
 const timedAbort=new AbortController();
 const pending=loader.parseWithProgress(bytes,'box.usda',{signal:timedAbort.signal});
@@ -54,7 +54,7 @@ await assert.rejects(loader.parseWithProgress(bytes,'box.usda',{onProgress:info=
   if(info.stage==='native-load')throw Error('callback failed');
 }}),/callback failed/);
 await assert.rejects(loader.parseWithProgress(bytes,'invalid.usdz',{onProgress:()=>{}}));
-assert.equal(native.onNextCrateProgress,previous);
+assert.equal(native.onCrateProgress,previous);
 loader.setMaxMemoryLimitMB(0.5);
 await assert.rejects(loader.parseWithProgress(bytes,'box.usda'),/integer/);
 assert.equal(created,released);

@@ -3,7 +3,7 @@
 //
 // LightUSD - AOUSD Core semantic validation.
 //
-// Port of the legacy validator (src/usd-validation.{hh,cc}) onto the next-core
+// Port of the legacy validator (src/usd-validation.{hh,cc}) onto the core
 // layer model (::lightusd::Layer / ::lightusd::PrimSpec). Rule ids, severities and message
 // wording mirror the legacy validator so reports are interchangeable between
 // the two paths. Checks that depend on legacy-only typed schema reconstruction

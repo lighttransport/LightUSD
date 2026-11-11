@@ -233,7 +233,7 @@ JSValue js_autoframe(JSContext *ctx, JSValueConst, int, JSValueConst *, int,
   if (!g_render_ctx) return JS_ThrowTypeError(ctx, "no render context");
   g_render_ctx->opt.autoframe = true;
   g_render_ctx->opt.camera.clear();
-  ResolveCameraNext(*g_render_ctx);
+  ResolveCameraCore(*g_render_ctx);
   return JS_UNDEFINED;
 }
 // lusdrender.setTime(t) -- re-evaluate geometry/transforms at time t and rebuild
@@ -247,8 +247,8 @@ JSValue js_setTime(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
     return JS_ThrowInternalError(ctx, "failed to rebuild geometry at time");
   }
   g_render_ctx->geometry_bounds = g_render_ctx->bounds;
-  RefreshVolumesNext(*g_render_ctx, t);
-  ResolveCameraNext(*g_render_ctx);
+  RefreshVolumesCore(*g_render_ctx, t);
+  ResolveCameraCore(*g_render_ctx);
   JSValue o = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, o, "time", std::isnan(t) ? JS_NULL : JS_NewFloat64(ctx, t));
   JS_SetPropertyStr(ctx, o, "triangles",

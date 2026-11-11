@@ -3,7 +3,7 @@
  *
  * mat4.c -- C11 double 4x4 transform math and reduced-argument pi trig.
  *
- * The leaf routines of src/next/eval/xform-eval.cc. They must stay
+ * The leaf routines of src/eval/xform-eval.cc. They must stay
  * bit-identical to the legacy evaluator (lightusd::Xformable), so the
  * reduced-argument sin_pi/cos_pi (NOT sin/cos of deg*pi/180) and the
  * row-vector multiply order are reproduced verbatim. Pure double[16] math: no

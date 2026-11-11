@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// Run against an isolated next-only WASM build: node this-file path/to/lightusd.js native-import.usda
+// Run against an isolated core WASM build: node this-file path/to/lightusd.js native-import.usda
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 import {pathToFileURL} from 'node:url';
 const {default: factory} = await import(pathToFileURL(path.resolve(process.argv[2])).href);
 const module = await factory();
-const writer = new module.NextUSDZConverterNative();
+const writer = new module.USDZConverterNative();
 const encoder = new TextEncoder();
 const obj = encoder.encode('v 0 0 0\nv 1 0 0\nv 0 1 0\nvw 0 0 .25 1 .75\nvw 1 1 2\nvw 2 0 -.5 1 1.5\nf 1 2 3\nl 1 2\np 3\n');
 try {
@@ -22,7 +22,7 @@ try {
   for (const value of ['SkelBindingAPI', 'primvars:skel:jointWeights', 'BasisCurves', 'Points', 'elementSize = 2']) assert.ok(text.includes(value), value);
   for (const [method, ext] of [['exportAsUSDC', 'usdc'], ['exportAsUSDZ', 'usdz']]) {
     const data = writer[method]();
-    const reader = new module.NextUSDZConverterNative();
+    const reader = new module.USDZConverterNative();
     try {
       assert.ok(reader.loadFromBinary(data, 'skin.' + ext), reader.error());
       assert.ok(reader.exportAsUSDA().includes('primvars:skel:jointWeights'));

@@ -212,7 +212,7 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
 
   if (!ValueToFloat4(value, out)) return false;
 
-  // next-core Values keep quats real-first (w, x, y, z); render animation
+  // core Values keep quats real-first (w, x, y, z); render animation
   // channels use xyzw (three.js quaternion order). xformOp:orient is the
   // quat-valued xform op.
   const ::lightusd::TypeId tid = value.type_id();
@@ -745,7 +745,7 @@ bool RenderSceneConverter::Impl::ConvertAnimation(const Stage& stage,
           continue;
         }
 
-        // next-core keeps quats REAL-FIRST (w, x, y, z); an AnimationChannel
+        // core keeps quats REAL-FIRST (w, x, y, z); an AnimationChannel
         // is the GPU-facing form and its rotation values are xyzw (what a
         // three.js QuaternionKeyframeTrack expects). Swizzle here, at the
         // boundary -- SkelAnimationData itself stays real-first.

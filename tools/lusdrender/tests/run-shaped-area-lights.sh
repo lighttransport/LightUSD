@@ -133,7 +133,7 @@ render() {  # $1 = scene, $2 = out, $3 = NEE enabled, $4.. = extra flags
   if [ "$nee" = 0 ]; then set -- -noLightNee "$@"; fi
   "$LUSDRENDER" "$scene" "$out" -rtPreview \
     -viewDir 0,0,1 -bg 0,0,0 -ambient 0 \
-    -materialShading lightrt-bsdf -materialResolver tydra-next "$@" \
+    -materialShading lightrt-bsdf -materialResolver tydra "$@" \
     > "$out.log" 2>&1
   if [ ! -s "$out" ]; then
     echo "FAIL: lusdrender failed for $out"

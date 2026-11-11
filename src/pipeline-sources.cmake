@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# Common next pipeline sources shared by the standalone library and the
-# compatibility combined WASM module. Relative to src/next. Shared legacy
+# Common pipeline sources shared by the standalone library and the
+# compatibility combined WASM module. Relative to src/. Shared legacy
 # support (notably LZ4) is supplied by each parent, not duplicated here.
 set(LIGHTUSD_PIPELINE_SOURCES
     types/type-info.cc
@@ -61,6 +61,8 @@ set(LIGHTUSD_PIPELINE_SOURCES
     crate/crate-writer-types.cc
     crate/crate-writer.cc
     crate/variant-holders.cc
+    crate/variant-inline.cc
+    parser/extension-field.cc
     parser/lexer.cc
     parser/value-parser.cc
     parser/value-parser-types.cc

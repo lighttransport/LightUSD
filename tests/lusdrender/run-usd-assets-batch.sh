@@ -8,7 +8,7 @@
 #
 # Corpus: set USD_ASSETS_ROOT (or --root DIR). Defaults to the local
 # usd-wg/assets checkout at /mnt/disk1/work/usd-assets; the harness SKIPs if it
-# does not exist. lusdrender's next loader allows '..' parent-relative
+# does not exist. lusdrender's core loader allows '..' parent-relative
 # references by default, so no allow-parent-paths flag is needed here.
 #
 # Modes: lusdr-cpu (-rtPreview), lusdr-vk (-vk), lusdr-vkr (-vkr).

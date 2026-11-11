@@ -13,11 +13,11 @@ import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
 import { getAssetUriFromURL, mountBackendSelector } from 'lightusd/LoaderConfigUtils.js';
 import {
-    buildNextThreeNode,
-    isNextScene,
-    nextCountsFromScene,
-    readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+    buildThreeNode,
+    isScene,
+    countsFromScene,
+    readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 import {
     MtlxNodeGraphProcessor,
     createOpenPBRMaterial,
@@ -45,12 +45,12 @@ function getStartupUSDModelURI(params = new URLSearchParams(window.location.sear
 
 function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
     const backend = params.get('backend');
-    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+    return (backend === 'core' || backend === 'auto' || backend === 'legacy')
         ? backend
-        : 'next';
+        : 'core';
 }
 
-function staticNextParseOptions() {
+function staticParseOptions() {
     return {
         backend: getBackendFromURL(),
         materialDedup: false,
@@ -2522,7 +2522,7 @@ async function loadUSDFile(file) {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, file.name, resolve, reject, staticNextParseOptions());
+            state.loader.parse(arrayBuffer, file.name, resolve, reject, staticParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -2585,7 +2585,7 @@ async function loadUSDFromURI(uri) {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, displayName, resolve, reject, staticNextParseOptions());
+            state.loader.parse(arrayBuffer, displayName, resolve, reject, staticParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -3364,8 +3364,8 @@ async function buildScene() {
     state.materials = [];
     state.materialData = [];
 
-    if (isNextScene(usd)) {
-        const built = buildNextThreeNode(usd, {
+    if (isScene(usd)) {
+        const built = buildThreeNode(usd, {
             skipTextures: false,
             lazyTextures: true,
             // Keep light records until the authored dome/direct lights below
@@ -3373,14 +3373,14 @@ async function buildScene() {
             releaseBuildData: false
         });
         const root = built.node;
-        const metadata = readNextSceneMeta(usd);
+        const metadata = readSceneMeta(usd);
         if ((metadata.upAxis || 'Y') === 'Z') {
             root.rotation.x = -Math.PI / 2;
         }
         state.currentModel = root;
         state.scene.add(root);
         if (built.textureManager) {
-            startTrackedTextureLoading(built.textureManager, state.loadStats, 'nextTextureQueue');
+            startTrackedTextureLoading(built.textureManager, state.loadStats, 'coreTextureQueue');
         }
         const materialSet = new Set();
         root.traverse((obj) => {
@@ -3424,7 +3424,7 @@ async function buildScene() {
             applyEnvironment();
         }
         updateEnvUI();
-        const counts = nextCountsFromScene(usd);
+        const counts = countsFromScene(usd);
         const meshCount = usd.numMeshes ? usd.numMeshes() : 0;
         const materialCount = state.materialData.length || (usd.numMaterials ? usd.numMaterials() : 0);
         updateSceneEntityInfo(usd, meshCount, materialCount, counts);
@@ -3432,7 +3432,7 @@ async function buildScene() {
         if (state.materialData.length > 0) {
             selectMaterial(0);
         }
-        updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials (backend: next · OpenPBR node graph data)`);
+        updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials (backend: core · OpenPBR node graph data)`);
         if (typeof usd.releaseBuildData === 'function') {
             usd.releaseBuildData();
         }
@@ -3689,7 +3689,7 @@ async function buildScene() {
 }
 
 function fitCameraToObject(object) {
-    // NextRenderSceneUtils reconstructs USD xforms with matrixAutoUpdate
+    // RenderSceneUtils reconstructs USD xforms with matrixAutoUpdate
     // disabled. Update the world matrices before measuring the bounds, or
     // translated children are framed at the origin until the first render.
     object.updateMatrixWorld(true);
@@ -4243,7 +4243,7 @@ window.loadBlenderSample = async function() {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, filename, resolve, reject, staticNextParseOptions());
+            state.loader.parse(arrayBuffer, filename, resolve, reject, staticParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -5025,7 +5025,7 @@ async function handleBridgeScene(sceneData) {
 
         // Parse with LightUSD
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(binaryData.buffer, scene?.name || 'BlenderScene.usdz', resolve, reject, staticNextParseOptions());
+            state.loader.parse(binaryData.buffer, scene?.name || 'BlenderScene.usdz', resolve, reject, staticParseOptions());
         });
 
         if (!state.usdData) {

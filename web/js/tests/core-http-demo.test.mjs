@@ -25,24 +25,24 @@ try {
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/http-asset-resolver.html`);
  await page.waitForFunction(()=>!!window.httpAssetDemo,{timeout:60000});
  const output=await page.evaluate(async()=>{
-  const {flattenNextOverHttp,HttpAssetResolver,renderer}=window.httpAssetDemo;
+  const {flattenOverHttp,HttpAssetResolver,renderer}=window.httpAssetDemo;
   const encode=x=>new TextEncoder().encode(x);
   const baseUrl=location.origin+'/http-fixture/';
   const rootBytes=encode('#usda 1.0\n( subLayers=[@a/ref.usda@,@b/ref.usda@] )');
   const resolver=new HttpAssetResolver({baseUrl});
-  const result=await flattenNextOverHttp({renderer,rootBytes,filename:'root.usda',resolver});
+  const result=await flattenOverHttp({renderer,rootBytes,filename:'root.usda',resolver});
   const entries=window.httpAssetDemo.parseUSDZEntries(result.usdz);
   const doc=new renderer.native.LayerDocument();
   let text;
   try {if(!doc.load(entries[0].data).success)throw Error(doc.error());text=doc.exportUSDA().text;}finally{doc.delete();}
   const preload=new HttpAssetResolver({baseUrl});
-  const cached=await flattenNextOverHttp({renderer,rootBytes,filename:'root.usda',resolver:preload,preloadedAssets:[
+  const cached=await flattenOverHttp({renderer,rootBytes,filename:'root.usda',resolver:preload,preloadedAssets:[
    {key:'a/ref.usda',bytes:encode('#usda 1.0\ndef Scope "A" { asset texture=@same.png@ }')},
    {key:'b/ref.usda',bytes:encode('#usda 1.0\ndef Scope "B" { asset texture=@same.png@ }')},
    {key:'a/same.png',bytes:encode('texture-a')},{key:'b/same.png',bytes:encode('texture-b')}
   ]});
   let failed=false;
-  try{await flattenNextOverHttp({renderer,rootBytes:encode('#usda 1.0\n( subLayers=[@missing.usda@] )'),filename:'root.usda',resolver});}catch{failed=true;}
+  try{await flattenOverHttp({renderer,rootBytes:encode('#usda 1.0\n( subLayers=[@missing.usda@] )'),filename:'root.usda',resolver});}catch{failed=true;}
   return {text,assets:entries.slice(1).map(x=>({name:x.name,data:new TextDecoder().decode(x.data)})),fetches:resolver.fetchLog.filter(x=>x.ok).map(x=>x.url),cachedFetches:preload.fetchLog.length,cachedAssets:cached.packagedAssets,failed};
  });
  assert.equal(output.assets.length,2);assert.deepEqual(output.assets.map(x=>x.data).sort(),['texture-a','texture-b']);

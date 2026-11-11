@@ -203,7 +203,7 @@ struct CompositionOptions {
   // the holder — its pxr-internal prototype numbering is not reproducible.)
   // OFF by default (BuildStage keeps native instancing: prototype member holds
   // the subtree, instances carry instance_prototype meta + emit empty). Enable
-  // for a complete flattened layer (next_usdcat -f).
+  // for a complete flattened layer (lusdcat -f).
   // Back-compat: a lone `flatten_instances = true` (with instance_flatten_mode
   // left Native) is normalized to InstanceFlattenMode::Holder in Cache::Open.
   bool flatten_instances = false;
@@ -265,8 +265,8 @@ struct CompositionOptions {
   // caller enables it in LoadUSDOptions).
   ParseOptions usda_parse_options = {};
 
-  // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
-  // [next_warm]). Off by default. Replaces the former LIGHTUSD_TIMING env
+  // Emit per-phase timing diagnostics to stderr ([core_compose]/[core_build]/
+  // [core_warm]). Off by default. Replaces the former LIGHTUSD_TIMING env
   // read so the composition core takes no implicit process-environment input;
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;

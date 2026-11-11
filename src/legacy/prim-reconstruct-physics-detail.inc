@@ -19,7 +19,7 @@ static bool HasPropertyPrefix(const PropertyMap &properties, const std::string &
 // The props are LEFT IN `properties` (never added to the consumed `table`), so
 // they still round-trip verbatim through the generic stage-converter props pass
 // and the USDA printer — this is an additive read-model only. Mirrors the field
-// routing in src/next/schema/physics-api.cc and src/usd-validation.cc.
+// routing in src/schema/physics-api.cc and src/usd-validation.cc.
 template <typename JointT>
 static void PopulateDriveLimitMaps(const PropertyMap &properties, JointT *joint) {
   auto split_dof_field = [](const std::string &rest, std::string *dof,

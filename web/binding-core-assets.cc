@@ -33,9 +33,9 @@ std::string GenerateAssetUuid() {
   return uuid;
 }
 
-std::string NextAssetStore::makeUuid_() { return GenerateAssetUuid(); }
+std::string AssetStore::makeUuid_() { return GenerateAssetUuid(); }
 
-bool NextAssetStore::assetMetadataCost_(size_t identifier_size,
+bool AssetStore::assetMetadataCost_(size_t identifier_size,
                                         uint64_t* out) {
   constexpr uint64_t kPerAssetBookkeepingBytes = 256;
   if (!out) return false;
@@ -43,7 +43,7 @@ bool NextAssetStore::assetMetadataCost_(size_t identifier_size,
   return true;
 }
 
-bool NextAssetStore::aliasMetadataCost_(size_t authored_size,
+bool AssetStore::aliasMetadataCost_(size_t authored_size,
                                         size_t resolved_size,
                                         uint64_t* out) {
   constexpr uint64_t kPerAliasBookkeepingBytes = 128;
@@ -53,7 +53,7 @@ bool NextAssetStore::aliasMetadataCost_(size_t authored_size,
   return true;
 }
 
-int NextAssetStore::registerMemoryAsset(const uint8_t* identifier,
+int AssetStore::registerMemoryAsset(const uint8_t* identifier,
                                         uint32_t identifier_size,
                                         const uint8_t* bytes,
                                         uint32_t byte_size,
@@ -124,7 +124,7 @@ int NextAssetStore::registerMemoryAsset(const uint8_t* identifier,
   return 0;
 }
 
-int NextAssetStore::setAssetFromRawPointer(const uint8_t* identifier,
+int AssetStore::setAssetFromRawPointer(const uint8_t* identifier,
                                            uint32_t identifier_size,
                                            const uint8_t* bytes,
                                            uint32_t byte_size) {
@@ -141,7 +141,7 @@ int NextAssetStore::setAssetFromRawPointer(const uint8_t* identifier,
   return overwritten ? 1 : 0;
 }
 
-int NextAssetStore::adoptStreamingAsset(const std::string& identifier,
+int AssetStore::adoptStreamingAsset(const std::string& identifier,
                                         std::vector<uint8_t>&& bytes,
                                         const std::string& uuid,
                                         std::shared_ptr<void> payload_reservation) {
@@ -205,7 +205,7 @@ int NextAssetStore::adoptStreamingAsset(const std::string& identifier,
   return 0;
 }
 
-int NextAssetStore::unregisterMemoryAsset(const uint8_t* identifier,
+int AssetStore::unregisterMemoryAsset(const uint8_t* identifier,
                                           uint32_t size) {
   if (!identifier || !size) return -1;
   const std::string key(reinterpret_cast<const char*>(identifier), size);
@@ -228,7 +228,7 @@ int NextAssetStore::unregisterMemoryAsset(const uint8_t* identifier,
   return 1;
 }
 
-std::string NextAssetStore::aliasTarget_(const std::string& identifier) const {
+std::string AssetStore::aliasTarget_(const std::string& identifier) const {
   std::string key = identifier;
   for (size_t depth = 0; depth < 64; ++depth) {
     const auto it = aliases_.find(key);
@@ -238,7 +238,7 @@ std::string NextAssetStore::aliasTarget_(const std::string& identifier) const {
   return key;
 }
 
-int NextAssetStore::readMemoryAsset(const uint8_t* identifier, uint32_t size,
+int AssetStore::readMemoryAsset(const uint8_t* identifier, uint32_t size,
                                     std::vector<uint8_t>* bytes) const {
   if (!bytes || (!identifier && size)) return -1;
   std::string key;
@@ -248,7 +248,7 @@ int NextAssetStore::readMemoryAsset(const uint8_t* identifier, uint32_t size,
   return resolver_.ReadAsset(key, bytes, &error) ? 1 : 0;
 }
 
-int NextAssetStore::borrowedAssetView(const uint8_t* identifier, uint32_t size,
+int AssetStore::borrowedAssetView(const uint8_t* identifier, uint32_t size,
                                      const uint8_t** data,
                                      uint32_t* byte_size) {
   if (!data || !byte_size || (!identifier && size)) return -1;
@@ -266,7 +266,7 @@ int NextAssetStore::borrowedAssetView(const uint8_t* identifier, uint32_t size,
   return 1;
 }
 
-int NextAssetStore::setAlias(const uint8_t* authored, uint32_t authored_size,
+int AssetStore::setAlias(const uint8_t* authored, uint32_t authored_size,
                              const uint8_t* resolved, uint32_t resolved_size) {
   if (!authored || !authored_size || !resolved || !resolved_size) return -1;
   const std::string authored_key(reinterpret_cast<const char*>(authored), authored_size);
@@ -284,14 +284,14 @@ int NextAssetStore::setAlias(const uint8_t* authored, uint32_t authored_size,
   return 0;
 }
 
-int NextAssetStore::setBaseWorkingPath(const uint8_t* path, uint32_t size) {
+int AssetStore::setBaseWorkingPath(const uint8_t* path, uint32_t size) {
   if (!path && size) return -1;
   resolver_.SetWorkingDirectory(size
       ? std::string(reinterpret_cast<const char*>(path), size) : std::string());
   return 0;
 }
 
-int NextAssetStore::baseWorkingPathCopy(uint8_t* out, uint32_t cap) const {
+int AssetStore::baseWorkingPathCopy(uint8_t* out, uint32_t cap) const {
   const std::string& value = resolver_.GetWorkingDirectory();
   if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
   const int required = static_cast<int>(value.size());
@@ -300,24 +300,24 @@ int NextAssetStore::baseWorkingPathCopy(uint8_t* out, uint32_t cap) const {
   return required;
 }
 
-int NextAssetStore::addSearchPath(const uint8_t* path, uint32_t size) {
+int AssetStore::addSearchPath(const uint8_t* path, uint32_t size) {
   if (!path || !size) return -1;
   resolver_.AddSearchPath(std::string(reinterpret_cast<const char*>(path), size));
   return 0;
 }
 
-int NextAssetStore::clearSearchPaths() {
+int AssetStore::clearSearchPaths() {
   resolver_.ClearSearchPaths();
   return 0;
 }
 
-int NextAssetStore::searchPathCount() const {
+int AssetStore::searchPathCount() const {
   const size_t count = resolver_.GetSearchPaths().size();
   return count <= static_cast<size_t>((std::numeric_limits<int>::max)())
       ? static_cast<int>(count) : -1;
 }
 
-int NextAssetStore::searchPathCopy(int index, uint8_t* out, uint32_t cap) const {
+int AssetStore::searchPathCopy(int index, uint8_t* out, uint32_t cap) const {
   const auto& paths = resolver_.GetSearchPaths();
   if (index < 0 || static_cast<size_t>(index) >= paths.size()) return -1;
   const std::string& value = paths[static_cast<size_t>(index)];
@@ -328,12 +328,12 @@ int NextAssetStore::searchPathCopy(int index, uint8_t* out, uint32_t cap) const 
   return required;
 }
 
-int NextAssetStore::identifierCount() const {
+int AssetStore::identifierCount() const {
   return assets_.size() > static_cast<size_t>((std::numeric_limits<int>::max)())
       ? -1 : static_cast<int>(assets_.size());
 }
 
-int NextAssetStore::identifierCopy(int index, uint8_t* out, uint32_t cap) const {
+int AssetStore::identifierCopy(int index, uint8_t* out, uint32_t cap) const {
   if (index < 0 || static_cast<size_t>(index) >= assets_.size()) return -1;
   auto it = assets_.begin();
   std::advance(it, index);
@@ -345,7 +345,7 @@ int NextAssetStore::identifierCopy(int index, uint8_t* out, uint32_t cap) const 
   return size;
 }
 
-int NextAssetStore::assetUuid(const uint8_t* identifier, uint32_t size,
+int AssetStore::assetUuid(const uint8_t* identifier, uint32_t size,
                               uint8_t* out, uint32_t cap) const {
   if (!identifier && size) return -1;
   std::string key;
@@ -360,7 +360,7 @@ int NextAssetStore::assetUuid(const uint8_t* identifier, uint32_t size,
   return length;
 }
 
-int NextAssetStore::findAssetByUuid(const uint8_t* uuid, uint32_t size,
+int AssetStore::findAssetByUuid(const uint8_t* uuid, uint32_t size,
                                     uint8_t* out, uint32_t cap) const {
   if (!uuid || !size) return -1;
   const std::string key(reinterpret_cast<const char*>(uuid), size);
@@ -373,7 +373,7 @@ int NextAssetStore::findAssetByUuid(const uint8_t* uuid, uint32_t size,
   return length;
 }
 
-int NextAssetStore::assetHash(const uint8_t* identifier, uint32_t size,
+int AssetStore::assetHash(const uint8_t* identifier, uint32_t size,
                               uint8_t* out, uint32_t cap) const {
   if (!identifier && size) return -1;
   std::string key;
@@ -386,7 +386,7 @@ int NextAssetStore::assetHash(const uint8_t* identifier, uint32_t size,
   return length;
 }
 
-int NextAssetStore::verifyAssetHash(const uint8_t* identifier,
+int AssetStore::verifyAssetHash(const uint8_t* identifier,
                                    uint32_t identifier_size,
                                    const uint8_t* hash,
                                    uint32_t hash_size) const {
@@ -403,7 +403,7 @@ int NextAssetStore::verifyAssetHash(const uint8_t* identifier,
   return it->second == expected ? 1 : 0;
 }
 
-int NextAssetStore::deleteAssetByUuid(const uint8_t* uuid, uint32_t size) {
+int AssetStore::deleteAssetByUuid(const uint8_t* uuid, uint32_t size) {
   if (!uuid || !size) return -1;
   const std::string key(reinterpret_cast<const char*>(uuid), size);
   const auto found = assets_by_uuid_.find(key);
@@ -413,7 +413,7 @@ int NextAssetStore::deleteAssetByUuid(const uint8_t* uuid, uint32_t size) {
                                static_cast<uint32_t>(identifier.size()));
 }
 
-int NextAssetStore::setMemoryLimit(uint32_t limit_bytes) {
+int AssetStore::setMemoryLimit(uint32_t limit_bytes) {
   if (limit_bytes == 0 || limit_bytes > (uint32_t{1} << 30) ||
       memory_bytes_ > limit_bytes) return -1;
   if (!payload_budget_->SetLimit(limit_bytes)) return -1;
@@ -421,14 +421,14 @@ int NextAssetStore::setMemoryLimit(uint32_t limit_bytes) {
   return 0;
 }
 
-int NextAssetStore::setMetadataLimit(uint64_t limit_bytes) {
+int AssetStore::setMetadataLimit(uint64_t limit_bytes) {
   if (limit_bytes == 0 || limit_bytes > (uint64_t{1} << 30) ||
       metadata_bytes_ > limit_bytes) return -1;
   metadata_limit_bytes_ = limit_bytes;
   return 0;
 }
 
-uint64_t NextAssetStore::cacheSizeBytes() const {
+uint64_t AssetStore::cacheSizeBytes() const {
   uint64_t total = 0;
   for (const auto& asset : assets_) {
     const uint64_t entry_size = static_cast<uint64_t>(asset.first.size()) +
@@ -440,7 +440,7 @@ uint64_t NextAssetStore::cacheSizeBytes() const {
   return total;
 }
 
-int NextAssetStore::clear() {
+int AssetStore::clear() {
   for (const auto& asset : assets_) resolver_.UnregisterMemoryAsset(asset.first);
   assets_.clear();
   aliases_.clear();
@@ -453,7 +453,7 @@ int NextAssetStore::clear() {
   return 0;
 }
 
-std::string NextAssetStore::snapshotMetadata() const {
+std::string AssetStore::snapshotMetadata() const {
   using lightusd::minijson::Value;
   Value result;
   result["assets"] = Value::array();
@@ -473,7 +473,7 @@ std::string NextAssetStore::snapshotMetadata() const {
   return result.dump();
 }
 
-int NextAssetStore::copyAssetsTo(
+int AssetStore::copyAssetsTo(
     lightusd::AssetResolver* destination,
     size_t* accounted_bytes) const {
   if (!destination || !accounted_bytes) return -1;

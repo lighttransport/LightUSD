@@ -15,7 +15,7 @@ SCENE="$ROOT/examples/lusdview/tests/camera-dof.usda"
 
 render() {
   local backend="$1" fstop="$2" image="$3" log="$4"
-  local args=(--next --backend "$backend" --frames 2 --size 320x200
+  local args=(--core --backend "$backend" --frames 2 --size 320x200
               --camera ThinLens --f-stop "$fstop" --focus-distance 8
               --no-grid --screenshot "$image" "$SCENE")
   if [ "$backend" = vk ]; then

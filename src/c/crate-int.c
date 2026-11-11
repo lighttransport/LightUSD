@@ -3,7 +3,7 @@
  *
  * crate-int.c -- C11 pxrUSD crate integer decode.
  *
- * The decode side of src/next/crate/crate-format.{hh,cc}: pxrUSD delta-coded
+ * The decode side of src/crate/crate-format.{hh,cc}: pxrUSD delta-coded
  * integer sections and the common-prefix integer section. This is the
  * security-critical path that turns untrusted crate bytes into integers, so it
  * lives in the C11 core where every bounds check is explicit and the C ABI can

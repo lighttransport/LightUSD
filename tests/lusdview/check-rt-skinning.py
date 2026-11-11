@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""lusdview `--next --rt`: skeletal skinning and blendshapes must reach the tracer.
+"""lusdview `--core --rt`: skeletal skinning and blendshapes must reach the tracer.
 
 The ray tracer builds its BLAS from actual vertex buffers, so the raster vertex
-shader's deform never reaches it. The `--next` path handled that by refusing GPU
+shader's deform never reaches it. The `--core` path handled that by refusing GPU
 skinning under RT entirely and falling back to the load-time CPU bake -- which
 means every new time code re-ran the whole converter, the most expensive thing in
 the program, to move one skeleton.
@@ -22,7 +22,7 @@ The assertion is parity, in both directions:
 
 Only the skeletal case is asserted. The re-pose applies blendshape morph too (in
 deform.glsl's order: morph, then skin), but no fixture here animates a blendshape
-under `--time` -- neither the next path nor the legacy Tydra path moves for
+under `--time` -- neither the core path nor the legacy Tydra path moves for
 models/blendshape-and-animation-test-001.usda, which is a separate, pre-existing
 gap. Asserting morph parity against that would only assert two rest poses.
 
@@ -44,7 +44,7 @@ def render(binary, model, out, skinning, time):
         os.remove(out)
     except FileNotFoundError:
         pass
-    cmd = [binary, *vk_device_args("vk"), "--next", "--headless", "--rt",
+    cmd = [binary, *vk_device_args("vk"), "--core", "--headless", "--rt",
            "--frames", "3", "--size", "320x320",
            "--time", str(time), "--skinning", skinning, "--screenshot", out,
            model]
@@ -125,7 +125,7 @@ def main():
         print("SKIP: --rt produced no image (no ray-tracing capable device?)")
         return SKIP
     if "RT skeletal skinning" not in log and "RT blendshape" not in log:
-        print("FAIL: --next --rt did not take the RT skinning path. It fell back "
+        print("FAIL: --core --rt did not take the RT skinning path. It fell back "
               "to the load-time CPU bake, which re-runs the whole converter for "
               "every time code.\n--- log ---\n" + log)
         return 1
@@ -160,7 +160,7 @@ def main():
                   f"(two rest poses agreeing).")
             return 1
 
-    print("PASS: --next --rt re-poses the skinned mesh per frame, byte-identical "
+    print("PASS: --core --rt re-poses the skinned mesh per frame, byte-identical "
           "to the CPU bake")
     return 0
 

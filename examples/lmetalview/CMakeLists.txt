@@ -2,7 +2,7 @@
 #
 # Added from src/CMakeLists.txt, where lightusd_core / lightusd_c /
 # lightusd_render_c / tydra are already defined. The example links ONLY the
-# next product (next + tydra); no legacy lightusd/lightusd_static target is
+# core product (lightusd_core + tydra); no legacy lightusd/lightusd_legacy_static target is
 # involved.
 #
 # Shaders are compiled by the Metal driver at startup (see swift/Shaders.swift),
@@ -18,7 +18,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
-# Core: next + tydra -> flat preview scene behind a C ABI (core/lmv.h)
+# Core: lightusd_core + tydra -> flat preview scene behind a C ABI (core/lmv.h)
 # ---------------------------------------------------------------------------
 
 set(LMV_CORE_SOURCES
@@ -42,7 +42,7 @@ set_source_files_properties(${LMV_REPO_ROOT}/src/external/miniz.c
                COMPILE_FLAGS "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
 
 # EXR decode: the vendored pure-C11 tinyexr v3 backend + the LightUSD adapter.
-# The `next` product does not build the legacy image-loader stack, so the example
+# The core product does not build the legacy image-loader stack, so the example
 # carries this decoder itself.
 set(LMV_EXR_DIR ${LMV_REPO_ROOT}/src/external/tinyexr)
 file(GLOB LMV_TINYEXR_SOURCES CONFIGURE_DEPENDS ${LMV_EXR_DIR}/src/*.c)
@@ -57,7 +57,7 @@ set_source_files_properties(${LMV_REPO_ROOT}/src/imageio/exr-codec.c
 list(APPEND LMV_CORE_SOURCES ${LMV_EXR_SOURCES})
 
 # KTX2 preview decode: the vendored texpipe/texcomp C stack + zstd for
-# supercompressed containers. Not part of the `next` product, so the example
+# supercompressed containers. Not part of the core product, so the example
 # builds it here.
 set(LMV_TEXTOOLS_DIR ${LMV_REPO_ROOT}/src/external/textools)
 file(GLOB LMV_TEXTOOL_SOURCES CONFIGURE_DEPENDS

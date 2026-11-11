@@ -2,7 +2,7 @@ import { LuciaError, encoder } from './utils.js';
 
 export async function composeProject(source, assets, { resolveAsset = null, signal = null, module = null } = {}) {
   module ||= await import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory());
-  const session = new module.NextFlattenSession(), supplied = new Set();
+  const session = new module.FlattenSession(), supplied = new Set();
   const checked = value => { if (!value.success) throw new LuciaError('LUCIA_COMPOSITION', value.error || 'Composition failed.'); return value; };
   try {
     checked(session.setMaxInputBytes(256 * 1024 * 1024));

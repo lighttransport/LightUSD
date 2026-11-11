@@ -83,7 +83,7 @@ int main() {
   // reports tellg() == LLONG_MAX. Every "read the whole file" path fed that
   // straight into std::string(n, '\0') or vector::resize(n), which throws an
   // uncaught std::length_error -- terminating the process. A USD file
-  // referencing `@./somedir.mtlx@` was enough; fuzz_next_compose found it.
+  // referencing `@./somedir.mtlx@` was enough; fuzz_core_compose found it.
   //
   // Every cap that should have caught it was conditional (`if (max_* > 0)`),
   // so the default configuration was unguarded. Each reader must now reject a

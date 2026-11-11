@@ -52,7 +52,7 @@ def run(binary, scene, work, extra):
 
 
 FIT_RE = re.compile(
-    r"next: texture-fit=(?P<name>\S+)[^;]*?vs (?P<thr>unbounded|[\d.]+ MiB) "
+    r"core: texture-fit=(?P<name>\S+)[^;]*?vs (?P<thr>unbounded|[\d.]+ MiB) "
     r"threshold .*?; (?P<comp>skip|keep) compression, (?P<mips>skip|keep) mips"
     r"; decoder max_edge=(?P<edge>\d+)")
 

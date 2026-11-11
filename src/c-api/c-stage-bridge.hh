@@ -18,7 +18,7 @@ LIGHTUSD_API bool SetNativeRootLayer(lightusd_stage* stage,
 // generation; the caller must hold the only reference to the stage.
 LIGHTUSD_API lightusd::Layer* MutableNativeRootLayer(lightusd_stage* stage);
 // Author an already-parsed value on the root layer (the C typed-buffer
-// setters cover POD and string arrays; this carries any next Value, e.g. one
+// setters cover POD and string arrays; this carries any Value, e.g. one
 // parsed from USDA literal text). `type_name` is the declared USD type
 // ("float3[]", "token", ...).
 LIGHTUSD_API bool SetNativeAttribute(lightusd_stage* stage, const char* prim_path,

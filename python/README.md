@@ -222,7 +222,7 @@ through `stage.warnings()`.
 
 ## Performance and memory
 
-- `lightusd.load` runs the same next core as the CLI; the binding does not add
+- `lightusd.load` runs the same core as the CLI; the binding does not add
   a second copy of geometry. Numeric attributes are zero-copy buffer views, and
   `Stage.flattened()` is the one call that deliberately builds a second stage.
 - Live memory is released on `Stage.close()`. RSS may stay high afterwards

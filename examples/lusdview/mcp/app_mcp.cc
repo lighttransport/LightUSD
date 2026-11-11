@@ -19,7 +19,7 @@
 #include <unordered_map>
 
 #include "app.hh"
-#include "next_scene_loader.hh"
+#include "core_scene_loader.hh"
 #include "light3d/math.h"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
@@ -265,10 +265,10 @@ json App::mcpSceneInfo(const json&, std::string&) {
           json{{"prim", d.primPath}, {"asset", d.assetPath}, {"arc", d.arc}});
     }
     out["deferred_payloads"] = deferred;
-  } else if (nextSession_) {
-    out["composed"] = nextSession_->IsComposed();
+  } else if (coreSession_) {
+    out["composed"] = coreSession_->IsComposed();
     const std::vector<std::string> deferred =
-        nextSession_->GetDeferredPayloadPaths();
+        coreSession_->GetDeferredPayloadPaths();
     out["deferred_payload_count"] = deferred.size();
     json paths = json::array();
     for (const std::string& path : deferred) {
@@ -276,9 +276,9 @@ json App::mcpSceneInfo(const json&, std::string&) {
     }
     out["deferred_payloads"] = std::move(paths);
   }
-  if (nextSession_) {
-    out["stage_revision"] = nextStageRevision_;
-    out["layer_dependencies"] = nextSession_->GetLayerDependencies();
+  if (coreSession_) {
+    out["stage_revision"] = coreStageRevision_;
+    out["layer_dependencies"] = coreSession_->GetLayerDependencies();
   }
   return out;
 }
@@ -626,8 +626,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
   }
 
   std::vector<VcharControl> authoredControls;
-  if (nextSession_) {
-    auto snapshot = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto snapshot = coreSession_->PublicSnapshot();
     lightusd::api::Stage view;
     if (lightusd::api::DocumentSnapshotStage(snapshot, &view) == LIGHTUSD_OK)
       authoredControls = ReadVcharControls(view.get());
@@ -639,7 +639,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       err = "vchar_physics op must be status, initialize, step, reset, or hide";
       return json::object();
     }
-    auto snapshot = nextSession_ ? nextSession_->PublicSnapshot() : lightusd::api::DocumentSnapshot{};
+    auto snapshot = coreSession_ ? coreSession_->PublicSnapshot() : lightusd::api::DocumentSnapshot{};
     lightusd::api::Stage authored;
     const uint64_t revision = lightusd::api::DocumentSnapshotRevision(snapshot);
     if (physicsSceneGen_ != sceneGen_ || physicsRevision_ != revision) {
@@ -673,7 +673,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         const float dt = args.value("timestep", physicsPreview_.world().timestep);
         if (!physicsPreview_.step(authored.get(), animTime_, static_cast<int>(requestedSteps), dt, &err)) return json::object();
       }
-      UpdateNextAnimatedMeshWorlds(physicsPreview_.stage(), &draw_, animTime_);
+      UpdateCoreAnimatedMeshWorlds(physicsPreview_.stage(), &draw_, animTime_);
       std::vector<std::pair<int, std::array<float, 16>>> uploads;
       for (size_t i = 0; i < draw_.meshes.size(); ++i) {
         if (!draw_.meshes[i].animatedWorld) continue;
@@ -685,7 +685,7 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         if (renderer_) for (const auto& upload : uploads)
           renderer_->updateMeshWorld(upload.first, upload.second.data());
       });
-      nextTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
+      coreTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
       physicsPreviewVisible_ = true;
     }
     const auto& world = physicsPreview_.world();
@@ -1259,7 +1259,7 @@ json App::mcpRenderStats(const json&, std::string&) {
                                        ? "software" : "auto");
   const TransparencyStatus transparency =
       renderer_ ? renderer_->transparencyStatus() : TransparencyStatus{};
-  return json{{"next_skeleton_overlay_vertices", gui_.nextSkeletonOverlayVertexCount()}, {"cpu_frame_s", mcpCpuFrameSeconds_},
+  return json{{"core_skeleton_overlay_vertices", gui_.coreSkeletonOverlayVertexCount()}, {"cpu_frame_s", mcpCpuFrameSeconds_},
               {"timer_scope", "lusdview UI frame through present; includes CPU work and GPU waits"},
               {"frame_serial", mcpFrameSerial_},
               {"ui_fps", ImGui::GetIO().Framerate},
@@ -1293,7 +1293,7 @@ json App::mcpRenderStats(const json&, std::string&) {
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {
-  if (!loaded_.comp.composed && !nextSession_) {
+  if (!loaded_.comp.composed && !coreSession_) {
     err = "load_payloads: scene was not composed (no deferred payloads)";
     return json::object();
   }
@@ -1303,9 +1303,9 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
       if (p.is_string()) add.insert(p.get<std::string>());
     }
   } else {
-    if (nextSession_) {
+    if (coreSession_) {
       for (const std::string& path :
-           nextSession_->GetDeferredPayloadPaths()) {
+           coreSession_->GetDeferredPayloadPaths()) {
         add.insert(path);
       }
     } else {
@@ -1320,8 +1320,8 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
 }
 
 json App::mcpReloadLayer(const json& args, std::string& err) {
-  if (!useNextLoader_ || !nextSession_) {
-    err = "reload_layer: the active scene is not a retained next session";
+  if (!useCoreLoader_ || !coreSession_) {
+    err = "reload_layer: the active scene is not a retained core session";
     return json::object();
   }
   if (loadActive_) {
@@ -1330,7 +1330,7 @@ json App::mcpReloadLayer(const json& args, std::string& err) {
   }
   std::string layer = args.value("path", loaded_.filepath);
   const std::vector<std::string> dependencies =
-      nextSession_->GetLayerDependencies();
+      coreSession_->GetLayerDependencies();
   if (layer != loaded_.filepath &&
       std::find(dependencies.begin(), dependencies.end(), layer) ==
           dependencies.end()) {
@@ -1339,7 +1339,7 @@ json App::mcpReloadLayer(const json& args, std::string& err) {
   }
   startLayerReloadAsync(layer);
   return json{{"started", true}, {"path", layer},
-              {"base_revision", nextStageRevision_}};
+              {"base_revision", coreStageRevision_}};
 }
 
 json App::mcpTimeline(const json& args, std::string& err) {
@@ -1840,8 +1840,8 @@ json App::mcpListPrims(const json& args, std::string&) {
     if (m > 0) cap = static_cast<size_t>(m);
   }
   json paths = json::array();
-  if (nextSession_) {
-    auto snapshot = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto snapshot = coreSession_->PublicSnapshot();
     lightusd::api::Stage stage;
     if (lightusd::api::DocumentSnapshotStage(snapshot, &stage) == LIGHTUSD_OK) {
       VisitPublicPrims(stage.get(), [&](lightusd_prim prim) {
@@ -1918,17 +1918,17 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
                 {"scene", {{"loaded", loaded_.ok},
                            {"loading", loadActive_ || progressiveActive_ || reconvActive_ || (reconvHasRequest_ && reconvRequested_ != reconvApplied_)},
                            {"filepath", loaded_.filepath}, {"has_animation", hasAnimation_},
-                           {"scene_generation", sceneGen_}, {"stage_revision", nextStageRevision_},
+                           {"scene_generation", sceneGen_}, {"stage_revision", coreStageRevision_},
                            {"renderer_generation", rendererGeneration_}, {"window_generation", windowGeneration_},
                            {"backend", BackendName(backend_)}, {"ray_tracing", rtPath_}}}, {"size", {width, height}},
                 {"frame_serial", mcpFrameSerial_}, {"rendered_time", mcpRenderedTime_}, {"rendered_camera", mcpRenderedCamera_}, {"barrier", mcpBarrier_}};
   }
 
-  if (nextSession_) {
-    auto document = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto document = coreSession_->PublicSnapshot();
     lightusd::api::Stage view;
     if (lightusd::api::DocumentSnapshotStage(document, &view) != LIGHTUSD_OK) {
-      err = "next session has no published stage";
+      err = "core session has no published stage";
       return json();
     }
     if (name == "stage_info") {
@@ -2125,7 +2125,7 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       return json{{"path", path}, {"attr_name", attr}, {"value", publicDefaultJson(value, text)}};
     }
 
-    err = "Tool is not available on the read-only next document: " + name;
+    err = "Tool is not available on the read-only core document: " + name;
     return json::object();
   }
 

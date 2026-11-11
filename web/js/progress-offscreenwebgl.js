@@ -44,9 +44,9 @@ function getStartupUSDModelURI(params = new URLSearchParams(window.location.sear
 
 function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
     const backend = params.get('backend');
-    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+    return (backend === 'core' || backend === 'auto' || backend === 'legacy')
         ? backend
-        : 'next';
+        : 'core';
 }
 
 function getDisplayNameFromURI(uri) {

@@ -14,7 +14,7 @@ namespace lusdview {
 
 
 // Derive the raster preview key light (draw->previewLightDir/Color/hasPreview
-// Light) from draw->lights. Called by BuildDrawScene; also usable by the `next`
+// Light) from draw->lights. Called by BuildDrawScene; also usable by the `core`
 // loader, which assembles its own DrawScene.
 void UpdatePreviewLight(DrawScene* draw);
 
@@ -72,12 +72,12 @@ void DiagnoseUnsupportedRealtimeLobes(const DrawMaterialCPU& material,
 
 
 
-// --- Texture post-passes, shared by the legacy and `--next` scene loaders ----
+// --- Texture post-passes, shared by the legacy and `--core` scene loaders ----
 void ClassifyTextureUsage(DrawScene* out);
 // Encode the already-decoded DrawScene textures to a GPU block format
 // (`--texture-compress`), cap-gated by TextureRuntimeOptions::caps. Split out of
 // ApplyTextureRuntimeOptions (which also does the size cap / byte budget) so the
-// `--next` loader — whose own texture decoder already applies those — can call
+// `--core` loader — whose own texture decoder already applies those — can call
 // just this one.
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out);
 void CompressDrawTexture(const TextureRuntimeOptions& opt, DrawTextureCPU* texture);
@@ -97,7 +97,7 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out);
 // blocks to what the device can sample (upload as-is / transcode uni / decode),
 // carry its mip chain, and fill `tex` — no decode + re-encode. Returns false when
 // the file can't be used (caller falls back to the normal decode path). Used by
-// the `--next` loader, which reads the asset itself; the legacy path has an
+// the `--core` loader, which reads the asset itself; the legacy path has an
 // equivalent that starts from the tydra RenderScene's block buffer.
 bool BuildKeptCompressedFromKtx2(const uint8_t* data, size_t size,
                                  const TextureRuntimeOptions& opt,

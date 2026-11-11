@@ -53,7 +53,7 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool("compare_panel", "Open the native paired-view comparison panel or save its composited window to the controller directory.",
       {{"op", strProp("open, status or window_capture")}, {"mode", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
        {"window_size", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2}}}}));
-  tools.push_back(tool("inspect_prim", "Paginated native next-stage property diagnostics, relationship targets and attribute connections. Array defaults report type/count without materialization.",
+  tools.push_back(tool("inspect_prim", "Paginated native core-stage property diagnostics, relationship targets and attribute connections. Array defaults report type/count without materialization.",
       {{"path", strProp("Absolute prim path")}, {"offset", {{"type", "integer"}, {"minimum", 0}}},
        {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 256}}}}, json::array({"path"})));
   tools.push_back(tool("frame_barrier", "Retain the next submitted non-threaded mono raster frame and its full native state. Retrieve its pixels with screenshot {barrier:token}.",
@@ -164,7 +164,7 @@ json MCPServer::buildToolsList() const {
   tools.push_back(tool(
       "reload_layer",
       "Re-read the root layer or one resolved path from get_scene_info's "
-      "layer_dependencies, recompose the retained next Stage, and apply a "
+      "layer_dependencies, recompose the retained core Stage, and apply a "
       "transactional incremental renderer update. Omit path to reload the root.",
       {{"path", strProp("resolved dependency-layer path (omit = root layer)")}}));
   tools.push_back(tool(

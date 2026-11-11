@@ -3,7 +3,7 @@
 //
 // path-expression.hh (next-local)
 //
-// C++ adapter over the C11 SdfPathExpression core (src/next/c/path-expr.c).
+// C++ adapter over the C11 SdfPathExpression core (src/c/path-expr.c).
 // The next product owns this adapter instead of including the legacy
 // core/path-expression.hh, which drags the legacy value-type layer into every
 // next translation unit.

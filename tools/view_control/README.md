@@ -320,7 +320,7 @@ nor a library-only memory estimate.
 python3 tools/view_control/load_benchmark.py --config /tmp/load-job.json \
   --out /tmp/load-results --python ../OpenUSD/.venv/bin/python3 \
   --usdrecord ../OpenUSD/dist-v26.11/bin/usdrecord \
-  --native-library build_ninja/lusdcat_next_build/liblightusd_c.so \
+  --native-library build_ninja/liblightusd_c.so \
   --native-extension /tmp/staged-python/lightusd/_core.abi3.so
 ```
 

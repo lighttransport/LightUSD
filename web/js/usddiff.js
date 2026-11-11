@@ -144,11 +144,10 @@ function setStatus(s) { els.status.textContent = s; }
 async function ensureWasm() {
   if (native) return native;
   setStatus('Loading WASM…');
-  // backend=next / wasm=next load the next-only module (its usddiff diffs
-  // next::Layer with the same options/result contract).
+  // backend=core / wasm=core load the core module (its usddiff diffs
+  // lightusd::Layer with the same options/result contract).
   const params = new URLSearchParams(window.location.search);
-  const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
-  const glue = useNext ? './src/lightusd/lightusd.js' : './src/lightusd/lightusd.js';
+  const glue = './src/lightusd/lightusd.js';  // core module (core is the default backend)
   native = await loadWasm(() => import(/* @vite-ignore */ new URL(glue, import.meta.url).href));
   setStatus('');
   return native;

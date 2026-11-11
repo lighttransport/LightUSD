@@ -155,7 +155,7 @@ and verification below describe that older checkpoint, not the current build.
 
 ## Finished PCP refactor
 
-Private implementation types live in `src/next/pcp/cache-internal.hh`.
+Private implementation types live in `src/pcp/cache-internal.hh`.
 Non-template compiled boundaries separate:
 
 - `cache.cc`: public forwarding API and remaining coordination.

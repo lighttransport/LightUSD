@@ -2176,7 +2176,7 @@
 #if defined(LIGHTUSD_DEFERRED_FILL)
     if (deferred_filler_) refine_chunks = false;
 #endif
-    CratePhaseTimer chunk_timer(options_.enable_timing, "next_crate_write", options_.host_services);
+    CratePhaseTimer chunk_timer(options_.enable_timing, "core_crate_write", options_.host_services);
     const std::vector<size_t> chunk_bounds =
         MakeFieldsChunkBounds(layer, refine_chunks);
     chunk_timer.lap("chunk_plan");
@@ -2195,7 +2195,7 @@
     // ctx holds an encoded chunk: memory).
     const size_t P = wide ? 2 * W : W;
     if (options_.enable_timing) {
-      LIGHTUSD_LOG_I("[next_crate_write] field_chunks=" << nchunks
+      LIGHTUSD_LOG_I("[core_crate_write] field_chunks=" << nchunks
                        << " fixed_chunks=" << fixed_chunks
                        << " workers=" << W << " contexts=" << P);
     }

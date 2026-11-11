@@ -5,7 +5,7 @@
 # `map2`, ...). A texture's UsdPrimvarReader selects which one it samples, and
 # the renderer must honour that selection rather than always using the first set.
 #
-# Both the viewer's CPU ray tracer (`lusdview --cpu-rt`, the `next` converter)
+# Both the viewer's CPU ray tracer (`lusdview --cpu-rt`, the `core` converter)
 # and the standalone CPU renderer (`lusdrender`, the core converter) are
 # checked against the same scenes.
 #
@@ -406,7 +406,7 @@ done
 # ignore the second UV set entirely: the material's UV primvar was not registered
 # by the legacy scene converter, so the mesh exported without texcoords and every
 # texture lookup collapsed to (0, 0). The check below pins the fix from the
-# converter side, independently of the viewer's `next` path.
+# converter side, independently of the viewer's `core` path.
 RENDER="${LUSDRENDER:-$REPO_ROOT/build_ninja/tools/lusdrender/lusdrender}"
 [ -x "$RENDER" ] || { echo "SKIP: lusdrender not found: $RENDER"; exit "$SKIP"; }
 

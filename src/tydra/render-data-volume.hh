@@ -1,5 +1,5 @@
 #pragma once
-// UsdVol render data for tydra/next: a Volume prim's bound fields, resolved
+// UsdVol render data for Tydra: a Volume prim's bound fields, resolved
 // against their files by tydra/vol (FieldCache), and the constants of its
 // volume material. Voxels stay in the FieldCache and are produced on demand
 // (dense with a budget, or the sparse grid), so extraction does not decode

@@ -8,17 +8,17 @@ namespace lightusd {
 namespace web_core {
 namespace {
 
-using NextRenderMaterial = lightusd::tydra::RenderMaterial;
-using NextShaderParam = lightusd::tydra::ShaderParam;
+using RenderMaterial = lightusd::tydra::RenderMaterial;
+using ShaderParam = lightusd::tydra::ShaderParam;
 
 static void CopyMaterialParam(matser::ShaderParam<float>& dst,
-                              const NextShaderParam& src) {
+                              const ShaderParam& src) {
   dst.value = src.value.x;
   dst.texture_id = src.texture_id;
 }
 
 static void CopyMaterialParam(matser::ShaderParam<matser::vec3>& dst,
-                              const NextShaderParam& src) {
+                              const ShaderParam& src) {
   dst.value[0] = src.value.x;
   dst.value[1] = src.value.y;
   dst.value[2] = src.value.z;
@@ -26,7 +26,7 @@ static void CopyMaterialParam(matser::ShaderParam<matser::vec3>& dst,
 }
 
 static matser::RenderMaterial ToSerialMaterial(
-    const NextRenderMaterial& src, const lightusd::Stage& stage) {
+    const RenderMaterial& src, const lightusd::Stage& stage) {
   matser::RenderMaterial dst;
   dst.name = src.name;
   dst.abs_path = src.prim_path;
@@ -218,20 +218,20 @@ static matser::RenderScene ToSerialScene(
 static matser::RenderLight ToSerialLight(
     const lightusd::tydra::RenderLight& src,
     const lightusd::tydra::RenderScene& scene) {
-  using NextType = lightusd::tydra::LightType;
+  using CoreType = lightusd::tydra::LightType;
   using Legacy = matser::RenderLight;
   Legacy dst;
   dst.name = src.name;
   dst.abs_path = src.prim_path;
   switch (src.type) {
-    case NextType::Directional: dst.type = Legacy::Type::Distant; break;
-    case NextType::Spot: dst.type = Legacy::Type::Sphere; break;
-    case NextType::Rect: dst.type = Legacy::Type::Rect; break;
-    case NextType::Disk: dst.type = Legacy::Type::Disk; break;
-    case NextType::Dome: dst.type = Legacy::Type::Dome; break;
-    case NextType::Sphere: dst.type = Legacy::Type::Sphere; break;
-    case NextType::Cylinder: dst.type = Legacy::Type::Cylinder; break;
-    case NextType::Geometry: dst.type = Legacy::Type::Geometry; break;
+    case CoreType::Directional: dst.type = Legacy::Type::Distant; break;
+    case CoreType::Spot: dst.type = Legacy::Type::Sphere; break;
+    case CoreType::Rect: dst.type = Legacy::Type::Rect; break;
+    case CoreType::Disk: dst.type = Legacy::Type::Disk; break;
+    case CoreType::Dome: dst.type = Legacy::Type::Dome; break;
+    case CoreType::Sphere: dst.type = Legacy::Type::Sphere; break;
+    case CoreType::Cylinder: dst.type = Legacy::Type::Cylinder; break;
+    case CoreType::Geometry: dst.type = Legacy::Type::Geometry; break;
     default: dst.type = Legacy::Type::Point; break;
   }
   dst.color = {src.color.x, src.color.y, src.color.z};
@@ -244,7 +244,7 @@ static matser::RenderLight ToSerialLight(
   dst.specular = src.specular;
   // Distant lights do not use the shaping API in the legacy render record;
   // its serializer therefore reports the RenderLight default.
-  dst.shapingConeAngle = src.type == NextType::Directional
+  dst.shapingConeAngle = src.type == CoreType::Directional
       ? 90.0f : src.shaping_cone_angle;
   dst.shapingFocus = src.shaping_focus;
   dst.shapingFocusTint = {src.shaping_focus_tint.x, src.shaping_focus_tint.y,
@@ -260,17 +260,17 @@ static matser::RenderLight ToSerialLight(
   dst.shadowFalloff = src.shadow_falloff;
   dst.shadowFalloffGamma = src.shadow_falloff_gamma;
   switch (src.type) {
-    case NextType::Directional:
+    case CoreType::Directional:
       dst.angle = src.params.distant.angle;
       break;
-    case NextType::Rect:
+    case CoreType::Rect:
       dst.width = src.params.rect.width;
       dst.height = src.params.rect.height;
       break;
-    case NextType::Disk:
+    case CoreType::Disk:
       dst.radius = src.params.disk.radius;
       break;
-    case NextType::Dome:
+    case CoreType::Dome:
       dst.domeTextureFormat = static_cast<Legacy::DomeTextureFormat>(
           src.params.dome.texture_format);
       dst.guideRadius = src.guide_radius;
@@ -280,14 +280,14 @@ static matser::RenderLight ToSerialLight(
             src.params.dome.texture_id)].resolved_path;
       }
       break;
-    case NextType::Sphere:
+    case CoreType::Sphere:
       dst.radius = src.params.sphere.radius;
       break;
-    case NextType::Cylinder:
+    case CoreType::Cylinder:
       dst.radius = src.params.cylinder.radius;
       dst.length = src.params.cylinder.length;
       break;
-    case NextType::Spot:
+    case CoreType::Spot:
       dst.radius = src.spot_source_radius;
       break;
     default:
@@ -389,17 +389,17 @@ int RenderStream::outputMaterialStringCopy(int material_id, uint8_t kind,
           const lightusd::UsdPrim mat = stage_.GetPrimAtPath(rec.prim_path);
           lightusd::UsdPrim shader;
           const std::vector<lightusd::Path>* mtlx_connections =
-              NextPropertyConnections(mat, "outputs:mtlx:surface");
+              PropertyConnections(mat, "outputs:mtlx:surface");
           if (mtlx_connections && !mtlx_connections->empty()) {
             shader = stage_.GetPrimAtPath(
-                NextConnectionPrimPath((*mtlx_connections)[0].str()));
+                ConnectionPrimPath((*mtlx_connections)[0].str()));
           }
           if (!shader.IsValid()) {
             const std::string shader_path =
                 lightusd::GetSurfaceShader(stage_, mat);
             if (!shader_path.empty()) shader = stage_.GetPrimAtPath(shader_path);
           }
-          value = BuildNextNodeGraphJson(
+          value = BuildNodeGraphJson(
               mat, shader, render_mat->mtlx_config.version);
         }
       }

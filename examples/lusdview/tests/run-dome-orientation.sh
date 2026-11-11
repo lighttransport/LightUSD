@@ -77,13 +77,13 @@ render() {
     --screenshot "$OUT/$name.ppm" \
     "$@" "$scene" >"$OUT/$name.log" 2>&1
 }
-render next-0 "$OUT/dome-0.usda" || { echo "SKIP: Vulkan unavailable"; exit "$SKIP"; }
-render next-90 "$OUT/dome-90.usda" || { echo "FAIL: rotated DomeLight render"; exit 1; }
-render next-usdz-0 "$OUT/dome-0.usdz" || { echo "FAIL: packaged DomeLight render"; exit 1; }
-render next-usdz-90 "$OUT/dome-90.usdz" || { echo "FAIL: packaged rotated DomeLight render"; exit 1; }
+render core-0 "$OUT/dome-0.usda" || { echo "SKIP: Vulkan unavailable"; exit "$SKIP"; }
+render core-90 "$OUT/dome-90.usda" || { echo "FAIL: rotated DomeLight render"; exit 1; }
+render core-usdz-0 "$OUT/dome-0.usdz" || { echo "FAIL: packaged DomeLight render"; exit 1; }
+render core-usdz-90 "$OUT/dome-90.usdz" || { echo "FAIL: packaged rotated DomeLight render"; exit 1; }
 
-python3 - "$OUT/next-0.ppm" "$OUT/next-90.ppm" \
-  "$OUT/next-usdz-0.ppm" "$OUT/next-usdz-90.ppm" <<'PY'
+python3 - "$OUT/core-0.ppm" "$OUT/core-90.ppm" \
+  "$OUT/core-usdz-0.ppm" "$OUT/core-usdz-90.ppm" <<'PY'
 import re,sys
 def ppm(p):
  d=open(p,'rb').read(); m=re.match(rb'P6\s+(\d+)\s+(\d+)\s+255\s',d)

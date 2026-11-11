@@ -464,7 +464,7 @@ function escapeHTML(text) {
     .replaceAll("'", '&#039;');
 }
 
-const backend = 'next';
+const backend = 'core';
 let worker, requestId = 0;
 const pending = new Map();
 function request(type, payload = {}) {
@@ -539,7 +539,7 @@ async function validateCurrentInput(format = 'json') {
   try {
     setStatus('Validating...');
     let options = {groups: selectedGroups()};
-    if (backend === 'next') {
+    if (backend === 'core') {
       options = {profile: profile.value, format,
         maxSamples: Number(document.getElementById('maxSamples').value),
         maxMemoryMB: Number(document.getElementById('maxMemory').value),
@@ -563,7 +563,7 @@ async function validateCurrentInput(format = 'json') {
     controls.forEach((control, i) => { control.disabled = disabledBefore[i]; });
     state.busy = false; validateBtn.disabled = !state.ready;
     document.getElementById('cancel').disabled = true;
-    document.getElementById('downloadSarif').disabled = backend !== 'next' || !state.lastResult;
+    document.getElementById('downloadSarif').disabled = backend !== 'core' || !state.lastResult;
   }
 }
 document.getElementById('cancel').addEventListener('click', async () => {

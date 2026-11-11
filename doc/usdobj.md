@@ -347,7 +347,7 @@ Menagerie robot exports in about 2 s).
 
 ## Composition and native APIs
 
-The next-core layer loader used by Python supports OBJ references, payloads and
+The core layer loader used by Python supports OBJ references, payloads and
 sublayers. An OBJ layer has default prim `/World`, so a reference without an
 explicit prim path imports that subtree, as in the binding example above. An
 OBJ sublayer contributes its `/World` hierarchy directly. OBJ, MTL and textures
@@ -365,11 +365,11 @@ must be portable to other USD readers.
 | C `lightusd_import_file`, `lightusd_import_memory` | Full import with `LIGHTUSD_IMPORT_OBJ`; initialize options with `lightusd_import_options_init` |
 | C++ `usdObj::ReadObjStageFromFile`, `ReadObjStageFromMemory`, `ReadObjLayerFromMemory` | Legacy full-stage/layer adapters; memory APIs accept source and import options |
 | C++ `usdObj::ReadObjFromFile`, `ReadObjFromString` | Legacy geometry-only adapter: combines polygon meshes, requires faces and does not provide the full material/curve/point scene |
-| Next-core `pcp::LoadLayerFromFile`, `LoadLayerFromMemory` | Layer loading and composition; use a `.obj` source identifier for format dispatch |
+| Core `pcp::LoadLayerFromFile`, `LoadLayerFromMemory` | Layer loading and composition; use a `.obj` source identifier for format dispatch |
 
 See [`lightusd-import-c.h`](../src/c-api/lightusd-import-c.h),
 [`usdObj.hh`](../src/usdObj.hh) and the
-[next-core layer loader](../src/next/pcp/layer-registry.hh) for signatures and
+[core layer loader](../src/pcp/layer-registry.hh) for signatures and
 ownership. The legacy composition loader also accepts loose OBJ layers; this
 does not make every USD-only memory loader an OBJ reader.
 
@@ -395,14 +395,14 @@ incomplete UVs, missing weights and unsupported features are reported through
 ### Large inputs and generated stress tests
 
 OBJ memory inputs are parsed as bounded byte views; they need no NUL terminator
-and the next-core/Python path does not copy the entire input into a string.
+and the core/Python path does not copy the entire input into a string.
 File imports without a custom resolver memory-map the OBJ on POSIX systems
 (other platforms and resolver-backed reads fall back to reading it), so the
 source is not duplicated in anonymous memory; it still counts against
 `max_input` and the memory budget. The file must not shrink while it is being
 imported. URDF/MJCF mesh assets (OBJ, STL, DAE) are read the same way.
 Serial OBJ, MTL and callback parsing visit lines incrementally rather than
-allocating a line table proportional to the input. The next-core layer loader
+allocating a line table proportional to the input. The core layer loader
 and C/Python OBJ import APIs pass compact numeric geometry to USD without a
 JSON node for every coordinate. The legacy/robot JSON bridge remains available
 and checks its additional allocation estimates against the import budget.
@@ -434,7 +434,7 @@ Repeated object names use advancing suffix counters, so resolving
 name collisions does not restart a search through all prior objects. Warning
 storage is capped even when a single diagnostic is very large.
 
-[`test_obj_large.cc`](../tests/next/test_obj_large.cc) generates OBJ source in
+[`test_obj_large.cc`](../tests/core/test_obj_large.cc) generates OBJ source in
 memory. Its normal CTest case checks geometry, UV/color/skin arrays, allocation
 failure cleanup, expansion budgets, tiny decimals, scale-independent and mixed
 explicit/generated normals, smoothing memory use, large coordinates, blank-line
@@ -443,19 +443,19 @@ assets are checked in. Its optional `--triangles` and `--comment-mib` arguments
 exercise dense geometry and byte offsets beyond 32 bits independently:
 
 ```sh
-cmake -S src/next -B build_ninja/obj-large-next -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
-cmake --build build_ninja/obj-large-next --target test_obj_large -j8
-ctest --test-dir build_ninja/obj-large-next -R next_test_obj_large --output-on-failure
+cmake -S src -B build_ninja/obj-large-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON
+cmake --build build_ninja/obj-large-core --target test_obj_large -j8
+ctest --test-dir build_ninja/obj-large-core -R core_test_obj_large --output-on-failure
 
 # One million triangles with normals, UVs, colors and vw records.
-build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0
+build_ninja/obj-large-core/test_obj_large --triangles 1000000 --comment-mib 0
 
 # Explicit normals with a smoothing group must avoid unused smoothing maps.
-build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0 --smooth
+build_ninja/obj-large-core/test_obj_large --triangles 1000000 --comment-mib 0 --smooth
 
 # More than 4 GiB of input, with real geometry after the generated comments.
-build_ninja/obj-large-next/test_obj_large --triangles 100 --comment-mib 4097
+build_ninja/obj-large-core/test_obj_large --triangles 100 --comment-mib 4097
 ```
 
 These stress sizes are opt-in and allocate the source in RAM. `--parser-only`
@@ -463,7 +463,7 @@ runs the C11 parse without the USD conversion. Python-generated buffer and
 expansion-limit tests are in
 [`test_obj_large.py`](../python/tests/test_obj_large.py).
 Generated MTL validation and allocation-failure tests are in
-[`test_obj_materials.cc`](../tests/next/test_obj_materials.cc). They cover both
+[`test_obj_materials.cc`](../tests/core/test_obj_materials.cc). They cover both
 precision families, standalone/OBJ/callback entry points, 2,001 materials,
 30,000 reverse-ordered custom fields and duplicate-key order. Python resolver
 coverage is in [`test_obj_materials.py`](../python/tests/test_obj_materials.py).
@@ -472,13 +472,13 @@ orders, repeated/missing library requests and prefix/duplicate name lookups for
 scene and callback loading in both precisions. For a larger optional run:
 
 ```sh
-cmake --build build_ninja/obj-large-next --target test_obj_materials -j8
-build_ninja/obj-large-next/test_obj_materials --lookup-materials 100000
+cmake --build build_ninja/obj-large-core --target test_obj_materials -j8
+build_ninja/obj-large-core/test_obj_materials --lookup-materials 100000
 ```
 
 Regression coverage also includes:
 
-- [C11/next OBJ reader tests](../tests/next/test_obj_reader.cc): float/double
+- [C11 OBJ reader tests](../tests/core/test_obj_reader.cc): float/double
   skin arrays, invalid records, mixed primitive types and influence metadata.
 - [Python OBJ layer/skin tests](../python/tests/test_obj_layers_skin.py): seam
   copies, signed weights, more than four influences, composition, packaged

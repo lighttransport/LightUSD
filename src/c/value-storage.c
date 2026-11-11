@@ -3,8 +3,8 @@
  *
  * value-storage.c -- C11 value type-query predicates.
  *
- * The Value-free type predicates of src/next/types/value.cc and
- * src/next/types/value-view.cc: which backing storage an array element type
+ * The Value-free type predicates of src/types/value.cc and
+ * src/types/value-view.cc: which backing storage an array element type
  * uses, scalar-component/byte-size mapping, and the array-size validity checks.
  * Everything is a pure function of lu_type_id; the Value object model stays C++.
  */

@@ -18,7 +18,7 @@ import path from 'node:path';
 import process from 'node:process';
 import {Matrix4} from 'three';
 import LightUSDFactory from '../src/lightusd/lightusd.js';
-import {NextRenderSceneAdapter} from '../src/lightusd/LightUSDLoader.js';
+import {RenderSceneAdapter} from '../src/lightusd/LightUSDLoader.js';
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -594,7 +594,7 @@ async function main() {
   opts.modelName = opts.modelName || baseName;
 
   const lightusd = await LightUSDFactory();
-  const native = new lightusd.NextUSDZConverterNative();
+  const native = new lightusd.USDZConverterNative();
   let extracted;
   let renderMeshes = new Map();
   const renderWarnings = [];
@@ -612,7 +612,7 @@ async function main() {
     if (opts.emitMeshes && !opts.placeholderMeshes) {
       let render;
       try {
-        render = await NextRenderSceneAdapter.create(lightusd, bytes, path.basename(inputPath));
+        render = await RenderSceneAdapter.create(lightusd, bytes, path.basename(inputPath));
         renderMeshes = collectRenderMeshes(render, renderWarnings,
           extracted.prims.filter(prim => hasApi(prim, 'PhysicsRigidBodyAPI')).map(prim => prim.path));
       } catch (error) {

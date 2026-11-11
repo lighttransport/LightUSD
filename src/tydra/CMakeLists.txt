@@ -5,7 +5,7 @@
 
 cmake_minimum_required(VERSION 3.10)
 
-# Define tydra/next source files
+# Define tydra source files
 set(TYDRA_SOURCES
     scene-preview.cc
     scene-preview-lod.cc
@@ -126,7 +126,7 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
   if(TARGET lightusd)
     target_link_libraries(lusdpreview PRIVATE lightusd)
   else()
-    # The standalone next product has no image I/O archive. Share the existing
+    # The standalone core product has no image I/O archive. Share the existing
     # decoder/resize implementation without introducing a legacy Stage link.
     add_library(lightusd_preview_images STATIC
       "${CMAKE_CURRENT_LIST_DIR}/../image-loader.cc"
@@ -275,7 +275,7 @@ target_sources(tydra PRIVATE
 option(LIGHTUSD_TYDRA_BUILD_TESTS "Build tests for Tydra" OFF)
 
 if(LIGHTUSD_TYDRA_BUILD_TESTS)
-    # src/next (LIGHTUSD_BUILD_TESTS) also defines test_tydra and
+    # src/ (LIGHTUSD_BUILD_TESTS) also defines test_tydra and
     # registers it with ctest; define it here only when that has not happened,
     # so enabling both options does not fail configure with a duplicate target.
     if(NOT TARGET test_tydra)
@@ -292,7 +292,7 @@ endif()
 if(LIGHTUSD_BUILD_FUZZERS)
     target_compile_options(tydra PRIVATE ${CORE_FUZZ_LIB_FLAGS})
     add_executable(fuzz_core_render
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/next_render_fuzzmain.cc)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/core_render_fuzzmain.cc)
     target_link_libraries(fuzz_core_render PRIVATE tydra lightusd_core)
     target_compile_options(fuzz_core_render PRIVATE ${CORE_FUZZ_BIN_FLAGS})
     target_link_options(fuzz_core_render PRIVATE ${CORE_FUZZ_BIN_FLAGS})

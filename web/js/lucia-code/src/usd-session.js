@@ -1,4 +1,4 @@
-import { NextRenderSceneAdapter } from '../../src/lightusd/LightUSDLoader.js';
+import { RenderSceneAdapter } from '../../src/lightusd/LightUSDLoader.js';
 import { buildUSDZWithNewRoot, unpackUSDZ } from '../../src/usdzconvert.js';
 import { authorLODVariants } from './lod-variants.js';
 import { createLayerPropertyDelta, applyLayerPropertyDelta } from './layer-delta.js';
@@ -415,7 +415,7 @@ export class LuciaUsdSession extends EventTarget {
     const [{default: factory}, {default: mcpFactory}] = await Promise.all([
       import('../../src/lightusd/lightusd.js'), import('../../src/lightusd/lightusd_mcp.js')]);
     this.module = await factory();
-    this.nextModulePromise = Promise.resolve(this.module);
+    this.coreModulePromise = Promise.resolve(this.module);
     this.mcpModule = await mcpFactory();
     this.author = new this.mcpModule.LightUSDMCPServer();
     if (!this.author.createContext(this.sessionId)) throw new LuciaError('LUCIA_INIT', 'Could not create the Lucia USD session.');
@@ -473,7 +473,7 @@ export class LuciaUsdSession extends EventTarget {
     }
     const bytes = buildUSDZWithNewRoot(rootPath, root, passthrough);
     try {
-      return await NextRenderSceneAdapter.create(this.module, bytes, 'preview.usdz');
+      return await RenderSceneAdapter.create(this.module, bytes, 'preview.usdz');
     } catch (error) {
       throw new LuciaError('LUCIA_RENDER_CONVERT', error.message || 'Could not build the preview scene.');
     }
@@ -534,7 +534,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async nativeAttributeEdits(edits, summary) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     const checked = result => { if (!result.success) throw new LuciaError('LUCIA_NATIVE_ATTRIBUTE', result.error || 'Native attribute edit failed.'); return result; };
     try {
@@ -559,7 +559,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async compactPropertyHistory(before, after) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       const read = source => {
@@ -586,7 +586,7 @@ export class LuciaUsdSession extends EventTarget {
   }
 
   async restorePropertyHistory(delta, direction) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) throw new LuciaError('LUCIA_HISTORY', document.error());
@@ -740,7 +740,7 @@ export class LuciaUsdSession extends EventTarget {
     const interpolation = normalizeInterpolationToken(attribute.interpolation, 'vertex');
     if (!['constant', 'uniform', 'vertex', 'varying', 'faceVarying'].includes(interpolation))
       throw new LuciaError('LUCIA_MESH_ATTRIBUTE', 'Mesh primvars require constant, uniform, vertex, varying or faceVarying interpolation.');
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     let vertexCount, counts, corners;
     try {
@@ -976,7 +976,7 @@ export class LuciaUsdSession extends EventTarget {
   // Authored, untimed mesh points and topology. Animated or missing points
   // yield null so callers can refuse instead of silently dropping samples.
   async getAuthoredMesh(path) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       const loaded = document.load(encoder.encode(this.usda));
@@ -1007,7 +1007,7 @@ export class LuciaUsdSession extends EventTarget {
   async getViewportOverrides() {
     const hasInstancers = /\bPointInstancer\b/.test(this.usda), hasInvisible = /\bvisibility\s*=\s*"invisible"/.test(this.usda);
     if (!hasInstancers && !hasInvisible) return { instancers: [], invisible: [] };
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) return { instancers: [], invisible: [] };
@@ -1045,7 +1045,7 @@ export class LuciaUsdSession extends EventTarget {
   // constant; unauthored interpolation means constant). A topology rewrite
   // must drop them or the mesh is left with mismatched primvar arrays.
   async topologyPrimvarRemovals(sourcePath, targetPath = sourcePath) {
-    const native = await (this.nextModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
+    const native = await (this.coreModulePromise ||= import('../../src/lightusd/lightusd.js').then(({ default: factory }) => factory()));
     const document = new native.LayerDocument();
     try {
       if (!document.load(encoder.encode(this.usda)).success) return [];
@@ -1263,7 +1263,7 @@ export class LuciaUsdSession extends EventTarget {
 
   exportUSDA() { return this.usda; }
   exportUSDZ(assets = new Map(), remap = {}) {
-    const exporter = new this.module.NextUSDZConverterNative();
+    const exporter = new this.module.USDZConverterNative();
     try {
       if (!exporter.loadFromBinary(encoder.encode(this.usda), this.filename)) throw new LuciaError('LUCIA_EXPORT_LOAD', exporter.error());
       for (const [name, asset] of new Map([...(this.embeddedAssets || []), ...assets]))

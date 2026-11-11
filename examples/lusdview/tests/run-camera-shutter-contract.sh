@@ -27,7 +27,7 @@ def Xform "World" {
   }
 }
 USDA
-if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
     --backend vk --frames 1 --size 64x48 --camera Shot --time 10 \
     --render-report "$OUT/report.json" \
     "$OUT/shutter.usda" >"$OUT/run.log" 2>&1; then

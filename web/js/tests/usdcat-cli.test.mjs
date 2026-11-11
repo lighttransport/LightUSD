@@ -119,7 +119,7 @@ await testAsync('runUsdcat: USDC export reloads cleanly', () => withTempDir((dir
   // PXR-USDC magic header.
   assert.equal(Buffer.from(res.bytes.slice(0, 8)).toString('latin1'), 'PXR-USDC');
   // Reload the produced crate to confirm it parses.
-  const usd = new native.NextUSDZConverterNative();
+  const usd = new native.USDZConverterNative();
   try {
     assert.ok(usd.loadFromBinary(res.bytes, 'flat.usdc'), 'produced USDC should reload: ' + usd.error());
   } finally { usd.delete(); }

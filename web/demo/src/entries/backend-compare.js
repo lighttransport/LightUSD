@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
-import { isNextScene, nextCountsFromScene } from 'lightusd-next-demo-utils';
-import { buildNextDemoScene } from '../next-scene.js';
+import { isScene, countsFromScene } from 'lightusd-core-demo-utils';
+import { buildCoreScene } from '../core-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 
 function escapeHTML(v) { return String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
@@ -116,9 +116,9 @@ async function loadScene(url, label) {
   const filename = url.split('/').pop() || 'scene.usd';
 
   const parse = (bytes, name) => new Promise((resolve, reject) => {
-    loader.parse(bytes, name, resolve, reject, { backend: 'next', maxMemoryLimitMB: 512 });
+    loader.parse(bytes, name, resolve, reject, { backend: 'core', maxMemoryLimitMB: 512 });
   });
-  const converter = new loader.native_.NextUSDZConverterNative();
+  const converter = new loader.native_.USDZConverterNative();
   let roundtrip;
   try {
     if (!converter.loadFromBinary(data, filename)) throw new Error(converter.error());
@@ -134,9 +134,9 @@ async function loadScene(url, label) {
   ]) {
     $id(`${id}-loading`).style.background = '#f59e0b';
     const scene = await parse(bytes, name);
-    if (!isNextScene(scene)) throw new Error('Core loader returned an incompatible scene');
+    if (!isScene(scene)) throw new Error('Core loader returned an incompatible scene');
     try {
-      const built = await buildNextDemoScene(scene, {sourceUrl: url});
+      const built = await buildCoreScene(scene, {sourceUrl: url});
       for (const child of [...view.world.children]) {
         child.traverse(object => {
           object.geometry?.dispose?.();
@@ -147,7 +147,7 @@ async function loadScene(url, label) {
       view.data?.delete?.();
       view.world.add(built.node);
       view.data = scene;
-      const count = nextCountsFromScene(scene);
+      const count = countsFromScene(scene);
       counts.push(count);
       $id(`${id}-stats`).textContent = `${count.meshes} meshes, ${count.materials} mats, ${count.textures} tex`;
       $id(`${id}-loading`).style.background = '#75d4a5';
@@ -222,7 +222,7 @@ async function ensureLoader() {
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
   showLoader('Loading LightUSD WASM...', $id('source-wrap'));
   try {
-    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
+    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'core' });
   } finally { hideLoader(); }
   return loader;
 }

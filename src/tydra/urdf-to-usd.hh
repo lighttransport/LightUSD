@@ -3,7 +3,7 @@
 //
 /// @file urdf-to-usd.hh
 /// @brief Build USD Physics + MuJoCo stages from URDF-derived JSON
-///        (next-core port of src/tydra/urdf-to-usd.hh).
+///        (core port of src/tydra/urdf-to-usd.hh).
 #pragma once
 
 #include <cstdint>
@@ -26,7 +26,7 @@ struct URDFMeshBuffer {
   std::vector<int32_t> indices;
 };
 
-/// Build a USD stage (next-core) from a compact URDF/MJCF export payload.
+/// Build a USD stage (core) from a compact URDF/MJCF export payload.
 ///
 /// The JSON payload is renderer-neutral (same contract as the legacy
 /// converter):

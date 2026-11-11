@@ -9,14 +9,14 @@
 #include <new>
 #include <string>
 namespace {
-EM_JS(int, NextSubdivEmit,
+EM_JS(int, SubdivEmit,
       (uint32_t callback_id, const float* positions, uint32_t position_count,
        const float* normals, uint32_t normal_count,
        const uint32_t* indices, uint32_t index_count,
        const uint32_t* face_source, uint32_t face_count,
        const float* uvs, uint32_t uv_count,
        uint32_t num_vertices, uint32_t num_faces, uint32_t batch_index), {
-  return Module['__lightusdNextSubdivEmit'](
+  return Module['__lightusdSubdivEmit'](
       callback_id, Number(positions), position_count, Number(normals),
       normal_count, Number(indices), index_count, Number(face_source),
       face_count, Number(uvs), uv_count, num_vertices, num_faces, batch_index);
@@ -86,7 +86,7 @@ class SubdivStreamer {
       SinkCtx *c = static_cast<SinkCtx *>(user);
       const bool have_normals = c->want_normals && b->normals;
       const bool have_uv = b->num_fvar == 1 && b->fvar[0].values;
-      return NextSubdivEmit(
+      return SubdivEmit(
           c->callback_id, b->positions, b->num_vertices * 3,
           have_normals ? b->normals : nullptr,
           have_normals ? b->num_vertices * 3 : 0,

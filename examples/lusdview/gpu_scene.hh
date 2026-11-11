@@ -133,7 +133,7 @@ struct DrawMeshCPU {
   uint64_t uploadedTopologyFingerprint{0};
   size_t uploadedVertexCount{0};
   // Optional per-vertex displayColor (rgb, parallel to `vertices`); empty = none.
-  // Used by the flat --next preview to tint geometry; the material shader
+  // Used by the flat --core preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
   std::vector<float> vertexColors;
   // Optional per-vertex alpha (parallel to `vertices`); empty = fully opaque.
@@ -146,7 +146,7 @@ struct DrawMeshCPU {
   // renderers ignore these until full normal-map/anisotropy evaluation lands.
   std::vector<float> tangents;
   std::vector<float> binormals;
-  // Float/vector primvars retained from the next loader for MaterialX
+  // Float/vector primvars retained from the core loader for MaterialX
   // geompropvalue nodes. Empty until a generic primvar is authored.
   std::vector<DrawGeomPropCPU> geomProps;
   // True when the mesh has no authored normals: the shader shades it with the
@@ -258,14 +258,14 @@ struct DrawMeshCPU {
   float protoAabbMax[3]{0, 0, 0};
   // Max per-axis morph displacement (object space), used to pad protoAabb so a
   // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
-  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
+  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsCore.
   float morphExtent[3]{0, 0, 0};
-  // --next deform: this mesh's OWN rest-pose world box, and the absolute bone-row
+  // --core deform: this mesh's OWN rest-pose world box, and the absolute bone-row
   // range its jointIdx references. aabbMin/Max cannot serve: a skinned batch keeps
   // the conservative whole-scene box there (a tight rest box would pop the mesh out
-  // of view as the rig moves). These let BuildNextPosedSceneBounds re-derive the
+  // of view as the rig moves). These let BuildCorePosedSceneBounds re-derive the
   // scene box at a new time code from 8 corners per bone, instead of re-skinning
-  // every vertex -- which is what the Tydra path does, and what the next loader is
+  // every vertex -- which is what the Tydra path does, and what the core loader is
   // built to avoid. boneLo < 0 = unskinned.
   float restAabbMin[3]{0, 0, 0};
   float restAabbMax[3]{0, 0, 0};
@@ -1087,7 +1087,7 @@ struct DrawLightCPU {
   bool hasSpectralEmission{false};
 };
 
-// Render-ready non-mesh geometry retained from the next-core converter. These
+// Render-ready non-mesh geometry retained from the core converter. These
 // carriers deliberately preserve world-space placement and authored/tessellated
 // attributes instead of prematurely expanding them into camera-dependent mesh
 // proxies; raster backends consume them as billboards/ribbons and RT backends
@@ -1187,18 +1187,18 @@ struct DrawScene {
   float previewLightColor[3]{1.0f, 1.0f, 1.0f};
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
 
-  // --next per-frame GPU skinning. The Tydra path re-poses from
-  // RenderScene::skeletons; the next path has no RenderScene, so each skinned
+  // --core per-frame GPU skinning. The Tydra path re-poses from
+  // RenderScene::skeletons; the core path has no RenderScene, so each skinned
   // source mesh records here how to re-pose itself straight from the retained
-  // next Stage. One entry per skinned source mesh (not per DrawMesh: the next
+  // core Stage. One entry per skinned source mesh (not per DrawMesh: the core
   // loader merges meshes into material batches, so one batch may draw vertices
   // from several of these).
   //
   // The mesh's vertices are already world-baked into its batch, so the bone rows
   // this entry owns ([matrixBase, matrixBase + numJoints)) are pre-composed with
-  // both `geomBind` and the mesh's world transform -- see BuildNextSkinningFrame.
+  // both `geomBind` and the mesh's world transform -- see BuildCoreSkinningFrame.
   // Vertices reference them by ABSOLUTE row index through DrawMeshCPU::jointIdx.
-  struct NextSkelBinding {
+  struct CoreSkelBinding {
     std::string skelPath;  // Skeleton prim
     std::string animPath;  // bound SkelAnimation ("" = rest pose)
     std::string meshPath;  // the skinned mesh (diagnostics)
@@ -1209,7 +1209,7 @@ struct DrawScene {
     double renderWorld[16];  // transform applied by the draw after skinning
     double skeletonWorld[16];  // Skeleton prim local-to-world transform
   };
-  std::vector<NextSkelBinding> nextSkels;
+  std::vector<CoreSkelBinding> coreSkels;
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};
@@ -1227,7 +1227,7 @@ struct DrawScene {
   std::vector<std::string> skipped;
   size_t triangleCount{0};
   // Total vertex count, captured at load time. Stored separately because the
-  // --next path frees per-mesh CPU geometry after GPU upload (so summing
+  // --core path frees per-mesh CPU geometry after GPU upload (so summing
   // meshes[].vertices later would report 0).
   size_t vertexCount{0};
 

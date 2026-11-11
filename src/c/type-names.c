@@ -4,7 +4,7 @@
  * type-names.c -- built-in USD type metadata (C11 core).
  *
  * Crate/in-memory type layouts plus the USD<->TypeId name mapping. This was
- * a constexpr C++ array in src/next/types/type-info.cc; as C11 data it is
+ * a constexpr C++ array in src/types/type-info.cc; as C11 data it is
  * available to C consumers (the C ABI) and the layout is the single source
  * of truth. Metadata only: no per-type executable callbacks.
  */

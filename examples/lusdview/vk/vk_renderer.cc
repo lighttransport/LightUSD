@@ -3208,7 +3208,7 @@ void VulkanRenderer::createTessPipeline() {
   }
 }
 
-// Instanced flat-shaded prototype pipeline (large-scene --next path). Mirrors the
+// Instanced flat-shaded prototype pipeline (large-scene --core path). Mirrors the
 // GL instanced program: per-instance 3x4 o2w + instance color + per-vertex color,
 // drawn with vkCmdDrawIndexed(indexCount, instanceCount, ...). Uses only push
 // constants (no descriptor sets), so it has its own pipeline layout.
@@ -7621,7 +7621,7 @@ void VulkanRenderer::syncSceneResources(
   if (!device_) return;
   // Same job GLRenderer::syncSceneResources does: make room for the texture
   // slots and materials that streamed in after beginScene. Materials are
-  // append-only in the next loader, so repacking the whole table is safe.
+  // append-only in the core loader, so repacking the whole table is safe.
   growTextureSlots(textureCount);
   rtMaterialsCpu_ = materials;
   selectFullRtShaderIfNeeded(materials);
@@ -8934,7 +8934,7 @@ void VulkanRenderer::finishMeshVertexUpdate(
     }
   }
   if (rtActive_) {
-    // Both callers (legacy RT skinning, --next RT deform) rewrite this vbo every
+    // Both callers (legacy RT skinning, --core RT deform) rewrite this vbo every
     // pose, so mark the mesh dynamic: its next BLAS build uses ALLOW_UPDATE and
     // later poses REFIT in place (rebuildTlas drains blasRefitPending) instead
     // of paying a full destroy + MODE_BUILD per frame.
@@ -9959,7 +9959,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
   }
 
-  // Raster GPU instancing buffers (flat --next path; independent of RT support).
+  // Raster GPU instancing buffers (flat --core path; independent of RT support).
   // The VK raster pipeline draws these prototypes with vkCmdDrawIndexed(...,
   // instanceCount, ...) using per-instance rows + colors as instance-rate vertex
   // attributes -- mirroring the GL instanced program.
@@ -17316,7 +17316,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
     }
 
-    // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--next path) ----
+    // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--core path) ----
     bool anyInstanced = false;
     for (const auto& m : meshes_) {
       if (m.instanceCount > 0) { anyInstanced = true; break; }

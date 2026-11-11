@@ -159,7 +159,7 @@ btnGenerate.addEventListener('click', async () => {
 
   // Create native instance
   if (usd) usd.delete();
-  usd = new native.NextUSDZConverterNative();
+  usd = new native.USDZConverterNative();
 
   // Pass texture to WASM asset cache
   // The core converter copies the typed bytes into its asset cache.
@@ -191,7 +191,7 @@ fileInput.addEventListener('change', async (e) => {
   const fileData = new Uint8Array(await file.arrayBuffer());
 
   if (usd) usd.delete();
-  usd = new native.NextUSDZConverterNative();
+  usd = new native.USDZConverterNative();
 
   const ok = usd.loadFromBinary(fileData, file.name);
   if (!ok) {

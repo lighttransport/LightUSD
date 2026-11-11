@@ -14,7 +14,7 @@ namespace detail {
 using JSONValue = ::lightusd::minijson::Value;
 
 // Schema-neutral, validated view of the JSON exchanged by the browser URDF
-// and MJCF frontends. Both legacy and next-core authors consume this object so
+// and MJCF frontends. Both legacy and core authors consume this object so
 // section defaults and source-format detection cannot drift.
 struct URDFPayload {
   JSONValue root;

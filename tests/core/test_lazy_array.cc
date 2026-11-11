@@ -44,7 +44,7 @@ using namespace lightusd;
 namespace {
 std::string LazyArrayScratchDirectory() {
 #if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
-  char pattern[] = "/tmp/lightusd-next-lazy-XXXXXX";
+  char pattern[] = "/tmp/lightusd-core-lazy-XXXXXX";
   char* created = ::mkdtemp(pattern);
   return created ? std::string(created) : std::string("/tmp");
 #else

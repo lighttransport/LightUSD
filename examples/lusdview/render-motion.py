@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--camera", required=True,
                         help="authored camera providing shutter and per-time pose")
     parser.add_argument("--backend", choices=("gl", "vk"), default="vk")
-    parser.add_argument("--next", action="store_true", dest="next_loader")
+    parser.add_argument("--core", action="store_true", dest="core_loader")
     parser.add_argument("--viewer-arg", action="append", default=[])
     args = parser.parse_args()
     if args.segments < 1 or args.segments > 64:
@@ -103,8 +103,8 @@ def main():
         common = [str(binary), "--headless", "--backend", args.backend,
                   "--frames", "1", "--size", f"{width}x{height}",
                   "--camera", args.camera, "--no-raster-motion"]
-        if args.next_loader:
-            common.append("--next")
+        if args.core_loader:
+            common.append("--core")
         report_path = temp / "report.json"
         run(common + ["--time", repr(args.time), "--render-report",
                       str(report_path)] + args.viewer_arg + [str(scene)])

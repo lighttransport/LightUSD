@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // lusdrender — the RenderContext aggregator (persistent render state shared by
-// the next-loader pipeline) plus the cross-TU function prototype surface (added
+// the core-loader pipeline) plus the cross-TU function prototype surface (added
 // as the monolith is split into per-module .cc files).
 #pragma once
 
@@ -47,7 +47,7 @@ struct RenderContext {
   std::vector<InstanceRT> instances;
   lrt_tlas *tlas{nullptr};
   bool use_tlas{false};
-  DirectScene direct;             // empty for the next path
+  DirectScene direct;             // empty for the core path
   LightCache lights;              // empty -> camera-headlight fallback
   IblCache ibl;                   // image-based lighting (--env / DomeLight)
   lusdr::Axis up_axis{lusdr::Axis::Y};
@@ -304,11 +304,11 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
 
 bool LoadProgress(float progress, void *);
 
-// ---- next-loader / driver (defined in lusdrender.cc for now) ----
+// ---- core-loader / driver (defined in lusdrender.cc for now) ----
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
-void RefreshVolumesNext(RenderContext &ctx, double time);
-bool BuildNextGaussianEllipses(const lightusd::Stage &stage,
+void RefreshVolumesCore(RenderContext &ctx, double time);
+bool BuildCoreGaussianEllipses(const lightusd::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh = false);
 
@@ -318,7 +318,7 @@ bool BuildNextGaussianEllipses(const lightusd::Stage &stage,
 bool BuildDeferredGaussianChunk(const Options &opt, EllipseSceneChunk *chunk);
 void PrintRTStats(const RenderContext &ctx);
 double RenderFrameTo(RenderContext &ctx, const std::string &path);
-void ResolveCameraNext(RenderContext &ctx);
+void ResolveCameraCore(RenderContext &ctx);
 
 #ifdef LIGHTUSD_WITH_QJS
 int RunJSScriptMode(const Options &opt, const std::string &script_path);
@@ -383,11 +383,11 @@ bool RunCudaSharedRT(const Options &opt,
                      const std::vector<EllipseSceneChunk>* ellipses = nullptr);
 #endif
 
-// ---- lusdr_next.cc (next loader + driver) ----
+// ---- lusdr_core.cc (core loader + driver) ----
 unsigned WorkerThreadCount(int requested);
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask);
 matrix4d Mat4FromArray(const double d[16]);
-// -subdiv level for the CPU / GPU mesh streams (lusdr_next.cc).
+// -subdiv level for the CPU / GPU mesh streams (lusdr_core.cc).
 void SetPreviewSubdivisionLevel(int level);
 int PreviewSubdivisionLevel();
 
@@ -419,13 +419,13 @@ std::string DirName(const std::string &path);
 bool UsdzEntryMatches(const std::string &entry, const std::string &asset);
 
 
-lightusd::UsdPrim ConnectedPrimNext(const lightusd::Stage &stage,
+lightusd::UsdPrim ConnectedPrimCore(const lightusd::Stage &stage,
                                           const lightusd::UsdPrim &prim,
                                           const std::string &prop);
 
 WrapMode ParseWrapMode(const std::string &s);
 
-void ResolveScalarTextureNext(const lightusd::Stage &stage,
+void ResolveScalarTextureCore(const lightusd::Stage &stage,
                               const lightusd::UsdPrim &surf,
                               const std::string &input, TextureCache &tc,
                               ScalarTex *out);
@@ -433,7 +433,7 @@ void ResolveScalarTextureNext(const lightusd::Stage &stage,
 UvXform ResolveUvXform(const lightusd::Stage &stage,
                        const lightusd::UsdPrim &uvtex);
 
-void ResolveMeshMaterialNext(const lightusd::Stage &stage,
+void ResolveMeshMaterialCore(const lightusd::Stage &stage,
                              const lightusd::UsdPrim &mesh,
                              TextureCache &tc, Vec3 *base_color, int32_t *tex_id,
                              float *roughness, float *metallic,
@@ -459,7 +459,7 @@ void ResolveMeshMaterialNext(const lightusd::Stage &stage,
 void ResolveMeshMaterialCached(
     const lightusd::Stage &stage, const lightusd::UsdPrim &mesh,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
-    MeshJobNext *job);
+    MeshJobCore *job);
 
 bool PathMatchesMask(const std::string &path,
                      const std::vector<std::string> &mask);
@@ -477,7 +477,7 @@ bool SceneGeometryAnimated(const lightusd::Stage &stage,
 
 // When `expand_instancers` is true, UsdGeomPointInstancer prims are EXPANDED in
 // place: every visible instance's prototype meshes are emitted as world-space
-// MeshJobNext (transform = prototype-local * instance TRS * instancer world),
+// MeshJobCore (transform = prototype-local * instance TRS * instancer world),
 // recursively (nested instancers expand too). This is the GPU flatten path's
 // only way to render instanced geometry (no GPU TLAS). Default false keeps the
 // two-level proto-collection callers byte-identical (they stop at instancers and
@@ -487,32 +487,32 @@ bool SceneGeometryAnimated(const lightusd::Stage &stage,
 // instancer expansion stops early. This bounds host memory on scenes with tens of
 // millions of instances (e.g. Moana island) -- the -vkInstanced collector passes
 // a budget so a huge instancer yields a bounded preview instead of OOMing.
-void CollectRTPreviewMeshesNext(const lightusd::Stage &stage,
+void CollectRTPreviewMeshesCore(const lightusd::Stage &stage,
                                 const lightusd::UsdPrim &prim,
                                 const matrix4d &parent_world,
                                 lusdr::Purpose inherited_purpose, double time,
                                 const std::vector<std::string> &mask,
-                                std::vector<MeshJobNext> *jobs,
+                                std::vector<MeshJobCore> *jobs,
                                 bool expand_instancers = false,
                                 size_t max_jobs = 0);
 
 // Streaming instance sink: called once per emitted placement with the prototype
 // mesh prim, its world transform, and purpose. Same (prim, world, purpose) an
-// expanded MeshJobNext would carry -- the two-level -vkInstanced collector uses
-// this to group placements on the fly instead of materializing one MeshJobNext
+// expanded MeshJobCore would carry -- the two-level -vkInstanced collector uses
+// this to group placements on the fly instead of materializing one MeshJobCore
 // per instance (each ~392 B); a large instanced scene then costs ~88 B/placement
 // of host memory during collection instead of ~392 B, so Moana island fits in far
-// less RAM. See CollectRTInstancePlacementsNext.
+// less RAM. See CollectRTInstancePlacementsCore.
 using RtInstanceSink = std::function<void(const lightusd::UsdPrim & /*prim*/,
                                           const matrix4d & /*world*/,
                                           lusdr::Purpose /*purpose*/)>;
 
-// Streaming counterpart of CollectRTPreviewMeshesNext(expand_instancers=true):
+// Streaming counterpart of CollectRTPreviewMeshesCore(expand_instancers=true):
 // traverses `prim`, expands PointInstancer / native instances, and delivers each
-// placement to `sink` instead of appending a MeshJobNext. Stops after
+// placement to `sink` instead of appending a MeshJobCore. Stops after
 // `max_placements` sink calls (0 = unlimited). Returns the number of placements
 // emitted (so the caller can report a hit budget).
-size_t CollectRTInstancePlacementsNext(const lightusd::Stage &stage,
+size_t CollectRTInstancePlacementsCore(const lightusd::Stage &stage,
                                        const lightusd::UsdPrim &prim,
                                        const matrix4d &parent_world,
                                        lusdr::Purpose inherited_purpose,
@@ -521,57 +521,57 @@ size_t CollectRTInstancePlacementsNext(const lightusd::Stage &stage,
                                        const RtInstanceSink &sink,
                                        size_t max_placements);
 
-float ReadCamFloatNext(const lightusd::UsdPrim &prim, const char *name,
+float ReadCamFloatCore(const lightusd::UsdPrim &prim, const char *name,
                        float fallback);
 
-bool FindNextCameraFrameRecursive(const lightusd::Stage &stage,
+bool FindCoreCameraFrameRecursive(const lightusd::Stage &stage,
                                   const lightusd::UsdPrim &prim,
                                   const matrix4d &parent_world,
                                   const std::string &query, double time,
                                   CameraFrame *frame, float *aspect);
 
-bool FindNextCameraFrame(const lightusd::Stage &stage,
+bool FindCoreCameraFrame(const lightusd::Stage &stage,
                          const std::string &query, double time,
                          CameraFrame *frame, float *aspect);
 
 CameraFrame MakeUsdRecordCamera(const Bounds &bounds, lusdr::Axis up_axis,
                                 int width, int *out_height);
 
-bool IsCurvePrimNext(const lightusd::UsdPrim &prim);
+bool IsCurvePrimCore(const lightusd::UsdPrim &prim);
 
-std::vector<lusdr::value::point3f> ReadCurvePointsNext(
+std::vector<lusdr::value::point3f> ReadCurvePointsCore(
     const lightusd::UsdPrim &prim, double time,
     const lightusd::ValueClipStageLoader &clip_loader);
 
-bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
+bool BuildCoreCurves(RenderContext &ctx, const std::vector<CurveJobCore> &jobs,
                      double time, bool include_flat = true);
 
 // Convert authored flat/ribbon curves to bounded camera-facing triangle
 // carriers for GPU backends. The CPU path continues to use LightRT's native
 // flat-curve intersector.
-bool BuildNextFlatCurveMeshes(
-    const std::vector<CurveJobNext> &jobs, double time,
+bool BuildCoreFlatCurveMeshes(
+    const std::vector<CurveJobCore> &jobs, double time,
     const lightusd::ValueClipStageLoader &clip_loader,
     const CameraFrame &camera, const Options &opt,
     std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
-bool BuildNextFlatCurveBounds(
-    const std::vector<CurveJobNext> &jobs, double time,
+bool BuildCoreFlatCurveBounds(
+    const std::vector<CurveJobCore> &jobs, double time,
     const lightusd::ValueClipStageLoader &clip_loader, Bounds *bounds);
 
 matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
                      const float *scale3);
 
-void CollectCurvesNextRec(const lightusd::UsdPrim &prim,
+void CollectCurvesCoreRec(const lightusd::UsdPrim &prim,
                           const matrix4d &parent_world,
                           lusdr::Purpose inherited_purpose, double time,
-                          std::vector<CurveJobNext> *out);
+                          std::vector<CurveJobCore> *out);
 
 void CollectProtoCurves(const lightusd::Stage &stage,
                         const std::string &proto_path,
                         lusdr::Purpose start_purpose, double time,
-                        std::vector<CurveJobNext> *out);
+                        std::vector<CurveJobCore> *out);
 
 int32_t ReserveCurveProto(const lightusd::Stage &stage,
                           const std::string &proto_path,
@@ -599,11 +599,11 @@ void CollectSceneSplit(const lightusd::Stage &stage,
                        const matrix4d &parent_world,
                        lusdr::Purpose inherited_purpose, double time,
                        const std::vector<std::string> &mask,
-                       std::vector<MeshJobNext> *base_jobs,
+                       std::vector<MeshJobCore> *base_jobs,
                        std::vector<InstanceRT> *instances,
                        std::unordered_map<std::string, uint32_t> *proto_ids,
                        std::vector<ProtoBuildReq> *protos,
-                       std::vector<CurveJobNext> *curve_jobs,
+                       std::vector<CurveJobCore> *curve_jobs,
                        CurveProtoCollect *curve_inst, RTPreviewStats *stats,
                        const std::unordered_set<std::string> *proto_holders);
 
@@ -632,7 +632,7 @@ void CollectPrototypePaths(const lightusd::UsdPrim &prim,
 void CollectProtoJobs(const lightusd::Stage &stage,
                       const std::string &proto_path,
                       lusdr::Purpose start_purpose, double time,
-                      std::vector<MeshJobNext> *jobs);
+                      std::vector<MeshJobCore> *jobs);
 
 inline size_t EstimateTrisForJob(const lightusd::UsdPrim &prim,
                                  double time);
@@ -640,14 +640,14 @@ inline size_t EstimateTrisForJob(const lightusd::UsdPrim &prim,
 void ExpandBoundsByTransformedO2W(Bounds *g, const Bounds &local,
                                   const float o2w[12]);
 
-void CollectLightsNext(const lightusd::Stage &stage,
+void CollectLightsCore(const lightusd::Stage &stage,
                        const lightusd::UsdPrim &prim,
                        const matrix4d &parent_world, double time,
                        LightCache *cache);
 
 lightusd::UsdPrim FindDomeLightRec(const lightusd::UsdPrim &prim);
 
-bool BuildNextIbl(const lightusd::Stage &stage, const Options &opt,
+bool BuildCoreIbl(const lightusd::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
 // Vulkan descriptor path: add the stage DomeLight as an analytic dome entry
@@ -660,11 +660,11 @@ bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
 
 std::string SubstituteFrame(const std::string &path, long frame);
 
-int RunRTPreviewNext(const Options &opt);
+int RunRTPreviewCore(const Options &opt);
 
-// Compose through the persistent next-core session with aggregate accounting,
+// Compose through the persistent core session with aggregate accounting,
 // then release transient PCP caches before returning the retained Stage.
-bool LoadNextStageBudgeted(const Options &opt, lightusd::Stage *stage,
+bool LoadCoreStageBudgeted(const Options &opt, lightusd::Stage *stage,
                            std::string *warn, std::string *err,
                            lightusd::ValueClipStageLoader *clip_loader = nullptr);
 

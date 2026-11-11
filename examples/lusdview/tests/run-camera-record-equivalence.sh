@@ -101,10 +101,10 @@ run_loader() {
   sed -n 's/^\[lusdview-camera\] //p' "$OUT/$name.log" > "$OUT/$name.records"
   [ -s "$OUT/$name.records" ]
 }
-run_loader next "$OUT/cameras.usda" || { echo "FAIL: default camera extraction"; exit 1; }
+run_loader core "$OUT/cameras.usda" || { echo "FAIL: default camera extraction"; exit 1; }
 run_loader packaged "$OUT/cameras.usdz" || { echo "FAIL: packaged camera extraction"; exit 1; }
 
-python3 - "$OUT/next.records" "$OUT/packaged.records" <<'PY'
+python3 - "$OUT/core.records" "$OUT/packaged.records" <<'PY'
 import math, sys
 def read(p):
     rows = []
@@ -121,7 +121,7 @@ a = read(sys.argv[1])
 b = read(sys.argv[2])
 
 if len(a) != 3 or len(b) != 3:
-    print(f"expected 3 camera records, got next={len(a)} packaged={len(b)}")
+    print(f"expected 3 camera records, got core={len(a)} packaged={len(b)}")
     raise SystemExit(1)
 
 # Field layout:
@@ -158,18 +158,18 @@ if len(a) != 3 or len(b) != 3:
 for ci, (x, y) in enumerate(zip(a, b)):
     # Compare absolute paths
     if x[1] != y[1]:
-        print(f"camera {ci} path: next={x[1]} packaged={y[1]}")
+        print(f"camera {ci} path: core={x[1]} packaged={y[1]}")
         raise SystemExit(1)
     # Compare projection strings
     if x[2] != y[2]:
-        print(f"camera {ci} projection: next={x[2]} packaged={y[2]}")
+        print(f"camera {ci} projection: core={x[2]} packaged={y[2]}")
         raise SystemExit(1)
     # Compare numeric fields (indices 3..28)
     for fi in range(3, 29):
         u = float(x[fi])
         v = float(y[fi])
         if not math.isclose(u, v, rel_tol=1e-4, abs_tol=1e-4):
-            print(f"camera {ci} field {fi} ({x[1]}): next={u} packaged={v}")
+            print(f"camera {ci} field {fi} ({x[1]}): core={u} packaged={v}")
             raise SystemExit(1)
 
 expected_advanced = {

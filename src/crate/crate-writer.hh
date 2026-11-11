@@ -62,7 +62,7 @@ struct CrateWriteOptions {
   /// counts (the parallel build merges per-prim results in deterministic order).
   int num_threads = 1;
 
-  /// Log per-phase wall times ("[next_crate_write] ...") at INFO through
+  /// Log per-phase wall times ("[core_crate_write] ...") at INFO through
   /// lightusd::logging.
   bool enable_timing = false;
 

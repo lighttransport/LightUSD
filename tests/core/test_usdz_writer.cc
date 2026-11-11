@@ -100,11 +100,11 @@ void test_write_usdz_to_file() {
   TEST("WriteUSDZToFile");
   auto stage = MakeTestStage();
 
-  auto result = WriteUSDZToFile("/tmp/test_usdz_next.usdz", stage);
+  auto result = WriteUSDZToFile("/tmp/test_usdz_core.usdz", stage);
   if (!result.success) { FAIL(result.error.c_str()); return; }
 
   // Verify file exists
-  FILE* f = fopen("/tmp/test_usdz_next.usdz", "rb");
+  FILE* f = fopen("/tmp/test_usdz_core.usdz", "rb");
   if (!f) { FAIL("file not created"); return; }
   fseek(f, 0, SEEK_END);
   long size = ftell(f);
@@ -119,7 +119,7 @@ void test_read_usdz_with_reader() {
   TEST("Read USDZ with USDZReader");
 
   USDZReader reader;
-  if (!reader.OpenFile("/tmp/test_usdz_next.usdz")) {
+  if (!reader.OpenFile("/tmp/test_usdz_core.usdz")) {
     FAIL("failed to open USDZ file"); return;
   }
 
@@ -149,7 +149,7 @@ void test_read_usdz_stage() {
 
   Stage loaded_stage;
   std::string warn, err;
-  bool ok = LoadUSD("/tmp/test_usdz_next.usdz", &loaded_stage, &warn, &err);
+  bool ok = LoadUSD("/tmp/test_usdz_core.usdz", &loaded_stage, &warn, &err);
   if (!ok) { FAIL(err.c_str()); return; }
 
   // Verify prims
@@ -236,7 +236,7 @@ void test_usdz_root_is_first_entry() {
   if (!reader.Open(valid.data(), valid.size())) {
     FAIL("failed to reopen valid fixture before state-reset check"); return;
   }
-  if (reader.OpenFile("/tmp/lightusd-next-definitely-missing.usdz") ||
+  if (reader.OpenFile("/tmp/lightusd-core-definitely-missing.usdz") ||
       reader.NumEntries() != 0 || reader.EntryData(0) != nullptr) {
     FAIL("failed OpenFile retained entries from the previous archive"); return;
   }
@@ -260,13 +260,13 @@ void test_usdz_memory_caps() {
   USDZReadOptions read_opts;
   read_opts.max_archive_size = 1;
   USDZReader reader;
-  if (reader.OpenFile("/tmp/test_usdz_next.usdz", read_opts)) {
+  if (reader.OpenFile("/tmp/test_usdz_core.usdz", read_opts)) {
     FAIL("USDZReader ignored archive cap"); return;
   }
 
   read_opts.max_archive_size = 0;
   read_opts.max_entry_size = 1;
-  if (reader.OpenFile("/tmp/test_usdz_next.usdz", read_opts)) {
+  if (reader.OpenFile("/tmp/test_usdz_core.usdz", read_opts)) {
     FAIL("USDZReader ignored entry cap"); return;
   }
 
@@ -274,7 +274,7 @@ void test_usdz_memory_caps() {
   load_opts.limits.max_input_bytes = 1;
   Stage loaded_stage;
   std::string warn, err;
-  if (LoadUSD("/tmp/test_usdz_next.usdz", &loaded_stage, load_opts, &warn, &err)) {
+  if (LoadUSD("/tmp/test_usdz_core.usdz", &loaded_stage, load_opts, &warn, &err)) {
     FAIL("LoadUSD ignored USDZ memory cap"); return;
   }
 
@@ -285,7 +285,7 @@ void test_usdc_from_usdz() {
   TEST("Extract USDC from USDZ and read");
 
   USDZReader reader;
-  if (!reader.OpenFile("/tmp/test_usdz_next.usdz")) {
+  if (!reader.OpenFile("/tmp/test_usdz_core.usdz")) {
     FAIL("failed to open USDZ file"); return;
   }
 

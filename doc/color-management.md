@@ -101,9 +101,9 @@ Build native and both WASM backends first, then run:
 # C++ conversion and schema/validation coverage
 build_ninja/unit-test-lightusd tydra_renderscene_rendering_colorspace_test
 build_ninja/unit-test-lightusd tydra_renderscene_custom_texture_colorspace_test
-ctest --test-dir build-next --output-on-failure
+ctest --test-dir build-core --output-on-failure
 
-# Native next/legacy render, PNG readback, expected constant pixel and texture
+# Native core/legacy render, PNG readback, expected constant pixel and texture
 # checks (sRGB/raw, gamma 2.2, Rec.709/AP1, AP1/AP0, pixel-exact
 # built-in/custom AP1 and piecewise-sRGB parity, plus MaterialXConfig constant
 # and texture NodeGraph fallback versus explicit metadata in both backends)
@@ -111,7 +111,7 @@ python3 tools/lusdrender/check_colorspace_regression.py \
   build_ninja/tools/lusdrender/lusdrender . \
   --output /tmp/lightusd-colorspace-native
 
-# Numeric AP0/Macbeth references plus legacy/next WASM parity, raw bypass,
+# Numeric AP0/Macbeth references plus legacy/core WASM parity, raw bypass,
 # channel-distinct transforms, and MaterialX graph/config metadata
 cd web/js
 npm run test:colorspace-regression -- --wasm

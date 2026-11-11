@@ -9,7 +9,7 @@ self.onmessage = async ({data}) => {
   try {
     nativePromise ||= import('../../src/lightusd/lightusd.js').then(({default:factory}) => factory());
     const native = await nativePromise;
-    converter = new native.NextUSDZConverterNative();
+    converter = new native.USDZConverterNative();
     const budget = Math.min(data.options.udimMemoryBudgetBytes, 1024 * 1024 * 1024);
     converter.setMaxRetainedPayloadBytes(budget);
     if (!converter.loadFromBinary(new TextEncoder().encode(data.source), data.filename)) throw new Error(converter.error());

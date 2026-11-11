@@ -66,29 +66,29 @@ Convert options:
                            Needed for very large scenes.
   --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
   --max-wasm-heap-mb <N>   Best-effort cap for bulk WASM asset registration
-                           (0 = off). Use stream/stream-next for large folders.
+                           (0 = off). Use stream/stream-core for large folders.
   --url-list <file.json>   Streaming source as URLs: [{key,url}...], [url...],
                            or {baseUrl, files}. Implies network fetch per asset.
-  --pipeline <legacy|next|stream|stream-next> Flatten pipeline (default: legacy).
+  --pipeline <legacy|core|stream|stream-core> Flatten pipeline (default: legacy).
                            'stream': lazy folder/url-list source — USD layers
                            only in memory; textures fetched->processed->
                            zip-appended one at a time (lowest peak RSS;
-                           requires -o and flatten). 'next' uses the
+                           requires -o and flatten). 'core' uses the
                            experimental low-memory lazy-ValueRep path for a single
                            .usdz with a top-level USDC root; falls back to legacy
-                           otherwise. 'stream-next': the stream source combined
-                           with the next multi-asset compose+flatten in wasm
+                           otherwise. 'stream-core': the stream source combined
+                           with the core multi-asset compose+flatten in wasm
                            (USDC layers only; supports texture rename remaps
                            for --texture-format png/jpeg/exr); falls back to
                            the legacy stream compose when the input doesn't
                            qualify. Also via LIGHTUSD_PIPELINE env.
   --include-unused-textures
-                           With --pipeline stream-next, convert/package texture
-                           files from the input folder even when the next-composed
+                           With --pipeline stream-core, convert/package texture
+                           files from the input folder even when the core-composed
                            root does not reference them. Default is to skip
                            unreferenced textures for lower memory and smaller
                            USDZ output.
-  --variant <set=value>    Override a variant set during next flattening.
+  --variant <set=value>    Override a variant set during core flattening.
                            Repeat for multiple sets. Example: --variant lod=high
   --stream-textures        Re-encode/resize textures one at a time and repack in
                            JS, so decoded images never accumulate in the WASM
@@ -99,7 +99,7 @@ Convert options:
                            auto-enabled and falls back for nested roots / non-keep
                            formats.
   --no-stream-textures     Force the in-heap batch texture path (higher memory).
-  --stream-write           (--pipeline next, DEFAULT) Stream the flattened root
+  --stream-write           (--pipeline core, DEFAULT) Stream the flattened root
                            crate straight into the .usdz instead of buffering it,
                            so the output crate never materializes in the WASM heap
                            or in JS. Byte-identical output; roughly halves peak
@@ -164,13 +164,13 @@ function parseArgs() {
     maxUsdcMb: 0, maxMemMb: 0,
     wasmHeapLimitBytes: process.env.LIGHTUSD_MAX_WASM_HEAP ?
       parseByteSize(process.env.LIGHTUSD_MAX_WASM_HEAP) : 0,
-    pipeline: process.env.LIGHTUSD_PIPELINE || 'legacy',
+    pipeline: process.env.LIGHTUSD_PIPELINE || 'core',
     // undefined => auto (stream textures for a single .usdz keep-format re-encode,
     // the low-memory default); true => force; false => force the in-heap path.
     streamTextures: undefined,
-    // Stream the flattened root crate straight into the .usdz (next pipeline only)
+    // Stream the flattened root crate straight into the .usdz (core pipeline only)
     // instead of buffering it — keeps the output crate out of the WASM heap and JS.
-    // Default ON for --pipeline next when writing to a file; LIGHTUSD_STREAM_WRITE=0
+    // Default ON for --pipeline core when writing to a file; LIGHTUSD_STREAM_WRITE=0
     // (or --no-stream-write) disables it.
     streamWrite: process.env.LIGHTUSD_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
@@ -534,7 +534,7 @@ async function runStreamingConvert(native, o) {
       maxUsdcMb: o.maxUsdcMb,
       maxMemMb: o.maxMemMb,
       wasmHeapLimitBytes: o.wasmHeapLimitBytes,
-      pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
+      pipeline: o.pipeline === 'stream-core' ? 'core' : undefined,
       streamWrite: o.streamWrite,
       optimizeMaterials: o.optimizeMaterials,
       materialAtlasSize: o.materialAtlasSize,
@@ -693,7 +693,7 @@ async function main() {
   // go into memory for composition, textures are fetched -> processed ->
   // appended to the output zip one at a time. Lowest peak RSS for
   // texture-heavy scene folders. Requires flatten; root must be a bare USD.
-  if (o.pipeline === 'stream' || o.pipeline === 'stream-next') {
+  if (o.pipeline === 'stream' || o.pipeline === 'stream-core') {
     await runStreamingConvert(native, o);
     return;
   }

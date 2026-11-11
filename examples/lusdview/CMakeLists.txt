@@ -99,8 +99,8 @@ set(LUSDVIEW_SOURCES
     config.cc
     scene_optimize.cc
     incremental_scene_update.cc
-    next_scene_loader.cc
-    next_mesh_adapter.cc
+    core_scene_loader.cc
+    core_mesh_adapter.cc
     viewer_document.cc
     public_stage_queries.cc
     physics_preview.cc
@@ -559,13 +559,13 @@ if(LIGHTUSD_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(lusdview_public_stage_queries_test PRIVATE lightusd_c)
 
-  add_executable(lusdview_next_mesh_adapter_test
-      tests/next_mesh_adapter_test.cc next_mesh_adapter.cc)
-  target_compile_features(lusdview_next_mesh_adapter_test PRIVATE cxx_std_17)
-  lusdview_set_warning_flags(lusdview_next_mesh_adapter_test)
-  target_include_directories(lusdview_next_mesh_adapter_test PRIVATE
+  add_executable(lusdview_core_mesh_adapter_test
+      tests/core_mesh_adapter_test.cc core_mesh_adapter.cc)
+  target_compile_features(lusdview_core_mesh_adapter_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_core_mesh_adapter_test)
+  target_include_directories(lusdview_core_mesh_adapter_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
-  target_link_libraries(lusdview_next_mesh_adapter_test PRIVATE
+  target_link_libraries(lusdview_core_mesh_adapter_test PRIVATE
       lightusd_render_c tydra)
 
   add_executable(lusdview_document_test tests/viewer_document_test.cc viewer_document.cc)
@@ -658,7 +658,7 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_preview_cache_test
       lusdview_vchar_control_map_test
       lusdview_document_test
-      lusdview_next_mesh_adapter_test
+      lusdview_core_mesh_adapter_test
       lusdview_public_stage_queries_test
       lusdview_texture_residency_policy_test
       lusdview_incremental_scene_update_test
@@ -769,14 +769,14 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     OpenGL::GL
     ${CMAKE_DL_LIBS})
 
-# --- `next` lazy loader + Tydra converter (large-scene preview path) -----
-# Mirrors tools/lusdrender/CMakeLists.txt: build the next libs on demand (with
+# --- core lazy loader + Tydra converter (large-scene preview path) -----
+# Mirrors tools/lusdrender/CMakeLists.txt: build the core libs on demand (with
 # the std::thread parallel-compose path forced on) and link them. Used by
-# next_scene_loader.cc (the --next OpenGL mesh preview).
+# core_scene_loader.cc (the --core OpenGL mesh preview).
 set(LIGHTUSD_ENABLE_THREAD ON CACHE BOOL "" FORCE)
 if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
-                   ${CMAKE_BINARY_DIR}/lusdview_next_build)
+                   ${CMAKE_BINARY_DIR}/lusdview_core_build)
 endif()
 if(NOT TARGET tydra)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra

@@ -131,20 +131,20 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   // 2) Reference point: the framed USD camera, else the scene-bbox centre.
   CameraFrame cam;
   float aspect = 1.0f;
-  bool have_cam = FindNextCameraFrame(stage, opt->camera, time, &cam, &aspect);
+  bool have_cam = FindCoreCameraFrame(stage, opt->camera, time, &cam, &aspect);
   Vec3 cam_ref = have_cam ? cam.origin : Vec3{0, 0, 0};
 
   // 3) Collect proxy meshes and aggregate per district.
-  std::vector<MeshJobNext> jobs;
+  std::vector<MeshJobCore> jobs;
   for (const auto &root : stage.GetRootPrims()) {
-    CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+    CollectRTPreviewMeshesCore(stage, root, matrix4d::identity(),
                                lusdr::Purpose::Default, time, opt->mask,
                                &jobs);
   }
 
   std::map<std::string, District> districts;
   Vec3 scene_min{1e30f, 1e30f, 1e30f}, scene_max{-1e30f, -1e30f, -1e30f};
-  for (MeshJobNext &job : jobs) {
+  for (MeshJobCore &job : jobs) {
     const std::string path = job.prim.GetPath().str();
     std::string dpath, dname;
     if (!DistrictOf(path, opt->lod_container, &dpath, &dname)) continue;

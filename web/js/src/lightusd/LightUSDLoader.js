@@ -155,7 +155,7 @@ function nextAnimationFrame() {
     });
 }
 
-function nextCrateProgressLocalPercentage(info = {}) {
+function crateProgressLocalPercentage(info = {}) {
     const phase = String(info.phase || '');
     const ratio = Number.isFinite(info.percentage)
         ? Math.max(0, Math.min(100, info.percentage)) / 100
@@ -179,9 +179,9 @@ function nextCrateProgressLocalPercentage(info = {}) {
     }
 }
 
-export class NextRenderSceneAdapter {
+export class RenderSceneAdapter {
     constructor(native, renderStream, options = {}) {
-        this.__backend = 'next';
+        this.__backend = 'core';
         this.native = native;
         this.renderStream = renderStream;
         this.filename = options.filename || '';
@@ -324,7 +324,7 @@ export class NextRenderSceneAdapter {
 
     static async create(native, bytes, filename = 'scene.usdz', options = {}) {
         if (!native || typeof native.RenderStream !== 'function') {
-            throw new Error('LightUSD next backend is unavailable in this WASM module.');
+            throw new Error('LightUSD core backend is unavailable in this WASM module.');
         }
 
         const onProgress = typeof options.onProgress === 'function'
@@ -345,7 +345,7 @@ export class NextRenderSceneAdapter {
             if (!onProgress) return;
             const p = Math.max(0, Math.min(100, Number(localPercentage) || 0));
             onProgress({
-                backend: 'next',
+                backend: 'core',
                 stage,
                 percentage: progressBase + (p / 100) * progressRange,
                 localPercentage: p,
@@ -380,7 +380,7 @@ export class NextRenderSceneAdapter {
         let rootAssetName = '';
         const archiveEntries = new Map();
 
-        report('archive', 0, 'Preparing next backend input...');
+        report('archive', 0, 'Preparing core backend input...');
         await yieldForProgress();
 
         if (/\.usdz$/i.test(filename)) {
@@ -388,7 +388,7 @@ export class NextRenderSceneAdapter {
             const entries = parseUSDZEntries(u8);
             const root = this._rootEntry(entries);
             if (!root) {
-                throw new Error('LightUSD next backend could not find a USD root layer in the USDZ archive.');
+                throw new Error('LightUSD core backend could not find a USD root layer in the USDZ archive.');
             }
             rootAssetName = this._normTexPathStatic(root.name);
             // RenderStream consumes a root layer, not the surrounding archive.
@@ -452,8 +452,8 @@ export class NextRenderSceneAdapter {
             }
             // Supply every package entry to the resolver, including images.
             // The root identifier anchors references and authored texture paths.
-            if (archiveEntries.size && typeof native.NextAssetStore === 'function') {
-                const store = new native.NextAssetStore();
+            if (archiveEntries.size && typeof native.AssetStore === 'function') {
+                const store = new native.AssetStore();
                 try {
                     store.setMemoryLimitBytes(Math.min(options.maxMemoryLimitMB ?? 512, 1024) * 1024 * 1024);
                     const slash = rootAssetName.lastIndexOf('/');
@@ -464,7 +464,7 @@ export class NextRenderSceneAdapter {
                     renderStream.importAssetStore(store);
                 } finally { store.delete(); }
             }
-            // Variant selection: the next compositor keys overrides by variant
+            // Variant selection: the core compositor keys overrides by variant
             // SET name (applies to every prim carrying that set).
             if (options.variantSelection && options.variantSelection.variantSet &&
                 typeof renderStream.setVariantOverride === 'function') {
@@ -478,9 +478,9 @@ export class NextRenderSceneAdapter {
             // Native callbacks are module-global. Install them only across the
             // synchronous native call, so concurrent async loads cannot retain
             // or restore each other's callbacks across JavaScript yields.
-            const previousNextCrateProgress = native.onNextCrateProgress;
+            const previousCrateProgress = native.onCrateProgress;
             if (onProgress) {
-                native.onNextCrateProgress = (info = {}) => {
+                native.onCrateProgress = (info = {}) => {
                     const phase = info.phase || 'crate';
                     const total = Number(info.total);
                     const current = Number(info.current);
@@ -488,7 +488,7 @@ export class NextRenderSceneAdapter {
                         ? ` ${Math.min(current, total)}/${total}`
                         : '';
                     report('native-load',
-                        nextCrateProgressLocalPercentage(info),
+                        crateProgressLocalPercentage(info),
                         `Loading USD crate: ${phase}${count}`,
                         { cratePhase: phase, crateCurrent: current, crateTotal: total });
                 };
@@ -498,7 +498,7 @@ export class NextRenderSceneAdapter {
                     ? renderStream.begin(crate, rootAssetName || filename)
                     : renderStream.begin(crate);
             } finally {
-                if (onProgress) native.onNextCrateProgress = previousNextCrateProgress;
+                if (onProgress) native.onCrateProgress = previousCrateProgress;
             }
             if (!beginResult || !beginResult.success) {
                 const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
@@ -600,7 +600,7 @@ export class NextRenderSceneAdapter {
                     const item = getAnimation(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getAnimation(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getAnimation(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -638,7 +638,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getNode(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getNode(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getNode(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -651,7 +651,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getLight(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getLight(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getLight(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -664,7 +664,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getPoints(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getPoints(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getPoints(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -677,7 +677,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getCurves(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getCurves(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getCurves(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -690,7 +690,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getCamera(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getCamera(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getCamera(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -703,7 +703,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getPointInstancer(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getPointInstancer(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getPointInstancer(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -716,7 +716,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getPointInstanceDraw(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getPointInstanceDraw(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getPointInstanceDraw(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -729,7 +729,7 @@ export class NextRenderSceneAdapter {
                     const item = renderStream.getSkeleton(i);
                     if (!item || item.error) {
                         if (item?.error) {
-                            console.warn(`NextRenderSceneAdapter: getSkeleton(${i}) returned ${item.error}`);
+                            console.warn(`RenderSceneAdapter: getSkeleton(${i}) returned ${item.error}`);
                         }
                         continue;
                     }
@@ -782,7 +782,7 @@ export class NextRenderSceneAdapter {
             report('complete', 100, 'Core scene ready.');
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
-            return new NextRenderSceneAdapter(native, null, {
+            return new RenderSceneAdapter(native, null, {
                 filename,
                 archiveEntries,
                 meshes,
@@ -1107,7 +1107,7 @@ export class NextRenderSceneAdapter {
     }
 
     _normTexPath(path) {
-        return NextRenderSceneAdapter._normTexPathStatic(path);
+        return RenderSceneAdapter._normTexPathStatic(path);
     }
 
     getArchiveTextureBytes(path) {
@@ -1122,7 +1122,7 @@ export class NextRenderSceneAdapter {
     }
 
     getArchiveUDIMTiles(path) {
-        return NextRenderSceneAdapter._udimLayout(this.archiveEntries, path);
+        return RenderSceneAdapter._udimLayout(this.archiveEntries, path);
     }
 
     releaseArchiveTextureBytes() {
@@ -1526,18 +1526,18 @@ class LightUSDLoader extends Loader {
      * @param {Function} options.onLightUSDDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
      * @param {boolean} options.debugMemory - Print native heap debug events to console
      * @param {boolean} options.suppressNativeInfoLogs - Drop native [INFO] stdout logs
-     * @param {'next'|'legacy'|'auto'} options.backend - Compatibility setting;
+     * @param {'core'|'legacy'|'auto'} options.backend - Compatibility setting;
      *   all values use the core WASM/render backend. Legacy requests warn.
      */
     constructor(manager, options = {}) {
         super(manager);
 
         this.native_ = null;
-        this.nextOnlyNative_ = false;
+        this.coreOnlyNative_ = false;
         // Backend names remain accepted for older callers; scenes use core.
-        this.backend_ = ['legacy', 'next', 'auto'].includes(options.backend)
-            ? options.backend
-            : 'next';
+        this.backend_ = ['legacy', 'core', 'auto'].includes(options.backend)
+            ? (options.backend === 'core' ? 'core' : options.backend)
+            : 'core';
 
         this.assetResolver_ = null;
 
@@ -1732,7 +1732,8 @@ class LightUSDLoader extends Loader {
     // This is async but the load() method handles it internally with promises
     async init( options = {}) {
 
-        if (options.backend === 'legacy' || options.backend === 'next' || options.backend === 'auto') {
+        if (options.backend === 'legacy' || options.backend === 'core'
+            || options.backend === 'auto') {
           this.backend_ = options.backend;
         }
 
@@ -1744,8 +1745,8 @@ class LightUSDLoader extends Loader {
           this.useMemory64_ = options.useMemory64;
         }
 
-        if (Object.prototype.hasOwnProperty.call(options, 'useNextOnlyWasm')) {
-            console.warn('[LightUSDLoader] useNextOnlyWasm is deprecated; use backend: \'next\'.');
+        if (Object.prototype.hasOwnProperty.call(options, 'useCoreOnlyWasm')) {
+            console.warn('[LightUSDLoader] useCoreOnlyWasm is deprecated; use backend: \'core\'.');
         }
 
         if (!this.native_) {
@@ -1766,16 +1767,16 @@ class LightUSDLoader extends Loader {
             }
             // The published module is the core build (lightusd[_64].js). The
             // legacy module is no longer shipped; `backend: 'legacy'` and the
-            // historical `wasm=` / `nextWasm=` query switches are ignored.
+            // historical `wasm=` query switch are ignored.
             if (options.backend === 'legacy' || getParam("backend") === 'legacy' ||
                 getParam("wasm") === 'legacy') {
                 console.warn('[LightUSDLoader] The legacy backend was removed; using the core module.');
             }
-            this.backend_ = 'next';
+            this.backend_ = 'core';
             const coreUrl = new URL(use_memory64 ? './lightusd_64.js' : './lightusd.js',
                 import.meta.url).href;
             const initLightUSDNative = (await import(/* @vite-ignore */ coreUrl)).default;
-            this.nextOnlyNative_ = true;
+            this.coreOnlyNative_ = true;
 
             let wasmBinary = null;
 
@@ -2203,13 +2204,13 @@ class LightUSDLoader extends Loader {
         }
 
         // Every scene loads through the core module; `backend` values other
-        // than 'next' (legacy/auto) are accepted for compatibility and ignored.
-        const backend = options.backend || this.backend_ || 'next';
-        if (backend !== 'next' && !this.warnedLegacyBackend_) {
+        // than 'core' (legacy/auto) are accepted for compatibility and ignored.
+        const backend = options.backend || this.backend_ || 'core';
+        if (backend !== 'core' && !this.warnedLegacyBackend_) {
             console.warn('[LightUSDLoader] backend=' + backend + ' is not available; using the core module.');
             this.warnedLegacyBackend_ = true;
         }
-        NextRenderSceneAdapter.create(this.native_, binary, filePath, {
+        RenderSceneAdapter.create(this.native_, binary, filePath, {
             ...options, maxMemoryLimitMB: options.maxMemoryLimitMB ?? this.maxMemoryLimitMB_
         })
             .then(onLoad)
@@ -2226,7 +2227,7 @@ class LightUSDLoader extends Loader {
     async parseWithProgress(binary, filePath, options = {}) {
         if (options.signal?.aborted) throw new DOMException('Parsing aborted', 'AbortError');
         if (!this.native_) await this.init(options);
-        return NextRenderSceneAdapter.create(this.native_, binary, filePath, {
+        return RenderSceneAdapter.create(this.native_, binary, filePath, {
             ...options,
             maxMemoryLimitMB: options.maxMemoryLimitMB ?? this.maxMemoryLimitMB_
         });

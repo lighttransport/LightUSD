@@ -83,7 +83,7 @@ try{
       canvas:app.renderer.domElement.width>0&&app.renderer.domElement.height>0};
    });
    assert.match(state.status,/^Loaded/,filename+': '+JSON.stringify(state));
-   assert.equal(state.backend,'next',filename);assert.equal(state.core,true,filename);assert.equal(state.legacy,false,filename);
+   assert.equal(state.backend,'core',filename);assert.equal(state.core,true,filename);assert.equal(state.legacy,false,filename);
    assert.ok(state.meshCount>0,filename);assert.equal(state.canvas,true,filename);
    assert.deepEqual(errors,[],filename);
    console.log('PASS production core demo '+filename);

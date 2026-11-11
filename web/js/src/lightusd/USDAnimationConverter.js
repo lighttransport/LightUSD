@@ -364,7 +364,7 @@ export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
 				continue;
 			}
 
-			// Matrix-driven nodes (next backend groups set matrix +
+			// Matrix-driven nodes (core backend groups set matrix +
 			// matrixAutoUpdate=false) ignore the position/quaternion/scale
 			// that AnimationMixer writes. Decompose once and switch the
 			// target back to TRS-driven updates so tracks take effect.

@@ -5,8 +5,7 @@ import {bakeUDIMAtlas, discoverUDIMTiles, splitUDIMPattern, udimOptions} from '.
 import {loadWasm} from '../src/usdzconvert.js';
 
 const wasm64 = process.env.LIGHTUSD_WASM64 === '1';
-const combined = process.env.LIGHTUSD_UDIM_COMBINED === '1';
-const glue = process.env.LIGHTUSD_UDIM_GLUE || (combined ? (wasm64 ? '../src/lightusd/lightusd_combined_64.js' : '../src/lightusd/lightusd_combined.js') : wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js');
+const glue = process.env.LIGHTUSD_UDIM_GLUE || (wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js');
 const dir = new URL('.', new URL(glue, import.meta.url));
 const native = await loadWasm(() => import(glue), {locateFile: file => new URL(file, dir).href});
 function solid(r, g, b, a = 255) {
@@ -102,7 +101,7 @@ const scene = `#usda 1.0
 `;
 for (const mode of ['grid', 'dense']) {
   const input = new Map(map); input.set('root.usda', new TextEncoder().encode(scene));
-  const result = await convertFolderToUSDZ(native, input, {flatten: combined, reencode: false, rootLayerFormat: 'usda', udimBake: mode});
+  const result = await convertFolderToUSDZ(native, input, {flatten: false, reencode: false, rootLayerFormat: 'usda', udimBake: mode});
   const entries = parseUSDZEntries(result.usdz);
   const root = new TextDecoder().decode(entries[0].data);
   assert.match(root, /udim_[0-9a-f]{64}\.png/);
@@ -116,14 +115,14 @@ console.log('UDIM end-to-end layer edits: grid/dense passed');
 const {convertSourceToUSDZStreaming} = await import('../src/usdzconvert.js');
 async function convertedText(content, extra = {}, streaming = false) {
   const input = new Map(map);input.set('root.usda', new TextEncoder().encode(content));
-  const options = {flatten: combined, reencode: false, rootLayerFormat: 'usda', udimBake: 'dense', ...extra};
+  const options = {flatten: false, reencode: false, rootLayerFormat: 'usda', udimBake: 'dense', ...extra};
   const result = streaming ? await convertSourceToUSDZStreaming(native, {keys: [...input.keys()], fetch: async key => input.get(key)}, options)
     : await convertFolderToUSDZ(native, input, options);
   const entries = parseUSDZEntries(result.usdz);
   let text = new TextDecoder().decode(entries[0].data);
   if (entries[0].name.endsWith('.usdc')) {
-    const converter = combined ? new native.LightUSDLoaderNative() : new native.NextUSDZConverterNative();
-    try {assert.equal(combined ? converter.loadAsLayerFromBinary(entries[0].data, 'root.usdc') : converter.loadFromBinary(entries[0].data, 'root.usdc'), true);text=combined ? converter.layerToString() : converter.exportAsUSDA();}finally{converter.delete();}
+    const converter = new native.USDZConverterNative();
+    try {assert.equal(converter.loadFromBinary(entries[0].data, 'root.usdc'), true);text=converter.exportAsUSDA();}finally{converter.delete();}
   }
   return {text, entries, result};
 }
@@ -238,8 +237,8 @@ const instancesScene = scene.replace('  def Mesh "Mesh" {', '  def Xform "Protot
 const instances = await convertedText(instancesScene);
 assert.match(instances.text, /primvars:_udimAtlas0/);
 assert.doesNotMatch(instances.text, /<UDIM>/);
-if (!combined) assert.match(instances.text, /instanceable = true/);
-if (!combined) {
+assert.match(instances.text, /instanceable = true/);
+{
   const override = instancesScene.replace('   rel material:binding', `   over "Mesh" {
     point3f[] points = [(0,0,0), (2,0,0), (0,2,0)]
    }
@@ -254,20 +253,6 @@ const concrete = await convertedText(scene.replace('   def Shader "Reader"', `  
    def Shader "Reader"`));
 assert.ok(concrete.entries.some(entry => entry.name === 'textures/tile.1001.png'));
 console.log('UDIM variants, instance consumers, and shared source tiles passed');
-if (combined) {
-  const nested = new Map([...map].map(([key,value]) => ['asset/' + key,value]));
-  nested.set('asset/scene.usda', new TextEncoder().encode(scene));
-  nested.set('root.usda', new TextEncoder().encode('#usda 1.0\ndef Xform "World" (prepend references = @asset/scene.usda@</World>) {}\n'));
-  const result = await convertFolderToUSDZ(native, nested, {flatten: false, udimBake: 'grid', reencode: false});
-  const entries = parseUSDZEntries(result.usdz);
-  const dependency = entries.find(entry => entry.name === 'asset/scene.usda');
-  assert.ok(dependency);
-  assert.doesNotMatch(new TextDecoder().decode(dependency.data), /<UDIM>/);
-  assert.ok(entries.some(entry => /asset\/textures\/udim_.*\.png/.test(entry.name)));
-}
-
-
-
 if (process.env.LIGHTUSD_NATIVE_USDZCONVERT) {
   const fs = await import('node:fs');const os = await import('node:os');const path = await import('node:path');const {spawnSync} = await import('node:child_process');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightusd-udim-native-'));
@@ -338,8 +323,8 @@ def Xform "World" (prepend references = @asset/scene.usda@</World>) {}
 // unrelated sets. The default all-sites contract stays strict.
 const {bakeLayerUDIM} = await import('../src/udim-bake.js');
 function layerFor(text) {
-  const layer = combined ? new native.LightUSDLoaderNative() : new native.NextUSDZConverterNative();
-  assert.equal(combined ? layer.loadAsLayerFromBinary(new TextEncoder().encode(text),'root.usda') : layer.loadFromBinary(new TextEncoder().encode(text),'root.usda'),true);
+  const layer = new native.USDZConverterNative();
+  assert.equal(layer.loadFromBinary(new TextEncoder().encode(text),'root.usda'),true);
   return layer;
 }
 const spare = `\n def Shader "Spare" { uniform token info:id = "UsdUVTexture"\n asset inputs:file = @missing.%04d.png@\n }\n`;
@@ -348,7 +333,7 @@ for(const mode of ['grid','dense']) {
   const layer=layerFor(twoSets);
   try {
     const baked=await bakeLayerUDIM(native,layer,source,{udimBake:mode,udimShaderPaths:['/World/Mat/Texture']});
-    const text=combined ? layer.layerToString() : layer.exportAsUSDA();
+    const text=layer.exportAsUSDA();
     assert.equal(baked.assets.length,1);assert.match(text,/@missing\.%04d\.png@/);assert.doesNotMatch(text,/@textures\/tile\.<UDIM>\.png@/);
   }finally{layer.delete();}
 }
@@ -358,10 +343,10 @@ for(const [text,selection,count] of [[twoSets,['/Missing'],1],[twoSets,['/World/
  try {
   const sites=layer.describeUDIM().sites.filter(site=>site.path==='/World/Mat/Texture');
   const plans=sites.slice(0,count).map(site=>({...site,asset:'atlas.png',layout}));
-  const before=combined?layer.layerToString():layer.exportAsUSDA();
+  const before=layer.exportAsUSDA();
   const result=layer.applyUDIM({options:{mode:'grid'},plans,...(selection===undefined?{}:{shaderPaths:selection})});
   assert.equal(result.success,false,'incomplete or invalid scope must fail');
-  assert.equal(combined?layer.layerToString():layer.exportAsUSDA(),before);
+  assert.equal(layer.exportAsUSDA(),before);
  }finally{layer.delete();}
 }
 console.log('UDIM selected sets: grid/dense isolation, strict scope and complete animation plans passed');

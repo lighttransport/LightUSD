@@ -1,4 +1,4 @@
-// Color-management parity across the legacy and next WASM backends.
+// Color-management parity across the legacy and core WASM backends.
 
 import assert from 'node:assert/strict';
 
@@ -7,8 +7,8 @@ import { transformLinearColor } from '../src/lightusd/ColorSpaceUtils.js';
 
 const encoder = new TextEncoder();
 const legacy = await loadWasm(() => import(
-  new URL('../src/lightusd/lightusd_combined.js', import.meta.url).href));
-const next = await loadWasm(() => import(
+  new URL('../src/lightusd/lightusd_legacy.js', import.meta.url).href));
+const core = await loadWasm(() => import(
   new URL('../src/lightusd/lightusd.js', import.meta.url).href), {
   locateFile: (file) => new URL('../src/lightusd/' + file,
     import.meta.url).href
@@ -179,7 +179,7 @@ function loadLegacy(usda, name) {
 }
 
 function loadNext(usda) {
-  const stream = new next.RenderStream();
+  const stream = new core.RenderStream();
   const result = stream.begin(encoder.encode(usda));
   assert(result?.success, result?.error || stream.error());
   return stream;
@@ -224,10 +224,10 @@ const legacyDisplay = multiply3(Array.from(legacyMeta.workingToDisplayLinear),
 const nextDisplay = multiply3(Array.from(nextMeta.workingToDisplayLinear),
   nextWorking);
 assertNear(legacyDisplay, expectedDisplay, 3e-4, 'legacy display-linear');
-assertNear(nextDisplay, expectedDisplay, 3e-4, 'next display-linear');
+assertNear(nextDisplay, expectedDisplay, 3e-4, 'core display-linear');
 assertNear(nextDisplay, legacyDisplay, 3e-5, 'backend parity');
 
-// The next binding exports the already-resolved transform because custom
+// The core binding exports the already-resolved transform because custom
 // ColorSpaceDefinitionAPI properties are stage-local and unavailable once the
 // RenderScene is handed to Three.js.
 const nextCustomTexture = loadNext(CUSTOM_TEXTURE_USDA);
@@ -245,7 +245,7 @@ try {
     2.521686, -1.134130, -0.387556,
     -0.276480, 1.372719, -0.096239,
     -0.015378, -0.152975, 1.168353
-  ], 3e-4, 'next custom texture transform');
+  ], 3e-4, 'core custom texture transform');
 } finally {
   nextCustomTexture.end();
   nextCustomTexture.delete();
@@ -297,7 +297,7 @@ try {
 const authoredRaw = [0.25, 0.5, 0.75];
 const decodedChromatic = [0.05087609, 0.21404114, 0.52252155];
 assertNear(legacyRawWorking, authoredRaw, 1e-7, 'legacy raw bypass');
-assertNear(nextRawWorking, authoredRaw, 1e-7, 'next raw bypass');
+assertNear(nextRawWorking, authoredRaw, 1e-7, 'core raw bypass');
 
 // MaterialXConfig and property-level colorSpace metadata must survive graph
 // reconstruction in both backends.
@@ -334,7 +334,7 @@ try {
   assert.equal(mesh.material.materialXConfig.sourceUri,
     'lookdev/materials.mtlx');
   assertNear(Array.from(mesh.material.baseColor), decodedChromatic, 3e-5,
-    'next MaterialX nodegraph color transform');
+    'core MaterialX nodegraph color transform');
   const graph = JSON.parse(mesh.material.openPBRNodeGraphJson);
   const input = graph.nodegraph.nodes.flatMap((node) => node.inputs || [])
     .find((candidate) => candidate.name === 'value');
@@ -373,7 +373,7 @@ try {
 assertNear(legacyMtlxConfiguredColor, expectedConfigured, 3e-5,
   'legacy MaterialXConfig default transform');
 assertNear(nextMtlxConfiguredColor, expectedConfigured, 3e-5,
-  'next MaterialXConfig default transform');
+  'core MaterialXConfig default transform');
 assertNear(nextMtlxConfiguredColor, legacyMtlxConfiguredColor, 3e-5,
   'MaterialXConfig backend parity');
 
@@ -401,7 +401,7 @@ try {
 assertNear(legacyMtlxInheritedColor, authoredRaw, 3e-5,
   'legacy inherited ColorSpaceAPI precedence');
 assertNear(nextMtlxInheritedColor, authoredRaw, 3e-5,
-  'next inherited ColorSpaceAPI precedence');
+  'core inherited ColorSpaceAPI precedence');
 
 console.log(JSON.stringify({
   pass: true,

@@ -38,7 +38,7 @@ target_include_directories(${BUILD_TARGET}
                            PRIVATE "${PROJECT_SOURCE_DIR}/../../src/")
 
 
-target_link_libraries(${BUILD_TARGET} PRIVATE lightusd::lightusd_static
+target_link_libraries(${BUILD_TARGET} PRIVATE lightusd::legacy_static
                                               ${EXT_LIBRARIES} PUBLIC ${CMAKE_DL_LIBS})
 
 source_group("Source Files" FILES ${SOURCES})

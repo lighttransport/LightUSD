@@ -6,7 +6,7 @@
 # matching reports XPASS and must be pruned.
 #
 # Reason tags:
-#   ENGINE-*: a real src/next/pcp composition difference (site attribution,
+#   ENGINE-*: a real src/pcp composition difference (site attribution,
 #     arc ordering, selection, error policy).
 BasicLocalAndGlobalClassCombination_root ENGINE-IMPLIED-CLASS: model.usd site of the nested class is /_class_Model/_class_Nested in pxr, /Model/_class_Nested in next
 SpecializesAndAncestralArcs2_root ENGINE-IMPLIED-CLASS: pxr maps the ancestral specializes site to /_shared_HumanHair/Hair_Chiang/Class, next keeps /Inner

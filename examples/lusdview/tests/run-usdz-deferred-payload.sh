@@ -74,7 +74,7 @@ const viewer = process.argv[2];
 const config = process.argv[3];
 const packagePath = process.argv[4];
 const loader = process.argv[5];
-const loaderArg = '--next';
+const loaderArg = '--core';
 const child = spawn(viewer, [
   '--config', config, '--headless', '--backend', 'vk', loaderArg,
   '--defer-payloads', '--frames', '100000', '--mcp-stdio', packagePath
@@ -149,11 +149,11 @@ child.on('exit', (code, signal) => {
   if (loader === 'legacy' && initial.triangle_count !== 0) {
     throw new Error(`legacy payload geometry was not deferred: ${JSON.stringify(initial)}`);
   }
-  // The next loader visualizes a deferred payload with a bounded proxy cube;
+  // The core loader visualizes a deferred payload with a bounded proxy cube;
   // require that marker rather than confusing it with eagerly loaded content.
-  if (loader === 'next' &&
+  if (loader === 'core' &&
       (initial.triangle_count !== 12 || !initial.truncated)) {
-    throw new Error(`next deferred-payload proxy is missing: ${JSON.stringify(initial)}`);
+    throw new Error(`core deferred-payload proxy is missing: ${JSON.stringify(initial)}`);
   }
 
   const started = await call('load_payloads');

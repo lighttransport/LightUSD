@@ -1759,7 +1759,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
         }
 
         // Build views from HEAPU8's buffer: every module exports HEAPU8, while
-        // the next-only module does not export the other typed heaps (and
+        // the core-only module does not export the other typed heaps (and
         // touching an unexported runtime symbol aborts). Copies own their
         // data, so a later heap growth cannot invalidate them.
         const buffer = lightusd.HEAPU8.buffer;
@@ -1871,7 +1871,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
 
         geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.points), 3));
 
-        // Next-backend meshes can be non-indexed triangle soups, which carry
+        // Core-backend meshes can be non-indexed triangle soups, which carry
         // `faceVertexIndices: null`.
         if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
           if (mesh.faceVertexIndices && mesh.faceVertexIndices.length > 0) {

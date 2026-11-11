@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender next-loader animation regression. A time-sampled transform moves a
+# lusdrender core-loader animation regression. A time-sampled transform moves a
 # red foreground quad away from the center between frames 1 and 2, revealing a
 # blue background quad. This verifies -frames re-evaluates animated geometry and
 # rebuilds the BVH when needed.

@@ -121,9 +121,9 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const lightusd::api::Stage& stage);
-  size_t nextSkeletonOverlayVertexCount() const { return showSkeleton_ ? nextSkeletonLines_.size() : 0; }
-  // StageSession owns the authoritative deferred set. The composed next Stage
+  void setCoreStage(const lightusd::api::Stage& stage);
+  size_t coreSkeletonOverlayVertexCount() const { return showSkeleton_ ? coreSkeletonLines_.size() : 0; }
+  // StageSession owns the authoritative deferred set. The composed core Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
     deferredPayloadPaths_ = std::move(paths);
@@ -402,10 +402,10 @@ class Gui {
     adaptiveTargetFps_ = targetFps;
   }
   bool cameraInteractive() const { return cameraInteractive_; }
-  // True once App::poseNextDrawForTracer has written POSED vertices back into
+  // True once App::poseCoreDrawForTracer has written POSED vertices back into
   // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
   // then NOT deform draw_ again (it would double-deform); see
-  // rebuildSubsetHighlight. Fed by App each frame from nextTracerPosedTime_.
+  // rebuildSubsetHighlight. Fed by App each frame from coreTracerPosedTime_.
   void setDrawIsPosed(bool posed) { drawIsPosed_ = posed; }
   // Lazy CUDA/HIP capability cache (App::cudaProbe_/hipProbe_), fed each frame
   // so the menu can gray out an item once a switch attempt has proven the
@@ -560,8 +560,8 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawNextPrimTree(lightusd_prim prim);
-  void drawNextInspector();
+  bool drawCorePrimTree(lightusd_prim prim);
+  void drawCoreInspector();
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
@@ -675,12 +675,12 @@ class Gui {
     std::string selectedPath;
   };
 
-  lightusd::api::Stage nextStage_;
-  std::vector<std::string> nextSkeletonPaths_;
-  bool nextSkeletonPathsReady_{false};
-  double nextSkeletonTime_{0};
-  bool nextSkeletonTimeValid_{false};
-  std::vector<HelperVertex> nextSkeletonLines_;
+  lightusd::api::Stage coreStage_;
+  std::vector<std::string> coreSkeletonPaths_;
+  bool coreSkeletonPathsReady_{false};
+  double coreSkeletonTime_{0};
+  bool coreSkeletonTimeValid_{false};
+  std::vector<HelperVertex> coreSkeletonLines_;
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};

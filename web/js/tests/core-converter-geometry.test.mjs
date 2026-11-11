@@ -7,13 +7,13 @@ const native = await loadWasm(() => import(`../src/lightusd/lightusd${suffix}.js
   locateFile: file => new URL('../src/lightusd/' + file, import.meta.url).pathname,
 });
 const source = fs.readFileSync(new URL('../../../tests/usda/geometry-optimize-nonuniform-normal-001.usda', import.meta.url));
-const converter = new native.NextUSDZConverterNative();
+const converter = new native.USDZConverterNative();
 try {
   assert.equal(converter.loadFromBinary(new Uint8Array(source), 'scene.usda'), true, converter.error());
   for (const rootLayerFormat of ['usda', 'usdc']) {
     const bytes = converter.exportAsUSDZWithOptions({rootLayerFormat, optimizeGeometry: 'mergeMeshes'});
     assert.ok(bytes?.length, converter.error());
-    const reader = new native.NextUSDZConverterNative();
+    const reader = new native.USDZConverterNative();
     try {
       assert.equal(reader.loadFromBinary(bytes, 'result.usdz'), true, reader.error());
       const text = reader.exportAsUSDA();

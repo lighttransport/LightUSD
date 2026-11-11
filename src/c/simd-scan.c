@@ -3,7 +3,7 @@
  *
  * simd-scan.c -- C11 SIMD byte scanning for the USDA parser.
  *
- * Faithful C11 port of src/next/parser/simd-scan.cc. Bulk byte scanning for the
+ * Faithful C11 port of src/parser/simd-scan.cc. Bulk byte scanning for the
  * array-literal hot path: skip runs of "boring" bytes (digits/commas/
  * whitespace) at SIMD speed and stop only at structurally-interesting bytes.
  * Pure scanning -- it changes only *how fast* the same byte positions are

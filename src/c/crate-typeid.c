@@ -4,7 +4,7 @@
  * crate-typeid.c -- C11 crate value-type metadata (name + fixed size).
  *
  * The `CrateTypeId` enum's diagnostic name and fixed element size, keyed by the
- * wire value. Values and the size table mirror src/next/crate/crate-format.hh;
+ * wire value. Values and the size table mirror src/crate/crate-format.hh;
  * the C++ accessors forward so the table lives once and C consumers (the C ABI)
  * can reuse it.
  */

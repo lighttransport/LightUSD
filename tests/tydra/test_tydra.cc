@@ -4399,7 +4399,7 @@ def Xform "World"
 )";
 
   auto test_urdf_mjcf_conversion = []() {
-  std::cout << "Testing URDF/MJCF next-core conversion...\n";
+  std::cout << "Testing URDF/MJCF core conversion...\n";
 
   const char* payload = R"JSON({
     "name": "test_robot",
@@ -4503,7 +4503,7 @@ def Xform "World"
   assert(stage.HasPrimAtPath("/World/Keyframes/home"));
   assert(stage.HasPrimAtPath("/World/Sensors/position"));
 
-  std::cout << "  URDF/MJCF next-core conversion: PASSED\n";
+  std::cout << "  URDF/MJCF core conversion: PASSED\n";
   };
   test_urdf_mjcf_conversion();
 
@@ -4913,7 +4913,7 @@ def Xform "Root"
   assert(std::fabs(channel.keyframes[1].value.x - 3.0f) < 0.001f);
   assert(std::fabs(channel.keyframes[2].value.x - 5.0f) < 0.001f);
 
-  std::cout << "  Next value-clip baking: PASSED\n";
+  std::cout << "  Core value-clip baking: PASSED\n";
 }
 
 // Regression: the animation-extraction gate
@@ -8354,7 +8354,7 @@ def Xform "World" {
 
 void TestSparseUDIMTextureRetention() {
   namespace fs = std::filesystem;
-  const fs::path root = fs::temp_directory_path() / "lightusd-next-udim-retain";
+  const fs::path root = fs::temp_directory_path() / "lightusd-core-udim-retain";
   std::error_code ec;
   fs::remove_all(root, ec);
   ec.clear();

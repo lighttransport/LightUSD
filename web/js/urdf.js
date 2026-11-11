@@ -12,14 +12,14 @@ import {
   createConfiguredLightUSDLoader,
   getAssetUriFromURL,
   getBackendFromURL,
-  makeStaticNextParseOptions,
+  makeStaticParseOptions,
   parseUSDSceneFromArrayBuffer
 } from 'lightusd/LoaderConfigUtils.js';
 import {
-  buildNextThreeNode,
-  isNextScene,
-  nextCountsFromScene
-} from 'lightusd/NextRenderSceneUtils.js';
+  buildThreeNode,
+  isScene,
+  countsFromScene
+} from 'lightusd/RenderSceneUtils.js';
 
 const state = {
   robot: null,
@@ -85,7 +85,7 @@ const state = {
     showTendons: true,
     showSensors: true,
     renderSensorView: true,
-    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'next'),
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'core'),
     // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
     // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
     // visual/auxiliary split). Geoms with no group fall back to showVisuals/
@@ -358,7 +358,7 @@ function basenameFromUrl(url) {
   return basenameFromUri(url);
 }
 
-function isNextSceneObject(object) {
+function isSceneObject(object) {
   return !!object?.userData && Number.isFinite(object.userData.usdMeshCount);
 }
 
@@ -588,7 +588,7 @@ async function loadUSDObjectFromBytes(bytes, filename) {
     filename,
     // Decode in-package textures (e.g. an embedded-texture USDZ) in the native
     // loader so the converted-USD view shows materials instead of a flat color.
-    makeStaticNextParseOptions({
+    makeStaticParseOptions({
       backend: state.settings.backend,
       loadTextureInNative: true
     })
@@ -598,14 +598,14 @@ async function loadUSDObjectFromBytes(bytes, filename) {
     stats.parseMs = performance.now() - parseStart;
     updateLoadStatsPanel(stats);
   }
-  if (isNextScene(sceneData)) {
-    const built = buildNextThreeNode(sceneData, {
+  if (isScene(sceneData)) {
+    const built = buildThreeNode(sceneData, {
       skipTextures: false,
       lazyTextures: false
     });
     const object = built.node;
     object.name = filename.replace(/\.[^.]+$/, '') || 'usd_scene';
-    const counts = nextCountsFromScene(sceneData);
+    const counts = countsFromScene(sceneData);
     object.userData.usdMeshCount = counts.meshes || 0;
     object.userData.usdMaterialCount = counts.materials || 0;
     object.userData.usdTextureCount = counts.textures || 0;
@@ -693,7 +693,7 @@ async function loadUSDFile(file, existingStats = null) {
   applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
   finishLoadStats(stats);
-  setStatus(`Loaded USD ${file.name} (${isNextSceneObject(object) ? 'next' : 'legacy'} backend)`);
+  setStatus(`Loaded USD ${file.name} (${isSceneObject(object) ? 'core' : 'legacy'} backend)`);
 }
 
 async function loadOBJMeshFromFile(file) {
@@ -999,7 +999,7 @@ function usdGeometryClassification(extracted) {
     //   1. `UsdPhysicsCollisionAPI` applied (canonical UsdPhysics)
     //   2. `mjc:group >= 3` (menagerie convention: groups 3-5 are collision)
     //   3. `purpose == "guide"` (surfaced by the patched
-    //      `AppendPhysicsPrimJson` in `web/binding.cc`; used by the
+    //      `AppendPhysicsPrimJson` in `web/binding-legacy.cc`; used by the
     //      mujoco-usd-converter to hide colliders from default renders)
     // Any of these flips the prim into the collision bucket.
     if (hasApi(prim, 'PhysicsCollisionAPI')
@@ -4904,7 +4904,7 @@ function buildGeneratedSourceFromUSD(model) {
 async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    const Exporter = loader.native_.NextUSDZConverterNative;
+    const Exporter = loader.native_.USDZConverterNative;
     if (typeof Exporter !== 'function') {
       throw new Error('The selected LightUSD backend does not provide the URDF/MJCF exporter.');
     }

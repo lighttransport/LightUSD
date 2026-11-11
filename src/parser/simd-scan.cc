@@ -3,7 +3,7 @@
 //
 // LightUSD - SIMD scanning helpers (C++ forwarder)
 //
-// The implementation now lives in the C11 core (src/next/c/simd-scan.c) so the
+// The implementation now lives in the C11 core (src/c/simd-scan.c) so the
 // scalar/SSE2/NEON kernels are shared. This TU only bridges the C++ namespace
 // to the C ABI.
 

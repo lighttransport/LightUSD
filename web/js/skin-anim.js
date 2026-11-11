@@ -8,15 +8,15 @@ import {
 	getAssetUriFromURL,
 	getBackendFromURL,
 	LOADER_BACKEND_CHOICES,
-	makeStaticNextParseOptions,
+	makeStaticParseOptions,
 	parseUSDSceneFromArrayBuffer,
 	setBackendAndReload
 } from 'lightusd/LoaderConfigUtils.js';
 import {
-	buildNextThreeNode,
-	isNextScene,
-	readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+	buildThreeNode,
+	isScene,
+	readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 import { buildJointHierarchyHTML } from 'lightusd/JointHierarchyUtils.js';
 import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
 import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
@@ -1059,7 +1059,7 @@ function updateVariantControls(variantInfos, activeSelection = null) {
 async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, variantSelection = null) {
 	let variantInfos = [];
 	const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, {
-		...makeStaticNextParseOptions({ backend: LOADER_BACKEND }),
+		...makeStaticParseOptions({ backend: LOADER_BACKEND }),
 		variantSelection,
 		onVariants: (infos) => {
 			variantInfos = infos;
@@ -1137,15 +1137,15 @@ function updateLoadStatsPanel(stats) {
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
 	];
-	if (stats.nextTimings) {
-		const timing = stats.nextTimings;
+	if (stats.coreTimings) {
+		const timing = stats.coreTimings;
 		lines.push(
-			`Next archive setup: ${formatDurationMs(timing.archiveMs)}`,
-			`Next native begin: ${formatDurationMs(timing.nativeBeginMs)}`,
-			`Next animation copy: ${formatDurationMs(timing.animationCopyMs)}`,
-			`Next entity copy: ${formatDurationMs(timing.entityCopyMs)}`,
-			`Next mesh copy: ${formatDurationMs(timing.meshCopyMs)}`,
-			`Next adapter total: ${formatDurationMs(timing.totalMs)}`
+			`Core archive setup: ${formatDurationMs(timing.archiveMs)}`,
+			`Core native begin: ${formatDurationMs(timing.nativeBeginMs)}`,
+			`Core animation copy: ${formatDurationMs(timing.animationCopyMs)}`,
+			`Core entity copy: ${formatDurationMs(timing.entityCopyMs)}`,
+			`Core mesh copy: ${formatDurationMs(timing.meshCopyMs)}`,
+			`Core adapter total: ${formatDurationMs(timing.totalMs)}`
 		);
 	}
 
@@ -1176,7 +1176,7 @@ async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
 	const { usdScene: usd_scene, variantInfos } =
 		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
 	stats.parseMs = performance.now() - parseStart;
-	stats.nextTimings = isNextScene(usd_scene)
+	stats.coreTimings = isScene(usd_scene)
 		? (usd_scene.getStats?.().timings || null)
 		: null;
 	updateVariantControls(variantInfos, currentVariantSelection);
@@ -1448,26 +1448,26 @@ async function processUSDScene(usd_scene, filename) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
-	let nextBuiltNode = null;
-	let nextNodeIndexMap = null;
-	let nextTextureManager = null;
-	let nextTextureLoadPromise = null;
-	if (isNextScene(usd_scene)) {
-		const built = buildNextThreeNode(usd_scene, {
+	let coreBuiltNode = null;
+	let coreNodeIndexMap = null;
+	let coreTextureManager = null;
+	let coreTextureLoadPromise = null;
+	if (isScene(usd_scene)) {
+		const built = buildThreeNode(usd_scene, {
 			skipTextures: false,
 			lazyTextures: true,
 			releaseBuildData: false
 		});
-		nextBuiltNode = built.node;
-		nextNodeIndexMap = built.nodeIndexMap || null;
-		nextTextureManager = built.textureManager || null;
-		if (nextTextureManager) {
-			nextTextureLoadPromise = nextTextureManager.startLoading({
+		coreBuiltNode = built.node;
+		coreNodeIndexMap = built.nodeIndexMap || null;
+		coreTextureManager = built.textureManager || null;
+		if (coreTextureManager) {
+			coreTextureLoadPromise = coreTextureManager.startLoading({
 				concurrency: LightUSDLoaderUtils.defaultTextureConcurrency(),
 				yieldInterval: 16,
 				onTextureLoaded: (material) => { material.needsUpdate = true; }
 			}).catch((err) => {
-				console.warn('[skin-anim] Next texture loading failed:', err);
+				console.warn('[skin-anim] core texture loading failed:', err);
 			});
 		}
 	}
@@ -1566,9 +1566,9 @@ async function processUSDScene(usd_scene, filename) {
 	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
 		(window._lightusd_wasm_memory ? window._lightusd_wasm_memory.buffer.byteLength : null) : null;
 
-	// Build Three.js node from USD. Next scenes are already materialized from
+	// Build Three.js node from USD. Core scenes are already materialized from
 	// RenderScene data; legacy scenes are built from the USD node tree.
-	let threeNode = nextBuiltNode;
+	let threeNode = coreBuiltNode;
 	if (!threeNode) {
 		const usdRootNode = usd_scene.getDefaultRootNode();
 		threeNode = await LightUSDLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
@@ -1584,9 +1584,9 @@ async function processUSDScene(usd_scene, filename) {
 	// Build node index map BEFORE bones are added to the hierarchy.
 	// Adding bones changes the DFS traversal order, which would break
 	// the mapping from USD node indices to Three.js objects.
-	// Next scenes use the RenderScene node-table map from buildNextThreeNode:
+	// Core scenes use the RenderScene node-table map from buildThreeNode:
 	// animation target_node is a table index, not a DFS index.
-	const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
+	const nodeIndexMap = coreNodeIndexMap || buildNodeIndexMap(threeNode);
 
 	// Set Z-up to Y-up conversion based on file metadata.
 	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
@@ -1752,7 +1752,7 @@ async function processUSDScene(usd_scene, filename) {
 	// Geometry, skeleton, metadata, and animation data are now JS-owned. Drop
 	// the next adapter's large build-time arrays while retaining archiveEntries
 	// for the lazy texture loader. delete() still runs after textures settle.
-	if (isNextScene(usd_scene) && typeof usd_scene.releaseBuildData === 'function') {
+	if (isScene(usd_scene) && typeof usd_scene.releaseBuildData === 'function') {
 		usd_scene.releaseBuildData();
 	}
 
@@ -1787,8 +1787,8 @@ async function processUSDScene(usd_scene, filename) {
 		// should be collected before the animation loop starts allocating.
 		hintGC();
 	};
-	if (nextTextureLoadPromise) {
-		nextTextureLoadPromise.then(releaseUSDScene);
+	if (coreTextureLoadPromise) {
+		coreTextureLoadPromise.then(releaseUSDScene);
 	} else {
 		releaseUSDScene();
 	}
@@ -2692,7 +2692,7 @@ gizmoFolder.add(animationParams, 'deselectJoint')
 gizmoFolder.open();
 
 // Bone reduction settings
-const boneReductionFolder = gui.addFolder('Bone Settings (Next Load)');
+const boneReductionFolder = gui.addFolder('Bone Settings (Core Load)');
 boneReductionFolder.add(animationParams, 'enableBoneReduction')
 	.name('Enable Reduction')
 	.onChange(() => {

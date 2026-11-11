@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender next-loader animation regression for time-sampled authored normals.
+# lusdrender core-loader animation regression for time-sampled authored normals.
 # With -smooth, frame 1 uses camera-facing normals and receives direct light;
 # frame 2 turns normals sideways and should render dark. This also guards the
 # -frames animated-geometry predicate: normals must rebuild the smooth-shading

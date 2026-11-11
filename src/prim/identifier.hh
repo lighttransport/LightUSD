@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// AOUSD Unicode identifier and path validation for the standalone next core.
+// AOUSD Unicode identifier and path validation for the standalone core.
 //
 // The grammar and the UTF-8 decoder live in the C11 core
-// (src/next/c/identifier.c), which reuses the shared XID module
+// (src/c/identifier.c), which reuses the shared XID module
 // (src/unicode-xid-c.{c,h}). These thin adapters keep the historical C++ names.
 
 #pragma once

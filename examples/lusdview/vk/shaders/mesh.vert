@@ -169,7 +169,7 @@ void main() {
         : textureLod(uDisplacementTex, duv, 0.0).r;
     disp = height * dsb.x + dsb.y;
   }
-  // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
+  // Guard normalize(): geometric-normal meshes (e.g. the --core flat preview)
   // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
   // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the
   // whole triangle. Only offset when the normal is usable.

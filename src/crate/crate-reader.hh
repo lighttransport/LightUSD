@@ -46,7 +46,7 @@ struct CrateReadOptions : CrateLimits {
   /// Set false to force eager decode (e.g. for A/B memory comparisons).
   bool lazy_arrays = true;
 
-  /// Log per-phase wall times ("[next_crate_read] ...", "[next_crate_stage]
+  /// Log per-phase wall times ("[core_crate_read] ...", "[core_crate_stage]
   /// ...") at INFO through lightusd::logging.
   bool enable_timing = false;
 

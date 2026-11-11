@@ -88,7 +88,7 @@ set(USD_LIBS
 # Link libraries
 target_link_libraries(usd_comparison
     ${USD_LIBS}
-    lightusd_static  # LightUSD static library
+    lightusd_legacy_static  # LightUSD static library
     TBB::tbb
     pthread
     dl

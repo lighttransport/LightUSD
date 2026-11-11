@@ -17,5 +17,5 @@ the full-LOD benchmark scene flatten matches jemalloc's speed at a lower peak RS
 The whole allocator builds as one translation unit, `src/static.c`. With
 `MI_MALLOC_OVERRIDE` it also defines malloc/free/new/delete, replacing the C
 library allocator in the executable it is linked into. It is selected with
-`-DLIGHTUSD_NEXT_ALLOCATOR=mimalloc` (src/next/CMakeLists.txt). The
+`-DLIGHTUSD_ALLOCATOR=mimalloc` (src/CMakeLists.txt). The
 allocator evaluation is in doc/large-scene.md.

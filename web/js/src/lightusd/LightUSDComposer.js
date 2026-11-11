@@ -4,7 +4,7 @@ const contexts = new WeakMap();
 const bytes = value => value instanceof Uint8Array ? value : new Uint8Array(value);
 const arcFields = {references: 2, payloads: 4, inherits: 8, specializes: 16, variantSets: 32};
 
-// Public composition helper over the core LayerDocument/NextFlattenSession API.
+// Public composition helper over the core LayerDocument/FlattenSession API.
 // Documents remain caller-owned; temporary sessions are always released.
 class LightUSDComposer {
     constructor() {
@@ -101,10 +101,10 @@ class LightUSDComposer {
     getBaseWorkingPath() { return this.baseWorkingPath_; }
     _session(mask, layer = this.getLayer()) {
         const native = this.getUSDLoader().native_;
-        if (!native?.NextFlattenSession) throw new Error('LightUSDComposer: initialize the core USD loader first');
+        if (!native?.FlattenSession) throw new Error('LightUSDComposer: initialize the core USD loader first');
         const exported = layer.exportUSDC();
         if (!exported.success) throw new Error(exported.error);
-        const session = new native.NextFlattenSession();
+        const session = new native.FlattenSession();
         try {
             const name = this.baseWorkingPath_.replace(/\/?$/, '/') + this.filename_;
             const begun = session.begin(exported.data, name, true);

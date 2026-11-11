@@ -1,0 +1,170 @@
+[
+  {
+    "legacyMethod": "addAssetSearchPath",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "assetExists",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "clearAssetSearchPaths",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "clearAssets",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "deleteAsset",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "deleteAssetByName",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "deleteAssetByUUID",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "findAssetByUUID",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAllAssetUUIDs",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAllowParentRelativeAssetPaths",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAsset",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetByUUID",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetCacheDataAsMemoryView",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetCacheMaxSizeBytes",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetCacheSizeBytes",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetCount",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetHash",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetSearchPaths",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getAssetUUID",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getBaseWorkingPath",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "getStreamingAssetUUID",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "hasAsset",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "setAllowParentRelativeAssetPaths",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "setAsset",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "setAssetCacheMaxSizeBytes",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "setAssetFromRawPointer",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "setBaseWorkingPath",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "verifyAssetHash",
+    "coreSurface": "AssetStore",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified"
+  }
+]

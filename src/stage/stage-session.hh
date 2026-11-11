@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Focused next-core loading and persistent document-session API.
+// Focused core loading and persistent document-session API.
 #pragma once
 
 #include <cstddef>
@@ -138,7 +138,7 @@ struct StageOperationResult {
 
 using StageEditResult = StageOperationResult;
 
-/// Persistent next-core document. It keeps the resolver and PCP cache alive so
+/// Persistent core document. It keeps the resolver and PCP cache alive so
 /// payload and variant edits reuse parsed dependency layers.
 class StageSession {
  public:

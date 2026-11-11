@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Tydra/Next - MaterialX Support Implementation
+// LightUSD Tydra - MaterialX Support Implementation
 
 #include "core/native-io.hh"
 #include "materialx.hh"

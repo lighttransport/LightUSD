@@ -178,7 +178,7 @@ export function runUsdcat(native, { map, rootName, flatten = true, format = 'usd
   let rootBytes = map.get(rootName);
   if (!rootBytes) throw new Error(`Missing root layer: ${rootName}`);
   if (flatten) {
-    const session = new native.NextFlattenSession();
+    const session = new native.FlattenSession();
     try {
       if (maxMemMb > 0) {
         const limit = session.setMaxInputBytes(maxMemMb * 1024 * 1024);
@@ -211,7 +211,7 @@ export function runUsdcat(native, { map, rootName, flatten = true, format = 'usd
       }
     } finally { session.delete(); }
   }
-  const usd = new native.NextUSDZConverterNative();
+  const usd = new native.USDZConverterNative();
   try {
     if ((maxUsdcMb > 0 || maxMemMb > 0) && typeof usd.setUSDCExportLimitMB === 'function') {
       usd.setUSDCExportLimitMB(maxUsdcMb, maxMemMb);

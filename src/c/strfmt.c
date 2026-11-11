@@ -6,7 +6,7 @@
  * Locale-independent, libc-free decimal integer formatting (no std::to_string,
  * no snprintf). Output is byte-identical to `ss << v` under the classic locale:
  * plain decimal, leading '-' for negatives, no '+'/padding/grouping. This is
- * the C core of src/next/strfmt.hh; the C++ wrappers forward here so the digit
+ * the C core of src/strfmt.hh; the C++ wrappers forward here so the digit
  * loop lives once and is available to C consumers.
  */
 

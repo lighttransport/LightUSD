@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Regression test: lusdrender's tydra-next (-rtPreview) path must sample the UV
+# Regression test: lusdrender's tydra (-rtPreview) path must sample the UV
 # set a texture's UsdPrimvarReader names, not always the primary `st`.
 #
-# AddRTPreviewMeshNext used to read one UV set from a fixed preference list
+# AddRTPreviewMeshCore used to read one UV set from a fixed preference list
 # (always `st`) and ignore RenderTexture::uv_primvar, so a base-color texture
 # bound through `varname="uvSet1"` sampled `st` -- the render was byte-identical
 # to one authored with `varname="st"`. The fixture's `uvSet1` covers only the

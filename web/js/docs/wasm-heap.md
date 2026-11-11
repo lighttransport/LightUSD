@@ -139,7 +139,7 @@ WASM asset cache/export buffers.
 
 For CLI users (see the 2026-06-09 section for the lowest-memory flattened path):
 
-- For single-`.usdz` flattened rewrites, prefer `--pipeline next --stream-write`
+- For single-`.usdz` flattened rewrites, prefer `--pipeline core --stream-write`
   (with `--no-reencode`). This is the lowest-RSS path on wasm32 and keeps the
   whole 28-scene corpus under 1 GB without needing wasm64.
 - Use `--no-reencode` for unchanged USDZ packaging. This enables the passthrough
@@ -152,27 +152,27 @@ For CLI users (see the 2026-06-09 section for the lowest-memory flattened path):
 - Keep `--max-usdc-mb` and `--max-mem-mb` explicit for large test scenes so the
   writer caps are not the first failure mode.
 
-## 2026-06-09 update: `next` low-memory pipeline + streaming crate writer
+## 2026-06-09 update: `core` low-memory pipeline + streaming crate writer
 
 This section supersedes the 2026-06-05 status for single-`.usdz` flattened
-rewrites. With the `next` lazy-ValueRep pipeline and the streaming crate writer,
+rewrites. With the `core` lazy-ValueRep pipeline and the streaming crate writer,
 **every scene in the 28-asset test corpus now converts under 1 GB process RSS on
 wasm32, byte-identical to the buffered output, with zero OOM** — including the
 ~200–300 MB geometry/texture-heavy scenes (`geometry-scene`, `single-mesh-scene`,
 `materialx-scene-1`, `textured-scene-2`) that previously peaked at 1.3–1.9 GB.
 
-Enable it with `--pipeline next --stream-write`:
+Enable it with `--pipeline core --stream-write`:
 
 ```console
 node web/js/cli/usdzconvert.js \
   input.usdz -o out.usdz \
-  --pipeline next --no-reencode --stream-write \
+  --pipeline core --no-reencode --stream-write \
   --max-usdc-mb 1024 --max-mem-mb 2048
 ```
 
 ### Strategy (four layers, applied in order)
 
-1. **`next` lazy-ValueRep pipeline** (`src/next/`, opt-in via `--pipeline next`).
+1. **`core` lazy-ValueRep pipeline** (`src/`, opt-in via `--pipeline core`).
    Load → compose → write all share one retained copy of the input crate. Numeric
    POD arrays are kept as `LazyArrayRef`s (a `shared_ptr` to the source buffer +
    offset), never decoded, and on write are copied verbatim from the source
@@ -182,7 +182,7 @@ node web/js/cli/usdzconvert.js \
 2. **Configurable zero-copy input cap (512 MiB default).** The root crate is
    streamed into a single wasm zero-copy buffer. The cap was 256 MiB, which a
    geometry-heavy root (e.g. `geometry-scene`'s 276 MB single `.usdc`) exceeded —
-   declining the `next` path and silently falling back to the high-memory legacy
+   declining the `core` path and silently falling back to the high-memory legacy
    flatten. Raised the default to 512 MiB and made it caller-settable via
    `--max-mem-mb` (`binding.cc allocateZeroCopyBuffer(name, size, max_bytes)`).
 
@@ -201,7 +201,7 @@ node web/js/cli/usdzconvert.js \
 Built with `-DLIGHTUSD_FLATTEN_MEMLOG` (compile-gated; an env gate can't be used
 because emscripten `getenv()` does not see `process.env`), the flatten logs the
 wasm linear-heap high-water — which is monotonic, so per-stage deltas attribute
-the peak. Measured (32-bit wasm, `--pipeline next`, buffered writer):
+the peak. Measured (32-bit wasm, `--pipeline core`, buffered writer):
 
 | scene             | after-read | after-compose | after-write    |
 |-------------------|-----------:|--------------:|---------------:|
@@ -254,7 +254,7 @@ buffered in JS. `ZipStreamWriter.addEntryStreaming(name, streamFn)` emits the
 root entry's local header with placeholder CRC/size, streams the data (computing
 CRC32 incrementally), then **patches** the 12-byte CRC/size field — which needs a
 seekable sink. The CLI provides a `{ write, patch }` fd sink (all writes use an
-explicit position). `nextFlattenBufferToSink(uuid, lazy, chunkCb)` forwards
+explicit position). `flattenBufferToSink(uuid, lazy, chunkCb)` forwards
 ordered chunks from the C++ writer as transient wasm-heap views (JS copies them
 synchronously into the CRC and the fd). The flattened root therefore never
 materializes — not in the wasm heap, not in JS.
@@ -263,7 +263,7 @@ This removes, together: the full output `buffer_` in wasm, the
 `WriteLayerToMemory` copy, the `toOwnedUint8Array` JS copy, and the JS root
 buffer held during repack.
 
-### Result: full 28-scene corpus (wasm32, `--pipeline next --stream-write`)
+### Result: full 28-scene corpus (wasm32, `--pipeline core --stream-write`)
 
 Byte-identical to the buffered output, 0 OOM, **all 28 under 1 GB RSS**. Peak RSS
 roughly halves on the large scenes:
@@ -277,7 +277,7 @@ roughly halves on the large scenes:
 | textured-scene-1              |   204 |      493 MB  |          **368 MB**  |
 | materialx-scene-1b                 |    84 |      594 MB  |          **292 MB**  |
 
-`--stream-write` is the **default** for the `next` pipeline when writing to a
+`--stream-write` is the **default** for the `core` pipeline when writing to a
 file (it transparently falls back to buffering without a seekable sink). Disable
 with `--no-stream-write` or `LIGHTUSD_STREAM_WRITE=0`. Output is byte-identical
 either way; streaming only lowers memory.
@@ -307,7 +307,7 @@ never lands in the WASM heap; the geometry conversion is the blow-up.)
 
 ### The incremental converter
 
-A `RenderStream` binding (`web/binding.cc`) drives the `next` pipeline's LAZY
+A `RenderStream` binding (`web/binding.cc`) drives the `core` pipeline's LAZY
 crate:
 
 1. JS extracts the root `.usdc` from the `.usdz` and streams ONLY it into WASM
@@ -377,8 +377,8 @@ Relevant commits: streaming renderer (`3b6379a57`), incremental RenderStream
 
 ### Stream USDZ Output — IMPLEMENTED (2026-06-09)
 
-Done for the `next` pipeline via the streaming crate writer
-(`CrateWriter::WriteLayerToSink`) + `nextFlattenBufferToSink`. See the 2026-06-09
+Done for the `core` pipeline via the streaming crate writer
+(`CrateWriter::WriteLayerToSink`) + `flattenBufferToSink`. See the 2026-06-09
 section above. The output crate is emitted to a sink in file order and never
 fully materialized in wasm or JS. The CLI sink writes incrementally to the output
 fd; a browser `WritableStream` sink would slot in the same way.

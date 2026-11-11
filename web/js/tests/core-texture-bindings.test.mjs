@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {NextTextureLoadingManager} from '../src/lightusd/NextRenderSceneUtils.js';
+import {TextureLoadingManager} from '../src/lightusd/RenderSceneUtils.js';
 import {installTextureColorTransform} from '../src/lightusd/ColorSpaceUtils.js';
 import {OpenPBRMaterial} from '../src/lightusd/LightUSDOpenPBRSimple.js';
-const manager=new NextTextureLoadingManager();
+const manager=new TextureLoadingManager();
 let finish;
 manager.loadTexture=()=>new Promise(resolve=>{finish=resolve;});
 const source=new THREE.MeshPhysicalMaterial();

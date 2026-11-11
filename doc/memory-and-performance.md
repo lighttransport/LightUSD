@@ -434,13 +434,13 @@ intended for refcounts / type tags / cache-coherency flags.
 
 ## refactor-next Phase-0 baselines (2026-06-10, HEAD 59801312)
 
-Baselines for the `src/next` optimization roadmap (`doc/refactor-next.md`),
+Baselines for the `src/` optimization roadmap (`doc/refactor-next.md`),
 captured with `bench_pcp_compose` and `bench_lazy_mem` (Release, gcc,
 Linux x86-64). Re-measure after each phase and diff here. For the current
 standalone `next` smoke tests and benchmark entrypoint, run:
 
 ```bash
-RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-core-checks.sh
 ```
 
 The script uses small `bench_lazy_mem` defaults for routine local checks. Set

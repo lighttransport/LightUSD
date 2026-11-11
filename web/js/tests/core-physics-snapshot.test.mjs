@@ -22,7 +22,7 @@ def Mesh "Body" (prepend apiSchemas=["PhysicsRigidBodyAPI","PhysicsCollisionAPI"
  rel physics:filteredPairs=[</Body>]
 }
 `);
-const converter=new core.NextUSDZConverterNative();
+const converter=new core.USDZConverterNative();
 try {
  assert.ok(converter.loadFromBinary(source,'large.usda'),converter.error());
  for(const binary of [false,true]) {

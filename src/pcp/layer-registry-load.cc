@@ -532,7 +532,7 @@ bool LooksLikeMtlxXML(const uint8_t *data, size_t size) {
 
 namespace {
 
-Value MtlxValueToNextValue(const mtlx::MtlxValue &v) {
+Value MtlxValueToCoreValue(const mtlx::MtlxValue &v) {
   switch (v.type) {
     case mtlx::MtlxValue::TYPE_BOOL: return Value(v.bool_val);
     case mtlx::MtlxValue::TYPE_INT: return Value(static_cast<int32_t>(v.int_val));
@@ -598,7 +598,7 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
         input->GetType() == "filename" &&
                 input->GetValue().type == mtlx::MtlxValue::TYPE_STRING
             ? Value::MakeAssetPath(input->GetValue().string_val)
-            : MtlxValueToNextValue(input->GetValue());
+            : MtlxValueToCoreValue(input->GetValue());
     if (!value.is_empty()) {
       const std::string property = "inputs:" + input->GetName();
       lb.add_property(property, std::move(value));

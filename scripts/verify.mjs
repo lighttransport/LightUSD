@@ -35,11 +35,11 @@ function parseArgs(argv) {
   if (!['prepare', 'test', 'doctor'].includes(opts.action)) {
     throw new Error('action must be prepare, test, or doctor');
   }
-  if (!['native', 'next', 'web', 'oracle', 'assets', 'gpu', 'full'].includes(opts.profile)) {
-    throw new Error('profile must be native, next, web, oracle, assets, gpu, or full');
+  if (!['native', 'core', 'web', 'oracle', 'assets', 'gpu', 'full'].includes(opts.profile)) {
+    throw new Error('profile must be native, core, web, oracle, assets, gpu, or full');
   }
   const targets = ['npm', 'menagerie', 'mujoco-wasm', 'wasm', 'web', 'assets', 'openusd',
-    'native', 'next', 'web-node', 'web-physics', 'web-browser', 'physics', 'oracle', 'gpu'];
+    'native', 'core', 'web-node', 'web-physics', 'web-browser', 'physics', 'oracle', 'gpu'];
   if (opts.target && !targets.includes(opts.target)) {
     throw new Error(`target must be one of: ${targets.join(', ')}`);
   }
@@ -50,7 +50,7 @@ function usage() {
   console.log(`Usage: scripts/verify.sh <prepare|test|doctor> [options]
 
 Options:
-  --profile <native|next|web|oracle|assets|gpu|full>
+  --profile <native|core|web|oracle|assets|gpu|full>
   --target <component>  run one focused prepare/test target (or use --component)
   --offline       never fetch; require all inputs in the cache
   --software      use software browser rendering (default for test)
@@ -150,11 +150,11 @@ function testNative(ctx) {
   });
 }
 
-function testNext(ctx) {
-  const build = path.join(ctx.cache, 'next-build');
-  run(ctx.root, 'next configure', 'cmake', ['-S', path.join(ctx.root, 'src'), '-B', build, '-G', 'Ninja', '-DLIGHTUSD_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
-  run(ctx.root, 'next build', 'cmake', ['--build', build]);
-  run(ctx.root, 'next CTest', 'ctest', ['--test-dir', build, '--output-on-failure']);
+function testCore(ctx) {
+  const build = path.join(ctx.cache, 'core-build');
+  run(ctx.root, 'core configure', 'cmake', ['-S', path.join(ctx.root, 'src'), '-B', build, '-G', 'Ninja', '-DLIGHTUSD_BUILD_TESTS=ON', '-DCMAKE_BUILD_TYPE=Debug']);
+  run(ctx.root, 'core build', 'cmake', ['--build', build]);
+  run(ctx.root, 'core CTest', 'ctest', ['--test-dir', build, '--output-on-failure']);
 }
 
 function testWeb(ctx) {
@@ -240,14 +240,14 @@ function test(ctx) {
     if (ctx.target === 'web-browser') return testWebProfile(ctx, 'browser');
     if (ctx.target === 'web') return testWeb(ctx);
     if (ctx.target === 'native') return testNative(ctx);
-    if (ctx.target === 'next') return testNext(ctx);
+    if (ctx.target === 'core') return testCore(ctx);
     if (ctx.target === 'oracle') return testOracle(ctx);
     if (ctx.target === 'assets') return testAssets(ctx);
     if (ctx.target === 'gpu') return testGpu(ctx);
     throw new Error(`test does not support target ${ctx.target}`);
   }
   if (ctx.profile === 'native' || ctx.profile === 'full') testNative(ctx);
-  if (ctx.profile === 'next' || ctx.profile === 'full') testNext(ctx);
+  if (ctx.profile === 'core' || ctx.profile === 'full') testCore(ctx);
   if (ctx.profile === 'web' || ctx.profile === 'full') testWeb(ctx);
   if (ctx.profile === 'oracle' || ctx.profile === 'full') testOracle(ctx);
   if (ctx.profile === 'assets' || ctx.profile === 'full') testAssets(ctx);

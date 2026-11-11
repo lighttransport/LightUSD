@@ -234,7 +234,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     dst.components = src.components;
     dst.values.reserve((m.indices.size() / 3) * 3 * dst.components);
   }
-  // Most next-loader meshes are world-baked at load time (m.world == identity,
+  // Most core-loader meshes are world-baked at load time (m.world == identity,
   // the transform already folded into `vertices`), but `animatedWorld` meshes
   // (see gpu_scene.hh) keep a REAL per-frame world matrix on top of a fixed
   // local-space vertex buffer -- the raster GPU vertex shader always applies
@@ -369,7 +369,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     }
     lg.push_back(g);
     const int frontMat = submeshMatId(static_cast<uint32_t>(t));
-    // Unbound next-loader instanced prototypes carry their flat/instance tint
+    // Unbound core-loader instanced prototypes carry their flat/instance tint
     // in Inst; suppress that loader's anonymous material-0 placeholder to avoid
     // multiplying by default gray twice. Legacy scenes may use index 0 for a
     // real authored material, identified by its populated material record.

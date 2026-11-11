@@ -11,7 +11,7 @@
 
 namespace lightusd {
 
-// Upper bound for any next/tydra worker pool that a caller sizes explicitly
+// Upper bound for any core/Tydra worker pool that a caller sizes explicitly
 // (clamped here). Was 16: with a scalable allocator the pcp opinion fill still
 // gained going 16 -> 32 threads on Island when a caller asks for that width.
 // The bound stays because per-worker state is not free -- each pcp warm worker
@@ -45,7 +45,7 @@ enum class CallbackConcurrency : uint8_t {
   Concurrent
 };
 
-// Common execution policy for next and tydra/next operations. 0 selects a
+// Common execution policy for core and Tydra operations. 0 selects a
 // bounded hardware-derived count, 1 forces serial execution, and >1 requests a
 // fixed count (clamped to kMaxExecutionThreads).
 struct ExecutionOptions {

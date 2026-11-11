@@ -61,7 +61,7 @@ USD
 for mode in legacy lightrt-bsdf; do
   "$LUSDRENDER" "$TMP/scene.usda" "$TMP/$mode.png" -rtPreview \
     -w 64 -height 64 -viewDir 0,0,1 -bg 1,0,0 -ambient 0 -noShadows \
-    -samples 4 --materialShading "$mode" --materialResolver tydra-next \
+    -samples 4 --materialShading "$mode" --materialResolver tydra \
     >"$TMP/$mode.log" 2>&1
   rc=$?
   if [ "$rc" -ne 0 ]; then

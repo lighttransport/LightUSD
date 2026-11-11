@@ -2,20 +2,22 @@
 # Copyright 2024-Present Light Transport Entertainment Inc.
 #
 # Legacy implementation build (src/legacy), included from the root
-# CMakeLists.txt when LIGHTUSD_BUILD_LEGACY=ON. It runs in the root directory
-# scope, after the core (src/) has been configured, so every relative path
-# below is relative to the repository root.
+# CMakeLists.txt when LIGHTUSD_BUILD_LEGACY=ON. It runs in an isolated
+# child directory using the repository root as its source directory, after
+# core has been configured. Relative source paths remain root-relative.
 #
 # Legacy is compiled but not tested: its libraries, tools, examples and test
 # executables still build (CI keeps a build-only job), but no test is
-# registered with CTest. add_test()/set_tests_properties() are turned into
-# no-ops for everything configured from here on; the core registered its
-# tests before this file is included.
+# registered with CTest. Legacy build descriptions omit test registration
+# instead of overriding CMake commands used by core or parent projects.
+set(LIGHTUSD_LEGACY_TARGET "lightusd_legacy")
+set(LIGHTUSD_LEGACY_TARGET_NS "lightusd::legacy")
+set(LIGHTUSD_LEGACY_TARGET_STATIC "lightusd_legacy_static")
+set(LIGHTUSD_LEGACY_TARGET_STATIC_NS "lightusd::legacy_static")
+set(LIGHTUSD_LEGACY_C_TARGET "c-lightusd-legacy")
+set(LIGHTUSD_LEGACY_TEST_TARGET "test_lightusd_legacy")
+
 message(STATUS "LightUSD: building the legacy implementation (compiled, not tested)")
-function(add_test)
-endfunction()
-function(set_tests_properties)
-endfunction()
 
 # ---- Legacy product -------------------------------------------------------
 # Legacy-only sources live in src/legacy/ (same relative layout they had under
@@ -126,10 +128,10 @@ option(LIGHTUSD_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
 option(LIGHTUSD_LEGACY_USE_CORE_PCP
-       "Use stable next::pcp::Cache backend for LargeSceneLoader (links lightusd_core)."
+       "Use stable lightusd::pcp::Cache backend for LargeSceneLoader (links lightusd_core)."
        OFF)
 option(LIGHTUSD_ENABLE_SIMD
-       "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the next parser; OFF forces the scalar path."
+       "Enable SIMD backends (SSE2 on x86, NEON on AArch64) for the core parser; OFF forces the scalar path."
        ON)
 option(LIGHTUSD_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
@@ -362,7 +364,7 @@ find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 # When ASan is enabled, propagate the runtime link flag to ALL
 # executables. add_sanitizers() (from FindSanitizers.cmake) sets
 # LINK_FLAGS as a private target property; any exe target that links
-# the asan-instrumented lightusd_static.a but forgets to call
+# the asan-instrumented lightusd_legacy_static.a but forgets to call
 # add_sanitizers() ends up with undefined references to
 # __asan_report_load*, __asan_memcpy, etc. Setting CMAKE_EXE_LINKER_FLAGS
 # globally avoids that footgun across examples/, tests/feat/,
@@ -1058,7 +1060,7 @@ if(LIGHTUSD_WITH_QJS)
   )
 endif(LIGHTUSD_WITH_QJS)
 
-# Share stage-neutral Ptex/subdivision objects with next and render consumers.
+# Share stage-neutral Ptex/subdivision objects with core and render consumers.
 include("${PROJECT_SOURCE_DIR}/cmake/lightusd-render-support.cmake")
 lightusd_add_render_support()
 list(APPEND LIGHTUSD_SOURCES
@@ -1527,8 +1529,8 @@ endif()
 #endif(LIGHTUSD_WITH_ALAC_AUDIO)
 #
 # TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
-#add_library(${LIGHTUSD_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
-#add_sanitizers(${LIGHTUSD_TARGET_STATIC})
+#add_library(${LIGHTUSD_LEGACY_TARGET_STATIC} STATIC $<TARGET_OBJECTS:lightusd_object>)
+#add_sanitizers(${LIGHTUSD_LEGACY_TARGET_STATIC})
 
 # miniz (and the bundled zstd) build inside lightusd_tinyvdb, which links
 # after the root objects: one copy serves the root library and tinyvdb, and
@@ -1547,81 +1549,81 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/lightusd-asset-import.cmake")
 if(TARGET lightusd_asset_import)
   # lightusd_asset_import compiles pugixml and is linked below; a second copy
-  # in lightusd_static gives macOS ld duplicate pugi:: symbols.
+  # in lightusd_legacy_static gives macOS ld duplicate pugi:: symbols.
   list(REMOVE_ITEM LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
 endif()
 list(APPEND LIGHTUSD_SOURCES ${PROJECT_SOURCE_DIR}/src/core/host-services.cc)
-add_library(${LIGHTUSD_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
-target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_asset_import)
+add_library(${LIGHTUSD_LEGACY_TARGET_STATIC} STATIC ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+target_link_libraries(${LIGHTUSD_LEGACY_TARGET_STATIC} lightusd_asset_import)
 # Shared pixel conversion uses the stage-independent C half-float helpers.
 if(TARGET lightusd_core_c)
-  target_link_libraries(${LIGHTUSD_TARGET_STATIC} lightusd_core_c)
+  target_link_libraries(${LIGHTUSD_LEGACY_TARGET_STATIC} lightusd_core_c)
 else()
-  target_sources(${LIGHTUSD_TARGET_STATIC} PRIVATE
+  target_sources(${LIGHTUSD_LEGACY_TARGET_STATIC} PRIVATE
     ${PROJECT_SOURCE_DIR}/src/c/half.c)
 endif()
 if(NOT LIGHTUSD_NATIVE_IO)
-  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+  target_compile_definitions(${LIGHTUSD_LEGACY_TARGET_STATIC} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
 endif()
 if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
-  target_compile_definitions(${LIGHTUSD_TARGET_STATIC} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
-  target_link_libraries(${LIGHTUSD_TARGET_STATIC} ${CMAKE_DL_LIBS})
+  target_compile_definitions(${LIGHTUSD_LEGACY_TARGET_STATIC} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+  target_link_libraries(${LIGHTUSD_LEGACY_TARGET_STATIC} ${CMAKE_DL_LIBS})
   if(WIN32)
-    target_link_libraries(${LIGHTUSD_TARGET_STATIC} psapi)
+    target_link_libraries(${LIGHTUSD_LEGACY_TARGET_STATIC} psapi)
   endif()
 endif()
-set_target_properties(${LIGHTUSD_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_sanitizers(${LIGHTUSD_TARGET_STATIC})
+set_target_properties(${LIGHTUSD_LEGACY_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_sanitizers(${LIGHTUSD_LEGACY_TARGET_STATIC})
 #set_target_properties(lightusd_object PROPERTIES FOLDER "lightusd")
 
 # Target with namespace
-add_library(${LIGHTUSD_TARGET_STATIC_NS} ALIAS ${LIGHTUSD_TARGET_STATIC})
+add_library(${LIGHTUSD_LEGACY_TARGET_STATIC_NS} ALIAS ${LIGHTUSD_LEGACY_TARGET_STATIC})
 
 
 if(LIGHTUSD_BUILD_SHARED_LIBS)
   #add_library(
-  #  ${LIGHTUSD_TARGET} SHARED $<TARGET_OBJECTS:lightusd_object>)
+  #  ${LIGHTUSD_LEGACY_TARGET} SHARED $<TARGET_OBJECTS:lightusd_object>)
   add_library(
-    ${LIGHTUSD_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
-  target_link_libraries(${LIGHTUSD_TARGET} lightusd_asset_import)
+    ${LIGHTUSD_LEGACY_TARGET} SHARED ${LIGHTUSD_SOURCES} ${LIGHTUSD_DEP_SOURCES} ${LIGHTUSD_EXT_SOURCES})
+  target_link_libraries(${LIGHTUSD_LEGACY_TARGET} lightusd_asset_import)
   if(TARGET lightusd_core_c)
-    target_link_libraries(${LIGHTUSD_TARGET} lightusd_core_c)
+    target_link_libraries(${LIGHTUSD_LEGACY_TARGET} lightusd_core_c)
   else()
-    target_sources(${LIGHTUSD_TARGET} PRIVATE
+    target_sources(${LIGHTUSD_LEGACY_TARGET} PRIVATE
       ${PROJECT_SOURCE_DIR}/src/c/half.c)
   endif()
   if(NOT LIGHTUSD_NATIVE_IO)
-    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+    target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
   endif()
   if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
-    target_compile_definitions(${LIGHTUSD_TARGET} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
-    target_link_libraries(${LIGHTUSD_TARGET} ${CMAKE_DL_LIBS})
+    target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+    target_link_libraries(${LIGHTUSD_LEGACY_TARGET} ${CMAKE_DL_LIBS})
     if(WIN32)
-      target_link_libraries(${LIGHTUSD_TARGET} psapi)
+      target_link_libraries(${LIGHTUSD_LEGACY_TARGET} psapi)
     endif()
   endif()
-  add_sanitizers(${LIGHTUSD_TARGET})
+  add_sanitizers(${LIGHTUSD_LEGACY_TARGET})
 
   # for dllexport
-  target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
-  target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
+  target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
+  target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
 
-  set(LIGHTUSD_LIBS ${LIGHTUSD_TARGET_STATIC} ${LIGHTUSD_TARGET})
+  set(LIGHTUSD_LIBS ${LIGHTUSD_LEGACY_TARGET_STATIC} ${LIGHTUSD_LEGACY_TARGET})
 else()
   # static only
-  set(LIGHTUSD_LIBS ${LIGHTUSD_TARGET_STATIC})
+  set(LIGHTUSD_LIBS ${LIGHTUSD_LEGACY_TARGET_STATIC})
 endif()
 
 if(WIN32 AND LIGHTUSD_WITH_PXR_COMPAT_API)
   if(LIGHTUSD_BUILD_SHARED_LIBS)
-    target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "PXR_DYNAMIC")
-    target_compile_definitions(${LIGHTUSD_TARGET} PRIVATE "USD_EXPORTS")
+    target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PRIVATE "PXR_DYNAMIC")
+    target_compile_definitions(${LIGHTUSD_LEGACY_TARGET} PRIVATE "USD_EXPORTS")
   endif()
 
 endif()
 
 #
-# Optional: next::pcp::Cache backend for LargeSceneLoader
+# Optional: lightusd::pcp::Cache backend for LargeSceneLoader
 #
 if(LIGHTUSD_LEGACY_USE_CORE_PCP AND NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_core_build)
@@ -1950,20 +1952,20 @@ endforeach()
 
 if(LIGHTUSD_LEGACY_C_API_ENABLED)
   if(LIGHTUSD_BUILD_SHARED_LIBS)
-    add_library(${BUILD_TARGET_C} SHARED ${LIGHTUSD_C_API_SOURCES})
+    add_library(${LIGHTUSD_LEGACY_C_TARGET} SHARED ${LIGHTUSD_C_API_SOURCES})
     # Link with static(object) version of liblightusd to make dll monolitic
-    # TODO: Build LIGHTUSD_TARGET_STATIC as Object?
-    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
-    target_compile_definitions(${BUILD_TARGET_C} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
+    # TODO: Build LIGHTUSD_LEGACY_TARGET_STATIC as Object?
+    target_link_libraries(${LIGHTUSD_LEGACY_C_TARGET} PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
+    target_compile_definitions(${LIGHTUSD_LEGACY_C_TARGET} PRIVATE "LIGHTUSD_COMPILE_LIBRARY")
+    target_compile_definitions(${LIGHTUSD_LEGACY_C_TARGET} PRIVATE "LIGHTUSD_SHARED_LIBRARY")
     target_include_directories(
-      ${BUILD_TARGET_C} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      ${LIGHTUSD_LEGACY_C_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
   endif()
 
-  add_library(${BUILD_TARGET_C}_static STATIC ${LIGHTUSD_C_API_SOURCES})
-  target_link_libraries(${BUILD_TARGET_C}_static PRIVATE ${LIGHTUSD_TARGET_STATIC})
+  add_library(${LIGHTUSD_LEGACY_C_TARGET}_static STATIC ${LIGHTUSD_C_API_SOURCES})
+  target_link_libraries(${LIGHTUSD_LEGACY_C_TARGET}_static PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
   target_include_directories(
-    ${BUILD_TARGET_C}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    ${LIGHTUSD_LEGACY_C_TARGET}_static PRIVATE ${PROJECT_SOURCE_DIR}/src)
 endif()
 
 # usda_parser/usdc_parser are registered by the core example build.
@@ -2072,14 +2074,14 @@ endif()
 
 # [VisualStudio]
 if(WIN32)
-  # Set ${LIGHTUSD_TARGET_STATIC} as a startup project for VS IDE
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_TARGET_STATIC})
+  # Set ${LIGHTUSD_LEGACY_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_LEGACY_TARGET_STATIC})
 
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
-  # directory to ${LIGHTUSD_TARGET_STATIC} git repo root.
+  # directory to ${LIGHTUSD_LEGACY_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
     set_target_properties(
-      ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+      ${LIGHTUSD_LEGACY_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 endif()
@@ -2113,8 +2115,6 @@ if(LIGHTUSD_BUILD_TESTS)
       if(NOT MSVC)
         target_compile_options(${tt_target} PRIVATE -w)
       endif()
-      add_test(NAME ${tt_name} COMMAND ${tt_target})
-      set_tests_properties(${tt_name} PROPERTIES LABELS "textools")
     endforeach()
   endif()
 
@@ -2143,9 +2143,6 @@ if(LIGHTUSD_BUILD_TESTS)
     target_compile_options(textools_ptex_test PRIVATE -ffp-contract=off -w)
     target_link_libraries(textools_ptex_test PRIVATE m)
   endif()
-  add_test(NAME textools-ptex COMMAND textools_ptex_test)
-  set_tests_properties(textools-ptex PROPERTIES LABELS "textools;ptex"
-    ENVIRONMENT "TPTEX_TEST_TMPDIR=${CMAKE_CURRENT_BINARY_DIR}")
 
   # (The lusdview unit tests are registered inside
   # examples/lusdview/CMakeLists.txt, where their targets are in scope; that
@@ -2157,14 +2154,14 @@ if(LIGHTUSD_BUILD_TESTS)
   #
   set(LIGHTUSD_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
 
-  add_executable(${LIGHTUSD_TEST_TARGET} ${LIGHTUSD_TEST_SOURCES})
-  add_sanitizers(${LIGHTUSD_TEST_TARGET})
+  add_executable(${LIGHTUSD_LEGACY_TEST_TARGET} ${LIGHTUSD_TEST_SOURCES})
+  add_sanitizers(${LIGHTUSD_LEGACY_TEST_TARGET})
 
   target_include_directories(
-    ${LIGHTUSD_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
+    ${LIGHTUSD_LEGACY_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src
                                     ${PROJECT_SOURCE_DIR}/tests)
-  target_link_libraries(${LIGHTUSD_TEST_TARGET}
-                        PRIVATE ${LIGHTUSD_TARGET_STATIC})
+  target_link_libraries(${LIGHTUSD_LEGACY_TEST_TARGET}
+                        PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
 
   #
   # unit tester
@@ -2189,30 +2186,20 @@ if(LIGHTUSD_BUILD_TESTS)
   if(TARGET lightusd_tinyvdb)
     add_executable(test-tet-float-range tests/volumetric/tet-float-range.c src/lz4/lz4.c)
     target_link_libraries(test-tet-float-range PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-tet-float-range COMMAND test-tet-float-range)
-    set_tests_properties(volumetric-tet-float-range PROPERTIES LABELS "cpu;volume;security")
     if(LIGHTUSD_TINYVDB_GPU AND NOT EMSCRIPTEN)
       add_executable(profile-gpu-level-set tests/volumetric/profile-gpu-level-set.c src/lz4/lz4.c)
       target_link_libraries(profile-gpu-level-set PRIVATE lightusd_tinyvdb ${CMAKE_DL_LIBS})
     endif()
     add_executable(test-level-set-allocator tests/volumetric/test-level-set-allocator.c src/lz4/lz4.c)
     target_link_libraries(test-level-set-allocator PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-level-set-allocator COMMAND test-level-set-allocator)
-    set_tests_properties(volumetric-level-set-allocator PROPERTIES LABELS "cpu;volume;security")
     add_executable(test-graded-stencil tests/volumetric/test-graded-stencil.c src/lz4/lz4.c)
     target_link_libraries(test-graded-stencil PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-graded-stencil COMMAND test-graded-stencil)
-    set_tests_properties(volumetric-graded-stencil PROPERTIES LABELS "cpu;volume")
     add_executable(test-tet-center-sample tests/volumetric/tet-center-sample.c
       src/lz4/lz4.c)
     target_link_libraries(test-tet-center-sample PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-tet-center-sample COMMAND test-tet-center-sample)
-    set_tests_properties(volumetric-tet-center-sample PROPERTIES LABELS "cpu;volume")
     add_executable(test-tet-worker-identity
       tests/volumetric/tet-worker-identity.c src/lz4/lz4.c)
     target_link_libraries(test-tet-worker-identity PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-tet-worker-identity COMMAND test-tet-worker-identity)
-    set_tests_properties(volumetric-tet-worker-identity PROPERTIES LABELS "cpu;volume")
     add_executable(profile-tet tests/volumetric/profile-tet.c src/lz4/lz4.c)
     target_link_libraries(profile-tet PRIVATE lightusd_tinyvdb)
     # The graded background is experimental and not wired into stuffing yet.
@@ -2227,16 +2214,12 @@ if(LIGHTUSD_BUILD_TESTS)
     else()
       target_compile_options(test-graded-refine PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME volumetric-graded-refine COMMAND test-graded-refine)
-    set_tests_properties(volumetric-graded-refine PROPERTIES LABELS "cpu;volume")
   endif()
 
   if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND TARGET lightusd_tinyvdb)
     add_executable(test-tet-overflow-32 tests/volumetric/tet-overflow-32.c src/lz4/lz4.c)
     target_include_directories(test-tet-overflow-32 PRIVATE src/external/tinyvdb)
     target_link_libraries(test-tet-overflow-32 PRIVATE lightusd_tinyvdb)
-    add_test(NAME volumetric-tet-overflow-32 COMMAND test-tet-overflow-32)
-    set_tests_properties(volumetric-tet-overflow-32 PROPERTIES LABELS "cpu;volume;security")
   endif()
 
   # Prefer an explicitly configured interpreter so CTest can use a virtualenv,
@@ -2250,12 +2233,6 @@ if(LIGHTUSD_BUILD_TESTS)
 
   find_program(LIGHTUSD_HDRGEN_NODE_EXECUTABLE NAMES node nodejs)
   if(LIGHTUSD_HDRGEN_NODE_EXECUTABLE)
-    add_test(
-      NAME tool-hdrgen-test
-      COMMAND ${LIGHTUSD_HDRGEN_NODE_EXECUTABLE}
-              ${PROJECT_SOURCE_DIR}/tools/hdrgen/examples/test-presets.js)
-    set_tests_properties(tool-hdrgen-test PROPERTIES
-                         TIMEOUT 30 LABELS "tools;hdrgen;node;cpu")
   endif()
 
   if(LIGHTUSD_BUILD_PYTHON_TESTS AND LUSDR_PYTHON)
@@ -2266,16 +2243,6 @@ if(LIGHTUSD_BUILD_TESTS)
       OUTPUT_QUIET
       ERROR_QUIET)
     if(LIGHTUSD_PYTHON_TEST_DEPS_RESULT EQUAL 0)
-      add_test(
-        NAME python-lightusd-tests
-        COMMAND ${LUSDR_PYTHON} -m pytest
-                "${PROJECT_SOURCE_DIR}/python/tests"
-                -k "not slow and not large and not usd_assets and not aousd" -q)
-      set_tests_properties(
-        python-lightusd-tests
-        PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-                   TIMEOUT 600
-                   LABELS "python;bindings")
     else()
       message(WARNING
               "LIGHTUSD_BUILD_PYTHON_TESTS=ON but `${LUSDR_PYTHON}` cannot import pytest and lightusd; Python tests will not be registered")
@@ -2288,11 +2255,6 @@ if(LIGHTUSD_BUILD_TESTS)
   # USDA parser tester
   #
   if(LIGHTUSD_WITH_MODULE_USDA_READER)
-    add_test(
-      NAME usda-parser-unit-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/unit-runner.py --app
-              "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-      )
   endif()
 
   #
@@ -2324,54 +2286,17 @@ if(LIGHTUSD_BUILD_TESTS)
     # timeSamples on typed writers, list-edit qualifiers, and imageable fields
     # such as Scope visibility/purpose. Several are latent -- no tests/usda
     # fixture exercises them -- so this suite prevents silent regressions.
-    add_test(
-      NAME scope-imageable-roundtrip
-      COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
-              "$<TARGET_FILE:lusdcat>"
-      )
-    set_tests_properties(scope-imageable-roundtrip PROPERTIES SKIP_RETURN_CODE 77)
 
-    add_test(
-      NAME validation-suite-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py
-              --app "$<TARGET_FILE:lusdcat>"
-              --basedir "${PROJECT_SOURCE_DIR}/tests/usda/validation"
-      )
 
     # Corpus-wide robustness regression: validate every parseable fixture in
     # tests/usda and fail only if the validator crashes or hangs.
-    add_test(
-      NAME validation-regression-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-regression.py
-              --app "$<TARGET_FILE:lusdcat>"
-              --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-      )
 
-    add_test(
-      NAME validation-usdz-cube-test
-      COMMAND "$<TARGET_FILE:lusdcat>" --validate
-              "${PROJECT_SOURCE_DIR}/models/cube.usdz"
-      )
 
-    add_test(
-      NAME validation-usdz-texture-cat-plane-test
-      COMMAND "$<TARGET_FILE:lusdcat>" --validate
-              "${PROJECT_SOURCE_DIR}/models/texture-cat-plane.usdz"
-      )
 
     find_program(LIGHTUSD_NODE_EXECUTABLE node)
     if(LIGHTUSD_NODE_EXECUTABLE
        AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/lightusd/lightusd.js"
        AND EXISTS "${PROJECT_SOURCE_DIR}/web/js/src/lightusd/lightusd.wasm")
-      add_test(
-        NAME web-validation-parity-test
-        COMMAND ${CMAKE_COMMAND} -E env
-                "LUSDCAT_PATH=$<TARGET_FILE:lusdcat>"
-                "LIGHTUSD_WASM_DIR=${PROJECT_SOURCE_DIR}/web/js/src/lightusd"
-                "LIGHTUSD_PARITY_SKIP_STALE_WASM=1"
-                "${LIGHTUSD_NODE_EXECUTABLE}"
-                "${PROJECT_SOURCE_DIR}/web/js/tests/validation-parity.mjs"
-        )
     endif()
   endif()
   # lusdview tests are registered by examples/lusdview/tests.cmake.
@@ -2382,38 +2307,12 @@ if(LIGHTUSD_BUILD_TESTS)
   # in sync with src/usd-preview-surface-schema.json. Fails if a schema edit was
   # not followed by `python3 scripts/gen-usd-preview-surface-inputs.py`.
   #
-  add_test(
-    NAME preview-surface-schema-sync
-    COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/gen-usd-preview-surface-inputs.py --check
-    )
 
   # Offline pin/integrity gate for the generated OpenUSD compatibility
   # baseline. Refreshing the file requires an OpenUSD checkout, but normal CI
   # deliberately has no runtime or network dependency on OpenUSD.
-  add_test(
-    NAME openusd-schema-manifest
-    COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/check-openusd-schema-manifest.py
-            ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
-    )
 
-  add_test(
-    NAME openusd-capability-ledger
-    COMMAND ${LUSDR_PYTHON}
-            ${PROJECT_SOURCE_DIR}/scripts/generate-lightusd-capability-ledger.py
-            --check
-            --manifest ${PROJECT_SOURCE_DIR}/doc/generated/openusd-schema-26.08.json
-            --output ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
-    )
 
-  add_test(
-    NAME openusd-supported-schema-fixture
-    COMMAND ${LUSDR_PYTHON}
-            ${PROJECT_SOURCE_DIR}/scripts/generate-openusd-supported-schema-fixture.py
-            --check
-            --ledger ${PROJECT_SOURCE_DIR}/doc/generated/lightusd-capabilities-openusd-26.08.json
-            --output ${PROJECT_SOURCE_DIR}/tests/usda/generated/openusd-supported-schema-26.08.usda
-            --registry-output ${PROJECT_SOURCE_DIR}/src/schema/generated/openusd-supported-schema-names.inc
-    )
 
   #
   # USDA roundtrip tester
@@ -2423,16 +2322,11 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(${LIGHTUSD_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usda-roundtrip.cc)
     add_sanitizers(${LIGHTUSD_ROUNDTRIP_TARGET})
     target_include_directories(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     if(LIGHTUSD_WITH_JSON)
       target_compile_definitions(${LIGHTUSD_ROUNDTRIP_TARGET} PRIVATE "LIGHTUSD_WITH_JSON")
     endif()
 
-    add_test(
-      NAME usda-roundtrip-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/roundtrip-runner.py --app
-              "$<TARGET_FILE:usda_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-      )
   endif()
 
   #
@@ -2443,16 +2337,11 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} ${PROJECT_SOURCE_DIR}/tests/usdc-roundtrip.cc)
     add_sanitizers(${LIGHTUSD_USDC_ROUNDTRIP_TARGET})
     target_include_directories(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     if(LIGHTUSD_WITH_JSON)
       target_compile_definitions(${LIGHTUSD_USDC_ROUNDTRIP_TARGET} PRIVATE "LIGHTUSD_WITH_JSON")
     endif()
 
-    add_test(
-      NAME usdc-roundtrip-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usda/usdc-roundtrip-runner.py --app
-              "$<TARGET_FILE:usdc_roundtrip>" --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-      )
 
     # USDC writer roundtrip: lusdcat writes USDC -> read back as USDA -> lusddiff
     # Uses --report-only so it does not fail the suite (informational baseline).
@@ -2460,14 +2349,6 @@ if(LIGHTUSD_BUILD_TESTS)
     #   python3 tests/legacy/usdc-writer/usdc-writer-runner.py --lusdcat ./build/lusdcat --lusddiff ./build/lusddiff --basedir tests/usda --verbose
     # lusddiff now lives under tools/ (LIGHTUSD_BUILD_TOOLS); skip if not built.
     if(TARGET lusddiff)
-      add_test(
-        NAME usdc-writer-diff-test
-        COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/legacy/usdc-writer/usdc-writer-runner.py
-                --lusdcat "$<TARGET_FILE:lusdcat>"
-                --lusddiff "$<TARGET_FILE:lusddiff>"
-                --basedir "${PROJECT_SOURCE_DIR}/tests/usda"
-                --report-only
-        )
     endif()
   endif()
 
@@ -2485,34 +2366,15 @@ if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_USD_ASSETS_ROOT)
       list(APPEND _lightusd_corpus_root_args --assets "${LIGHTUSD_USD_ASSETS_ROOT}")
     endif()
-    add_test(
-      NAME corpus-parse-native
-      COMMAND ${LIGHTUSD_NODE_EXECUTABLE}
-              ${PROJECT_SOURCE_DIR}/tests/parse-asset-corpus.mjs
-              --optional-assets
-              ${_lightusd_corpus_root_args}
-              --mode load
-              --lusdcat "$<TARGET_FILE:lusdcat>"
-              --out "${CMAKE_BINARY_DIR}/corpus-parse-results"
-              --max-fail 0
-      )
-    set_tests_properties(corpus-parse-native PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
   #
   # USDA parser tester
   #
   if(LIGHTUSD_WITH_MODULE_USDC_READER)
-    add_test(
-      NAME usdc-parser-unit-test
-      COMMAND ${LUSDR_PYTHON} ${PROJECT_SOURCE_DIR}/tests/usdc/unit-runner.py --app
-              "$<TARGET_FILE:test_lightusd>" --basedir "${PROJECT_SOURCE_DIR}/tests/usdc"
-      )
     # usdc-parser-unit-test globs all *.usdc in tests/usdc/, including
     # *-runtime.usdc files that are generated by unit-test-lightusd.
     # Must run after unit tests to avoid reading partially-written files.
-    set_tests_properties(usdc-parser-unit-test PROPERTIES
-      DEPENDS unit-test-lightusd)
   endif()
 
   #
@@ -2543,26 +2405,20 @@ if(LIGHTUSD_BUILD_TESTS)
     elseif(UNIX)
       target_link_libraries(feat-lightrt-uv PRIVATE m)
     endif()
-    add_test(NAME feat-lightrt-uv COMMAND feat-lightrt-uv
-      WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     if(LIGHTUSD_WITH_LEGACY_TYDRA)
       add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
       add_sanitizers(feat-value-clip)
-      target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-value-clip COMMAND feat-value-clip
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
 
     # tydra value-level diff API (ULP tolerance, metadata reasons, value display)
     if(LIGHTUSD_WITH_LEGACY_TYDRA)
       add_executable(feat-diff tests/feat/diff/test-diff.cc)
       add_sanitizers(feat-diff)
-      target_link_libraries(feat-diff PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-diff PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-diff PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-diff COMMAND feat-diff
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
 
     # Composition: a local-only child PrimSpec must survive a reference/inherit/
@@ -2570,10 +2426,8 @@ if(LIGHTUSD_BUILD_TESTS)
     # dst-only children).
     add_executable(feat-localchild tests/feat/composition-localchild/test-localchild.cc)
     add_sanitizers(feat-localchild)
-    target_link_libraries(feat-localchild PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-localchild PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-localchild PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-localchild COMMAND feat-localchild
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Composition: a variant selection on the referencing prim must win over the
     # referenced asset's own default, even when the populated variantSet lives
@@ -2584,10 +2438,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-variant-payload-chain
                    tests/feat/variant-payload-chain/test-variant-payload-chain.cc)
     add_sanitizers(feat-variant-payload-chain)
-    target_link_libraries(feat-variant-payload-chain PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-variant-payload-chain PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-variant-payload-chain PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-variant-payload-chain COMMAND feat-variant-payload-chain
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
@@ -2595,10 +2447,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-usdc-specifier
                    tests/feat/usdc-specifier/test-usdc-specifier.cc)
     add_sanitizers(feat-usdc-specifier)
-    target_link_libraries(feat-usdc-specifier PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-usdc-specifier PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-usdc-specifier PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-usdc-specifier COMMAND feat-usdc-specifier
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # On --flatten a composed prim's `apiSchemas` list-op must bake to EXPLICIT
     # form (pxrUSD usdcat drops the `prepend`/`append` qualifier). Without it the
@@ -2609,10 +2459,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-flatten-apischemas
                    tests/feat/flatten-apischemas/test-flatten-apischemas.cc)
     add_sanitizers(feat-flatten-apischemas)
-    target_link_libraries(feat-flatten-apischemas PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-flatten-apischemas PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-flatten-apischemas PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-flatten-apischemas COMMAND feat-flatten-apischemas
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Variant composition must respect LIVRPS: a host's local `over` for a prim
     # that the selected variant DEFINES must (1) be promoted over->def with the
@@ -2623,20 +2471,16 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-variant-local-override
                    tests/feat/variant-local-override/test-variant-local-override.cc)
     add_sanitizers(feat-variant-local-override)
-    target_link_libraries(feat-variant-local-override PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-variant-local-override PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-variant-local-override PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-variant-local-override COMMAND feat-variant-local-override
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # OpenUSD inserts variant-selected children BEFORE local children; lightusd
     # used to append them. Regresses CompositeVariant prepend + primChildren sync.
     add_executable(feat-variant-child-order
                    tests/feat/variant-child-order/test-variant-child-order.cc)
     add_sanitizers(feat-variant-child-order)
-    target_link_libraries(feat-variant-child-order PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-variant-child-order PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-variant-child-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-variant-child-order COMMAND feat-variant-child-order
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Opt-in authored-order emission: a flattened crate must be able to reproduce
     # the authored prim-child order (from the crate `primChildren` field), like
@@ -2646,10 +2490,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-preserve-order
                    tests/feat/preserve-order/test-preserve-order.cc)
     add_sanitizers(feat-preserve-order)
-    target_link_libraries(feat-preserve-order PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-preserve-order PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-preserve-order PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-preserve-order COMMAND feat-preserve-order
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Opt-in OpenUSD-compatible float notation (SetUSDFloatFormat): fixed for
     # decimal exponents in [-6,15), unpadded/sign-less exponent outside -- matches
@@ -2657,20 +2499,16 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-usd-float-format
                    tests/feat/usd-float-format/test-usd-float-format.cc)
     add_sanitizers(feat-usd-float-format)
-    target_link_libraries(feat-usd-float-format PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-usd-float-format PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-usd-float-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-usd-float-format COMMAND feat-usd-float-format
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Opt-in OpenUSD-compatible USDA text layout (SetUSDTextFormat): metadata
     # paren on the `def` line, apiSchemas first, blank line between siblings.
     add_executable(feat-usd-text-format
                    tests/feat/usd-text-format/test-usd-text-format.cc)
     add_sanitizers(feat-usd-text-format)
-    target_link_libraries(feat-usd-text-format PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-usd-text-format PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-usd-text-format PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-usd-text-format COMMAND feat-usd-text-format
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Opt-in asset-path normalization on flatten (io::NormalizePath +
     # SetNormalizeAssetPathOnFlatten): collapse `.`/`..` when anchoring a
@@ -2678,10 +2516,8 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-asset-path-normalize
                    tests/feat/asset-path-normalize/test-asset-path-normalize.cc)
     add_sanitizers(feat-asset-path-normalize)
-    target_link_libraries(feat-asset-path-normalize PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-asset-path-normalize PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-asset-path-normalize PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-asset-path-normalize COMMAND feat-asset-path-normalize
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # Driver-level counterpart: run the binary flatten drivers (lusdcat, and
     # lusdzconvert -> src/legacy/usdz-convert.cc) end-to-end on the same fixtures so a
@@ -2705,90 +2541,67 @@ if(LIGHTUSD_BUILD_TESTS)
       if(TARGET lusdzconvert)
         set(_vchain_lusdzconvert "$<TARGET_FILE:lusdzconvert>")
       endif()
-      add_test(NAME feat-variant-chain-driver
-               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
-                       $<TARGET_FILE:lusdcat> ${PROJECT_SOURCE_DIR}
-                       ${_vchain_lusdzconvert})
     endif()
 
     if(UNIX AND TARGET lusdzconvert AND TARGET lusdcat)
-      add_test(NAME lusdzconvert-regression-driver
-               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-lusdzconvert-regression.sh
-                       $<TARGET_FILE:lusdzconvert> $<TARGET_FILE:lusdcat>
-                       ${PROJECT_SOURCE_DIR})
     endif()
 
     # PointInstancer instancing (compute API + Tydra expansion)
     if(LIGHTUSD_WITH_LEGACY_TYDRA)
       add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
       add_sanitizers(feat-instancing)
-      target_link_libraries(feat-instancing PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-instancing PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-instancing COMMAND feat-instancing
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
 
     # Cross-directory cwp anchoring (composition) via LargeSceneLoader
     add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
     add_sanitizers(feat-large-scene)
-    target_link_libraries(feat-large-scene PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-large-scene PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-large-scene PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-large-scene COMMAND feat-large-scene
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     if(LIGHTUSD_WITH_MODULE_USDC_WRITER AND LIGHTUSD_WITH_MODULE_USDC_READER)
       add_executable(feat-dedp tests/feat/dedp/test-dedp.cc)
       add_sanitizers(feat-dedp)
-      target_link_libraries(feat-dedp PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-dedp PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-dedp PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-dedp COMMAND feat-dedp
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
 
     # MaterialX tests
     add_executable(feat-mtlx-parse tests/feat/mtlx/test_mtlx_parse.cc)
     add_sanitizers(feat-mtlx-parse)
-    target_link_libraries(feat-mtlx-parse PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-parse PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-mtlx-parse PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-mtlx-parse COMMAND feat-mtlx-parse
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     add_executable(feat-mtlx-import tests/feat/mtlx/test_mtlx_import.cc)
     add_sanitizers(feat-mtlx-import)
-    target_link_libraries(feat-mtlx-import PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-import PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-mtlx-import PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-mtlx-import COMMAND feat-mtlx-import)
 
     add_executable(feat-mtlx-export tests/feat/mtlx/test_mtlx_export.cc)
     add_sanitizers(feat-mtlx-export)
-    target_link_libraries(feat-mtlx-export PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-export PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
 
     if(LIGHTUSD_WITH_LEGACY_TYDRA)
       # Variant tests
       add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
       add_sanitizers(feat-variant-converter)
-      target_link_libraries(feat-variant-converter PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-variant-converter PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-variant-converter COMMAND feat-variant-converter
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
       add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
       add_sanitizers(feat-variant-applier)
-      target_link_libraries(feat-variant-applier PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(feat-variant-applier PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME feat-variant-applier COMMAND feat-variant-applier
-               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     endif()
   endif()
 
   if(LIGHTUSD_WITH_JSON AND LIGHTUSD_WITH_LEGACY_TYDRA)
     add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
     add_sanitizers(feat-mtlx-grouped-params)
-    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(feat-mtlx-grouped-params PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-mtlx-grouped-params PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-mtlx-grouped-params COMMAND feat-mtlx-grouped-params)
   endif()
 
   #
@@ -2797,37 +2610,29 @@ if(LIGHTUSD_BUILD_TESTS)
   if(LIGHTUSD_WITH_MODULE_USDA_READER)
     add_executable(bench-parse-opt tests/feat/parse-opt/test-parse-opt.cc)
     add_sanitizers(bench-parse-opt)
-    target_link_libraries(bench-parse-opt PRIVATE ${LIGHTUSD_TARGET_STATIC})
+    target_link_libraries(bench-parse-opt PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(bench-parse-opt PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
-    set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
 
     if(LIGHTUSD_WITH_LEGACY_TYDRA)
       # Render-conversion benchmark: Stage -> raster/RT renderable mesh.
       # Report-only (no timing gate): prints median conversion time plus a
       # deterministic scene checksum for serial-vs-parallel byte-identity A/B
-      # checks. When the next-core backend is enabled, a combined binary also
-      # measures the tydra::next pipeline on the same input.
+      # checks. When the core backend is enabled, a combined binary also
+      # measures the lightusd::tydra pipeline on the same input.
       add_executable(bench-render-convert tests/feat/render-convert/perf-render-convert.cc)
       add_sanitizers(bench-render-convert)
-      target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
       target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
-      add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
       # Both binaries create/remove the same /tmp/perfrc_scene_64.usda fixture.
-      set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
-                           RESOURCE_LOCK render_convert_fixture)
 
       if(LIGHTUSD_LEGACY_USE_CORE_PCP AND TARGET lightusd_core AND TARGET tydra)
-        add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
-        add_sanitizers(bench-render-convert-next)
-        target_link_libraries(bench-render-convert-next PRIVATE
-          ${LIGHTUSD_TARGET_STATIC} lightusd_core tydra)
-        target_include_directories(bench-render-convert-next PRIVATE
+        add_executable(bench-render-convert-core-vs-legacy tests/feat/render-convert/perf-render-convert.cc)
+        add_sanitizers(bench-render-convert-core-vs-legacy)
+        target_link_libraries(bench-render-convert-core-vs-legacy PRIVATE
+          ${LIGHTUSD_LEGACY_TARGET_STATIC} lightusd_core tydra)
+        target_include_directories(bench-render-convert-core-vs-legacy PRIVATE
           ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src)
-        target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_CORE=1)
-        add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
-        set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
-                             RESOURCE_LOCK render_convert_fixture)
+        target_compile_definitions(bench-render-convert-core-vs-legacy PRIVATE PERFRC_ENABLE_CORE=1)
       endif()
     endif()
   endif()
@@ -2837,10 +2642,8 @@ if(LIGHTUSD_BUILD_TESTS)
   #
   add_executable(feat-subdiv tests/feat/subdiv/test-subdiv.cc)
   add_sanitizers(feat-subdiv)
-  target_link_libraries(feat-subdiv PRIVATE ${LIGHTUSD_TARGET_STATIC})
+  target_link_libraries(feat-subdiv PRIVATE ${LIGHTUSD_LEGACY_TARGET_STATIC})
   target_include_directories(feat-subdiv PRIVATE ${PROJECT_SOURCE_DIR}/src)
-  add_test(NAME feat-subdiv COMMAND feat-subdiv
-           WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
   # Opt-in: verify tsd against an OpenSubdiv source checkout.
   # The required sdc/vtr/far sources are compiled directly from
@@ -2873,26 +2676,23 @@ if(LIGHTUSD_BUILD_TESTS)
     add_executable(feat-subdiv-verify tests/feat/subdiv/subdiv-verify-osd.cc)
     add_sanitizers(feat-subdiv-verify)
     target_link_libraries(feat-subdiv-verify PRIVATE
-      tsd_osd_ref ${LIGHTUSD_TARGET_STATIC})
+      tsd_osd_ref ${LIGHTUSD_LEGACY_TARGET_STATIC})
     target_include_directories(feat-subdiv-verify PRIVATE
       ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-subdiv-verify COMMAND feat-subdiv-verify
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-    set_tests_properties(feat-subdiv-verify PROPERTIES LABELS "osd-verify")
   endif()
 
 endif(LIGHTUSD_BUILD_TESTS)
 
 # [VisualStudio]
 if(WIN32)
-  # Set ${LIGHTUSD_TARGET_STATIC} as a startup project for VS IDE
-  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_TARGET_STATIC})
+  # Set ${LIGHTUSD_LEGACY_TARGET_STATIC} as a startup project for VS IDE
+  set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${LIGHTUSD_LEGACY_TARGET_STATIC})
 
   # For easier debugging in VS IDE(cmake 3.8.0 or later required) Set working
-  # directory to ${LIGHTUSD_TARGET_STATIC} git repo root.
+  # directory to ${LIGHTUSD_LEGACY_TARGET_STATIC} git repo root.
   if(CMAKE_VERSION VERSION_GREATER 3.8.0)
     set_target_properties(
-      ${LIGHTUSD_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
+      ${LIGHTUSD_LEGACY_TARGET_STATIC} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY
                                            "${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 endif()

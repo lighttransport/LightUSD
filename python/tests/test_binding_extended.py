@@ -130,7 +130,7 @@ def test_stage_metadata_and_layer():
     stats = st2.stats
     assert stats["prim_count"] >= 0
     assert stats["memory_bytes"] > 0
-    # pseudo_root may be None on next core (reserved); check root_prims instead
+    # pseudo_root may be None on core (reserved); check root_prims instead
     assert len(st2.root_prims) >= 0
     assert st2.default_prim is None or st2.default_prim_path is None
     # define prim to satisfy default prim

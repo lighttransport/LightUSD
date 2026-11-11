@@ -89,11 +89,11 @@
   </div>
 
   <script type="module">
-    import { mountHttpAssetResolverDemo, flattenNextOverHttp, HttpAssetResolver } from './http-asset-resolver.js';
+    import { mountHttpAssetResolverDemo, flattenOverHttp, HttpAssetResolver } from './http-asset-resolver.js';
     const fileInput = document.getElementById('file-input');
     document.getElementById('btn-file').addEventListener('click', () => fileInput.click());
     mountHttpAssetResolverDemo({ fileInput }).then(demo => {
-      window.httpAssetDemo = {...demo, flattenNextOverHttp, HttpAssetResolver};
+      window.httpAssetDemo = {...demo, flattenOverHttp, HttpAssetResolver};
     }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
       window.renderError = e.message || String(e);

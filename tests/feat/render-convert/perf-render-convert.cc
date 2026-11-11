@@ -64,7 +64,7 @@ struct Options {
   int legacy_threads = -2;  // legacy converter num_threads (-2 = default)
   bool json = false;
   bool legacy_only = false;
-  bool next_only = false;
+  bool core_only = false;
   std::string scene;  // explicit scene file (optional)
 };
 
@@ -102,12 +102,12 @@ bool ParseOptions(int argc, char **argv, Options *opts) {
       opts->json = true;
     } else if (arg == "--legacy-only") {
       opts->legacy_only = true;
-    } else if (arg == "--next-only") {
-      opts->next_only = true;
+    } else if (arg == "--core-only") {
+      opts->core_only = true;
     } else if (arg == "--help" || arg == "-h") {
       std::printf(
           "Usage: %s [--prims N] [--iters N] [--threads N] [--json] "
-          "[--legacy-only] [--next-only] [--scene file.usda]\n",
+          "[--legacy-only] [--core-only] [--scene file.usda]\n",
           argv[0]);
       std::exit(0);
     } else {
@@ -416,7 +416,7 @@ BenchResult Bench(const std::string &path, int iters, int num_threads) {
 
 // ---------------------------- next pipeline -----------------------------
 
-namespace next_bench {
+namespace core_bench {
 
 template <typename ChunkedT>
 void HashChunked(const ChunkedT &arr, Hasher *hsh) {
@@ -506,7 +506,7 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
   return res;
 }
 
-}  // namespace next_bench
+}  // namespace core_bench
 
 #endif  // PERFRC_HAS_CORE
 
@@ -519,7 +519,7 @@ int main(int argc, char **argv) {
   }
 
   constexpr bool have_legacy = (PERFRC_ENABLE_LEGACY != 0);
-  constexpr bool have_next = (PERFRC_HAS_CORE != 0);
+  constexpr bool have_core = (PERFRC_HAS_CORE != 0);
 
   std::string scene_path = opts.scene;
   std::string cleanup_path;
@@ -546,10 +546,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  const bool want_legacy = have_legacy && !opts.next_only;
-  const bool want_next = have_next && !opts.legacy_only;
+  const bool want_legacy = have_legacy && !opts.core_only;
+  const bool want_core = have_core && !opts.legacy_only;
 
-  if (opts.next_only && !have_next) {
+  if (opts.core_only && !have_core) {
     std::fprintf(stderr,
                  "next converter not compiled in (build with "
                  "PERFRC_ENABLE_CORE)\n");
@@ -586,8 +586,8 @@ int main(int argc, char **argv) {
 #endif
 
 #if PERFRC_HAS_CORE
-  if (want_next) {
-    BenchResult r = next_bench::Bench(scene_path, opts.iters, opts.threads);
+  if (want_core) {
+    BenchResult r = core_bench::Bench(scene_path, opts.iters, opts.threads);
     if (!r.ok) {
       std::fprintf(stderr, "next: %s\n", r.err.c_str());
       all_ok = false;

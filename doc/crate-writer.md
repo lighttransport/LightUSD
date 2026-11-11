@@ -4,13 +4,13 @@ The LightUSD USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 
 > **Two crate writers in the current codebase.** This document primarily covers
 > the **classic** writer (`src/crate-writer*.cc`, driven by `Stage` via
-> `stage-converter.cc`, exposed by `lusdcat`). The refactored **`next`** engine
-> ships a second, independent crate writer under `src/next/crate/` (used by the
-> `next` pipeline — `next_usdcat -f -o out.usdc`, the wasm `--pipeline stream-next`
+> `stage-converter.cc`, exposed by `lusdcat`). The refactored **core** engine
+> ships a second, independent crate writer under `src/crate/` (used by the
+> core pipeline — `lusdcat -f -o out.usdc`, the wasm `--pipeline stream-core`
 > USDZ path, etc.). The two share the on-disk format and the dedup principles
 > below, but are separate implementations. The dedup/format reference sections
-> apply to both; the [`next` crate writer performance](#next-crate-writer-performance--remaining-opportunities)
-> section at the end is specific to `src/next/crate/`.
+> apply to both; the [`core` crate writer performance](#core-crate-writer-performance--remaining-opportunities)
+> section at the end is specific to `src/crate/`.
 
 ## Integration Points
 
@@ -20,8 +20,8 @@ The LightUSD USDC Crate Writer writes USD Stage data to binary USDC (Crate) form
 - CLI: `examples/lusdcat` with `-o/--output` option
 - Unit tests: `tests/unit/unit-crate-writer.cc`
 
-**`next` writer (`src/next/crate/`):** a single `crate-writer.cc` translation unit
-that `#include`s the `Impl` body split across `crate-writer-{impl,write,tables,passthrough,values,properties,fields,sections}.inc` (+ `crate-writer-types.{hh,cc}`, `crate-writer.hh`). Public API in `src/next/writer/usdc-writer.{hh,cc}` (`WriteUSDCToFile`/`WriteUSDCToMemory`/`WriteLayerToUSDC*`); built directly from a composed `next::Layer` (no `stage-converter` step). Tests: `tests/next/test_usdc_{writer,roundtrip,malformed}.cc` (the reader is
+**core writer (`src/crate/`):** a single `crate-writer.cc` translation unit
+that `#include`s the `Impl` body split across `crate-writer-{impl,write,tables,passthrough,values,properties,fields,sections}.inc` (+ `crate-writer-types.{hh,cc}`, `crate-writer.hh`). Public API in `src/writer/usdc-writer.{hh,cc}` (`WriteUSDCToFile`/`WriteUSDCToMemory`/`WriteLayerToUSDC*`); built directly from a composed `lightusd::Layer` (no `stage-converter` step). Tests: `tests/core/test_usdc_{writer,roundtrip,malformed}.cc` (the reader is
 exercised by `test_usdc.cc` / `test_usdcat_roundtrip.cc`). A lazy-array **pass-through** (`crate-writer-passthrough.inc`, `TryPassThrough`) copies a POD array block verbatim from the memory-mapped source crate when the type/version are compatible, so a read→write of an unchanged array never re-encodes.
 
 ## Usage
@@ -415,8 +415,8 @@ and the dedup constants, not the O(specs) global-interning floor:
 ## Verification expectations
 
 `num_threads=1` `cmp`-equals `num_threads=8/16` (deterministic). USDC tests:
-`ctest --test-dir build-next -R usdc` (THREADS OFF) + the threaded build. For
-stream-next/wasm (single-threaded → serial path), the produced root `.usdc` is
+`ctest --test-dir build-core -R usdc` (THREADS OFF) + the threaded build. For
+stream-core/wasm (single-threaded → serial path), the produced root `.usdc` is
 byte-identical to the pre-change writer — confirmed on a large UE-export scene by
 building both and comparing (root crate md5-identical; mesh count matches OpenUSD;
 Pixar `usdcat` valid).

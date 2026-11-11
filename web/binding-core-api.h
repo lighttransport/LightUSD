@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-#ifndef LIGHTUSD_WEB_NEXT_API_H_
-#define LIGHTUSD_WEB_NEXT_API_H_
+#ifndef LIGHTUSD_WEB_CORE_API_H_
+#define LIGHTUSD_WEB_CORE_API_H_
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
@@ -26,7 +26,7 @@ int32_t lightusd_wasm_layer_export_usdz(uint32_t handle,
                                         uint8_t root_format);
 int32_t lightusd_wasm_layer_export_usdz_copy(uint32_t handle, uint8_t* out,
                                              uint32_t cap);
-/* Memory-bounded next-only image encoding. PNG, BMP, TIFF/DNG, and optional EXR are supported; returns
+/* Memory-bounded core image encoding. PNG, BMP, TIFF/DNG, and optional EXR are supported; returns
  * encoded byte count, 2 for invalid dimensions, -2 for unsupported format,
  * -3 when encoded output exceeds the 512 MiB cap, and -1 for bad arguments.
  * Query with out=NULL/cap=0, then call again with an output buffer. */
@@ -50,7 +50,7 @@ int32_t lightusd_image_job_info(uint32_t,uint8_t*,uint32_t);
 uintptr_t lightusd_image_job_data(uint32_t,uint32_t);
 int32_t lightusd_image_job_size(uint32_t,uint32_t);
 void lightusd_image_job_release(uint32_t);
-/* Next-only root rewrite. The result bytes remain owned by the converter
+/* Core-only root rewrite. The result bytes remain owned by the converter
  * until its next rewrite or destruction; buffer queries copy them. Format is
  * 0=USDC, 1=USDA. A zero max_memory keeps finite library defaults. */
 typedef struct lightusd_wasm_rewrite_options {
@@ -139,7 +139,7 @@ uint8_t* lightusd_wasm_validate_json(const uint8_t* data, uint32_t size,
                                     uint32_t filename_size,
                                     const uint8_t* options_json,
                                     uint32_t options_size);
-/* Full lusdchecker report. asset_store is 0 or a live NextAssetStore handle.
+/* Full lusdchecker report. asset_store is 0 or a live AssetStore handle.
  * Reads only supplied memory assets. Same ownership as validate_json. */
 uint8_t* lightusd_wasm_check_json(const uint8_t* data, uint32_t size,
     const uint8_t* filename, uint32_t filename_size,
@@ -234,7 +234,7 @@ int32_t lightusd_wasm_render_stream_asset_cancel(uint32_t handle,
     const uint8_t* name, uint32_t name_size);
 int32_t lightusd_wasm_render_begin_streamed_asset(uint32_t handle,
     const uint8_t* name, uint32_t name_size);
-/* Shared next-only memory asset store. Empty identifier requests a generated
+/* Shared core memory asset store. Empty identifier requests a generated
  * usd-anon identifier. Register returns its UTF-8 byte length, or negative. */
 int32_t lightusd_wasm_asset_store_register(uint32_t handle,
     const uint8_t* identifier, uint32_t identifier_size,
@@ -343,7 +343,7 @@ int32_t lightusd_wasm_render_provide_asset(uint32_t handle,
                                           uint32_t name_size,
                                           const uint8_t* bytes,
                                           uint32_t byte_size);
-/* Imports a snapshot of a standalone NextAssetStore for composition and
+/* Imports a snapshot of a standalone AssetStore for composition and
  * resolver-backed dependencies. Returns 0 on success, -1 on invalid input. */
 int32_t lightusd_wasm_render_import_asset_store(uint32_t render_handle,
                                                uint32_t asset_store_handle);
@@ -1014,7 +1014,7 @@ int32_t lightusd_wasm_render_warning(uint32_t handle, char* out, uint32_t cap);
  * length and NUL-terminate when a non-empty output buffer is supplied. */
 int32_t lightusd_wasm_render_composition_record(uint32_t handle,
     uint8_t field, uint32_t index, char* out, uint32_t cap);
-/* NextFlattenSession typed input path. begin/provide return 1 for success,
+/* FlattenSession typed input path. begin/provide return 1 for success,
  * 0 for a session error, -1 for an invalid handle. Other mutators return
  * 0 on success and -1 for invalid input/handle. */
 int32_t lightusd_wasm_flatten_begin(uint32_t handle, const uint8_t* root,
@@ -1106,82 +1106,82 @@ int32_t lightusd_wasm_flatten_release_step(uint32_t handle);
 }
 namespace lightusd {
 namespace web_core {
-void* NextCreateObject(uint32_t kind);
-void NextDestroyObject(uint32_t kind, void* object);
-int NextFlattenBegin(void* object, const uint8_t* root, uint32_t root_size,
+void* CreateObject(uint32_t kind);
+void DestroyObject(uint32_t kind, void* object);
+int FlattenBegin(void* object, const uint8_t* root, uint32_t root_size,
                      const uint8_t* name, uint32_t name_size, bool lazy_arrays);
-int NextFlattenProvideLayer(void* object, const uint8_t* key,
+int FlattenProvideLayer(void* object, const uint8_t* key,
                             uint32_t key_size, const uint8_t* data,
                             uint32_t data_size);
-int NextFlattenAddSublayer(void* object, const uint8_t* path,
+int FlattenAddSublayer(void* object, const uint8_t* path,
                            uint32_t path_size);
-int NextFlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
+int FlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
                           const uint8_t* prim_path, uint32_t prim_size,
                           const uint8_t* asset_path, uint32_t asset_size,
                           const uint8_t* target_path, uint32_t target_size);
-int NextFlattenSetCompositionMask(void* object, uint32_t mask);
-int NextFlattenSetRebaseAssetPaths(void* object, bool enabled);
-int NextFlattenSetAssetPathRemap(void* object, const uint8_t* json,
+int FlattenSetCompositionMask(void* object, uint32_t mask);
+int FlattenSetRebaseAssetPaths(void* object, bool enabled);
+int FlattenSetAssetPathRemap(void* object, const uint8_t* json,
                                 uint32_t json_size);
-int NextFlattenRemapLayerAssetPaths(void* object, const uint8_t* json,
+int FlattenRemapLayerAssetPaths(void* object, const uint8_t* json,
                                    uint32_t json_size);
-int NextFlattenSetMaxInputBytes(void* object, uint32_t limit_bytes);
-int NextFlattenMaxInputBytes(void* object);
-int NextFlattenSetMaxOutputBytes(void* object, uint32_t limit_bytes);
-int NextFlattenMaxOutputBytes(void* object);
-int NextFlattenInputBytes(void* object);
-int NextFlattenPreflightLayer(void* object, const uint8_t* key,
+int FlattenSetMaxInputBytes(void* object, uint32_t limit_bytes);
+int FlattenMaxInputBytes(void* object);
+int FlattenSetMaxOutputBytes(void* object, uint32_t limit_bytes);
+int FlattenMaxOutputBytes(void* object);
+int FlattenInputBytes(void* object);
+int FlattenPreflightLayer(void* object, const uint8_t* key,
                               uint32_t key_size, uint32_t data_size);
-int NextFlattenSetVariant(void* object, const uint8_t* key,
+int FlattenSetVariant(void* object, const uint8_t* key,
                           uint32_t key_size, const uint8_t* selection,
                           uint32_t selection_size);
-void NextFlattenEnd(void* object);
-int NextFlattenError(void* object, uint8_t* out, uint32_t cap);
-int NextFlattenStep(void* object, uint32_t callback_id,
+void FlattenEnd(void* object);
+int FlattenError(void* object, uint8_t* out, uint32_t cap);
+int FlattenStep(void* object, uint32_t callback_id,
                     lightusd_wasm_flatten_step_info* out);
-int NextFlattenStepBuffer(void* object, uint8_t kind, uint32_t index,
+int FlattenStepBuffer(void* object, uint8_t kind, uint32_t index,
                           uint8_t* out, uint32_t cap);
-int NextFlattenLayerDependencyCount(void* object);
-void NextFlattenReleaseStep(void* object);
-int NextConverterUDIM(void*, bool, const uint8_t*, uint32_t);
-int NextConverterUDIMCopy(void*, uint8_t*, uint32_t);
-int NextConverterRewrite(void* object, const uint8_t* data, uint32_t size,
+int FlattenLayerDependencyCount(void* object);
+void FlattenReleaseStep(void* object);
+int ConverterUDIM(void*, bool, const uint8_t*, uint32_t);
+int ConverterUDIMCopy(void*, uint8_t*, uint32_t);
+int ConverterRewrite(void* object, const uint8_t* data, uint32_t size,
                          const lightusd_wasm_rewrite_options* options,
                          lightusd_wasm_rewrite_info* out);
-int NextConverterRewriteBuffer(void* object, uint8_t* out, uint32_t cap);
-int NextConverterString(void* object, uint8_t kind, uint8_t* out, uint32_t cap);
-int NextConverterSetBytes(void* object, uint8_t kind, const uint8_t* name,
+int ConverterRewriteBuffer(void* object, uint8_t* out, uint32_t cap);
+int ConverterString(void* object, uint8_t kind, uint8_t* out, uint32_t cap);
+int ConverterSetBytes(void* object, uint8_t kind, const uint8_t* name,
                           uint32_t name_size, const uint8_t* data,
                           uint32_t size);
-int NextConverterPreflightAsset(void* object, const uint8_t* name,
+int ConverterPreflightAsset(void* object, const uint8_t* name,
                                 uint32_t name_size, uint32_t size);
-int NextConverterRootPreflight(void* object, uint32_t size);
-int NextConverterPreflightMesh(void* object, const uint8_t* name,
+int ConverterRootPreflight(void* object, uint32_t size);
+int ConverterPreflightMesh(void* object, const uint8_t* name,
                                uint32_t name_size, uint32_t position_count,
                                uint32_t normal_count, uint32_t uv_count,
                                uint32_t index_count);
-int NextConverterSetMesh(void* object, const uint8_t* name,
+int ConverterSetMesh(void* object, const uint8_t* name,
                          uint32_t name_size, const float* positions,
                          uint32_t position_count, const float* normals,
                          uint32_t normal_count, const float* uvs,
                          uint32_t uv_count, const uint32_t* indices,
                          uint32_t index_count);
-int NextConverterControl(void* object, uint8_t kind, int32_t first,
+int ConverterControl(void* object, uint8_t kind, int32_t first,
                          int32_t second);
-int NextConverterExport(void* object, uint8_t kind);
-int NextConverterExportConfigured(void* object, const uint8_t* data, uint32_t size);
-int NextConverterExportWithOptions(void* object, uint8_t kind,
+int ConverterExport(void* object, uint8_t kind);
+int ConverterExportConfigured(void* object, const uint8_t* data, uint32_t size);
+int ConverterExportWithOptions(void* object, uint8_t kind,
                                    uint8_t root_format);
-int NextConverterExportWithRemap(void* object, const uint8_t* remap_json,
+int ConverterExportWithRemap(void* object, const uint8_t* remap_json,
                                  uint32_t remap_json_size,
                                  uint8_t root_format);
-const uint8_t* NextConverterExportData(void* object);
-int NextConverterExportBuffer(void* object, uint8_t* out, uint32_t cap);
-uint8_t* NextValidateJSON(const uint8_t* data, uint32_t size,
+const uint8_t* ConverterExportData(void* object);
+int ConverterExportBuffer(void* object, uint8_t* out, uint32_t cap);
+uint8_t* ValidateJSON(const uint8_t* data, uint32_t size,
                           const uint8_t* filename, uint32_t filename_size,
                           const uint8_t* options, uint32_t options_size);
 
-uint8_t* NextDiffJSON(const lightusd_wasm_diff_options* options,
+uint8_t* DiffJSON(const lightusd_wasm_diff_options* options,
                       const uint8_t* left, uint32_t left_size,
                       const uint8_t* left_name, uint32_t left_name_size,
                       const uint8_t* right, uint32_t right_size,

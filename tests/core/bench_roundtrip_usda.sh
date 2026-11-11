@@ -16,7 +16,7 @@
 set -u
 
 BIN="${BIN:-build_next_thr/lusdcat}"
-TMP="${TMP:-${TMPDIR:-/tmp}/lightusd-next-bench}"
+TMP="${TMP:-${TMPDIR:-/tmp}/lightusd-core-bench}"
 THREADS=""          # empty = auto
 USE_O=0             # 1 = use `-o <file>` (FdSink) instead of stdout redirect
 ROUNDTRIP=0

@@ -19,11 +19,11 @@ namespace tn = lightusd;
 namespace tr = lightusd::tydra;
 namespace lightusd {
 namespace web_core {
-extern "C" bool reportNextLoadProgress(const char* phase, double current, double total)
-    EM_IMPORT(reportNextLoadProgress);
-extern "C" bool reportNextLayerLoadProgress(const char* phase, double current,
+extern "C" bool reportLoadProgress(const char* phase, double current, double total)
+    EM_IMPORT(reportLoadProgress);
+extern "C" bool reportLayerLoadProgress(const char* phase, double current,
                                              double total)
-    EM_IMPORT(reportNextLayerLoadProgress);
+    EM_IMPORT(reportLayerLoadProgress);
 bool IsUSDCBytes(const std::string& bytes);
 // Size-query copy: return required bytes; leave undersized destinations untouched.
 int CopyOutputString(const std::string& value, uint8_t* out, uint32_t cap);
@@ -44,7 +44,7 @@ std::string RenderMaterialJson(const tr::RenderScene& scene,
                                const tr::RenderMaterial& mat);
 size_t AnimationComponentCount(const tr::AnimationChannel& channel);
 int AnimationTargetNodeCount(const tr::AnimationClip& clip);
-std::unique_ptr<tn::Layer> ParseNextLayerBytes(
+std::unique_ptr<tn::Layer> ParseLayerBytes(
     const uint8_t* data, size_t size, const std::string& key,
     const tn::CrateReadOptions& read_opts, std::string* error);
 template <typename T>

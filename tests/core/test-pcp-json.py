@@ -52,7 +52,7 @@ class ComparisonTests(unittest.TestCase):
             case.mkdir(parents=True)
             (case / 'pcp.json').write_text('{"Entry":"root.usd","Composing":{}}')
             result = subprocess.run([sys.executable, str(HERE / 'run-aousd-supplemental.py'),
-                '--suite-root', str(base), '--next-usdcat', ARGS.lusdcat,
+                '--suite-root', str(base), '--lusdcat', ARGS.lusdcat,
                 '--category', 'composition'], capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertIn('case count differs from the pinned release', result.stderr)

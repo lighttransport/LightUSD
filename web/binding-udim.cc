@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Shared by combined and next-only products; no emval or legacy scene
+// Shared by combined and core products; no emval or legacy scene
 // dependency.
 #include <emscripten/emscripten.h>
 #include <emscripten/heap.h>

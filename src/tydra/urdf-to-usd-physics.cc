@@ -528,7 +528,7 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
     if (legacy || ActiveProfile().MjcOnly() || !(steps > 0.0) || std::fabs(1.0 / steps - timestep) > 1e-12 * timestep)
       Set(scene, "mjc:option:timestep", tn::Value(timestep), "double", true);
   }
-  // next-only: the solver timestep also under the flat mjc:timestep name.
+  // core: the solver timestep also under the flat mjc:timestep name.
   if (legacy) Set(scene, "mjc:timestep", tn::Value(timestep), "double");
   // Full <option>/<flag>/<compiler> set (overrides/augments timestep).
   ApplyMjcSceneOptions(scene, root);

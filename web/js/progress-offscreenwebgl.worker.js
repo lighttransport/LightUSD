@@ -28,10 +28,10 @@ import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils, TextureLoadingManager } from './src/lightusd/LightUSDLoaderUtils.js';
 import { setLightUSD as setMaterialXLightUSD } from './src/lightusd/LightUSDMaterialX.js';
 import {
-    buildNextThreeNode,
-    isNextScene,
-    readNextSceneMeta
-} from './src/lightusd/NextRenderSceneUtils.js';
+    buildThreeNode,
+    isScene,
+    readSceneMeta
+} from './src/lightusd/RenderSceneUtils.js';
 
 // ---- Worker-compatible image loading patch ----
 THREE.ImageLoader.prototype.load = function (url, onLoad, _onProgress, onError) {
@@ -370,7 +370,7 @@ function applyEnv() {
 // USD Loading with progress
 // ============================================================================
 
-async function handleLoadFile({ data, filename, backend = 'next' }) {
+async function handleLoadFile({ data, filename, backend = 'core' }) {
     sendStatus(`Loading: ${filename}...`);
 
     try {
@@ -393,13 +393,13 @@ const COROUTINE_PHASE_MAP = {
     complete:  { stage: 'building', pct: 80, label: 'Parse complete' },
 };
 
-async function loadUSDFromData(data, filename, backend = 'next') {
+async function loadUSDFromData(data, filename, backend = 'core') {
     clearScene();
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
-    const useNext = backend === 'next' || backend === 'auto';
-    const useAsync = !useNext && loaderState.loader.hasAsyncSupport();
+    const useCore = backend === 'core' || backend === 'auto';
+    const useAsync = !useCore && loaderState.loader.hasAsyncSupport();
     console.log(`[Worker] Coroutine async: ${useAsync ? 'ON' : 'OFF'}` +
         (useAsync && DEBUG_PARSE_DELAY_MS > 0 ? `, debug delay: ${DEBUG_PARSE_DELAY_MS}ms/phase` : ''));
 
@@ -454,17 +454,17 @@ async function loadUSDFromData(data, filename, backend = 'next') {
 
     loaderState.nativeLoader = usd;
 
-    if (isNextScene(usd)) {
-        const metadata = readNextSceneMeta(usd);
+    if (isScene(usd)) {
+        const metadata = readSceneMeta(usd);
         sceneState.upAxis = metadata.upAxis || 'Y';
         sendProgress('building', 80, 'Building next render scene...');
-        const built = buildNextThreeNode(usd, {
+        const built = buildThreeNode(usd, {
             skipTextures: false,
             lazyTextures: true,
             onProgress: (info) => {
                 const pct = 80 + Math.min(1, Math.max(0, info.percentage / 100)) * 14;
                 sendProgress('building', pct, info.message ||
-                    `Building next scene (${info.builtMeshes}/${info.totalMeshes})...`);
+                    `Building core scene (${info.builtMeshes}/${info.totalMeshes})...`);
             },
             progressInterval: 20
         });
@@ -503,10 +503,10 @@ async function loadUSDFromData(data, filename, backend = 'next') {
                     isComplete: true
                 });
             }).catch(err => {
-                console.warn('[Worker] Next texture loading failed:', err);
+                console.warn('[Worker] core texture loading failed:', err);
             });
         }
-        console.log('[Worker] next backend rendered geometry/materials from RenderScene; legacy node APIs are skipped.');
+        console.log('[Worker] core backend rendered geometry/materials from RenderScene; legacy node APIs are skipped.');
         const sceneEntityCounts = readSceneEntityCounts(usd);
         sendLoaded(
             sceneState.meshCount,

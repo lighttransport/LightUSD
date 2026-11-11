@@ -53,7 +53,7 @@ std::string UsdaFixturePath(const std::string& filename) {
   return file_path.substr(0, pos) + "/tests/usda/" + filename;
 }
 
-std::string NextFixturePath(const std::string& filename) {
+std::string CoreFixturePath(const std::string& filename) {
   const std::string file_path(__FILE__);
   const size_t slash = file_path.rfind('/');
   assert(slash != std::string::npos);
@@ -61,7 +61,7 @@ std::string NextFixturePath(const std::string& filename) {
 }
 
 std::vector<uint8_t> ReadHexFixture(const std::string& filename) {
-  std::ifstream ifs(NextFixturePath(filename));
+  std::ifstream ifs(CoreFixturePath(filename));
   assert(ifs);
   std::vector<uint8_t> bytes;
   char hi = 0;
@@ -651,7 +651,7 @@ void TestRelationshipForwarding() {
   LoadOptions strict;
   strict.parse_options.strict_aousd_conformance = true;
   LoadResult result = LoadUSDAFromFile(
-      NextFixturePath("aousd-relationship-forwarding.usda"), strict);
+      CoreFixturePath("aousd-relationship-forwarding.usda"), strict);
   assert(result.success);
 
   const UsdPrim foo = result.stage.GetPrimAtPath("/foo");
@@ -690,7 +690,7 @@ void TestAuthoredEmptyMetadata() {
   LoadOptions strict;
   strict.parse_options.strict_aousd_conformance = true;
   LoadResult default_prim = LoadUSDAFromFile(
-      NextFixturePath("aousd-authored-empty-defaultprim.usda"), strict);
+      CoreFixturePath("aousd-authored-empty-defaultprim.usda"), strict);
   assert(default_prim.success);
   const Layer* default_prim_layer = default_prim.stage.GetRootLayer();
   assert(default_prim_layer && default_prim_layer->meta().defaultPrim_set &&
@@ -721,7 +721,7 @@ void TestAuthoredEmptyMetadata() {
          "authored-empty defaultPrim must block a weaker defaultPrim");
 
   LoadResult result = LoadUSDAFromFile(
-      NextFixturePath("aousd-authored-empty-metadata.usda"), strict);
+      CoreFixturePath("aousd-authored-empty-metadata.usda"), strict);
   assert(result.success);
   const Layer* layer = result.stage.GetRootLayer();
   assert(layer && layer->meta().doc_set && layer->meta().doc.empty());
@@ -828,7 +828,7 @@ void TestAuthoredEmptyMetadata() {
   assert(empty_variant_merged.meta().variantSelections() == empty_look);
 
   LoadResult dictionaries = LoadUSDAFromFile(
-      NextFixturePath("aousd-authored-empty-dictionaries.usda"), strict);
+      CoreFixturePath("aousd-authored-empty-dictionaries.usda"), strict);
   assert(dictionaries.success);
   const Layer* dict_layer = dictionaries.stage.GetRootLayer();
   const UsdPrim dict_prim = dictionaries.stage.GetPrimAtPath("/P");
@@ -858,7 +858,7 @@ void TestAuthoredEmptyMetadata() {
   assert(count(dict_back_usda, "customData = {") == 2);
 
   LoadResult color = LoadUSDAFromFile(
-      NextFixturePath("aousd-authored-empty-color.usda"), strict);
+      CoreFixturePath("aousd-authored-empty-color.usda"), strict);
   assert(color.success);
   const Layer* color_layer = color.stage.GetRootLayer();
   assert(color_layer && color_layer->meta().colorConfiguration_set &&
@@ -918,9 +918,9 @@ void TestSpecifierResolution() {
   LoadOptions strict;
   strict.parse_options.strict_aousd_conformance = true;
   LoadResult strong = LoadUSDAFromFile(
-      NextFixturePath("aousd-specifier-strong.usda"), strict);
+      CoreFixturePath("aousd-specifier-strong.usda"), strict);
   LoadResult weak = LoadUSDAFromFile(
-      NextFixturePath("aousd-specifier-weak.usda"), strict);
+      CoreFixturePath("aousd-specifier-weak.usda"), strict);
   assert(strong.success && weak.success);
   std::unique_ptr<Layer> strong_layer = TakeLayer(&strong);
   std::unique_ptr<Layer> weak_layer = TakeLayer(&weak);
@@ -947,9 +947,9 @@ void TestSpecifierResolution() {
          PrimSpecifier::Def);
 
   LoadResult inherit_strong = LoadUSDAFromFile(
-      NextFixturePath("aousd-specifier-inherit-strong.usda"), strict);
+      CoreFixturePath("aousd-specifier-inherit-strong.usda"), strict);
   LoadResult inherit_weak = LoadUSDAFromFile(
-      NextFixturePath("aousd-specifier-inherit-weak.usda"), strict);
+      CoreFixturePath("aousd-specifier-inherit-weak.usda"), strict);
   assert(inherit_strong.success && inherit_weak.success);
   std::unique_ptr<Layer> inherit_strong_layer = TakeLayer(&inherit_strong);
   std::unique_ptr<Layer> inherit_weak_layer = TakeLayer(&inherit_weak);
@@ -976,7 +976,7 @@ void TestSpecifierResolution() {
          "weaker local and direct-inherit specifier rules must match AOUSD");
 
   LoadResult multi = LoadUSDAFromFile(
-      NextFixturePath("aousd-specifier-specializes.usda"), strict);
+      CoreFixturePath("aousd-specifier-specializes.usda"), strict);
   assert(multi.success);
   std::unique_ptr<Layer> multi_layer = TakeLayer(&multi);
   Compositor multi_compositor;
@@ -1182,9 +1182,9 @@ void TestApiSchemaListOpFidelity() {
          mixed_back.ordered == mixed.ordered);
 
   LoadResult strong = LoadUSDAFromFile(
-      NextFixturePath("aousd-apischemas-compose-strong.usda"));
+      CoreFixturePath("aousd-apischemas-compose-strong.usda"));
   LoadResult weak = LoadUSDAFromFile(
-      NextFixturePath("aousd-apischemas-compose-weak.usda"));
+      CoreFixturePath("aousd-apischemas-compose-weak.usda"));
   assert(strong.success && weak.success);
   std::unique_ptr<Layer> strong_layer = TakeLayer(&strong);
   std::unique_ptr<Layer> weak_layer = TakeLayer(&weak);
@@ -1197,7 +1197,7 @@ void TestApiSchemaListOpFidelity() {
     return std::make_unique<Layer>(weak_layer->Clone());
   });
   std::unique_ptr<Layer> composed = compositor.Compose(
-      *strong_layer, NextFixturePath("aousd-apischemas-compose-strong.usda"));
+      *strong_layer, CoreFixturePath("aousd-apischemas-compose-strong.usda"));
   assert(composed);
   const PrimSpec* composed_prim = composed->prim_at_path("/P");
   assert(composed_prim &&
@@ -1278,7 +1278,7 @@ void TestStageQueryAncestry() {
   LoadOptions strict;
   strict.parse_options.strict_aousd_conformance = true;
   LoadResult result = LoadUSDAFromFile(
-      NextFixturePath("aousd-stage-query-ancestry.usda"), strict);
+      CoreFixturePath("aousd-stage-query-ancestry.usda"), strict);
   assert(result.success);
 
   const UsdPrim class_child =
@@ -1310,7 +1310,7 @@ void TestStageQueryAncestry() {
          "a stronger active=true child cannot override an inactive ancestor");
 
   LoadResult models = LoadUSDAFromFile(
-      NextFixturePath("aousd-model-hierarchy.usda"), strict);
+      CoreFixturePath("aousd-model-hierarchy.usda"), strict);
   assert(models.success);
   assert(models.stage.GetPrimAtPath("/RootGroup").IsInModelHierarchy());
   assert(models.stage.GetPrimAtPath("/RootGroup/Assembly")

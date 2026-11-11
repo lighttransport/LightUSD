@@ -141,7 +141,7 @@ for (const coreModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
     assert.notEqual(feature.HEAPU8.buffer, instance.HEAPU8.buffer);
     assert.deepEqual(feature.featureInfo, instance.featureInfo);
   }
-  for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
+  for (const api of ['USDZConverterNative', 'FlattenSession', 'RenderStream']) {
     assert.equal(typeof instance[api], 'function', coreModule + ' exposes ' + api);
   }
 }
@@ -149,15 +149,14 @@ for (const coreModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
 // The legacy and combined modules are never published.
 for (const legacyModule of ['lightusd/lightusd_legacy.js', 'lightusd/lightusd_legacy_64.js',
                             'lightusd/lightusd_combined.js',
-                            // Pre-1.1 name of the core module; no shim is shipped.
-                            'lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
+                            'lightusd/lightusd_combined_64.js']) {
   await assert.rejects(import(legacyModule), legacyModule + ' must not be published');
 }
 
 // The loader runs on the core module; a requested legacy backend is ignored
 // with a warning.
 for (const useMemory64 of [false, true]) {
-  for (const backend of ['next', 'legacy']) {
+  for (const backend of ['core', 'legacy']) {
     const loader = new pkg.LightUSDLoader();
     await loader.init({ backend, useMemory64 });
     const usda = new TextEncoder().encode('#usda 1.0\\ndef Xform "Root" {}\\n');

@@ -77,7 +77,7 @@ stream.delete();
 assert.deepEqual([...image.data],[12,34,56,255]);
 const loose=await createCoreRenderInspector(native,new TextEncoder().encode('#usda 1.0\ndef Cube "Box" {}\n'),'box.usda');
 assert.equal(loose.numMeshes(),1);loose.delete();
-const cache=new native.NextAssetStore();
+const cache=new native.AssetStore();
 cache.registerMemoryAsset('nested/root.usda',source);
 cache.registerMemoryAsset('nested/textures/check.png',encode([12,34,56,255]));
 cache.registerMemoryAsset('textures/check.png',encode([255,0,0,255]));

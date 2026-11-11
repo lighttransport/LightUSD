@@ -1,12 +1,10 @@
 # LightUSD Python Binding
 
-LightUSD ships a CPython extension package named `lightusd` **v1.0.0**
-(next core, `preview` npm dist-tag), built on the **next core**
-(`src/next/` + `src/tydra/next/`) through the C API (`src/c-api/`). The
-legacy lightusd core is not linked into the Python wheel. Native C++ (`cmake
--S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
-`LIGHTUSD_WASM_PRODUCT=legacy/next/combined`) still build and ship the legacy
-path.
+LightUSD ships a CPython extension package named `lightusd`, built on the
+**core** implementation (`src/` + `src/tydra/`) through the C API
+(`src/c-api/`). The legacy lightusd core is not linked into the Python wheel.
+Native C++ (`cmake -S .`) and WASM (`web/CMakeLists.txt` with
+`LIGHTUSD_WASM_PRODUCT=legacy/core/combined`) still build the legacy path.
 
 End-user package documentation lives in [../python/README.md](../python/README.md).
 This page is for source builds and maintainer notes.
@@ -29,8 +27,8 @@ python/lightusd/tydra.py      render-scene shim
 src/python/py-*.c             raw CPython C-API extension (lightusd._core)
 src/c-api/lightusd-c.*        core C API (lightusd_*): stage/prim/attr/authoring
 src/c-api/lightusd-render-c.* tydra render C API (buffers, materials, nodes)
-src/next/                     next core (parser, crate, composition, writers)
-src/tydra/next/               render-scene converter
+src/                          core (parser, crate, composition, writers)
+src/tydra/                    render-scene converter
 ```
 
 Single extension source, two build configurations:
@@ -47,7 +45,7 @@ Single extension source, two build configurations:
 ## Building from source
 
 ```bash
-pip install -e .          # drives CMake on src/next, then builds the extension
+pip install -e .          # drives CMake on src/, then builds the extension
 pytest python/tests -q
 ```
 

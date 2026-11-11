@@ -22,8 +22,8 @@
 namespace lightusd {
 namespace tydra {  template <typename T> struct ValueArrayRead;  }
 namespace web_core {
-class NextAssetStore;
-class NextLayerDocument;
+class AssetStore;
+class LayerDocument;
 class RenderStream {
  public:
   RenderStream();
@@ -84,8 +84,8 @@ class RenderStream {
 
   int provideAssetBytes(const uint8_t* name, uint32_t name_size,
                         const uint8_t* bytes, uint32_t byte_size);
-  int importAssetStore(const NextAssetStore& store);
-  int beginCachedAsset(NextAssetStore& store, const uint8_t* identifier,
+  int importAssetStore(const AssetStore& store);
+  int beginCachedAsset(AssetStore& store, const uint8_t* identifier,
                       uint32_t identifier_size);
   int clearImportedAssetStore();
   void reset();
@@ -107,7 +107,7 @@ class RenderStream {
                                      uint32_t offset, uint32_t byte_size);
   int finalizeStreamingAsset(const uint8_t* name, uint32_t name_size);
   int finalizeStreamingAssetToStore(const uint8_t* name, uint32_t name_size,
-                                   NextAssetStore& store);
+                                   AssetStore& store);
   int cancelStreamingAsset(const uint8_t* name, uint32_t name_size);
   int beginStreamingAssetAsRoot(const uint8_t* name, uint32_t name_size);
   int removeAssetBytes(const uint8_t* name, uint32_t name_size);
@@ -167,7 +167,7 @@ class RenderStream {
   int preflightBeginInput(uint32_t size);
   int beginBytes(const uint8_t* bytes, uint32_t size,
                  const std::string& source_uri = {});
-  int beginFromLayerDocument(NextLayerDocument& document);
+  int beginFromLayerDocument(LayerDocument& document);
   int exportStageUSDC();
   int stageUSDCSize() const;
   uintptr_t stageUSDCData() const;
@@ -972,7 +972,7 @@ class RenderStream {
   uint32_t provided_asset_byte_limit_{0};  // 0 = unlimited
   uint32_t max_input_bytes_{static_cast<uint32_t>(
       security_policy::kDefaultInputLimitBytes)};
-  // Next-only untrusted-load policy: keep one architecture-independent 1 GiB
+  // Core-only untrusted-load policy: keep one architecture-independent 1 GiB
   // resident default, independent of legacy WASM's 2/8 GiB render defaults.
   int32_t max_memory_limit_mb_{1024};
   struct VariantSetInfo {

@@ -87,7 +87,7 @@ USDA
 
 run_capture() {
   local scene="$1" image="$2" log="$3"
-  if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+  if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
       "${BACKEND_ARGS[@]}" --frames 1 --size 96x64 --camera Shot --time 1 \
       --screenshot "$image" "$scene" >"$log" 2>&1; then
     if [ "$MOTION_BACKEND" != cpu ] &&
@@ -152,7 +152,7 @@ if [ "$MOTION_BACKEND" != cpu ]; then
     exit 0
   fi
   if xvfb-run -a env XDG_CONFIG_HOME="$OUT/config-home-interactive" \
-      "$BIN" --next --backend gl --frames 240 --size 320x240 \
+      "$BIN" --core --backend gl --frames 240 --size 320x240 \
       --camera Shot --time 1 "${BACKEND_ARGS[@]}" --path-trace \
       --pt-samples 4 --pt-motion-segments 2 \
       --render-report "$OUT/interactive.json" "$OUT/open.usda" \

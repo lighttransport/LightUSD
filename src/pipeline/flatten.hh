@@ -71,7 +71,7 @@ struct FlattenOptions {
   // layers can map to different packaged assets.
   bool anchor_relative_asset_remap = false;
 
-  // Compose with the parallel `pcp::Cache` engine (as `next_usdcat -f`)
+  // Compose with the parallel `pcp::Cache` engine (as `lusdcat -f`)
   // instead of the serial `Compositor`: much faster on multi-reference scenes
   // and it resolves the full LIVRPS + variant + instancing set; the output is
   // a self-contained (instance Holder) flattened layer. External arcs resolve

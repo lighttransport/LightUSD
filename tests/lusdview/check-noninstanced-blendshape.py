@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""lusdview: a non-instanced blendshape mesh must animate on the default (--next)
+"""lusdview: a non-instanced blendshape mesh must animate on the default (--core)
 loader.
 
-The --next loader batches non-instanced meshes into shared vertex buffers and
+The --core loader batches non-instanced meshes into shared vertex buffers and
 world-bakes them. Blendshape morph is a per-vertex CSR keyed to the prim,
 applied in object space before the world transform, and its per-frame weight
 lookup needs the mesh's own absPath -- none of which survives a world-baked,
@@ -157,7 +157,7 @@ def main():
         print(f"FAIL: frames barely differ ({ratio:.2f}% of pixels) -- morph "
               f"likely not applied.")
         return 1
-    print(f"PASS: non-instanced blendshape animates on --next "
+    print(f"PASS: non-instanced blendshape animates on --core "
           f"({ratio:.1f}% of pixels change t=0 -> t=12)")
     return 0
 

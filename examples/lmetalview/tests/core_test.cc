@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// lmetalview core test: exercises the next+tydra preview scene ABI without
+// lmetalview core test: exercises the lightusd_core + tydra preview scene ABI without
 // a GPU. Verifies geometry, materials, decoded textures, animation scrubbing and
 // the shared camera controller, plus the GPU ABI constants used by the Swift
 // side.

@@ -1,5 +1,5 @@
 // Generated from aousd/core/1.0.1/core_spec.md by
-// scripts/generate-next-aousd-tables.py. Do not edit by hand.
+// scripts/generate-core-aousd-tables.py. Do not edit by hand.
 AOUSD_SCHEMA_FALLBACK("ColorSpaceDefinitionAPI", "name", "token",
                       Value::MakeToken("custom"))
 AOUSD_SCHEMA_FALLBACK("ColorSpaceDefinitionAPI", "redChroma", "float2",

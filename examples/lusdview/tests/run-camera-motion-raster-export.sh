@@ -5,16 +5,16 @@ SKIP=77
 ROOT="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 BIN="${1:-${LUSDVIEW:-$ROOT/build_ninja/lusdview}}"
 BACKEND="${3:-vk}"
-LOADER_MODE="${4:-next}"
+LOADER_MODE="${4:-core}"
 case "$BACKEND" in
   gl) DIRECT_WINDOW_ARGS=(); TEST_SIZE=320x240 ;;
   vk) DIRECT_WINDOW_ARGS=(--headless); TEST_SIZE=64x64 ;;
   *) echo "FAIL: backend must be gl or vk"; exit 1 ;;
 esac
 case "$LOADER_MODE" in
-  next) LOADER_ARGS=(--next); COMPANION_LOADER_ARGS=(--next) ;;
-  static) LOADER_ARGS=(--next); COMPANION_LOADER_ARGS=(--next) ;;
-  *) echo "FAIL: loader must be next or static"; exit 1 ;;
+  core) LOADER_ARGS=(--core); COMPANION_LOADER_ARGS=(--core) ;;
+  static) LOADER_ARGS=(--core); COMPANION_LOADER_ARGS=(--core) ;;
+  *) echo "FAIL: loader must be core or static"; exit 1 ;;
 esac
 [ -x "$BIN" ] || { echo "SKIP: lusdview not found"; exit "$SKIP"; }
 OUT="${LUSDVIEW_TEST_OUT:-$(mktemp -d)}"

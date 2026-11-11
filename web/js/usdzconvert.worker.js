@@ -25,9 +25,7 @@ function progress(info) {
 async function ensureWasm(pipeline) {
   if (native) return native;
   progress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
-  const importer = pipeline === 'next-only'
-    ? () => import('./src/lightusd/lightusd.js')
-    : () => import('./src/lightusd/lightusd.js');
+  const importer = () => import('./src/lightusd/lightusd.js');
   native = await loadWasm(importer, {
     onLightUSDDebug(event) {
       const now = performance.now();
@@ -144,14 +142,14 @@ async function runConversion(data) {
 
   progress({ stage: 'preparing', current: 1, total: 1, message: opts.rootPath });
   let result;
-  if (opts.pipeline === 'stream' || opts.pipeline === 'stream-next') {
+  if (opts.pipeline === 'stream' || opts.pipeline === 'stream-core') {
     if ((opts.targetTextureBytes || 0) > 0) {
       throw new Error('Streaming conversion does not support target total texture size yet.');
     }
     result = await convertSourceToUSDZStreaming(native, streamingSourceFromFiles(data.files), {
       ...opts,
-      pipeline: opts.pipeline === 'stream-next' ? 'next' : undefined,
-      nextPreloadUsdLayers: opts.pipeline === 'stream-next',
+      pipeline: opts.pipeline === 'stream-core' ? 'core' : undefined,
+      preloadUsdLayers: opts.pipeline === 'stream-core',
     });
   } else {
     result = await convertFolderToUSDZ(native, await readUploadedFiles(data.files), opts);

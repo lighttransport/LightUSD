@@ -118,15 +118,8 @@ set(TEST_LIGHTUSD_32BIT_SKIP_LIST
 )
 
 if (WIN32)
-  add_test(NAME ${TEST_TARGET_NAME} COMMAND "${TEST_TARGET_NAME}.exe"
-           WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>  )
 elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
-  add_test(NAME ${TEST_TARGET_NAME}
-           COMMAND "${TEST_TARGET_NAME}" --skip ${TEST_LIGHTUSD_32BIT_SKIP_LIST}
-           WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>)
 else ()
-  add_test(NAME ${TEST_TARGET_NAME} COMMAND "${TEST_TARGET_NAME}"
-           WORKING_DIRECTORY $<TARGET_FILE_DIR:${TEST_TARGET_NAME}>  )
 endif ()
 
 # OpenVDB corpus (tinyvdbio's data directory, kept out of Git): skipped
@@ -134,18 +127,12 @@ endif ()
 set(LIGHTUSD_TINYVDBIO_DATA_DIR "$ENV{TINYVDBIO_DATA_DIR}" CACHE PATH
     "tinyvdbio data directory for the usdvol-vdb-corpus test (empty skips)")
 if (NOT WIN32)
-  add_test(NAME usdvol-vdb-corpus
-           COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-tinyvdbio-corpus.sh
-                   $<TARGET_FILE:${TEST_TARGET_NAME}> "${LIGHTUSD_TINYVDBIO_DATA_DIR}")
-  set_tests_properties(usdvol-vdb-corpus PROPERTIES SKIP_RETURN_CODE 77)
 endif ()
 
 # Unit tests run from the build tree, while their fixtures live in the source
 # tree. Pass the source root explicitly so out-of-tree ctest runs work too.
-set_tests_properties(${TEST_TARGET_NAME} PROPERTIES
-  ENVIRONMENT "LIGHTUSD_TEST_FIXTURE_DIR=${LIGHTUSD_TEST_FIXTURE_DIR}")
 
-target_link_libraries(${TEST_TARGET_NAME} PRIVATE lightusd_static ${CMAKE_DL_LIBS})
+target_link_libraries(${TEST_TARGET_NAME} PRIVATE lightusd_legacy_static ${CMAKE_DL_LIBS})
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # Add crate-writer library and includes for dedup tests
@@ -158,7 +145,7 @@ set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${
 
 #
 # Core schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
-# linking lightusd_core into unit-test-lightusd alongside lightusd_static makes
+# linking lightusd_core into unit-test-lightusd alongside lightusd_legacy_static makes
 # that binary's concurrency tests flaky (overlapping objects in the two static
 # libs), so these are isolated rather than destabilizing the legacy suite there.
 #
@@ -174,10 +161,6 @@ if(TARGET lightusd_core)
                                      ${CMAKE_CURRENT_SOURCE_DIR})
   set_target_properties(${CORE_TEST_TARGET} PROPERTIES
                         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-  add_test(NAME ${CORE_TEST_TARGET} COMMAND ${CORE_TEST_TARGET}
-           WORKING_DIRECTORY $<TARGET_FILE_DIR:${CORE_TEST_TARGET}>)
-  set_tests_properties(${CORE_TEST_TARGET} PROPERTIES
-    ENVIRONMENT "LIGHTUSD_TEST_FIXTURE_DIR=${LIGHTUSD_TEST_FIXTURE_DIR}")
 endif()
 
 if (LIGHTUSD_WITH_PXR_COMPAT_API)

@@ -279,7 +279,7 @@ main() {
     exit 1
   fi
 
-  # The next-core lusdcat (tests/core/lusdcat.cc) prints only a
+  # The core lusdcat (tests/core/lusdcat.cc) prints only a
   # "loaded: N prims" summary unless asked for output; --rewrite-layer prints
   # the root layer as USDA, matching `usdcat <file>`. The legacy lusdcat
   # prints USDA by default. Detect which one we have unless LUSDCAT_ARGS is set.
@@ -381,7 +381,7 @@ OPTIONS:
 ENVIRONMENT VARIABLES:
   LUSDCAT_PATH            Override lusdcat path
   LUSDCAT_ARGS            Extra lusdcat args (default: auto, --rewrite-layer
-                          for the next-core lusdcat; set empty to disable)
+                          for the core lusdcat; set empty to disable)
   USDCAT_PATH             Override usdcat path
   TIMEOUT_MS              Override timeout
   SHOW_DETAILED_DIFF      Set to 'false' to disable detailed diffs (default: true)

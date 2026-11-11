@@ -56,7 +56,7 @@ EMSCRIPTEN_KEEPALIVE uint8_t* lu_validator_check(const uint8_t* data, uint32_t s
     int checker) {
   if ((!data && size) || (!name && name_size) || (!options && options_size) ||
       size > (uint32_t(1) << 30) || name_size > 65536 || options_size > (uint32_t(16) << 20)) return nullptr;
-  if (!checker) return lightusd::web_core::NextValidateJSON(data, size,
+  if (!checker) return lightusd::web_core::ValidateJSON(data, size,
       reinterpret_cast<const uint8_t*>(name), name_size,
       reinterpret_cast<const uint8_t*>(options), options_size);
   if (assets && metadata["aliases"].is_object()) {

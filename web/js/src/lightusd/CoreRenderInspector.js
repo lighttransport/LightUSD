@@ -24,7 +24,7 @@ export async function createCoreRenderInspector(native, input, filename='', opti
       }
       const layer=entries[0];
       if(!layer||!/\.(usd|usda|usdc)$/i.test(layer.name))throw Error('USDZ has no root layer');
-      store=new native.NextAssetStore();
+      store=new native.AssetStore();
       store.setMemoryLimitBytes(Math.min(limit*1024*1024,1024*1024*1024));
       const slash=layer.name.lastIndexOf('/');
       if(slash>=0)store.setBaseWorkingPath(layer.name.slice(0,slash));

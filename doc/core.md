@@ -22,40 +22,39 @@ The WASM `LayerDocument.setAttribute(path, name, type, value, isArray, options)`
 accepts optional `{uniform, custom}` boolean flags. Existing calls retain their
 custom-attribute default; explicit flags support schema-authored attributes.
 
-## Migrating from next
+## Default core and optional legacy
 
-LightUSD 1.1 promotes the former `next` implementation to the core and moves
-the pre-1.1 implementation to `src/legacy/` (compiled with
-`-DLIGHTUSD_BUILD_LEGACY=ON`, not tested or published).
+The maintained implementation lives in `src/` and `src/tydra/`, with public
+namespaces `lightusd::` and `lightusd::tydra::`. Link `lightusd_core`
+(`lightusd::core` from the root build) and `tydra`. The root and standalone
+`src/` projects register core tests when `LIGHTUSD_BUILD_TESTS=ON`.
+Retired module names, CMake aliases, environment aliases, and CLI switches
+are removed; use the canonical names in current headers and command help.
 
-| Before (1.0) | 1.1 |
-|---|---|
-| `src/next/`, `src/tydra/next/` | `src/`, `src/tydra/` |
-| `#include "next/..."`, `#include "tydra/next/..."` | `#include "..."`, `#include "tydra/..."` |
-| `lightusd::next::`, `lightusd::tydra::next::` | `lightusd::`, `lightusd::tydra::` |
-| legacy `lightusd::` API | `lightusd::legacy::` (compile-only) |
-| CMake targets `lightusd_next`, `tydra_next` | `lightusd_core`, `tydra` (old names removed) |
-| `LIGHTUSD_NEXT_*` options | `LIGHTUSD_*` (old names accepted with a deprecation warning) |
-| `-DLIGHTUSD_NATIVE_PRODUCT=next\|legacy` | core is always built; `-DLIGHTUSD_BUILD_LEGACY=ON` adds legacy |
-| `tests/next/`, ctest `next_test_*` | `tests/core/`, `core_*` (label `core`) |
-| WASM `LIGHTUSD_WASM_PRODUCT=next`, `lightusd_next[_64].js` | `LIGHTUSD_WASM_PRODUCT=core`, `lightusd[_64].js` (no `lightusd_next.js` shim) |
-| WASM legacy module `lightusd[_64].js` | `lightusd_legacy[_64].js` (compile-only, not published) |
-| WASM C ABI `lightusd_next_*` | `lightusd_wasm_*` |
-| `LightUSDLoader({backend: 'legacy'})` | ignored with a warning; the loader always uses the core module |
-| `lusdrender -legacyLoad`, `lusdview --legacy-load` | ignored with a warning |
+The older implementation lives under `src/legacy/` in `lightusd::legacy::`.
+It is disabled by default. Explicitly enable `LIGHTUSD_BUILD_LEGACY=ON` and,
+if needed, `LIGHTUSD_WITH_LEGACY_TYDRA=ON`. Its native libraries are
+`lightusd_legacy_static` / `lightusd::legacy_static` and optional
+`lightusd_legacy` / `lightusd::legacy`. Legacy configuration is isolated from
+core compile options and include paths. Native legacy tests are compiled but
+not registered with CTest. Legacy does not override CMake test commands,
+so tests added by parent consumers remain available.
 
-Removed with the legacy loader: lusdview's light/camera gizmos and
-RenderScene node tree, the lusdview MCP `vchar_physics` tool, and the
-native `lusdzconvert` material/geometry optimization and UDIM baking
-(use `web/js/cli/usdzconvert.js`). See
-[testing-cpp.md](testing-cpp.md#legacy-tests-compiled-not-run) for the
-known coverage gaps.
+WASM publishes `LIGHTUSD_WASM_PRODUCT=core` as `lightusd[_64].js` and uses
+the `lightusd_wasm_*` C ABI. Independent feature modules and the MCP product
+also use core. Standalone `LIGHTUSD_WASM_PRODUCT=legacy` is opt-in and emits
+`lightusd_legacy[_64].js`; it is not published. The combined product is removed.
+The browser loader always uses core; explicit legacy requests warn.
+Python wheels link only the core libraries and never build `src/legacy/`.
+
+See [the C++ testing guide](testing-cpp.md) and
+[the WASM regression procedure](../web/js/docs/regression.md) for validation.
 
 ## Terminology
 
 LightUSD currently has two USD implementations:
 
-- **Core**: the implementation under `src/` (formerly `src/next/`): a
+- **Core**: the implementation under `src/` (formerly `src/`): a
   lower-dependency USD core with flat layer storage, runtime type dispatch,
   lazy USDC arrays, and a lower-memory flatten/write path.
 - **Legacy**: the pre-1.1 Stage/Prim implementation, now `src/legacy/`
@@ -145,7 +144,7 @@ if (!edit) return 1;
 lightusd::StageSnapshot current = edit.snapshot;
 ```
 
-All public next loaders default to `InputPolicy::Untrusted` and finite
+All public core loaders default to `InputPolicy::Untrusted` and finite
 `ResourceLimits`. Zero-valued limits are rejected. Trusted applications that
 deliberately need no shared load/session/render ceiling must opt in with
 `InputPolicy::Trusted` and `ResourceLimits::Unlimited()`; lower-level
@@ -214,7 +213,7 @@ The main performance feature is the lazy USDC path:
 4. The streaming writer can emit the output crate to a sink without building the
    whole output in a second large buffer.
 
-This is the reason the web `--pipeline next --stream-write` path can keep large
+This is the reason the web `--pipeline core --stream-write` path can keep large
 single-USDZ flattened rewrites below the wasm32 2 GB heap limit. The input crate
 is retained once, lazy arrays point into it, and the flattened root crate can be
 streamed into the USDZ archive.
@@ -258,11 +257,12 @@ with lossy assumptions.
 ## Application Defaults
 
 - `lusdcat`: built from `tests/core/lusdcat.cc` by the core project.
-- `lusdview`: core document session + tydra. `--next` is an accepted no-op;
+- `lusdview`: core document session + tydra. `--core` is an accepted no-op (deprecated alias of `--core`);
   `--legacy-load` is ignored with a warning.
 - `lusdrender`: every CPU and GPU render loads through the core;
-  `-materialResolver tydra-next` is the default (`legacy` selects the former
+  `-materialResolver tydra` is the default (`legacy` selects the former
   hand-written material resolver, which still runs on the core stage).
+  The old `tydra-next` value is accepted as a deprecated alias.
 - Parent-relative asset paths are enabled because USD resolves them relative to
   the authoring layer. Sandboxed hosts can disable them through
   `ResolverConfig::allow_parent_paths`.
@@ -310,9 +310,9 @@ The web converter exposes four flatten/package modes:
 | Mode | CLI/UI value | Core path | Best use |
 |------|--------------|-----------|----------|
 | Legacy | `legacy` | legacy core + legacy writer | Stable default, broad feature coverage. |
-| Next | `next` | core/core IO for a single top-level USDC-root `.usdz` | Low-memory flattened rewrite of existing USDZ. |
+| Core | `core` | core/core IO for a single top-level USDC-root `.usdz` | Low-memory flattened rewrite of existing USDZ. |
 | Stream | `stream` | legacy compose/write with lazy source fetching | Folder or URL-list input where textures should not be loaded all at once. |
-| Stream + Next | `stream-next` | streaming source + next multi-layer flatten | Folder or URL-list input with USDC layers, low-memory root flatten, streamed textures. |
+| Stream + Core | `stream-core` | streaming source + core multi-layer flatten | Folder or URL-list input with USDC layers, low-memory root flatten, streamed textures. |
 
 Browser UI:
 
@@ -355,7 +355,7 @@ node cli/usdzconvert.js ./model_folder \
 
 ### 2. Low-memory rewrite of a single USDZ
 
-Use next mode for a single `.usdz` whose root layer is a top-level USDC file.
+Use core mode for a single `.usdz` whose root layer is a top-level USDC file.
 This is the lowest-memory path for flattening an existing package while keeping
 textures unchanged.
 
@@ -363,7 +363,7 @@ textures unchanged.
 cd web/js
 node cli/usdzconvert.js input.usdz \
   -o output.usdz \
-  --pipeline next \
+  --pipeline core \
   --no-reencode \
   --stream-write \
   --max-usdc-mb 1024 \
@@ -373,9 +373,9 @@ node cli/usdzconvert.js input.usdz \
 
 Notes:
 
-- `--stream-write` is the default for next mode when writing to a file, but
+- `--stream-write` is the default for core mode when writing to a file, but
   spelling it out documents the intended path.
-- If the input does not qualify, the converter logs that the next path declined
+- If the input does not qualify, the converter logs that the core path declined
   and falls back to a legacy path.
 - Texture processing hooks can disable some low-heap shortcuts because decoded
   texture data must then be materialized.
@@ -403,17 +403,17 @@ through a bounded fetch/process/zip loop. Texture concurrency is capped at 64
 even for malformed or extreme API inputs; `--texture-memory-budget` normally
 selects a much smaller count from the conservative per-worker estimate.
 
-### 4. Streaming folder conversion with next flatten
+### 4. Streaming folder conversion with core flatten
 
-Use stream-next for folder or URL-list inputs with USDC layers when you want both
-lazy texture packaging and the next multi-layer compose/flatten path.
+Use stream-core for folder or URL-list inputs with USDC layers when you want both
+lazy texture packaging and the core multi-layer compose/flatten path.
 
 ```bash
 cd web/js
 node cli/usdzconvert.js ./scene_folder \
-  -o scene-next.usdz \
+  -o scene-core.usdz \
   --root root.usdc \
-  --pipeline stream-next \
+  --pipeline stream-core \
   --resize 512 \
   --texture-format png \
   --texture-codec best \
@@ -423,14 +423,14 @@ node cli/usdzconvert.js ./scene_folder \
   -v
 ```
 
-By default, stream-next packages only texture assets referenced by the composed
+By default, stream-core packages only texture assets referenced by the composed
 root. To include unreferenced texture files from the input folder:
 
 ```bash
 node cli/usdzconvert.js ./scene_folder \
-  -o scene-next-all-textures.usdz \
+  -o scene-core-all-textures.usdz \
   --root root.usdc \
-  --pipeline stream-next \
+  --pipeline stream-core \
   --include-unused-textures
 ```
 
@@ -456,7 +456,7 @@ node cli/usdzconvert.js \
   --url-list manifest.json \
   --root root.usdc \
   -o scene.usdz \
-  --pipeline stream-next \
+  --pipeline stream-core \
   --texture-format keep \
   --no-reencode
 ```
@@ -478,7 +478,7 @@ assetMap.set('scene.usdz', inputBytes);
 
 const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
   rootPath: 'scene.usdz',
-  pipeline: 'next',
+  pipeline: 'core',
   reencode: false,
   textureFormat: 'keep',
   streamWrite: true,
@@ -512,8 +512,8 @@ const source = {
 
 const { usdz, stats } = await convertSourceToUSDZStreaming(native, source, {
   rootPath: 'root.usdc',
-  pipeline: 'next',
-  nextPreloadUsdLayers: true,
+  pipeline: 'core',
+  preloadUsdLayers: true,
   textureFormat: 'png',
   maxTextureSize: 512,
   includeUnusedTextures: false,
@@ -532,14 +532,14 @@ with `File.arrayBuffer()` as the source fetch function.
 Use this rule of thumb:
 
 - Use **legacy** first when correctness coverage matters more than memory.
-- Use **next** for a single packaged `.usdz` with a top-level USDC root and
+- Use **core** for a single packaged `.usdz` with a top-level USDC root and
   unchanged textures.
 - Use **stream** for folder/URL-list input when texture memory is the bottleneck
   but the legacy flatten path is acceptable.
-- Use **stream-next** for large folder/URL-list input with USDC layers when you
+- Use **stream-core** for large folder/URL-list input with USDC layers when you
   need core flattening plus streaming texture packaging.
 
-The next paths are most effective when:
+The core paths are most effective when:
 
 - the root USD is USDC,
 - large arrays can pass through lazily,
@@ -559,8 +559,8 @@ They are less effective or may fall back when:
 Next standalone checks:
 
 ```bash
-scripts/run-next-checks.sh
-ctest --test-dir build-next --output-on-failure -L next -LE 'benchmark|corpus'
+scripts/run-core-checks.sh
+ctest --test-dir build-ninja --output-on-failure -L core -LE 'benchmark|corpus'
 ```
 
 Web converter tests:
@@ -568,7 +568,7 @@ Web converter tests:
 ```bash
 cd web/js
 node tests/test-usdzconvert.js
-node tests/usdzconvert-next.test.mjs
+node tests/usdzconvert-core.test.mjs
 ```
 
 Browser smoke test:

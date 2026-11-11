@@ -4,7 +4,7 @@
 //
 // Checks:
 // - HEAPU8 exported runtime (zero-copy)
-// - NextFlattenSession + RenderStream APIs
+// - FlattenSession + RenderStream APIs
 // - OpenPBR specular_ior + volume nodegraph JSON via Tydra
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -40,12 +40,12 @@ assert.ok(typeof instance.HEAPU8.byteLength === 'number');
 console.log(`ok - HEAPU8 ${instance.HEAPU8.byteLength} bytes`);
 
 // 2. API surface
-for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
+for (const api of ['USDZConverterNative', 'FlattenSession', 'RenderStream']) {
   assert.equal(typeof instance[api], 'function', `${api} exists`);
 }
-console.log('ok - APIs NextUSDZConverterNative/NextFlattenSession/RenderStream');
+console.log('ok - APIs USDZConverterNative/FlattenSession/RenderStream');
 
-// 3. NextFlattenSession smoke (lazy array flatten)
+// 3. FlattenSession smoke (lazy array flatten)
 {
   const usda = `#usda 1.0
 def Xform "World" {
@@ -57,7 +57,7 @@ def Xform "World" {
 }
 `;
   const bytes = new TextEncoder().encode(usda);
-  const sess = new instance.NextFlattenSession();
+  const sess = new instance.FlattenSession();
   const begin = sess.begin(bytes, 'test.usda', true);
   assert.equal(begin.success, true, `begin: ${begin.error}`);
   const step = sess.step(null);
@@ -65,7 +65,7 @@ def Xform "World" {
   assert.equal(step.status, 'done', `status ${step.status}`);
   assert.ok(step.data instanceof Uint8Array && step.data.length > 8);
   assert.equal(String.fromCharCode(...step.data.slice(0, 8)), 'PXR-USDC');
-  console.log('ok - NextFlattenSession flatten');
+  console.log('ok - FlattenSession flatten');
   sess.end();
 }
 

@@ -60,9 +60,9 @@ notes are removed rather than archived; find them in Git history.
 
 - [lusdview.md](lusdview.md) — `lusdview` build & GPU debugging notes.
 - [lmetalview](../examples/lmetalview/README.md) — native macOS Swift + Metal
-  Quick Look-style viewer (`next` product only).
+  Quick Look-style viewer (core product only).
 - [ld3d12view](../examples/ld3d12view/README.md) — native Windows Direct3D 12
-  viewer on the lmetalview core and lightui (`next` product only).
+  viewer on the lmetalview core and lightui (core product only).
 - [lusdview-tasks.md](lusdview-tasks.md) — `lusdview`/`lusdrender` open tasks
   and working notes (incl. the external usd-assets run log).
 - [lusdrender.md](lusdrender.md) — `lusdrender` GPU backend testing.
@@ -91,7 +91,7 @@ notes are removed rather than archived; find them in Git history.
   newline-after-prim-spec finding).
 - [sanitizers.md](sanitizers.md) — ASan/TSan build and run notes.
 - [datarace.md](datarace.md) — Thread-safety and data-race notes.
-- [refactor-next.md](refactor-next.md) — `src/next` optimization & hardening
+- [refactor-next.md](refactor-next.md) — historical core (`src/`) optimization & hardening log
   roadmap (fuzzers, corpus gate, phase results).
 - [refactor-c-core.md](refactor-c-core.md) — C-style core consolidation,
   compile/object/WASM measurements, API migration, and remaining parity gates.

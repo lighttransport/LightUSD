@@ -147,7 +147,7 @@ async function main() {
   await loader.init({ useMemory64: false });
   if (opts.verbose) console.log('WASM module loaded.');
 
-  const usd = new loader.native_.NextUSDZConverterNative();
+  const usd = new loader.native_.USDZConverterNative();
 
   if (opts.sample) {
     // Generate sample scene (no texture in CLI mode — just geometry)

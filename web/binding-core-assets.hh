@@ -11,7 +11,7 @@
 
 namespace lightusd::web_core {
 
-class NextAssetStore {
+class AssetStore {
  public:
   int registerMemoryAsset(const uint8_t* identifier, uint32_t identifier_size,
                           const uint8_t* bytes, uint32_t byte_size,

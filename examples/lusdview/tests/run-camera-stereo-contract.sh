@@ -38,7 +38,7 @@ USDA
 run_report() {
   local mode="$1" report="$2" shot="$3" log="$4"
   local args=()
-  [ "$mode" = next ] && args+=(--next)
+  [ "$mode" = core ] && args+=(--core)
   if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" "${args[@]}" \
       --headless --backend vk --frames 1 --size 64x48 --stereo \
       --camera /World/Rig/Left --render-report "$report" \
@@ -54,14 +54,14 @@ run_report() {
 }
 
 run_report legacy "$OUT/legacy.json" "$OUT/legacy.ppm" "$OUT/legacy.log"
-run_report next "$OUT/next.json" "$OUT/next.ppm" "$OUT/next.log"
+run_report core "$OUT/core.json" "$OUT/core.ppm" "$OUT/core.log"
 
-python3 - "$OUT/legacy.json" "$OUT/next.json" \
-  "$OUT/legacy.ppm" "$OUT/next.ppm" <<'PY'
+python3 - "$OUT/legacy.json" "$OUT/core.json" \
+  "$OUT/legacy.ppm" "$OUT/core.ppm" <<'PY'
 import json, pathlib, sys
 
 reports = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:3]]
-for label, report in zip(("legacy", "next"), reports):
+for label, report in zip(("legacy", "core"), reports):
     stereo = report.get("stereo", {})
     if stereo.get("requested") is not True or stereo.get("resolved") is not True:
         raise SystemExit(f"FAIL: {label} stereo pair did not resolve: {stereo}")
@@ -70,8 +70,8 @@ for label, report in zip(("legacy", "next"), reports):
     if stereo.get("rendering") != "side-by-side-capture":
         raise SystemExit(f"FAIL: {label} native stereo capture missing: {stereo}")
 if reports[0]["stereo"] != reports[1]["stereo"]:
-    raise SystemExit("FAIL: legacy/next stereo records differ")
-for label, report, path in zip(("legacy", "next"), reports, sys.argv[3:5]):
+    raise SystemExit("FAIL: legacy/core stereo records differ")
+for label, report, path in zip(("legacy", "core"), reports, sys.argv[3:5]):
     data = pathlib.Path(path).read_bytes()
     header, pixels = data.split(b"\n255\n", 1)
     magic, dims = header.splitlines()
@@ -91,12 +91,12 @@ for label, report, path in zip(("legacy", "next"), reports, sys.argv[3:5]):
         right += row[eye:]
     if left == right:
         raise SystemExit(f"FAIL: {label} native stereo eyes are identical")
-print("PASS: legacy/next native stereo capture contract")
+print("PASS: legacy/core native stereo capture contract")
 PY
 
 if command -v xvfb-run >/dev/null 2>&1; then
   if xvfb-run -a env \
-      XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next \
+      XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core \
       --backend gl --frames 1 --size 64x48 --stereo \
       --camera /World/Rig/Left --render-report "$OUT/gl.json" \
       --screenshot "$OUT/gl.ppm" "$OUT/stereo.usda" \
@@ -130,7 +130,7 @@ PY
   fi
 
   if xvfb-run -a env \
-      XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next \
+      XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core \
       --backend vk --frames 1 --size 64x48 --stereo \
       --camera /World/Rig/Left --render-report "$OUT/vk-live.json" \
       --screenshot "$OUT/vk-live.ppm" "$OUT/stereo.usda" \
@@ -158,7 +158,7 @@ else
 fi
 
 python3 "$ROOT/examples/lusdview/render-stereo.py" \
-  --lusdview "$BIN" --next --backend vk --viewer-arg=--cpu-rt \
+  --lusdview "$BIN" --core --backend vk --viewer-arg=--cpu-rt \
   --size 48x32 --output "$OUT/stereo.ppm" "$OUT/stereo.usda"
 python3 - "$OUT/stereo.ppm" <<'PY'
 import pathlib, sys

@@ -12,7 +12,7 @@ SCENE="$ROOT/examples/lusdview/tests/camera-dof.usda"
 
 render() {
   local camera="$1" image="$2" log="$3"
-  env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+  env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
     --backend vk --rt --frames 8 --camera "$camera" --config "$OUT/config.json" \
     --screenshot "$image" "$SCENE" >"$log" 2>&1
 }

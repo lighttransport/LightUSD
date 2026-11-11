@@ -469,7 +469,7 @@ export class StreamingUSDRenderer {
     let r;
     try {
       if(texEntries.size) {
-        const store=new this.native.NextAssetStore();
+        const store=new this.native.AssetStore();
         try {
           const slash=sourceURI.lastIndexOf('/');
           if(slash>=0)store.setBaseWorkingPath(sourceURI.slice(0,slash));

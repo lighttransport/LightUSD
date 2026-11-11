@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(LIGHTUSD_TARGET "lightusd") # TODO: drop `z`
-set(LIGHTUSD_TARGET_NS "lightusd::lightusd") # dll lib. may not be built.
-set(LIGHTUSD_TARGET_STATIC_NS "lightusd::lightusd_static") # static lib is always built.
-set(LIGHTUSD_TARGET_STATIC "lightusd_static") # alias to ${LIGHTUSD_TARGET_STATIC_NS}
-set(BUILD_TARGET_C "c-lightusd")
-#set(BUILD_TARGET_BLENDER_PY "lightusd_blender")
-set(LIGHTUSD_TEST_TARGET "test_lightusd")
+# Re-enter this source directory in a separate binary directory for legacy.
+# This preserves its root-relative source lists while isolating its directory
+# compile definitions, include paths, and namespace bridge from core targets.
+if(_LIGHTUSD_CONFIGURE_LEGACY_PRODUCT)
+  include(${CMAKE_CURRENT_LIST_DIR}/src/legacy/legacy.cmake)
+  return()
+endif()
 
-project(${LIGHTUSD_TARGET} C CXX)
+project(lightusd C CXX)
 option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
 if(NOT LIGHTUSD_NATIVE_IO)
   add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
@@ -19,7 +19,7 @@ include(${PROJECT_SOURCE_DIR}/tools/ousddiff/tests.cmake)
 
 # PROJECT_IS_TOP_LEVEL is available from cmake 3.21
 if (CMAKE_VERSION VERSION_LESS 3.21)
-  if ("${CMAKE_PROJECT_NAME}" STREQUAL "${LIGHTUSD_TARGET}")
+  if ("${CMAKE_PROJECT_NAME}" STREQUAL "lightusd")
     set(PROJECT_IS_TOP_LEVEL ON)
   endif()
 endif ()
@@ -42,16 +42,6 @@ endif ()
 # (src/legacy) is compiled on request only and is not tested.
 option(LIGHTUSD_BUILD_LEGACY
        "Also build the legacy implementation (src/legacy; compiled, not tested)" OFF)
-if(DEFINED LIGHTUSD_NATIVE_PRODUCT)
-  # Pre-1.1 product switch.
-  if(LIGHTUSD_NATIVE_PRODUCT STREQUAL "legacy")
-    message(DEPRECATION
-      "LIGHTUSD_NATIVE_PRODUCT=legacy is deprecated; use -DLIGHTUSD_BUILD_LEGACY=ON.")
-    set(LIGHTUSD_BUILD_LEGACY ON CACHE BOOL
-        "Also build the legacy implementation (src/legacy; compiled, not tested)" FORCE)
-  endif()
-  unset(LIGHTUSD_NATIVE_PRODUCT CACHE)
-endif()
 # [ccache] Configured first so the core and the legacy build use it.
 option(LIGHTUSD_USE_CCACHE "Use ccache for faster recompile." ON)
 option(LIGHTUSD_LEGACY_USE_PCH "Legacy: use a precompiled header (does not help that codebase; opt-in)." OFF)
@@ -68,7 +58,7 @@ if(LIGHTUSD_USE_CCACHE)
       # unless told to relax the PCH/time-macro hash checks. Wrap the launcher
       # with `env CCACHE_SLOPPINESS=...` (Unix; MSVC path does not use ccache).
       set(CCACHE_LAUNCHER "${CCACHE_EXE}")
-      if((LIGHTUSD_USE_PCH OR LIGHTUSD_USE_PCH OR LIGHTUSD_LEGACY_USE_PCH OR NOT DEFINED LIGHTUSD_USE_PCH) AND CMAKE_HOST_UNIX)
+      if((LIGHTUSD_USE_PCH OR LIGHTUSD_LEGACY_USE_PCH OR NOT DEFINED LIGHTUSD_USE_PCH) AND CMAKE_HOST_UNIX)
         set(CCACHE_LAUNCHER env CCACHE_SLOPPINESS=pch_defines,time_macros "${CCACHE_EXE}")
       endif()
 
@@ -103,9 +93,6 @@ if(SANITIZE_UNDEFINED)
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
 endif()
-# Options renamed from LIGHTUSD_NEXT_* / TYDRA_NEXT_* in 1.1.
-include(${PROJECT_SOURCE_DIR}/cmake/DeprecatedOption.cmake)
-lightusd_apply_deprecated_core_options()
 option(LIGHTUSD_BUILD_TESTS "Build tests" OFF)
 option(LIGHTUSD_BUILD_EXAMPLES "Build examples" OFF)
 if(NOT DEFINED LIGHTUSD_BUILD_LUSDCAT)
@@ -133,14 +120,18 @@ if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_BUILD_C_API_EXAMPLE)
 endif()
 if(LIGHTUSD_BUILD_TESTS)
   enable_testing()
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME core_migration_names
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check-core-migration.py)
+    set_tests_properties(core_migration_names PROPERTIES LABELS "core;migration")
+  endif()
 endif()
 add_subdirectory(src)
 if(COMMAND add_sanitizers)
   add_sanitizers(lightusd_core)
 endif()
 add_library(lightusd::core ALIAS lightusd_core)
-# Pre-1.1 alias; remove after one release.
-add_library(lightusd::next ALIAS lightusd_core)
 # Default external USD asset corpus for regression tests.  The repository-local
 # symlink is intentionally the default so a checkout with `usd-assets` present
 # exercises the asset gates without machine-specific paths; callers can point
@@ -245,5 +236,7 @@ endif()
 
 # ---- Legacy (optional; compiled, not tested) -------------------------------
 if(LIGHTUSD_BUILD_LEGACY)
-  include(${PROJECT_SOURCE_DIR}/src/legacy/legacy.cmake)
+  set(_LIGHTUSD_CONFIGURE_LEGACY_PRODUCT ON)
+  add_subdirectory(${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/legacy)
+  unset(_LIGHTUSD_CONFIGURE_LEGACY_PRODUCT)
 endif()

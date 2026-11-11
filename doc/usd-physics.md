@@ -238,9 +238,9 @@ type and variability against them (`core.schema.attributeType`,
 (`physics.property.nonStandardName`).
 
 Downstream checks (optional, see [testing](testing-cpp.md)):
-`tests/next/run-newton-compare.py` compares Newton's `add_mjcf` with Newton's
+`tests/core/run-newton-compare.py` compares Newton's `add_mjcf` with Newton's
 `add_usd` of the converted file (MuJoCo arbitrates mass/COM/inertia/collider
-differences); `tests/next/run-openusd-physics-check.py` runs every OpenUSD
+differences); `tests/core/run-openusd-physics-check.py` runs every OpenUSD
 `UsdValidation` validator and the UsdPhysics parser on each profile.
 
 ## SDF sidecars and volumetric meshes
@@ -821,7 +821,7 @@ LightUSD converts URDF and MuJoCo MJCF robots into a UsdPhysics + mjcPhysics
 
 - **Native importers** (C++, C ABI, Python `lightusd.import_urdf/import_mjcf`,
   CLI `examples/urdf-to-usd`): `src/tydra/asset-import/` parses the source and
-  `src/tydra/next/urdf-to-usd*.cc` writes the stage in the selected
+  `src/tydra/urdf-to-usd*.cc` writes the stage in the selected
   [output profile](#output-profiles). This is the path described by the rest
   of this document.
 - **JSON bridge** (web demo / node CLI): `lightusd::tydra::ConvertURDFJsonToUSDStage`
@@ -1042,9 +1042,9 @@ extension that carries the missing control-node and interpolation semantics.
 | Pretty-printing (USDA output) | Done | `src/pprint-physics.cc` |
 | Tydra JSON export | Done | `src/tydra/physics-to-json.cc` |
 | Native URDF/MJCF/OBJ import (payload) | Done | `src/tydra/asset-import/` (`mjcf*.cc` with `mjcf-internal.hh`, `urdf.cc`, `obj.cc`, `dae.cc`, `reader.cc`, `builtin-texture.cc`) |
-| Profile-aware USD writer (next core) | Done | `src/tydra/next/urdf-to-usd*.cc` |
+| Profile-aware USD writer (core) | Done | `src/tydra/urdf-to-usd*.cc` |
 | C ABI / Python | Done | `src/c-api/lightusd-import-c.cc`, `lightusd-physics-c.cc`; `python/lightusd/` |
-| Physics query / validation | Done | `lightusd_stage_query_physics`, `src/next/validation/usd-validation-physics.cc` |
+| Physics query / validation | Done | `lightusd_stage_query_physics`, `src/validation/usd-validation-physics.cc` |
 
 ### API schemas supported
 
@@ -1068,14 +1068,14 @@ Registered in the `APISchemas::APIName` enum (`src/core/composition-types.hh`):
 - `tests/usda/physics-*.usda` synthetic test files for USDA/USDC roundtrip
 - Blender export roundtrip test asset: `models/blender-physics.usda`
 - Native importers: `python/tests/` (import, profiles, soft bodies, tendons,
-  textures, components), `tests/next/` CTest, the `fuzz_next_import`
+  textures, components), `tests/core/` CTest, the `fuzz_core_import`
   libFuzzer harness
-- Downstream checks (optional): `tests/next/run-newton-compare.py` (Newton
+- Downstream checks (optional): `tests/core/run-newton-compare.py` (Newton
   `add_mjcf`/`add_urdf` vs `add_usd`: Menagerie 69/69, 135 URDFs),
-  `tests/next/run-mujoco-usd-compare.py` (MuJoCo's compile of the MJCF vs its
+  `tests/core/run-mujoco-usd-compare.py` (MuJoCo's compile of the MJCF vs its
   USD decoder's compile of LightUSD's stage, Menagerie 68/69, needs a
-  `MUJOCO_WITH_USD` build and `tests/next/mujoco-model-dump.cc`) and
-  `tests/next/run-openusd-physics-check.py` (OpenUSD 26.08 UsdPhysics
+  `MUJOCO_WITH_USD` build and `tests/core/mujoco-model-dump.cc`) and
+  `tests/core/run-openusd-physics-check.py` (OpenUSD 26.08 UsdPhysics
   validators and parser)
 
 ---
@@ -1167,11 +1167,11 @@ MuJoCo 3.10.1 CPU run from
 errors across the three links of 0.043, 0.031, 0.314 and 0.678 m at 0.5, 1.0,
 1.5 and 2.0 s; link 3 has the maximum at each sample. The coupled trajectories
 diverge over time, so this does not establish solver equivalence. The
-reproducible C API probe is `tests/next/mujoco-chain-dynamics.cc`:
+reproducible C API probe is `tests/core/mujoco-chain-dynamics.cc`:
 
 ```sh
 c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
-  tests/next/mujoco-chain-dynamics.cc \
+  tests/core/mujoco-chain-dynamics.cc \
   -L"$MUJOCO_BUILD/lib" -Wl,-rpath,"$MUJOCO_BUILD/lib" -lmujoco \
   -o /tmp/mujoco-chain-dynamics
 /tmp/mujoco-chain-dynamics tests/feat/physics-oracle/three-link-chain.xml
@@ -1208,7 +1208,7 @@ whose frame points along `(2, 1, 0)`. It verifies that Blender aligns the hinge
 axis correctly, the body swings under gravity, and the pivot stays within
 10 mm. A matching MuJoCo fixture is
 `tests/feat/physics-oracle/offdiagonal-hinge.xml`; its C API sampler is
-`tests/next/mujoco-offdiagonal-dynamics.cc`. At 0.5, 1.0, 1.5 and 2.0 seconds,
+`tests/core/mujoco-offdiagonal-dynamics.cc`. At 0.5, 1.0, 1.5 and 2.0 seconds,
 the center-position differences are approximately 0.17, 0.38, 0.11 and 0.51 m.
 This is evidence of substantial divergence for this one off-diagonal inertia
 case, not solver equivalence. Blender's rigid-body API has no custom inertia
@@ -1222,7 +1222,7 @@ Build and run the MuJoCo sampler with:
 
 ```sh
 c++ -std=c++17 -I"$MUJOCO_SOURCE/include" \
-  tests/next/mujoco-offdiagonal-dynamics.cc \
+  tests/core/mujoco-offdiagonal-dynamics.cc \
   -L"$MUJOCO_BUILD/lib" -Wl,-rpath,"$MUJOCO_BUILD/lib" -lmujoco \
   -o /tmp/mujoco-offdiagonal-dynamics
 /tmp/mujoco-offdiagonal-dynamics tests/feat/physics-oracle/offdiagonal-hinge.xml

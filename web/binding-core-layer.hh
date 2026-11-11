@@ -10,14 +10,14 @@
 
 namespace lightusd::web_core {
 
-class NextAssetStore;
+class AssetStore;
 
-class NextLayerDocument {
+class LayerDocument {
  public:
-  NextLayerDocument() = default;
-  ~NextLayerDocument();
-  NextLayerDocument(const NextLayerDocument&) = delete;
-  NextLayerDocument& operator=(const NextLayerDocument&) = delete;
+  LayerDocument() = default;
+  ~LayerDocument();
+  LayerDocument(const LayerDocument&) = delete;
+  LayerDocument& operator=(const LayerDocument&) = delete;
 
   int32_t load(const uint8_t* bytes, uint32_t size,
                const std::function<bool(const char*, size_t, size_t)>& progress = {});
@@ -86,7 +86,7 @@ class NextLayerDocument {
   uintptr_t exportUsdaData() const;
   int32_t exportUsdcSize();
   uintptr_t exportUsdcData() const;
-  int32_t exportUsdz(NextAssetStore* assets, uint8_t root_format);
+  int32_t exportUsdz(AssetStore* assets, uint8_t root_format);
   int32_t exportUsdzSize() const;
   uintptr_t exportUsdzData() const;
   int32_t mhProfileJSONSize();

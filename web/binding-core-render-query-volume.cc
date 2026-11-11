@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Next render stream: UsdVol Volumes (resolved fields, dense voxels on
+// Core render stream: UsdVol Volumes (resolved fields, dense voxels on
 // demand) and ParticleFields (3D Gaussian splats).
 #include "binding-core-common.hh"
 #include "binding-core-render.hh"

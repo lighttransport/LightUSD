@@ -685,8 +685,8 @@ struct Options {
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
-  enum class MaterialResolver { Legacy, TydraNext, Compare };
-  MaterialResolver material_resolver{MaterialResolver::TydraNext};
+  enum class MaterialResolver { Legacy, Tydra, Compare };
+  MaterialResolver material_resolver{MaterialResolver::Tydra};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
   // Level-set volumes (UsdVol fieldClass "levelSet"): shade the isosurface as
@@ -1112,11 +1112,11 @@ inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
 
 struct ResolvedMat;
 
-struct MeshJobNext {
+struct MeshJobCore {
   lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   lusdr::Purpose purpose{lusdr::Purpose::Default};
-  // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
+  // Face-GeomSubset split (ExpandGeomSubsetJobsCore): a mesh whose faces are
   // material-bound per GeomSubset becomes one job per bound subset + a
   // remainder job.
   // `subset_faces` (indexed by AUTHORED face id; empty = whole mesh) masks which
@@ -1178,7 +1178,7 @@ struct TextureCache {
   std::string base_dir;  // directory of the input file, for relative paths
   const lightusd::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
-  // Shared decode + size cap + byte budget (built on first use in lusdr_next).
+  // Shared decode + size cap + byte budget (built on first use in lusdr_core).
   std::shared_ptr<lightusd::tydra::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
@@ -1259,7 +1259,7 @@ struct ProtoBuildReq {
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
-struct CurveJobNext {
+struct CurveJobCore {
   lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   lusdr::Purpose purpose{lusdr::Purpose::Default};

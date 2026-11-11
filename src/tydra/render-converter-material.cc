@@ -88,7 +88,7 @@ std::string ConnectionPropertyName(const std::string& path) {
   return dot == std::string::npos ? std::string() : path.substr(dot + 1);
 }
 
-void EmitNextGraphValue(std::ostream& os, const Value& value) {
+void EmitCoreGraphValue(std::ostream& os, const Value& value) {
   if (auto v = value.as_asset_path()) {
     os << '"' << JsonEscape(*v) << '"';
     return;
@@ -118,7 +118,7 @@ void EmitNextGraphValue(std::ostream& os, const Value& value) {
 // consumed by the shared lusdview graph compiler. The next converter already
 // resolves simple constants and images; this record retains the full utility
 // node topology for descriptor-backed renderers instead of silently baking it.
-std::string BuildNextMaterialXGraphJson(const Stage& stage,
+std::string BuildCoreMaterialXGraphJson(const Stage& stage,
                                         const UsdPrim& shader,
                                         bool volume_graph = false) {
   const UsdPrim material = shader.GetParent();
@@ -268,7 +268,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
                              : source_name->second)
            << "\",\"output\":\"" << JsonEscape(ConnectionOutputName(connection)) << '"';
       } else if (const Value* value = node.GetPropertyValueOrEarliestTimeSample(prop)) {
-        os << ",\"value\":"; EmitNextGraphValue(os, *value);
+        os << ",\"value\":"; EmitCoreGraphValue(os, *value);
         if (const ::lightusd::PrimSpec* spec = node.GetPrimSpec()) {
           if (const std::string* type = spec->property_type_name(prop))
             os << ",\"type\":\"" << JsonEscape(*type) << '"';
@@ -493,7 +493,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
       const UsdPrim volume_shader = stage.GetPrimAtPath(vol);
       if (volume_shader.IsValid()) {
         out->volume_nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, volume_shader, true);
+            BuildCoreMaterialXGraphJson(stage, volume_shader, true);
       }
     }
   }
@@ -628,7 +628,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         out->preview_surface = std::make_unique<PreviewSurfaceShader>();
         ExtractPreviewSurface(stage, child, out->preview_surface.get(), scene);
         out->preview_surface_nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, child);
+            BuildCoreMaterialXGraphJson(stage, child);
         if (out->preview_surface->opacity.is_texture() ||
             out->preview_surface->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
@@ -643,7 +643,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractOpenPBRSurface(stage, child, out->openpbr.get(), scene);
         out->openpbr->nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, child);
+            BuildCoreMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
             out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
@@ -677,7 +677,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
                              &out->openpbr->opacity, scene);
         }
         out->openpbr->nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, child);
+            BuildCoreMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
             out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
@@ -691,7 +691,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
         out->openpbr->nodegraph_json =
-            BuildNextMaterialXGraphJson(stage, child);
+            BuildCoreMaterialXGraphJson(stage, child);
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;

@@ -151,7 +151,7 @@ publish inputs and package sources match the release commit.
 Inputs:
 
 - `release_version` — semver, e.g. `0.9.9` or `0.9.9-rc1` (rewrites the staged `package.json`; should match what you committed in 1b).
-- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `next` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases. Verify after publish: `npm view lightusd dist-tags`.
+- `npm_tag` — npm dist-tag, e.g. `latest` for a real release, `preview` / `core` / `rc` for pre-releases. **Default is `preview`** — change it to `latest` for stable releases. Verify after publish: `npm view lightusd dist-tags`.
 
 The job:
 

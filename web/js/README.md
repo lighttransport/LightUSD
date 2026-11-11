@@ -257,13 +257,13 @@ npm run dev:progress           # progress-demo.html
 npm run dev:progress-offscreen # progress-offscreenwebgl.html
 ```
 
-Starting any Vite development command incrementally builds the local legacy
-and next WASM modules into `src/lightusd`. This requires Emscripten
+Starting any Vite development command incrementally builds the local core
+WASM module into `src/lightusd`. This requires Emscripten
 (`emcmake`), CMake, and Ninja. The generated `lightusd*.js` and
 `lightusd*.wasm` files are build artifacts and are not committed.
 
 The generated modules are build artifacts and are not committed. The
-published `LightUSDLoader` is next-first; demos and CLIs that need legacy
+published `LightUSDLoader` is core-first; demos and CLIs that need legacy
 behavior pass `backend: 'legacy'` explicitly.
 
 Experimental (WebGPU/WebGL2):
@@ -283,7 +283,7 @@ Please see `../npm`
 ## USD validation
 
 `npm run dev:validation` opens the existing validation demo, now using the full
-`lusdchecker` engine in the next WASM backend. Choose default, strict, or AOUSD
+`lusdchecker` engine in the core WASM backend. Choose default, strict, or AOUSD
 Core profiles; supply dependency files/folders and optional JSON definitions;
 inspect coverage and sampled/variant findings; export JSON or SARIF. Validation
 runs locally in a cancellable worker.

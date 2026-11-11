@@ -32,7 +32,7 @@ std::filesystem::path MakeTempRoot(const char* tag) {
   namespace fs = std::filesystem;
   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
   const fs::path root = fs::temp_directory_path() /
-                        ("lightusd-next-resolver-" + std::string(tag) + "-" +
+                        ("lightusd-core-resolver-" + std::string(tag) + "-" +
                          std::to_string(stamp));
   fs::remove_all(root);
   fs::create_directories(root);

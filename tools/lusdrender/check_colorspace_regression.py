@@ -122,7 +122,7 @@ def main():
     os.makedirs(output, exist_ok=True)
 
     cases = [
-        ("next", ["-rtPreview"]),
+        ("core", ["-rtPreview"]),
     ]
     results = []
     for backend, backend_args in cases:

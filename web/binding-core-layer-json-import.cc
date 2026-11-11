@@ -810,7 +810,7 @@ bool ParseLayerJSONPrim(const minijson::Value& encoded, tn::LayerBuilder* builde
 
 }  // namespace
 
-int32_t NextLayerDocument::loadJSON(const uint8_t* bytes, uint32_t size) {
+int32_t LayerDocument::loadJSON(const uint8_t* bytes, uint32_t size) {
   constexpr size_t kJSONWorkingLimit = size_t{1} << 30;
   if (!bytes || !size) return failJSON_("Layer JSON input is empty");
   if (size > kMaxLayerJSONBytes || size > kJSONWorkingLimit / 8)

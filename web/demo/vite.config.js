@@ -7,7 +7,7 @@ import { compression } from 'vite-plugin-compression2'
 // base: "./" => make asset path relative(required for static hosting of lightusd demo page at github pages)
 export default defineConfig(() => {
   const lightusdRoot = path.resolve(__dirname, '../js/src/lightusd');
-  const nextUtils = path.resolve(lightusdRoot, 'NextRenderSceneUtils.js');
+  const coreUtils = path.resolve(lightusdRoot, 'RenderSceneUtils.js');
 
   return {
     base: "./",
@@ -22,7 +22,7 @@ export default defineConfig(() => {
     },
     resolve: {
         alias: [
-            { find: 'lightusd-next-demo-utils', replacement: nextUtils },
+            { find: 'lightusd-core-demo-utils', replacement: coreUtils },
             { find: 'lightusd', replacement: lightusdRoot },
             { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
             { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },

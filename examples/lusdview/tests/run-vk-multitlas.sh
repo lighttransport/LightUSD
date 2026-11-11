@@ -25,7 +25,7 @@ render() {
   [[ "$variant" == multi ]] &&
     prefix=(env LUSDVIEW_RT_TLAS_CHUNK_INSTANCES=2)
   if ! timeout 90s "${prefix[@]}" "$viewer" --headless --backend vk --rt \
-      --next --frames 1 --size 256x192 --camera /root/Cam --mode "$mode" \
+      --core --frames 1 --size 256x192 --camera /root/Cam --mode "$mode" \
       --screenshot "$image" "$scene" >"$log" 2>&1; then
     if grep -Eq 'ray tracing is unavailable|no compatible Vulkan|no Vulkan device|renderer init failed' "$log"; then
       echo "SKIP: Vulkan ray-query unavailable"
@@ -70,7 +70,7 @@ capacity_log="$out/capacity.log"
 capacity_report="$out/capacity.json"
 if ! timeout 90s env LUSDVIEW_RT_TLAS_CHUNK_INSTANCES=2 \
     LUSDVIEW_RT_TLAS_MAX_CHUNKS=1 "$viewer" --headless --backend vk --rt \
-    --next --frames 1 --size 64x64 --camera /root/Cam \
+    --core --frames 1 --size 64x64 --camera /root/Cam \
     --screenshot "$out/capacity.ppm" --render-report "$capacity_report" \
     "$scene" >"$capacity_log" 2>&1; then
   echo "FAIL: forced capacity diagnostic run failed" >&2

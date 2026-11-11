@@ -117,8 +117,8 @@ drawn_meshes() {
 }
 
 status=0
-for loader in "--next"; do
-  name="${loader:---next}"
+for loader in "--core"; do
+  name="${loader:---core}"
 
   got="$(drawn_meshes "$TMP/both.usda" "$loader")" || { status=1; continue; }
   if [ "$got" != "1" ]; then

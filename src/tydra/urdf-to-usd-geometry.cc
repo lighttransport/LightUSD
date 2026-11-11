@@ -333,7 +333,7 @@ void AddCollisionAPIs(tn::PrimSpec *prim, bool mesh_collision,
                                 kDefaultNewtonMaxHullVertices)),
           "int", true);
   }
-  // next-only: MuJoCo contact filter bits under their MJCF attribute names
+  // core: MuJoCo contact filter bits under their MJCF attribute names
   // (the legacy converter only authors mjc:geomContype/geomConaffinity).
   const Json *mjc = JsonObject(src, "mjc");
   auto contact_bits = [&](const char *key) {

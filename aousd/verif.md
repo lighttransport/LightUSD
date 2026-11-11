@@ -36,7 +36,7 @@ Each normative change in the v1.1.0 changelog was checked against OpenUSD
 | Splines: loop reset at the period boundary | **Fixed** |
 | Splines: inner loops (`LoopParameters`) | **Fixed**: were parsed but never evaluated |
 | Splines: evaluation-time anti-regression must be Keep Ratio | **Fixed** (exact non-regressive limit; pxr stops ~1e-5 short, so values agree to ~1e-5) |
-| Piecewise-linear approximation | **Implemented** (optional feature): `SampleSplineData` (src/next/types/spline.hh) — polylines split at value discontinuities and value-block gaps like pxr `TsSpline::Sample`; covers inner loops and every extrapolation mode; vertical deviation <= tolerance (pxr bounds perpendicular distance in scaled space, so its vertical error can exceed it near steep slopes). Also tightened the Bezier time solve near the Keep Ratio vertical tangent |
+| Piecewise-linear approximation | **Implemented** (optional feature): `SampleSplineData` (src/types/spline.hh) — polylines split at value discontinuities and value-block gaps like pxr `TsSpline::Sample`; covers inner loops and every extrapolation mode; vertical deviation <= tolerance (pxr bounds perpendicular distance in scaled space, so its vertical error can exceed it near steep slopes). Also tightened the Bezier time solve near the Keep Ratio vertical tangent |
 | Native instancing: ignored non-arc specs/arcs under an instance, ancestral arcs, implied-arc sharing (spec examples 1-3 + variants) | Already conformant: prototype sharing, flatten and instance-proxy values identical to pxr; stable cases added as `tests/usda/aousd11-instancing-*` gate fixtures |
 | Schema families and versioning | **Implemented**: `ParseSchemaFamilyAndVersion` (spec grammar; agrees with OpenUSD except `_1`, which pxr splits as family `''`), and schema manifests reject a versioned schema inheriting its own family |
 
@@ -45,7 +45,7 @@ were audited separately in
 [doc/validation/aousd11-schema-defs-uihints-2026-11-04.md](../doc/validation/aousd11-schema-defs-uihints-2026-11-04.md)
 (26 rules: 12 agree, 8 fixed, 3 unspecified/OpenUSD-deviates, 3 n/a).
 
-Pinned by `TestSplineCore11Parity` and `TestSplinePiecewiseLinear` (tests/next/test_aousd_conformance.cc; the latter holds pxr 26.11 `Sample` output as expected data).
+Pinned by `TestSplineCore11Parity` and `TestSplinePiecewiseLinear` (tests/core/test_aousd_conformance.cc; the latter holds pxr 26.11 `Sample` output as expected data).
 
 **Spec erratum found:** the LZ4 framing table now gives "Number of Chunks:
 8 bytes" and "Chunk Size: 1 byte", and the prose says a 64-bit chunk size.

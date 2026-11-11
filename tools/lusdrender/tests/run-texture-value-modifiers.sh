@@ -79,7 +79,7 @@ for space in ('raw','sRGB'):
  }
 ''')
 PY
-for RESOLVER in legacy tydra-next; do
+for RESOLVER in legacy tydra; do
  for SPACE in raw sRGB; do
   "$BIN" "$TMP/$SPACE.usda" "$TMP/$RESOLVER-$SPACE.png" "${RENDER_ARGS[@]}" -diagnosticEmission -materialResolver "$RESOLVER" -camera /C -w 16 -height 16 -threads 1 > "$TMP/$RESOLVER-$SPACE.log" 2>&1 || {
     if [ "$BACKEND" = vkr ] && grep -qiE 'no Vulkan|Failed to create.*Vulkan|ray.query unavailable|not built.*Vulkan' "$TMP/$RESOLVER-$SPACE.log"; then exit 77;fi
@@ -94,7 +94,7 @@ sys.path.insert(0,str(Path(sys.argv[2])/"examples/lusdview/tests"))
 from asset_fingerprint import _read_image
 root=Path(sys.argv[1])
 def encode(x):return round((12.92*x if x<=.0031308 else 1.055*x**(1/2.4)-.055)*255)
-for resolver in ('legacy','tydra-next'):
+for resolver in ('legacy','tydra'):
  for space in ('raw','sRGB'):
   decoded=_read_image(str(root/f'{resolver}-{space}.png'))
   assert decoded is not None

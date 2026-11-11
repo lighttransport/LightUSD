@@ -349,7 +349,7 @@ static void test_resolver_layer_loader_package_path() {
   std::cout << "[MakeResolverLayerLoader + package path]\n";
   namespace fs = std::filesystem;
   const fs::path dir = fs::temp_directory_path() /
-                        ("lightusd-next-usdz-loader-" +
+                        ("lightusd-core-usdz-loader-" +
                          std::to_string(
                              std::chrono::steady_clock::now()
                                  .time_since_epoch()

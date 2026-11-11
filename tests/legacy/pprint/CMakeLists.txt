@@ -20,7 +20,7 @@ add_executable(pprint_benchmark
 
 # Link against lightusd library
 target_link_libraries(pprint_benchmark
-  lightusd_static
+  lightusd_legacy_static
   Threads::Threads
 )
 

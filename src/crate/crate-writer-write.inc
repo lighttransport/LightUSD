@@ -16,7 +16,7 @@
                          const CrateWritePatch* patch = nullptr) {
     result_ = CrateWriteResult();
     required_version_minor_ = 0;
-    CratePhaseTimer timer(options_.enable_timing, "next_crate_write", options_.host_services);
+    CratePhaseTimer timer(options_.enable_timing, "core_crate_write", options_.host_services);
     auto lap = [&](const char* phase) { timer.lap(phase); };
 
     if (!CheckWriteOptions()) return result_;
@@ -261,7 +261,7 @@
       result_.success = false;
       return result_;
     }
-    CratePhaseTimer timer(options_.enable_timing, "next_crate_write", options_.host_services);
+    CratePhaseTimer timer(options_.enable_timing, "core_crate_write", options_.host_services);
     return FinishWrite(sink, patch, timer);
   }
 

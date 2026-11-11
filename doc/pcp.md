@@ -1059,21 +1059,21 @@ comparison table and correctness analysis in
 
 ---
 
-## lightusd::next::pcp — native composition for the `next` module
+## lightusd::pcp — native composition
 
-The `next` module (`src/next/`) is a standalone, low-dependency rewrite of
-lightusd (runtime type dispatch, flat index-based storage, SBO `Value`). It does
-**not** link the main library, so the main `pcp::Cache` (built on
-`lightusd::Layer` / `composition-graph.cc`) cannot be reused directly. Instead,
-`src/next/pcp/` is a **native, standalone re-implementation of the same PCP
-design** on `next`'s own types (C++14, only `next/` + STL + vendored
+The core implementation (`src/`) is a standalone, low-dependency rewrite
+of the original lightusd core (runtime type dispatch, flat index-based storage,
+SBO `Value`). It does **not** link the main library, so the main `pcp::Cache`
+(built on `lightusd::Layer` / `composition-graph.cc`) cannot be reused directly.
+Instead, `src/pcp/` is a **native, standalone re-implementation of the same PCP
+design** on the core's own types (C++14, only `src/` + STL + vendored
 `nonstd/expected`).
 
 ### Design
 
 - **Lazy per-prim composition.** `Cache::ComputePrimIndex(path)` builds and caches
   one prim's composition graph on demand; you pay only for prims you query.
-  `BuildStage()` materializes the whole composed scene into a `next::Stage`.
+  `BuildStage()` materializes the whole composed scene into a `lightusd::Stage`.
 - **`PrimIndex` / `CompNode`** mirror the main engine: a per-prim DAG of
   strength-ordered sources. Site prim paths are interned into a shared table
   (`CompNode` stores a `uint32` index) and deduped across all cached indices;
@@ -1158,12 +1158,12 @@ builds are sequential and zero-overhead — the parallel path and lock macro com
 
 ### Tests
 
-`tests/next/test_pcp.cc` (built with `-DLIGHTUSD_NEXT_BUILD_TESTS=ON`) covers each
+`tests/core/test_pcp.cc` (built with `-DLIGHTUSD_BUILD_TESTS=ON`) covers each
 arc, ancestral composition, deferred payloads, instancing + proxies, relocates,
 cross-source variants, implied class propagation (incl. intermediate stacks),
 sublayer stack composition/cycle/depth errors, node-overflow rejection, the parallel
 batch build vs. a serial baseline, concurrent shared-cache queries (TSan), and the
-one-call helpers. `tests/next/test_pcp_parallel.cc` adds dedicated
+one-call helpers. `tests/core/test_pcp_parallel.cc` adds dedicated
 minimal/complex/stress coverage for the parallel build on *synthetically generated*
 scenes (up to ~900 paths × 8 threads × repeated rounds), plus same-asset parse-once
 contention coverage, asserting every index and prototype grouping matches the serial

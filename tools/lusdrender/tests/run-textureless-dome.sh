@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Regression test: a DomeLight with no texture:file must still illuminate on the
-# tydra-next (-rtPreview) path.
+# tydra (-rtPreview) path.
 #
-# BuildNextIbl returned false whenever the dome had no texture, so a textureless
+# BuildCoreIbl returned false whenever the dome had no texture, so a textureless
 # DomeLight was dropped entirely: no IBL, no background, no fill light. A
 # constant-color environment -- one of the most common lighting setups -- added
 # nothing. The fix synthesizes a constant environment of color*intensity.

@@ -18,7 +18,7 @@ On Windows PowerShell, use `npm.cmd` if execution policy blocks `npm.ps1`.
 The isolated Vite configuration permits synthetic scenes without WASM. For the
 ShaderBall geometry diagnostic, also run the standard
 `web/demo/scripts/prepare-local-lightusd.sh` in an Emscripten environment.
-This produces the combined and next-only modules in ignored output locations.
+This produces the combined and core-only modules in ignored output locations.
 
 Asset setup pins USD assets to `3b75c2dad6a494897557dcca0098257bcf42a8c6` and
 MaterialX 1.39.5 to `7b64921ef1d42f2d57871e9d2c43dc11f041f26b`. Downloads live
@@ -501,7 +501,7 @@ Verified on Chrome 152.0.7977.76, NVIDIA Ampere hardware:
 - Fixed 1280×720 ShaderBall raster diagnostic: latest 30-second run, 1,543 frames,
   median 19.2 ms, p95 21.7 ms. These measurements cover the diagnostic shaders,
   not the planned complete MaterialX realtime renderer.
-- Combined and next-only WASM builds complete with cached Emscripten 4.0.8.
+- Combined and core WASM builds complete with cached Emscripten 4.0.8.
 - Node regression profile in WSL: 20 reported passes, zero failures (the native
   validation-parity check is skipped because lusdcat is not built).
 

@@ -35,7 +35,7 @@ if (!baseURL) {
     startupError += text;
     process.stderr.write(`[vite] ${text}`);
   });
-  // First use may rebuild both legacy and next WASM modules through Vite's
+  // First use may rebuild both legacy and core WASM modules through Vite's
   // configure plugin, which is substantially slower than an ordinary startup.
   const startupTimeout = Number(
     process.env.LIGHTUSD_COLORSPACE_SERVER_TIMEOUT_MS || 120000);

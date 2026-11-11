@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2026 - Present Light Transport Entertainment Inc.
 //
-// Regression test for the next-core URDF/MJCF JSON -> USD converter
+// Regression test for the core URDF/MJCF JSON -> USD converter
 // (src/tydra/next/urdf-to-usd.cc). The payload exercises every builder
 // ported from the legacy converter (links/inertia, meshes, native collision
 // shapes, joints + limits/frames/mimic, physics scene options, Newton

@@ -27,7 +27,7 @@ run_viewer() {
 cold_img="$OUT/cold.png"
 cold_log="$OUT/cold.log"
 run_viewer env XDG_CACHE_HOME="$OUT/xdg-cache" XDG_CONFIG_HOME="$OUT/config-home" \
-  "$BIN" --next --headless --cuda --mode depth --camera Cam --frames 1 \
+  "$BIN" --core --headless --cuda --mode depth --camera Cam --frames 1 \
   --time 1 --config "$CONFIG" --no-skeleton --screenshot "$cold_img" "$SCENE" \
   >"$cold_log" 2>&1
 cold_rc=$?
@@ -61,7 +61,7 @@ ptx_file="$(find "$CACHE_DIR" -maxdepth 1 -type f -name '*.ptx' -print -quit)"
 warm_img="$OUT/warm.png"
 warm_log="$OUT/warm.log"
 run_viewer env XDG_CONFIG_HOME="$OUT/config-home" \
-  "$BIN" --next --headless --cuda --cuda-cache-dir "$CACHE_DIR" --mode depth \
+  "$BIN" --core --headless --cuda --cuda-cache-dir "$CACHE_DIR" --mode depth \
   --camera Cam --frames 1 --time 1 --config "$CONFIG" --no-skeleton \
   --screenshot "$warm_img" "$SCENE" >"$warm_log" 2>&1
 warm_rc=$?
@@ -87,7 +87,7 @@ printf '%s\n' 'intentionally invalid PTX' >"$ptx_file"
 recovered_img="$OUT/recovered.png"
 recovered_log="$OUT/recovered.log"
 run_viewer env XDG_CONFIG_HOME="$OUT/config-home" \
-  "$BIN" --next --headless --cuda --cuda-cache-dir "$CACHE_DIR" --mode depth \
+  "$BIN" --core --headless --cuda --cuda-cache-dir "$CACHE_DIR" --mode depth \
   --camera Cam --frames 1 --time 1 --config "$CONFIG" --no-skeleton \
   --screenshot "$recovered_img" "$SCENE" >"$recovered_log" 2>&1
 recovered_rc=$?

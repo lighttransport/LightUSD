@@ -43,7 +43,7 @@ struct LoadOptions {
   // share from gpuGeometryBudgetBytes (or uses the built-in preview default).
   size_t volumeMemoryBudgetBytes{0};
   size_t uploadStagingBytes{0};
-  // Maximum CPU geometry held between the next-loader producer and the GPU
+  // Maximum CPU geometry held between the core-loader producer and the GPU
   // context thread. Zero selects 64 MiB for interactive streaming.
   size_t streamBufferBytes{0};
   // Explicit performance controls. Zero selects the hardware-derived default.
@@ -94,12 +94,12 @@ struct LoadOptions {
   lightusd_texture_fit textureFit{0, LIGHTUSD_TEXTURE_FIT_DEFAULT, 0};
   size_t textureFitThresholdBytes{0};
   // 25% of resident VRAM, INDEPENDENT of --texture-fit. Gates mip generation
-  // only; see the comment where it is consumed in next_scene_loader.cc.
+  // only; see the comment where it is consumed in core_scene_loader.cc.
   size_t textureComfortBytes{0};
   // Optional source-mesh conversion cap for large-scene preview profiles.
   // Remaining prims stay unmaterialized instead of paying CPU conversion cost.
   size_t maxMeshConversions{0};
-  // Publish a bounds/camera proxy scene from next-core's namespace checkpoint
+  // Publish a bounds/camera proxy scene from core's namespace checkpoint
   // while authoritative opinion composition continues.
   bool progressivePreview{false};
   // Maximum marker boxes emitted for the asynchronous composition preview.
@@ -152,14 +152,14 @@ struct LoadOptions {
   bool allowParentRelativePaths{false};
   // Emit per-vertex GPU skinning attributes (joint indices/weights + a bone
   // matrix layout) instead of baking a static skinned pose into the geometry at
-  // load. Only the `next` loader reads this: the Tydra path always emits the
+  // load. Only the `core` loader reads this: the Tydra path always emits the
   // attributes and decides afterwards. Off = load-time CPU bake (the pose at
   // `timecode`), which is what the CPU-skinning and CPU-tracer paths need.
   bool gpuSkinning{false};
   TextureRuntimeOptions textureOptions;
 };
 
-// Move-only messages produced by the next loader and consumed by App on the
+// Move-only messages produced by the core loader and consumed by App on the
 // render/context thread. A complete event contains scene-wide metadata and
 // resources; streamed meshes have already been removed from its DrawScene.
 struct ProgressiveSceneEvent {

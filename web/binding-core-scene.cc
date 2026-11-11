@@ -19,49 +19,49 @@
 namespace tn = lightusd;
 namespace lightusd {
 namespace web_core {
-minijson::Value NextValueJSON(tn::ValueView value) {
+minijson::Value ValueJSON(tn::ValueView value) {
   return ::lightusd::layer_json_detail::ValueJSON(value);
 }
 
-const std::vector<tn::Path>* NextPropertyConnections(
+const std::vector<tn::Path>* PropertyConnections(
     const tn::UsdPrim& prim, const std::string& property_name) {
   const tn::PrimSpec* spec = prim.GetPrimSpec();
   return spec ? spec->connection(property_name) : nullptr;
 }
 
-std::string NextConnectionPrimPath(const std::string& connection) {
+std::string ConnectionPrimPath(const std::string& connection) {
   size_t dot = connection.find(".outputs:");
   if (dot == std::string::npos) dot = connection.find(".inputs:");
   if (dot == std::string::npos) dot = connection.rfind('.');
   return dot == std::string::npos ? connection : connection.substr(0, dot);
 }
 
-static std::string NextConnectionOutputName(const std::string& connection) {
+static std::string ConnectionOutputName(const std::string& connection) {
   const size_t marker = connection.find(".outputs:");
   if (marker != std::string::npos) return connection.substr(marker + 9);
   const size_t dot = connection.rfind('.');
   return dot == std::string::npos ? std::string() : connection.substr(dot + 1);
 }
 
-static std::string NextConnectionNodeName(const std::string& connection) {
-  const std::string path = NextConnectionPrimPath(connection);
+static std::string ConnectionNodeName(const std::string& connection) {
+  const std::string path = ConnectionPrimPath(connection);
   const size_t slash = path.rfind('/');
   return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-static std::string NextMtlxCategory(const std::string& node_id) {
+static std::string MtlxCategory(const std::string& node_id) {
   if (node_id.rfind("ND_", 0) != 0) return node_id;
   const std::string body = node_id.substr(3);
   const size_t suffix = body.rfind('_');
   return suffix == std::string::npos ? body : body.substr(0, suffix);
 }
 
-static void CollectNextNodeGraphs(const tn::UsdPrim& prim,
+static void CollectNodeGraphs(const tn::UsdPrim& prim,
                            std::vector<tn::UsdPrim>* graphs) {
   if (!graphs) return;
   for (const tn::UsdPrim& child : prim.GetChildren()) {
     if (child.GetTypeName() == "NodeGraph") graphs->push_back(child);
-    CollectNextNodeGraphs(child, graphs);
+    CollectNodeGraphs(child, graphs);
   }
 }
 
@@ -69,21 +69,21 @@ static void CollectNextNodeGraphs(const tn::UsdPrim& prim,
 // editor. The next render converter deliberately stores GPU-facing shader
 // parameters; the authored node network remains in the Stage and must be
 // serialized before RenderStream releases it.
-std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
+std::string BuildNodeGraphJson(const tn::UsdPrim& material,
                                    const tn::UsdPrim& shader,
                                    const std::string& version) {
   if (!material.IsValid() || !shader.IsValid()) return {};
   std::vector<tn::UsdPrim> graphs;
-  CollectNextNodeGraphs(material, &graphs);
+  CollectNodeGraphs(material, &graphs);
   if (graphs.empty()) return {};
 
   tn::UsdPrim graph = graphs.front();
   for (const std::string& property : shader.GetPropertyNames()) {
     if (property.rfind("inputs:", 0) != 0) continue;
     const std::vector<tn::Path>* connections =
-        NextPropertyConnections(shader, property);
+        PropertyConnections(shader, property);
     if (!connections || connections->empty()) continue;
-    const std::string source = NextConnectionPrimPath((*connections)[0].str());
+    const std::string source = ConnectionPrimPath((*connections)[0].str());
     for (const tn::UsdPrim& candidate : graphs) {
       const std::string candidate_path = candidate.GetPath().str();
       if (source == candidate_path ||
@@ -110,7 +110,7 @@ std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
     }
     lightusd::minijson::Value node_json;
     node_json["name"] = node.GetName();
-    node_json["category"] = NextMtlxCategory(node_id);
+    node_json["category"] = MtlxCategory(node_id);
     node_json["type"] = node_id;
     node_json["inputs"] = lightusd::minijson::Value::array();
     for (const std::string& property : node.GetPropertyNames()) {
@@ -118,13 +118,13 @@ std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
       lightusd::minijson::Value input;
       input["name"] = property.substr(7);
       const std::vector<tn::Path>* connections =
-          NextPropertyConnections(node, property);
+          PropertyConnections(node, property);
       if (connections && !connections->empty()) {
         const std::string source = (*connections)[0].str();
-        input["nodename"] = NextConnectionNodeName(source);
-        input["output"] = NextConnectionOutputName(source);
+        input["nodename"] = ConnectionNodeName(source);
+        input["output"] = ConnectionOutputName(source);
       } else if (const tn::Value* value = node.GetPropertyValue(property)) {
-        lightusd::minijson::Value encoded = NextValueJSON(*value);
+        lightusd::minijson::Value encoded = ValueJSON(*value);
         if (!encoded.is_null()) input["value"] = std::move(encoded);
       }
       std::string color_space;
@@ -144,11 +144,11 @@ std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
     lightusd::minijson::Value output;
     output["name"] = property.substr(8);
     const std::vector<tn::Path>* connections =
-        NextPropertyConnections(graph, property);
+        PropertyConnections(graph, property);
     if (connections && !connections->empty()) {
       const std::string source = (*connections)[0].str();
-      output["nodename"] = NextConnectionNodeName(source);
-      output["output"] = NextConnectionOutputName(source);
+      output["nodename"] = ConnectionNodeName(source);
+      output["output"] = ConnectionOutputName(source);
     }
     graph_json["outputs"].push_back(std::move(output));
   }
@@ -159,16 +159,16 @@ std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
   for (const std::string& property : shader.GetPropertyNames()) {
     if (property.rfind("inputs:", 0) != 0) continue;
     const std::vector<tn::Path>* connections =
-        NextPropertyConnections(shader, property);
+        PropertyConnections(shader, property);
     if (!connections || connections->empty()) continue;
     const std::string source = (*connections)[0].str();
-    const std::string source_prim = NextConnectionPrimPath(source);
+    const std::string source_prim = ConnectionPrimPath(source);
     if (source_prim != graph_path &&
         source_prim.rfind(graph_path + "/", 0) != 0) continue;
     lightusd::minijson::Value connection;
     connection["input"] = property.substr(7);
     connection["nodegraph"] = graph.GetName();
-    connection["output"] = NextConnectionOutputName(source);
+    connection["output"] = ConnectionOutputName(source);
     root["connections"].push_back(std::move(connection));
   }
   return root.dump();
@@ -192,8 +192,8 @@ std::string CanonicalMaterialGraph(const tn::Stage& stage,
   };
   std::function<void(const std::string&, std::string*)> encode_connection;
   encode_connection = [&](const std::string& connection, std::string* out) {
-    std::string prim_path = NextConnectionPrimPath(connection);
-    std::string output = NextConnectionOutputName(connection);
+    std::string prim_path = ConnectionPrimPath(connection);
+    std::string output = ConnectionOutputName(connection);
     if (prim_path.empty()) prim_path = connection;
     const std::string visit_key = prim_path + "." + output;
     if (!visiting.insert(visit_key).second) {
@@ -350,7 +350,7 @@ std::string CanonicalMaterialGraph(const tn::Stage& stage,
   return valid && has_terminal ? root : std::string();
 }
 
-void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Value* out) {
+void AppendPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Value* out) {
   if (!out || !prim.IsValid()) return;
   lightusd::minijson::Value item;
   item["name"] = prim.GetName();
@@ -396,7 +396,7 @@ void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Valu
       else if (type == "GeomSubset") render = render || name == "indices";
       if (render) continue;
     }
-    item["properties"][name] = NextValueJSON(*value);
+    item["properties"][name] = ValueJSON(*value);
   }
   for (const std::string& name : prim.GetRelationshipNames()) {
     const std::vector<tn::Path>* targets = prim.GetRelationship(name);
@@ -409,7 +409,7 @@ void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Valu
     if (auto token = purpose->as_token()) item["purpose"] = *token;
   }
   if (const tn::Value* matrix = prim.GetPropertyValue("xformOp:transform")) {
-    item["matrix"] = NextValueJSON(*matrix);
+    item["matrix"] = ValueJSON(*matrix);
   }
   if (type == "Mesh" || type == "Cube" || type == "Sphere" ||
       type == "Cylinder" || type == "Capsule" || type == "Plane") {
@@ -420,7 +420,7 @@ void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Valu
                              type.substr(1);
     auto copy_property = [&](const char* property, const char* key) {
       if (const tn::Value* value = prim.GetPropertyValue(property)) {
-        geometry[key] = NextValueJSON(*value);
+        geometry[key] = ValueJSON(*value);
       }
     };
     if (type == "Mesh") {
@@ -439,7 +439,7 @@ void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, lightusd::minijson::Valu
   }
   out->push_back(std::move(item));
   for (const tn::UsdPrim& child : prim.GetChildren()) {
-    AppendNextPhysicsPrimJSON(child, out);
+    AppendPhysicsPrimJSON(child, out);
   }
 }
 

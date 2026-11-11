@@ -8,7 +8,7 @@ const native = await loadWasm(() => import(`../src/lightusd/lightusd${suffix}.js
 });
 const encode = text => new TextEncoder().encode(text);
 function textFromPackage(bytes) {
-  const reader = new native.NextUSDZConverterNative();
+  const reader = new native.USDZConverterNative();
   try {
     assert.equal(reader.loadFromBinary(bytes, 'result.usdz'), true, reader.error());
     return reader.exportAsUSDA();

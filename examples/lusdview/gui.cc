@@ -24,7 +24,7 @@
 #include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
-#include "next_scene_loader.hh"  // BuildNextRtDeformedVertices (selection-highlight re-pose)
+#include "core_scene_loader.hh"  // BuildCoreRtDeformedVertices (selection-highlight re-pose)
 #include "skinning.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -1545,9 +1545,9 @@ void Gui::rebuildSubsetHighlight() {
   const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
 
   std::set<uint32_t> faces;
-  if (nextStage_ && !selPath_.empty()) {
+  if (coreStage_ && !selPath_.empty()) {
     const lightusd_prim subset =
-        lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str());
+        lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
     ReadPublicGeomSubsetFaces(subset, &faces);
   }
   {
@@ -1971,7 +1971,7 @@ bool Gui::framePath(const std::string& absPath) {
   return found;
 }
 
-bool Gui::drawNextPrimTree(lightusd_prim prim) {
+bool Gui::drawCorePrimTree(lightusd_prim prim) {
   if (!lightusd_prim_is_valid(prim)) return false;
   const std::string path = PublicString(lightusd_prim_path(prim));
   const std::string label = PublicString(lightusd_prim_name(prim)) + "  " + PublicString(lightusd_prim_type_name(prim));
@@ -2013,7 +2013,7 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
     ImGui::SameLine();
     ImGui::TextDisabled("payload");
   }
-  if (ImGui::BeginPopupContextItem("next_prim_context")) {
+  if (ImGui::BeginPopupContextItem("core_prim_context")) {
     if (lightusd_prim_has_payload(prim) && ImGui::MenuItem("Load payload")) {
       payloadLoadRequests_.push_back(path);
     }
@@ -2037,7 +2037,7 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   }
   if (open) {
     for (size_t i = 0; i < lightusd_prim_child_count(prim); ++i) {
-      drawNextPrimTree(lightusd_prim_child(prim, i));
+      drawCorePrimTree(lightusd_prim_child(prim, i));
     }
     ImGui::TreePop();
   }
@@ -2045,18 +2045,18 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   return matches || descendant_matches;
 }
 
-void Gui::drawNextInspector() {
-  if (!nextStage_ || selPath_.empty()) {
+void Gui::drawCoreInspector() {
+  if (!coreStage_ || selPath_.empty()) {
     HintWrapped("Select a prim to inspect it.");
     return;
   }
-  const lightusd_prim publicPrim = lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str());
+  const lightusd_prim publicPrim = lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
   if (!lightusd_prim_is_valid(publicPrim)) {
     HintWrapped("The selected prim is not present in the composed stage.");
     return;
   }
 
-  drawSelectionBreadcrumbs("##next-inspector-breadcrumbs");
+  drawSelectionBreadcrumbs("##core-inspector-breadcrumbs");
   ImGui::TextWrapped("%s", selPath_.c_str());
   if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
   ImGui::TextDisabled("Type: %s", PublicString(lightusd_prim_type_name(publicPrim)).c_str());
@@ -2078,7 +2078,7 @@ void Gui::drawNextInspector() {
   if (shaderBallPos != std::string::npos &&
       shaderBallPos + shaderBallSuffix.size() == selPath_.size()) {
     const std::string sceneRoot = selPath_.substr(0, shaderBallPos);
-    const lightusd_prim materialScope = lightusd_stage_prim_at_path(nextStage_.get(),
+    const lightusd_prim materialScope = lightusd_stage_prim_at_path(coreStage_.get(),
         (sceneRoot + "/materials/examples/mtlx").c_str());
     std::vector<std::string> choices;
     if (lightusd_prim_is_valid(materialScope)) {
@@ -2134,7 +2134,7 @@ void Gui::drawNextInspector() {
       const std::string set = PublicString(lightusd_prim_variant_set_name(publicPrim, i));
       std::string selected = PublicString(lightusd_variant_selection(publicPrim, set.c_str()));
       if (selected.empty()) selected = "(default)";
-      const std::string id = set + "##next_variant";
+      const std::string id = set + "##core_variant";
       if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
         for (size_t j = 0; j < lightusd_variant_count(publicPrim, set.c_str()); ++j) {
           const std::string variant = PublicString(lightusd_variant_name(publicPrim, set.c_str(), j));
@@ -2179,7 +2179,7 @@ void Gui::drawNextInspector() {
   }
 
   if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-    if (ImGui::BeginTable("##next_properties", 3,
+    if (ImGui::BeginTable("##core_properties", 3,
                           ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_BordersInnerV |
                               ImGuiTableFlags_Resizable)) {
@@ -2276,7 +2276,7 @@ void Gui::drawHierarchy() {
     ImGui::Checkbox("Render scene", &renderHierarchy_);
     hierFilter_.Draw("Search", -1.0f);  // name / type / path
     ImGui::Separator();
-    if (draw_ && (renderHierarchy_ || !nextStage_)) {
+    if (draw_ && (renderHierarchy_ || !coreStage_)) {
       // The draw records retain composed prim paths, including instanced and
       // procedural geometry. Build ancestors iteratively to avoid recursive
       // traversal of arbitrarily deep scene paths.
@@ -2329,9 +2329,9 @@ void Gui::drawHierarchy() {
       }
       while (!openPaths.empty()) { ImGui::TreePop(); openPaths.pop_back(); }
       if (nodes.empty()) HintWrapped("No matching render objects.");
-    } else if (nextStage_) {
-      for (size_t i = 0; i < lightusd_stage_root_prim_count(nextStage_.get()); ++i) {
-        drawNextPrimTree(lightusd_stage_root_prim(nextStage_.get(), i));
+    } else if (coreStage_) {
+      for (size_t i = 0; i < lightusd_stage_root_prim_count(coreStage_.get()); ++i) {
+        drawCorePrimTree(lightusd_stage_root_prim(coreStage_.get(), i));
       }
     }
   } else {
@@ -2345,8 +2345,8 @@ void Gui::drawInspector() {
   refineSelectedTextures_ = false;
   releaseSelectedTextures_ = false;
   ImGui::Begin("Inspector");
-  if (nextStage_) {
-    drawNextInspector();
+  if (coreStage_) {
+    drawCoreInspector();
   } else if (!selPath_.empty()) {
     ImGui::TextWrapped("%s", selPath_.c_str());
     if (ImGui::SmallButton("Copy path")) {
@@ -2974,7 +2974,7 @@ void Gui::drawPayloads() {
     ImGui::End();
     return;
   }
-  if (nextStage_) {
+  if (coreStage_) {
     // The overwhelmingly common case has no deferred payloads. Do not traverse
     // the entire composed stage merely to decide whether the empty panel says
     // "No deferred payloads" or "All payloads loaded"; on large scenes that
@@ -2989,7 +2989,7 @@ void Gui::drawPayloads() {
       wantLoadAllPayloads_ = true;
     }
     ImGui::Separator();
-    if (ImGui::BeginTable("##next_payloads", 3,
+    if (ImGui::BeginTable("##core_payloads", 3,
                           ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_BordersInnerV |
                               ImGuiTableFlags_Resizable)) {
@@ -3009,7 +3009,7 @@ void Gui::drawPayloads() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(primPath.c_str());
         ImGui::TableNextColumn();
-        const lightusd_prim prim = lightusd_stage_prim_at_path(nextStage_.get(), primPath.c_str());
+        const lightusd_prim prim = lightusd_stage_prim_at_path(coreStage_.get(), primPath.c_str());
         const std::string asset = lightusd_prim_has_payload(prim)
             ? PublicString(lightusd_prim_arc_text(prim, LIGHTUSD_ARC_PAYLOAD, 0))
             : "(deferred)";
@@ -3549,8 +3549,8 @@ void Gui::drawMaterialsPanel() {
 void Gui::drawCompositionGraph() {
   ImGui::Begin("Composition Graph");
   const lightusd_prim selPrim =
-      (nextStage_ && !selPath_.empty())
-          ? lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str())
+      (coreStage_ && !selPath_.empty())
+          ? lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str())
           : lightusd_prim{};
   if (!lightusd_prim_is_valid(selPrim)) {
     ImGui::TextDisabled("Select a prim to see its composition arcs.");
@@ -3818,7 +3818,7 @@ void Gui::drawStats() {
     ImGui::Text("Curves: %zu prims / %zu tessellated samples",
                 draw_->curves.size(), curveSamples);
     // draw_->vertexCount is captured at load (CPU geometry may be freed after
-    // upload on the --next path, so summing meshes[].vertices would read 0).
+    // upload on the --core path, so summing meshes[].vertices would read 0).
     ImGui::Text("Vertices: %zu", draw_->vertexCount);
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
     // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
@@ -5087,13 +5087,13 @@ Gui::posedPickVertices() const {
     std::fprintf(stderr,
                  "[pick] pose applied=%.3f current=%.3f drawIsPosed=%d next=%d\n",
                  timeline_.applied, timeline_.current, drawIsPosed_ ? 1 : 0,
-                 nextStage_ ? 1 : 0);
+                 coreStage_ ? 1 : 0);
   }
-  if (nextStage_) {
-    // --next loader: re-pose the retained rest vertices at the current time
+  if (coreStage_) {
+    // --core loader: re-pose the retained rest vertices at the current time
     // (morph then skin), exactly like the selection-highlight path.
     std::vector<RtSkinnedMeshUpload> posed;
-    if (BuildNextRtDeformedVertices(nextStage_.get(), *draw_, timeline_.applied,
+    if (BuildCoreRtDeformedVertices(coreStage_.get(), *draw_, timeline_.applied,
                                     blendOverrides(), &posed)) {
       for (RtSkinnedMeshUpload& upload : posed) {
         if (upload.meshIndex >= 0)
@@ -5271,7 +5271,7 @@ int Gui::pickMeshSingle(
   const light3d::Vec3 rd = light3d::normalize(farW - nearW);
 
   // Slab test against a world-space AABB. Return the entry distance as well: the
-  // next-loader deliberately releases static CPU triangles after GPU upload, so
+  // core-loader deliberately releases static CPU triangles after GPU upload, so
   // their retained bounds are the low-memory object-picking representation.
   const float invdx = (rd.x != 0.0f) ? 1.0f / rd.x : 1e30f;
   const float invdy = (rd.y != 0.0f) ? 1.0f / rd.y : 1e30f;
@@ -6669,12 +6669,12 @@ void Gui::drawViewport() {
   ImGui::End();
 }
 
-void Gui::setNextStage(const lightusd::api::Stage& stage) {
-  if (nextStage_.get() == stage.get()) return;
-  nextStage_ = stage;
-  nextSkeletonPathsReady_ = false;
-  nextSkeletonPaths_.clear(); nextSkeletonLines_.clear();
-  nextSkeletonTimeValid_ = false;
+void Gui::setCoreStage(const lightusd::api::Stage& stage) {
+  if (coreStage_.get() == stage.get()) return;
+  coreStage_ = stage;
+  coreSkeletonPathsReady_ = false;
+  coreSkeletonPaths_.clear(); coreSkeletonLines_.clear();
+  coreSkeletonTimeValid_ = false;
 }
 
 void Gui::renderViewportScene(FramePacket* packet) {
@@ -7016,9 +7016,9 @@ void Gui::buildHelpers() {
   }
 
   // Extent attribute bbox
-  if (showExtent_ && nextStage_ && !selPath_.empty()) {
+  if (showExtent_ && coreStage_ && !selPath_.empty()) {
     const lightusd_prim prim =
-        lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str());
+        lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
     float mn[3], mx[3];
     if (lightusd_prim_is_valid(prim) && ReadPublicPreviewExtent(prim, mn, mx))
       addBox(mn, mx, 0.30f, 1.00f, 0.50f);
@@ -7028,28 +7028,28 @@ void Gui::buildHelpers() {
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
   // Draw the same animated joint hierarchy used for skinning, then apply the
   // Skeleton prim transform to match the rendered character placement.
-  if (showSkeleton_ && nextStage_) {
-    if (!nextSkeletonPathsReady_) {
-      VisitPublicPrims(nextStage_.get(), [&](lightusd_prim prim) {
+  if (showSkeleton_ && coreStage_) {
+    if (!coreSkeletonPathsReady_) {
+      VisitPublicPrims(coreStage_.get(), [&](lightusd_prim prim) {
         if (PublicString(lightusd_prim_type_name(prim)) == "Skeleton")
-          nextSkeletonPaths_.push_back(PublicString(lightusd_prim_path(prim)));
+          coreSkeletonPaths_.push_back(PublicString(lightusd_prim_path(prim)));
         return true;
       });
-      nextSkeletonPathsReady_ = true;
+      coreSkeletonPathsReady_ = true;
     }
-    if (!nextSkeletonTimeValid_ || nextSkeletonTime_ != timeline_.applied) {
-      nextSkeletonLines_.clear();
+    if (!coreSkeletonTimeValid_ || coreSkeletonTime_ != timeline_.applied) {
+      coreSkeletonLines_.clear();
       const float dx = draw_ && draw_->hasBounds ? draw_->aabbMax[0] - draw_->aabbMin[0] : 1.0f;
       const float dy = draw_ && draw_->hasBounds ? draw_->aabbMax[1] - draw_->aabbMin[1] : 1.0f;
       const float dz = draw_ && draw_->hasBounds ? draw_->aabbMax[2] - draw_->aabbMin[2] : 1.0f;
       const float diagonal = std::sqrt(dx*dx + dy*dy + dz*dz);
       auto segment = [&](const light3d::Vec3& a, const light3d::Vec3& b) {
-        nextSkeletonLines_.push_back(HelperVertex{{a.x,a.y,a.z},{0.10f,0.80f,0.90f}});
-        nextSkeletonLines_.push_back(HelperVertex{{b.x,b.y,b.z},{0.10f,0.80f,0.90f}});
+        coreSkeletonLines_.push_back(HelperVertex{{a.x,a.y,a.z},{0.10f,0.80f,0.90f}});
+        coreSkeletonLines_.push_back(HelperVertex{{b.x,b.y,b.z},{0.10f,0.80f,0.90f}});
       };
-      for (const auto& path : nextSkeletonPaths_) {
-        NextSkeletonOverlay pose;
-        if (!BuildNextSkeletonOverlay(nextStage_.get(),path,timeline_.applied,&pose)) continue;
+      for (const auto& path : coreSkeletonPaths_) {
+        CoreSkeletonOverlay pose;
+        if (!BuildCoreSkeletonOverlay(coreStage_.get(),path,timeline_.applied,&pose)) continue;
         const size_t count = std::min(pose.parents.size(), pose.positions.size()/3);
         const float markerSize = std::max(diagonal*(count>=1024 ? 0.001f : 0.015f),1e-5f);
         for (size_t joint=0; joint<count; ++joint) {
@@ -7064,10 +7064,10 @@ void Gui::buildHelpers() {
           }
         }
       }
-      nextSkeletonTime_ = timeline_.applied;
-      nextSkeletonTimeValid_ = true;
+      coreSkeletonTime_ = timeline_.applied;
+      coreSkeletonTimeValid_ = true;
     }
-    overlayLines_.insert(overlayLines_.end(),nextSkeletonLines_.begin(),nextSkeletonLines_.end());
+    overlayLines_.insert(overlayLines_.end(),coreSkeletonLines_.begin(),coreSkeletonLines_.end());
   }
 
   // Translation gizmo at the selected mesh world position.
@@ -7135,9 +7135,9 @@ void Gui::drawStageMeta() {
         ImGui::TableSetColumnIndex(1);
         ImGui::TextWrapped("%s", v.c_str());
       };
-      if (nextStage_) {
+      if (coreStage_) {
         PublicStageInfo info;
-        if (ReadPublicStageInfo(nextStage_.get(), &info)) {
+        if (ReadPublicStageInfo(coreStage_.get(), &info)) {
           row("upAxis", info.upAxis);
           row("metersPerUnit", std::to_string(info.metersPerUnit));
           row("framesPerSecond", std::to_string(info.framesPerSecond));
@@ -7149,7 +7149,7 @@ void Gui::drawStageMeta() {
           if (!info.documentation.empty()) row("documentation", info.documentation);
         }
         lightusd::api::StringList layers;
-        if (lightusd_stage_sublayers(nextStage_.get(), layers.put()) == LIGHTUSD_OK &&
+        if (lightusd_stage_sublayers(coreStage_.get(), layers.put()) == LIGHTUSD_OK &&
             lightusd::api::StringListSize(layers)) {
           std::string sublayers;
           for (size_t i = 0; i < lightusd::api::StringListSize(layers); ++i) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Layer / PrimSpec diff tests for src/next/diff/layer-diff.{hh,cc}:
+// Layer / PrimSpec diff tests for src/diff/layer-diff.{hh,cc}:
 // identical layers, value changes, ULP/eps tolerance, prim add/remove,
 // metadata gating (compareMetadata), array + timeSample diffs, fuzzy asset
 // paths, and the text/JSON renderer output shape.

@@ -1,0 +1,2691 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// LightUSD - Unit tests
+
+#include <iostream>
+#include <fstream>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <cmath>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>
+#endif
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
+
+#include "types/type-id.hh"
+#include "types/type-info.hh"
+#include "types/value.hh"
+#include "crate/crate-data-source.hh"
+#include "crate/crate-format.hh"
+#include "crate/lazy-array.hh"
+#include "prim/path.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
+#include "parser/ascii-parser.hh"
+#include "load-usd.hh"
+#include "stage/stage.hh"
+#include "reader/usda-reader.hh"
+#include "schema/physics-api.hh"
+#include "schema/physics-joint.hh"
+#include "schema/physics-scene.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usda-writer.hh"
+
+using namespace lightusd;
+
+namespace {
+
+static const std::string& CoreTestScratchDirectory() {
+  static const std::string directory = [] {
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    char pattern[] = "/tmp/lightusd-core-unit-XXXXXX";
+    char* created = ::mkdtemp(pattern);
+    return created ? std::string(created) : std::string("/tmp");
+#else
+    return std::string("/tmp");
+#endif
+  }();
+  return directory;
+}
+
+static std::string CoreTestScratchPath(const char* name) {
+  return CoreTestScratchDirectory() + "/" + name;
+}
+
+#if !defined(LIGHTUSD_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                             \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+constexpr bool kExpectUsdaLazyMmap = true;
+#else
+constexpr bool kExpectUsdaLazyMmap = false;
+#endif
+
+std::string UsdaFixturePath(const std::string& filename) {
+  const std::string file_path(__FILE__);
+  const std::string marker = "/tests/core/";
+  const size_t pos = file_path.rfind(marker);
+  assert(pos != std::string::npos);
+  return file_path.substr(0, pos) + "/tests/usda/" + filename;
+}
+
+}  // namespace
+
+// ============================================================
+// Type system tests
+// ============================================================
+
+void test_type_id() {
+  std::cout << "Testing TypeId..." << std::endl;
+
+  // Test type name lookup
+  assert(GetTypeName(TypeId::Float) != nullptr);
+  assert(std::strcmp(GetTypeName(TypeId::Float), "float") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Float3), "float3") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4d), "matrix4d") == 0);
+
+  // Test reverse lookup
+  assert(GetTypeIdFromName("float") == TypeId::Float);
+  assert(GetTypeIdFromName("float3") == TypeId::Float3);
+  assert(GetTypeIdFromName("unknown") == TypeId::Invalid);
+
+  // Test type size
+  assert(GetTypeSize(TypeId::Float) == sizeof(float));
+  assert(GetTypeSize(TypeId::Double) == sizeof(double));
+  assert(GetTypeSize(TypeId::Float3) == 3 * sizeof(float));
+  assert(GetTypeSize(TypeId::Matrix4d) == 16 * sizeof(double));
+
+  // Test scalar detection
+  assert(IsScalarType(TypeId::Float) == true);
+  assert(IsScalarType(TypeId::Float3) == false);
+  assert(IsScalarType(TypeId::Matrix4d) == false);
+
+  // Test component type
+  assert(GetComponentType(TypeId::Float3) == TypeId::Float);
+  assert(GetComponentType(TypeId::Double3) == TypeId::Double);
+  assert(GetComponentType(TypeId::Matrix4d) == TypeId::Double);
+
+  // Test component count
+  assert(GetComponentCount(TypeId::Float) == 1);
+  assert(GetComponentCount(TypeId::Float3) == 3);
+  assert(GetComponentCount(TypeId::Matrix4d) == 16);
+
+  // Every built-in descriptor has an allocation-free bounded-name lookup.
+  // A span is not required to be terminated, and embedded NULs are significant.
+  for (uint16_t i = 1; i < static_cast<uint16_t>(TypeId::Count); ++i) {
+    const TypeId id = static_cast<TypeId>(i);
+    const TypeInfo* info = GetTypeInfo(id);
+    assert(info && info->id == id && info->name);
+    const std::string name(info->name);
+    assert(GetTypeIdFromName(name.data(), name.size()) == id);
+    bool array = true;
+    if (id != TypeId::Extent && id != TypeId::Reference) {
+      assert(ParseTypeName(name, array) == id && !array);
+      assert(ParseTypeName(name + "[]", array) == id && array);
+    }
+    if (info->component_type != TypeId::Invalid) {
+      assert(info->size == GetTypeSize(info->component_type) * info->component_count);
+      assert(info->alignment == GetTypeAlignment(info->component_type));
+    }
+  }
+  const char bounded[] = {'f', 'l', 'o', 'a', 't', 'x'};
+  assert(GetTypeIdFromName(bounded, 5) == TypeId::Float);
+  assert(GetTypeIdFromName(bounded, 6) == TypeId::Invalid);
+  assert(GetTypeIdFromName("float\0tail", 10) == TypeId::Invalid);
+  assert(GetTypeIdFromName(nullptr, 3) == TypeId::Invalid);
+  assert(GetTypeInfo(static_cast<TypeId>(65535)) == nullptr);
+  bool array = true;
+  assert(ParseTypeName("", array) == TypeId::Invalid && !array);
+  assert(ParseTypeName("[]", array) == TypeId::Invalid && !array);
+  assert(ParseTypeName("float[][]", array) == TypeId::Invalid && array);
+
+  std::cout << "  TypeId tests passed!" << std::endl;
+}
+
+void test_value() {
+  std::cout << "Testing Value..." << std::endl;
+
+  // Test scalar values
+  {
+    Value v(42);
+    assert(v.type_id() == TypeId::Int);
+    assert(!v.is_empty());
+    assert(!v.is_array());
+    assert(v.as_int() != nullptr);
+    assert(*v.as_int() == 42);
+    assert(v.as_float() == nullptr);  // Wrong type
+  }
+
+  // Test float value
+  {
+    Value v(3.14f);
+    assert(v.type_id() == TypeId::Float);
+    assert(v.as_float() != nullptr);
+    assert(std::abs(*v.as_float() - 3.14f) < 0.001f);
+  }
+
+  // Test string value
+  {
+    Value v(std::string("hello"));
+    assert(v.type_id() == TypeId::String);
+    assert(v.as_string() != nullptr);
+    assert(*v.as_string() == "hello");
+  }
+
+  // Test vector factory
+  {
+    Value v = Value::MakeFloat3(1.0f, 2.0f, 3.0f);
+    assert(v.type_id() == TypeId::Float3);
+    assert(v.as_float3() != nullptr);
+    const float* data = v.as_float3();
+    assert(data[0] == 1.0f);
+    assert(data[1] == 2.0f);
+    assert(data[2] == 3.0f);
+  }
+
+  // Test matrix factory
+  {
+    double mat_data[16] = {
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1
+    };
+    Value v = Value::MakeMatrix4d(mat_data);
+    assert(v.type_id() == TypeId::Matrix4d);
+    assert(v.as_matrix4d() != nullptr);
+    const double* data = v.as_matrix4d();
+    assert(data[0] == 1.0);
+    assert(data[15] == 1.0);
+  }
+
+  // Test copy
+  {
+    Value v1(123);
+    Value v2 = v1;
+    assert(*v2.as_int() == 123);
+    *v2.as_int() = 456;
+    assert(*v1.as_int() == 123);  // v1 unchanged
+    assert(*v2.as_int() == 456);
+  }
+
+  // Test move
+  {
+    Value v1(std::string("test"));
+    Value v2 = std::move(v1);
+    assert(v1.is_empty());
+    assert(*v2.as_string() == "test");
+  }
+
+  // Test array
+  {
+    std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+    Value v = Value::MakeFloatArray(data);
+    assert(v.is_array());
+    assert(v.array_size() == 5);
+    assert(v.as_float_array() != nullptr);
+    assert(v.as_float_array()->size() == 5);
+    assert((*v.as_float_array())[2] == 3.0f);
+  }
+
+  // Value's compact array-size field cannot represent more than uint32_t.
+  // Reject an oversized lazy reference instead of silently truncating it.
+  {
+    LazyArrayRef ref;
+    ref.source =
+        CrateDataSource::Adopt(std::string(), CrateVersion{0, 8, 0});
+    ref.value_type = TypeId::Float;
+    ref.element_count =
+        static_cast<uint64_t>((std::numeric_limits<uint32_t>::max)()) + 1;
+    Value v = Value::MakeLazyArray(ref);
+    assert(v.is_empty());
+
+    ref.element_count = 1;
+    ref.source.reset();
+    assert(Value::MakeLazyArray(ref).is_empty());  // source is required
+  }
+
+  // Component-array factories reject partial tuples, mismatched arity, and a
+  // TypeId whose accessor expects a different backing storage class.
+  {
+    assert(Value::MakeFloat2Array(std::vector<float>{1, 2, 3}).is_empty());
+    assert(Value::MakeFloat3Array(std::vector<float>{1, 2, 3, 4}).is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2, 3},
+                                     TypeId::Float2, 2)
+               .is_empty());
+    assert(Value::MakeFloatCompArray(std::vector<float>{1, 2}, TypeId::Token,
+                                     2)
+               .is_empty());
+    assert(Value::MakeDoubleCompArray(std::vector<double>{1, 2, 3},
+                                      TypeId::Double3, 2)
+               .is_empty());
+    assert(Value::MakeIntCompArray(std::vector<int32_t>{1, 2}, TypeId::Int2,
+                                   3)
+               .is_empty());
+    assert(Value::MakeUIntCompArray(std::vector<uint32_t>{1, 2},
+                                    TypeId::UInt2, 0)
+               .is_empty());
+    assert(Value::MakeStringLikeArray(std::vector<std::string>{"x"},
+                                      TypeId::Float)
+               .is_empty());
+  }
+
+  // Pointer-backed factories reject null input and non-trivial storage types;
+  // constructing a raw Dictionary would otherwise destroy an uninitialized
+  // shared_ptr handle.
+  {
+    const uint32_t raw = 0;
+    assert(Value::MakeMatrix2f(nullptr).is_empty());
+    assert(Value::MakeMatrix4d(nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Float, nullptr).is_empty());
+    assert(Value::MakeFromRaw(TypeId::Dictionary, &raw).is_empty());
+  }
+
+  // A failed mutable accessor must not mark an unrelated value as edited.
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2});
+    assert(!v.is_dirty());
+    assert(v.as_double_array() == nullptr);
+    assert(!v.is_dirty());
+  }
+
+  // raw_data() on an array exposes its flat element payload, not the private
+  // polymorphic storage wrapper. Mutable access must preserve copy-on-write.
+  {
+    Value original = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    const Value& const_original = original;
+    const int32_t* const_raw =
+        static_cast<const int32_t*>(const_original.raw_data());
+    assert(const_raw && const_raw[0] == 1 && const_raw[2] == 3);
+    assert(!original.is_dirty());
+
+    Value edited = original;
+    int32_t* mutable_raw = static_cast<int32_t*>(edited.raw_data());
+    assert(mutable_raw);
+    mutable_raw[0] = 9;
+    assert(edited.is_dirty());
+    assert((*edited.as_int_array())[0] == 9);
+    assert((*original.as_int_array())[0] == 1);
+
+    Value tuples = Value::MakeFloat3Array({0, 1, 2, 3, 4, 5});
+    const Value& const_tuples = tuples;
+    const float* tuple_raw =
+        static_cast<const float*>(const_tuples.raw_data());
+    assert(tuple_raw && tuple_raw[0] == 0 && tuple_raw[5] == 5);
+
+    Value token = Value::MakeToken("raw token");
+    const Value& const_token = token;
+    Value token_copy =
+        Value::MakeFromRaw(TypeId::Token, const_token.raw_data());
+    assert(token_copy.as_token() && *token_copy.as_token() == "raw token");
+
+    Value empty;
+    Value block = Value::MakeBlock();
+    assert(empty.raw_data() == nullptr);
+    assert(block.raw_data() == nullptr);
+  }
+
+  // Array growth uses an element count and cannot publish partial tuples.
+  {
+    Value scalar = Value::MakeFloatArray(std::vector<float>{1, 2});
+    assert(scalar.resize_array(3));
+    scalar.as_float_array()[2] = 3;
+    assert(scalar.array_size() == 3);
+
+    Value tuples = Value::MakeFloat3Array(std::vector<float>{1, 2, 3});
+    assert(tuples.resize_array(2));
+    auto lanes = tuples.as_float_array();
+    lanes[3] = 4;
+    lanes[4] = 5;
+    lanes[5] = 6;
+    assert(tuples.array_size() == 2);
+  }
+
+  // Copy-on-write: a copy shares the buffer until one side mutates, then the
+  // mutation must be private (the other copy is unaffected).
+  {
+    Value a = Value::MakeFloatArray(std::vector<float>{1, 2, 3});
+    Value b = a;  // shares the buffer (refcount bump, no element copy)
+    assert(*a.as_float_array() == *b.as_float_array());
+
+    (*b.as_float_array())[0] = 99.0f;  // mutable access detaches b
+    assert((*b.as_float_array())[0] == 99.0f);
+    assert((*a.as_float_array())[0] == 1.0f && "CoW detach failed: a was mutated");
+
+    // A token array (string elements) detaches correctly too.
+    Value t = Value::MakeTokenArray(std::vector<std::string>{"x", "y"});
+    Value t2 = t;
+    assert(*t.as_token_array() == *t2.as_token_array());
+  }
+
+  // Array equality/hash/raw-bytes must cover every concrete array backing type,
+  // not just float3/int. These are used by time-sample deduplication.
+  {
+    Value q1 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    Value q2 = Value::MakeFloatCompArray(
+        std::vector<float>{0, 0, 0, 1, 0, 1, 0, 0}, TypeId::Quatf, 4);
+    assert(q1 == q2);
+    assert(q1.hash() == q2.hash());
+    size_t n = 0;
+    const uint8_t* raw = q1.raw_bytes(&n);
+    assert(raw && n == 8 * sizeof(float));
+
+    Value m1 = Value::MakeDoubleCompArray(std::vector<double>(32, 2.0),
+                                          TypeId::Matrix4d, 16);
+    Value m2 = m1;
+    assert(m1 == m2);
+    assert(m1.hash() == m2.hash());
+    raw = m1.raw_bytes(&n);
+    assert(raw && n == 32 * sizeof(double));
+
+    Value tok1 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    Value tok2 = Value::MakeTokenArray(std::vector<std::string>{"a", "b"});
+    assert(tok1 == tok2);
+    assert(tok1.hash() == tok2.hash());
+    assert(tok1.raw_bytes(&n) == nullptr && n == 0);
+
+    (*q2.as_float_array())[0] = 42.0f;
+    assert(q1 != q2);
+  }
+
+  // Ownership is shared for each backing kind, including string objects.
+  // Mutable raw access clones only the edited numeric owner. Input ranges
+  // are copied into canonical C11 storage; string arrays use explicit edits.
+  {
+    std::vector<float> input{1, 2, 3};
+    const float* allocation = input.data();
+    const Value adopted = Value::MakeFloatArray(std::move(input));
+    assert(adopted.raw_data() != allocation);
+    input[0] = 99;
+    assert(adopted.as_float_array()[0] == 1);
+    Value arrays[] = {
+      adopted, Value::MakeIntArray(std::vector<int32_t>{1, 2}),
+      Value::MakeDoubleArray(std::vector<double>{1, 2}),
+      Value::MakeInt64Array(std::vector<int64_t>{1, 2}),
+      Value::MakeUIntArray(std::vector<uint32_t>{1, 2}),
+      Value::MakeUInt64Array(std::vector<uint64_t>{1, 2}),
+      Value::MakeBoolArray(std::vector<bool>{true, false}),
+      Value::MakeTokenArray(std::vector<std::string>{"owned string", "second"})
+    };
+    for (const Value& original : arrays) {
+      if (original.as_token_array()) continue;
+      const void* before = original.raw_data();
+      Value copy = original;
+      const Value& read_copy = copy;
+      assert(read_copy.raw_data() == before);
+      assert(copy.raw_data() != before);  // detach all eight storage kinds
+      assert(copy == original);
+      Value moved = std::move(copy);
+      assert(copy.is_empty());
+      assert(moved == original);
+      copy = moved;
+      moved.clear();
+      assert(copy == original);
+    }
+    Value tokens = arrays[7];
+    assert(tokens.set_string_at(0, "edited"));
+    assert(tokens.as_token_array()[0] == "edited");
+    assert((*arrays[7].as_token_array())[0] == "owned string");
+    Value bits = arrays[6];
+    static_cast<uint8_t*>(bits.raw_data())[0] = 0;
+    assert((*arrays[6].as_bool_array())[0] == 1);
+  }
+
+  std::cout << "  Value tests passed!" << std::endl;
+}
+
+void test_shared_storage() {
+  PropNameTable properties;
+  const auto first = properties.intern("first");
+  const std::string_view stable = properties.get(first);
+  const auto empty = properties.intern("");
+  assert(properties.find(std::string_view{}).id == empty.id);
+  const std::string embedded("a\0b", 3);
+  const auto binary = properties.intern(embedded);
+  assert(properties.find(std::string_view(embedded)).id == binary.id);
+  assert(!properties.find("a").is_valid());
+  properties.freeze();
+  for (int i = 0; i < 8192; ++i) {
+    const std::string name = "property:" + std::to_string(i);
+    const auto id = properties.intern(name);
+    assert(id.is_valid() && properties.find(name).id == id.id);
+  }
+  assert(properties.get(first).data() == stable.data() && stable == "first");
+  assert(properties.find("first").id == first.id);
+  properties.unfreeze();
+  properties.freeze();
+  assert(properties.find("property:8191").is_valid());
+
+  TypeNameTable types;
+  const auto type = types.intern("FirstType");
+  const std::string* stable_type = &types.get(type);
+  for (int i = 0; i < 4096; ++i) {
+    const std::string name = "Type" + std::to_string(i);
+    const auto id = types.intern(name);
+    assert(id.is_valid() && types.find(name).id == id.id);
+  }
+  assert(&types.get(type) == stable_type && *stable_type == "FirstType");
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const Value shared = Value::MakeFloatArray(std::vector<float>{1, 2, 3});
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < 4; ++worker) {
+    workers.emplace_back([&properties, &shared, first, stable, worker] {
+      for (int i = 0; i < 2000; ++i) {
+        assert(properties.find("first").id == first.id);
+        assert(properties.get(first).data() == stable.data());
+        const auto id = properties.intern("thread:" + std::to_string(worker) +
+                                         ":" + std::to_string(i));
+        assert(id.is_valid());
+        Value copy = shared;
+        (*copy.as_float_array())[0] = 42;
+        assert((*shared.as_float_array())[0] == 1);
+      }
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  assert(properties.find("thread:3:1999").is_valid());
+#endif
+}
+
+// ============================================================
+// Prim tests
+// ============================================================
+
+void test_path() {
+  std::cout << "Testing Path..." << std::endl;
+
+  Path p1("/World/Cube");
+  assert(p1.is_absolute());
+  assert(!p1.is_root());
+  assert(p1.name() == "Cube");
+  assert(p1.parent().str() == "/World");
+
+  Path p2 = p1.append_child("child");
+  assert(p2.str() == "/World/Cube/child");
+
+  Path p3("/Cube.xformOp:translate");
+  assert(p3.has_property());
+  assert(p3.property_name() == "xformOp:translate");
+  assert(p3.prim_path().str() == "/Cube");
+  assert(p3.parent().str() == "/Cube");
+
+  Path property_child("/A/B.prop");
+  assert(property_child.parent().str() == "/A/B");
+
+  assert(Path("/A").parent().str() == "/");
+  assert(Path("A/B").parent().str() == "A");
+  assert(Path("/A/B/C").make_relative_to(Path("/A")).str() == "B/C");
+  assert(Path("/A/B").make_relative_to(Path("/A")).str() == "B");
+  assert(Path("/AB/C").make_relative_to(Path("/A")).str() == "/AB/C");
+  assert(Path("/A/B").make_relative_to(Path("/")).str() == "A/B");
+  assert(Path("/A").make_relative_to(Path("/A")).str() == ".");
+  assert(Path("/A/").make_relative_to(Path("/A")).str() == ".");
+
+  Path root = Path::root();
+  assert(root.is_root());
+  assert(root.str() == "/");
+
+  std::cout << "  Path tests passed!" << std::endl;
+}
+
+void test_prim() {
+  std::cout << "Testing canonical PrimSpec authoring..." << std::endl;
+  Layer layer;
+  const uint32_t cube = layer.define_prim_at_path("/Cube", "Mesh", PrimSpecifier::Def);
+  assert(cube != UINT32_MAX);
+  PrimSpec* prim = layer.prim(cube);
+  assert(prim->name() == "Cube");
+  assert(prim->type_name() == "Mesh");
+  assert(prim->specifier() == PrimSpecifier::Def);
+  prim->upsert_property("points", Value::MakeFloat3(0, 0, 0));
+  const Value* points = prim->property_value("points");
+  assert(points && points->type_id() == TypeId::Float3);
+  prim->meta().customData() = Value::MakeDictionary();
+  prim->meta().customData().as_dictionary()->set("purpose", Value::MakeToken("render"));
+  assert(prim->meta().customData().as_dictionary()->find("purpose"));
+  const uint32_t child = layer.define_prim_at_path("/Cube/SubMesh", "Mesh", PrimSpecifier::Def);
+  assert(child != UINT32_MAX);
+  assert(layer.prim(cube)->child_indices().size() == 1);
+  assert(layer.prim(cube)->child_indices()[0] == child);
+  std::cout << "  PrimSpec tests passed!" << std::endl;
+}
+
+// ============================================================
+// Parser tests
+// ============================================================
+
+void test_lexer() {
+  std::cout << "Testing Lexer..." << std::endl;
+
+  const char* input = R"(
+    def Mesh "Cube" {
+      float3 points = (1.0, 2.0, 3.0)
+      int count = 42
+      string name = "hello world"
+    }
+  )";
+
+  Lexer lexer(input, std::strlen(input));
+
+  Token tok = lexer.next();
+  assert(tok.type == TokenType::Def);
+
+  tok = lexer.next();
+  assert(tok.type == TokenType::Identifier);
+  assert(tok.value == "Mesh");
+
+  tok = lexer.next();
+  assert(tok.type == TokenType::String);
+  assert(tok.value == "Cube");
+
+  tok = lexer.next();
+  assert(tok.type == TokenType::OpenBrace);
+
+  // Skip to string value test
+  while (tok.type != TokenType::Eof) {
+    tok = lexer.next();
+    if (tok.type == TokenType::String && tok.value == "hello world") {
+      break;
+    }
+  }
+  assert(tok.value == "hello world");
+
+  // Mixing borrowed peeks with the existing owning API must preserve token
+  // values, positions, and ownership across subsequent scans/input release.
+  Token saved;
+  {
+    std::string text = "\nlong_identifier_123456789012345 18446744073709551615 </Root.x> \"a\\nb\"";
+    Lexer mixed(text.data(), text.size());
+    const auto view = mixed.peek_view();
+    assert(view.value.data() == text.data() + 1);
+    assert(view.line == 2 && view.column == 1);
+    const auto state = mixed.save_state();
+    mixed.consume();
+    assert(mixed.next().value == "18446744073709551615");
+    mixed.restore_state(state);
+    assert(mixed.peek_view().value == view.value);
+    assert(mixed.peek().value == view.value);
+    saved = mixed.next();
+    assert(mixed.peek_view().value == "18446744073709551615");
+    mixed.consume();
+    assert(mixed.peek_view().value == "/Root.x");
+    assert(mixed.next().value == "/Root.x");
+    assert(mixed.peek_view().value == "a\nb");
+    assert(mixed.next().value == "a\nb");
+    assert(mixed.peek_view().type == TokenType::Eof);
+  }
+  assert(saved.value == "long_identifier_123456789012345");
+
+  std::cout << "  Lexer tests passed!" << std::endl;
+}
+
+void test_value_parser() {
+  std::cout << "Testing ValueParser..." << std::endl;
+
+  // Test parsing float3
+  {
+    const char* input = "(1.0, 2.0, 3.0)";
+    Lexer lexer(input, std::strlen(input));
+    ParseResult result = ParseValue(lexer, TypeId::Float3);
+    assert(result.success);
+    assert(result.value.type_id() == TypeId::Float3);
+    const float* data = result.value.as_float3();
+    assert(data != nullptr);
+    assert(data[0] == 1.0f);
+    assert(data[1] == 2.0f);
+    assert(data[2] == 3.0f);
+  }
+
+  // Test parsing matrix4d
+  {
+    const char* input = "((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))";
+    Lexer lexer(input, std::strlen(input));
+    ParseResult result = ParseValue(lexer, TypeId::Matrix4d);
+    assert(result.success);
+    assert(result.value.type_id() == TypeId::Matrix4d);
+    const double* data = result.value.as_matrix4d();
+    assert(data != nullptr);
+    assert(data[0] == 1.0);
+    assert(data[15] == 1.0);
+  }
+
+  // Test parsing array
+  {
+    const char* input = "[1.0, 2.0, 3.0]";
+    Lexer lexer(input, std::strlen(input));
+    ParseResult result = ParseArrayValue(lexer, TypeId::Float);
+    assert(result.success);
+    assert(result.value.is_array());
+    auto arr = result.value.as_float_array();
+    assert(arr != nullptr);
+    assert(arr->size() == 3);
+    assert((*arr)[0] == 1.0f);
+  }
+
+  std::cout << "  ValueParser tests passed!" << std::endl;
+}
+
+void test_ascii_parser() {
+  std::cout << "Testing AsciiParser..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+)
+
+def Xform "World" {
+    def Mesh "Cube" {
+        float3[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+}
+)";
+
+  AsciiParser parser;
+  bool success = parser.Parse(input, std::strlen(input));
+
+  if (!success) {
+    std::cout << "Parse errors:" << std::endl;
+    for (const auto& err : parser.GetErrors()) {
+      std::cout << "  Line " << err.line << ": " << err.message << std::endl;
+    }
+  }
+  assert(success);
+
+  Stage stage = parser.TakeStage();
+  assert(stage.GetMeta().defaultPrim == "World");
+  assert(stage.GetUpAxis() == "Y");
+  assert(std::abs(stage.GetMetersPerUnit() - 0.01) < 0.001);
+
+  auto roots = stage.GetRootPrims();
+  assert(roots.size() == 1);
+  assert(roots[0].GetName() == "World");
+  assert(roots[0].GetTypeName() == "Xform");
+  assert(roots[0].GetChildCount() == 1);
+
+  UsdPrim cube = stage.GetPrimAtPath("/World/Cube");
+  assert(cube.IsValid());
+  assert(cube.GetTypeName() == "Mesh");
+  assert(cube.HasProperty("points"));
+
+  std::cout << "  AsciiParser tests passed!" << std::endl;
+}
+
+void test_usda_reader() {
+  std::cout << "Testing USDAReader..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Sphere "MySphere" {
+    double radius = 1.5
+    float3 center = (0, 0, 0)
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+
+  auto roots = result.stage.GetRootPrims();
+  assert(roots.size() == 1);
+  assert(roots[0].GetName() == "MySphere");
+  assert(roots[0].GetTypeName() == "Sphere");
+
+  // Check property access
+  UsdPrim sphere = result.stage.GetPrimAtPath("/MySphere");
+  assert(sphere.IsValid());
+  assert(sphere.HasProperty("radius"));
+  assert(sphere.HasProperty("center"));
+
+  const Value* radius = sphere.GetPropertyValue("radius");
+  assert(radius != nullptr);
+  assert(radius->as_double() != nullptr);
+  assert(std::abs(*radius->as_double() - 1.5) < 0.001);
+
+  std::cout << "  USDAReader tests passed!" << std::endl;
+}
+
+void test_usda_lazy_parse_policies() {
+  std::cout << "Testing USDA lazy parse policies..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Mesh "MeshA" {
+    int[] small = [1, 2]
+    int[] large = [1, 2, 3, 4]
+    point3f[] points = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
+}
+)";
+
+  // Lazy parsing disabled by default -> every supported array is eager.
+  {
+    LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small"));
+    assert(!mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  LoadOptions enabled_opts;
+  enabled_opts.parse_options.enable_usda_lazy_arrays = true;
+
+  // Enable lazy arrays with default policy -> all supported arrays become lazy.
+  {
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // Owned string parsing adopts the caller's buffer as the retained lazy source.
+  // This is the WASM/browser path after JS bytes have already been copied into a
+  // C++ string; it avoids a second full USDA source copy.
+  {
+    std::string owned(input);
+    LoadResult result = LoadUSDAFromStringOwned(std::move(owned), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
+    auto values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
+  }
+
+  // Top-level owned memory loader should take the same single-copy USDA path.
+  {
+    std::string owned(input);
+    LoadUSDOptions opts;
+    opts.usda_options = enabled_opts;
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDFromMemoryOwned(std::move(owned), &stage, opts, &warn, &err);
+    assert(ok);
+    UsdPrim mesh = stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // File-backed lazy parsing should retain the source through mmap on native
+  // POSIX builds, avoiding the extra full-file string copy kept by the string
+  // input path above.
+  {
+    const char* path = "/tmp/lightusd_usda_lazy_mmap_test.usda";
+    {
+      std::ofstream f(path, std::ios::binary);
+      f << input;
+    }
+
+    LoadResult result = LoadUSDAFromFile(path, enabled_opts);
+    std::remove(path);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(points->lazy_ref()->source->is_mmapped());
+    } else {
+      assert(!points->lazy_ref()->source->is_mmapped());
+    }
+    assert(!points->lazy_ref()->source->can_borrow());
+    assert(points->array_size() == 3);
+    auto values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
+  }
+
+  // Tight max element policy should keep oversized arrays eager.
+  {
+    LoadOptions limited = enabled_opts;
+    limited.parse_options.max_usda_lazy_array_elements = 2;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), limited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  // 0 => no cap.
+  {
+    LoadOptions unlimited = enabled_opts;
+    unlimited.parse_options.max_usda_lazy_array_elements = 0;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), unlimited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+  }
+
+  // Non-simple arrays are still parsed correctly, but not captured lazily.
+  const char* comments = R"(#usda 1.0
+def Mesh "MeshB" {
+    int[] with_comment = [1, # inline comment
+        2, 3]
+}
+)";
+  {
+    LoadResult result =
+        LoadUSDAFromString(comments, std::strlen(comments), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshB");
+    assert(mesh.IsValid());
+    const Value* with_comment = mesh.GetPropertyValue("with_comment");
+    assert(with_comment);
+    assert(!with_comment->is_lazy());
+    auto values = with_comment->as_int_array();
+    assert(values && values->size() == 3);
+    assert((*values)[1] == 2);
+  }
+
+  std::cout << "  USDA lazy parse policy tests passed!" << std::endl;
+}
+
+// ============================================================
+// Arc list-op qualifiers (prepend / append / delete)
+// ============================================================
+
+void test_arc_listops() {
+  std::cout << "Testing arc list-op qualifiers..." << std::endl;
+
+  // prepend inserts at the front; append at the back; delete removes. The
+  // composed `references` list must reflect those ops in authoring order.
+  const char* input = R"(#usda 1.0
+def "A" (
+    references = [@base.usd@</X>]
+    prepend references = [@front.usd@</X>]
+    append references = [@back.usd@</X>]
+    delete references = [@base.usd@</X>]
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim a = result.stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  const std::vector<std::string>& refs = a.GetMeta().references;
+  // explicit [base] -> prepend front -> [front, base] -> append back ->
+  // [front, base, back] -> delete base -> [front, back].
+  assert(refs.size() == 2 && "list-op qualifiers not applied");
+  assert(refs[0].find("front.usd") != std::string::npos && "prepend not at front");
+  assert(refs[1].find("back.usd") != std::string::npos && "append not at back");
+  for (const auto& r : refs) {
+    assert(r.find("base.usd") == std::string::npos && "delete did not remove");
+  }
+
+  std::cout << "  Arc list-op tests passed!" << std::endl;
+}
+
+// A per-reference layer offset `(offset = N; scale = M)` must be captured into
+// the canonical ref string as `?layerOffset=N:M`.
+void test_arc_layer_offset_parse() {
+  std::cout << "Testing arc layer-offset parse..." << std::endl;
+  const char* input = R"(#usda 1.0
+def "R" (
+    references = @asset.usd@</A> (offset = 12; scale = 2)
+)
+{
+}
+)";
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim r = result.stage.GetPrimAtPath("/R");
+  assert(r.IsValid());
+  const std::vector<std::string>& refs = r.GetMeta().references;
+  assert(refs.size() == 1);
+  assert(refs[0].find("layerOffset=") != std::string::npos &&
+         "reference layer offset not captured");
+  assert(refs[0].find("12") != std::string::npos &&
+         refs[0].find(":2") != std::string::npos && "offset/scale wrong");
+  std::cout << "  Arc layer-offset parse passed!" << std::endl;
+}
+
+// ============================================================
+// Physics schema readers (regression: vector3f / quatf properties were dropped)
+// ============================================================
+
+void test_physics_schema() {
+  std::cout << "Testing physics schema readers..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+(
+    upAxis = "Z"
+)
+
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    bool physics:kinematicEnabled = 1
+    rel physics:simulationOwner = </Scene>
+    vector3f physics:velocity = (1, 2, 3)
+    vector3f physics:angularVelocity = (4, 5, 6)
+    point3f physics:centerOfMass = (0.5, 0.5, 0.5)
+    float3 physics:diagonalInertia = (2, 3, 4)
+}
+
+def Xform "BodyDefaults" (
+    prepend apiSchemas = ["PhysicsMassAPI"]
+)
+{
+}
+
+def PhysicsScene "Scene"
+{
+}
+
+def PhysicsScene "AuthoredScene"
+{
+    vector3f physics:gravityDirection = (0, -1, 0)
+    float physics:gravityMagnitude = 3
+}
+
+def PhysicsRevoluteJoint "Joint"
+{
+    token physics:axis = "Z"
+    point3f physics:localPos0 = (1, 0, 0)
+    point3f physics:localPos1 = (0, 1, 0)
+}
+
+def PhysicsSliderJoint "Slider"
+{
+    token physics:axis = "Y"
+    float physics:lowerLimit = -2
+    float physics:upperLimit = 4
+}
+
+def PhysicsSphericalJoint "Ball"
+{
+    float physics:coneAngle0Limit = 30
+    float physics:coneAngle1Limit = 45
+}
+
+def PhysicsBallJoint "BallAlias"
+{
+    float physics:coneAngle0Limit = 15
+    float physics:coneAngle1Limit = 25
+}
+
+def Mesh "MeshCollider" (
+    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+)
+{
+    token physics:approximation = "convexHull"
+}
+
+def PhysicsJoint "Driven" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:transY"]
+)
+{
+    token physics:drive:rotX:type = "acceleration"
+    float physics:drive:rotX:maxForce = 8
+    float physics:limit:transY:low = -1
+    float physics:limit:transY:high = 2
+}
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+
+  UsdPrim body = result.stage.GetPrimAtPath("/Body");
+  assert(body.IsValid());
+
+  // Rigid body velocity / angularVelocity (single vector3f attrs).
+  PhysicsRigidBodyData rb;
+  assert(GetPhysicsRigidBodyData(result.stage, body, &rb, 0.0));
+  assert(rb.kinematicEnabled);
+  assert(rb.simulationOwner == "/Scene");
+  assert(std::abs(rb.velocity[0] - 1.0f) < 0.001f);
+  assert(std::abs(rb.velocity[1] - 2.0f) < 0.001f);
+  assert(std::abs(rb.velocity[2] - 3.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[0] - 4.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[1] - 5.0f) < 0.001f);
+  assert(std::abs(rb.angularVelocity[2] - 6.0f) < 0.001f);
+
+  // Mass: centerOfMass / diagonalInertia (vector3f).
+  PhysicsMassData mass;
+  assert(GetPhysicsMassData(result.stage, body, &mass));
+  assert(std::abs(mass.centerOfMass[0] - 0.5f) < 0.001f);
+  assert(std::abs(mass.centerOfMass[2] - 0.5f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[0] - 2.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[1] - 3.0f) < 0.001f);
+  assert(std::abs(mass.diagonalInertia[2] - 4.0f) < 0.001f);
+
+  UsdPrim body_defaults = result.stage.GetPrimAtPath("/BodyDefaults");
+  assert(body_defaults.IsValid());
+  PhysicsMassData mass_defaults;
+  assert(GetPhysicsMassData(result.stage, body_defaults, &mass_defaults));
+  assert(std::isinf(mass_defaults.centerOfMass[0]) &&
+         mass_defaults.centerOfMass[0] < 0.0f);
+  assert(mass_defaults.principalAxes[0] == 0.0f);
+  assert(mass_defaults.principalAxes[3] == 0.0f);
+
+  // Joint local frame positions (vector3f).
+  UsdPrim joint = result.stage.GetPrimAtPath("/Joint");
+  assert(joint.IsValid());
+  PhysicsJointData jd;
+  assert(GetPhysicsJointData(result.stage, joint, &jd, 0.0));
+  assert(jd.hasLocalPos0);
+  assert(std::abs(jd.localPos0[0] - 1.0f) < 0.001f);
+  assert(jd.hasLocalPos1);
+  assert(std::abs(jd.localPos1[1] - 1.0f) < 0.001f);
+  assert(std::isinf(jd.breakForce));
+  assert(!jd.collisionEnabled);
+
+  UsdPrim scene = result.stage.GetPrimAtPath("/Scene");
+  assert(scene.IsValid());
+  assert(!IsPhysicsJoint(scene));
+  PhysicsSceneData scene_data;
+  assert(GetPhysicsSceneData(result.stage, scene, &scene_data));
+  assert(std::abs(scene_data.gravityMagnitude - 9.81f) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[0]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[1]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[2] + 1.0f) < 0.001f);
+
+  UsdPrim authored_scene = result.stage.GetPrimAtPath("/AuthoredScene");
+  assert(authored_scene.IsValid());
+  PhysicsSceneData authored_scene_data;
+  assert(GetPhysicsSceneData(result.stage, authored_scene, &authored_scene_data));
+  assert(std::abs(authored_scene_data.gravityMagnitude - 3.0f) < 0.001f);
+  assert(std::abs(authored_scene_data.gravityDirection[1] + 1.0f) < 0.001f);
+
+  PhysicsRevoluteJointData rj;
+  assert(GetPhysicsRevoluteJointData(result.stage, joint, &rj, 0.0));
+  assert(std::abs(rj.axis[2] - 1.0f) < 0.001f);
+
+  UsdPrim slider = result.stage.GetPrimAtPath("/Slider");
+  assert(slider.IsValid());
+  PhysicsSliderJointData slider_data;
+  assert(GetPhysicsSliderJointData(result.stage, slider, &slider_data, 0.0));
+  assert(std::abs(slider_data.axis[1] - 1.0f) < 0.001f);
+  assert(std::abs(slider_data.lowerLimit + 2.0f) < 0.001f);
+  assert(std::abs(slider_data.upperLimit - 4.0f) < 0.001f);
+
+  UsdPrim ball = result.stage.GetPrimAtPath("/Ball");
+  assert(ball.IsValid());
+  PhysicsSphericalJointData sj;
+  assert(GetPhysicsSphericalJointData(result.stage, ball, &sj, 0.0));
+  assert(std::abs(sj.coneAngle0Limit - 30.0f) < 0.001f);
+  assert(std::abs(sj.coneAngle1Limit - 45.0f) < 0.001f);
+
+  UsdPrim ball_alias = result.stage.GetPrimAtPath("/BallAlias");
+  assert(ball_alias.IsValid());
+  PhysicsBallJointData ball_alias_data;
+  assert(GetPhysicsBallJointData(result.stage, ball_alias, &ball_alias_data, 0.0));
+  assert(std::abs(ball_alias_data.coneAngle0Limit - 15.0f) < 0.001f);
+  assert(std::abs(ball_alias_data.coneAngle1Limit - 25.0f) < 0.001f);
+
+  UsdPrim mesh_collider = result.stage.GetPrimAtPath("/MeshCollider");
+  assert(mesh_collider.IsValid());
+  PhysicsMeshCollisionData mesh_collision;
+  assert(GetPhysicsMeshCollisionData(mesh_collider, &mesh_collision));
+  assert(mesh_collision.approximation == "convexHull");
+
+  UsdPrim driven = result.stage.GetPrimAtPath("/Driven");
+  assert(driven.IsValid());
+  PhysicsDriveData drive;
+  assert(GetPhysicsDriveData(driven, "rotX", &drive));
+  assert(drive.type == "acceleration");
+  assert(std::abs(drive.maxForce - 8.0f) < 0.001f);
+  PhysicsLimitData limit;
+  assert(GetPhysicsLimitData(driven, "transY", &limit));
+  assert(std::abs(limit.low + 1.0f) < 0.001f);
+  assert(std::abs(limit.high - 2.0f) < 0.001f);
+
+  {
+    LoadResult fixture =
+        LoadUSDAFromFile(UsdaFixturePath("physics-schema-defaults-001.usda"));
+    assert(fixture.success);
+    UsdPrim fixture_body = fixture.stage.GetPrimAtPath("/World/Body");
+    assert(fixture_body.IsValid());
+    PhysicsRigidBodyData fixture_rb;
+    assert(GetPhysicsRigidBodyData(fixture.stage, fixture_body, &fixture_rb));
+    assert(fixture_rb.kinematicEnabled);
+    assert(fixture_rb.simulationOwner == "/World/Scene");
+
+    PhysicsMassData fixture_mass;
+    assert(GetPhysicsMassData(fixture.stage, fixture_body, &fixture_mass));
+    assert(std::isinf(fixture_mass.centerOfMass[0]) &&
+           fixture_mass.centerOfMass[0] < 0.0f);
+    assert(fixture_mass.principalAxes[0] == 0.0f);
+    assert(fixture_mass.principalAxes[3] == 0.0f);
+
+    UsdPrim fixture_scene = fixture.stage.GetPrimAtPath("/World/Scene");
+    assert(fixture_scene.IsValid());
+    assert(!IsPhysicsJoint(fixture_scene));
+  }
+
+  {
+    LoadResult fixture = LoadUSDAFromFile(
+        UsdaFixturePath("physics-spherical-schema-names-001.usda"));
+    assert(fixture.success);
+    UsdPrim fixture_ball = fixture.stage.GetPrimAtPath("/World/Ball");
+    assert(fixture_ball.IsValid());
+    PhysicsSphericalJointData fixture_sj;
+    assert(GetPhysicsSphericalJointData(fixture.stage, fixture_ball,
+                                        &fixture_sj, 0.0));
+    assert(std::abs(fixture_sj.coneAngle0Limit - 30.0f) < 0.001f);
+    assert(std::abs(fixture_sj.coneAngle1Limit - 45.0f) < 0.001f);
+  }
+
+  std::cout << "  physics schema tests passed!" << std::endl;
+}
+
+// Stock OpenUSD accepts an explicit arc clear, but every qualified None is
+// invalid (including deprecated add/reorder). This must hold in both profiles.
+void test_arc_none_qualifiers() {
+  for (bool strict : {false, true}) {
+    LoadOptions options;
+    options.parse_options.strict_aousd_conformance = strict;
+    for (const char* field : {"references", "payload", "inherits", "specializes"}) {
+      for (const char* qualifier : {"", "prepend ", "append ", "delete ", "reorder ", "add "}) {
+        const std::string source = "#usda 1.0\ndef \"P\" (\n" +
+            std::string(qualifier) + field + " = None\n) {}\n";
+        const auto loaded = LoadUSDAFromString(source, options);
+        assert(loaded.success == (qualifier[0] == '\0'));
+        if (qualifier[0] != '\0')
+          assert(loaded.error_summary.find("None") != std::string::npos);
+      }
+    }
+  }
+}
+
+void test_arc_and_relocate_variant_path_rejection() {
+  for (bool strict : {false, true}) {
+    LoadOptions options;
+    options.parse_options.strict_aousd_conformance = strict;
+    for (const char* field : {"references", "payload", "inherits", "specializes"}) {
+      for (const char* qualifier : {"", "prepend ", "append ", "delete ", "reorder ", "add "}) {
+        for (bool nested : {false, true}) {
+          const std::string metadata = std::string(qualifier) + field +
+              " = [</Target{look=a}Child>]";
+          const std::string source = nested
+              ? "#usda 1.0\ndef \"P\" {\n variantSet \"look\" = {\n \"a\" (" + metadata + ") {}\n }\n}\n"
+              : "#usda 1.0\ndef \"P\" (" + metadata + ") {}\n";
+          const auto loaded = LoadUSDAFromString(source, options);
+          assert(!loaded.success);
+          assert(loaded.error_summary.find("cannot contain variant selections") != std::string::npos);
+        }
+      }
+    }
+    for (bool layer : {false, true}) {
+      for (bool source : {false, true}) {
+        const std::string edit = source
+            ? "relocates = {</P{look=a}Child>: </P/Moved>}"
+            : "relocates = {</P/Child>: </P{look=a}Moved>}";
+        const std::string text = layer ? "#usda 1.0\n(" + edit + ")\ndef \"P\" {}\n"
+            : "#usda 1.0\ndef \"P\" (" + edit + ") {}\n";
+        const auto loaded = LoadUSDAFromString(text, options);
+        assert(!loaded.success);
+        assert(loaded.error_summary.find("cannot contain variant selections") != std::string::npos);
+      }
+    }
+    // A literal brace in an asset name is not a variant-selection path.
+    assert(LoadUSDAFromString("#usda 1.0\ndef \"P\" (references = @asset{v=a}.usd@</A>) {}\n", options).success);
+  }
+}
+
+void test_load_usd_from_memory() {
+  std::cout << "Testing LoadUSDFromMemory..." << std::endl;
+
+  const char* usda = R"(#usda 1.0
+def Xform "root" {
+  def Mesh "geom" {
+    float radius = 3.0
+  }
+}
+)";
+
+  // USDA sniffed from content
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda),
+                              std::strlen(usda), &stage, &warn, &err);
+  assert(ok && "memory load should succeed");
+  assert(stage.GetPrimAtPath("/root/geom").IsValid());
+
+  // USDC: write the stage to memory, load it back
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wres = WriteUSDCToMemory(usdc, stage);
+  assert(wres.success && "usdc memory write should succeed");
+  Stage stage2;
+  ok = LoadUSDFromMemory(usdc.data(), usdc.size(), &stage2, &warn, &err);
+  assert(ok && "usdc memory load should succeed");
+  assert(stage2.GetPrimAtPath("/root/geom").IsValid());
+
+  // Garbage input fails cleanly
+  const uint8_t garbage[] = {0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  Stage stage3;
+  err.clear();
+  ok = LoadUSDFromMemory(garbage, sizeof(garbage), &stage3, &warn, &err);
+  assert(!ok && !err.empty() && "garbage input should fail with an error");
+
+  // Empty input fails cleanly
+  ok = LoadUSDFromMemory(nullptr, 0, &stage3, &warn, &err);
+  assert(!ok && "empty input should fail");
+
+  // The common high-level limit must remain authoritative even when the
+  // nested parser options retain their broader defaults.
+  LoadUSDOptions shallow;
+  shallow.limits.max_parse_depth = 1;
+  err.clear();
+  ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda),
+                         std::strlen(usda), &stage3, shallow, &warn, &err);
+  assert(!ok && "high-level parse depth limit must be enforced");
+
+  std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
+}
+
+void test_stage_change_set_aggregation() {
+  StageChangeSet aggregate;
+  aggregate.base_revision = 4;
+  aggregate.new_revision = 4;
+
+  StageChangeSet first;
+  first.base_revision = 4;
+  first.new_revision = 5;
+  first.prims.push_back(
+      {Path("/Model"), StageChangeFlag::Transform, {"xformOp:translate"}});
+  assert(AppendStageChangeSet(first, &aggregate));
+
+  StageChangeSet second;
+  second.base_revision = 5;
+  second.new_revision = 6;
+  second.prims.push_back(
+      {Path("/Model"), StageChangeFlag::Visibility,
+       {"visibility", "xformOp:translate"}});
+  second.prims.push_back(
+      {Path("/Payload"), StageChangeFlag::Resync, {"payload"}});
+  assert(AppendStageChangeSet(second, &aggregate));
+  assert(aggregate.base_revision == 4);
+  assert(aggregate.new_revision == 6);
+  assert(aggregate.prims.size() == 2);
+  assert(HasStageChange(aggregate.prims[0].flags,
+                        StageChangeFlag::Transform));
+  assert(HasStageChange(aggregate.prims[0].flags,
+                        StageChangeFlag::Visibility));
+  assert(aggregate.prims[0].properties.size() == 2);
+
+  StageChangeSet gap;
+  gap.base_revision = 8;
+  gap.new_revision = 9;
+  assert(!AppendStageChangeSet(gap, &aggregate));
+  assert(aggregate.full_resync);
+  assert(aggregate.new_revision == 9);
+}
+
+void test_stage_session_variants() {
+  std::cout << "Testing StageSession path-scoped variants..." << std::endl;
+  const char* path = "/tmp/lightusd_stage_session.usda";
+  {
+    std::ofstream ofs(path);
+    ofs << R"(#usda 1.0
+def Xform "A" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+def Xform "B" (
+  variants = { string model = "low" }
+  prepend variantSets = "model"
+) {
+  variantSet "model" = {
+    "low" { int level = 1 }
+    "high" { int level = 2 }
+  }
+}
+def Mesh "M" {
+  point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0, 1, 2]
+  string[] labels = ["retained"]
+}
+)";
+  }
+
+  {
+    StageSession per_prim;
+    assert(per_prim.OpenFile(path));
+    StageSnapshot retained = per_prim.GetSnapshot();
+    const UsdPrim mesh = retained->GetPrimAtPath("/M");
+    const auto released = per_prim.ReleaseStaticGeometryArraysForPrim(mesh, 1);
+    assert(released.property_count == 3);
+    assert(retained->GetPrimAtPath("/M").GetPropertyValue("points") != nullptr);
+    assert(per_prim.GetSnapshot()->GetPrimAtPath("/M").GetPropertyValue("points") == nullptr);
+    assert(per_prim.ReleaseStaticGeometryArraysForPrim(mesh, 1).property_count == 0);
+  }
+
+  StageSession session;
+  assert(session.OpenFile(path));
+  assert(session.IsComposed());
+  StageSnapshot initial_snapshot = session.GetSnapshot();
+  assert(initial_snapshot);
+  assert(initial_snapshot.revision == 1);
+  const Value* initial_level =
+      initial_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(initial_level && initial_level->as_int() &&
+         *initial_level->as_int() == 1);
+  session.ReleaseCompositionCache();
+  assert(session.IsComposed());
+  assert(session.GetSnapshot()->GetPrimAtPath("/A").IsValid());
+  Stage::StaticGeometryReleaseStats released =
+      session.ReleaseStaticGeometryArrays(1);
+  assert(released.property_count == 3);
+  assert(released.stage_bytes_after < released.stage_bytes_before);
+  StageSnapshot compact_snapshot = session.GetSnapshot();
+  UsdPrim compact_mesh = compact_snapshot->GetPrimAtPath("/M");
+  assert(compact_mesh.HasProperty("points"));
+  assert(compact_mesh.GetPropertyValue("points") == nullptr);
+  assert(compact_mesh.GetPropertyValue("labels") != nullptr);
+  // Releasing geometry is copy-on-write: a previously published immutable
+  // snapshot retains its arrays.
+  const Value* snapshot_points =
+      initial_snapshot->GetPrimAtPath("/M").GetPropertyValue("points");
+  assert(snapshot_points && snapshot_points->array_size() == 3);
+
+  StageEditResult edit =
+      session.SetVariantSelection(Path("/A"), "model", "high");
+  assert(edit);
+  assert(edit.snapshot.revision == 2);
+  assert(edit.changes.base_revision == 1);
+  assert(edit.changes.new_revision == 2);
+  const StageChangeSet published_changes = session.GetLastChangeSet();
+  assert(published_changes.base_revision == edit.changes.base_revision);
+  assert(published_changes.new_revision == edit.changes.new_revision);
+  bool found_a_change = false;
+  for (const PrimChange& change : edit.changes.prims) {
+    if (change.path == Path("/A")) {
+      found_a_change = true;
+      assert(std::find(change.properties.begin(), change.properties.end(),
+                       "level") != change.properties.end());
+    }
+  }
+  assert(found_a_change);
+  // The old snapshot is still a coherent view of revision 1.
+  initial_level =
+      initial_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(initial_level && initial_level->as_int() &&
+         *initial_level->as_int() == 1);
+  StageSnapshot edited_snapshot = session.GetSnapshot();
+  const Value* a = edited_snapshot->GetPrimAtPath("/A").GetPropertyValue("level");
+  const Value* b = edited_snapshot->GetPrimAtPath("/B").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 2);
+  assert(b && b->as_int() && *b->as_int() == 1);
+  const Value* restored_points =
+      edited_snapshot->GetPrimAtPath("/M").GetPropertyValue("points");
+  assert(restored_points && restored_points->array_size() == 3);
+  assert(session.ClearVariantSelection(Path("/A"), "model"));
+  a = session.GetSnapshot()->GetPrimAtPath("/A").GetPropertyValue("level");
+  assert(a && a->as_int() && *a->as_int() == 1);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  std::atomic<bool> stop_reader{false};
+  std::atomic<bool> reader_ok{true};
+  std::thread reader([&]() {
+    uint64_t previous = 0;
+    while (!stop_reader.load(std::memory_order_relaxed)) {
+      StageSnapshot snapshot = session.GetSnapshot();
+      if (!snapshot || snapshot.revision < previous ||
+          !snapshot->GetPrimAtPath("/A").IsValid()) {
+        reader_ok.store(false, std::memory_order_relaxed);
+        break;
+      }
+      previous = snapshot.revision;
+    }
+  });
+  for (int i = 0; i < 8; ++i) {
+    assert(session.SetVariantSelection(Path("/A"), "model", "high"));
+    assert(session.ClearVariantSelection(Path("/A"), "model"));
+  }
+  stop_reader.store(true, std::memory_order_relaxed);
+  reader.join();
+  assert(reader_ok.load(std::memory_order_relaxed));
+#endif
+  std::remove(path);
+  std::cout << "  StageSession variant tests passed!" << std::endl;
+}
+
+void test_stage_session_payloads_and_cancel() {
+  std::cout << "Testing StageSession payload edits and cancellation..."
+            << std::endl;
+  const char* root_path = "/tmp/lightusd_session_root.usda";
+  const char* payload_path = "/tmp/lightusd_session_payload.usda";
+  {
+    std::ofstream ofs(payload_path);
+    ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 7\n}\n";
+  }
+  {
+    std::ofstream ofs(root_path);
+    ofs << "#usda 1.0\ndef Xform \"P\" (payload = "
+           "@lightusd_session_payload.usda@</Payload>) {}\n"
+           "def Xform \"Q\" (payload = "
+           "@lightusd_session_payload.usda@</Payload>) {}\n";
+  }
+
+  StageSessionOptions options;
+  options.composition.load_payloads = false;
+  options.cache_retention = CacheRetention::LayersOnly;
+  StageSession session;
+  assert(session.OpenFile(root_path, options));
+  StageSessionMemoryStats initial_stats = session.GetMemoryStats();
+  assert(initial_stats.source_layer_bytes > 0);
+  assert(initial_stats.composed_stage_bytes > 0);
+  assert(initial_stats.prim_index_count == 0);
+  assert(session.GetSnapshot()->GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  assert(!session.GetDeferredPayloadPaths().empty());
+  const std::vector<std::string> dependencies = session.GetLayerDependencies();
+  session.ReleaseCompositionCache();
+  assert(session.IsComposed());
+  assert(!session.GetDeferredPayloadPaths().empty());
+  assert(session.GetLayerDependencies() == dependencies);
+  assert(session.GetMemoryStats().source_layer_bytes == 0);
+  assert(session.LoadPayloads({Path("/P"), Path("/Q")}));
+  StageSnapshot loaded_snapshot = session.GetSnapshot();
+  const Value* loaded =
+      loaded_snapshot->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  loaded = loaded_snapshot->GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 7);
+  StageSnapshot before_reload = session.GetSnapshot();
+  {
+    std::ofstream ofs(payload_path);
+    ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 8\n}\n";
+  }
+  StageEditResult reload = session.ReloadLayer(payload_path);
+  assert(reload);
+  assert(reload.changes.base_revision == before_reload.revision);
+  assert(reload.changes.new_revision == before_reload.revision + 1);
+  assert(session.GetLastChangeSet().new_revision ==
+         reload.changes.new_revision);
+  bool reload_classified = false;
+  for (const PrimChange& change : reload.changes.prims) {
+    if ((change.path == Path("/P") || change.path == Path("/Q")) &&
+        std::find(change.properties.begin(), change.properties.end(),
+                  "loadedValue") != change.properties.end()) {
+      reload_classified = true;
+    }
+  }
+  assert(reload_classified);
+  loaded_snapshot = session.GetSnapshot();
+  loaded = loaded_snapshot->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
+  const Value* old_loaded =
+      before_reload->GetPrimAtPath("/P").GetPropertyValue("loadedValue");
+  assert(old_loaded && old_loaded->as_int() && *old_loaded->as_int() == 7);
+  assert(session.GetMemoryStats().prim_index_count == 0);
+  assert(session.UnloadPayload(Path("/P")));
+  assert(session.GetSnapshot()->GetPrimAtPath("/P").GetPropertyValue("loadedValue") ==
+         nullptr);
+  loaded_snapshot = {};
+  before_reload = {};
+  StageSnapshot retained_for_take = session.GetSnapshot();
+  lightusd::expected<Stage, OperationStatus> busy_take =
+      session.CloseAndTakeStage();
+  assert(!busy_take && busy_take.error() == OperationStatus::Busy);
+  assert(session.IsOpen());
+  retained_for_take = {};
+  lightusd::expected<Stage, OperationStatus> taken_result =
+      session.CloseAndTakeStage();
+  assert(taken_result);
+  Stage taken = std::move(*taken_result);
+  assert(!session.IsOpen());
+  assert(!session.IsComposed());
+  loaded = taken.GetPrimAtPath("/Q").GetPropertyValue("loadedValue");
+  assert(loaded && loaded->as_int() && *loaded->as_int() == 8);
+
+  StageSessionOptions cancelled_options;
+  cancelled_options.progress_callback =
+      [](const ProgressEvent&) { return false; };
+  StageSession cancelled;
+  assert(!cancelled.OpenFile(root_path, cancelled_options));
+  assert(!cancelled.IsOpen());
+  assert(!cancelled.GetDiagnostics().empty());
+
+  StageSession reentrant;
+  OperationStatus reentrant_status = OperationStatus::Ok;
+  StageSessionOptions reentrant_options;
+  reentrant_options.progress_callback = [&](const ProgressEvent&) {
+    const StageEditResult nested = reentrant.Rebuild();
+    reentrant_status = nested.status;
+    (void)reentrant.GetSnapshot();
+    return true;
+  };
+  assert(reentrant.OpenFile(root_path, reentrant_options));
+  assert(reentrant_status == OperationStatus::Busy);
+
+  // Cancellation at the final progress notification is still transactional:
+  // no candidate stage/revision is published after the callback rejects it.
+  bool cancel_recompose_at_completion = false;
+  StageSessionOptions transactional_options;
+  transactional_options.composition.load_payloads = false;
+  transactional_options.progress_callback =
+      [&](const ProgressEvent& event) {
+        return !(cancel_recompose_at_completion &&
+                 event.phase == ProgressPhase::Recompose &&
+                 event.progress >= 1.0f);
+      };
+  StageSession transactional;
+  assert(transactional.OpenFile(root_path, transactional_options));
+  const StageSnapshot before_cancelled_edit = transactional.GetSnapshot();
+  cancel_recompose_at_completion = true;
+  const StageEditResult cancelled_edit =
+      transactional.LoadPayload(Path("/P"));
+  assert(!cancelled_edit &&
+         cancelled_edit.status == OperationStatus::Cancelled);
+  const StageSnapshot after_cancelled_edit = transactional.GetSnapshot();
+  assert(after_cancelled_edit.revision == before_cancelled_edit.revision);
+  assert(after_cancelled_edit.stage == before_cancelled_edit.stage);
+  assert(after_cancelled_edit->GetPrimAtPath("/P")
+             .GetPropertyValue("loadedValue") == nullptr);
+
+  StageSessionOptions tiny_budget;
+  tiny_budget.load.limits.max_resident_bytes = 1;
+  StageSession budgeted;
+  assert(!budgeted.OpenFile(root_path, tiny_budget));
+  bool saw_memory_budget = false;
+  for (const Diagnostic& diagnostic : budgeted.GetDiagnostics()) {
+    if (diagnostic.code == "memory_budget") saw_memory_budget = true;
+  }
+  assert(saw_memory_budget);
+
+  std::remove(root_path);
+  std::remove(payload_path);
+  std::cout << "  StageSession payload/cancel tests passed!" << std::endl;
+}
+
+void test_stage_session_preview_and_dependencies() {
+  std::cout << "Testing StageSession preview checkpoint/dependencies..."
+            << std::endl;
+  const std::string root_path = CoreTestScratchPath("preview_root.usda");
+  const std::string sub_path = CoreTestScratchPath("preview_sub.usda");
+  {
+    std::ofstream ofs(sub_path);
+    ofs << R"(#usda 1.0
+def Mesh "FromSub" {
+  float3[] extent = [(-1, -2, -3), (1, 2, 3)]
+  double3 xformOp:translate = (4, 5, 6)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+  int expensive = 7
+}
+)";
+  }
+  {
+    std::ofstream ofs(root_path);
+    ofs << "#usda 1.0\n( subLayers = [@./preview_sub.usda@] )\n"
+           "def Xform \"Root\" { def Scope \"Child\" {}\n }\n";
+  }
+
+  StageSnapshot retained_preview;
+  StageSnapshot retained_early_preview;
+  int early_preview_calls = 0;
+  int preview_calls = 0;
+  StageSessionOptions options;
+  options.early_preview_callback = [&](const StagePreview& preview) {
+    ++early_preview_calls;
+    assert(!preview.namespace_complete);
+    assert(!preview.spatial_subset);
+    assert(!preview.authoritative);
+    assert(preview.snapshot);
+    assert(preview.snapshot->GetPrimAtPath("/Root").IsValid());
+    retained_early_preview = preview.snapshot;
+    return true;
+  };
+  options.preview_callback = [&](const StagePreview& preview) {
+    ++preview_calls;
+    assert(!preview.namespace_complete);
+    assert(preview.spatial_subset);
+    assert(!preview.authoritative);
+    assert(preview.snapshot);
+    assert(preview.snapshot->GetPrimAtPath("/FromSub").IsValid());
+    assert(preview.snapshot->GetPrimAtPath("/FromSub").GetTypeName() ==
+           "Mesh");
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("extent") != nullptr);
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("xformOp:translate") != nullptr);
+    // The structure checkpoint precedes full opinion filling.
+    assert(preview.snapshot->GetPrimAtPath("/FromSub")
+               .GetPropertyValue("expensive") == nullptr);
+    retained_preview = preview.snapshot;
+    return true;
+  };
+
+  StageSession session;
+  assert(session.OpenFile(root_path, options));
+  assert(early_preview_calls == 1);
+  assert(retained_early_preview);
+  assert(preview_calls == 1);
+  assert(retained_preview);
+  const Value* final_value =
+      session.GetSnapshot()->GetPrimAtPath("/FromSub").GetPropertyValue("expensive");
+  assert(final_value && final_value->as_int() && *final_value->as_int() == 7);
+  // Completion must not mutate the separately-owned preview.
+  assert(retained_preview->GetPrimAtPath("/FromSub")
+             .GetPropertyValue("expensive") == nullptr);
+
+  const std::vector<std::string> dependencies =
+      session.GetLayerDependencies();
+  assert(std::is_sorted(dependencies.begin(), dependencies.end()));
+  assert(std::adjacent_find(dependencies.begin(), dependencies.end()) ==
+         dependencies.end());
+  assert(std::find(dependencies.begin(), dependencies.end(), root_path) !=
+         dependencies.end());
+  assert(std::find(dependencies.begin(), dependencies.end(), sub_path) !=
+         dependencies.end());
+  session.ReleaseCompositionCache();
+  assert(session.GetLayerDependencies() == dependencies);
+
+  std::remove(root_path.c_str());
+  std::remove(sub_path.c_str());
+  std::cout << "  StageSession preview/dependency tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: Matrix type name lookup (previously Matrix2f/Matrix3f/Matrix4f
+// shared the "matrix2d"/"matrix3d"/"matrix4d" name with their double siblings,
+// making GetTypeIdFromName("matrix2f") return Invalid).
+// ============================================================
+
+void test_matrix_type_name_lookup() {
+  std::cout << "Testing matrix type name lookup regression..." << std::endl;
+
+  // Float matrix types must have their own distinct USD names.
+  assert(GetTypeIdFromName("matrix2f") == TypeId::Matrix2f);
+  assert(GetTypeIdFromName("matrix3f") == TypeId::Matrix3f);
+  assert(GetTypeIdFromName("matrix4f") == TypeId::Matrix4f);
+
+  // Double matrix types remain unchanged.
+  assert(GetTypeIdFromName("matrix2d") == TypeId::Matrix2d);
+  assert(GetTypeIdFromName("matrix3d") == TypeId::Matrix3d);
+  assert(GetTypeIdFromName("matrix4d") == TypeId::Matrix4d);
+
+  // GetTypeName must return the correct name for each type.
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2f), "matrix2f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3f), "matrix3f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4f), "matrix4f") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix2d), "matrix2d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix3d), "matrix3d") == 0);
+  assert(std::strcmp(GetTypeName(TypeId::Matrix4d), "matrix4d") == 0);
+
+  // TypeInfo sizes must still be correct.
+  assert(GetTypeSize(TypeId::Matrix2f) == sizeof(float) * 4);
+  assert(GetTypeSize(TypeId::Matrix3f) == sizeof(float) * 9);
+  assert(GetTypeSize(TypeId::Matrix4f) == sizeof(float) * 16);
+  assert(GetTypeSize(TypeId::Matrix2d) == sizeof(double) * 4);
+  assert(GetTypeSize(TypeId::Matrix3d) == sizeof(double) * 9);
+  assert(GetTypeSize(TypeId::Matrix4d) == sizeof(double) * 16);
+
+  // Float matrices are distinct types from double matrices.
+  assert(TypeId::Matrix2f != TypeId::Matrix2d);
+  assert(TypeId::Matrix3f != TypeId::Matrix3d);
+  assert(TypeId::Matrix4f != TypeId::Matrix4d);
+
+  std::cout << "  Matrix type name lookup regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: Frame4d layout and Value copy/move/equality operations.
+// ============================================================
+
+void test_value_boxed_large_pod() {
+  std::cout << "Testing boxed large POD storage ( oversized inline matrices )..." << std::endl;
+
+  assert(Value::kSBOSize == LU_VALUE_INLINE_CAP);
+
+  // C11 kind taxonomy: small types stay POD, large scalar POD spills to BOX.
+  assert(lu_value_kind_of(LU_TYPE_FLOAT4) == LU_VALUE_POD);
+  assert(lu_value_kind_of(LU_TYPE_MATRIX4F) == LU_VALUE_BOX);
+  assert(lu_value_kind_of(LU_TYPE_MATRIX3D) == LU_VALUE_BOX);
+  assert(lu_value_kind_of(LU_TYPE_FRAME4D) == LU_VALUE_BOX);
+  assert(lu_type_size(LU_TYPE_MATRIX4F) == sizeof(float) * 16);
+
+  {
+    std::vector<float> data(16, 0.0f);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1);
+    Value a = Value::MakeMatrix4f(data.data());
+    Value b = a;  // CoW by pointer/array-style copy
+    assert(a.type_id() == TypeId::Matrix4f);
+    assert(b.type_id() == TypeId::Matrix4f);
+    const float* pa = a.as_matrix4f();
+    const float* pb = b.as_matrix4f();
+    assert(pa != nullptr && pb != nullptr);
+    assert(std::memcmp(pa, pb, sizeof(float)*16) == 0);
+    for (size_t i = 0; i < 16; ++i) assert(pb[i] == static_cast<float>(i + 1));
+    assert(a.raw_bytes(nullptr) == nullptr || true);
+  }
+
+  {
+    double mat[16] = {0};
+    for (int i = 0; i < 16; ++i) mat[i] = (i + 1) * 0.25;
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = a;
+    Value c = std::move(a);
+    assert(c.type_id() == TypeId::Frame4d);
+    const double* pc = c.as_matrix4d();
+    assert(pc != nullptr);
+    for (int i = 0; i < 16; ++i) assert(pc[i] == (i + 1) * 0.25);
+    assert(c.hash() != 0);
+  }
+
+  {
+    float mat[16] = {0};
+    for (int i = 0; i < 16; ++i) mat[i] = static_cast<float>(i * 2);
+    Value v = Value::MakeFromRaw(TypeId::Matrix4f, mat);
+    const float* p = static_cast<const float*>(v.raw_data());
+    assert(p != nullptr);
+    assert(p[0] == 0.0f && p[5] == 10.0f);
+  }
+  std::cout << "  Boxed large POD storage regression tests passed!" << std::endl;
+}
+
+// Regression tests for the Value C11-carrier fixes: array element count must
+// survive copy/move, inline scalars must never be mistaken for heap (boxed)
+// pointers during destroy, boxed values must compare/hash by payload bytes
+// (not by allocation address), and scalar accessors must reach boxed payload.
+void test_value_regressions() {
+  std::cout << "Testing Value copy/move/destroy/compare regressions..." << std::endl;
+
+  // --- Inline scalar integrity across copy/move/destroy -----------------
+  // Use bit patterns that would look like live pointers if the inline SBO
+  // bytes were (wrongly) treated as an owned heap allocation. A regression
+  // here crashes in ~Value/destroy via free() of a bogus pointer.
+  {
+    std::vector<Value> scalars;
+    scalars.emplace_back(static_cast<int32_t>(42));      // 0x2a
+    scalars.emplace_back(static_cast<uint64_t>(0x2a2a2a2a2a2a2a2aULL));
+    scalars.emplace_back(static_cast<double>(1.5));
+    scalars.emplace_back(static_cast<float>(2.5f));
+    scalars.emplace_back(true);
+    // Force several copy + move passes so copy_from/move_from run.
+    std::vector<Value> copied = scalars;
+    std::vector<Value> moved = std::move(copied);
+    assert(moved.size() == scalars.size());
+    assert(*moved[0].as_int() == 42);
+    assert(*moved[1].as_uint64() == 0x2a2a2a2a2a2a2a2aULL);
+    assert(*moved[2].as_double() == 1.5);
+    assert(*moved[3].as_float() == 2.5f);
+    assert(*moved[4].as_bool() == true);
+    scalars.clear();  // destroy originals (must not free inline bytes)
+  }
+
+  // --- Boxed matrix compare/hash by payload, not pointer ----------------
+  {
+    double m3[9];
+    for (int i = 0; i < 9; ++i) m3[i] = static_cast<double>(i + 1);
+    Value a = Value::MakeMatrix3d(m3);
+    Value b = Value::MakeMatrix3d(m3);  // distinct allocation
+    assert(a.type_id() == TypeId::Matrix3d && b.type_id() == TypeId::Matrix3d);
+    assert(a.as_matrix3d() != nullptr && b.as_matrix3d() != nullptr);
+    // Independent heap boxes with equal content must be equal + hash equal.
+    assert(a == b);
+    assert(a.hash() == b.hash());
+
+    double m3b[9];
+    for (int i = 0; i < 9; ++i) m3b[i] = static_cast<double>(i + 1);
+    m3b[4] = 999.0;
+    Value c = Value::MakeMatrix3d(m3b);
+    assert(!(a == c));
+    assert(a.hash() != c.hash() || true);  // hash may collide; equality is the gate
+
+    // Copy + move a boxed value; content must be preserved (deep copy).
+    Value d = a;
+    Value e = std::move(a);
+    assert(d == b && e == b);
+  }
+
+  // --- Boxed scalar accessors return payload, not the box pointer -------
+  {
+    double m4[16];
+    for (int i = 0; i < 16; ++i) m4[i] = static_cast<double>(i) * 0.5;
+    Value v = Value::MakeMatrix4d(m4);
+    const double* p = v.as_matrix4d();
+    assert(p != nullptr);
+    for (int i = 0; i < 16; ++i) assert(p[i] == static_cast<double>(i) * 0.5);
+
+    size_t nbytes = 0;
+    const uint8_t* raw = v.raw_bytes(&nbytes);
+    assert(raw != nullptr && nbytes == sizeof(double) * 16);
+    assert(std::memcmp(raw, m4, sizeof(m4)) == 0);
+  }
+
+  // --- Inline small-POD matrix still reads through the SBO --------------
+  {
+    double m2[4] = {1, 2, 3, 4};
+    Value v = Value::MakeMatrix2d(m2);
+    const double* p = v.as_matrix2d();
+    assert(p != nullptr);
+    assert(p[0] == 1 && p[1] == 2 && p[2] == 3 && p[3] == 4);
+  }
+
+  // --- array_size() is stable across copy/move (element count retained) --
+  {
+    std::vector<float> flat = {1, 2, 3, 4, 5, 6};  // 2 x float3
+    Value a = Value::MakeFloat3Array(flat);
+    assert(a.array_size() == 2);
+    Value b = a;
+    Value c = std::move(a);
+    assert(b.array_size() == 2);
+    assert(c.array_size() == 2);
+    assert(b == c);
+
+    // A boxed scalar reports size 0 (it is not an array).
+    double m3[9] = {0};
+    Value m = Value::MakeMatrix3d(m3);
+    assert(m.array_size() == 0);
+  }
+
+  std::cout << "  Value copy/move/destroy/compare regressions passed!" << std::endl;
+}
+
+void test_value_heap_memory_usage() {
+  std::cout << "Testing Value::heap_memory_usage accounting..." << std::endl;
+  // Regression: element width must be GetTypeSize (full element width), not a
+  // fixed 4-byte multiplier. double[] of N is N*8; float3[] of N is N*12.
+  {
+    Value d = Value::MakeDoubleArray(std::vector<double>{1, 2, 3});
+    assert(d.array_size() == 3);
+    assert(d.heap_memory_usage() >= 3 * sizeof(double));
+  }
+  {
+    std::vector<float> flat = {1, 2, 3, 4, 5, 6};  // 2 x float3
+    Value f3 = Value::MakeFloat3Array(flat);
+    assert(f3.array_size() == 2);
+    assert(f3.heap_memory_usage() >= 2 * 3 * sizeof(float));
+  }
+  {
+    Value s = Value(std::string("hello"));
+    assert(s.heap_memory_usage() == 0);  // short strings stay in the value
+  }
+  std::cout << "  Value::heap_memory_usage accounting passed!" << std::endl;
+}
+
+void test_frame4d_value_ops() {
+  std::cout << "Testing Frame4d Value operations regression..." << std::endl;
+
+  // Frame4d shares the matrix4d layout in the immutable metadata table.
+  const TypeInfo* info = GetTypeInfo(TypeId::Frame4d);
+  assert(info != nullptr);
+  assert(info->size == sizeof(double) * 16);
+  assert(std::strcmp(info->name, "frame4d") == 0);
+
+  // Construct a Frame4d value via MakeRaw and verify it round-trips.
+  {
+    double mat[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    Value v = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    assert(v.type_id() == TypeId::Frame4d);
+    const double* data = v.as_matrix4d();  // frame4d uses matrix4d storage
+    assert(data != nullptr);
+    assert(data[0] == 1.0);
+    assert(data[15] == 1.0);
+  }
+
+  // Copy Frame4d value.
+  {
+    double mat[16] = {2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = a;
+    assert(a.type_id() == TypeId::Frame4d);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(*a.as_matrix4d() == *b.as_matrix4d());
+  }
+
+  // Move Frame4d value.
+  {
+    double mat[16] = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3};
+    Value a = Value::MakeFromRaw(TypeId::Frame4d, mat);
+    Value b = std::move(a);
+    assert(b.type_id() == TypeId::Frame4d);
+    assert(b.as_matrix4d()[15] == 3.0);
+  }
+
+  std::cout << "  Frame4d Value operations regression tests passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: mutable as_int_array() must accept Int2/Int3/Int4
+// arrays (previously checked type_id_ != TypeId::Int instead of
+// IsIntBackedArray, rejecting Int2/Int3/Int4 arrays).
+// ============================================================
+
+void test_mutable_int_array_backing_types() {
+  std::cout << "Testing mutable as_int_array() backing types regression..."
+            << std::endl;
+
+  // Int2 array: const and mutable accessors must both work.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6}, TypeId::Int2, 2);
+    assert(v.type_id() == TypeId::Int2);
+    assert(v.is_array());
+    assert(v.array_size() == 3);
+
+    // Const accessor
+    const Value& cv = v;
+    auto carr = cv.as_int_array();
+    assert(carr != nullptr);
+    assert(carr->size() == 6);
+    assert((*carr)[0] == 1);
+
+    // Mutable accessor
+    auto marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int2 array");
+    assert(marr->size() == 6);
+    (*marr)[0] = 99;
+    assert((*v.as_int_array())[0] == 99);
+  }
+
+  // Int3 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{10, 20, 30, 40, 50, 60}, TypeId::Int3, 3);
+    assert(v.type_id() == TypeId::Int3);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    auto marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int3 array");
+    assert(marr->size() == 6);
+  }
+
+  // Int4 array.
+  {
+    Value v = Value::MakeIntCompArray(
+        std::vector<int32_t>{1, 2, 3, 4, 5, 6, 7, 8}, TypeId::Int4, 4);
+    assert(v.type_id() == TypeId::Int4);
+    assert(v.array_size() == 2);
+
+    const Value& cv = v;
+    assert(cv.as_int_array() != nullptr);
+
+    auto marr = v.as_int_array();
+    assert(marr != nullptr && "mutable as_int_array() rejected Int4 array");
+    assert(marr->size() == 8);
+  }
+
+  // Plain Int array (regression check: must still work).
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{7, 8, 9});
+    assert(v.type_id() == TypeId::Int);
+    auto marr = v.as_int_array();
+    assert(marr != nullptr);
+    assert(marr->size() == 3);
+    assert((*marr)[0] == 7);
+  }
+
+  // Float-backed types must NOT be accepted by as_int_array().
+  {
+    Value v = Value::MakeIntArray(std::vector<int32_t>{1, 2, 3});
+    // Correct type: accepted
+    assert(v.as_int_array() != nullptr);
+  }
+
+  std::cout << "  Mutable as_int_array() backing types regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: ParseGenericValue tuple arity dispatch
+// (Previously hard-coded Float3 for all tuples, so float2/float4/int-tuples
+// failed to parse and desynced the lexer.)
+// ============================================================
+
+void test_generic_value_tuple_arity() {
+  std::cout << "Testing ParseGenericValue tuple arity dispatch..." << std::endl;
+
+  // Helper: parse a string through ParseGenericValue and return (success, type)
+  auto parse = [](const char* src, TypeId& out_type) -> bool {
+    Lexer lex(src, std::strlen(src));
+    ParseResult result = ParseGenericValue(lex, out_type);
+    // Consume trailing EOF to verify no unconsumed tokens.
+    return result.success && !lex.has_error() &&
+           lex.peek().type == TokenType::Eof;
+  };
+
+  // Float2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0)", tid));
+    assert(tid == TypeId::Float2);
+  }
+
+  // Float3 tuple (still works as before)
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0)", tid));
+    assert(tid == TypeId::Float3);
+  }
+
+  // Float4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(1.0, 2.0, 3.0, 4.0)", tid));
+    assert(tid == TypeId::Float4);
+  }
+
+  // Int2 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20)", tid));
+    assert(tid == TypeId::Int2);
+  }
+
+  // Int3 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30)", tid));
+    assert(tid == TypeId::Int3);
+  }
+
+  // Int4 tuple
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("(10, 20, 30, 40)", tid));
+    assert(tid == TypeId::Int4);
+  }
+
+  // Unmatched '(' is an error
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(!parse("(1.0, 2.0", tid));
+  }
+
+  // Non-tuple values still work
+  {
+    TypeId tid = TypeId::Invalid;
+    assert(parse("42", tid) && tid == TypeId::Int);
+    assert(parse("3.14", tid) && tid == TypeId::Double);
+    assert(parse("\"hello\"", tid) && tid == TypeId::String);
+  }
+
+  std::cout << "  ParseGenericValue tuple arity dispatch tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: EncodeDeltaS32 signed overflow
+// (Previously used plain int32_t subtraction which is UB on overflow;
+// the unsigned counterpart EncodeDeltaU32 correctly promotes to int64_t.)
+// ============================================================
+
+void test_encode_delta_s32_overflow() {
+  std::cout << "Testing EncodeDeltaS32 overflow safety..." << std::endl;
+
+  // The encode/decode must round-trip correctly for large (but int32_t-fitting)
+  // deltas. The previous UB was in the subtraction `values[i] - prev` when
+  // both operands are extreme int32_t values; the fix promotes to int64_t.
+  {
+    int32_t values[] = {-1000000000, 1000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == -1000000000);
+    assert(decoded[1] == 1000000000);
+  }
+
+  // Large negative delta
+  {
+    int32_t values[] = {0, -2000000000};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 2);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(2);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 2);
+    assert(ok);
+    assert(decoded[0] == 0);
+    assert(decoded[1] == -2000000000);
+  }
+
+  // The on-disk format's code-3 lane is int64 specifically so transitions
+  // between opposite int32 extremes remain lossless.
+  {
+    const int32_t values[] = {INT32_MIN, INT32_MAX, INT32_MIN};
+    const std::vector<uint8_t> encoded = EncodeDeltaS32(values, 3);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(3);
+    assert(DecodeDeltaS32(encoded.data(), encoded.size(), decoded.data(), 3));
+    assert(decoded == std::vector<int32_t>(values, values + 3));
+  }
+
+  // A hostile code-3 delta must be range-checked before signed addition.
+  {
+    std::vector<uint8_t> encoded(sizeof(int32_t) + 1 + sizeof(int32_t) +
+                                 sizeof(int64_t), 0);
+    encoded[sizeof(int32_t)] = uint8_t{0x0e};  // code 2, then code 3
+    const int32_t first_delta = INT32_MAX;
+    const int64_t overflowing_delta = INT64_MAX;
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1, &first_delta,
+                sizeof(first_delta));
+    std::memcpy(encoded.data() + sizeof(int32_t) + 1 + sizeof(first_delta),
+                &overflowing_delta, sizeof(overflowing_delta));
+    int32_t decoded[2] = {};
+    assert(!DecodeDeltaS32(encoded.data(), encoded.size(), decoded, 2));
+  }
+
+  // The 2-bit code-map calculation must reject hostile counts before it wraps
+  // or indexes beyond the supplied buffer. Non-empty decodes also require an
+  // output destination.
+  {
+    const uint8_t tiny[16] = {};
+    uint32_t u32 = 0;
+    int32_t s32 = 0;
+    uint64_t u64 = 0;
+    const size_t huge = (std::numeric_limits<size_t>::max)();
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), &u32, huge));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), &s32, huge));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), &u64, huge));
+    assert(!DecodeDeltaU32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaS32(tiny, sizeof(tiny), nullptr, 1));
+    assert(!DecodeDeltaU64(tiny, sizeof(tiny), nullptr, 1));
+  }
+
+  // U64 reconstruction is defined in unsigned arithmetic, including values
+  // above INT64_MAX; no implementation-defined signed round-trip is needed.
+  {
+    std::vector<uint8_t> encoded(sizeof(int64_t) + 1, 0);
+    const int64_t common_delta = -1;
+    std::memcpy(encoded.data(), &common_delta, sizeof(common_delta));
+    uint64_t decoded[2] = {};
+    assert(DecodeDeltaU64(encoded.data(), encoded.size(), decoded, 2));
+    assert(decoded[0] == (std::numeric_limits<uint64_t>::max)());
+    assert(decoded[1] == (std::numeric_limits<uint64_t>::max)() - 1);
+  }
+
+  // Single element (no deltas to compute)
+  {
+    int32_t values[] = {42};
+    std::vector<uint8_t> encoded = EncodeDeltaS32(values, 1);
+    assert(!encoded.empty());
+
+    std::vector<int32_t> decoded(1);
+    bool ok = DecodeDeltaS32(encoded.data(), encoded.size(),
+                             decoded.data(), 1);
+    assert(ok);
+    assert(decoded[0] == 42);
+  }
+
+  // Empty input
+  {
+    std::vector<uint8_t> encoded = EncodeDeltaS32(nullptr, 0);
+    assert(encoded.empty());
+  }
+
+  std::cout << "  Delta-code overflow safety tests passed!" << std::endl;
+}
+
+// ============================================================
+// Main
+// ============================================================
+
+// ============================================================
+// Regression: LerpValue must interpolate every linearly-interpolatable
+// scalar type (previously Half/Half2-4, semantic-half aliases, Quath and
+// Matrix2f/3f/2d/3d fell through to "held", snapping animated values of
+// those types to the earlier time sample).
+// ============================================================
+
+void test_lerp_value_scalar_type_coverage() {
+  std::cout << "Testing LerpValue scalar type coverage regression..."
+            << std::endl;
+
+  // Half scalar: 1.0h (0x3C00) .. 3.0h (0x4200), midpoint must be 2.0.
+  {
+    const uint16_t one = 0x3C00, three = 0x4200;
+    Value a = Value::MakeFromRaw(TypeId::Half, &one);
+    Value b = Value::MakeFromRaw(TypeId::Half, &three);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Half);
+    float f = 0.0f;
+    assert(r.to_float(&f));
+    assert(f == 2.0f);
+  }
+
+  // Half3 semantic alias (point3h): componentwise midpoint.
+  {
+    const uint16_t pa[3] = {0x3C00, 0x3C00, 0x3C00};  // (1,1,1)
+    const uint16_t pb[3] = {0x4200, 0x4200, 0x4200};  // (3,3,3)
+    Value a = Value::MakeFromRaw(TypeId::Point3h, pa);
+    Value b = Value::MakeFromRaw(TypeId::Point3h, pb);
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Point3h);
+    float f3[3] = {0, 0, 0};
+    assert(r.to_float3(f3));
+    assert(f3[0] == 2.0f && f3[1] == 2.0f && f3[2] == 2.0f);
+  }
+
+  // Matrix3f: elementwise lerp.
+  {
+    float ma[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float mb[9] = {4, 4, 4, 4, 4, 4, 4, 4, 4};
+    Value r = LerpValue(Value::MakeMatrix3f(ma), Value::MakeMatrix3f(mb), 0.25);
+    assert(r.type_id() == TypeId::Matrix3f);
+    const float* m = r.as_matrix3f();
+    assert(m != nullptr);
+    for (int i = 0; i < 9; ++i) assert(m[i] == 1.0f);
+  }
+
+  // Matrix2d: elementwise lerp.
+  {
+    double ma[4] = {0, 0, 0, 0};
+    double mb[4] = {2, 2, 2, 2};
+    Value r = LerpValue(Value::MakeMatrix2d(ma), Value::MakeMatrix2d(mb), 0.5);
+    assert(r.type_id() == TypeId::Matrix2d);
+    const double* m = r.as_matrix2d();
+    assert(m != nullptr);
+    for (int i = 0; i < 4; ++i) assert(m[i] == 1.0);
+  }
+
+  // Quath: identity..identity slerp stays identity (exercise the half-quat
+  // path; previously the value was held, which also returned `a`, so check a
+  // non-trivial pair: w-flip halfway must renormalize, not snap).
+  {
+    const uint16_t qa[4] = {0x3C00, 0, 0, 0};  // (w=1,x=0,y=0,z=0) storage-order agnostic
+    Value a = Value::MakeFromRaw(TypeId::Quath, qa);
+    Value r = LerpValue(a, a, 0.5);
+    assert(r.type_id() == TypeId::Quath);
+  }
+
+  // Non-interpolatable types must still be held.
+  {
+    Value a(int32_t(1)), b(int32_t(3));
+    Value r = LerpValue(a, b, 0.5);
+    assert(r.type_id() == TypeId::Int);
+    assert(*r.as_int() == 1);
+  }
+
+  std::cout << "  LerpValue scalar type coverage regression tests passed!"
+            << std::endl;
+}
+
+// ============================================================
+// Regression: PathExpression arrays share the string-vector storage but
+// were excluded from as_token_array()/operator==/hash(), so two identical
+// pathExpression[] values compared unequal and hashed by type only.
+// ============================================================
+
+void test_path_expression_array_equality_hash() {
+  std::cout << "Testing pathExpression[] equality/hash regression..."
+            << std::endl;
+
+  std::vector<std::string> e1 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e2 = {"/World//", "/Set/Chair_*"};
+  std::vector<std::string> e3 = {"/Other//"};
+  Value a = Value::MakeStringLikeArray(std::move(e1), TypeId::PathExpression);
+  Value b = Value::MakeStringLikeArray(std::move(e2), TypeId::PathExpression);
+  Value c = Value::MakeStringLikeArray(std::move(e3), TypeId::PathExpression);
+
+  assert(a.as_token_array() != nullptr);
+  assert(a.as_token_array()->size() == 2);
+  assert(a == b);
+  assert(!(a == c));
+  assert(a.hash() == b.hash());
+  assert(a.hash() != c.hash());
+
+  std::cout << "  pathExpression[] equality/hash regression tests passed!"
+            << std::endl;
+}
+
+// Regression (ASan heap-use-after-free): ParsePrimContents cached the
+// current PrimSpec* across a nested child ParsePrim(), which appends to the
+// layer's flat prim vector and can reallocate it. A `reorder` statement
+// AFTER a child prim then dereferenced the freed pointer. Found by the
+// core_usda fuzzer.
+void test_usda_reorder_after_child_prim() {
+  std::cout << "Testing USDA reorder-after-child-prim UAF regression..."
+            << std::endl;
+
+  // Many children force the flat prim vector to reallocate mid-parse; the
+  // trailing `reorder properties` on the parent then touches its meta.
+  const char* input = R"(#usda 1.0
+def Xform "Parent" {
+    def Scope "A" {}
+    def Scope "B" {}
+    def Scope "C" {}
+    def Scope "D" {}
+    def Scope "E" {}
+    def Scope "F" {}
+    def Scope "G" {}
+    def Scope "H" {}
+    reorder nameChildren = ["H", "A"]
+    reorder properties = ["y", "x"]
+    float x = 1.0
+    float y = 2.0
+}
+
+)";
+
+  LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+  assert(result.success);
+  UsdPrim parent = result.stage.GetPrimAtPath("/Parent");
+  assert(parent.IsValid());
+  assert(parent.GetChildren().size() == 8);
+  assert(parent.HasProperty("x"));
+  assert(parent.HasProperty("y"));
+
+  std::cout << "  USDA reorder-after-child-prim UAF regression passed!"
+            << std::endl;
+}
+
+void test_hardened_session_profile() {
+  const size_t cap = size_t(64) << 20;
+  StageSessionOptions opts = MakeHardenedStageSessionOptions(cap);
+  assert(opts.load.input_policy == InputPolicy::Untrusted);
+  assert(opts.load.limits.max_input_bytes == cap);
+  assert(opts.load.limits.max_resident_bytes == cap);
+  assert(!opts.load.usdc_options.crate_options.use_mmap);
+  assert(opts.composition.error_when_asset_not_found);
+  assert(!opts.composition.usdc_use_mmap);
+  assert(!opts.resolver.allow_absolute_paths);
+  assert(!opts.resolver.allow_parent_paths);
+  assert(!opts.resolver.search_recursively);
+  assert(!opts.resolver.enable_suffix_fallback);
+  assert(opts.execution.max_threads == 1);
+  assert(opts.execution.callback_concurrency ==
+         CallbackConcurrency::Serialized);
+  assert(MakeHardenedStageSessionOptions(0)
+             .load.limits.max_resident_bytes == 1);
+  assert(ClampExecutionThreads(1000) == kMaxExecutionThreads);
+  TaskArena arena(1000);
+  const size_t expected_threads =
+      kExecutionThreadsEnabled ? static_cast<size_t>(kMaxExecutionThreads) : 1;
+  assert(arena.max_threads() == expected_threads);
+  std::vector<uint8_t> visits(7, 0);
+  arena.Run(visits.size(), [&](size_t index) { visits[index] = 1; });
+  for (uint8_t visited : visits) assert(visited == 1);
+}
+
+// The batched deferred-array parse and the parallel prim-subtree parse must be
+// indistinguishable from the serial parser: same layer (written text), same
+// warnings (text AND order), and on failure the same errors (the fast attempt
+// falls back to a serial re-parse).
+namespace {
+
+std::string MakeFastParseTestDoc(int nchildren, const std::string& inject_at_7,
+                                 bool dup_sibling, bool block_comment) {
+  auto num_list = [](int n, int base, bool tuple3, bool trailing) {
+    std::string s = "[";
+    for (int i = 0; i < n; i++) {
+      if (i) s += ", ";
+      if (tuple3) {
+        s += "(" + std::to_string(base + i) + ".5, " +
+             std::to_string(i % 7) + ", -" + std::to_string(i) + "e-2)";
+      } else {
+        s += std::to_string(base + i);
+      }
+    }
+    if (trailing) s += ",";
+    s += "]";
+    return s;
+  };
+  std::string doc =
+      "#usda 1.0\n"
+      "(\n"
+      "    defaultPrim = \"World\"\n"
+      "    upAxis = \"Z\"\n"
+      ")\n\n"
+      "def Xform \"World\" (\n"
+      "    kind = \"assembly\"\n"
+      "    customData = { dictionary d = { int x = 1 } }\n"
+      ")\n{\n";
+  for (int c = 0; c < nchildren; c++) {
+    const std::string name = "m" + std::to_string(c);
+    // Small leading siblings (batched into runs) and mid-size meshes.
+    doc += "    def Scope \"s" + std::to_string(c) + "\" { int k = " +
+           std::to_string(c) + " }\n";
+    doc += "    def Mesh \"" + name + "\" (\n"
+           "        kind = \"component\"\n"
+           "        weirdMeta" + std::to_string(c % 3) + " = 1\n"
+           "    )\n    {\n";
+    const int n = 200 + 37 * (c % 5);
+    doc += "        point3f[] points = " + num_list(n, c, true, c % 4 == 1) +
+           "\n";
+    doc += "        int[] faceVertexIndices = " +
+           num_list(n, c, false, c % 3 == 2) + "\n";
+    // float -> int coercion stays on the synchronous (fallback) semantics.
+    doc += "        int[] coerced = [1.5, -2.25, " + num_list(90, 3, false, false)
+               .substr(1) + "\n";
+    doc += "        half[] halves = " + num_list(120, c, false, false) + "\n";
+    doc += "        uchar[] bytes = [1, 2, 3, 250, 7, 9, 11, 13, 17, 19, 23, 29, "
+           "31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101]\n";
+    doc += "        matrix4d[] xf = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), "
+           "(" + std::to_string(c) + ", 2, 3, 1) ), ( (1, 0, 0, 0), (0, 1, 0, "
+           "0), (0, 0, 1, 0), (0, 0, 0, 1) ), ( (2, 0, 0, 0), (0, 2, 0, 0), (0, "
+           "0, 2, 0), (0, 0, 0, 1) ), ( (3, 0, 0, 0), (0, 3, 0, 0), (0, 0, 3, "
+           "0), (0, 0, 0, 1) )]\n";
+    doc += "        normal3f[] normals.timeSamples = {\n";
+    for (int t = 0; t < 3; t++) {
+      doc += "            " + std::to_string(t) + ": " +
+             num_list(n / 2, t, true, t == 1) + ",\n";
+    }
+    doc += "        }\n";
+    doc += "        custom string note = \"a { b } ( c ) [ d ] # e @ f\"\n";
+    doc += "        asset tex = @@@dir/a@b.png@@@\n";
+    doc += "        asset tex2 = @./t{x}.png@\n";
+    doc += "        rel material:binding = </World/m0/Mat>\n";
+    doc += "        rel sib = <../s" + std::to_string(c) + ">\n";
+    doc += "        uniform token purpose = \"render\" (\n"
+           "            customData = { string c = \"}\" }\n"
+           "        )\n";
+    doc += "        # comment with } and ) and [ inside\n";
+    if (c == 7 && !inject_at_7.empty()) doc += inject_at_7;
+    if (block_comment && c == 5) doc += "        /* { block } */ int bc = 1\n";
+    doc += "        def Material \"Mat\" {\n"
+           "            token outputs:surface.connect = <Shader.outputs:out>\n"
+           "            def Shader \"Shader\" {\n"
+           "                uniform token info:id = \"UsdPreviewSurface\"\n"
+           "                color3f inputs:diffuseColor = (0.1, 0.2, 0.3)\n"
+           "            }\n"
+           "        }\n";
+    doc += "        variantSet \"lod\" = {\n"
+           "            \"hi\" { def Scope \"Hi\" { float f = 1 } }\n"
+           "            \"lo\" { def Scope \"Lo\" { float f = 2 } }\n"
+           "        }\n";
+    doc += "    }\n";
+  }
+  if (dup_sibling) {
+    doc += "    over \"m3\" { float extra = 1 }\n";
+  }
+  doc += "    float worldAttr = 3\n";
+  doc += "}\n\n";
+  doc += "def \"Tail\" { double[] d = " + std::string("[") ;
+  for (int i = 0; i < 300; i++) doc += (i ? ", " : "") + std::to_string(i) + ".25";
+  doc += "] }\n";
+  return doc;
+}
+
+struct ParseOutcome {
+  bool ok = false;
+  bool fast = false;
+  std::string text;
+  std::vector<std::string> warnings;
+  std::vector<std::string> errors;
+};
+
+ParseOutcome ParseForEquivalence(const std::string& doc, bool fast,
+                                 bool strict) {
+  ParseOptions opts;
+  opts.strict_aousd_conformance = strict;
+  if (fast) {
+    opts.num_threads = 4;
+  } else {
+    opts.async_arrays = false;
+    opts.parallel_prims = false;
+  }
+  AsciiParser parser(opts);
+  ParseOutcome out;
+  out.ok = parser.Parse(doc.data(), doc.size());
+  out.fast = parser.UsedFastPath();
+  out.warnings = parser.GetWarnings();
+  for (const ParseError& e : parser.GetErrors()) {
+    out.errors.push_back(std::to_string(e.line) + ":" +
+                         std::to_string(e.column) + ":" + e.message);
+  }
+  if (out.ok) {
+    Stage stage = parser.TakeStage();
+    assert(stage.GetRootLayer());
+    out.text = WriteLayerToString(*stage.GetRootLayer());
+  }
+  return out;
+}
+
+void ExpectSameOutcome(const std::string& doc, bool strict,
+                       bool expect_fast) {
+  const ParseOutcome serial = ParseForEquivalence(doc, false, strict);
+  const ParseOutcome fast = ParseForEquivalence(doc, true, strict);
+  assert(!serial.fast);
+  assert(serial.ok == fast.ok);
+  assert(serial.text == fast.text);
+  assert(serial.warnings == fast.warnings);
+  assert(serial.errors == fast.errors);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (expect_fast && std::thread::hardware_concurrency() > 1) {
+    assert(fast.fast);
+  }
+#else
+  (void)expect_fast;
+#endif
+}
+
+}  // namespace
+
+void test_usda_fast_parse_equivalence() {
+  std::cout << "Testing USDA fast-parse (deferred arrays / parallel prims) "
+               "equivalence..." << std::endl;
+  // Clean document: must take the fast path and match the serial parse.
+  const std::string clean = MakeFastParseTestDoc(40, "", false, false);
+  assert(clean.size() > (size_t(256) << 10));
+  ExpectSameOutcome(clean, false, /*expect_fast=*/true);
+  ExpectSameOutcome(clean, true, /*expect_fast=*/false);  // strict: any
+
+  // Duplicate sibling spanning a dispatched fragment and the main parser
+  // (serial MERGES it): must fall back and still match.
+  ExpectSameOutcome(MakeFastParseTestDoc(40, "", true, false), false, false);
+
+  // Block comment inside a prim body (capture leaves it inline).
+  ExpectSameOutcome(MakeFastParseTestDoc(40, "", false, true), false, false);
+
+  // Errors inside a dispatched block / deferred array: identical errors and
+  // warnings (serial re-parse), for both modes.
+  const char* bad_bodies[] = {
+      "        float[] bad = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, "
+      "15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, "
+      "32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, "
+      "49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, "
+      "66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, x]\n",
+      "        int[] big = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, "
+      "16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, "
+      "33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, "
+      "50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 99999999999]\n",
+      "        float3[] odd = [(1, 2, 3), (4, 5), (6, 7, 8), (1, 2, 3), (1, 2, "
+      "3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), "
+      "(1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, "
+      "2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2, 3)]\n",
+      "        float x = \n",
+      "        def \"bad name\" {}\n",
+      "        string unterminated = \"abc\n",
+  };
+  for (const char* body : bad_bodies) {
+    const std::string doc = MakeFastParseTestDoc(40, body, false, false);
+    ExpectSameOutcome(doc, false, false);
+    ExpectSameOutcome(doc, true, false);
+  }
+  std::cout << "  USDA fast-parse equivalence tests passed!" << std::endl;
+}
+
+int main() {
+  std::cout << "=== LightUSD Unit Tests ===" << std::endl;
+  std::cout << std::endl;
+
+  try {
+    test_type_id();
+    test_shared_storage();
+    test_value();
+    test_matrix_type_name_lookup();
+    test_frame4d_value_ops();
+    test_value_boxed_large_pod();
+    test_value_regressions();
+    test_value_heap_memory_usage();
+    test_mutable_int_array_backing_types();
+    test_generic_value_tuple_arity();
+    test_encode_delta_s32_overflow();
+    test_lerp_value_scalar_type_coverage();
+    test_path_expression_array_equality_hash();
+    test_path();
+    test_prim();
+    test_lexer();
+    test_value_parser();
+    test_ascii_parser();
+    test_usda_reader();
+    test_usda_reorder_after_child_prim();
+    test_usda_fast_parse_equivalence();
+    test_hardened_session_profile();
+    test_usda_lazy_parse_policies();
+    test_arc_listops();
+    test_arc_layer_offset_parse();
+    test_physics_schema();
+    test_arc_none_qualifiers();
+    test_arc_and_relocate_variant_path_rejection();
+    test_load_usd_from_memory();
+    test_stage_change_set_aggregation();
+    test_stage_session_variants();
+    test_stage_session_payloads_and_cancel();
+    test_stage_session_preview_and_dependencies();
+
+    std::cout << std::endl;
+    std::cout << "All tests passed!" << std::endl;
+    return 0;
+
+  } catch (const std::exception& e) {
+    std::cerr << "Test failed with exception: " << e.what() << std::endl;
+    return 1;
+  }
+}

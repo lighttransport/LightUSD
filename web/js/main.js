@@ -5,7 +5,7 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js'
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js'
-import { buildNextThreeNode, isNextScene } from 'lightusd/NextRenderSceneUtils.js'
+import { buildThreeNode, isScene } from 'lightusd/RenderSceneUtils.js'
 
 const gui = new GUI();
 
@@ -200,10 +200,10 @@ async function loadScenes() {
   for (const usd_scene of usd_scenes) {
 
     let threeNode;
-    if (isNextScene(usd_scene)) {
+    if (isScene(usd_scene)) {
       // next (default) scenes carry next render records; build them with the
-      // next scene builder and apply the shared environment map.
-      const built = buildNextThreeNode(usd_scene, { skipTextures: false, lazyTextures: true });
+      // core scene builder and apply the shared environment map.
+      const built = buildThreeNode(usd_scene, { skipTextures: false, lazyTextures: true });
       threeNode = built.node;
       threeNode.traverse((obj) => {
         if (!obj.isMesh) return;

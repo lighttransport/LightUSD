@@ -1,12 +1,12 @@
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 
 // Compatibility entry points for old demo URLs/imports. Only core is shipped.
-export function getBackendFromURL(_params, _fallback = 'next') { return 'next'; }
-export const LOADER_BACKEND_CHOICES = ['next'];
-export function normalizeBackend(_value, _fallback = 'next') { return 'next'; }
+export function getBackendFromURL(_params, _fallback = 'core') { return 'core'; }
+export const LOADER_BACKEND_CHOICES = ['core'];
+export function normalizeBackend(_value, _fallback = 'core') { return 'core'; }
 export function setBackendAndReload(_backend) {
   const url = new URL(window.location.href);
-  url.searchParams.set('backend','next');
+  url.searchParams.set('backend','core');
   window.location.href = url.toString();
 }
 // Retain the helper for demo imports without presenting an unavailable choice.
@@ -35,8 +35,8 @@ export function basenameFromUri(uri, fallback = 'scene.usd') {
   return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || fallback;
 }
 
-export function makeStaticNextParseOptions(options = {}) {
-  const backend = options.backend || 'next';
+export function makeStaticParseOptions(options = {}) {
+  const backend = options.backend || 'core';
   return {
     ...options,
     backend,
@@ -76,9 +76,9 @@ export async function createConfiguredLightUSDLoader(options = {}) {
   const initOptions = options.initOptions || {
     useZstdCompressedWasm: false,
     useMemory64: false,
-    // next is the default product; pass backend: 'legacy' for the legacy
+    // core is the default product; pass backend: 'legacy' for the legacy
     // compatibility module during the transition period.
-    backend: options.backend || 'next'
+    backend: options.backend || 'core'
   };
   const skinningOptions = options.skinningOptions || {};
 

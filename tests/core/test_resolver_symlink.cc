@@ -3,7 +3,7 @@
 //
 // Regression test: the next-module AssetResolver must follow SYMLINKED assets.
 //
-// Bug: AssetResolver::FileExistsImpl (src/next/resolver/asset-resolver.cc) used
+// Bug: AssetResolver::FileExistsImpl (src/resolver/asset-resolver.cc) used
 // lstat()+S_ISREG to probe candidate paths. For a symlink, lstat reports the
 // link itself (S_ISLNK, not S_ISREG), so a symlinked asset was reported
 // "missing". The resolver then fell through to returning the bare, *unanchored*
@@ -13,7 +13,7 @@
 // This regularly happens in production scenes: Animal Logic ALab merges
 // techvar_assets / baked_procedurals / trailer_cameras into the tree as
 // symlinks, so every symlinked variant-gated payload and surfacing binding
-// vanished from the composed stage (entity composed to 0 meshes via --next).
+// vanished from the composed stage (entity composed to 0 meshes via --core).
 //
 // Fix: probe with stat() (follows the link to its target's type). A symlink to a
 // regular file now yields S_ISREG and resolves against the anchor dir; a

@@ -25,7 +25,7 @@ add_subdirectory("${LIGHTUSD_ROOT}" lightusd EXCLUDE_FROM_ALL)
 
 add_executable(bench_lightusd bench_lightusd.cc)
 target_include_directories(bench_lightusd PRIVATE "${LIGHTUSD_ROOT}/src")
-target_link_libraries(bench_lightusd PRIVATE lightusd_static)
+target_link_libraries(bench_lightusd PRIVATE lightusd_legacy_static)
 target_compile_features(bench_lightusd PRIVATE cxx_std_14)
 
 # --- OpenUSD -----------------------------------------------------------------

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildNextDemoScene } from '../next-scene.js';
+import { buildCoreScene } from '../core-scene.js';
 import { showLoader, hideLoader } from "../lightusd-loader.js";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -629,15 +629,15 @@ async function loadUSDScene(loader) {
   const bytes = new TextEncoder().encode(text);
   const sourceName = USDA.split('/').pop() || 'scene.usda';
   const scene = await new Promise((resolve, reject) => {
-    loader.parse(bytes.buffer, sourceName, resolve, reject, { backend: 'next' });
+    loader.parse(bytes.buffer, sourceName, resolve, reject, { backend: 'core' });
   });
-  const { node: usdObj } = await buildNextDemoScene(scene, { sourceUrl: USDA });
+  const { node: usdObj } = await buildCoreScene(scene, { sourceUrl: USDA });
   usdObj.name = 'USD rest pose';
   styleRestPose(usdObj);
   restRoot.add(usdObj);
 
   // Extract physics JSON
-  const native = new loader.native_.NextUSDZConverterNative();
+  const native = new loader.native_.USDZConverterNative();
   try {
     if (!native.loadFromBinary(bytes, sourceName)) {
       throw new Error(native.error?.() || 'Physics scene conversion failed.');
@@ -677,7 +677,7 @@ async function main() {
   const loader = new LightUSDLoader(null, { maxMemoryLimitMB: 256 });
   showLoader("Loading LightUSD WASM...", document.getElementById("viewport"));
   try {
-    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
+    await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'core' });
   } finally {
     hideLoader();
   }

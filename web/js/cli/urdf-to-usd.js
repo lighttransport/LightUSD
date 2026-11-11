@@ -2579,7 +2579,7 @@ async function main() {
   }
 
   const lightusd = await LightUSDFactory();
-  const native = new lightusd.NextUSDZConverterNative();
+  const native = new lightusd.USDZConverterNative();
   let payloadJSON;
   try {
     payloadJSON = JSON.stringify(payload);

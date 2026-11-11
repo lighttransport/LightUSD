@@ -217,8 +217,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
              subdivision_scheme != "none" &&
              subdivision_deformed) {
     AddWarning("Subdivision skipped for deformed mesh '" + out->prim_path +
-               "' on the next path; use --no-next for refined skin and "
-               "blend-shape primvars");
+               "' (subdivision is not applied to deformed geometry)");
   }
 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).

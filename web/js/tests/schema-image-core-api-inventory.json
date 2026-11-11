@@ -1,0 +1,11 @@
+[
+  {"legacy":"clearURDFMeshBuffers","core":"USDZConverterNative.clearURDFMeshBuffers"},
+  {"legacy":"computeMeshTangents","core":"RenderStream.computeMeshTangents"},
+  {"legacy":"createSampleScene","core":"USDZConverterNative.createSampleScene"},
+  {"legacy":"createURDFPhysicsScene","core":"USDZConverterNative.createURDFPhysicsScene"},
+  {"legacy":"encodeImageNative","core":"RenderStream.encodeImageNative"},
+  {"legacy":"extractPhysicsSceneJSON","core":"USDZConverterNative.extractPhysicsSceneJSON"},
+  {"legacy":"generateBoneTexture","core":"RenderStream.generateBoneTexture"},
+  {"legacy":"setCollisionMesh","core":"USDZConverterNative.setCollisionMesh"},
+  {"legacy":"setVisualMesh","core":"USDZConverterNative.setVisualMesh"}
+]

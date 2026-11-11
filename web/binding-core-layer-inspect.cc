@@ -15,7 +15,7 @@ namespace tn = lightusd;
 
 namespace lightusd {
 namespace web_core {
-int32_t NextLayerDocument::mhProfileJSONSize() {
+int32_t LayerDocument::mhProfileJSONSize() {
   if (!stage_) {
     mh_profile_json_ = "[]";
     return 2;
@@ -86,14 +86,14 @@ int32_t NextLayerDocument::mhProfileJSONSize() {
           estimated_bytes += floats->size() * 32;
           minijson::Value encoded = minijson::Value::object();
           encoded["t"] = time;
-          encoded["v"] = NextValueJSON(*sample);
+          encoded["v"] = ValueJSON(*sample);
           samples.push_back(std::move(encoded));
         }
         minijson::Value sampled = minijson::Value::object();
         sampled["timeSamples"] = std::move(samples);
         attrs[name] = std::move(sampled);
       } else if (value) {
-        attrs[name] = NextValueJSON(*value);
+        attrs[name] = ValueJSON(*value);
       } else {
         attrs[name] = minijson::Value();
       }
@@ -119,7 +119,7 @@ int32_t NextLayerDocument::mhProfileJSONSize() {
   return static_cast<int32_t>(mh_profile_json_.size());
 }
 
-int32_t NextLayerDocument::mhProfileJSONCopy(uint8_t* out,
+int32_t LayerDocument::mhProfileJSONCopy(uint8_t* out,
                                              uint32_t cap) const {
   if (mh_profile_json_.size() > static_cast<size_t>((std::numeric_limits<int32_t>::max)())) return -1;
   const int32_t required = static_cast<int32_t>(mh_profile_json_.size());
@@ -128,7 +128,7 @@ int32_t NextLayerDocument::mhProfileJSONCopy(uint8_t* out,
   return required;
 }
 
-int32_t NextLayerDocument::shadingGraphJSONSize() {
+int32_t LayerDocument::shadingGraphJSONSize() {
   if (!stage_) {
     error_ = "Shading graph inspection requires a loaded Layer";
     shading_graph_json_.clear();
@@ -194,7 +194,7 @@ int32_t NextLayerDocument::shadingGraphJSONSize() {
         }
       }
       const std::vector<tn::Path>* connections =
-          NextPropertyConnections(prim, name);
+          PropertyConnections(prim, name);
       if (shading_prim) {
         const tn::PrimSpec* spec = prim.GetPrimSpec();
         const std::string* type_name = spec ? spec->property_type_name(name) : nullptr;
@@ -216,7 +216,7 @@ int32_t NextLayerDocument::shadingGraphJSONSize() {
             item["connections"].push_back(connection.str());
           }
         }
-        if (value && authored) item["value"] = NextValueJSON(*value);
+        if (value && authored) item["value"] = ValueJSON(*value);
         properties[name] = std::move(item);
       }
     }
@@ -246,7 +246,7 @@ int32_t NextLayerDocument::shadingGraphJSONSize() {
       const tn::Value* value = prim.GetPropertyValue("colorSpace:name");
       if (!value || !prim.HasAuthoredProperty("colorSpace:name")) continue;
       minijson::Value color = minijson::Value::object();
-      color["value"] = NextValueJSON(*value);
+      color["value"] = ValueJSON(*value);
       color["timeSampled"] = prim.HasTimeSamples("colorSpace:name");
       root["colorSpaces"][prim.GetPath().str()] = std::move(color);
     }
@@ -263,7 +263,7 @@ int32_t NextLayerDocument::shadingGraphJSONSize() {
   return static_cast<int32_t>(shading_graph_json_.size());
 }
 
-int32_t NextLayerDocument::shadingGraphJSONCopy(uint8_t* out,
+int32_t LayerDocument::shadingGraphJSONCopy(uint8_t* out,
                                                 uint32_t cap) const {
   if (shading_graph_json_.size() > static_cast<size_t>((std::numeric_limits<int32_t>::max)())) return -1;
   const int32_t required = static_cast<int32_t>(shading_graph_json_.size());

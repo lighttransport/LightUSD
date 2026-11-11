@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""lusdview `--next` regression: skinning must reach INSTANCED prototypes.
+"""lusdview `--core` regression: skinning must reach INSTANCED prototypes.
 
 A skinned rig behind a scenegraph instance (`instanceable = true`) is drawn from a
-shared prototype. The next loader used to convert the prototype's geometry but
+shared prototype. The core loader used to convert the prototype's geometry but
 never skin it, so every instance rendered the REST pose and the animation was
 simply absent -- silently, and only for instanced rigs.
 
@@ -153,7 +153,7 @@ def render(binary, model, out_png, timecode, backend):
 
 
 def instance_count(log):
-    """Instances reported by the next loader, e.g. '-> 1 draws (...), 2 instances'."""
+    """Instances reported by the core loader, e.g. '-> 1 draws (...), 2 instances'."""
     m = re.search(r"(\d+) instances", log)
     return int(m.group(1)) if m else -1
 

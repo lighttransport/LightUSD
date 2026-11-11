@@ -59,8 +59,7 @@ void help(const char* name) {
       << "  --snorm8              Retain normals/tangents as packed signed "
          "bytes\n  --fast-index-build    Expand corners without "
          "deduplication\n"
-      << "  --next                Compatibility alias; core is the default\n  "
-         "--compose-threads N   Composition worker count\n  "
+      << "  --compose-threads N   Composition worker count\n  "
          "--compose-threads-auto Use hardware concurrency\n"
       << "  --load-payloads | --defer-payloads\n  --no-animation        Skip "
          "animation extraction\n  --profile             Print load and "
@@ -109,7 +108,6 @@ bool parse(int argc, char** argv, Options* o) {
           o->threads = static_cast<int>(value);
         }
       }
-    } else if (flag == "--next") {
     } else if (flag == "--notri")
       o->triangulate = false;
     else if (flag == "--trifan")

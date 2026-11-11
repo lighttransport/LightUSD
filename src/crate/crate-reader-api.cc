@@ -60,7 +60,7 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 
   constexpr size_t kPhaseTotal = 10;
   if (!ReportProgress("bootstrap", 0, kPhaseTotal)) return std::move(result_);
-  CratePhaseTimer timer(options_.enable_timing, "next_crate_read");
+  CratePhaseTimer timer(options_.enable_timing, "core_crate_read");
   auto lap = [&](const char* phase) { timer.lap(phase); };
   if (!ReadBootstrap()) return std::move(result_);
   source_->set_version(version_);

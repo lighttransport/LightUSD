@@ -4,7 +4,7 @@
 // Built-in USD layouts. Metadata only: no per-type executable callbacks.
 //
 // The table and the USD <-> TypeId name mapping live in the C11 core
-// (src/next/c/type-names.c), so C consumers (the C ABI) share one copy of the
+// (src/c/type-names.c), so C consumers (the C ABI) share one copy of the
 // type system. This file is the C++ facade.
 
 #include "type-info.hh"

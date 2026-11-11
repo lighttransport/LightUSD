@@ -69,7 +69,7 @@ if [[ "${LUSDVIEW_PTEX_RT:-0}" == "1" ]]; then
   rt_args=(--rt)
 fi
 if ! env LUSDVIEW_PTEX_FORCE_RESIDENCY=1 timeout 60s \
-    "$viewer" --headless --backend vk --next "${rt_args[@]}" \
+    "$viewer" --headless --backend vk --core "${rt_args[@]}" \
     --large-scene-profile instance-heavy --ptex-initial-faces 1 --ptex-cache-mb 4 \
     "${texture_args[@]}" \
     --frames 4 --size 192x128 --camera /Camera \

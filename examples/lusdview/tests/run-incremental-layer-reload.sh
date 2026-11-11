@@ -51,7 +51,7 @@ def Xform "World" {
 }
 USDA
 
-if ! "$LUSDVIEW" --config "$TMP/config.json" --headless --backend "$BACKEND" --next \
+if ! "$LUSDVIEW" --config "$TMP/config.json" --headless --backend "$BACKEND" --core \
      --frames 1 "$TMP/root.usda" >"$TMP/probe.log" 2>&1; then
   echo "SKIP: headless Vulkan is unavailable"
   exit "$SKIP"
@@ -61,7 +61,7 @@ node - "$LUSDVIEW" "$TMP/config.json" "$TMP/root.usda" "$TMP/geometry.usda" "$BA
 const fs = require('fs');
 const {spawn} = require('child_process');
 const child = spawn(process.argv[2], [
-  '--config', process.argv[3], '--headless', '--backend', process.argv[6], '--next',
+  '--config', process.argv[3], '--headless', '--backend', process.argv[6], '--core',
   '--frames', '100000', '--mcp-stdio', process.argv[4]
 ], {stdio: ['pipe', 'pipe', 'pipe']});
 let stdout = '', stderr = '', id = 1;

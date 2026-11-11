@@ -115,7 +115,7 @@ async function main() {
   const filename = params.get('name') || basename(url);
   const label = params.get('label') || filename;
   const camera = parseCamera(params);
-  const backend = getBackendFromURL(params, 'next');
+  const backend = getBackendFromURL(params, 'core');
 
   window.__usdAssetsViewer = {
     ready: false,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify HermiteCurves are collected by the next loader and reach the bounded
+# Verify HermiteCurves are collected by the core loader and reach the bounded
 # Vulkan curve tessellation path together with Basis/Nurbs curves and Points.
 set -uo pipefail
 
@@ -21,7 +21,7 @@ trap 'rm -rf "$TMP"' EXIT
 if [ "$?" -ne 0 ] || ! grep -q "rt native curve chunks: round 3 (22 segments)" \
     "$TMP/curves-cpu.log"; then
   cat "$TMP/curves-cpu.log"
-  echo "FAIL: Hermite tangents were not tessellated in the CPU next path"
+  echo "FAIL: Hermite tangents were not tessellated in the CPU core path"
   exit 1
 fi
 "$LUSDRENDER" -hermiteSegments 8 "$ASSET" "$TMP/curves.png" -vkr -w 32 -height 32 \

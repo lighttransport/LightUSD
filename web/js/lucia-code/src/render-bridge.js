@@ -5,7 +5,7 @@ export function materialSnapshotsDiffer(before, after) {
   return before.triangles.some((signature, index) => signature !== after.triangles[index]);
 }
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { buildNextThreeNode, defaultTextureConcurrency } from '../../src/lightusd/NextRenderSceneUtils.js';
+import { buildThreeNode, defaultTextureConcurrency } from '../../src/lightusd/RenderSceneUtils.js';
 import { choosePreviewBudget, previewGeometryDrawCount, previewTextureScale } from './preview-budget.js';
 
 export function isRenderedObject(object) {
@@ -46,7 +46,7 @@ export class LuciaRenderBridge extends EventTarget {
     this.clearSelection();
     this.clearVertexLockPreview();
     this.pathObjects.clear(); this.lodGroups = new Map(); this.authoredHidden = new Set(); this.colliderObjects = [];
-    const built = buildNextThreeNode(nativeScene, {skipTextures:false, lazyTextures:true,
+    const built = buildThreeNode(nativeScene, {skipTextures:false, lazyTextures:true,
       releaseBuildData:false, onProgress});
     if (built.textureManager) await built.textureManager.startLoading({
       concurrency:defaultTextureConcurrency(), yieldInterval:16});

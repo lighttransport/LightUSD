@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Shared, stage-independent render support. Embed the same objects in the
-# legacy and next archives so manual archive consumers need no extra libraries.
+# legacy and core archives so manual archive consumers need no extra libraries.
 get_filename_component(LIGHTUSD_RENDER_SUPPORT_DIR
     "${CMAKE_CURRENT_LIST_DIR}/../src" ABSOLUTE)
 

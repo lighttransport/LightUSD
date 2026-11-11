@@ -105,7 +105,7 @@ size_t MatchFloatSpecial(const char* p, const char* end) {
 int HexVal(char c) { return lu_lex_hex_val(c); }
 
 
-// Keyword lookup lives in the C11 core (src/next/c/lexer.c).
+// Keyword lookup lives in the C11 core (src/c/lexer.c).
 TokenType LookupKeyword(const char* p, size_t n) {
   return static_cast<TokenType>(lu_lex_lookup_keyword(p, n));
 }
@@ -758,7 +758,7 @@ Token Lexer::scan_number() {
   size_t start_col = column_;
   size_t start = pos_;
 
-  // Byte-length-only core lives in the C11 core (src/next/c/lexer.c).
+  // Byte-length-only core lives in the C11 core (src/c/lexer.c).
   const size_t len = lu_lex_scan_number(data_ + start, data_ + length_);
   // Numeric literals never contain a newline, so advance() would only bump the
   // column; do it in one step (identical result, fewer calls).

@@ -9,13 +9,13 @@ import { LightUSDWorkerLoader } from 'lightusd/LightUSDWorkerLoader.js';
 import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
 import { OpenPBRMaterial } from 'lightusd/LightUSDOpenPBRSimple.js';
-import { getBackendFromURL, makeStaticNextParseOptions } from 'lightusd/LoaderConfigUtils.js';
+import { getBackendFromURL, makeStaticParseOptions } from 'lightusd/LoaderConfigUtils.js';
 import {
-    buildNextThreeNode,
-    isNextScene,
-    nextCountsFromScene,
-    readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+    buildThreeNode,
+    isScene,
+    countsFromScene,
+    readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 
 // ============================================================================
 // Constants
@@ -67,7 +67,7 @@ const sceneState = {
 // Settings
 const settings = {
     applyUpAxisConversion: false,
-    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'next')
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'core')
 };
 
 // Progress state for tracking stages
@@ -951,7 +951,7 @@ function disposeMaterial(material) {
  * then textures load in background with separate progress bar.
  */
 async function buildSceneWithProgress(usd, onProgress) {
-    if (isNextScene(usd)) {
+    if (isScene(usd)) {
         sceneState.meshCount = 0;
         sceneState.textureCount = 0;
         sceneState.lightsCount = 0;
@@ -968,7 +968,7 @@ async function buildSceneWithProgress(usd, onProgress) {
             message: 'Building next render scene...'
         });
         await new Promise(r => requestAnimationFrame(r));
-        const built = buildNextThreeNode(usd, {
+        const built = buildThreeNode(usd, {
             skipTextures: false,
             lazyTextures: true,
             onProgress: (info) => {
@@ -981,7 +981,7 @@ async function buildSceneWithProgress(usd, onProgress) {
             }
         });
         sceneState.textureLoadingManager = built.textureManager;
-        const counts = nextCountsFromScene(usd);
+        const counts = countsFromScene(usd);
         sceneState.meshCount = counts.meshes || 0;
         sceneState.textureCount = counts.textures || 0;
         sceneState.lightsCount = counts.lights || 0;
@@ -1159,8 +1159,8 @@ async function buildSceneWithProgress(usd, onProgress) {
  * Load scene metadata including upAxis from USD file
  */
 function loadSceneMetadata() {
-    if (isNextScene(loaderState.nativeLoader)) {
-        const metadata = readNextSceneMeta(loaderState.nativeLoader);
+    if (isScene(loaderState.nativeLoader)) {
+        const metadata = readSceneMeta(loaderState.nativeLoader);
         sceneState.upAxis = metadata.upAxis || 'Y';
         return;
     }
@@ -1350,7 +1350,7 @@ async function loadWithWorker(source, isFile, stats) {
     }
 
     let usd;
-    const workerParseOptions = makeStaticNextParseOptions({ backend: settings.backend });
+    const workerParseOptions = makeStaticParseOptions({ backend: settings.backend });
     const parseStart = performance.now();
     if (isFile) {
         // Load from File object
@@ -1408,7 +1408,7 @@ async function loadWithMainThread(source, isFile, stats) {
     }
 
     let usd;
-    const parseOptions = makeStaticNextParseOptions({ backend: settings.backend });
+    const parseOptions = makeStaticParseOptions({ backend: settings.backend });
     const parseStart = performance.now();
     if (isFile) {
         updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
@@ -1460,8 +1460,8 @@ async function loadUSDWithProgress(source, isFile = false) {
         let usd;
 
         // Use Web Worker for responsive UI during parsing. LightUSDWorker
-        // handles both backends (it dynamically imports the next-only module
-        // when the load options request backend=next).
+        // handles both backends (it dynamically imports the core module
+        // when the load options request backend=core).
         if (loaderState.useWorker) {
             usd = await loadWithWorker(source, isFile, stats);
         } else {
@@ -1494,7 +1494,7 @@ async function loadUSDWithProgress(source, isFile = false) {
         // Update UI
         updateModelInfo();
         finishLoadStats(stats);
-        updateStatus(`Model loaded (backend: ${isNextScene(usd) ? 'next' : 'legacy'}, upAxis: ${sceneState.upAxis})`);
+        updateStatus(`Model loaded (backend: ${isScene(usd) ? 'core' : 'legacy'}, upAxis: ${sceneState.upAxis})`);
 
         hideProgress();
 

@@ -14,7 +14,7 @@ add_sanitizers(${EXAMPLE_TARGET})
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src/c-api)
 # Allocator (if enabled) must precede the rest so it wins symbol resolution.
-target_link_libraries(${EXAMPLE_TARGET} ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} lightusd_static)
+target_link_libraries(${EXAMPLE_TARGET} ${LIGHTUSD_TOOLS_ALLOCATOR_LIB} lightusd_legacy_static)
 target_link_libraries(${EXAMPLE_TARGET} lightusd_core)
 if(TARGET lightusd_c)
   target_link_libraries(${EXAMPLE_TARGET} lightusd_c)

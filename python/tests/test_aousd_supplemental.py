@@ -83,7 +83,7 @@ def _enumerate_file_formats(limit=CAP):
     return files[:limit] if limit else files
 
 
-# file_formats assets next does not load, with the reason. Each entry must
+# file_formats assets the core does not load, with the reason. Each entry must
 # still fail (so a fix is noticed and the entry pruned); every other asset
 # must load.
 KNOWN_FILE_FORMAT_FAILURES = {}
@@ -386,7 +386,7 @@ def test_aousd_composition_load():
         # (default) loader may reject it. Any other rejection is a regression.
         authored_errors = data.get("Errors") or []
         try:
-            # next default is now fallback-free; corpus expects standin=render fallback for some cases (e.g. /FergusCloak)
+            # the core default is now fallback-free; corpus expects standin=render fallback for some cases (e.g. /FergusCloak)
             st = lightusd.load(str(entry), variants={"standin": "render"})
         except lightusd.UsdError as e:
             if authored_errors:

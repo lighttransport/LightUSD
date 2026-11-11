@@ -143,9 +143,9 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
     echo "SKIP: packaged-vk RT unavailable (software Vulkan only)"
     continue
   fi
-  next_ok=0
+  core_ok=0
   packaged_ok=0
-  for loader_spec in "next:--next" "packaged:--next"; do
+  for loader_spec in "core:--core" "packaged:--core"; do
     loader="${loader_spec%%:*}"
     loader_args="${loader_spec#*:}"
     tag="$loader-$backend"
@@ -167,7 +167,7 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
     fi
     if grep -Fq "$marker" "$OUT/rt-geomsubset-$tag.log" && [ -s "$img" ]; then
       ran=$((ran + 1))
-      if [ "$loader" = next ]; then next_ok=1; else packaged_ok=1; fi
+      if [ "$loader" = core ]; then core_ok=1; else packaged_ok=1; fi
       probe "$img" "$tag" || {
         echo "FAIL: $tag GeomSubset materials"; fail=1;
       }
@@ -178,7 +178,7 @@ for spec in "vk:--backend vk --rt:caps: v1 .*rt=hardware" \
   # If either input format proved this backend is available, the other input format must
   # also reach RT and render. Otherwise a format-specific failure would be
   # mislabeled as an unavailable GPU and silently pass via the other input format.
-  if [ "$next_ok" -ne "$packaged_ok" ]; then
+  if [ "$core_ok" -ne "$packaged_ok" ]; then
     echo "FAIL: $backend RT available for only one input format"
     fail=1
   fi

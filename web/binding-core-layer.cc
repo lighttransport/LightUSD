@@ -42,23 +42,23 @@ bool IsHalfType(lightusd_type type) {
 }
 }  // namespace
 
-NextLayerDocument::~NextLayerDocument() {
+LayerDocument::~LayerDocument() {
   end();
 }
 
-void NextLayerDocument::end() {
+void LayerDocument::end() {
   if (stage_) lightusd_stage_destroy(stage_);
   stage_ = nullptr;
   clearExport_();
   error_.clear();
 }
 
-int32_t NextLayerDocument::fail_(const char* message) {
+int32_t LayerDocument::fail_(const char* message) {
   error_ = message ? message : "Layer operation failed";
   return -1;
 }
 
-int32_t NextLayerDocument::failJSON_(const char* message) {
+int32_t LayerDocument::failJSON_(const char* message) {
   if (stage_) lightusd_stage_destroy(stage_);
   stage_ = nullptr;
   clearExport_();
@@ -66,13 +66,13 @@ int32_t NextLayerDocument::failJSON_(const char* message) {
   return -1;
 }
 
-bool NextLayerDocument::ensureLoaded_() {
+bool LayerDocument::ensureLoaded_() {
   if (stage_) return true;
   fail_("No layer is loaded");
   return false;
 }
 
-void NextLayerDocument::clearExport_() {
+void LayerDocument::clearExport_() {
   if (export_text_) lightusd_string_destroy(export_text_);
   if (export_crate_) lightusd_string_destroy(export_crate_);
   export_text_ = nullptr;
@@ -84,7 +84,7 @@ void NextLayerDocument::clearExport_() {
 }
 
 
-int32_t NextLayerDocument::load(
+int32_t LayerDocument::load(
     const uint8_t* bytes, uint32_t size,
     const std::function<bool(const char*, size_t, size_t)>& progress) {
   if (!bytes || !size) return fail_("Layer input is empty");
@@ -123,7 +123,7 @@ int32_t NextLayerDocument::load(
 }
 
 
-int32_t NextLayerDocument::definePrim(const uint8_t* path,
+int32_t LayerDocument::definePrim(const uint8_t* path,
                                       uint32_t path_size,
                                       const uint8_t* type,
                                       uint32_t type_size) {
@@ -144,7 +144,7 @@ int32_t NextLayerDocument::definePrim(const uint8_t* path,
   return 0;
 }
 
-int32_t NextLayerDocument::removePrim(const uint8_t* path,
+int32_t LayerDocument::removePrim(const uint8_t* path,
                                       uint32_t path_size) {
   if (!ensureLoaded_()) return -1;
   std::string path_text;
@@ -160,7 +160,7 @@ int32_t NextLayerDocument::removePrim(const uint8_t* path,
   return 0;
 }
 
-int32_t NextLayerDocument::removeAttribute(
+int32_t LayerDocument::removeAttribute(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size) {
   if (!ensureLoaded_()) return -1;
@@ -179,7 +179,7 @@ int32_t NextLayerDocument::removeAttribute(
   return 0;
 }
 
-int32_t NextLayerDocument::setStringAttribute(
+int32_t LayerDocument::setStringAttribute(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, const uint8_t* value, uint32_t value_size) {
   if (!ensureLoaded_()) return -1;
@@ -200,7 +200,7 @@ int32_t NextLayerDocument::setStringAttribute(
   return 0;
 }
 
-int32_t NextLayerDocument::setNumberAttribute(
+int32_t LayerDocument::setNumberAttribute(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, double value) {
   if (!ensureLoaded_()) return -1;
@@ -220,7 +220,7 @@ int32_t NextLayerDocument::setNumberAttribute(
   return 0;
 }
 
-int32_t NextLayerDocument::setAttributeMetadata(
+int32_t LayerDocument::setAttributeMetadata(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, const uint8_t* key, uint32_t key_size, uint8_t kind,
     const uint8_t* payload, uint32_t payload_size, double number,
@@ -275,7 +275,7 @@ int32_t NextLayerDocument::setAttributeMetadata(
   return 0;
 }
 
-int32_t NextLayerDocument::getAttributeMetadata(
+int32_t LayerDocument::getAttributeMetadata(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, const uint8_t* key, uint32_t key_size,
     uint8_t* kind, uint8_t* out, uint32_t cap) {
@@ -353,7 +353,7 @@ int32_t NextLayerDocument::getAttributeMetadata(
   return static_cast<int32_t>(bytes.size());
 }
 
-int32_t NextLayerDocument::setStageMetadata(
+int32_t LayerDocument::setStageMetadata(
     const uint8_t* key, uint32_t key_size, uint8_t kind,
     const uint8_t* text, uint32_t text_size, double number) {
   if (!ensureLoaded_()) return -1;
@@ -389,7 +389,7 @@ int32_t NextLayerDocument::setStageMetadata(
   return 0;
 }
 
-int32_t NextLayerDocument::setPrimMetadata(
+int32_t LayerDocument::setPrimMetadata(
     const uint8_t* path, uint32_t path_size, const uint8_t* key,
     uint32_t key_size, uint8_t kind, const uint8_t* payload,
     uint32_t payload_size, uint32_t count) {
@@ -452,7 +452,7 @@ int32_t NextLayerDocument::setPrimMetadata(
   return 0;
 }
 
-int32_t NextLayerDocument::primMetadataIsAuthored(
+int32_t LayerDocument::primMetadataIsAuthored(
     const uint8_t* path, uint32_t path_size, const uint8_t* key,
     uint32_t key_size) {
   if (!ensureLoaded_()) return -1;
@@ -474,7 +474,7 @@ int32_t NextLayerDocument::primMetadataIsAuthored(
   return authored ? 1 : 0;
 }
 
-int32_t NextLayerDocument::getPrimMetadata(
+int32_t LayerDocument::getPrimMetadata(
     const uint8_t* path, uint32_t path_size, const uint8_t* key,
     uint32_t key_size, uint8_t* kind, uint32_t* count, uint8_t* out,
     uint32_t cap) {
@@ -572,7 +572,7 @@ int32_t NextLayerDocument::getPrimMetadata(
   return required;
 }
 
-int32_t NextLayerDocument::getStageMetadataNumber(
+int32_t LayerDocument::getStageMetadataNumber(
     const uint8_t* key, uint32_t key_size, double* out) {
   if (!ensureLoaded_()) return -1;
   std::string key_text;
@@ -600,7 +600,7 @@ int32_t NextLayerDocument::getStageMetadataNumber(
   return 0;
 }
 
-int32_t NextLayerDocument::getStageMetadataString(
+int32_t LayerDocument::getStageMetadataString(
     const uint8_t* key, uint32_t key_size, uint8_t* out, uint32_t cap) {
   if (!ensureLoaded_()) return -1;
   std::string key_text;
@@ -633,7 +633,7 @@ int32_t NextLayerDocument::getStageMetadataString(
   return required;
 }
 
-int32_t NextLayerDocument::stageMetadataIsAuthored(const uint8_t* key,
+int32_t LayerDocument::stageMetadataIsAuthored(const uint8_t* key,
                                                   uint32_t key_size) {
   if (!ensureLoaded_()) return -1;
   std::string key_text;
@@ -645,7 +645,7 @@ int32_t NextLayerDocument::stageMetadataIsAuthored(const uint8_t* key,
   return authored ? 1 : 0;
 }
 
-int32_t NextLayerDocument::setRelationshipTargets(
+int32_t LayerDocument::setRelationshipTargets(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, const uint8_t* packed_targets, uint32_t packed_size,
     uint32_t count) {
@@ -692,7 +692,7 @@ int32_t NextLayerDocument::setRelationshipTargets(
   return 0;
 }
 
-int32_t NextLayerDocument::relationshipTargetCount(
+int32_t LayerDocument::relationshipTargetCount(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size) {
   if (!ensureLoaded_()) return -1;
@@ -712,7 +712,7 @@ int32_t NextLayerDocument::relationshipTargetCount(
   return static_cast<int32_t>(count);
 }
 
-int32_t NextLayerDocument::relationshipTargetCopy(
+int32_t LayerDocument::relationshipTargetCopy(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, uint32_t index, uint8_t* out, uint32_t cap) {
   if (!ensureLoaded_()) return -1;
@@ -739,7 +739,7 @@ int32_t NextLayerDocument::relationshipTargetCopy(
   return required;
 }
 
-int32_t NextLayerDocument::removeRelationship(
+int32_t LayerDocument::removeRelationship(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size) {
   if (!ensureLoaded_()) return -1;
@@ -758,7 +758,7 @@ int32_t NextLayerDocument::removeRelationship(
   return 0;
 }
 
-int32_t NextLayerDocument::setAttribute(
+int32_t LayerDocument::setAttribute(
     const uint8_t* path, uint32_t path_size, const uint8_t* name,
     uint32_t name_size, const uint8_t* type_name, uint32_t type_size,
     uint8_t is_array, const uint8_t* data, uint32_t data_size,
@@ -859,26 +859,26 @@ int32_t NextLayerDocument::setAttribute(
   return 0;
 }
 
-int32_t NextLayerDocument::primCount() const {
+int32_t LayerDocument::primCount() const {
   if (!stage_) return 0;
   const size_t count = lightusd_stage_prim_count(stage_);
   return count > static_cast<size_t>((std::numeric_limits<int32_t>::max)())
       ? -1 : static_cast<int32_t>(count);
 }
 
-int32_t NextLayerDocument::errorSize() const {
+int32_t LayerDocument::errorSize() const {
   if (error_.size() > static_cast<size_t>((std::numeric_limits<int32_t>::max)()))
     return -1;
   return static_cast<int32_t>(error_.size());
 }
 
-int32_t NextLayerDocument::errorCopy(uint8_t* out, uint32_t cap) const {
+int32_t LayerDocument::errorCopy(uint8_t* out, uint32_t cap) const {
   if (error_.size() > cap || (error_.size() && !out)) return -1;
   if (!error_.empty()) std::memcpy(out, error_.data(), error_.size());
   return static_cast<int32_t>(error_.size());
 }
 
-int32_t NextLayerDocument::exportUsdaSize() {
+int32_t LayerDocument::exportUsdaSize() {
   if (!ensureLoaded_()) return -1;
   if (!export_text_) {
     const lightusd_status status = lightusd_stage_export_usda(stage_, &export_text_);
@@ -897,13 +897,13 @@ int32_t NextLayerDocument::exportUsdaSize() {
   return static_cast<int32_t>(view.len);
 }
 
-uintptr_t NextLayerDocument::exportUsdaData() const {
+uintptr_t LayerDocument::exportUsdaData() const {
   if (!export_text_) return 0;
   const lightusd_sv view = lightusd_string_view(export_text_);
   return reinterpret_cast<uintptr_t>(view.data);
 }
 
-int32_t NextLayerDocument::exportUsdcSize() {
+int32_t LayerDocument::exportUsdcSize() {
   if (!ensureLoaded_()) return -1;
   if (!export_crate_) {
     const lightusd_status status = lightusd_stage_export_usdc(stage_, &export_crate_);
@@ -922,13 +922,13 @@ int32_t NextLayerDocument::exportUsdcSize() {
   return static_cast<int32_t>(view.len);
 }
 
-uintptr_t NextLayerDocument::exportUsdcData() const {
+uintptr_t LayerDocument::exportUsdcData() const {
   if (!export_crate_) return 0;
   const lightusd_sv view = lightusd_string_view(export_crate_);
   return reinterpret_cast<uintptr_t>(view.data);
 }
 
-int32_t NextLayerDocument::exportUsdz(NextAssetStore* asset_store,
+int32_t LayerDocument::exportUsdz(AssetStore* asset_store,
                                       uint8_t root_format) {
   if (!ensureLoaded_()) return -1;
   if (root_format > 1) return fail_("Invalid USDZ root layer format");
@@ -1031,12 +1031,12 @@ int32_t NextLayerDocument::exportUsdz(NextAssetStore* asset_store,
   return static_cast<int32_t>(export_usdz_.size());
 }
 
-int32_t NextLayerDocument::exportUsdzSize() const {
+int32_t LayerDocument::exportUsdzSize() const {
   return export_usdz_.size() > static_cast<size_t>((std::numeric_limits<int32_t>::max)())
       ? -1 : static_cast<int32_t>(export_usdz_.size());
 }
 
-uintptr_t NextLayerDocument::exportUsdzData() const {
+uintptr_t LayerDocument::exportUsdzData() const {
   return export_usdz_.empty() ? 0 : reinterpret_cast<uintptr_t>(export_usdz_.data());
 }
 

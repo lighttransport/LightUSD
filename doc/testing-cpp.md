@@ -57,7 +57,7 @@ copy/move assignment. Name-table tests retain references across rehashing and
 frozen-snapshot updates; threaded builds exercise concurrent interning and
 array detachment.
 
-Run standalone next tests with threading both off and on after primitive changes.
+Run standalone core tests with threading both off and on after primitive changes.
 For memory checks, use an optimized sanitizer build (for example Debug with
 `-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer`): the large-instance
 suite has a wall-clock bound that an unoptimized sanitizer build can exceed.
@@ -97,7 +97,7 @@ scripts/verify.sh prepare --target menagerie --offline
 scripts/verify.sh test --target web-physics --software
 ```
 
-Profiles are `native`, `next`, `web`, `oracle`, `assets`, `gpu`, and `full`.
+Profiles are `native`, `core`, `web`, `oracle`, `assets`, `gpu`, and `full`.
 The `gpu` profile is opt-in. Private large-scene inputs remain opt-in and are
 not part of the reproducible public `full` profile. Each action writes a JSON
 report under the ignored verification cache.
@@ -184,12 +184,12 @@ The fixture root can also be supplied directly to a test executable with the
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The experimental `next` module (`src/`, `lightusd_core`) and
+> **Scope:** The experimental `core` module (`src/`, `lightusd_core`) and
 > its tests under `tests/core/` are **not** part of this regression suite. They
 > are a standalone CMake project, are not built by the main `build/` (so they do
 > not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
-> treat `next` results as part of the regression gate. See
-> [Experimental `next` library tests](#experimental-next-library-tests) for how
+> treat `core` results as part of the regression gate. See
+> [Experimental `core` library tests](#experimental-next-library-tests) for how
 > to build and run them on demand.
 
 The full regression pass has two parts:
@@ -212,7 +212,7 @@ cd build
 ctest --output-on-failure
 cd ..
 
-# 2. Run the stable next module tests. Keep this Debug: tests use assert().
+# 2. Run the stable core module tests. Keep this Debug: tests use assert().
 cmake -S src -B build-core -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-core -j16
 ctest --test-dir build-core --output-on-failure
@@ -362,7 +362,7 @@ and recovery from a broken sandbox X socket, see
 [`doc/lusdview.md`](lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
 
 `lusdview-value-clip-carrier` uses the shared small fixtures in
-`tests/feat/value-clip/carrier/`. The CPU `lusdview_next_mesh_adapter_test` checks
+`tests/feat/value-clip/carrier/`. The CPU `lusdview_core_mesh_adapter_test` checks
 the clip points at both times, ownership after stage release, and filesystem
 resolver opt-out. The WASM dispatch suite checks the same supplied clip assets
 through the lazy mesh path and the clips enable flag; disabled geometry retains
@@ -405,11 +405,11 @@ The Vulkan render smoke also requires meshes with custom scalar float/int and
 vector rest-position primvars to survive the public API buffer copy. Sizes are
 measured in scalar elements; using the chunk-container size discards geometry
 such as the composed public Teapot asset even though composition succeeds.
-The CPU `lusdview_next_mesh_adapter_test` checks copied bounds, independently
+The CPU `lusdview_core_mesh_adapter_test` checks copied bounds, independently
 interpolated UV sets, indexed/custom primvars, proxies, and ownership after the
 temporary render record and stage are destroyed. Secondary-UV interpolation
 uses a formerly reserved byte of the public mesh info, preserving its ABI layout.
-`lusdview-next-mesh-materials` compares ordinary meshes with PointInstancer
+`lusdview-core-mesh-materials` compares ordinary meshes with PointInstancer
 and native-instance panels using generated textures under Vulkan ray query.
 Both panels must use the secondary UV set for preview bindings and the full
 material for `--material-purpose full`. A malformed-topology panel also checks
@@ -526,7 +526,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `tool-lusdrender-materialx-cpu-graph` | Default CPU lusdrender evaluation of deep connected MaterialX graphs without fallback | None (headless CLI) |
 | `lusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
 | `lusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
-| `lusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
+| `lusdview-core-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
 | `lusdview-gl-nonmesh-render` | GL carrier-render for Points/Curves | No GL context |
 | `lusdview-vk-nonmesh-render` | VK carrier-render for Points/Curves | No Vulkan backend |
 | `lusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
@@ -559,7 +559,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-area-light-vulkan` | Vulkan RT finite-light soft-shadow response | Hardware Vulkan RT |
 | `lusdview-area-light-cuda` | CUDA finite-light soft-shadow response | CUDA device |
 
-The `lmetalview` example (native macOS Swift + Metal viewer, `next` product
+The `lmetalview` example (native macOS Swift + Metal viewer, `core` product
 only) registers its own tests. Configure with
 `-DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON
 -DLIGHTUSD_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
@@ -586,7 +586,7 @@ only) registers its own tests. Configure with
 ctest -R '^lmetalview' --output-on-failure
 ```
 
-The `ld3d12view` example (native Windows Direct3D 12 viewer, `next` product
+The `ld3d12view` example (native Windows Direct3D 12 viewer, `core` product
 only, Windows only) shares `lmetalview_core`, so `lmetalview_core_test` also runs
 on Windows. Configure with `-DLIGHTUSD_NATIVE_PRODUCT=next
 -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON
@@ -694,8 +694,8 @@ USDC and optional supplemental composition corpora without relaxing list-op
 semantics or numeric tolerances:
 
 ```sh
-PXR_WORK_THREAD_LIMIT=1 node tests/core/run-next-pxr-flatten-diff.mjs \
-  --next-usdcat build_ninja/lusdcat \
+PXR_WORK_THREAD_LIMIT=1 node tests/core/run-core-pxr-flatten-diff.mjs \
+  --lusdcat build_ninja/lusdcat \
   --usdcat ref/dist/bin/usdcat --jobs 4 \
   --suite-root /path/to/aousd/releases/1.0.1
 ```
@@ -727,7 +727,7 @@ The writer test covers typed bindings and collections on Model, Scope, and
 Xform through USDA and USDC, including membership-expression metadata, blocked
 values, and declarations without values. The comparison test accepts equivalent
 boolean spellings only on matching `bool` declarations, while preserving real
-value differences. It also runs in the standalone `next` CTest suite.
+value differences. It also runs in the standalone `core` CTest suite.
 
 Explicit empty list-op regressions can be run with:
 
@@ -744,7 +744,7 @@ writer uses `None` as its canonical empty spelling. The comparator accepts both
 spellings for relationship targets and known list-op metadata, preserves
 list-op qualifiers and multiple edits on one relationship, and does not equate
 attribute value blocks with empty arrays. The comparator test is also registered
-as `next_compare_usda_listops` in the standalone `next` suite.
+as `next_compare_usda_listops` in the standalone `core` suite.
 
 For Vulkan transparency changes, run the persistent-viewer promotion tests as
 well as the fixed-frame transparency matrix:
@@ -860,11 +860,11 @@ runs of the same build must print the same hash.
 Report-only: never fails on timings. Threading follows the repo-wide
 `LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_ENABLE_THREAD` CMake options. The
 **legacy** `LIGHTUSD_ENABLE_THREAD` stays opt-in (default OFF = fully serial);
-the **next core**'s `LIGHTUSD_ENABLE_THREAD` now defaults **ON for native
+the **core**'s `LIGHTUSD_ENABLE_THREAD` now defaults **ON for native
 builds** (WASM/Emscripten stays OFF, and `web/CMakeLists.txt` forces it off) —
 that switch enables the next parallel paths (source warm, arc-layer prefetch,
 parallel opinion fill, parallel crate-writer build). Pass
-`-DLIGHTUSD_ENABLE_THREAD=OFF` to force the serial next path; without
+`-DLIGHTUSD_ENABLE_THREAD=OFF` to force the serial core path; without
 either switch the tool still runs and reports, just single-threaded.
 
 ## Fixture Coverage
@@ -1101,7 +1101,7 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ### Core library tests
 
-CI builds the default `next` product with the MCP server enabled and with
+CI builds the default `core` product with the MCP server enabled and with
 ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
 driver so Clang supplies the C++ UBSan runtime used by the shared library.
 The legacy product with `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON` and examples
@@ -1109,8 +1109,8 @@ also needs a configure check: the unified `lusdcat` target must be created
 only once. Keep compact writer-layout assertions valid on both 32-bit and
 64-bit targets.
 
-`next` (`src/`, library `lightusd_core`) has a standalone regression suite.
-Run it explicitly when changing shared code or the next product:
+`core` (`src/`, library `lightusd_core`) has a standalone regression suite.
+Run it explicitly when changing shared code or the core product:
 
 - It is a **standalone CMake project** (`src/CMakeLists.txt` with its own
   `project()`). Its tests do not appear in the default legacy `ctest` tree.
@@ -1173,7 +1173,7 @@ For C-core size measurements, configure a Ninja tree with
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
 
 ```bash
-scripts/bench-core-port.sh --build-dir build_ninja/next-release --repeat 3
+scripts/bench-core-port.sh --build-dir build_ninja/core-release --repeat 3
 scripts/bench-core-port.sh --build-dir web/build_ninja --wasm --repeat 3
 ```
 
@@ -1454,12 +1454,12 @@ the standalone Debug suite at the release directory:
 git clone --depth 1 --branch release/1.0.1.post0 \
   https://github.com/aousd/core-spec-supplemental-public.git \
   build_ninja/aousd-supplemental
-cmake -S src -B build_ninja/next-debug -G Ninja \
+cmake -S src -B build_ninja/core-debug -G Ninja \
   -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
   -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$PWD/build_ninja/aousd-supplemental/releases/1.0.1"
-cmake --build build_ninja/next-debug -j16
-ctest --test-dir build_ninja/next-debug --output-on-failure
-ctest --test-dir build_ninja/next-debug -L aousd -V
+cmake --build build_ninja/core-debug -j16
+ctest --test-dir build_ninja/core-debug --output-on-failure
+ctest --test-dir build_ninja/core-debug -L aousd -V
 ```
 
 This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
@@ -1502,12 +1502,12 @@ isolated directory and run:
 
 ```bash
 python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
-python3 tests/core/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
+python3 tests/core/test-pcp-json.py --lusdcat build_ninja/core-debug/lusdcat \
   --oracle-python "$(command -v python3)" \
   --oracle-pythonpath build_ninja/stock-oracle
 python3 tests/core/run-aousd-supplemental.py \
   --suite-root build_ninja/aousd-supplemental/releases/1.0.1 \
-  --next-usdcat build_ninja/next-debug/lusdcat --category composition \
+  --lusdcat build_ninja/core-debug/lusdcat --category composition \
   --pcp-oracle-python "$(command -v python3)" \
   --pcp-oracle-pythonpath build_ninja/stock-oracle
 ```
@@ -1524,7 +1524,7 @@ Legacy metadata roundtrip tests also require explicit `None` opinions for
 relationships, inherits, and specializes. WASM layer tests cover reference
 dictionaries through USDA, USDC, and JSON exports.
 
-Regression coverage to keep in mind when touching `next`:
+Regression coverage to keep in mind when touching `core`:
 
 - `test_tydra.cc` also covers the compiled chunk-storage engine: exact-tail
   compaction repeated under allocation accounting, self-append and COW,
@@ -1534,7 +1534,7 @@ Regression coverage to keep in mind when touching `next`:
 - `unit-test-lightusd` includes `minijson_shortest_double_roundtrip_test`:
   finite binary64 boundary values and 4096 deterministic bit-pattern samples
   must serialize/reparse exactly (with a separate signed-zero spelling check).
-  Run this legacy unit target as well as standalone next tests after changing
+  Run this legacy unit target as well as standalone core tests after changing
   the shared MiniJSON serializer.
 - `test_validation.cc` covers the immutable rule table's pointer/count contract
   and idempotent severity upgrades. Run the full PCP and threaded PCP tests
@@ -1561,16 +1561,16 @@ Build and run them on demand in a separate build directory. The preferred
 entrypoint is:
 
 ```bash
-scripts/run-next-checks.sh
+scripts/run-core-checks.sh
 ```
 
 Useful environment overrides:
 
 ```bash
-scripts/run-next-checks.sh --help
-BUILD_DIR=build-core-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+scripts/run-core-checks.sh --help
+BUILD_DIR=build-core-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-core-checks.sh
 ```
 
 The equivalent manual commands are:
@@ -1875,20 +1875,20 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings tests (`python/tests/`) are not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The experimental `next` module (`src/`, `tests/core/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+- The experimental `core` module (`src/`, `tests/core/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `core` library tests](#experimental-next-library-tests).
 
 `security_sha256_digest_test` checks empty/null handling, standard ASCII and
 binary SHA-256 vectors, and both padding/block boundaries. The asset-cache
-fixture in `web/js/tests/apply-variant-selection-overload.test.mjs` compares
+fixture in `web/js/tests/core-c-dispatch.test.mjs` compares
 against Node's crypto implementation on wasm32 and memory64, where native-only
 coverage would miss size_t-width bugs in bit-count encoding.
 
 ## Workflow tools and core examples
 
-`next_workflow_examples` generates small inputs and checks composition, typed
+`core_workflow_examples` generates small inputs and checks composition, typed
 queries, USDA/USDC reopening, payload/variant edits after snapshot publication,
 cancellation, sampled/spline/skeletal evaluation and portable package relocation.
-It is also registered in standalone next builds with examples enabled.
+It is also registered in standalone core builds with examples enabled.
 All four C++ workflow examples consume the public ownership facade; the
 animation traversal keeps stage-retaining `Prim` objects through its work list.
 The interactive workflow exercises the installed-header C++ document/render
@@ -1935,16 +1935,16 @@ The `lusdcat --explain` path is also a public-C-API consumer and should be
 smoke-tested with a USDA fixture when changing property-trace behavior.
 
 ```sh
-cmake -S src -B build_ninja/next-core -G Ninja \
+cmake -S src -B build_ninja/core -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=OFF
-cmake --build build_ninja/next-core
-ctest --test-dir build_ninja/next-core --output-on-failure
-cmake -S src -B build_ninja/next-render -G Ninja \
+cmake --build build_ninja/core
+ctest --test-dir build_ninja/core --output-on-failure
+cmake -S src -B build_ninja/core-render -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=ON
-cmake --build build_ninja/next-render
-ctest --test-dir build_ninja/next-render --output-on-failure
+cmake --build build_ninja/core-render
+ctest --test-dir build_ninja/core-render --output-on-failure
 ```
 
 To validate the root product-selection path and its public consumer gate:
@@ -1967,18 +1967,13 @@ src/stage/stage.hh` measures incremental rebuild time and compilation
 count, restoring the input timestamp afterward. Run measurements without
 concurrent builds or regression workloads.
 
-The combined WASM loading fixture in
-`web/js/tests/apply-variant-selection-overload.test.mjs` checks synchronous,
-layer/cached and async loading, validation JSON, lifecycle/progress state, and
-memory-probe size_t results on wasm32 and memory64. It also exercises the typed
-C task/record validation and JS ownership across async yields, including a
-callback deleting the original loader and a callback throwing `TypeError`.
-Memory probes reject negative lengths and lengths whose conservative scratch
-estimate exceeds the configured load-memory limit. The combined async binding
-uses C++17 tasks and remains available independently of the legacy-only
-`LIGHTUSD_WASM_COROUTINE` option. Select isolated rebuilt modules with
-`LIGHTUSD_COMBINED_MODULE`; see `web/js/docs/regression.md` for the Node override
-loader and full product regression procedure.
+The core WASM loading, ownership, and async contracts are checked by
+`web/js/tests/core-c-dispatch.test.mjs`,
+`web/js/tests/core-allocation-failure.test.mjs`, and
+`web/js/tests/core-usda-composition.test.mjs`. Core uses C++17 tasks.
+Legacy coroutine support is isolated behind `LIGHTUSD_WASM_COROUTINE` in the
+optional standalone legacy product. See `web/js/docs/regression.md` for the
+module override loader and complete regression procedure.
 
 The same combined fixture covers MCP context isolation across sessions and
 loader instances, counted Unicode/NUL-containing inputs, tool/resource JSON,
@@ -2167,7 +2162,7 @@ controls: unchanged v4 layout/defaults, fan triangulation, each tangent method,
 animation suppression, geometry release, instancer arrays required for draw
 expansion, persistent resolver lifetime and rejected invalid control values.
 `core_render_scene_c_api_smoke` retains the former facade smoke cases against
-`tydra_to_renderscene --next` (now a compatibility alias for its core default):
+`tydra_to_renderscene --core` (compatibility alias for its core default):
 animation enabled/disabled and mesh triangulation/tangent configuration, with
 exit-status and scene-count checks. The example has no legacy conversion path.
 
@@ -2386,7 +2381,7 @@ Use representative meshes and retain instruction counts when comparing runs
 under shared CPU load. `--host-only`
 uses a synthetic evaluator, so its output is not a correctness comparison.
 
-`lusdview_incremental_scene_update_test` now builds without linking next core
+`lusdview_incremental_scene_update_test` now builds without linking core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
 path/property spans, unsupported flags, stale revisions, full resync, and
@@ -2400,7 +2395,7 @@ build directory, reloads property/stage-metadata edits, and verifies the full
 caller-owned snapshot change export. It checks required counts, flags,
 revisions, property names, short-buffer atomicity, invalid arguments, empty
 changes and snapshot-backed string lifetime after later publications and
-session destruction. `next_workflow_examples` verifies the C++ facade exposes
+session destruction. `core_workflow_examples` verifies the C++ facade exposes
 the variant-edited `/World.level` property in the interactive-session example.
 
 The same C document test covers uncomposed loading, source-layer-only cache
@@ -2416,7 +2411,7 @@ loading on two sibling prims. It verifies single-revision publication, omitted
 override removal, empty batches, malformed paths, duplicate selections, count
 overflow, retained snapshots, and cancellation rollback followed by rebuild.
 Loading both sibling payloads exercises pseudo-root cache invalidation with
-previously retained composition data. `next_workflow_examples` uses the C++ batch
+previously retained composition data. `core_workflow_examples` uses the C++ batch
 facade for its variant edit and deferred payload loads.
 
 Document-session coverage also checks public state/dependency queries and cache
@@ -2474,7 +2469,7 @@ ctest --test-dir build_ninja -R '^lusdview_(preview_cache|vchar_control_map)_tes
 
 For a live composition-preview cache check, run the interactive viewer twice
 against the same reference scene with authored mesh extents and an initially
-empty cache directory. Use `--next --backend vk --no-threaded
+empty cache directory. Use `--core --backend vk --no-threaded
 --large-scene-profile balanced --preview-cache auto --preview-cache-dir <dir>
 --timing`, under the documented Xvfb/offload environment when needed. Verify
 `preview cache: stored` on the cold run, then `preview cache: hit` and
@@ -2540,7 +2535,7 @@ blocked/missing defaults, invalid handles and list lifetime after stage destruct
 When changing viewer document payload interfaces, run
 `lusdview-usdz-deferred-payload` alongside the document unit and incremental
 regressions. It checks the exact deferred prim/arc reported through MCP, the
-next loader's proxy geometry, and successful deferred USDZ payload loading in
+core loader's proxy geometry, and successful deferred USDZ payload loading in
 both loaders. The document unit verifies owned path-list contents survive edits
 and memory queries return the public C stats layout.
 
@@ -2686,7 +2681,7 @@ and warning-only exports. The UDIM browser check rejects Apply when an edited
 tile limit is invalid. `npm run test:lucia:performance` measures
 unchanged asset snapshot retention and bounded tile streaming; the browser smoke
 also reports a 131072-triangle viewport workload. Shared WASM UDIM tests cover
-HDR-to-EXR and EXR round-trip thumbnails on combined/next wasm32/memory64, with
+HDR-to-EXR and EXR round-trip thumbnails on combined/core wasm32/memory64, with
 16-bit atlas precision preserved. Rebuild next-only WASM with
 `LIGHTUSD_WASM_WITH_EXR=ON` to enable both EXR reading and writing.
 
@@ -2712,7 +2707,7 @@ Configure `build_ninja` with `LIGHTUSD_BUILD_TOOLS=ON` and
 exact exit status and structured diagnostics for strict/Core profiles, schema
 and shader manifests, compiled callbacks, sampled topology, reachable variants,
 resource limits, JSON/SARIF failures, and baselines. Generated table freshness
-is checked separately. Standalone Debug `next` testing and AOUSD supplemental
+is checked separately. Standalone Debug `core` testing and AOUSD supplemental
 checks remain required when changing the shared validators or compositor.
 
 `tests/checker-parity.py` compares exact IDs, severity, sites, and rejection
@@ -3965,7 +3960,7 @@ policy or the decoded-array count ceiling.
 ### Resumed dataset verification, 2026-11-03
 
 The [resumed report](validation/session-resumed-2026-11-03.md) records the final
-276-test native sweep, separate Python/next/AOUSD/WASM checks and AMD captures.
+276-test native sweep, separate Python/core/AOUSD/WASM checks and AMD captures.
 [USD-assets sampled diagnostics](validation/usd-assets-native-parameters-2026-11-03.md)
 now require actual native roughness/metallic field checks in addition to shared
 emissive adapters. [Island subset masks](validation/island-subset-population-2026-11-03.md)
@@ -4055,7 +4050,7 @@ been removed. `core_asset_resolution_example` and `core_variant_lister_smoke`
 exercise the public example entry points. The OpenChess tracing worker loads
 `loadFeature('raytrace')` from the core distribution. Demo production builds copy
 all optional feature JS/WASM pairs, and shared composition/export demo loading
-uses the core path. `web/js/tests/next-features.test.mjs` checks feature loading,
+uses the core path. `web/js/tests/core-features.test.mjs` checks feature loading,
 independent heaps, ray tracing, and Worker transfers. The former backend comparison
 page now compares the source with a USDC-rooted USDZ roundtrip. After building
 `web/demo` with Vite, run `cd web/js && npm run test:demo-core` to check
@@ -4298,11 +4293,11 @@ cover tile/memory limits, crossing-face reject/split and precision-losing output
 requests; pre-existing atlas-name collisions must not overwrite unrelated files.
 The WASM `udim-bake.test.mjs` suite exercises the same extracted core adapter.
 
-The HTTP asset resolver demo uses core `NextFlattenSession` and the incremental
+The HTTP asset resolver demo uses core `FlattenSession` and the incremental
 RenderStream renderer. `core-http-demo.test.mjs` checks remote dependency layers,
 texture paths anchored to different authoring directories, collision-free USDZ
 packaging, preloaded assets without network requests, and missing-layer errors.
-`NextFlattenSession.setRebaseAssetPaths(true)` preserves asset provenance before
+`FlattenSession.setRebaseAssetPaths(true)` preserves asset provenance before
 composition even when no remap is supplied; call it after `begin`. URI path
 normalization preserves the authority and opaque scheme payloads.
 
@@ -4412,7 +4407,7 @@ production page, adapter input and packed GPU scene under private Xvfb; run it
 through `scripts/xctest.sh`. The hardware flag requires a non-fallback adapter.
 
 The public `LightUSDComposer` helper now consumes caller-owned core
-`LayerDocument` objects and uses `NextFlattenSession` for dependency discovery.
+`LayerDocument` objects and uses `FlattenSession` for dependency discovery.
 `core-composer.test.mjs` covers nested layer anchors, references, optional
 payload loading, preloaded partial composition and resolver errors.
 `setCompositionMask` selects sublayers (1), references (2), payloads (4),

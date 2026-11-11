@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildNextDemoScene } from '../next-scene.js';
+import { buildCoreScene } from '../core-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -340,7 +340,7 @@ async function ensureLoader() {
   setStatus('Initializing LightUSD WASM...');
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'core' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -357,7 +357,7 @@ async function loadURL(url, label) {
   setStatus(`Parsing ${label}...`);
   nativeScene = await new Promise((resolve, reject) => {
     loader.parse(data, filename, resolve, reject, {
-      backend: 'next', maxMemoryLimitMB: 512,
+      backend: 'core', maxMemoryLimitMB: 512,
     });
   });
 
@@ -365,7 +365,7 @@ async function loadURL(url, label) {
   world.clear();
   if (highlightMesh) { scene.remove(highlightMesh); highlightMesh.geometry?.dispose?.(); highlightMesh = null; }
 
-  const { node: threeNode } = await buildNextDemoScene(nativeScene, { sourceUrl: url });
+  const { node: threeNode } = await buildCoreScene(nativeScene, { sourceUrl: url });
   world.add(threeNode);
 
   buildTreeFromUSD();
@@ -414,11 +414,11 @@ async function loadLocalFile(file) {
   await ensureLoader();
   const data = new Uint8Array(await file.arrayBuffer());
   nativeScene = await new Promise((resolve, reject) => {
-    loader.parse(data, file.name, resolve, reject, { backend: 'next', maxMemoryLimitMB: 512 });
+    loader.parse(data, file.name, resolve, reject, { backend: 'core', maxMemoryLimitMB: 512 });
   });
   world.clear();
   if (highlightMesh) { scene.remove(highlightMesh); highlightMesh.geometry?.dispose?.(); highlightMesh = null; }
-  const { node: threeNode } = await buildNextDemoScene(nativeScene);
+  const { node: threeNode } = await buildCoreScene(nativeScene);
   world.add(threeNode);
   buildTreeFromUSD();
   document.querySelectorAll('.inspector-tab').forEach((t) => t.classList.remove('active'));

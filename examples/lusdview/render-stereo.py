@@ -73,7 +73,7 @@ def main():
                         help="per-eye resolution, default 640x480")
     parser.add_argument("--camera", help="select either eye when pairs are ambiguous")
     parser.add_argument("--backend", choices=("gl", "vk"), default="vk")
-    parser.add_argument("--next", action="store_true", dest="next_loader")
+    parser.add_argument("--core", action="store_true", dest="core_loader")
     parser.add_argument("--viewer-arg", action="append", default=[],
                         help="additional lusdview argument; repeat as needed")
     args = parser.parse_args()
@@ -90,8 +90,8 @@ def main():
         report = temp / "pair.json"
         common = [str(binary), "--headless", "--backend", args.backend,
                   "--frames", "1"]
-        if args.next_loader:
-            common.append("--next")
+        if args.core_loader:
+            common.append("--core")
         probe = common + ["--size", "32x32", "--stereo",
                           "--render-report", str(report)]
         if args.camera:

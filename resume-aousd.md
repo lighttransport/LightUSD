@@ -1,4 +1,4 @@
-# Resume: AOUSD Core conformance for LightUSD `next`
+# Resume: AOUSD Core conformance for LightUSD `core`
 
 Handoff for a fresh coding-agent session. The AOUSD supplemental **composition**
 gate is fully closed (138/138); this file lists what remains and how to work on it.
@@ -6,7 +6,7 @@ gate is fully closed (138/138); this file lists what remains and how to work on 
 ## Orientation
 
 - **Repo / branch:** `/mnt/nvme02/work/lightusd-repo/physics-2026`, branch `physics-2026-fix2`.
-- **Module under work:** `src/next/` — a standalone C++14 USD core (parser, crate,
+- **Module under work:** `src/` — a standalone C++14 USD core (parser, crate,
   pcp composition, eval, validation, writer). It is NOT built by the top-level
   CMake; it has its own project + tests.
 - **Conformance report (read first):** `doc/ousd-vs-lightusd.md`. Every subsection ends
@@ -42,7 +42,7 @@ cmake --build build-next-threaded-debug -j16 && ctest --test-dir build-next-thre
 ```sh
 python3 tests/next/run-aousd-supplemental.py \
   --suite-root /tmp/mxpv-openusd/vendor/core-spec-supplemental-release_dec2025 \
-  --next-usdcat build-next/next_usdcat \
+  --lusdcat build-next/next_usdcat \
   --aousd-test build-next/test_aousd_conformance \
   --max-composition-fail 0                 # ratchet is 0; keep it there
 ```
@@ -64,7 +64,7 @@ cmake --build build -j16            # main lib must still build (next compiles i
 
 ## Composition-engine map (for the composition items below)
 
-The `next` PCP composition lives in `src/next/pcp/`. Key pieces after the 22-gap work:
+The `core` PCP composition lives in `src/pcp/`. Key pieces after the 22-gap work:
 
 - `namespace-mapping.hh` — `NamespaceMapping` is a longest-prefix-first SET of
   (source→target) pairs (pxr `PcpMapFunction`): one per arc + one per relocate.
@@ -121,7 +121,7 @@ semantics (`ApplyStringListOrder`, shared with clipSets/variantSet-name
 edits); `test_cross_layer_string_listop_matrix` covers every qualifier
 combination across a sublayer stack.
 Done (follow-up session, commits `808f2b790` `7e0b3e739` `a0a91ce67`):
-- Registry-driven field table: `src/next/layer/listop-field-table.hh`
+- Registry-driven field table: `src/layer/listop-field-table.hh`
   registers apiSchemas/variantSetNames/clipSets with ONE shared
   stronger-over-weaker merge; the three bespoke composition blocks are
   gone; variantSetNames upgraded from fill-absent to true list-op merge
@@ -174,7 +174,7 @@ MaterialX — prioritize from application requirements.
 ### Housekeeping (not conformance, but tracked)
 - 3 legacy-parser roundtrip fixtures fail (`aousd-namespace-order.usda`,
   `aousd-unknown-property-metadata.usda`, one USDC variant) — the LEGACY binary,
-  which `next` does not feed. XFAIL; only relevant if touching `src/usda-*`.
+  which `core` does not feed. XFAIL; only relevant if touching `src/usda-*`.
 - Oracle pinning: RESOLVED — standardized on the OpenUSD 26.05 dist
   (`/mnt/nvme02/work/lightusd-repo/OpenUSD/dist`, binary + python) for all
   differential gates; see "The supplemental corpus" section above.
@@ -185,7 +185,7 @@ MaterialX — prioritize from application requirements.
   case (composition/data_types/file_formats/value_resolution) fails the gate.
 - Add a regression FIRST (in-memory `LayerBuilder` in `tests/next/test_pcp.cc` or a
   fixture under `tests/next/fixtures/`, NOT the shared legacy corpus).
-- After any `src/next/pcp` change, run BOTH `build-next` and
+- After any `src/pcp` change, run BOTH `build-next` and
   `build-next-threaded-debug` ctest (the parallel-warm merge path is thread-only).
 - Diagnosis is cheap: `next_usdcat -f --instance-mode native <case>/usda/root.usd`
   diffed against `<case>/pcp.json` tells you exactly what's missing.

@@ -125,12 +125,12 @@ void ClampLightRtParams(tydra::LightRtOpenPBRParams* p) {
 
 
 void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
-  // Seed from the material's DIRECT fields first. The --next loader
-  // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
+  // Seed from the material's DIRECT fields first. The --core loader
+  // (core_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
   // alpha/emissive directly and does NOT populate mat.params, so the param
   // lookups below leave p at its constructor defaults (gray 0.8, etc.), and
   // BakeLightRtOpenPBR then copies those defaults back OVER the loader's values
-  // -- graying out every untextured constant-color material on the next path.
+  // -- graying out every untextured constant-color material on the core path.
   // The legacy path sets both the direct fields AND the params, so its lookups
   // override this seed with identical values (no behavior change there).
   p->baseColor[0] = mat.baseColor[0];
@@ -180,7 +180,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
   // UsdPreviewSurface *specular-workflow* input whose schema fallback is
   // (0,0,0), so carrying it into the metallic workflow tints the whole
   // specular lobe to black. A bound texture is a multiplicative fallback and
-  // is neutralised too. Without this the legacy and next loaders shade the
+  // is neutralised too. Without this the legacy and core loaders shade the
   // same UsdPreviewSurface differently (measured 3 levels on the linked-light
   // fixture).
   if (!mat.useSpecularWorkflow || mat.specularColorTex >= 0) {
@@ -1806,7 +1806,7 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
         std::copy(std::begin(directParams.normal), std::end(directParams.normal),
                   std::begin(p.normal));
       }
-      // The next loader keeps typed OpenPBR values next to a JSON graph even
+      // The core loader keeps typed OpenPBR values next to a JSON graph even
       // when only one surface input is graph-connected. Preserve every other
       // authored typed lane; the evaluator's defaults are not authored graph
       // routes and must not replace them. The legacy loader exposed this most

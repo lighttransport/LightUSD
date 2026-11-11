@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender next-loader blendshape regression. The red foreground mesh has a
+# lusdrender core-loader blendshape regression. The red foreground mesh has a
 # BlendShape target driven by SkelAnimation blendShapeWeights; frame 2 moves it
 # away from center and reveals a blue background.
 set -uo pipefail

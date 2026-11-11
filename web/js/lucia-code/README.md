@@ -116,7 +116,7 @@ restoring an asset creates separate mutable bytes. Scene history stores changed
 USDA intervals with SHA-256 checks rather than two complete stage strings.
 Distant edits on aligned lines retain separate intervals, bounded to 256 edits;
 changed line structure uses a lossless single-interval fallback.
-Transform and visibility edits use next-core typed attributes, with explicit
+Transform and visibility edits use core-typed attributes, with explicit
 custom/uniform flags and double-precision translation values. Other processors
 still use validated USDA reconstruction.
 Independent export-time stitching and assistant tools are not part of this UI.

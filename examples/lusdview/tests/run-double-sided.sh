@@ -4,7 +4,7 @@
 # culled, a doubleSided one must not -- identically on the GL and Vulkan raster
 # backends.
 #
-# Before the fix, the two backends disagreed twice over on the default (--next)
+# Before the fix, the two backends disagreed twice over on the default (--core)
 # loader: the loader never read the authored `doubleSided` (everything defaulted
 # to single-sided), GL back-face culled everything, and Vulkan culled nothing
 # (all pipelines were VK_CULL_MODE_NONE). So an authored doubleSided=true quad

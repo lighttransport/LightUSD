@@ -3,7 +3,7 @@
 //
 // LightUSD - AOUSD Core semantic validation.
 //
-// Port of the legacy validator (src/usd-validation.cc) onto the next-core
+// Port of the legacy validator (src/usd-validation.cc) onto the core
 // layer model. Rule ids / severities / messages mirror the legacy validator.
 //
 // Legacy checks that are not fully expressible on ::lightusd::Layer / ::lightusd::PrimSpec
@@ -84,7 +84,7 @@ bool EndsWith(const std::string &s, const std::string &suffix) {
 }
 
 // Identifier validation delegates to the shared strict UTF-8 + Unicode XID
-// validator (src/next/prim/identifier.hh) — the same implementation the
+// validator (src/prim/identifier.hh) — the same implementation the
 // parser and lexer use. The previous file-local approximation accepted ANY
 // byte >= 0x80, so malformed UTF-8 and non-XID codepoints passed validation.
 // (The shared IsValidIdentifier / IsValidNamespacedIdentifier are visible
@@ -428,7 +428,7 @@ bool IsValidConnectionTargetPathString(const std::string &path,
 }
 
 // ---------------------------------------------------------------------------
-// PrimSpec property adapters. In next-core, attributes live in the PropIndex
+// PrimSpec property adapters. In core, attributes live in the PropIndex
 // (PropSlot) while relationships live in a separate name->targets map.
 // ---------------------------------------------------------------------------
 

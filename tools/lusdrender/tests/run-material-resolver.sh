@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Compare lusdrender's next-loader material resolvers over curated USD assets.
+# Compare lusdrender's core-loader material resolvers over curated USD assets.
 #
 # This is an opt-in coverage harness for the shared material-eval migration:
-# legacy remains the default renderer, tydra-next exercises
+# legacy remains the default renderer, tydra exercises
 # RenderSceneConverter -> RenderMaterial -> shared OpenPBR params, and compare
 # renders legacy while reporting fields that differ. Resolver differences are
 # measured, not treated as failures by default; load/render failures still fail.
@@ -221,7 +221,7 @@ echo
 for asset in "${ASSETS[@]}"; do
   rel="$(asset_rel "$asset")"
   printf 'asset: %s\n' "$rel"
-  for resolver in legacy tydra-next compare; do
+  for resolver in legacy tydra compare; do
     safe="$(safe_name "${resolver}_${rel}")"
     out="$OUT_DIR/${safe}.png"
     log="$OUT_DIR/${safe}.log"

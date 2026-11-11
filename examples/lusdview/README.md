@@ -13,21 +13,21 @@ Authored stereo pairs can be captured natively side by side from GL or Vulkan:
 ```
 
 In a window, `--stereo` composes both authored eyes into the live viewport at
-display resolution. The same compositor works with the legacy and next loaders.
+display resolution. The same compositor works with the legacy and core loaders.
 
 The companion tool supplies the same workflow for external tracing modes
 (`--size` is the per-eye resolution):
 
 ```sh
 python3 examples/lusdview/render-stereo.py \
-  --lusdview ./build_ninja/lusdview --next --size 640x480 \
+  --lusdview ./build_ninja/lusdview --core --size 640x480 \
   --output stereo.ppm scene.usda
 ```
 
 Authored camera shutters can likewise drive deterministic raster motion exports:
 
 ```sh
-./build_ninja/lusdview --next --backend vk --camera Shot --time 24 \
+./build_ninja/lusdview --core --backend vk --camera Shot --time 24 \
   --pt-motion-segments 8 scene.usda
 ```
 
@@ -38,7 +38,7 @@ companion tool performs the same schedule in separate viewer processes:
 
 ```sh
 python3 examples/lusdview/render-motion.py \
-  --lusdview ./build_ninja/lusdview --next --backend vk --camera Shot \
+  --lusdview ./build_ninja/lusdview --core --backend vk --camera Shot \
   --time 24 --segments 8 --size 1280x720 --output motion.ppm scene.usda
 ```
 
@@ -211,7 +211,7 @@ python3 examples/lusdview/render-motion.py \
   scenes carrying these extended payloads use the hardware shader when
   available, with compute-BVH as the capability fallback. Native Points/Curves currently receive all packed direct lights
   because their light-link carrier mapping has not landed yet.
-- **UsdGeomPoints and curves (`--next`)** — Points plus BasisCurves,
+- **UsdGeomPoints and curves (`--core`)** — Points plus BasisCurves,
   HermiteCurves, and NurbsCurves retain evaluated widths, displayColor,
   displayOpacity, material binding, purpose, animation time, and transforms.
   OpenGL and Vulkan raster draw world-sized camera-facing point discs and
@@ -249,7 +249,7 @@ python3 examples/lusdview/render-motion.py \
   bilinear meshes are uniformly refined with `tinysubdiv` before raster or RT
   geometry is built. The default level is 2; use `--subdivision-level 0` to
   disable it or change **Scene ▸ Subdivision surfaces ▸ Pre-tessellation level**
-  to rebuild the live scene. The default next loader refines face-varying UVs
+  to rebuild the live scene. The default core loader refines face-varying UVs
   and recomputes normals along with the topology; the legacy loader additionally
   supports refined skin and blend-shape primvars.
 - **Production path tracing** — `--path-trace` selects a separate multi-bounce
@@ -347,7 +347,7 @@ python3 examples/lusdview/render-motion.py \
     stalls on one big upload. RT/CUDA/HIP paths retain their scene-owned upload
     paths, and headless `--frames` drains the stream synchronously for
     deterministic capture. Later payload, variant, and retained-layer edits
-    prepare a `tydra::next::RenderSession` candidate on the loader worker and
+    prepare a `tydra::RenderSession` candidate on the loader worker and
     publish it through the same atomic GL/Vulkan transaction on the render
     thread. `LUSDVIEW_RENDER_SESSION_MAX_MB` bounds this prepared scene (256 MiB
     by default; `0` disables it for oversized scenes). PointInstancer transform,
@@ -380,7 +380,7 @@ python3 examples/lusdview/render-motion.py \
     **time budget**) aborts mid-conversion.
   - **Triangle / vertex-memory budget** stops building once the cap is hit and
     marks the scene *truncated* (editable in the Stats > Render budget panel).
-  - The probed host/VRAM resource budget also applies to ordinary `--next`
+  - The probed host/VRAM resource budget also applies to ordinary `--core`
     loads, not only named large-scene profiles: composition retention, GPU
     geometry, upload staging, and decoded textures are capped before
     materialization. If authored composition exceeds the host cap, lusdview
@@ -409,7 +409,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j16 --target lusdview
 ```
 
-The compatibility product configures the viewer and links the refactored next
+The compatibility product configures the viewer and links the refactored core
 and Tydra libraries used by its default loader. See
 [`doc/lusdview.md`](../../doc/lusdview.md#build) for the current Vulkan build setup.
 
@@ -740,7 +740,7 @@ USD ──LoadUSDFromFile──▶ Stage ──RenderSceneConverter──▶ tyd
 `renderer.hh` is the GL/Vulkan boundary; everything else (loader, mesh build,
 camera, GUI, `DrawScene`) is backend-neutral.
 
-Camera `BackPlateAPI:<instance>` schemas are decoded by the next loader when
+Camera `BackPlateAPI:<instance>` schemas are decoded by the core loader when
 that camera is selected with `--camera`. Every visible instance becomes a
 camera-space textured grid in authored order. Optional alpha is merged into the
 plate texture and optional depth drives the grid vertices, so the same ordinary

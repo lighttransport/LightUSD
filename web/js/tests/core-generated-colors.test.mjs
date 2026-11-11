@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
-import {NextRenderSceneAdapter} from '../src/lightusd/LightUSDLoader.js';
-import {buildNextThreeNode} from '../src/lightusd/NextRenderSceneUtils.js';
+import {RenderSceneAdapter} from '../src/lightusd/LightUSDLoader.js';
+import {buildThreeNode} from '../src/lightusd/RenderSceneUtils.js';
 const suffix=process.env.LIGHTUSD_WASM64==='1'?'_64':'';
 const {default:factory}=await import(`../src/lightusd/lightusd${suffix}.js`);
 const core=await factory();
@@ -16,7 +16,7 @@ const source=new TextEncoder().encode(`#usda 1.0
    int[] primvars:displayColor:indices=[0,1,2,0,1,2]
   }
  }`);
-const adapter=await NextRenderSceneAdapter.create(core,source,'colors.usda');
+const adapter=await RenderSceneAdapter.create(core,source,'colors.usda');
 try {
   const ball=adapter.meshes.find(mesh=>mesh.primPath==='/World/Ball');
   const box=adapter.meshes.find(mesh=>mesh.primPath==='/World/Box');
@@ -34,7 +34,7 @@ try {
     assert.equal(colors[0],colors[1]);assert.equal(colors[1],colors[2]);seen.add(colors[0]);
   }
   assert.deepEqual([...seen].sort(),['0,0,1','0,1,0','1,0,0']);
-  const {node}=buildNextThreeNode(adapter,{skipTextures:true,releaseBuildData:false});
+  const {node}=buildThreeNode(adapter,{skipTextures:true,releaseBuildData:false});
   let painted;
   node.traverse(object=>{if(object.isMesh && object.userData['primMeta.absPath']==='/World/Ball')painted=object;});
   assert.ok(painted);

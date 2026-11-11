@@ -81,8 +81,8 @@ container.innerHTML = `
       <label>Texture loading</label>
       <select id="pipeline" style="padding:4px;width:160px"
         title="Stream textures to limit memory use for larger inputs.">
-        <option value="next">Standard</option>
-        <option value="stream-next">Stream textures</option>
+        <option value="core">Standard</option>
+        <option value="stream-core">Stream textures</option>
       </select>
 
       <label>Variant overrides</label>
@@ -98,7 +98,7 @@ container.innerHTML = `
 
       <label>Include unused textures</label>
       <input id="includeUnusedTextures" type="checkbox" style="justify-self:start"
-             title="For stream-next/next-capable conversion paths, also convert and package image files that are not referenced by the composed root.">
+             title="For stream-core/core conversion paths, also convert and package image files that are not referenced by the composed root.">
 
       <label>Target total texture size</label>
       <input id="targetSize" type="text" placeholder="e.g. 100MB (blank = off)" style="padding:4px;width:200px"
@@ -537,7 +537,7 @@ function uploadedSizeSum(predicate) {
 
 function shouldAutoStreamForWasmCap(opts, rootPath) {
   const cap = Number(opts.wasmHeapLimitBytes || 0);
-  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next') return null;
+  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-core') return null;
   if (!opts.flatten) return null;
   if (!rootPath || /\.usdz$/i.test(rootPath)) return null;
   if ((opts.targetTextureBytes || 0) > 0) return null;
@@ -554,7 +554,7 @@ function shouldAutoStreamForWasmCap(opts, rootPath) {
   const estimatedBulkBytes = imageBytes + otherBytes + usdBytes * 2;
   if (estimatedBulkBytes <= availableBulkBudget) return null;
   return {
-    pipeline: opts.pipeline === 'next' ? 'stream-next' : 'stream',
+    pipeline: opts.pipeline === 'core' ? 'stream-core' : 'stream',
     estimatedBulkBytes,
     availableBulkBudget,
     imageBytes,

@@ -46,9 +46,9 @@
 #include "io-util.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/render-data.hh"
-#include "usdVol.hh"  // OpenVDB (.vdb) loader for the `next` volume path
+#include "usdVol.hh"  // OpenVDB (.vdb) loader for the `core` volume path
 
-// Experimental `next` lazy loader: fast, low-memory USDC parse used as the
+// Experimental `core` lazy loader: fast, low-memory USDC parse used as the
 // default backend for the RT preview path. tydra provides bit-exact
 // world transforms (see src/tydra/scene-access.cc).
 #include "layer/prim-spec.hh"
@@ -631,7 +631,7 @@ static CameraFrame ResolveGpuCameraInst(const lightusd::Stage &stage,
   auto_opt.width = cam_width;
   if (!opt.camera.empty()) {
     float cam_aspect = 16.0f / 9.0f;
-    if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
+    if (FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
       if (*out_height <= 0) {
         // Clamp: a hostile aperture ratio must not overflow the int conversion
         // (UB) or demand a multi-GB framebuffer.
@@ -837,7 +837,7 @@ static bool ExtractProtoGeo(
     }
   }
   if (has_ptex) {
-    MeshJobNext resolved;
+    MeshJobCore resolved;
     resolved.prim = prim;
     ResolveMeshMaterialCached(stage, prim, tc, material_cache, &resolved);
     if (resolved.tex_id >= 0 && tc.textures &&
@@ -851,16 +851,16 @@ static bool ExtractProtoGeo(
   std::vector<Vec3> vn;
   bool perVertexN = false;
   std::vector<float> generated_uvs;
-  if (IsCurvePrimNext(prim)) {
+  if (IsCurvePrimCore(prim)) {
     if (!ExtractCurveProto(opt, prim, evaluation, out)) return false;
     nv = uint32_t(out->verts.size() / 3);
   } else if (lightusd::tydra::IsAnalyticGeomTypeName(
                  prim.GetTypeName())) {
-    GeneratedMeshNext generated;
-    if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+    GeneratedMeshCore generated;
+    if (!GenerateAnalyticMeshCore(stage, prim, opt.timecode, &generated))
       return false;
     std::vector<float> normals;
-    ExpandGeneratedMeshCornersNext(generated, &out->verts, &normals,
+    ExpandGeneratedMeshCornersCore(generated, &out->verts, &normals,
                                    &generated_uvs, &out->idx);
     nv = uint32_t(out->verts.size() / 3);
     vn.resize(nv);
@@ -1030,14 +1030,14 @@ static bool ExtractProtoGeo(
       lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
       if (mat.IsValid()) {
         lightusd::UsdPrim surf =
-            ConnectedPrimNext(stage, mat, "outputs:surface");
+            ConnectedPrimCore(stage, mat, "outputs:surface");
         if (!surf.IsValid())
-          surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+          surf = ConnectedPrimCore(stage, mat, "outputs:mtlx:surface");
         if (surf.IsValid()) {
           if (const lightusd::Value* d =
                   surf.GetPropertyValue("inputs:displacement"))
             if (const float* f = d->as_float()) disp_const = *f;
-          ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+          ResolveScalarTextureCore(stage, surf, "inputs:displacement", tc,
                                    &disp_tex);
         }
       }
@@ -1200,9 +1200,9 @@ static int TryRunInstancedVk(const lightusd::Stage &stage,
 
   // Group each placement into (prototype, per-instance transform) on the fly. The
   // streaming collector calls this sink once per placement (prim, world, purpose)
-  // WITHOUT materializing a MeshJobNext per instance, so a huge instanced scene
+  // WITHOUT materializing a MeshJobCore per instance, so a huge instanced scene
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
-  // memory per placement instead of a ~392 B MeshJobNext.
+  // memory per placement instead of a ~392 B MeshJobCore.
   auto place = [&](const lightusd::UsdPrim &prim, const matrix4d &world,
                    lusdr::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
@@ -1256,7 +1256,7 @@ static int TryRunInstancedVk(const lightusd::Stage &stage,
   size_t emitted = 0;
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted > budget) break;
-    emitted += CollectRTInstancePlacementsNext(
+    emitted += CollectRTInstancePlacementsCore(
         stage, root, matrix4d::identity(), lusdr::Purpose::Default,
         opt.timecode, opt.mask, place, budget + 1 - emitted);
   }
@@ -1662,7 +1662,7 @@ int main(int argc, char **argv) {
   // View-dependent district LOD (-lodStream): compose the scene in proxy LOD,
   // promote the districts nearest the camera to `full` under the host/VRAM
   // budget, and rewrite opt.input to a generated wrapper layer. Then fall
-  // through to the normal next-loader render. Best-effort: on failure (no
+  // through to the normal core-loader render. Best-effort: on failure (no
   // districts / compose error) opt.input is left untouched and we render as-is.
   std::string lod_wrapper;
   if (opt.lod_stream) {
@@ -1675,7 +1675,7 @@ int main(int argc, char **argv) {
 
   // Every CPU render uses the core streaming path.
   if (!opt.vulkan && !opt.use_d3d && !opt.hip && !opt.cuda) {
-    return RunRTPreviewNext(opt);
+    return RunRTPreviewCore(opt);
   }
 
   // PrimId is intentionally not in this gate: the next CPU path owns the
@@ -1691,26 +1691,26 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // -frames (per-timecode animation output) is implemented only by the `next`
+  // -frames (per-timecode animation output) is implemented only by the `core`
   // path above. It used to be silently ignored here -- the run produced one
   // image literally named with the `####` token and no animation. Fail loudly
   // instead so the user adds -rtPreview (or drops the flag).
   if (!opt.frames.empty()) {
-    std::cerr << "-frames is only supported on the next path (a .usdc input or "
+    std::cerr << "-frames is only supported on the core path (a .usdc input or "
                  "-rtPreview); this run would render a single frame and ignore "
                  "it. Add -rtPreview, or drop -frames.\n";
     return EXIT_FAILURE;
   }
 
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
-  // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
+  // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `core`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) {
-    // Load through next loader.
+    // Load through core loader.
     lightusd::Stage stage;
     lightusd::ValueClipStageLoader clip_stage_loader;
     std::string warn, err;
-    if (!LoadNextStageBudgeted(opt, &stage, &warn, &err,
+    if (!LoadCoreStageBudgeted(opt, &stage, &warn, &err,
                                &clip_stage_loader)) {
       if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
       std::cerr << "Failed to load USD: " << err << "\n";
@@ -1722,7 +1722,7 @@ int main(int argc, char **argv) {
     // -vkInstanced: true two-level GPU TLAS (per-prototype BLAS shared across
     // instances). TryRunInstancedVk STREAMS the expanded placements (grouping each
     // by source prim into shared prototypes + per-instance transforms as it goes,
-    // no per-instance MeshJobNext), then renders. On any failure (no shares, ray
+    // no per-instance MeshJobCore), then renders. On any failure (no shares, ray
     // query unavailable) it falls through to the flat GPU path below.
     if (opt.vulkan_instanced && opt.vulkan_rt) {
       const int result = TryRunInstancedVk(stage, opt, clip_stage_loader);
@@ -1740,7 +1740,7 @@ int main(int argc, char **argv) {
     std::vector<lusdr::Texture> gpu_textures;
     LightCache gpu_lights;
     for (const auto &root : stage.GetRootPrims()) {
-      CollectLightsNext(stage, root, matrix4d::identity(), opt.timecode,
+      CollectLightsCore(stage, root, matrix4d::identity(), opt.timecode,
                         &gpu_lights);
     }
     RenderContext gaussian_ctx;
@@ -1758,7 +1758,7 @@ int main(int argc, char **argv) {
 
     {
       // Collect meshes WITH their world transforms, purpose, and -mask, exactly
-      // like the CPU -rtPreview path (CollectRTPreviewMeshesNext). The GPU
+      // like the CPU -rtPreview path (CollectRTPreviewMeshesCore). The GPU
       // backends previously walked every Mesh and emitted its RAW LOCAL points,
       // ignoring world transforms, purpose, and -mask -- correct only for a
       // single mesh at the origin (suzanne), but for any composed/production
@@ -1785,16 +1785,16 @@ int main(int argc, char **argv) {
       for (const auto &root : stage.GetRootPrims()) {
         // Keep only one root's traversal records alive.  A production stage can
         // contain thousands of roots (or large instancer expansions); collecting
-        // every MeshJobNext before converting any geometry creates a needless
+        // every MeshJobCore before converting any geometry creates a needless
         // scene-wide transient peak on top of the final GPU chunk stream.
-        std::vector<MeshJobNext> mesh_jobs;
-        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
+        std::vector<MeshJobCore> mesh_jobs;
+        CollectRTPreviewMeshesCore(stage, root, matrix4d::identity(),
                                    lusdr::Purpose::Default, opt.timecode,
                                    opt.mask, &mesh_jobs,
                                    /*expand_instancers=*/true);
 
         // Stream geometry in WORLD space.
-        for (MeshJobNext &job : mesh_jobs) {
+        for (MeshJobCore &job : mesh_jobs) {
         // Purpose visibility: hide guide (and others per -purpose) like the CPU
         // path; the GPU path used to render every purpose unconditionally, so the
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
@@ -1813,10 +1813,10 @@ int main(int argc, char **argv) {
         uint32_t nv = 0;
         if (lightusd::tydra::IsAnalyticGeomTypeName(
                 prim.GetTypeName())) {
-          GeneratedMeshNext generated;
-          if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+          GeneratedMeshCore generated;
+          if (!GenerateAnalyticMeshCore(stage, prim, opt.timecode, &generated))
             continue;
-          ExpandGeneratedMeshCornersNext(generated, &geo.positions,
+          ExpandGeneratedMeshCornersCore(generated, &geo.positions,
                                           &geo.normals, &geo.uvs, &geo.indices);
           nv = uint32_t(geo.positions.size() / 3);
           for (size_t j = 0; j < size_t(nv); ++j) {
@@ -2060,14 +2060,14 @@ int main(int argc, char **argv) {
             lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
             if (mat.IsValid()) {
               lightusd::UsdPrim surf =
-                  ConnectedPrimNext(stage, mat, "outputs:surface");
+                  ConnectedPrimCore(stage, mat, "outputs:surface");
               if (!surf.IsValid())
-                surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+                surf = ConnectedPrimCore(stage, mat, "outputs:mtlx:surface");
               if (surf.IsValid()) {
                 if (const lightusd::Value *d =
                         surf.GetPropertyValue("inputs:displacement"))
                   if (const float *f = d->as_float()) disp_const = *f;
-                ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+                ResolveScalarTextureCore(stage, surf, "inputs:displacement", tc,
                                          &disp_tex);
               }
             }
@@ -2163,7 +2163,7 @@ int main(int argc, char **argv) {
         resolved.openpbr = job.openpbr;
         // UsdPreviewSurface's default opacityMode is "transparent": alpha
         // attenuates the diffuse lobe and the surface stays opaque. Only
-        // "presence" is true coverage; ResolveOpacityPresenceNext already
+        // "presence" is true coverage; ResolveOpacityPresenceCore already
         // distinguishes them for non-PreviewSurface materials as well.
         resolved.openpbr.opacityTransparent = !job.opacity_presence;
         resolved.materialx_graph_json = job.materialx_graph_json;
@@ -2228,7 +2228,7 @@ int main(int argc, char **argv) {
     bool has_flat_curves = false;
     Bounds gpu_flat_bounds;
     RenderContext gpu_curve_ctx;
-    std::vector<CurveJobNext> gpu_curve_jobs;
+    std::vector<CurveJobCore> gpu_curve_jobs;
     stage.Traverse([&](const lightusd::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
       if (type == "BasisCurves" || type == "HermiteCurves" ||
@@ -2250,19 +2250,19 @@ int main(int argc, char **argv) {
       gpu_curve_ctx.opt = opt;
       gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
-        CollectCurvesNextRec(root, matrix4d::identity(),
+        CollectCurvesCoreRec(root, matrix4d::identity(),
                              lusdr::Purpose::Default, opt.timecode,
                              &gpu_curve_jobs);
       }
-      if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
+      if (!BuildCoreCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
                            /*include_flat=*/false) ||
           !AppendGpuRoundCurves(gpu_curve_ctx.direct, &base_colors, &geos, opt)) {
         return EXIT_FAILURE;
       }
-      for (const CurveJobNext &job : gpu_curve_jobs)
+      for (const CurveJobCore &job : gpu_curve_jobs)
         has_flat_curves |= job.prim.GetPropertyValue("normals") != nullptr;
       if (has_flat_curves &&
-          !BuildNextFlatCurveBounds(gpu_curve_jobs, opt.timecode,
+          !BuildCoreFlatCurveBounds(gpu_curve_jobs, opt.timecode,
                                     clip_stage_loader, &gpu_flat_bounds)) {
         std::cerr << "Failed to read GPU flat/ribbon curve bounds.\n";
         return EXIT_FAILURE;
@@ -2285,7 +2285,7 @@ int main(int argc, char **argv) {
     if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty() &&
         !has_other_native_carrier) {
       native_gaussian =
-          BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode,
+          BuildCoreGaussianEllipses(stage, gaussian_ctx, opt.timecode,
                                     /*defer_gpu_bvh=*/true) &&
           gaussian_ctx.direct.has_ellipses();
     }
@@ -2330,7 +2330,7 @@ int main(int argc, char **argv) {
     if (native_gaussian && gaussian_ctx.bounds.valid) bounds = gaussian_ctx.bounds;
     bounds.valid = true;
     // Resolve the camera the SAME way the CPU -rtPreview path does
-    // (ResolveCameraNext): a named camera, else the USD record camera for
+    // (ResolveCameraCore): a named camera, else the USD record camera for
     // -autoframe, else auto-fit. This keeps -vk/-vkr framed identically to the
     // -rtPreview reference (the GPU backends previously used the tilted auto-fit
     // camera here, so the same scene framed differently from the CPU image).
@@ -2341,7 +2341,7 @@ int main(int argc, char **argv) {
     auto_opt.width = cam_width;
     if (!opt.camera.empty()) {
       float cam_aspect = 16.0f / 9.0f;
-      if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera,
+      if (FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera,
                               &cam_aspect)) {
         if (out_height <= 0) {
           double dh = double(cam_width) / double(cam_aspect);
@@ -2363,7 +2363,7 @@ int main(int argc, char **argv) {
 
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
     if ((opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) && has_flat_curves) {
-      if (!BuildNextFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
+      if (!BuildCoreFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
                                     clip_stage_loader, camera, opt, &geos,
                                     &base_colors)) {
         std::cerr << "Failed to build GPU flat/ribbon curve carriers.\n";
@@ -2585,5 +2585,5 @@ int main(int argc, char **argv) {
 #endif
 
   // Every CPU render runs on the core streaming path.
-  return RunRTPreviewNext(opt);
+  return RunRTPreviewCore(opt);
 }

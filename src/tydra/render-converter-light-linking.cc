@@ -101,7 +101,7 @@ class MeshPathIndex {
   uint32_t generation_ = 0;
 };
 
-bool EvalNextPathPredicate(const Stage& stage, const std::string& predicate,
+bool EvalCorePathPredicate(const Stage& stage, const std::string& predicate,
                            const std::string& prim_path) {
   std::string func = predicate;
   std::string arg;
@@ -169,7 +169,7 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
   PathExpressionEvalContext context;
   context.eval_predicate = [&stage](const std::string& pred,
                                     const std::string& path) {
-    return EvalNextPathPredicate(stage, pred, path);
+    return EvalCorePathPredicate(stage, pred, path);
   };
   auto subexpressions = std::make_shared<std::deque<ParsedPathExpression>>();
   const std::string seed_owner = owner.GetPath().str();

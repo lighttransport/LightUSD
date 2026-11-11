@@ -3,7 +3,7 @@
  *
  * path-expr.c -- C11 SdfPathExpression parser / serializer / matcher.
  *
- * Behavioural port of the next-side SdfPathExpression model: an expression is
+ * Behavioural port of the SdfPathExpression model: an expression is
  * parsed into a set-algebra tree which is flattened into a prefix-ordered op
  * stream plus left-to-right pattern/reference streams. Matching is a memoized
  * dynamic program over (element, segment) with `//` stretch support.

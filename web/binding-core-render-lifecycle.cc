@@ -99,7 +99,7 @@ void RenderStream::setTangentMethod(const std::string &method) {
   }
 
 bool RenderStream::beginOwned(std::string &&crate, const std::string& source_uri) {
-    // The next-only WASM surface accepts bytes, not filesystem paths. USDC
+    // The core WASM surface accepts bytes, not filesystem paths. USDC
     // lazy arrays retain this owned input buffer rather than an mmap.
     end();
     error_.clear();
@@ -132,7 +132,7 @@ bool RenderStream::beginOwned(std::string &&crate, const std::string& source_uri
                    load_resident_limit));
       opts.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
-        return reportNextLoadProgress(
+        return reportLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
       };
       lightusd::USDCLoadResult res =
@@ -150,12 +150,12 @@ bool RenderStream::beginOwned(std::string &&crate, const std::string& source_uri
       opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
       opts.usda_options.parse_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
-        return reportNextLoadProgress(
+        return reportLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
       };
       opts.usdc_options.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
-        return reportNextLoadProgress(
+        return reportLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
       };
       std::string warn;
@@ -332,7 +332,7 @@ int RenderStream::beginBytes(const uint8_t* bytes, uint32_t size,
     return beginOwned(std::move(s), source_uri) ? 1 : 0;
 }
 
-int RenderStream::beginFromLayerDocument(NextLayerDocument& document) {
+int RenderStream::beginFromLayerDocument(LayerDocument& document) {
     const int32_t size = document.exportUsdaSize();
     if (size < 0) {
       error_ = "Layer document could not export USDA";

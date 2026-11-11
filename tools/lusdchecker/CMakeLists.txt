@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
-# lusdchecker uses only the dependency-free next core. Build that target on
-# demand when the top-level project has not enabled another next consumer.
+# lusdchecker uses only the dependency-free core library. Build that target on
+# demand when the top-level project has not enabled another core consumer.
 if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
-                   ${CMAKE_BINARY_DIR}/lusdchecker_next_build)
+                   ${CMAKE_BINARY_DIR}/lusdchecker_core_build)
 endif()
 
 add_library(lusdchecker_lib STATIC lusdchecker.cc checker-cli.cc checker-options.cc report.cc checker-memory.cc)
@@ -264,7 +264,7 @@ if(LIGHTUSD_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/testdata/array-edit-resolve-valid.usda)
   set_tests_properties(lusdchecker_array_edit_resolved_valid PROPERTIES
     PASS_REGULAR_EXPRESSION "Result: PASSED - no issues found")
-  # Crate rep round-trip: the same edit read from a next-written .usdc
+  # Crate rep round-trip: the same edit read from a core-written .usdc
   # (pxr-readable), decoded and resolved during composition.
   add_test(NAME lusdchecker_array_edit_usdc
     COMMAND lusdchecker --composed
@@ -278,7 +278,7 @@ if(LIGHTUSD_BUILD_TESTS)
             ${PROJECT_SOURCE_DIR}/tests/usda/array-edit-compose-001.usda)
   set_tests_properties(lusdchecker_array_edit_compose_arc PROPERTIES
     PASS_REGULAR_EXPRESSION "Result: PASSED")
-  # next-parser leniency parity with pxr's usda parser: sparse array edits
+  # core-parser leniency parity with pxr's usda parser: sparse array edits
   # (preserved as raw text), float->int literal coercion, quoted-string asset
   # paths. Each fixture previously failed to parse (exit 2).
   add_test(NAME lusdchecker_parse_array_edit

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""lusdview `--next`: an ordinary (non-instanced) blendshaped mesh must MORPH,
+"""lusdview `--core`: an ordinary (non-instanced) blendshaped mesh must MORPH,
 and it must morph in the RIGHT SPACE.
 
 Two bugs, one test.
 
-(a) BuildMorphChannelsNext / BakeBlendShapes were only ever called on the
+(a) BuildMorphChannelsCore / BakeBlendShapes were only ever called on the
     INSTANCED prototype path. A plain blendshaped mesh -- which is what almost
     every rig in the wild is -- went through the static batch path, which called
     neither, so it rendered its REST shape at every time code.
 
 (b) That path world-BAKES its vertices (the batch's own transform is identity),
     but the blendshape offsets are authored in MESH-local space, and every
-    consumer -- deform.glsl and BuildNextRtDeformedVertices -- adds the delta
+    consumer -- deform.glsl and BuildCoreRtDeformedVertices -- adds the delta
     straight onto the position it is handed. The deltas were left in mesh space,
     so a blendshaped mesh under a rotated or scaled parent morphed along the
     wrong axes. (Skinning already did the equivalent: its bone rows are
@@ -143,7 +143,7 @@ def render(binary, model, out, time, extra=(), env=None):
     if not os.path.exists(config):
         with open(config, "w") as f:
             f.write('{"window_size":{"width":320,"height":320}}\n')
-    cmd = [binary, "--next", "--headless", "--size", "320x320", "--frames", "3", "--time",
+    cmd = [binary, "--core", "--headless", "--size", "320x320", "--frames", "3", "--time",
            str(time), "--config", config, "--no-grid", "--no-skeleton",
            "--screenshot", out, *extra, model]
     try:
@@ -225,7 +225,7 @@ def main():
         print("FAIL: the mesh renders identically at time 1 and time 20, so its "
               "blendshape is not being applied at all. A non-instanced blendshaped "
               "mesh goes through the static batch path -- which must build morph "
-              "channels (BuildMorphChannelsNext), as the instanced prototype path "
+              "channels (BuildMorphChannelsCore), as the instanced prototype path "
               "does.")
         return 1
 
@@ -241,7 +241,7 @@ def main():
     ok = (render(binary, scene, d_rest, 1, extra=depth) and
           render(binary, scene, d_gpu, 20, extra=depth) and
           render(binary, scene, d_bake, 20, extra=depth,
-                 env={"LUSDVIEW_NEXT_MORPH_BAKE": "1"}))
+                 env={"LUSDVIEW_CORE_MORPH_BAKE": "1"}))
     if not ok:
         print("SKIP: the transformed-parent scene did not render")
         return SKIP
@@ -274,7 +274,7 @@ def main():
         if open(rt1, "rb").read() == open(rt20, "rb").read():
             print("FAIL: the ray tracer renders the same image at time 1 and 20. "
                   "RT traces the vertex buffers themselves, so the morph has to "
-                  "reach them (BuildNextRtDeformedVertices).")
+                  "reach them (BuildCoreRtDeformedVertices).")
             return 1
         rt_verified = True
 

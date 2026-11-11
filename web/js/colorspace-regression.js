@@ -11,8 +11,8 @@ import {
   transformLinearColor
 } from './src/lightusd/ColorSpaceUtils.js';
 import { loadWasm } from './src/usdzconvert.js';
-import { NextRenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
-import { buildNextThreeNode, createNextMaterial } from './src/lightusd/NextRenderSceneUtils.js';
+import { RenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
+import { buildThreeNode, createMaterial } from './src/lightusd/RenderSceneUtils.js';
 
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
@@ -196,10 +196,10 @@ async function createBackendThreeMaterials() {
   const bytes = new TextEncoder().encode(BACKEND_MTLX_USDA);
   const next = await loadWasm(() => import(/* @vite-ignore */
     new URL('./src/lightusd/lightusd.js', import.meta.url).href));
-  const adapter = await NextRenderSceneAdapter.create(next, bytes, 'colorspace-browser.usda');
+  const adapter = await RenderSceneAdapter.create(next, bytes, 'colorspace-browser.usda');
   let adapterMaterial;
   try {
-    const {node} = buildNextThreeNode(adapter, {skipTextures:true});
+    const {node} = buildThreeNode(adapter, {skipTextures:true});
     node.traverse(object => {
       object.geometry?.dispose();
       if (!object.isMesh) return;
@@ -219,7 +219,7 @@ async function createBackendThreeMaterials() {
     if (!begun?.success) throw new Error(begun?.error || stream.error());
     const mesh = stream.getMesh(0);
     if (mesh.error) throw new Error(mesh.error);
-    nextMaterial = createNextMaterial({
+    nextMaterial = createMaterial({
       material: mesh.material,
       texturePaths: {}
     }, {}, null, true);

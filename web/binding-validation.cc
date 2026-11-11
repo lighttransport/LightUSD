@@ -156,7 +156,7 @@ static std::string validateFromBytes(const uint8_t* data, size_t size,
   return result.dump();
 }
 
-uint8_t* NextValidateJSON(const uint8_t* data, uint32_t size,
+uint8_t* ValidateJSON(const uint8_t* data, uint32_t size,
                           const uint8_t* filename, uint32_t filename_size,
                           const uint8_t* options, uint32_t options_size) {
   if (size > (uint32_t{1} << 30) || (size && !data) ||

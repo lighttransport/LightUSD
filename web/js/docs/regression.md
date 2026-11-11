@@ -34,7 +34,7 @@ smoke scene (materials remain diagnostic overrides). The focused harness also
 checks real pinned MaterialX library graphs, resource includes/EXR decoding, and
 seeded analytic transport scenes. See the status document for coverage limits.
 Its pure Node graph/scene tests are included in the aggregate Node profile.
-After rebuilding the combined WASM binding, run
+After rebuilding the core WASM binding, run
 `node tests/webgpu-mtlx-usd-graph.mjs` for typed USD shading connections and
 connected defaults; `--shaderball` also runs that fixture inside Chrome.
 It covers color-space metadata and asset opinions on untyped overrides. The
@@ -187,20 +187,20 @@ The OpenPBR weighted fixture also covers authored `specular_color` tinting.
 
 The `open-pbr-film` scene covers bounded OpenPBR thin-film weight, thickness,
 and IOR propagation.
-## Testing an isolated next WASM build
+## Testing an isolated core WASM build
 
-The Node profile includes `tests/next-c-dispatch.test.mjs`: object-ID generation
+The Node profile includes `tests/core-c-dispatch.test.mjs`: object-ID generation
 retirement, stale/wrong-class calls, explicit disposal, argument validation,
 numeric/Unicode JSON fidelity, and malformed validation options. Run it on both
 wasm32 and memory64 after changing the C dispatch or post-JS wrapper.
 
-`tests/next-mesh-budget-cache.test.mjs` compares scoped memory headroom to a
+`tests/core-mesh-budget-cache.test.mjs` compares scoped memory headroom to a
 fresh Stage scan after limit changes, asset updates, retained USDC export and
 forced heap growth. It also checks that owned mesh points survive growth.
-Run on both pointer widths; `LIGHTUSD_NEXT_MODULE` can select an isolated
+Run on both pointer widths; `LIGHTUSD_MODULE` can select an isolated
 module without replacing generated app files.
 
-`tests/next-binding-copy-contracts.test.mjs` exercises raw C callers on both
+`tests/core-binding-copy-contracts.test.mjs` exercises raw C callers on both
 pointer widths. It checks UTF-8 node-path size queries, untouched undersized
 destinations, scene strings' separate truncation/NUL convention, invalid
 handles/indices, and consistent streaming asset names across relative paths
@@ -210,8 +210,8 @@ To exercise an isolated measurement build without replacing generated app
 files, run from `web/js` (use an absolute module path):
 
 ```sh
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/core-artifacts/lightusd.js" \
-  NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
+LIGHTUSD_MODULE="$PWD/../build_ninja/core-artifacts/lightusd.js" \
+  NODE_OPTIONS="--loader $PWD/tests/core-module-override.mjs" \
   node tests/run-regression.mjs --profile node
 ```
 
@@ -221,17 +221,14 @@ test supplies `locateFile` for the application's normal artifacts. This is a
 Node-only testing helper, not a production loader or a substitute for the
 browser/physics gates below.
 
-For a combined-module binding change, set `LIGHTUSD_COMBINED_MODULE` to the
-isolated `lightusd_combined.js` (or `lightusd_combined_64.js`). The same override
-loader redirects combined imports and keeps their WASM paired with the glue.
-`apply-variant-selection-overload.test.mjs` checks the complete loader method
-inventory, typed streaming-buffer and asset-cache ownership/progress/error
-contracts, binary chunk copies, exact memory64 size_t/BigInt values, wasm32
-progress overflow, and standard SHA-256 digests across padding boundaries,
-alongside composition and flatten coverage. Set `LUSDCAT_PATH` to a native
-`lusdcat` built with `-DLIGHTUSD_BUILD_LEGACY=ON` to include legacy validation
-parity. This check requires its `--validate-all` report; the default core CLI
-does not implement that legacy flag. Core validation has its own parity tests.
+The combined WASM product and its typed compatibility adapter have been removed.
+Core regressions load only `lightusd[_64].js` and independent feature modules.
+`core-c-dispatch.test.mjs`, `core-allocation-failure.test.mjs`,
+`core-usda-composition.test.mjs`, and `core-flatten-behavior-parity.test.mjs`
+cover the maintained ownership, composition, flatten, and failure contracts.
+Legacy comparison suites require separately built `lightusd_legacy[_64].js`
+and run only under the explicit `--profile legacy` option; default CI does not
+build or run legacy. The checked migration maps retain historical API mappings.
 
 ## Complete gate
 
@@ -314,12 +311,12 @@ node tests/screenshot-offscreen-batch.mjs --all --sw \
 `tests/test-usdzconvert.js` checks STORE archive header consistency, directory
 bounds, duplicate names, overlapping entries, and archive comments containing
 ZIP signatures. Valid nonzero-offset input views retain borrowed entry data.
-The conversion suites exercise USDA/USDC roots with both combined and next-only
+The conversion suites exercise USDA/USDC roots with core
 WASM; repeat them with `LIGHTUSD_WASM64=1` after rebuilding memory64 modules.
 `tests/udim-bake.test.mjs` covers atlas pixels/precision, tile and memory caps,
 direct layer edits, clipping, geometry/file animation, skins, blendshapes,
 subdivision, variants, instances, and streaming. Run it with
-`LIGHTUSD_UDIM_COMBINED=1` as well as the default next-only selection on each
+`LIGHTUSD_UDIM_COMBINED=1` as well as the default core selection on each
 pointer width. `LIGHTUSD_UDIM_GLUE` selects an isolated artifact; setting
 `LIGHTUSD_NATIVE_USDZCONVERT` includes native output/sidecar checks.
 `tests/core-converter-orchestration.test.mjs` checks the public core folder and
@@ -394,10 +391,9 @@ browser regression tests are enabled:
 ctest --test-dir ../build_ninja -R wasm-regression-full --output-on-failure
 ```
 
-The default web build is deliberately non-threaded. Both
-`LIGHTUSD_ENABLE_THREAD` and `LIGHTUSD_NEXT_ENABLE_THREAD` must be `OFF`, and
-generated compile commands must contain no `-pthread`, `PTHREAD`, or
-`LIGHTUSD_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
+The default web build is deliberately non-threaded. `LIGHTUSD_ENABLE_THREAD`
+must be `OFF`, and generated compile commands must contain no `-pthread`,
+`PTHREAD`, or `LIGHTUSD_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
 it provides ownership/lifetime semantics; it does not enable parallel
 execution. The core WASM build uses `shared_ptr::use_count()` ownership
 checks because `shared_ptr::unique()` is unavailable in the active C++20
@@ -405,7 +401,7 @@ standard library.
 
 ### Full lusdchecker WASM validation
 
-`tests/next-checker.test.mjs` exercises the shared native/WASM checker engine:
+`tests/core-checker.test.mjs` exercises the shared native/WASM checker engine:
 strict and AOUSD profiles, missing coverage, run-local JSON definitions,
 coherent time samples, dependency variants, stored packages, baselines, SARIF,
 and counted/heap-view input contracts. It runs in the Node profile on wasm32
@@ -415,13 +411,13 @@ is available, it compares complete reports with the native executable.
 `tests/validation-browser.test.mjs` exercises **both** `web/js/validation.html`
 and `web/demo/validation.html`, including strict profile controls, missing
 coverage, supplied dependencies, and narrow-screen layout. It runs in the
-browser profile and accepts `LIGHTUSD_NEXT_MODULE` to test an isolated build:
+browser profile and accepts `LIGHTUSD_MODULE` to test an isolated build:
 
 ```sh
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
-  NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
-  node tests/next-checker.test.mjs
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
+LIGHTUSD_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
+  NODE_OPTIONS="--loader $PWD/tests/core-module-override.mjs" \
+  node tests/core-checker.test.mjs
+LIGHTUSD_MODULE="$PWD/../build_ninja/checker/artifacts/lightusd.js" \
   node tests/validation-browser.test.mjs
 ```
 
@@ -430,18 +426,18 @@ static bundles. `PUPPETEER_EXECUTABLE_PATH` selects an installed Chrome.
 
 See [the checker API guide](../../../tools/lusdchecker/README.md#javascript--wasm)
 for build options and the browser API. Legacy validation parity remains covered
-separately by `next-validation-parity.test.mjs`.
-## Independent next feature modules
+separately by `core-validation-parity.test.mjs`.
+## Independent core feature modules
 
-Build `lightusd_wasm_distribution` to produce the main next module plus geometry,
+Build `lightusd_wasm_distribution` to produce the main core module plus geometry,
 raytrace, validator and EXR, for each required pointer width. These are separate
 WASM heaps. Feature consumers use `await module.loadFeature(name)` and call the
 returned object. See [the packaging documentation](../../npm/README.md) for the
 API migration and custom module locations.
 
-`tests/next-features.test.mjs` runs the same contract in Node and a Node Worker.
+`tests/core-features.test.mjs` runs the same contract in Node and a Node Worker.
 Run with `LIGHTUSD_WASM64=1` for memory64.
-`tests/next-features-browser.test.mjs` checks both widths in Chrome's main thread
+`tests/core-features-browser.test.mjs` checks both widths in Chrome's main thread
 and module Workers. Both are registered in the regression runner. Coverage
 includes all ABI metadata mismatches, failed-load retry, promise deduplication,
 independent heaps, core-to-feature array transfers, subdivision, simplification,
@@ -459,16 +455,16 @@ USD_WG_ASSETS_DIR="$PWD/../../.cache/lightusd-verification/usd-assets" \
   LIGHTUSD_SKIP_WASM_PREPARE=1 npm run test:corpus -- --wasm64
 ```
 
-The runner uses `LayerDocument.load` with the default next-only module and
+The runner uses `LayerDocument.load` with the default core module and
 `loadAsLayerFromBinary` with the legacy module. It parses individual layers
-without composition or rendering. The next document API enforces its 512 MiB
+without composition or rendering. The core document API enforces its 512 MiB
 input/resident limit. `--max-fail 0`, supplied by the npm command, fails on any
 rejected input; a missing loader API is an error. The pinned corpus currently
 contains 280 USD-family files.
 
 ### Composed-load dependency failures
 
-A next RenderStream composed load fails when an external reference or payload
+A core RenderStream composed load fails when an external reference or payload
 cannot load, including blocked parent-relative paths and missing assets after
 an attached store is detached. It must clear prior render geometry and retain
 the typed composition issue report. A successful empty/partial scene is not an

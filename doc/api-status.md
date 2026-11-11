@@ -39,7 +39,7 @@ Coverage of OpenUSD schema domains in lightusd.
 | Capsule_1 | concrete | done | Updated capsule with separate top/bottom radii |
 | VisibilityAPI | API (single) | done | |
 | GeomModelAPI | API (single) | done | |
-| BackPlateAPI | API (multiple) | next schema | OpenUSD 26.08 registry/validation, typed extraction, render-camera propagation, lusdrender color/alpha/depth compositing, and camera-space depth-tested GL/Vulkan raster display for every authored instance |
+| BackPlateAPI | API (multiple) | core schema | OpenUSD 26.08 registry/validation, typed extraction, render-camera propagation, lusdrender color/alpha/depth compositing, and camera-space depth-tested GL/Vulkan raster display for every authored instance |
 | MotionAPI | API (single) | done | |
 | PrimvarsAPI | API (non-applied) | done | |
 | XformCommonAPI | API (non-applied) | done | |
@@ -197,14 +197,14 @@ MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJoint
 | Schema | Type | Status | Notes |
 |--------|------|--------|-------|
 | Volume | concrete | done | Typed GPrim-derived (`src/usdGeom.hh`), schema attrs modeled, reconstructed in `src/prim-reconstruct-vol.cc` |
-| FieldAsset | concrete | done | `GPrim`-derived base for field assets; pxr 25.x renamed it to `VolumeFieldAsset` (both names handled, see `src/next/schema/schema-registry.cc`) |
+| FieldAsset | concrete | done | `GPrim`-derived base for field assets; pxr 25.x renamed it to `VolumeFieldAsset` (both names handled, see `src/schema/schema-registry.cc`) |
 | OpenVDBAsset | concrete | done | `FieldAsset`-derived |
 | Field3DAsset | concrete | done | `FieldAsset`-derived |
 | VolumeFieldBase | abstract | -- | pxr 25.x name for the former `FieldBase` abstract base |
 | VolumeFieldAsset | abstract | -- | pxr 25.x name for the former `FieldAsset` abstract base |
-| ParticleField | concrete | next schema | Registry ancestry and validation; legacy preserves generic data |
+| ParticleField | concrete | core schema | Registry ancestry and validation; legacy preserves generic data |
 | ParticleField3DGaussianSplat | concrete | rendered | Next Vulkan/RT Gaussian carrier plus 26.08 fallbacks and validation |
-| 11 ParticleField API schemas | API (single) | next schema | Official position/orientation/scale/opacity/kernel/radiance declarations; typed accessors remain |
+| 11 ParticleField API schemas | API (single) | core schema | Official position/orientation/scale/opacity/kernel/radiance declarations; typed accessors remain |
 
 **Coverage: 4/6 concrete, 0/11 API** (Volume, FieldAsset, OpenVDBAsset,
 Field3DAsset implemented; ParticleField / ParticleField3DGaussianSplat
@@ -236,7 +236,7 @@ TinyVDB C API:
   `usdvol-vdb-corpus` ctest. Set `LIGHTUSD_TINYVDBIO_DATA_DIR` or
   `$TINYVDBIO_DATA_DIR` to run it; it is skipped otherwise.
 
-**Rendering (tydra/next).** `RenderScene::volumes` holds one `RenderVolume`
+**Rendering (Tydra).** `RenderScene::volumes` holds one `RenderVolume`
 per Volume.
 - **Fields:** each `field:<name>` relationship with exactly one (forwarded)
   target, resolved by `src/tydra/vol` at the scene time. Placement is the
@@ -267,7 +267,7 @@ per Volume.
   integrator, in front of scene geometry only; `-volumeLevelSet fog` marches
   them as `density = clamp(-sdf)` instead. Fog-class fields keep the
   emission/absorption march. lusdview's raster volume pass consumes density,
-  so its next loader meshes a level-set field through
+  so its core loader meshes a level-set field through
   `FieldCache::MeshLevelSet` and draws the surface as geometry (with the
   volume's albedo as a generated material); the legacy loader path does not.
 - **ParticleFields:** `RenderScene::particle_fields` applies the schema's
@@ -276,7 +276,7 @@ per Volume.
   `..._field_nanovdb` and `..._field_sample`) and
   `lightusd_render_particle_data_*`, Python `RenderScene.volumes()` /
   `volume_dense()` / `volume_nanovdb()` / `volume_sample()` /
-  `particle_fields()`, and next wasm `getVolumes` / `getVolumeDense` /
+  `particle_fields()`, and core wasm `getVolumes` / `getVolumeDense` /
   `getVolumeNanovdb` / `getVolumeSample` / `getParticleField`.
 
 **Authoring.** `lightusd.volume` provides:
@@ -306,7 +306,7 @@ The capability ledger lists usdVol as a required domain.
 | RenderSettings | concrete | stub | Recognized placeholder prim (typed, in pipeline for parse + pprint + roundtrip); schema attrs stay generic (`props`) |
 | RenderProduct | concrete | stub | Same placeholder treatment |
 | RenderVar | concrete | stub | Same placeholder treatment |
-| RenderPass | concrete | next schema | Registry fallbacks/declarations and relationship validation; render-pass execution remains |
+| RenderPass | concrete | core schema | Registry fallbacks/declarations and relationship validation; render-pass execution remains |
 | RenderSettingsBase | abstract | -- | |
 
 **Coverage: 0/5 fully typed (3 placeholder-stub)**

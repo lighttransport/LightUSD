@@ -454,7 +454,7 @@ int main() {
 
   // The shared CUDA/HIP host scene keeps a compact optional back-material
   // stream. Also lock the legacy convention that material index 0 may be a
-  // real authored material; only the next loader's anonymous index-0 record is
+  // real authored material; only the core loader's anonymous index-0 record is
   // suppressed for an unbound instanced prototype.
   lusdview::DrawScene sidedScene;
   lusdview::DrawMaterialCPU frontMat;
@@ -487,7 +487,7 @@ int main() {
   }
 
   lusdview::DrawScene placeholderScene;
-  placeholderScene.materials.emplace_back();  // anonymous next-loader fallback
+  placeholderScene.materials.emplace_back();  // anonymous core-loader fallback
   lusdview::DrawMeshCPU placeholderMesh = sidedMesh;
   placeholderMesh.submeshes[0].backfaceMaterialId = -1;
   placeholderScene.meshes.push_back(std::move(placeholderMesh));
@@ -2862,11 +2862,11 @@ int main() {
     return 1;
   }
 
-  // The next converter stores volume terminals separately from surface
+  // The core converter stores volume terminals separately from surface
   // graphs. Verify that the shared bridge evaluates that retained graph
   // instead of falling back to the scalar terminal defaults.
-  lusdview::DrawMaterialCPU nextVolumeGraph;
-  nextVolumeGraph.volumeMaterialXNodeGraphJson = R"json({
+  lusdview::DrawMaterialCPU coreVolumeGraph;
+  coreVolumeGraph.volumeMaterialXNodeGraphJson = R"json({
     "nodegraph":{"nodes":[
       {"name":"densityNode","category":"constant","type":"float",
        "inputs":[{"name":"value","value":0.75}]},
@@ -2885,15 +2885,15 @@ int main() {
       {"input":"volume_emission_color","output":"volume_emission_color"},
       {"input":"volume_emission_scale","output":"volume_emission_scale"},
       {"input":"volume_anisotropy","output":"volume_anisotropy"}]})json";
-  nextVolumeGraph.hasVolumeOutput = true;
-  lusdview::BakeRealtimePbrMaterial(&nextVolumeGraph);
-  if (!nextVolumeGraph.hasVolumeOutput ||
-      !Near(nextVolumeGraph.volumeDensity, 0.75f) ||
-      !Near(nextVolumeGraph.volumeEmission[0], 0.4f) ||
-      !Near(nextVolumeGraph.volumeEmission[2], 0.8f) ||
-      !Near(nextVolumeGraph.volumeAnisotropy, 0.25f)) {
-    std::fprintf(stderr, "next MaterialX volume graph evaluation failed (density=%g)\n",
-                 nextVolumeGraph.volumeDensity);
+  coreVolumeGraph.hasVolumeOutput = true;
+  lusdview::BakeRealtimePbrMaterial(&coreVolumeGraph);
+  if (!coreVolumeGraph.hasVolumeOutput ||
+      !Near(coreVolumeGraph.volumeDensity, 0.75f) ||
+      !Near(coreVolumeGraph.volumeEmission[0], 0.4f) ||
+      !Near(coreVolumeGraph.volumeEmission[2], 0.8f) ||
+      !Near(coreVolumeGraph.volumeAnisotropy, 0.25f)) {
+    std::fprintf(stderr, "core MaterialX volume graph evaluation failed (density=%g)\n",
+                 coreVolumeGraph.volumeDensity);
     return 1;
   }
 

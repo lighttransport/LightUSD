@@ -4,7 +4,7 @@
 
 Production builds resolve LightUSD from the package in
 `node_modules/lightusd`. The Vite development server resolves the local
-`web/js/src/lightusd` modules instead so next-backend changes can be tested
+`web/js/src/lightusd` modules instead so core-backend changes can be tested
 before npm publication.
 
 Current package target:
@@ -23,11 +23,10 @@ npm run dev
 
 The `prepare:local-lightusd` script configures and incrementally builds:
 
-* `web/build_ninja` for the local legacy module
-* `web/build_next_ninja` for `lightusd_next`
+* `web/build_ninja` for the local core module (plus the deprecated combined module)
 
-Both targets emit their glue and WASM files into `web/js/src/lightusd`. Ninja
-does no work when the outputs are current.
+The core distribution target emits its glue and WASM files into `web/js/src/lightusd`.
+Ninja does no work when the outputs are current.
 
 The GitHub Pages workflow uses `bun install` followed by
 `bash web/site/build-pages.sh`. That production build still resolves

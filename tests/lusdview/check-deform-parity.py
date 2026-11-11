@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lusdview `--next`: the GPU deform must land where the CPU bake lands.
+"""lusdview `--core`: the GPU deform must land where the CPU bake lands.
 
 One harness, one claim, run over several fixtures: whatever the vertex shader
 does per frame (blendshape morph, then linear-blend skinning) has to put the
@@ -38,11 +38,11 @@ from gpu_backend import software_only_vulkan
 SKIP = 77
 MAX_MEAN_DIFF = 0.5   # GPU deform vs CPU bake: same geometry, bar raster edges
 MIN_POSE_DIFF = 1.0   # rest vs posed: the deform must actually move something
-MAX_LOADER_DIFF = 0.5  # next vs legacy: same deform, same bounds, same frame
+MAX_LOADER_DIFF = 0.5  # core vs legacy: same deform, same bounds, same frame
 
 
 def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
-           loader="--next"):
+           loader="--core"):
     try:
         os.remove(out)
     except FileNotFoundError:
@@ -159,7 +159,7 @@ def main():
               "of seconds")
         return 1
     # The CUDA/HIP tracers build their BVH from draw_ geometry, so they take the
-    # deform through poseNextDrawForTracer rather than the vertex shader. Same
+    # deform through poseCoreDrawForTracer rather than the vertex shader. Same
     # claim, different plumbing -- and until that landed they were pinned to the
     # load-time CPU bake, a SECOND deform implementation free to disagree with the
     # shader's (it did: it skinned before it morphed).
@@ -211,7 +211,7 @@ def main():
     cpu_ok, cpu_log = render(binary, scene, cpu, pose_t, camera,
                              backend=backend,
                              extra=["--skinning", "cpu"],
-                             env={"LUSDVIEW_NEXT_MORPH_BAKE": "1"})
+                             env={"LUSDVIEW_CORE_MORPH_BAKE": "1"})
     if not cpu_ok and fatal_render_error(cpu_log):
         print("FAIL: baked render aborted\n" + cpu_log)
         return 1
@@ -252,9 +252,9 @@ def main():
     if legacy_ok:
         ldiff = mean_diff(gpu, legacy)
         if ldiff > MAX_LOADER_DIFF:
-            print(f"FAIL: {tag}: the next and legacy loaders do not render the same "
+            print(f"FAIL: {tag}: the core and legacy loaders do not render the same "
                   f"helper-free depth frame (mean diff {ldiff:.3f} > "
-                  f"{MAX_LOADER_DIFF}) even though the next deform matches its own "
+                  f"{MAX_LOADER_DIFF}) even though the core deform matches its own "
                   f"CPU bake ({diff:.3f}). Check posed geometry, scene bounds, and "
                   f"depth normalization.")
             return 1

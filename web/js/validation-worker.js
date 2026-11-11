@@ -1,13 +1,13 @@
 // Shared by web/js and web/demo. Validation is synchronous inside WASM, so
 // run it in a disposable worker to keep the UI responsive and cancellable.
-import nextGlue from './src/lightusd/lightusd_validator.js?url';
-import nextWasm from './src/lightusd/lightusd_validator.wasm?url';
+import coreGlue from './src/lightusd/lightusd_validator.js?url';
+import validatorWasm from './src/lightusd/lightusd_validator.wasm?url';
 let module;
 self.onmessage = async ({data}) => {
   try {
     if (data.type === 'init') {
-      const factory = (await import(/* @vite-ignore */ nextGlue)).default;
-      module = await factory({locateFile:path => path.endsWith('.wasm') ? nextWasm : path});
+      const factory = (await import(/* @vite-ignore */ coreGlue)).default;
+      module = await factory({locateFile:path => path.endsWith('.wasm') ? validatorWasm : path});
       if (typeof module.runValidation !== 'function') throw new Error('Rebuild the core validator feature');
       self.postMessage({id: data.id, result: true});
       return;

@@ -271,7 +271,7 @@ function assetNameFor(path, rootDir) {
 // the root layer's directory, including nested uploaded folders.
 function loadUsd(assetMap, rootPath, combine) {
   const usd = new native.RenderStream();
-  const store = new native.NextAssetStore();
+  const store = new native.AssetStore();
   const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
   try {
     store.setBaseWorkingPath(rootDir);

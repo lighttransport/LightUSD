@@ -517,7 +517,7 @@ bool ComposeStageFromLayer(std::shared_ptr<Layer> root_layer,
   }
   const auto t3 = Clock::now();
   if (timing) {
-    LIGHTUSD_LOG_I("[next_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
+    LIGHTUSD_LOG_I("[core_compose] open=" + FormatMilliseconds(ms(t1 - t0)) +
                 "ms build_stage=" + FormatMilliseconds(ms(t2 - t1)) +
                 "ms reclaim=" + FormatMilliseconds(ms(t3 - t2)) + "ms");
   }
@@ -1848,7 +1848,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       }
       if (unread) trimmer_->Request();
       if (options.enable_timing)
-        LIGHTUSD_LOG_I("[next_build] unread_layers_released=" + UIntToStr(unread) +
+        LIGHTUSD_LOG_I("[core_build] unread_layers_released=" + UIntToStr(unread) +
                        " prims=" + UIntToStr(unread_prims));
     }
     const FaultCounters fault_structure1 = ReadFaultCounters(options.host_services);
@@ -1981,7 +1981,7 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       auto elapsed_ms = [](std::chrono::steady_clock::duration duration) {
         return std::chrono::duration<double, std::milli>(duration).count();
       };
-      LIGHTUSD_LOG_I("[next_build] warm=" +
+      LIGHTUSD_LOG_I("[core_build] warm=" +
                   FormatMilliseconds(elapsed_ms(structure_t0 - warm_t0)) +
                   "ms sources=" +
                   FormatMilliseconds(prof_sources_ns_ / 1e6) +
@@ -2867,7 +2867,7 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
                    .count() / 1e6;
       };
       auto t_merge = PWClock::now();
-      LIGHTUSD_LOG_I("[next_warm] frontier=" + UIntToStr(level.size()) +
+      LIGHTUSD_LOG_I("[core_warm] frontier=" + UIntToStr(level.size()) +
                   " W=" + IntToStr(W) +
                   " discover=" + FormatMilliseconds(ms(t_start, t_discover)) +
                   "ms workers=" + FormatMilliseconds(ms(t_discover, t_workers)) +

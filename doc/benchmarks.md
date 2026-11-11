@@ -364,10 +364,10 @@ Kitchen_set capture is reproduced for non-commercial testing only.
 ## Kitchen_set (Pixar) — small interior, fully real-time
 
 The classic Pixar kitchen: **1806 meshes, ~0.54 M triangles** (1.07 M after the
-`--next` converter's triangulation), no point instancers. It is **Z-up** and an
+`--core` converter's triangulation), no point instancers. It is **Z-up** and an
 *enclosed interior* — the auto-framer fits the whole bounding box, so a headless
 capture shows the room shell from outside (the props are inside the walls); it is
-best explored interactively by orbiting in. The `--next` lazy path frames it more
+best explored interactively by orbiting in. The `--core` lazy path frames it more
 cleanly than the eager path (robust auto-frame, correct Z-up).
 
 ```sh
@@ -380,7 +380,7 @@ K=/mnt/disk1/data/usd/Kitchen_set/Kitchen_set.usd
 xvfb-run -a -s "-screen 0 1280x1024x24" \
   ./build/lusdview --backend gl                 $K --frames 4 --screenshot kitchen_gl.png
 # Cleaner framing via the lazy loader:
-./build/lusdview --headless --next --backend vk $K --frames 4 --screenshot kitchen_next.png
+./build/lusdview --headless --core --backend vk $K --frames 4 --screenshot kitchen_core.png
 ```
 
 > _Screenshot omitted: Pixar's Kitchen_set EULA permits non-commercial
@@ -392,12 +392,12 @@ xvfb-run -a -s "-screen 0 1280x1024x24" \
 | OpenGL (windowed) | 1806 / 0.54 M | 3.5 s | 0.45 GiB | < 2 ms |
 | Vulkan raster | 1806 / 0.54 M | 3.0 s | 0.70 GiB | < 2 ms |
 | Vulkan ray query | 1806 / 0.54 M | 4.2 s | 0.69 GiB | ~0.1 ms |
-| `--next` VK raster | 1 / 1.07 M | 3.0 s | 0.72 GiB | < 2 ms |
+| `--core` VK raster | 1 / 1.07 M | 3.0 s | 0.72 GiB | < 2 ms |
 
 Comfortably real-time on every backend; the wall time is dominated by parse +
 device/pipeline init, not drawing. A good shading / Z-up / interior-framing
 regression fixture. (The `Kitchen_set_instanced.usd` variant loads identically on
-the eager path, which flattens USD native instancing; `--next` is needed to
+the eager path, which flattens USD native instancing; `--core` is needed to
 preserve instancing.)
 
 ---
@@ -407,7 +407,7 @@ preserve instancing.)
 A whole house + landscaped lot. The shipped entry point
 `USD/MooreLane_ASWF_0623.usda` **sublayers** the point-instanced foliage
 (`Instances/usd_pointInstances_0621.usd`, 223 MB) over the assembly, composing
-via `--next` to **35 draws / 297,518 instances / 22.8 M unique tris** — but
+via `--core` to **35 draws / 297,518 instances / 22.8 M unique tris** — but
 **4.33 B *effective* tris** once instancing is expanded. This is the regime where
 the per-frame [`--raster-lod`](large-scene.md#265-per-frame-view-dependent-raster-lod---raster-lod-lusdview)
 pays off: a single exterior view can put **a billion** effective triangles in the
@@ -415,18 +415,18 @@ frustum.
 
 The scene ships ~20 authored cameras (`MASTER_cameraExtended` plus
 `cam_diningRoom_*`, `cam_livingRoomFireplace`, `cam_exteriorDrive`, …); frame them
-with `--camera`. Interiors render near-black in the flat-shaded `--next` preview
+with `--camera`. Interiors render near-black in the flat-shaded `--core` preview
 (no scene lighting) — the **exterior** cameras are the useful headless shots.
 
 ```sh
 M=/mnt/disk1/data/usd/Intel_mooreLane_v1_2_0/Intel_mooreLane/USD/MooreLane_ASWF_0623.usda
 # Foliage-heavy exterior hero (40 GiB host cgroup, framing an authored camera):
 systemd-run --user --scope -p MemoryMax=40G -p MemorySwapMax=2G \
-  ./build/lusdview --headless --next --backend vk --camera cam_exteriorDrive \
+  ./build/lusdview --headless --core --backend vk --camera cam_exteriorDrive \
     --max-tris 80000000 --frames 4 --screenshot moore_ext.png $M
 # Same view, view-dependent LOD (collapse < 24 px to box proxies, drop < 1.5 px):
 systemd-run --user --scope -p MemoryMax=40G -p MemorySwapMax=2G \
-  ./build/lusdview --headless --next --backend vk --camera cam_exteriorDrive \
+  ./build/lusdview --headless --core --backend vk --camera cam_exteriorDrive \
     --raster-lod --raster-lod-cull-px 1.5 --raster-lod-full-px 24 \
     --max-tris 80000000 --frames 4 --screenshot moore_ext_lod.png $M
 ```
@@ -474,5 +474,5 @@ content but parses much slower than the sublayered entry; prefer
 * Moore Lane's **exterior foliage** view is the one case that benefits from
   `--raster-lod` (1.02 B → 102 M effective tris, ~8.6× present), making it the
   natural middle-scale regression for the per-frame view-dependent LOD path.
-* Use **`--next`** for both: it gives correct Z-up + robust framing on
+* Use **`--core`** for both: it gives correct Z-up + robust framing on
   Kitchen_set and preserves the point-instanced foliage on Moore Lane.

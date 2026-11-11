@@ -6,7 +6,7 @@ physics simulation, composition, export, and more.
 ## Quick Start
 
 ```bash
-# Production build (local next WASM)
+# Production build (local core WASM)
 npm install
 npm run prepare:openchess
 npm run build
@@ -28,7 +28,7 @@ npm run dev               # builds local WASM + starts Vite dev server
 
 The dev server (`npm run dev`) builds LightUSD WASM from source using the
 local Emscripten toolchain, then serves the demo from the local source tree.
-The production build uses the same next module and keeps the deprecated
+The production build uses the same core module and keeps the deprecated
 combined module for explicit compatibility demos.
 
 ```bash
@@ -126,8 +126,8 @@ step described by the exporter documentation.
 ### How it works
 
 1. `prepare-local-lightusd.sh` configures two CMake builds:
-   - `web/build_ninja/` — legacy WASM (`lightusd.wasm` + `lightusd.js`)
-   - `web/build_next_ninja/` — next WASM (`lightusd.wasm` + `lightusd.js`)
+   - `web/build_ninja/` — core WASM (`lightusd.wasm` + `lightusd.js`)
+   - `web/build_ninja/` — core WASM (`lightusd.wasm` + `lightusd.js`)
 2. Build artifacts are copied to `web/js/src/lightusd/`
 3. Vite serves JS modules from `web/js/src/lightusd/` via the `lightusd` alias
 4. Hot-reload is available for JS changes; WASM changes require re-running
@@ -140,8 +140,8 @@ Pre-configured CMake bootstrap scripts in `web/`:
 | Script | Description |
 |--------|-------------|
 | `bootstrap-linux-ninja.sh` | Legacy WASM only (fastest) |
-| `bootstrap-linux-next-only.sh` | Next WASM only |
-| `bootstrap-linux-demodev.sh` | Both legacy + next, dev-optimized |
+| `bootstrap-linux-core-only.sh` | Core WASM only |
+| `bootstrap-linux-demodev.sh` | Both legacy + core, dev-optimized |
 | `bootstrap-linux-release.sh` | Release build (optimized) |
 | `bootstrap-linux-debug.sh` | Debug build with assertions |
 | `bootstrap-linux-wasm64.sh` | 64-bit WASM build |
@@ -188,7 +188,7 @@ npm run preview
 - COOP/COEP headers (`Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp`) are required for
   `SharedArrayBuffer` support (used by WASM threading)
-- `?backend=next` selects the next rendering backend (if available in build)
+- `?backend=core` selects the core rendering backend (if available in build)
 
 ## QA Testing
 
@@ -290,12 +290,12 @@ CORS, and 403/429 responses are reported in the viewer.
 | 20 | Procedural USD Builder | JSON → USD scene builder |
 | 21 | USDZ Packager | Export with bundle visualization |
 | 22 | USD Diff | Side-by-side comparison |
-| 23 | Backend Comparison | Legacy vs next rendering comparison |
+| 23 | Backend Comparison | Legacy vs core rendering comparison |
 | 24 | Online USD Viewer | File/folder upload, deferred payloads, materials, and animation |
 
 ### USD validation
 
 Open `validation.html` for the same validation UI as `web/js/validation.html`.
-It shares the worker and full next-WASM lusdchecker API, including strict and
+It shares the worker and full core-WASM lusdchecker API, including strict and
 AOUSD profiles, dependency folders, custom JSON definitions, coverage reporting,
 and JSON/SARIF downloads. See [the checker API guide](../../tools/lusdchecker/README.md#javascript--wasm).

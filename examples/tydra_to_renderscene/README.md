@@ -11,7 +11,7 @@ composition and Tydra; legacy is not required.
 ./build_ninja/tydra_to_renderscene animated.usda --nodump --dump-timesamples
 ```
 
-`--help` lists the controls. `--next` is a compatibility alias for the core
+`--help` lists the controls. `--core` is a compatibility alias for the core
 default. JSON diagnostics contain source metadata, configuration, resource
 counts, hierarchy, geometry previews, shader parameters and animation channels.
 YAML presents the same records in block form. Large arrays are previewed;

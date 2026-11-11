@@ -14,7 +14,7 @@ export function formatBytes(bytes) {
 export async function testMemoryUsage() {
   const loader = new LightUSDLoader();
   await loader.init({useMemory64: process.env.LIGHTUSD_WASM64 === '1'});
-  const store = new loader.native_.NextAssetStore();
+  const store = new loader.native_.AssetStore();
   try {
     const baseline = store.memoryStats();
     console.log('Core WASM asset-store memory usage');

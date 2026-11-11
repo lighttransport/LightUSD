@@ -1,6 +1,6 @@
 #version 450
 
-// Instanced authored-cage wireframe (--next GPU-instanced prototypes).
+// Instanced authored-cage wireframe (--core GPU-instanced prototypes).
 //
 // The single-draw wire program (wire.vert) cannot serve instanced prototypes:
 // its skin/morph attributes occupy locations 3/4/5, which the instanced vertex

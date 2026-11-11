@@ -3,7 +3,7 @@
  *
  * interpolation.c -- C11 time-sample interpolation primitives.
  *
- * The Value-free numeric core of src/next/types/interpolation.cc: the
+ * The Value-free numeric core of src/types/interpolation.cc: the
  * "is this type linearly interpolatable" predicate (over lu_type_id, which
  * mirrors ::lightusd::TypeId) and the scalar/vector lerp and quaternion slerp
  * kernels. The Value-typed InterpolateValues / bracket search stay C++.

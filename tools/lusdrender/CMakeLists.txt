@@ -166,7 +166,7 @@ add_executable(lusdrender
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
-  lusdr_next.cc
+  lusdr_core.cc
   lusdr_lod.cc
   lusdr_scene.cc
   lusdr_rt_lod.cc
@@ -290,7 +290,7 @@ set(LUSDRENDER_CXX_SOURCES
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
-  lusdr_next.cc
+  lusdr_core.cc
   lusdr_lod.cc
   lusdr_scene.cc
   lusdr_rt_lod.cc

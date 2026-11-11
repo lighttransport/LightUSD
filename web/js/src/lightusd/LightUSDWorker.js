@@ -5,27 +5,27 @@
  * Communicates with the main thread via postMessage for progress updates.
  */
 
-import { NextRenderSceneAdapter } from './LightUSDLoader.js';
+import { RenderSceneAdapter } from './LightUSDLoader.js';
 
 let lightusd = null;
-let lightusdNext = null;
+let lightusdCore = null;
 let lightusdBackend = '';
 let loader = null;
 
 // The worker always runs on the core module; the legacy backend was removed.
-function wantsNextBackend(options = {}) {
+function wantsCoreBackend(options = {}) {
     if (options.backend === 'legacy' || options.wasm === 'legacy') {
         console.warn('[LightUSDWorker] The legacy backend was removed; using the core module.');
     }
     return true;
 }
 
-function postNextProgress(info = {}) {
+function postLoadProgress(info = {}) {
     self.postMessage({
         type: 'progress',
-        phase: info.stage || info.backend || 'next',
+        phase: info.stage || info.backend || 'core',
         progress: Number.isFinite(info.percentage) ? info.percentage / 100 : 0,
-        message: info.message || 'Loading next scene...'
+        message: info.message || 'Loading USD scene...'
     });
 }
 
@@ -33,21 +33,21 @@ function postNextProgress(info = {}) {
  * Initialize the WASM module
  */
 async function init(options = {}) {
-    const nextBackend = wantsNextBackend(options);
-    if (nextBackend && lightusdNext) {
-        lightusd = lightusdNext;
-        lightusdBackend = 'next';
+    const wantsCore = wantsCoreBackend(options);
+    if (wantsCore && lightusdCore) {
+        lightusd = lightusdCore;
+        lightusdBackend = 'core';
         return true;
     }
     try {
-        if (nextBackend) {
+        if (wantsCore) {
             const useMemory64 = options.useMemory64 === true;
             const moduleUrl = new URL(useMemory64 ? './lightusd_64.js' : './lightusd.js',
                 import.meta.url).href;
             const module = await import(/* @vite-ignore */ moduleUrl);
-            lightusdNext = await module.default();
-            lightusd = lightusdNext;
-            lightusdBackend = 'next';
+            lightusdCore = await module.default();
+            lightusd = lightusdCore;
+            lightusdBackend = 'core';
             return true;
         }
 
@@ -66,12 +66,12 @@ async function loadFromBinary(binary, filename, options = {}) {
     if (!ok) return;
 
     try {
-        if (wantsNextBackend(options)) {
+        if (wantsCoreBackend(options)) {
             self.postMessage({ type: 'progress', phase: 'parsing', progress: 0.1 });
-            loader = await NextRenderSceneAdapter.create(lightusd, binary, filename, {
+            loader = await RenderSceneAdapter.create(lightusd, binary, filename, {
                 ...options,
-                backend: 'next',
-                onProgress: postNextProgress
+                backend: 'core',
+                onProgress: postLoadProgress
             });
             self.postMessage({ type: 'progress', phase: 'extracting', progress: 0.8 });
             const sceneData = extractSceneData(loader);

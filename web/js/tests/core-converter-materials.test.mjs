@@ -10,7 +10,7 @@ const native = await loadWasm(
 const source = fs.readFileSync(new URL(
   '../../../tests/legacy/unit/fixtures/usdzconvert-regression-textured-two-materials.usda',
   import.meta.url));
-const converter = new native.NextUSDZConverterNative();
+const converter = new native.USDZConverterNative();
 try {
   assert.equal(converter.loadFromBinary(new Uint8Array(source), 'scene.usda'), true,
     converter.error());
@@ -22,7 +22,7 @@ try {
     assert.ok(bytes?.length, converter.error());
     const archive = unpackUSDZ(bytes);
     assert.ok(archive.entries.has('textures/renamed.png'));
-    const reader = new native.NextUSDZConverterNative();
+    const reader = new native.USDZConverterNative();
     try {
       assert.equal(reader.loadFromBinary(bytes, 'converted.usdz'), true, reader.error());
       const text = reader.exportAsUSDA();
@@ -54,7 +54,7 @@ try {
     const options={rootLayerFormat,optimizeMaterials,reencode:false};
     const result = streaming ? await convertSourceToUSDZStreaming(native,{keys:[...input.keys()],fetch:async key=>input.get(key)},options)
       :await convertFolderToUSDZ(native,input,options);
-    const reader = new native.NextUSDZConverterNative();
+    const reader = new native.USDZConverterNative();
     try {
       assert.ok(reader.loadFromBinary(result.usdz,'preview.usdz'),reader.error());
       const text = reader.exportAsUSDA();
@@ -127,7 +127,7 @@ for (const streaming of [false,true]) for (const rootLayerFormat of ['usda','usd
   assert.deepEqual(rgba(5,6),colors.Red);
   assert.deepEqual(rgba(0,7),colors.Green);
   assert.deepEqual(rgba(4,7),colors.Red);
-  const reader = new native.NextUSDZConverterNative();
+  const reader = new native.USDZConverterNative();
   try {
     assert.ok(reader.loadFromBinary(result.usdz,'atlas.usdz'),reader.error());
     const text = reader.exportAsUSDA();

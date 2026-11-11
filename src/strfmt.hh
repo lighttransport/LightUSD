@@ -3,8 +3,8 @@
 //
 // LightUSD - integer<->string formatting (C++ adapter).
 //
-// The digit loop lives in the C11 core (src/next/c/strfmt.c, `lu_uint_to` /
-// `lu_int_to`); these wrappers forward to it so every "next" subsystem and C
+// The digit loop lives in the C11 core (src/c/strfmt.c, `lu_uint_to` /
+// `lu_int_to`); these wrappers forward to it so every "core" subsystem and C
 // consumer shares one copy. Locale-independent, libc-free, output byte-
 // identical to `ss << v` under the classic locale: plain decimal, leading '-'
 // for negatives, no '+'/padding/grouping. Kept dependency-light (<string>/

@@ -105,13 +105,13 @@ Four WASM variants (Emscripten SDK 4.0.9), then packages all of them:
 |---|---|---|
 | WASM32 legacy | `web/cmake-build` | `-DLIGHTUSD_WASM_PRODUCT=legacy` |
 | WASM64 legacy | `web/cmake-build64` | `-DLIGHTUSD_WASM_PRODUCT=legacy -DLIGHTUSD_WASM64=1` |
-| WASM32 next | `web/cmake-build-next` | `-DLIGHTUSD_WASM_PRODUCT=next` |
-| WASM64 next | `web/cmake-build-next64` | `-DLIGHTUSD_WASM_PRODUCT=next -DLIGHTUSD_WASM64=1` |
+| WASM32 core | `web/cmake-build-core` | `-DLIGHTUSD_WASM_PRODUCT=core` |
+| WASM64 core | `web/cmake-build-core64` | `-DLIGHTUSD_WASM_PRODUCT=core -DLIGHTUSD_WASM64=1` |
 
 Gates before publish:
 
-1. **Smoke test**: `web/js/tests/usdzconvert-next.test.mjs` on both 32- and
-   64-bit (a next-pipeline regression blocks publish).
+1. **Smoke test**: `web/js/tests/usdzconvert-core.test.mjs` on both 32- and
+   64-bit (a core-pipeline regression blocks publish).
 2. **Staging**: `npm run build:stage -- --release-version=<input>` — copies the
    8 required files (`lightusd*.js`/`*.wasm`/`*_64*`/`*_next*`, zstd-compressed
    variants) into `web/npm/dist`, rewrites `../` imports, and stamps the
@@ -188,4 +188,4 @@ npm run build:wasm
 | `HTTP 422: Unexpected inputs provided` | `gh workflow run` resolved `wasmPublish.yml` from the wrong ref (e.g. `release` lacks the inputs); pass `--ref dev` |
 | Wheel version wrong | `setuptools_scm` reads the git tag — push the tag first, use `fetch-depth: 0` locally (`git fetch --tags`), never hand-edit `python/lightusd/_version.py` |
 | npm publish needs auth/provenance | OIDC provenance must be configured for the org/package; locally you cannot publish from a dev machine without an npm token (not supported by this workflow) |
-| WASM smoke test fails | A `next` pipeline regression — fix before publishing; the gate intentionally blocks `wasmPublish.yml` |
+| WASM smoke test fails | A `core` pipeline regression — fix before publishing; the gate intentionally blocks `wasmPublish.yml` |

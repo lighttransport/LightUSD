@@ -57,19 +57,19 @@ well as binary sections/fields. Its seed bytes must omit the eight-byte
 prepends its USDA header. Use a copied corpus for mutation runs so generated
 inputs remain outside the source fixture directories.
 
-## src/next harnesses
+## core harnesses
 
-The `next` module has five of its own libFuzzer harnesses -- `next_usdc`
-(crate reader), `next_usda` (ASCII parser), `next_compose` (composition),
-`next_roundtrip` (USDA/USDC/USDZ writer and reader round trips), and
-`next_dtoa` (USDA float formatter: zmij fast path vs dragonbox reference,
-buffer overshoot, round-trip; the input bytes are the float/double bit
-patterns, so no seed corpus is needed).
-They are built from `src/next`, not from the top-level project, and are off by
+The core library has five of its own libFuzzer harnesses -- `fuzz_core_usdc`
+(crate reader), `fuzz_core_usda` (ASCII parser), `fuzz_core_compose`
+(composition), `fuzz_core_roundtrip` (USDA/USDC/USDZ writer and reader round
+trips), and `fuzz_core_dtoa` (USDA float formatter: zmij fast path vs
+dragonbox reference, buffer overshoot, round-trip; the input bytes are the
+float/double bit patterns, so no seed corpus is needed).
+They are built from `src/`, not from the top-level project, and are off by
 default because they require clang:
 
 ```
-$ cmake -S src/next -B build-fuzz -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
+$ cmake -S src -B build-fuzz -DLIGHTUSD_BUILD_FUZZERS=ON \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo
 $ cmake --build build-fuzz -j
@@ -80,14 +80,14 @@ It applies bounded input, nesting, string, array, and object limits, then
 exercises the parse-to-serialize boundary:
 
 ```sh
-cmake -S src/next -B build-fuzz -G Ninja \
-  -DLIGHTUSD_NEXT_BUILD_FUZZERS=ON \
+cmake -S src -B build-fuzz -G Ninja \
+  -DLIGHTUSD_BUILD_FUZZERS=ON \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build-fuzz --target fuzz_minijson -j
 build-fuzz/fuzz_minijson -runs=1000 tests/fuzzer/minijson-seeds
 ```
 
-`fuzz_next_import` covers native OBJ, URDF and MJCF import through the C
+`fuzz_core_import` covers native OBJ, URDF and MJCF import through the C
 import API (parsers, MJCF `replicate`/cable `composite`/`flexcomp` expansion
 and the USD writer, in the `newton` and `legacy` profiles) and the COLLADA
 reader. The first input byte selects the format (`& 3`: OBJ, URDF, MJCF,
@@ -95,8 +95,8 @@ COLLADA) and profile (`& 4`: legacy); inputs have no anchor, so referenced
 files are not opened:
 
 ```sh
-cmake --build build-fuzz --target fuzz_next_import -j
-build-fuzz/fuzz_next_import -fork=4 -max_len=16384 corpus tests/fuzzer/next_import_seeds
+cmake --build build-fuzz --target fuzz_core_import -j
+build-fuzz/fuzz_core_import -fork=4 -max_len=16384 corpus tests/fuzzer/core_import_seeds
 ```
 
 For containerized runs where LeakSanitizer is unavailable, use
@@ -107,9 +107,9 @@ The library itself is compiled with `-fsanitize=fuzzer-no-link,address,
 undefined`, so coverage-guided exploration reaches the reader and not just the
 harness body.
 
-### Seeding next_usdc
+### Seeding fuzz_core_usdc
 
-`next_usdc_fuzzmain.cc` re-prepends the 8-byte `PXR-USDC` magic, so seeds must
+`core_usdc_fuzzmain.cc` re-prepends the 8-byte `PXR-USDC` magic, so seeds must
 have it **stripped** -- otherwise every input carries a doubled magic and the
 parser rejects it immediately:
 
@@ -122,17 +122,17 @@ for f in glob.glob('tests/usdc/*.usdc') + glob.glob('models/*.usdc'):
     if d[:8] == b'PXR-USDC':
         open('/tmp/usdc-corpus/'+os.path.basename(f)+'.seed','wb').write(d[8:])
 "
-$ ./build-fuzz/fuzz_next_usdc -jobs=8 -workers=8 -max_total_time=1500 \
+$ ./build-fuzz/fuzz_core_usdc -jobs=8 -workers=8 -max_total_time=1500 \
     -max_len=131072 -artifact_prefix=/tmp/artifacts/ /tmp/usdc-corpus
 ```
 
 Check a corpus without fuzzing (fast, useful in CI) with `-runs=0`.
 
-`scripts/run-next-checks.sh RUN_FUZZ=1` does exactly that: it builds the four
+`scripts/run-core-checks.sh RUN_FUZZ=1` does exactly that: it builds the four
 harnesses and replays the seed corpus through each, which keeps them compiling
 and the seeds clean without a long fuzzing session.
 
-`next_roundtrip` consumes the USDA seed corpus directly. Each parseable seed is
+`fuzz_core_roundtrip` consumes the USDA seed corpus directly. Each parseable seed is
 serialized to USDA, USDC, and USDZ, then the generated outputs are read back;
 expected parse or writer rejection is ignored, while crashes and sanitizer
 failures are reported by libFuzzer.

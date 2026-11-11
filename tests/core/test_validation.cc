@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
-// AOUSD Core validation tests for src/next/validation: a valid USDA passes;
+// AOUSD Core validation tests for src/validation: a valid USDA passes;
 // specific rule violations are flagged with the expected rule ids; option
 // group toggling controls which rules run.
 

@@ -3,7 +3,7 @@
 //
 // LightUSD - sparse array edit (VtArrayEdit) text building & evaluation.
 //
-// The next core carries an authored `edit [ <op>; ... ]` value as a
+// The core carries an authored `edit [ <op>; ... ]` value as a
 // structured op list (PrimSpec::array_edit) whose literal elements are
 // canonical usda ELEMENT TEXT, plus the canonical `edit [...]` one-liner in
 // raw_default_source for printing. Evaluation applies the ops to a base

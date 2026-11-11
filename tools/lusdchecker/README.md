@@ -1,7 +1,7 @@
 # lusdchecker
 
 `lusdchecker` validates USDA, USDC, USDZ, and MaterialX `.mtlx` documents using
-LightUSD's dependency-free `next` core. It runs AOUSD Core 1.1.0 semantic checks and the
+LightUSD's dependency-free core library. It runs AOUSD Core 1.1.0 semantic checks and the
 available structural schema checks for UsdGeom/UsdSkel, UsdShade/MaterialX,
 UsdLux, and UsdPhysics (including the supported physics extensions).
 
@@ -81,7 +81,7 @@ finding lacks a matching lusdchecker finding and site. It runs in ctest as
 
 ## Current scope
 
-Validation is performed on the authored `next::Layer` by default. `--composed`
+Validation is performed on the authored layer by default. `--composed`
 resolves external arcs, validates the flattened result, and reports composition
 errors and cross-arc attribute/property-kind type conflicts, and enumerates
 every combination of authored variant selections (see "usdchecker parity"
@@ -245,15 +245,15 @@ unmapped findings fail comparison. It skips an unavailable reference unless
 
 ## JavaScript / WASM
 
-The next WASM module compiles the same checker engine and built-in definitions
+The core WASM module compiles the same checker engine and built-in definitions
 as the native executable. The existing validation page is shared by
 `web/js/validation.html` and `web/demo/validation.html`; both run checks in a
-cancellable worker. The next backend is the default. The legacy backend retains
+cancellable worker. The core backend is the default. The legacy backend retains
 its original lightweight validation contract.
 
 ```sh
 emcmake cmake -S web -B web/build_ninja/checker -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DLIGHTUSD_WASM_PRODUCT=next \
+  -DCMAKE_BUILD_TYPE=Release -DLIGHTUSD_WASM_PRODUCT=core \
   -DLIGHTUSD_WASM_OUTPUT_DIRECTORY="$PWD/web/js/src/lightusd"
 cmake --build web/build_ninja/checker -j8
 cd web/js
@@ -263,7 +263,7 @@ npm run dev:validation
 ```js
 import createModule from './lightusd.js';
 const usd = await createModule();
-const assets = new usd.NextAssetStore();
+const assets = new usd.AssetStore();
 try {
   assets.registerMemoryAsset('parts/mesh.usda', meshBytes);
   const report = usd.checkUSD(rootBytes, 'scene.usda', {
@@ -280,7 +280,7 @@ object, including `valid`, `complete`, `executionSuccessful`, `gatePassed`, issu
 categories, source assets, variant selections, and sampled times. It accepts
 ArrayBuffer views, including WASM heap views, and supports wasm32 and memory64.
 It is synchronous; use a worker for large inputs. It performs no network or
-filesystem reads. Supply dependencies through `NextAssetStore` using their
+filesystem reads. Supply dependencies through `AssetStore` using their
 relative paths, or upload a folder in the demo to preserve those paths. Missing
 required dependencies fail strict coverage. USDZ members are read in memory.
 

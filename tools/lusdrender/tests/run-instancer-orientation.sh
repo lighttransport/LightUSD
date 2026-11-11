@@ -2,7 +2,7 @@
 #
 # Regression test: a PointInstancer's `orientations` quaternion is REAL-FIRST.
 #
-# The next stage stores quats as (w, x, y, z) -- crate is imaginary-first on disk
+# The core stage stores quats as (w, x, y, z) -- crate is imaginary-first on disk
 # and the reader swizzles on load (crate-reader-unpack.cc). InstanceTRS used to read
 # the four floats as (x, y, z, w), which changes an authored Z rotation into a
 # different transform: instances came out rotated wrongly, and often upside
@@ -193,7 +193,7 @@ if ! cmp -s "$TMP/instanced.png" "$TMP/xformed.png"; then
   echo "FAIL: a PointInstancer instance rotated by quath (0, 0, 0, 1) does"
   echo "      NOT land where the same mesh under xformOp:rotateZ=180 lands. Those are"
   echo "      the same rotation, so they are the same world geometry and must render"
-  echo "      identically. The next stage stores quats REAL-FIRST (w, x, y, z) -- the"
+  echo "      identically. The core stage stores quats REAL-FIRST (w, x, y, z) -- the"
   echo "      crate reader swizzles them on load -- so InstanceTRS must read"
   echo "      (w, x, y, z), not (x, y, z, w). Reading it imaginary-first turns this"
   echo "      half turn about +Z into the identity, and in real"

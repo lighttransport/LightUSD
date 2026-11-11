@@ -41,7 +41,7 @@ The gaps selected for the 2026-07-11 remediation pass and the 2026-07-12 deeper 
 | USDC follow-up audit | **Fixed for bounded findings** | Omitted reference paths, compression dispatch, documentation, and sparse ordering are fixed. Unknown Layer, Prim, Attribute, and Relationship fields now retain their token, typed value, and `UnregisteredValue` source and rewrite interoperably instead of being dropped or rejected merely for being unknown. |
 | Interpolation breadth | **Implemented for AOUSD §12.6 types** | Every normative scalar, vector, matrix, and quaternion family plus held fallback is covered; semantic aliases preserve their declared roles. Numeric array interpolation remains an implementation extension, not part of the §12.6 compliance claim. |
 
-The dedicated [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) regression covers Unicode, the normative §8 valid/invalid path examples, typed spline parse/evaluate/USDC round-trip, the expanded foundational type matrix, `opaque`/`group` block USDA/USDC round trips, dictionary and multi-site relationship composition, raw/forwarded relationship targets and cycles, authored-empty defaultPrim/documentation/dictionaries/color metadata/namespace orders/relationships, the complete reviewed `apiSchemas`, `variantSetNames`, and `clipSets` sublist matrices, ordinary/direct-inherit/multi-inherit/specialize specifier matrices, ancestry and model-hierarchy queries, fixture-backed USDA/USDC namespace order, composed defaultPrim references, the exact §12.6 interpolation matrix, schema fallback/population, value clips (set ordering, manifest gating, and bracketing interpolation), and strict missing-loader behavior. Pxr-authored USDC fixtures separately verify empty order/list field presence and that unknown fields at every core spec scope cannot bypass strict loss detection.
+The dedicated [`test_aousd_conformance.cc`](../tests/core/test_aousd_conformance.cc) regression covers Unicode, the normative §8 valid/invalid path examples, typed spline parse/evaluate/USDC round-trip, the expanded foundational type matrix, `opaque`/`group` block USDA/USDC round trips, dictionary and multi-site relationship composition, raw/forwarded relationship targets and cycles, authored-empty defaultPrim/documentation/dictionaries/color metadata/namespace orders/relationships, the complete reviewed `apiSchemas`, `variantSetNames`, and `clipSets` sublist matrices, ordinary/direct-inherit/multi-inherit/specialize specifier matrices, ancestry and model-hierarchy queries, fixture-backed USDA/USDC namespace order, composed defaultPrim references, the exact §12.6 interpolation matrix, schema fallback/population, value clips (set ordering, manifest gating, and bracketing interpolation), and strict missing-loader behavior. Pxr-authored USDC fixtures separately verify empty order/list field presence and that unknown fields at every core spec scope cannot bypass strict loss detection.
 
 LightUSD still must not claim full AOUSD Core 1.0.1 compliance, but the supplemental composition delta that used to be the largest measured blocker is now **closed: all 138 supplemental composition cases pass** (see [Supplemental corpus](#verification-performed)). OpenUSD domain-schema breadth and the full `SdfVariableExpression` function grammar remain outside the completed AOUSD Core schema and asset-path-substitution subsets.
 
@@ -63,15 +63,15 @@ The review also found strong foundations worth preserving: bounded parsing, no-e
 
 This review covers:
 
-- `src/next` core data model, USDA/USDC/USDZ I/O, composition, resource resolution, validation, and value evaluation;
-- `src/tydra/next` render-scene conversion and access behavior;
+- `src/` core data model, USDA/USDC/USDZ I/O, composition, resource resolution, validation, and value evaluation;
+- `src/tydra` render-scene conversion and access behavior;
 - relevant legacy LightUSD behavior where `lusdcat` provides a useful second implementation point;
 - the checked-out OpenUSD source and `usdcat` as the expected behavior oracle where the AOUSD text is ambiguous;
 - the normative AOUSD Core Specification 1.0.1 stored in this repository.
 
 It does **not** require LightUSD to reproduce every OpenUSD library, plugin, Python binding, imaging subsystem, or command-line option. Those are OpenUSD parity questions, not automatically AOUSD conformance requirements. Conversely, a small API surface can still be conformant if its implemented stage, resolution, and format behavior meets section 4.
 
-The December 2025 AOUSD supplemental release is integrated as an optional external corpus through [`run-aousd-supplemental.py`](../tests/next/run-aousd-supplemental.py). It is Apache-2.0 but is not vendored, avoiding 19 MB of binary fixtures. The Core Specification remains normative; the adapter supplies a measurable regression baseline rather than a compliance declaration.
+The December 2025 AOUSD supplemental release is integrated as an optional external corpus through [`run-aousd-supplemental.py`](../tests/core/run-aousd-supplemental.py). It is Apache-2.0 but is not vendored, avoiding 19 MB of binary fixtures. The Core Specification remains normative; the adapter supplies a measurable regression baseline rather than a compliance declaration.
 
 ### Principal implementation evidence
 
@@ -79,16 +79,16 @@ The findings below are grounded primarily in these implementation areas:
 
 | Concern | LightUSD source |
 |---|---|
-| USDA property parsing and unsupported suffix handling | [`ascii-parser-prim.cc`](../src/next/parser/ascii-parser-prim.cc) |
-| Foundational type registry and values | [`type-id.hh`](../src/next/types/type-id.hh), [`type-info.cc`](../src/next/types/type-info.cc), [`value.hh`](../src/next/types/value.hh) |
-| Unicode identifiers and path representation | [`identifier.hh`](../src/next/prim/identifier.hh), [`path.hh`](../src/next/prim/path.hh), [`path.cc`](../src/next/prim/path.cc) |
-| Composition and flattening | [`composition.cc`](../src/next/composition/composition.cc), [`flatten.cc`](../src/next/pipeline/flatten.cc), [`pcp/`](../src/next/pcp/) |
-| Attribute, clip, and fallback evaluation | [`attribute-eval.cc`](../src/next/eval/attribute-eval.cc), [`value-clip.cc`](../src/next/eval/value-clip.cc), [`schema-registry.cc`](../src/next/schema/schema-registry.cc), [`interpolation.cc`](../src/next/types/interpolation.cc) |
-| Crate reading and feature decoding | [`crate-reader.cc`](../src/next/crate/crate-reader.cc), [`crate-reader-decode.cc`](../src/next/crate/crate-reader-decode.cc), [`crate-format.hh`](../src/next/crate/crate-format.hh) |
-| Asset resolution | [`asset-resolver.cc`](../src/next/resolver/asset-resolver.cc) |
-| USDZ I/O | [`usdz-reader.cc`](../src/next/reader/usdz-reader.cc), [`usdz-writer.cc`](../src/next/writer/usdz-writer.cc) |
-| Semantic validation | [`usd-validation.cc`](../src/next/validation/usd-validation.cc) |
-| Tydra render conversion | [`render-converter.cc`](../src/tydra/next/render-converter.cc), [`render-data.hh`](../src/tydra/next/render-data.hh) |
+| USDA property parsing and unsupported suffix handling | [`ascii-parser-prim.cc`](../src/parser/ascii-parser-prim.cc) |
+| Foundational type registry and values | [`type-id.hh`](../src/types/type-id.hh), [`type-info.cc`](../src/types/type-info.cc), [`value.hh`](../src/types/value.hh) |
+| Unicode identifiers and path representation | [`identifier.hh`](../src/prim/identifier.hh), [`path.hh`](../src/prim/path.hh), [`path.cc`](../src/prim/path.cc) |
+| Composition and flattening | [`composition.cc`](../src/composition/composition.cc), [`flatten.cc`](../src/pipeline/flatten.cc), [`pcp/`](../src/pcp/) |
+| Attribute, clip, and fallback evaluation | [`attribute-eval.cc`](../src/eval/attribute-eval.cc), [`value-clip.cc`](../src/eval/value-clip.cc), [`schema-registry.cc`](../src/schema/schema-registry.cc), [`interpolation.cc`](../src/types/interpolation.cc) |
+| Crate reading and feature decoding | [`crate-reader.cc`](../src/crate/crate-reader.cc), [`crate-reader-decode.cc`](../src/crate/crate-reader-decode.cc), [`crate-format.hh`](../src/crate/crate-format.hh) |
+| Asset resolution | [`asset-resolver.cc`](../src/resolver/asset-resolver.cc) |
+| USDZ I/O | [`usdz-reader.cc`](../src/reader/usdz-reader.cc), [`usdz-writer.cc`](../src/writer/usdz-writer.cc) |
+| Semantic validation | [`usd-validation.cc`](../src/validation/usd-validation.cc) |
+| Tydra render conversion | [`render-converter.cc`](../src/tydra/render-converter.cc), [`render-data.hh`](../src/tydra/render-data.hh) |
 
 ### Status and priority vocabulary
 
@@ -142,14 +142,14 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 
 At the baseline revision, the repository fixture `tests/usda/spline_basic.usda` produced five unknown-property warnings and rewrote to an empty `Splines` prim. It now round-trips with typed spline semantics.
 
-The implementation ([`src/next/types/spline.{hh,cc}`](../src/next/types/spline.hh)) covers:
+The implementation ([`src/types/spline.{hh,cc}`](../src/types/spline.hh)) covers:
 
 - a typed `SplineData`/`SplineKnot` model (bezier/hermite, dual-valued knots, per-knot tangents, tangent algorithms including `autoEase`, held/linear/curve interpolation, held/linear/sloped/loop extrapolation);
 - USDA parse/write of the `.spline` block, with strict mode rejecting malformed splines at parse time;
 - USDC 0.12 type-59 read/write, byte-compatible with `pxr/base/ts/binary.cpp` (0.13 bump when a knot carries a tangent algorithm);
 - spline value resolution in `AttributeEval` at the AOUSD precedence `timeSamples > spline > default`, casting to the declared `double`/`float`/`half`, with `autoEase` tangents recomputed per `pxr/base/ts/knotData.cpp`.
 
-**Verification:** `TestTypedSplines` in [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) (evaluate + USDC round-trip + half rounding + autoEase + declared-type preservation); OpenUSD `usdcat` opens next-written spline USDC with matching knots/tangents/extrapolation, and a pxr-authored 0.12 spline crate reads and evaluates in next.
+**Verification:** `TestTypedSplines` in [`test_aousd_conformance.cc`](../tests/core/test_aousd_conformance.cc) (evaluate + USDC round-trip + half rounding + autoEase + declared-type preservation); OpenUSD `usdcat` opens next-written spline USDC with matching knots/tangents/extrapolation, and a pxr-authored 0.12 spline crate reads and evaluates in next.
 
 Per-knot spline `customData` is now retained as authored USDA dictionary text and encoded/decoded using OpenUSD's trailing `unordered_map<double, VtDictionary>` Crate representation. Post-loop-extrapolation modes survive within next but are lost when re-opened in pxr because pxr's own 0.12 reader masks that field (a pxr limitation, not a next defect).
 
@@ -165,7 +165,7 @@ The regression now enumerates every public `TypeId` and fails if a newly added f
 
 ### AOUSD-USDA-001 — Valid Unicode identifiers are rejected (P1)
 
-**Remediation status:** fixed. `src/next/prim/identifier.hh` reuses `unicode-xid.hh`, performs strict UTF-8 decoding, and is used by the lexer and prim-name validator.
+**Remediation status:** fixed. `src/prim/identifier.hh` reuses `unicode-xid.hh`, performs strict UTF-8 decoding, and is used by the lexer and prim-name validator.
 
 **Normative area:** §§7.3.3 and 8 identifier rules; USDA identifiers use Unicode XID semantics.
 
@@ -225,7 +225,7 @@ With a weaker `rel r = </A>` and a stronger `prepend rel r = </B>`, OpenUSD reso
 
 Attribute `.connect` authoring now preserves all six sublists in USDA and USDC, including cross-site prepend/delete resolution and explicit-empty state. The broader problem still generalizes to elective fields not yet registered with the shared list-op machinery; ordered and generated multi-layer combinations are not yet registry-driven.
 
-**Remaining:** relationship results and explicit-empty `targetPaths` now round-trip, and stronger explicit-empty `apiSchemas` correctly blocks weaker applications. Both schema-name fields now have exact explicit/add/prepend/append/delete/order storage and interoperable USDC encoding, including inert and explicit-empty sublists. The reviewed cross-site API-schema delete case now resolves through the shared opinion-copy path. Cross-site `reorder` now applies with pxr SdfListOp semantics (shared `ApplyStringListOrder`, also used by clipSets/variantSet-name edits), and `test_cross_layer_string_listop_matrix` locks in every qualifier combination across a sublayer stack. Composition is now REGISTRY-DRIVEN: `src/next/layer/listop-field-table.hh` registers apiSchemas / variantSetNames / clipSets with one shared stronger-over-weaker merge (`MergeWeakerStringListOpField`), normalizing apiSchemas' legacy qualifier/vector representation to an equivalent edit; variantSetNames upgraded from fill-absent to a true list-op merge (`TestStringListOpFieldTable`).
+**Remaining:** relationship results and explicit-empty `targetPaths` now round-trip, and stronger explicit-empty `apiSchemas` correctly blocks weaker applications. Both schema-name fields now have exact explicit/add/prepend/append/delete/order storage and interoperable USDC encoding, including inert and explicit-empty sublists. The reviewed cross-site API-schema delete case now resolves through the shared opinion-copy path. Cross-site `reorder` now applies with pxr SdfListOp semantics (shared `ApplyStringListOrder`, also used by clipSets/variantSet-name edits), and `test_cross_layer_string_listop_matrix` locks in every qualifier combination across a sublayer stack. Composition is now REGISTRY-DRIVEN: `src/layer/listop-field-table.hh` registers apiSchemas / variantSetNames / clipSets with one shared stronger-over-weaker merge (`MergeWeakerStringListOpField`), normalizing apiSchemas' legacy qualifier/vector representation to an equivalent edit; variantSetNames upgraded from fill-absent to a true list-op merge (`TestStringListOpFieldTable`).
 
 A direct cross-site probe keeps this distinction concrete: a stronger `delete apiSchemas = ["WeakAPI"]` over weaker `prepend apiSchemas = ["WeakAPI", "KeepAPI"]` flattens to `["KeepAPI"]` in OpenUSD. Next previously produced an empty applied list; legacy and PCP composition now produce the same explicit `["KeepAPI"]` result and do not re-emit the local delete operation onto the flattened layer.
 
@@ -294,7 +294,7 @@ depth and an asset/property resolution stack; repeated entries produce a stable
 cycle diagnostic.
 
 The supplemental sampled-value assertions are now translated into
-`tests/next/test_aousd_value_resolution.cc` (ctest
+`tests/core/test_aousd_value_resolution.cc` (ctest
 `next_test_aousd_value_resolution`; also invoked by
 `run-aousd-supplemental.py --aousd-value-test`): default/timesamples
 bracketing + Held interpolation, `times` jump discontinuities, out-of-range
@@ -371,7 +371,7 @@ This is a core conformance issue, not merely missing C++ wrapper classes.
 
 **Normative area:** §12.4 Relationships.
 
-At baseline the core exposed only raw targets. The fixture [`aousd-relationship-forwarding.usda`](../tests/next/fixtures/aousd-relationship-forwarding.usda) now covers the normative example shape plus duplicate terminals and a cycle.
+At baseline the core exposed only raw targets. The fixture [`aousd-relationship-forwarding.usda`](../tests/core/fixtures/aousd-relationship-forwarding.usda) now covers the normative example shape plus duplicate terminals and a cycle.
 
 Native instance roots and proxy children now map prototype relationship targets
 back into the instance namespace, including recursively forwarded relationship
@@ -407,7 +407,7 @@ asset metadata (`GetAssetInfo`) and modification timestamps
 `lightusd_asset_resolver_get_modification_timestamp`, and the Python
 `AssetResolver.asset_info()` / `AssetResolver.modification_timestamp()`.
 
-Resolver API parity (C++ `next::AssetResolver` → C ABI → Python):
+Resolver API parity (C++ `lightusd::AssetResolver` → C ABI → Python):
 
 | C++ | C ABI | Python |
 | --- | --- | --- |
@@ -450,7 +450,7 @@ twice (measured ~49% lower peak RSS for a 128 MiB asset through the C ABI).
 Already-normalized paths skip the component-by-component rewrite, and a
 resolver without callbacks or memory assets skips the registry lock entirely:
 together these are ~37% faster single-threaded and ~44% faster with eight
-resolving threads (micro-benchmark in `tests/next`).
+resolving threads (micro-benchmark in `tests/core`).
 
 Callback userdata is owned explicitly: the C ABI gained
 `lightusd_asset_resolver_register_{scheme,package}_owned()`, which releases
@@ -621,7 +621,7 @@ Tydra is a render-ready scene conversion layer, not an AOUSD stage implementatio
 - Physics annotations useful to downstream render/interaction consumers.
 - Bounded diagnostics, unsupported-renderable recording, texture/colorspace handling, mesh cleanup, and animation sampling controls.
 
-The dedicated `test_tydra_next` executable passed all reviewed tests, including render access/extraction, material parity and fallbacks, point-instancer diagnostics and visibility, MaterialX, physics annotations, curves, URDF, clip baking, skeletal parity, UV promotion, and legacy-schema parity.
+The dedicated `test_tydra` executable passed all reviewed tests, including render access/extraction, material parity and fallbacks, point-instancer diagnostics and visibility, MaterialX, physics annotations, curves, URDF, clip baking, skeletal parity, UV promotion, and legacy-schema parity.
 
 ### TYDRA-GEOM-001 — Unsupported renderable schemas (P2)
 
@@ -644,7 +644,7 @@ copy (the old duplicate lacked jump-discontinuity handling, had a stale
 out-of-range mapping, no `clipSets` ordering edits, no manifest gating, and no
 nested-clip recursion). Tydra only retains the bake-time sampling caps as
 resource policy with a truncation diagnostic: `bake_value_clips`
-(`src/tydra/next/render-converter.hh`, default true) and
+(`src/tydra/render-converter.hh`, default true) and
 `max_value_clip_samples` (default 10000).
 
 ### Product-scope differences
@@ -747,7 +747,7 @@ The first remediation pass completed the loss policy, Unicode/path handling, rec
 The five directly affected AOUSD/Crate/USDC targets rebuilt and passed:
 
 ```sh
-ctest --test-dir build-next \
+ctest --test-dir build-core \
   -R 'next_test_(aousd_conformance|crate_alloc_guard|usdc_reader|usdc_writer|usdc_roundtrip)' \
   --output-on-failure
 ```
@@ -769,20 +769,20 @@ The generated-coverage/supplemental pass adds 13 generated AOUSD Core schema pro
 
 Configure the optional full gate with `-DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT=/path/to/core-spec-supplemental-release_dec2025`. The ordinary tree does not require or download this external corpus; `next_aousd_generated_tables` always checks the committed generated tables.
 
-With that external path configured, the complete standalone regression run passes **36/36** CTest targets (all `add_test` entries in `src/next/CMakeLists.txt`, including the corpus and supplemental gates). The composition ratchet (`--max-composition-fail`) is now **0**: every supplemental composition case must pass, so any file-format, data-type, value-entry, or composition regression fails the gate.
+With that external path configured, the complete standalone regression run passes **36/36** CTest targets (all `add_test` entries in `src/CMakeLists.txt`, including the corpus and supplemental gates). The composition ratchet (`--max-composition-fail`) is now **0**: every supplemental composition case must pass, so any file-format, data-type, value-entry, or composition regression fails the gate.
 
 The ratchet reached 0 in three reductions: 36 → 22 → 0. The first pass fixed uppercase USDA booleans, empty internal arcs selecting the layer-stack `defaultPrim`, instance-proxy lookup without subtree duplication, invalid/conflicting relocate rejection, chained post-relocation source paths, composed-namespace internal references with cycle bounds, implied-class selection strength, and variant-option selections targeting sibling variant sets.
 
-The final pass closed the last 22 by fixing four structural defects in `src/next/pcp`:
+The final pass closed the last 22 by fixing four structural defects in `src/pcp`:
 
 1. **Relocates are a per-layer-stack namespace edit, not a root-layer one.** They were collected from the root layer stack only and applied as a rename during `BuildStage`. Each `LayerStack` now carries its own resolved edit tables (`StackRelocates`, built in `InternLayerStack`), and relocation is resolved while deriving a prim's composition sources (`DeriveChildSources`): a departed child contributes nothing, a relocated-in child is pulled from its pre-relocation site — whose ancestors inside that stack may carry the arcs that actually deliver it (`SourcesForRelocateSource`). A relocate authored in a referenced/payloaded/variant layer stack therefore renames prims inside that stack's namespace and the rename maps through the arc into root space, including chained relocates and relocation to a new root prim.
 2. **Namespace mappings are prefix-map SETS**, not a single (source, target) pair (pxr's `PcpMapFunction`). One pair per arc plus one per relocate, matched longest-prefix-first, so a rename under a reference composes with it — and a class arc reached through a reference still resolves sibling paths of its own namespace (the implied-class site) through that reference.
 3. **Arc targets compose with their own ancestral arcs in the target layer stack.** `ProcessArc` seeded a bare `(stack, site)`, so a sub-root reference (`@char.usd@</Char/Sub>` where `/Char` itself references another layer) silently lost everything the ancestor's arcs delivered. Target sources are now derived from the target's parent chain in that stack, which also resolves targets that are relocate destinations. Variant selections still resolve in the *referencing* context.
 4. **Implied class arcs need the whole arc chain.** The chain was re-seeded per child prim as `{root, current stack}`, dropping intermediate stacks; it now rides along with the source (`Src::arc_chain`), so an override authored on a class path in any intermediate layer stack composes.
 
-Relative class-arc targets (`inherits = <../_Y>`) now resolve against the authoring prim, and unselected variant sets fall back to USD's registered global fallbacks (`CompositionOptions::variant_fallbacks`, defaulting to `standin → render, proxy`), which is what pxr's museum runner supplies. Regressions for all of this live in `tests/next/test_pcp.cc` (`test_relocates_in_referenced_layer_stack`, `test_relocate_to_new_root_prim`, `test_relative_class_arc_target`).
+Relative class-arc targets (`inherits = <../_Y>`) now resolve against the authoring prim, and unselected variant sets fall back to USD's registered global fallbacks (`CompositionOptions::variant_fallbacks`, defaulting to `standin → render, proxy`), which is what pxr's museum runner supplies. Regressions for all of this live in `tests/core/test_pcp.cc` (`test_relocates_in_referenced_layer_stack`, `test_relocate_to_new_root_prim`, `test_relative_class_arc_target`).
 
-The native legacy USDA parser/round-trip pair was also rerun after placing the two new regressions under `tests/next/fixtures` rather than widening the shared legacy corpus. It still reports the four pre-existing unexpected files (`aousd-namespace-order.usda`, `aousd-unknown-property-metadata.usda`, `rel-inherits-none-001.usda`, and `token-string-escapes.usda`); neither new next-only fixture appears in that failure set.
+The native legacy USDA parser/round-trip pair was also rerun after placing the two new regressions under `tests/core/fixtures` rather than widening the shared legacy corpus. It still reports the four pre-existing unexpected files (`aousd-namespace-order.usda`, `aousd-unknown-property-metadata.usda`, `rel-inherits-none-001.usda`, and `token-string-escapes.usda`); neither new next-only fixture appears in that failure set.
 
 A later rebuild of the current legacy library confirms that
 `rel-inherits-none-001.usda` and its Pixar-authored USDC counterpart retain both
@@ -806,7 +806,7 @@ crash: 0
 
 Six warning-bearing files concern preserved unknown prim metadata named `hide_in_stage_window` and `no_delete`; the seventh now exposes a previously silent unknown layer field named `id`. The post-remediation corpus therefore reports **273 pass / 7 warning / 0 fail / 0 timeout / 0 crash** over 280 files.
 
-The `web/build_ninja` WASM next-core/Tydra module also rebuilt successfully. Direct `test_tydra_next` execution passed its complete registered suite. OpenUSD opened a raw next-written omitted-path reference as `@target.usda@` (without `</>`), and OpenUSD and next produced the same composed marker value for the paired defaultPrim fixtures. OpenUSD also opened the next-written namespace-order crate and retained all three sparse reorder fields. These results demonstrate a healthy regression baseline, but they do not contradict the remaining conformance findings.
+The `web/build_ninja` WASM next-core/Tydra module also rebuilt successfully. Direct `test_tydra` execution passed its complete registered suite. OpenUSD opened a raw next-written omitted-path reference as `@target.usda@` (without `</>`), and OpenUSD and next produced the same composed marker value for the paired defaultPrim fixtures. OpenUSD also opened the next-written namespace-order crate and retained all three sparse reorder fields. These results demonstrate a healthy regression baseline, but they do not contradict the remaining conformance findings.
 
 ### Differential probe summary
 

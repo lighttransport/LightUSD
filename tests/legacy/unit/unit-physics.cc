@@ -2329,7 +2329,7 @@ def Xform "World"
 
   // Note: lightusd::legacy::tydra::ConvertPhysicsToJson scopes to PhysicsScene / Joint /
   // Actuator / Tendon / Keyframe — Mesh-collider surfacing lives in
-  // web/binding.cc's extractPhysicsSceneJSON (`AppendPhysicsPrimJson`),
+  // web/binding-legacy.cc's extractPhysicsSceneJSON (`AppendPhysicsPrimJson`),
   // which is exercised from the web/js test harness, not here.
 }
 

@@ -7,7 +7,10 @@ import { analyzeAsset } from '../src/asset-report.js';
 import { snapshotHealthInput } from '../src/health-analysis.js';
 
 test('typed property flags preserve schema and custom attributes on WASM32 and WASM64', async () => {
-  for (const suffix of ['', '_64']) {
+  // The wasm64 module requires Node >= 23 (emscripten memory64 glue); skip it
+  // there but always exercise wasm32.
+  const [major] = process.versions.node.split('.').map(Number);
+  for (const suffix of (major >= 23 ? ['', '_64'] : [''])) {
     const { default: factory } = await import(`../../src/lightusd/lightusd${suffix}.js`);
     const module = await factory(), document = new module.LayerDocument();
     try {

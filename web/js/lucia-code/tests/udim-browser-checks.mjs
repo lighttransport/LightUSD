@@ -122,7 +122,7 @@ def Xform "World" {
     const pending=app.udim.bake(base);app.operations.cancel();
     let cancelled=false;try{await pending;}catch(e){cancelled=e.code==='LUCIA_CANCELLED';}check(cancelled,'Cancellation left a running operation');
     check(app.session.exportUSDA()===original,'Cancelled operation changed USD');
-    // Exercise the real next-only worker with HDR input and EXR atlas output.
+    // Exercise the real core worker with HDR input and EXR atlas output.
     const hdr=new Uint8Array([...new TextEncoder().encode('#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n'),128,0,0,129,0,128,0,130]);
     app.project.assets=new Map(['1001','1002'].map(id=>[`textures/tile.${id}.hdr`,{bytes:hdr.slice()}]));
     await app.session.loadUSDA(source.replace('tile.<UDIM>.png','tile.<UDIM>.hdr'),'root.usda');

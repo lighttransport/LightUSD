@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Internal post-JS bridge for next's counted C dispatch. Object IDs are
+// Internal post-JS bridge for the counted C dispatch. Object IDs are
 // uint32 on both wasm32 and memory64; no native pointer is exposed to JS.
 {
   const live = new WeakMap();
@@ -164,7 +164,7 @@
     if (!ArrayBuffer.isView(bytes)) throw new TypeError('checkUSD: expected byte view');
     const store = assetStore === null ? null : live.get(assetStore);
     if (assetStore !== null && (!store?.handle || store.kind !== 5))
-      throw new TypeError('checkUSD: assetStore must be a live NextAssetStore');
+      throw new TypeError('checkUSD: assetStore must be a live AssetStore');
     // Asset queries may grow the core heap; snapshot a heap-backed root first.
     if (bytes.buffer === Module.HEAPU8.buffer)
       bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength).slice();
@@ -180,8 +180,8 @@
     return JSON.parse(feature.runValidation(bytes, filename, JSON.stringify(options), true, snapshot));
   };
   };
-  defineClass('NextUSDZConverterNative', 1);
-  defineClass('NextAssetStore', 5);
+  defineClass('USDZConverterNative', 1);
+  defineClass('AssetStore', 5);
   defineClass('LayerDocument', 6);
 
   const layerEncoder = new TextEncoder();
@@ -310,9 +310,9 @@
     const input = layerBytes(value, 'loadWithProgress');
     let ptr = 0;
     ++state.busy;
-    const previous = Module.__lightusdNextLayerProgressCallback;
+    const previous = Module.__lightusdLayerProgressCallback;
     let callbackError = null;
-    Module.__lightusdNextLayerProgressCallback = event => {
+    Module.__lightusdLayerProgressCallback = event => {
       try { return callback(event) !== false; }
       catch (error) { callbackError = error; return false; }
     };
@@ -331,7 +331,7 @@
       if (status !== 0) return {success: false, error: layerError(state)};
       return {success: true, primCount: Module['_lightusd_wasm_layer_prim_count'](state.handle)};
     } finally {
-      Module.__lightusdNextLayerProgressCallback = previous;
+      Module.__lightusdLayerProgressCallback = previous;
       if (ptr) Module['_lightusd_wasm_free'](ptr);
       --state.busy;
     }
@@ -1286,7 +1286,7 @@
   }});
   Object.defineProperty(Module.LayerDocument.prototype, 'exportUSDZ', {value: function(options = {}, assetStore = null) {
     const state = layerState(this);
-    if (arguments.length > 2) throw new TypeError('exportUSDZ: expected options and optional NextAssetStore');
+    if (arguments.length > 2) throw new TypeError('exportUSDZ: expected options and optional AssetStore');
     if (options === null) options = {};
     if (typeof options !== 'object' || ArrayBuffer.isView(options)) {
       throw new TypeError('exportUSDZ: options must be an object');
@@ -1302,7 +1302,7 @@
     if (assetStore !== null) {
       assetState = live.get(assetStore);
       if (!assetState?.handle || assetState.kind !== 5) {
-        throw new TypeError('exportUSDZ: assetStore must be a live NextAssetStore');
+        throw new TypeError('exportUSDZ: assetStore must be a live AssetStore');
       }
     }
     ++state.busy;
@@ -1487,7 +1487,7 @@
     if (!ArrayBuffer.isView(value)) throw new TypeError(label + ': expected byte view');
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   };
-  Object.defineProperty(Module.NextAssetStore.prototype, 'registerMemoryAsset', {value: function(identifier, bytes) {
+  Object.defineProperty(Module.AssetStore.prototype, 'registerMemoryAsset', {value: function(identifier, bytes) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length === 1) { bytes = identifier; identifier = ''; }
@@ -1526,7 +1526,7 @@
       return assetStoreDecoder.decode(Module.HEAPU8.subarray(outputOffset, outputOffset + idSize));
     } finally { if (ptr) Module['_lightusd_wasm_free'](ptr); --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setAssetFromRawPointer', {value: function(identifier, pointer, byteLength) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setAssetFromRawPointer', {value: function(identifier, pointer, byteLength) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 3 || (identifier !== null && typeof identifier !== 'string') ||
@@ -1568,7 +1568,7 @@
       return status === 1;
     } finally { if (keyPtr) Module['_lightusd_wasm_free'](keyPtr); --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'unregisterMemoryAsset', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'unregisterMemoryAsset', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string' || !identifier) {
@@ -1589,7 +1589,7 @@
       return status === 1;
     } finally { if (ptr) Module['_lightusd_wasm_free'](ptr); --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'readMemoryAsset', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'readMemoryAsset', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string' || !identifier) {
@@ -1623,7 +1623,7 @@
       --state.busy;
     }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetCacheDataAsMemoryView', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetCacheDataAsMemoryView', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string')
@@ -1661,7 +1661,7 @@
       if (namePtr) Module['_lightusd_wasm_free'](namePtr);
     }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAsset', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAsset', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string')
@@ -1671,7 +1671,7 @@
     return {name: identifier, data, sha256: this.getAssetHash(identifier),
       uuid: this.getAssetUUID(identifier)};
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setAlias', {value: function(authored, resolved) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setAlias', {value: function(authored, resolved) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2 || typeof authored !== 'string' || !authored ||
@@ -1693,7 +1693,7 @@
       if (status !== 0) throw new RangeError('setAlias: alias rejected');
     } finally { if (ptr) Module['_lightusd_wasm_free'](ptr); --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'assetIdentifiers', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'assetIdentifiers', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('assetIdentifiers: wrong argument count');
@@ -1701,28 +1701,28 @@
     return sizes.map((size, index) => assetStoreOutputString(state,
       '_lightusd_wasm_asset_store_identifier_copy', [index], 'assetIdentifiers'));
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetUUID', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetUUID', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string' || !identifier)
       throw new TypeError('getAssetUUID: expected a non-empty identifier');
     return assetStoreStringResult(state, '_lightusd_wasm_asset_store_uuid', identifier);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getStreamingAssetUUID', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getStreamingAssetUUID', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string' || !identifier)
       throw new TypeError('getStreamingAssetUUID: expected a non-empty asset identifier');
     return assetStoreStringResult(state, '_lightusd_wasm_asset_store_streaming_uuid', identifier);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'findAssetByUUID', {value: function(uuid) {
+  Object.defineProperty(Module.AssetStore.prototype, 'findAssetByUUID', {value: function(uuid) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof uuid !== 'string' || !uuid)
       throw new TypeError('findAssetByUUID: expected a non-empty UUID');
     return assetStoreStringResult(state, '_lightusd_wasm_asset_store_find_uuid', uuid);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetByUUID', {value: function(uuid) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetByUUID', {value: function(uuid) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof uuid !== 'string')
@@ -1732,14 +1732,14 @@
     if (!identifier) return {error: 'Asset not found with UUID: ' + uuid};
     return this.getAsset(identifier);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetHash', {value: function(identifier) {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetHash', {value: function(identifier) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof identifier !== 'string' || !identifier)
       throw new TypeError('getAssetHash: expected a non-empty identifier');
     return assetStoreStringResult(state, '_lightusd_wasm_asset_store_hash', identifier);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'verifyAssetHash', {value: function(identifier, hash) {
+  Object.defineProperty(Module.AssetStore.prototype, 'verifyAssetHash', {value: function(identifier, hash) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2 || typeof identifier !== 'string' || !identifier ||
@@ -1767,7 +1767,7 @@
       return status === 1;
     } finally { if (ptr) Module['_lightusd_wasm_free'](ptr); }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAllAssetUUIDs', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAllAssetUUIDs', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAllAssetUUIDs: wrong argument count');
@@ -1792,7 +1792,7 @@
         configurable: true, writable: true});
     return result;
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'deleteAssetByUUID', {value: function(uuid) {
+  Object.defineProperty(Module.AssetStore.prototype, 'deleteAssetByUUID', {value: function(uuid) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof uuid !== 'string' || !uuid)
@@ -1813,7 +1813,7 @@
       return status === 1;
     } finally { if (ptr) Module['_lightusd_wasm_free'](ptr); }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'assetExists', {value: function(nameOrUuid) {
+  Object.defineProperty(Module.AssetStore.prototype, 'assetExists', {value: function(nameOrUuid) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof nameOrUuid !== 'string' || !nameOrUuid)
@@ -1831,13 +1831,13 @@
     }
     return memory64Build ? BigInt(value) : Number(value);
   };
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetCount', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetCount', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAssetCount: wrong argument count');
     return legacyCacheSize(Module['_lightusd_wasm_asset_store_identifier_count'](state.handle));
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setBaseWorkingPath', {value: function(path) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setBaseWorkingPath', {value: function(path) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1) throw new TypeError('setBaseWorkingPath: expected one path');
@@ -1845,7 +1845,7 @@
     try { assetStoreSetPath(state, '_lightusd_wasm_asset_store_set_base_path', path, 'setBaseWorkingPath'); }
     finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getBaseWorkingPath', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getBaseWorkingPath', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getBaseWorkingPath: wrong argument count');
@@ -1853,7 +1853,7 @@
     try { return assetStoreOutputString(state, '_lightusd_wasm_asset_store_base_path', [], 'getBaseWorkingPath'); }
     finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'addAssetSearchPath', {value: function(path) {
+  Object.defineProperty(Module.AssetStore.prototype, 'addAssetSearchPath', {value: function(path) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1) throw new TypeError('addAssetSearchPath: expected one path');
@@ -1861,7 +1861,7 @@
     try { assetStoreSetPath(state, '_lightusd_wasm_asset_store_add_search_path', path, 'addAssetSearchPath'); }
     finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'clearAssetSearchPaths', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'clearAssetSearchPaths', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('clearAssetSearchPaths: wrong argument count');
@@ -1871,7 +1871,7 @@
         throw new RangeError('clearAssetSearchPaths: update failed');
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setAllowParentRelativeAssetPaths', {value: function(allow) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setAllowParentRelativeAssetPaths', {value: function(allow) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof allow !== 'boolean')
@@ -1882,7 +1882,7 @@
         throw new RangeError('setAllowParentRelativeAssetPaths: update failed');
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAllowParentRelativeAssetPaths', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAllowParentRelativeAssetPaths', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAllowParentRelativeAssetPaths: wrong argument count');
@@ -1893,7 +1893,7 @@
       return value === 1;
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetSearchPaths', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetSearchPaths', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAssetSearchPaths: wrong argument count');
@@ -1921,11 +1921,11 @@
         '_lightusd_wasm_asset_store_search_path_copy', [i], 'getAssetSearchPaths'));
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'hasAsset', {value: function(name) {
+  Object.defineProperty(Module.AssetStore.prototype, 'hasAsset', {value: function(name) {
     if (arguments.length !== 1) throw new TypeError('hasAsset: wrong argument count');
     return this.assetExists(name);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setAsset', {value: function(name, bytes) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setAsset', {value: function(name, bytes) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2 || typeof name !== 'string' || !name)
@@ -1934,21 +1934,21 @@
     this.registerMemoryAsset(name, bytes);
     return overwritten;
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'deleteAssetByName', {value: function(name) {
+  Object.defineProperty(Module.AssetStore.prototype, 'deleteAssetByName', {value: function(name) {
     if (arguments.length !== 1) throw new TypeError('deleteAssetByName: wrong argument count');
     return this.unregisterMemoryAsset(name);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'deleteAsset', {value: function(nameOrUuid) {
+  Object.defineProperty(Module.AssetStore.prototype, 'deleteAsset', {value: function(nameOrUuid) {
     if (arguments.length !== 1 || typeof nameOrUuid !== 'string' || !nameOrUuid)
       throw new TypeError('deleteAsset: expected a non-empty name or UUID');
     if (this.assetIdentifiers().includes(nameOrUuid)) return this.deleteAssetByName(nameOrUuid);
     return this.deleteAssetByUUID(nameOrUuid);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'clearAssets', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'clearAssets', {value: function() {
     if (arguments.length) throw new TypeError('clearAssets: wrong argument count');
     return this.clear();
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setMemoryLimitBytes', {value: function(limit) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setMemoryLimitBytes', {value: function(limit) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !Number.isInteger(limit) || limit < 1 || limit > 0x40000000) {
@@ -1957,7 +1957,7 @@
     const status = Module['_lightusd_wasm_asset_store_set_memory_limit'](state.handle, limit);
     if (status !== 0) throw new RangeError('setMemoryLimitBytes: limit below current use');
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setMetadataLimitBytes', {value: function(limit) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setMetadataLimitBytes', {value: function(limit) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 ||
@@ -1970,19 +1970,19 @@
       throw new RangeError('setMetadataLimitBytes: limit below current metadata use');
     }
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'metadataBytesUsed', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'metadataBytesUsed', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('metadataBytesUsed: wrong argument count');
     return Module['_lightusd_wasm_asset_store_metadata_bytes'](state.handle);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'metadataLimitBytes', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'metadataLimitBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('metadataLimitBytes: wrong argument count');
     return Module['_lightusd_wasm_asset_store_metadata_limit'](state.handle);
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'memoryStats', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'memoryStats', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('memoryStats: wrong argument count');
@@ -1990,19 +1990,19 @@
       bytesUsed: Module['_lightusd_wasm_asset_store_memory_bytes'](state.handle),
       limitBytes: Module['_lightusd_wasm_asset_store_memory_limit'](state.handle)};
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetCacheSizeBytes', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetCacheSizeBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAssetCacheSizeBytes: wrong argument count');
     return legacyCacheSize(Module['_lightusd_wasm_asset_store_cache_bytes'](state.handle));
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'getAssetCacheMaxSizeBytes', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'getAssetCacheMaxSizeBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('getAssetCacheMaxSizeBytes: wrong argument count');
     return legacyCacheSize(Module['_lightusd_wasm_asset_store_cache_max_bytes'](state.handle));
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'setAssetCacheMaxSizeBytes', {value: function(limit) {
+  Object.defineProperty(Module.AssetStore.prototype, 'setAssetCacheMaxSizeBytes', {value: function(limit) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 ||
@@ -2012,7 +2012,7 @@
     if (Module['_lightusd_wasm_asset_store_set_cache_max_bytes'](state.handle,
       BigInt(limit)) !== 0) throw new RangeError('setAssetCacheMaxSizeBytes: update failed');
   }});
-  Object.defineProperty(Module.NextAssetStore.prototype, 'clear', {value: function() {
+  Object.defineProperty(Module.AssetStore.prototype, 'clear', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 5) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length) throw new TypeError('clear: wrong argument count');
@@ -2095,14 +2095,14 @@
       --state.busy;
     }
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'loadFromBinary', {value: function(bytes, filename) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'loadFromBinary', {value: function(bytes, filename) {
     converterState(this);
     if (arguments.length !== 2) throw new TypeError('loadFromBinary: wrong argument count');
     if (typeof filename !== 'string') throw new TypeError('loadFromBinary: expected filename');
     return converterSetBytes(this, 0, filename,
       converterByteView(bytes, 'loadFromBinary', false), 'loadFromBinary');
   }});
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'createSampleScene', {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'createSampleScene', {
     value: function() {
       converterState(this);
       if (arguments.length !== 0) throw new TypeError('createSampleScene: wrong argument count');
@@ -2156,14 +2156,14 @@ def Xform "root"
       return this.loadFromBinary(converterEncoder.encode(scene), 'sample-scene.usda');
     }
   });
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'setAsset', {value: function(name, bytes) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'setAsset', {value: function(name, bytes) {
     converterState(this);
     if (arguments.length !== 2) throw new TypeError('setAsset: wrong argument count');
     if (typeof name !== 'string') throw new TypeError('setAsset: expected name');
     return converterSetBytes(this, 1, name,
       converterByteView(bytes, 'setAsset', false), 'setAsset');
   }});
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'setMaxAssetBytes', {value: function(limit) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'setMaxAssetBytes', {value: function(limit) {
     const state = converterState(this);
     if (arguments.length !== 1 || !Number.isInteger(limit) || limit <= 0 || limit > 0x40000000) {
       throw new RangeError('setMaxAssetBytes: expected an integer from 1 through 1 GiB');
@@ -2173,7 +2173,7 @@ def Xform "root"
     return {success: true};
   }});
   for (const [name, field] of [['assetBytes', 0], ['maxAssetBytes', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function() {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function() {
       const state = converterState(this);
       if (arguments.length !== 0) throw new TypeError(name + ': wrong argument count');
       const value = Module['_lightusd_wasm_converter_control'](state.handle, 3, field, 0);
@@ -2181,7 +2181,7 @@ def Xform "root"
       return value;
     }});
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'setMaxMeshBytes', {value: function(limit) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'setMaxMeshBytes', {value: function(limit) {
     const state = converterState(this);
     if (arguments.length !== 1 || !Number.isInteger(limit) || limit <= 0 || limit > 0x40000000) {
       throw new RangeError('setMaxMeshBytes: expected an integer from 1 through 1 GiB');
@@ -2190,7 +2190,7 @@ def Xform "root"
     return status === 0 ? {success: true} : {success: false, error: this.error()};
   }});
   for (const [name, field] of [['meshBytes', 0], ['maxMeshBytes', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function() {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function() {
       const state = converterState(this);
       if (arguments.length !== 0) throw new TypeError(name + ': wrong argument count');
       const value = Module['_lightusd_wasm_converter_control'](state.handle, 5, field, 0);
@@ -2198,7 +2198,7 @@ def Xform "root"
       return value;
     }});
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype,
+  Object.defineProperty(Module.USDZConverterNative.prototype,
     'setMaxRetainedPayloadBytes', {value: function(limit) {
       const state = converterState(this);
       if (arguments.length !== 1 || !Number.isInteger(limit) || limit <= 0 || limit > 0x40000000) {
@@ -2209,7 +2209,7 @@ def Xform "root"
     }});
   for (const [name, field] of [['retainedPayloadBytes', 0],
                                 ['maxRetainedPayloadBytes', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function() {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function() {
       const state = converterState(this);
       if (arguments.length !== 0) throw new TypeError(name + ': wrong argument count');
       const value = Module['_lightusd_wasm_converter_control'](state.handle, 7, field, 0);
@@ -2217,20 +2217,20 @@ def Xform "root"
       return value;
     }});
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'createURDFPhysicsScene', {value: function(json) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'createURDFPhysicsScene', {value: function(json) {
     converterState(this);
     if (arguments.length !== 1) throw new TypeError('createURDFPhysicsScene: wrong argument count');
     if (typeof json !== 'string') throw new TypeError('createURDFPhysicsScene: expected string');
     return converterSetBytes(this, 2, '', converterEncoder.encode(json), 'createURDFPhysicsScene');
   }});
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'clearURDFMeshBuffers', {value: function() {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'clearURDFMeshBuffers', {value: function() {
     const state = converterState(this);
     if (arguments.length !== 0) throw new TypeError('clearURDFMeshBuffers: wrong argument count');
     if (Module['_lightusd_wasm_converter_control'](state.handle, 0, 0, 0) !== 0) {
       throw new TypeError('Invalid LightUSD receiver');
     }
   }});
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'setUSDCExportLimitMB', {value: function(fileMB, memoryMB) {
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'setUSDCExportLimitMB', {value: function(fileMB, memoryMB) {
     const state = converterState(this);
     if (arguments.length !== 2) throw new TypeError('setUSDCExportLimitMB: wrong argument count');
     if (typeof fileMB !== 'number' || typeof memoryMB !== 'number') {
@@ -2329,7 +2329,7 @@ def Xform "root"
     }
   }
   for (const [name, kind] of [['setVisualMesh', 0], ['setCollisionMesh', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function(meshName, positions, normals, uvs, indices) {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function(meshName, positions, normals, uvs, indices) {
       converterState(this);
       if (arguments.length !== 5) throw new TypeError(name + ': wrong argument count');
       return converterSetMesh(this, kind, meshName, positions, normals, uvs, indices, name);
@@ -2402,20 +2402,20 @@ def Xform "root"
   }
   for (const [name, kind] of [['extractPhysicsSceneJSON', 0], ['exportAsUSDA', 1],
                               ['exportAsUSDC', 2], ['exportAsUSDZ', 3]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function() {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function() {
       converterState(this);
       if (arguments.length !== 0) throw new TypeError(name + ': wrong argument count');
       return converterExport(this, kind, name);
     }});
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype,
+  Object.defineProperty(Module.USDZConverterNative.prototype,
     'exportAsUSDZWithRemap', {value: function(remap) {
       converterState(this);
       if (arguments.length !== 1) throw new TypeError('exportAsUSDZWithRemap: expected one remap object');
       return converterExport(this, 3, 'exportAsUSDZWithRemap', 0,
         converterRemapBytes(remap, 'exportAsUSDZWithRemap'));
     }});
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype,
+  Object.defineProperty(Module.USDZConverterNative.prototype,
     'exportAsUSDZWithOptions', {value: function(remapOrOptions = {}, options) {
       converterState(this);
       if (arguments.length > 2) {
@@ -2460,13 +2460,13 @@ def Xform "root"
     } finally { if (buffer) Module['_lightusd_wasm_free'](buffer); }
   }
   for (const [name, kind] of [['error', 0], ['warn', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function() {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function() {
       if (arguments.length !== 0) throw new TypeError(name + ': wrong argument count');
       return converterString(this, kind, name);
     }});
   }
   for (const [name, apply] of [['describeUDIM', 0], ['applyUDIM', 1]]) {
-    Object.defineProperty(Module.NextUSDZConverterNative.prototype, name, {value: function(request) {
+    Object.defineProperty(Module.USDZConverterNative.prototype, name, {value: function(request) {
       const state = live.get(this);
       if (!state?.handle || state.kind !== 1) throw new TypeError('Invalid LightUSD receiver');
       if (arguments.length !== apply) throw new TypeError(name + ': wrong argument count');
@@ -2491,7 +2491,7 @@ def Xform "root"
       }
     }});
   }
-  Object.defineProperty(Module.NextUSDZConverterNative.prototype, 'rewriteRoot', {value: function(
+  Object.defineProperty(Module.USDZConverterNative.prototype, 'rewriteRoot', {value: function(
       bytes, filename, options) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 1) throw new TypeError('Invalid LightUSD receiver');
@@ -2566,7 +2566,7 @@ def Xform "root"
       --state.busy;
     }
   }});
-  defineClass('NextFlattenSession', 3);
+  defineClass('FlattenSession', 3);
   defineClass('RenderStream', 4);
 
   // Integer scene counts do not need an emval argument/result round trip.
@@ -2656,7 +2656,7 @@ def Xform "root"
     return {numMeshes, numMaterials, numTextures, numImages, numBuffers, numNodes,
       numLights, bufferMemoryBytes, bufferMemoryMB: bufferMemoryBytes / (1024 * 1024),
       assetCacheCount, assetCacheSizeBytes, assetCacheMaxBytes,
-      // The next renderer does not maintain the legacy reordered-mesh cache.
+      // The core renderer does not maintain the legacy reordered-mesh cache.
       reorderedMeshCacheCount: 0};
   }});
   const imageEncoder = new TextEncoder();
@@ -3114,7 +3114,7 @@ def Xform "root"
     }
     return flattenEncoder.encode(JSON.stringify(normalized));
   }
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'error', {value: function() {
+  Object.defineProperty(Module.FlattenSession.prototype, 'error', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 0) throw new TypeError('error: wrong argument count');
@@ -3141,7 +3141,7 @@ def Xform "root"
       --state.busy;
     }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setMaxInputBytes', {value: function(limit) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setMaxInputBytes', {value: function(limit) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !Number.isInteger(limit) || limit <= 0 || limit > 0x40000000) {
@@ -3153,7 +3153,7 @@ def Xform "root"
       return status === 0 ? {success: true} : {success: false, error: this.error()};
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'maxInputBytes', {value: function() {
+  Object.defineProperty(Module.FlattenSession.prototype, 'maxInputBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 0) throw new TypeError('maxInputBytes: wrong argument count');
@@ -3164,7 +3164,7 @@ def Xform "root"
       return value;
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setMaxOutputBytes', {value: function(limit) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setMaxOutputBytes', {value: function(limit) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !Number.isInteger(limit) || limit <= 0 || limit > 0x40000000) {
@@ -3176,7 +3176,7 @@ def Xform "root"
       return status === 0 ? {success: true} : {success: false, error: this.error()};
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'maxOutputBytes', {value: function() {
+  Object.defineProperty(Module.FlattenSession.prototype, 'maxOutputBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 0) throw new TypeError('maxOutputBytes: wrong argument count');
@@ -3187,7 +3187,7 @@ def Xform "root"
       return value;
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'inputBytes', {value: function() {
+  Object.defineProperty(Module.FlattenSession.prototype, 'inputBytes', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 0) throw new TypeError('inputBytes: wrong argument count');
@@ -3198,7 +3198,7 @@ def Xform "root"
       return value;
     } finally { --state.busy; }
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'begin', {value: function(root, name, lazyArrays) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'begin', {value: function(root, name, lazyArrays) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 3) throw new TypeError('begin: wrong argument count');
@@ -3215,7 +3215,7 @@ def Xform "root"
     return status ? {success: true, status: 'ready'}
                   : {success: false, error: this.error()};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'provideLayer', {value: function(key, data) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'provideLayer', {value: function(key, data) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2) throw new TypeError('provideLayer: wrong argument count');
@@ -3235,7 +3235,7 @@ def Xform "root"
         state.handle, keyPtr, keySize, dataPtr, dataSize));
     return status ? {success: true} : {success: false, error: this.error()};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'addSublayer', {value: function(path) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'addSublayer', {value: function(path) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof path !== 'string' || path.length === 0) {
@@ -3249,7 +3249,7 @@ def Xform "root"
         state.handle, pathPtr, pathSize));
     return status === 1 ? {success: true} : {success: false, error: this.error()};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'addPrimArc', {value: function(kind, primPath, assetPath, targetPath, listOp = 'explicit') {
+  Object.defineProperty(Module.FlattenSession.prototype, 'addPrimArc', {value: function(kind, primPath, assetPath, targetPath, listOp = 'explicit') {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     const listOps = {explicit: 0, add: 1, prepend: 2, append: 3, delete: 4, reorder: 5};
@@ -3280,7 +3280,7 @@ def Xform "root"
       });
     return status === 1 ? {success: true} : {success: false, error: this.error()};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setCompositionMask', {value: function(mask) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setCompositionMask', {value: function(mask) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !Number.isInteger(mask) || mask < 0 || mask > 63)
@@ -3289,7 +3289,7 @@ def Xform "root"
     if (status !== 1) throw new RangeError('setCompositionMask: ' + this.error());
     return {success: true};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setRebaseAssetPaths', {value: function(enabled) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setRebaseAssetPaths', {value: function(enabled) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || typeof enabled !== 'boolean') {
@@ -3299,7 +3299,7 @@ def Xform "root"
     if (status !== 1) throw new RangeError('setRebaseAssetPaths: ' + this.error());
     return {success: true};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setAssetPathRemap', {value: function(remap) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setAssetPathRemap', {value: function(remap) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1) throw new TypeError('setAssetPathRemap: wrong argument count');
@@ -3311,7 +3311,7 @@ def Xform "root"
     if (status !== 1) throw new RangeError('setAssetPathRemap: ' + this.error());
     return {success: true};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'remapLayerAssetPaths', {value: function(remap) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'remapLayerAssetPaths', {value: function(remap) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1) throw new TypeError('remapLayerAssetPaths: wrong argument count');
@@ -3323,7 +3323,7 @@ def Xform "root"
     if (count < 0) throw new RangeError('remapLayerAssetPaths: ' + this.error());
     return count;
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'setVariantOverride', {value: function(key, selection) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'setVariantOverride', {value: function(key, selection) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2) throw new TypeError('setVariantOverride: wrong argument count');
@@ -3336,7 +3336,7 @@ def Xform "root"
           state.handle, keyPtr, keySize, valuePtr, valueSize));
     return {success: true};
   }});
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'end', {value: function() {
+  Object.defineProperty(Module.FlattenSession.prototype, 'end', {value: function() {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 0) throw new TypeError('end: wrong argument count');
@@ -3348,8 +3348,8 @@ def Xform "root"
     } finally { --state.busy; }
   }});
   const flattenCallbacks = new Map();
-  let nextFlattenCallbackId = 1;
-  Module['__lightusdNextFlattenEmit'] = (id, offset, size) => {
+  let flattenCallbackId = 1;
+  Module['__lightusdFlattenEmit'] = (id, offset, size) => {
     const entry = flattenCallbacks.get(id);
     if (!entry) return 0;
     try {
@@ -3360,7 +3360,7 @@ def Xform "root"
       return 0;
     }
   };
-  Object.defineProperty(Module.NextFlattenSession.prototype, 'step', {value: function(callback) {
+  Object.defineProperty(Module.FlattenSession.prototype, 'step', {value: function(callback) {
     const state = live.get(this);
     if (!state?.handle || state.kind !== 3) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1) throw new TypeError('step: wrong argument count');
@@ -3371,7 +3371,7 @@ def Xform "root"
     let entry;
     if (callback != null) {
       do {
-        callbackId = nextFlattenCallbackId++ >>> 0;
+        callbackId = flattenCallbackId++ >>> 0;
       } while (callbackId === 0 || flattenCallbacks.has(callbackId));
       entry = {callback, error: null, errorSet: false};
       flattenCallbacks.set(callbackId, entry);
@@ -3616,7 +3616,7 @@ def Xform "root"
     }
   }});
   function withRenderProgress(state, callback) {
-    const property = '__lightusdNextRenderProgressCallback';
+    const property = '__lightusdRenderProgressCallback';
     const hadPrevious = Object.prototype.hasOwnProperty.call(Module, property);
     const previous = Module[property];
     const progressCallback = state.progressCallback;
@@ -3795,7 +3795,7 @@ def Xform "root"
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 2 || !storeState?.handle || storeState.kind !== 5 ||
         typeof identifier !== 'string' || identifier.length === 0) {
-      throw new TypeError('beginCachedAsset: expected a live NextAssetStore and non-empty identifier');
+      throw new TypeError('beginCachedAsset: expected a live AssetStore and non-empty identifier');
     }
     if (state.busy || storeState.busy) throw new TypeError('beginCachedAsset: object is busy');
     state.sourceURI = identifier;
@@ -3922,7 +3922,7 @@ def Xform "root"
     const state = live.get(this), storeState = live.get(store);
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !storeState?.handle || storeState.kind !== 5) {
-      throw new TypeError('importAssetStore: expected a live NextAssetStore');
+      throw new TypeError('importAssetStore: expected a live AssetStore');
     }
     if (state.busy || storeState.busy) throw new TypeError('importAssetStore: object is busy');
     ++state.busy;
@@ -3941,7 +3941,7 @@ def Xform "root"
     const state = live.get(this), storeState = live.get(store);
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
     if (arguments.length !== 1 || !storeState?.handle || storeState.kind !== 5) {
-      throw new TypeError('setAssetStore: expected a live NextAssetStore');
+      throw new TypeError('setAssetStore: expected a live AssetStore');
     }
     this.importAssetStore(store);
     state.assetStore = store;
@@ -4242,12 +4242,12 @@ def Xform "root"
   }
   Object.defineProperty(Module.RenderStream.prototype, 'finalizeStreamingAssetToStore', {value: function(name, store) {
     if (arguments.length !== 2 || typeof name !== 'string') {
-      throw new TypeError('finalizeStreamingAssetToStore: expected asset name and NextAssetStore');
+      throw new TypeError('finalizeStreamingAssetToStore: expected asset name and AssetStore');
     }
     const state = live.get(this), storeState = live.get(store);
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
     if (!storeState?.handle || storeState.kind !== 5) {
-      throw new TypeError('finalizeStreamingAssetToStore: expected a live NextAssetStore');
+      throw new TypeError('finalizeStreamingAssetToStore: expected a live AssetStore');
     }
     if (state.busy || storeState.busy) throw new TypeError('finalizeStreamingAssetToStore: object is busy');
     const nameBytes = assetEncoder.encode(name);
@@ -4354,7 +4354,7 @@ def Xform "root"
     if (arguments.length !== 0) throw new TypeError('getMMapZeroCopy: wrong argument count');
     const state = live.get(this);
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
-    throw new Error('getMMapZeroCopy: unsupported; next-only WASM assets are not mmap-backed');
+    throw new Error('getMMapZeroCopy: unsupported; core WASM assets are not mmap-backed');
   }});
   Object.defineProperty(Module.RenderStream.prototype, 'setMMapZeroCopy', {value: function(enabled) {
     if (arguments.length !== 1 || typeof enabled !== 'boolean') {
@@ -4362,7 +4362,7 @@ def Xform "root"
     }
     const state = live.get(this);
     if (!state?.handle || state.kind !== 4) throw new TypeError('Invalid LightUSD receiver');
-    throw new Error('setMMapZeroCopy: unsupported; next-only WASM assets are not mmap-backed');
+    throw new Error('setMMapZeroCopy: unsupported; core WASM assets are not mmap-backed');
   }});
   Object.defineProperty(Module.RenderStream.prototype, 'provideAsset', {value: function(name, bytes) {
     const state = live.get(this);
@@ -6767,7 +6767,7 @@ def Xform "root"
     return out;
   }});
   // Legacy instance queries describe flattened point-instancer mesh draws.
-  // Next already stores those draws as bounded records, so expose that same
+  // core already stores those draws as bounded records, so expose that same
   // record order through the legacy names.
   Object.defineProperty(Module.RenderStream.prototype, 'numInstances', {value: function() {
     if (arguments.length !== 0) throw new TypeError('numInstances: wrong argument count');
@@ -6802,7 +6802,7 @@ def Xform "root"
     const path = instancer.primPath;
     const localMatrix = draw.transform.slice();
     let globalMatrix = localMatrix.slice();
-    // Next stores the point-instance draw transform in instancer-local space;
+    // core stores the point-instance draw transform in instancer-local space;
     // legacy reports both that matrix and the world-space product.
     for (let nodeId = 0; nodeId < this.nodeCount(); ++nodeId) {
       const node = this.getNode(nodeId);

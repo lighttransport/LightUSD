@@ -186,7 +186,7 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
                                       USDValidationResult *result) {
   // NOTE (structural approximation): variant OPTION bodies (properties/child
   // prims inside a variant) are stored as PrimVariantData / graft layers in
-  // next-core rather than PrimSpecs, and are not deep-validated here. Only
+  // core rather than PrimSpecs, and are not deep-validated here. Only
   // set / variant / selection names are checked (legacy additionally walks
   // the variant PrimSpec bodies).
   std::set<std::string> local_sets;
@@ -544,7 +544,7 @@ void ValidateCompositionMetadata(const PrimSpec &ps,
 
   ValidateListOpFields(ps, prim_location, result);
 
-  // NOTE: invalid list-edit qualifiers are unrepresentable in next-core
+  // NOTE: invalid list-edit qualifiers are unrepresentable in core
   // (ArcListOp qualifiers are typed), so the legacy "invalid list-edit
   // qualifier" errors have no equivalent here.
   for (const std::string &ref : GatherArcStrings(

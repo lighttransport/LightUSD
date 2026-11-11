@@ -4,7 +4,7 @@
  * crate-delta-encode.c -- C11 pxrUSD crate delta encoders.
  *
  * The uint32/int32 delta encoders and the most-common-delta selector from
- * src/next/crate/crate-format.cc. The selector has two modes exactly as the
+ * src/crate/crate-format.cc. The selector has two modes exactly as the
  * C++ original: short arrays sort a copy of the deltas, long ones tally the
  * common [-32768, 32767] range in a flat table and the rest in an
  * open-addressing table (large FIELDSETS/PATHS tables have millions of distinct

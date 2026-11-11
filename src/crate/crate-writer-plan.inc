@@ -310,7 +310,7 @@ public:
     if (ok) {
       ++prepared_batches_;
       if (options_.enable_timing)
-        LIGHTUSD_LOG_I("[next_crate_prepare] batch=" + std::to_string(prepared_batches_) +
+        LIGHTUSD_LOG_I("[core_crate_prepare] batch=" + std::to_string(prepared_batches_) +
             " contexts=" + std::to_string(prepared_contexts_) +
             " scratch_bytes=" + std::to_string(prepared_log_->size()));
     }

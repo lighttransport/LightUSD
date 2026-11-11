@@ -155,10 +155,10 @@ run_loader() {
   sed -n 's/^\[lusdview-light\] //p' "$OUT/$name.log" > "$OUT/$name.records"
   [ -s "$OUT/$name.records" ]
 }
-run_loader next "$OUT/lights.usda" || { echo "FAIL: default light extraction"; exit 1; }
+run_loader core "$OUT/lights.usda" || { echo "FAIL: default light extraction"; exit 1; }
 run_loader packaged "$OUT/lights.usdz" || { echo "FAIL: packaged light extraction"; exit 1; }
 
-python3 - "$OUT/next.records" "$OUT/packaged.records" <<'PY'
+python3 - "$OUT/core.records" "$OUT/packaged.records" <<'PY'
 import math,sys
 def read(p): return [[float(x) for x in line.split()] for line in open(p) if line.strip()]
 a,b=read(sys.argv[1]),read(sys.argv[2])
@@ -168,6 +168,6 @@ for li,(x,y) in enumerate(zip(a,b)):
  # The same core conversion must preserve all light/link fields in USDZ.
  for fi,(u,v) in enumerate(zip(x,y)):
   if not math.isclose(u,v,rel_tol=1e-5,abs_tol=1e-5):
-   print(f'light {li} field {fi}: next={u} packaged={v}'); raise SystemExit(1)
+   print(f'light {li} field {fi}: core={u} packaged={v}'); raise SystemExit(1)
 print('PASS: loose/USDZ light records equivalent')
 PY

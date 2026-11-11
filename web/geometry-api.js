@@ -85,7 +85,7 @@
 
   const subdivCallbacks = new Map();
   let nextSubdivCallbackId = 1;
-  Module['__lightusdNextSubdivEmit'] =
+  Module['__lightusdSubdivEmit'] =
     (id, pos, posCount, nrm, nrmCount, idx, idxCount, fsrc, faceCount,
      uv, uvCount, numVertices, numFaces, batchIndex) => {
       const entry = subdivCallbacks.get(id);

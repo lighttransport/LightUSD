@@ -49,7 +49,7 @@ static int g_pcp_check_failures = 0;
 
 static const std::string& PcpScratchDirectory() {
   static const std::string directory = [] {
-    char pattern[] = "/tmp/lightusd-next-pcp-suite-XXXXXX";
+    char pattern[] = "/tmp/lightusd-core-pcp-suite-XXXXXX";
     char* created = ::mkdtemp(pattern);
     return created ? std::string(created) : std::string("/tmp");
   }();
@@ -4335,7 +4335,7 @@ static void test_out_of_scope_targets_dropped() {
 // deferral marker set by an earlier deferred one.
 static void test_deferred_payload_marker_order() {
   std::cout << "test_deferred_payload_marker_order..." << std::endl;
-  char directory_template[] = "/tmp/lightusd-next-pcp-XXXXXX";
+  char directory_template[] = "/tmp/lightusd-core-pcp-XXXXXX";
   char* directory = ::mkdtemp(directory_template);
   PCP_CHECK(directory != nullptr, "create isolated PCP temporary directory");
   if (!directory) return;

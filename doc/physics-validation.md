@@ -104,7 +104,7 @@ for compatibility. `USDValidationResult::AddIssue()` and
 The Menagerie runner has an opt-in semantic validation gate:
 
 ```sh
-PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/next/run-menagerie-import.py \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/core/run-menagerie-import.py \
   --menagerie "$MENAGERIE_ROOT" --out build_ninja/physics-validation-menagerie \
   --only xml --reference-only --validate-physics --workers 4
 ```

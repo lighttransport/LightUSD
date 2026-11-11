@@ -3,7 +3,7 @@
 //
 // LightUSD - Unified Header
 //
-// This header provides the main entry point for the "next" architecture.
+// This header provides the main entry point for the "core" architecture.
 // Built by default from the root CMake project (or `cmake -S src`).
 //
 // Key differences from the original architecture:

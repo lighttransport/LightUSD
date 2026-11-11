@@ -239,7 +239,7 @@ Vec3 EvalNurbsPatchPoint(const std::vector<lusdr::value::point3f> &points,
 }
 
 
-// Fixed base color for unmaterialed curve geometry (the `next` path doesn't
+// Fixed base color for unmaterialed curve geometry (the `core` path doesn't
 // resolve curve displayColor yet). One value for every hair segment.
 
 void AppendLinearCurveStrands(const std::vector<lusdr::value::point3f> &points,
@@ -431,9 +431,9 @@ void AppendHermiteCurveStrands(const float *points, const float *tangents,
 
 
 // ===========================================================================
-// `next` lazy-loader RT preview backend (default for USDC inputs).
+// `core` lazy-loader RT preview backend (default for USDC inputs).
 //
-// Loads the USDC with the experimental `next` reader (fast, low-memory, lazy
+// Loads the USDC with the experimental `core` reader (fast, low-memory, lazy
 // arrays) and streams triangles using tydra's bit-exact world transforms.
 // Produces the byte-identical triangle stream of the former eager path (validated:
 // matching per-purpose triangle counts on large scenes). Falls back to the
@@ -488,7 +488,7 @@ matrix4d Mat4FromArray(const double d[16]) {
 }
 
 // Read an array attribute, decoding lazily-stored arrays into a throwaway temp
-// (materialized_copy) so the `next` stage's Value stays lazy. This keeps the
+// (materialized_copy) so the `core` stage's Value stays lazy. This keeps the
 // big geometry arrays (points/indices/normals) from being permanently
 // materialized into the stage as we stream the scene, bounding peak memory.
 // `time` is NaN for the default value, or a frame time for animated (time-

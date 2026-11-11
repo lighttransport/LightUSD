@@ -100,7 +100,7 @@ Acceptance criteria:
 - [x] Update pure material edits in place when material and texture slot catalogs
   remain stable. Only material slots whose prim path contains the reported
   shader/material change are repacked; mesh and texture allocations are retained.
-- [x] Connect the next viewer loader to `tydra::next::RenderSession` and commit
+- [x] Connect the core viewer loader to `tydra::RenderSession` and commit
   prepared revisions through a `SceneUpdateSink` whose final step is the atomic
   DrawScene/GPU transaction. Preparation runs on the loader worker; a rejected
   sink leaves both the RenderSession and displayed GPU revision unchanged.
@@ -108,7 +108,7 @@ Acceptance criteria:
   render updates. Prepared candidates are retryable after sink rejection and
   rejected as stale after a competing revision commits.
 
-The retained `tydra::next::RenderSession` foundation selectively converts
+The retained `tydra::RenderSession` foundation selectively converts
 geometry-only topology/primvar edits and has a focused copy-on-write test that
 proves an unchanged mesh keeps its allocation and emits no upsert. Lusdview now
 uses the published `StageChangeSet` to retain compatible GPU mesh slots, with a
@@ -144,7 +144,7 @@ DrawScene planner for oversized scenes.
   the shared CUDA/HIP tracer already support it.
 - [x] Implement shutter/motion blur consistently across raster and RT backends.
   The shared authored-shutter contract and deterministic midpoint schedule are
-  in place. Headless CPU, CUDA, and HIP evaluate next-stage camera transforms,
+  in place. Headless CPU, CUDA, and HIP evaluate core-stage camera transforms,
   object transforms, and deformation at every shutter sample, rebuild their
   acceleration structures, and average in linear light. Their regressions cover
   independent geometry and camera motion. Native paused GL/Vulkan raster now
@@ -164,7 +164,7 @@ DrawScene planner for oversized scenes.
   preview selection, and report records. Native headless GL/Vulkan screenshots
   render and compose both eyes side by side while preserving per-eye pose, lens,
   shutter, and clipping state. Windowed GL/Vulkan live viewports compose both
-  eyes at display resolution, with legacy/next coverage. The dependency-free
+  eyes at display resolution, with legacy/core coverage. The dependency-free
   `render-stereo.py` companion extends that workflow to external CPU/CUDA/HIP
   tracing modes.
 - [x] Apply authored camera clipping planes in GL and Vulkan raster. Both
@@ -183,7 +183,7 @@ DrawScene planner for oversized scenes.
 - [x] Implement finite Sphere, Disk, Rect, and Cylinder area-light sampling in
   GL and Vulkan raster. Both backends use the shared packed light record and a
   deterministic finite-sample pattern; shadow coverage and light-link masks are
-  tested alongside the legacy/next loader parity path. The Vulkan RT area-light
+  tested alongside the legacy/core loader parity path. The Vulkan RT area-light
   gate now probes for a hardware-capable adapter before entering the expensive
   ray-query path, so software Vulkan runs skip instead of timing out.
 - [x] Implement dedicated GeometryLight and emissive-mesh raster sampling.
@@ -235,7 +235,7 @@ chunk draw statistics now count each submesh's visible commands once.
   captures; full details are in `lusdview.md`.
 - [ ] Detect skins with no time-varying pose and bake them automatically when
   skinning is Auto. Preserve explicitly requested GPU skinning and animated
-  skeletons, and prove posed bounds, animation and next/legacy parity before
+  skeletons, and prove posed bounds, animation and core/legacy parity before
   changing the default. See the measured CPU-skinning comparison in `lusdview.md`.
 - [ ] Evaluate a packed static vertex format with fixed-camera image parity and
   GPU timing; static vertex/index bandwidth remains a material frame cost.

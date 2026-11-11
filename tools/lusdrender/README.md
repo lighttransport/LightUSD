@@ -62,7 +62,7 @@ own nested payloads. The loader reports the number of deferred payloads.
 | `-smooth` | interpolate authored normals (smooth shading) |
 | `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
-| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `tydra-next` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
+| `-materialResolver legacy\|tydra\|compare` | core material resolver. `tydra` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
 | `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
 | `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
 | `-texMaxSize <N>` | longest texture edge cap; derived automatically from the host/VRAM budget unless explicitly set |
@@ -159,7 +159,7 @@ multi-million-triangle allocation.
 The OpenUSD float/half property pairs share float-over-half selection and
 array-length validation across native and fallback paths.
 
-For GPU mesh previews, next-loader traversal records are also collected and
+For GPU mesh previews, core-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
 being retained alongside the world-space geometry waiting for the GPU chunk
 upload; the final nearest-hit reduction and material order are unchanged.
@@ -169,7 +169,7 @@ job records are released immediately after native curve extraction as well, so
 subset-heavy instanced scenes do not retain authored job metadata throughout
 the entire BLAS/TLAS build.
 
-The flat next-loader mesh path also splits its native LightRT triangle BVH when
+The flat core-loader mesh path also splits its native LightRT triangle BVH when
 needed. `-triangleChunk N` sets the triangle limit (default 262,144);
 the integrator preserves global material/UV indices while checking every chunk,
 and `-stats` reports aggregate chunk node/memory totals.
@@ -289,14 +289,14 @@ analytic curve API is available.
   glass. UsdGeomBasisCurves, HermiteCurves, and NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
-  The default `-materialResolver tydra-next` path uses the shared material
+  The default `-materialResolver tydra` path uses the shared material
   converter. The legacy and compare modes remain migration aids for the
   shared material-eval layer; measure coverage on usd-assets with:
   `USD_ASSETS_ROOT=/path/to/usd-assets LUSDR_RUN_MATERIAL_RESOLVER=1 ctest --test-dir build -R tool-lusdrender-material-resolver --output-on-failure`.
   Add `LUSDR_MATERIAL_SHADING=lightrt-bsdf` to smoke the experimental BSDF
   shading mode through the same curated loop.
   `-materialShading lightrt-bsdf` is the next experimental step: with
-  `-materialResolver tydra-next`, lusdrender carries the shared OpenPBR block in
+  `-materialResolver tydra`, lusdrender carries the shared OpenPBR block in
   per-material side tables, then evaluates direct-light and headlight response
   through LightRT's OpenPBR BSDF. The diffuse irradiance and prefiltered
   reflection IBL terms also use `bsdf_eval` in this mode, and opaque hits trace
@@ -306,7 +306,7 @@ analytic curve API is available.
   diffusion response, fuzz uses the Charlie distribution, and thin film uses
   wavelength-sensitive Airy interference. Legacy material resolution still
   falls back to the slim material fields.
-* **Back plates** — the next CPU backend composites the selected camera's first
+* **Back plates** — the core CPU backend composites the selected camera's first
   visible `BackPlateAPI` instance. Color and optional alpha/depth images,
   scale/translate/Z-rotation tweaks, luma gain/lift/gamma, and camera-space
   depth normalization are honored. GPU backends currently omit the plate.

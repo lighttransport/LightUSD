@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildNextThreeNode } from 'lightusd/NextRenderSceneUtils.js';
+import { buildThreeNode } from 'lightusd/RenderSceneUtils.js';
 import {
   createConfiguredLightUSDLoader,
   parseUSDSceneFromArrayBuffer
@@ -188,13 +188,13 @@ async function usdaText() {
 async function loadLightUSDScene() {
   setStatus('Loading LightUSD WASM...');
   state.lightusdLoader = await createConfiguredLightUSDLoader();
-  state.lightusdNative = new state.lightusdLoader.native_.NextUSDZConverterNative();
+  state.lightusdNative = new state.lightusdLoader.native_.USDZConverterNative();
 
   const text = await usdaText();
   const bytes = new TextEncoder().encode(text);
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const sceneData = await parseUSDSceneFromArrayBuffer(state.lightusdLoader, arrayBuffer, 'embedded_robot.usda');
-  state.usdObject = buildNextThreeNode(sceneData, { skipTextures: true }).node;
+  state.usdObject = buildThreeNode(sceneData, { skipTextures: true }).node;
   state.usdObject.name = 'USD rest pose';
   setRestObjectStyle(state.usdObject);
   restRoot.add(state.usdObject);

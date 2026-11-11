@@ -39,7 +39,7 @@ def run(xvfb, binary, model, out, frames, extra_env=None):
         os.remove(out)
     except FileNotFoundError:
         pass
-    cmd = [xvfb, "-a", binary, "--next", "--hip", "--play",
+    cmd = [xvfb, "-a", binary, "--core", "--hip", "--play",
            "--frames", str(frames), "--screenshot", out, model]
     env = dict(os.environ)
     env["LUSDVIEW_RT_TIMING"] = "1"

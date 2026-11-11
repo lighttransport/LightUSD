@@ -56,7 +56,7 @@ const std::vector<Expectation> kExpectations = {
 
 // Flatten a resolved next Value into doubles. `want` is the expected lane
 // count (arrays flatten every element).
-bool FlattenNext(const Value& v, size_t want, std::vector<double>* out) {
+bool FlattenCore(const Value& v, size_t want, std::vector<double>* out) {
   out->clear();
   if (v.is_array()) {
     if (auto fa = v.as_float_array()) {
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
     std::vector<double> got;
     const size_t want =
         (e.kind == 3) ? size_t(e.num_count) : size_t(e.num_count);
-    if (!FlattenNext(r.value, e.kind == 3 ? 0 : want, &got)) {
+    if (!FlattenCore(r.value, e.kind == 3 ? 0 : want, &got)) {
       fail("cannot flatten resolved value to numbers");
       continue;
     }

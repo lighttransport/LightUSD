@@ -26,7 +26,7 @@ with `npm ci`.
 The full profile covers:
 
 - native CMake/CTest tests and the USD-WG corpus parser;
-- the Debug `src/next` CMake/CTest suite;
+- the Debug `src/` CMake/CTest suite;
 - web Node/WASM tests, MuJoCo physics, Menagerie MJCF/USD/MJCF closure,
   five-model URDF browser rendering, and the full OffscreenCanvas worker sweep;
 - USD-WG asset parsing; and

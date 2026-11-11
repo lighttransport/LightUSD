@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired, warm-input next-core benchmarks; serialized bytes go to /dev/null.
+"""Paired, warm-input core benchmarks; serialized bytes go to /dev/null.
 
 The manifest is a JSON list of {name, input, mode, format, payloads,
 compose_threads, parse_threads, write_threads, args}. mode defaults to flatten;

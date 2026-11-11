@@ -77,7 +77,7 @@ def Xform "Item" (
  }finally{layer.delete();}
 }
 {
- const session=new native.NextFlattenSession();
+ const session=new native.FlattenSession();
  try {
   assert.throws(()=>session.setCompositionMask(63),/session not started/);
   for(const value of [-1,64,1.5,'1',null])assert.throws(()=>session.setCompositionMask(value),/integer/);

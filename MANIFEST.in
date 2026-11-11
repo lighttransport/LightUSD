@@ -47,7 +47,7 @@ prune android
 prune ios
 prune tests/usdc
 prune tests/feat
-prune tests/legacy/unit
+prune tests/legacy
 prune tests/fuzzer
 prune tests/core
 prune tests/tydra
@@ -86,6 +86,8 @@ prune build
 prune build_py_ext
 prune build_py_ext_nothread
 prune build-next
+prune build-core
+prune build_combined
 prune dist
 prune .git
 prune .github

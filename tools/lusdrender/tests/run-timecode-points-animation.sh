@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender next-loader animation regression for time-sampled mesh points. The
+# lusdrender core-loader animation regression for time-sampled mesh points. The
 # red foreground mesh has default points plus frame-specific points; frame 2 moves
 # it away from center and reveals a blue background.
 set -uo pipefail

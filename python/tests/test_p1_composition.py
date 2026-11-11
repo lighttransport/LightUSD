@@ -27,7 +27,7 @@ def test_payload_deferred_vs_eager(tmp_path):
     # eager (default)
     st_eager = lightusd.load(str(root), load_payloads=True)
     # Payload should be available (either directly or under Holder)
-    # next-core may compose payload content at the holder prim itself
+    # core may compose payload content at the holder prim itself
     assert st_eager.get_prim_at("/Holder") is not None
     # deferred
     st_defer = lightusd.load(str(root), load_payloads=False)

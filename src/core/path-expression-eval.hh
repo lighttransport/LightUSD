@@ -4,7 +4,7 @@
 // path-expression-eval.hh (next-local)
 //
 // Self-contained matcher for SdfPathExpression, backed by the C11 core
-// (src/next/c/path-expr.c). Predicate evaluation and expression-reference
+// (src/c/path-expr.c). Predicate evaluation and expression-reference
 // resolution are injected through PathExpressionEvalContext so this module
 // stays decoupled from Stage/Prim.
 //

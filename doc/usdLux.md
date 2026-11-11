@@ -281,7 +281,7 @@ TYPE_ID_LUX_DOME_1, TYPE_ID_LUX_LIGHT_FILTER, TYPE_ID_LUX_PLUGIN_LIGHT_FILTER
 - Intensity + exposure computation
 - Light linking (`light:lightLink` / `light:shadowLink` collections resolved
   against scene geometry via `ResolveLightLinking()` —
-  `src/tydra/render-data-anim.cc`, mirrored in `src/tydra/next/render-converter.cc`)
+  `src/tydra/render-data-anim.cc`, mirrored in `src/tydra/render-converter.cc`)
 - MeshLightAPI area lights (mesh marked as area light during `ConvertMesh`,
   `src/tydra/render-data-mesh.cc`)
 

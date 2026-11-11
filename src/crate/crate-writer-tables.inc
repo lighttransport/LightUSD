@@ -133,7 +133,7 @@
 
   // Touch the slot a coming probe will read. The path table is far larger
   // than any cache on a big scene, so each intern otherwise starts with a
-  // stalled random load; the emit loops know the next path one step ahead.
+  // stalled random load; the emit loops know the core path one step ahead.
   void PrefetchPathSlot(uint64_t h) const {
     if (WorkerTLS()) return;  // the global slot arrays may rehash concurrently
 #if defined(__GNUC__) || defined(__clang__)

@@ -25,7 +25,7 @@ build\src\next\ld3d12view_example\ld3d12view.exe models\suzanne-pbr.usda
 ```
 
 `LIGHTUSD_BUILD_LD3D12VIEW` defaults to `LIGHTUSD_BUILD_EXAMPLES`, is
-only available on Windows and only in the `next` product. Enabling it also
+only available on Windows and only in the `core` product. Enabling it also
 builds `lmetalview_core` (the portable half of lmetalview), but not the Swift
 app. Nothing needs installing beyond Visual Studio's C++ workload and the
 Windows SDK: `d3d12`, `dxgi` and `d3dcompiler` ship with the SDK, and all
@@ -241,7 +241,7 @@ darken every textured material.
 
 ## Tests
 
-All registered by CTest when the next tests are enabled, all on the WARP adapter
+All registered by CTest when the core tests are enabled, all on the WARP adapter
 so they run without a GPU. The input and loading tests post real window messages
 (`WM_DROPFILES`, `WM_KEYDOWN`, mouse clicks, `WM_SIZE`), so they exercise the
 window procedure, not just the viewer logic.

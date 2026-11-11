@@ -3,10 +3,10 @@
 ## Demo app
 
 See `demo` folder.
-Its build uses the local next WASM module and also builds the deprecated
+Its build uses the local core WASM module and also builds the deprecated
 combined module for the backend comparison page and LightRT worker. Emscripten
 is required. The online viewer composes references and payloads during loading
-through the next flattening API.
+through the core flattening API.
 
 ## Technical note on JS/WASM version of LightUSD
 
@@ -21,10 +21,10 @@ See `js` folder for JS codes.
 Emscripten and `emcmake` are required. LightUSD uses C++20 coroutines for
 async work across the JS/WASM boundary without requiring Asyncify or JSPI.
 
-### Module variants: legacy / next
+### Module variants: legacy / core
 
-LightUSD has two USD cores. The published loader is next-first and the build
-produces separate legacy and next products:
+LightUSD has two USD cores. The published loader is core-first and the build
+produces separate legacy and core products:
 
 | Variant | CMake option | Module (`js/src/lightusd/`) | Contents | .wasm (MinSizeRel) |
 |---|---|---|---|---|
@@ -58,7 +58,7 @@ $ cmake --build web/build_ninja
 # core -> js/src/lightusd/lightusd.js/.wasm
 $ emcmake cmake -S web -B web/cmake-build-core -G Ninja \
     -DLIGHTUSD_WASM_PRODUCT=core -DCMAKE_BUILD_TYPE=MinSizeRel
-$ cmake --build web/cmake-build-next
+$ cmake --build web/cmake-build-core
 ```
 
 ### WASM64/MEMORY64 build (8GB memory limit)
@@ -109,7 +109,7 @@ WASM32, Ninja, and `CMAKE_BUILD_TYPE=MinSizeRel`:
 | Variant | `.wasm` | `zstd -19` |
 |---|---:|---:|
 | legacy (`lightusd.wasm`) | 6,551,876 bytes (6.25 MiB) | 1,321,824 bytes (1,290.84 KiB) |
-| next (`lightusd.wasm`) | 1,671,646 bytes (1.59 MiB) | 557,584 bytes (544.52 KiB) |
+| core (`lightusd.wasm`) | 1,671,646 bytes (1.59 MiB) | 557,584 bytes (544.52 KiB) |
 
 ### zstd compression
 

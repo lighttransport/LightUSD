@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Test runner for WASM-based USD file loading against the staged npm package.
-// Loads .usda files from tests/usda/ via LightUSDLoader (next backend — the
+// Loads .usda files from tests/usda/ via LightUSDLoader (core backend — the
 // only module the package ships) and verifies:
 //   1. Standalone valid files load (parse + compose + render conversion)
 //   2. Geometry files with complete data produce meshes
@@ -84,7 +84,7 @@ let loader;
 async function initLoader() {
   const mod = await import(path.join(distDir, 'LightUSDLoader.js'));
   loader = new mod.LightUSDLoader();
-  await loader.init({ backend: 'next' });
+  await loader.init({ backend: 'core' });
 }
 
 function readArrayBuffer(filePath) {
@@ -104,7 +104,7 @@ async function quietly(fn) {
 }
 
 async function load(rel, absPath) {
-  return quietly(() => loader.parseAsync(readArrayBuffer(absPath), rel, { backend: 'next' }));
+  return quietly(() => loader.parseAsync(readArrayBuffer(absPath), rel, { backend: 'core' }));
 }
 
 const errorText = (err) => String((err && err.message) || err);

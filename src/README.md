@@ -68,8 +68,8 @@ by extraction/downstream layers such as Tydra.
 
 ```bash
 # Configure, build, and run the standalone core smoke tests.
-scripts/run-next-checks.sh
-scripts/run-next-checks.sh --help
+scripts/run-core-checks.sh
+scripts/run-core-checks.sh --help
 
 # Optional broader gates after the smoke tests.
 scripts/build-openusd-usdcat.sh --prepare-only  # clone/fetch v26.05 to ref/openusd
@@ -77,10 +77,10 @@ scripts/build-openusd-usdcat.sh   # installs OpenUSD v26.05 usdcat to ref/dist/b
 scripts/build-openusd-usdcat.sh --full  # full OpenUSD release build to ref/dist
 OPENUSD_RETRY_NO_PYSIDE=0 scripts/build-openusd-usdcat.sh --full  # abort on first full-build failure
 OPENUSD_FETCH=0 scripts/build-openusd-usdcat.sh --prepare-only  # local-only refresh when v26.05 already checked out
-USDCAT_PATH=ref/dist/bin/usdcat scripts/run-next-checks.sh
-USD_WG_ASSETS_DIR=/path/to/usd-wg/assets RUN_CORPUS=1 scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+USDCAT_PATH=ref/dist/bin/usdcat scripts/run-core-checks.sh
+USD_WG_ASSETS_DIR=/path/to/usd-wg/assets RUN_CORPUS=1 scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-core-checks.sh
 
 # Manual labeled test selection after configuring with LIGHTUSD_BUILD_TESTS=ON.
 ctest --test-dir build --output-on-failure -L core -LE 'benchmark|corpus'
@@ -295,7 +295,7 @@ current cleanup/refactor queue rather than a historical checklist.
 - Keep `doc/refactor-next.md`, `doc/memory-and-performance.md`, and this README
   synchronized with landed behavior and benchmark deltas. Update
   `doc/testing-cpp.md` when core test coverage changes.
-- Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for
+- Keep `scripts/run-core-checks.sh` as the canonical standalone smoke test for
   the core module. The main regression build registers the core tests;
   remaining smoke checks are run explicitly through the standalone build and
   web/WASM core-product gates.

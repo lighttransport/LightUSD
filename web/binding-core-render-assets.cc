@@ -67,7 +67,7 @@ int RenderStream::provideAssetBytes(const uint8_t* name, uint32_t name_size,
     return 0;
 }
 
-int RenderStream::importAssetStore(const NextAssetStore& store) {
+int RenderStream::importAssetStore(const AssetStore& store) {
     lightusd::AssetResolver candidate;
     candidate.SetAssetReader(
         [](const std::string&, std::vector<uint8_t>*, std::string* error) {
@@ -133,7 +133,7 @@ int RenderStream::importAssetStore(const NextAssetStore& store) {
     return 0;
 }
 
-int RenderStream::beginCachedAsset(NextAssetStore& store,
+int RenderStream::beginCachedAsset(AssetStore& store,
                                   const uint8_t* identifier,
                                   uint32_t identifier_size) {
     if (!identifier || identifier_size == 0) {
@@ -399,7 +399,7 @@ int RenderStream::finalizeStreamingAsset(const uint8_t* name, uint32_t name_size
 
 int RenderStream::finalizeStreamingAssetToStore(const uint8_t* name,
                                                 uint32_t name_size,
-                                                NextAssetStore& store) {
+                                                AssetStore& store) {
     if (!name || !name_size) return -1;
     std::string key(reinterpret_cast<const char*>(name), name_size);
     key = NormalizeRenderAssetKey(key);

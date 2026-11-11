@@ -13,7 +13,7 @@
 namespace lightusd {
 namespace web_core {
 
-EM_JS(bool, reportNextLoadProgress, (const char* phase, double current, double total), {
+EM_JS(bool, reportLoadProgress, (const char* phase, double current, double total), {
   const cur = Number(current);
   const tot = Number(total);
   const event = {
@@ -23,21 +23,21 @@ EM_JS(bool, reportNextLoadProgress, (const char* phase, double current, double t
     percentage: tot > 0 ? (cur / tot) * 100 : 0
   };
   let keepGoing = true;
-  if (typeof Module.__lightusdNextRenderProgressCallback === 'function') {
-    keepGoing = Module.__lightusdNextRenderProgressCallback(event) !== false;
+  if (typeof Module.__lightusdRenderProgressCallback === 'function') {
+    keepGoing = Module.__lightusdRenderProgressCallback(event) !== false;
   }
-  if (typeof Module.onNextCrateProgress === 'function') {
-    Module.onNextCrateProgress(event);
+  if (typeof Module.onCrateProgress === 'function') {
+    Module.onCrateProgress(event);
   }
   return keepGoing;
 });
-EM_JS(bool, reportNextLayerLoadProgress,
+EM_JS(bool, reportLayerLoadProgress,
       (const char* phase, double current, double total), {
   const tot = Number(total), cur = Number(current);
   const event = {phase: UTF8ToString(Number(phase)), current: cur, total: tot,
     progress: tot > 0 ? cur / tot : 0, percentage: tot > 0 ? cur / tot * 100 : 0};
-  return typeof Module.__lightusdNextLayerProgressCallback !== 'function' ||
-    Module.__lightusdNextLayerProgressCallback(event) !== false;
+  return typeof Module.__lightusdLayerProgressCallback !== 'function' ||
+    Module.__lightusdLayerProgressCallback(event) !== false;
 });
 int CopyOutputString(const std::string& value, uint8_t* out, uint32_t cap) {
   if (value.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) return -1;
@@ -287,7 +287,7 @@ int AnimationTargetNodeCount(const tr::AnimationClip& clip) {
   return static_cast<int>(node_ids.size());
 }
 
-std::unique_ptr<tn::Layer> ParseNextLayerBytes(
+std::unique_ptr<tn::Layer> ParseLayerBytes(
     const uint8_t* data, size_t size, const std::string& key,
     const tn::CrateReadOptions& read_opts, std::string* error) {
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {

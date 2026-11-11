@@ -24,7 +24,7 @@ def run(root):
     off=c.call('capture')
     native['usdview'].call('render_settings',{'skeleton':True})
     s=settle(True);assert all(not v['display']['guide'] for v in s['viewers'].values())
-    on=c.call('capture');stats=native['lusdview'].call('get_render_stats');assert stats['next_skeleton_overlay_vertices']>0,stats
+    on=c.call('capture');stats=native['lusdview'].call('get_render_stats');assert stats['core_skeleton_overlay_vertices']>0,stats
     for name in native:
      assert not equal(off['captures'][name]['path'],on['captures'][name]['path']),name+' bone display did not change pixels'
     print('PASS independent bones affect both native images with guide purpose disabled',flush=True)

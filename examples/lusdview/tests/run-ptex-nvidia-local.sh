@@ -64,7 +64,7 @@ def Mesh "Mesh" (prepend apiSchemas = ["MaterialBindingAPI"]) {
 }
 EOF
   base="$out/$index"
-  common=(--next --texture-compress bc7 --texture-gpu vulkan
+  common=(--core --texture-compress bc7 --texture-gpu vulkan
           "--texture-gpu-device=$device" --ptex-initial-faces 1
           --ptex-cache-mb 8 --texture-mips on --frames 2 --size 256x160
           --camera /Camera)

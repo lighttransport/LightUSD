@@ -1,4 +1,4 @@
-// Comprehensive LightUSD `next` API example.
+// Comprehensive LightUSD `lightusd_core` API example.
 //
 // Demonstrates, in one pass: loading and composition, stage traversal,
 // typed schema access, attribute evaluation at a timecode, and writing the

@@ -205,7 +205,7 @@ void CrateReader::Impl::ApplyChildrenOrder(
 
 
 bool CrateReader::Impl::BuildStage() {
-  CratePhaseTimer timer(options_.enable_timing, "next_crate_stage");
+  CratePhaseTimer timer(options_.enable_timing, "core_crate_stage");
   auto lap = [&](const char* phase) { timer.lap(phase); };
   // Create layer and builder
   Layer layer;

@@ -162,8 +162,8 @@ inline bool ExpandTemplateClipMetadata(
   // explicit pre-check (the standard `a > MAX - b` idiom) instead of
   // computing-then-comparing-to-max, so no compiler-specific extra
   // precision is required for correctness on any platform. (Same fix as
-  // src/next/eval/value-clip.cc's ExpandTemplate, which implements the same
-  // spec section for the "next" USD core.)
+  // src/eval/value-clip.cc's ExpandTemplate, which implements the same
+  // spec section for the "core" USD core.)
   const double span = templateEndTime - templateStartTime;
   const double stepCount = span / templateStride;
   const double roundedSteps = std::round(stepCount);

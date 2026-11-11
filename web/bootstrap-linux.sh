@@ -1,6 +1,6 @@
 # Default WASM32 build: Ninja generator + MinSizeRel.
 # Builds the core module (lightusd.js/.wasm): the core + Tydra, with the
-# nextFlatten* lazy pipeline and RenderStream. Not the legacy compatibility
+# flatten* lazy pipeline and RenderStream. Not the legacy compatibility
 # module; use bootstrap-linux-legacy-only.sh for that (or, for the legacy
 # product, bootstrap-linux-legacy-only.sh, which is the former default).
 #

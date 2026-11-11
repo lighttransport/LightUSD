@@ -130,7 +130,7 @@ def diff_pcp(expected, actual, strict_order=False):
 
 
 
-def verify_invalid_text_case(case_dir, expected, classification, next_usdcat,
+def verify_invalid_text_case(case_dir, expected, classification, lusdcat,
                              oracle_python=None, oracle_version="26.11", oracle_env=None):
     """Verify a hash-pinned negative root and all available binary dependencies.
 
@@ -147,7 +147,7 @@ def verify_invalid_text_case(case_dir, expected, classification, next_usdcat,
     if binary_root.is_file() != classification['binaryRootPresent']:
         errors.append('binary root presence differs from the reviewed release')
     for flags in (['-l'], ['--dump-pcp-json', '-', '--pcp-json-version', '2']):
-        result = subprocess.run([next_usdcat, *flags, str(text)], capture_output=True, text=True)
+        result = subprocess.run([lusdcat, *flags, str(text)], capture_output=True, text=True)
         if result.returncode == 0 or classification['nextDiagnostic'] not in result.stderr:
             errors.append('negative text did not produce the required rejection: ' + ' '.join(flags))
     oracle_script = str(pathlib.Path(__file__).with_name('dump-pcp-oracle.py'))
@@ -171,7 +171,7 @@ def verify_invalid_text_case(case_dir, expected, classification, next_usdcat,
                 path.read_bytes()[:8] != b'PXR-USDC'):
             errors.append('original binary dependency missing or changed: ' + name)
             continue
-        result = run([next_usdcat, '-l', str(path)])
+        result = run([lusdcat, '-l', str(path)])
         if result.returncode:
             errors.append('original binary dependency failed to load: ' + name + ': ' + result.stderr[-800:])
         if oracle_python:
@@ -186,9 +186,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite-root",
                         default=os.environ.get("AOUSD_CORE_SUPPLEMENTAL_ROOT"))
-    parser.add_argument("--lusdcat", "--next-usdcat", dest="next_usdcat",
+    parser.add_argument("--lusdcat", dest="lusdcat",
                         required=True,
-                        help="unified lusdcat CLI (legacy alias: --next-usdcat)")
+                        help="unified lusdcat CLI")
     parser.add_argument("--aousd-test")
     parser.add_argument("--aousd-value-test",
                         help="test_aousd_value_resolution binary: asserts the "
@@ -279,7 +279,7 @@ def main():
         assets = sorted((root / "file_formats" / "tests" / "assets").rglob("*.usda"))
         assets += sorted((root / "file_formats" / "tests" / "assets").rglob("*.usdc"))
         for asset in assets:
-            result = run((args.next_usdcat, "-l", str(asset)))
+            result = run((args.lusdcat, "-l", str(asset)))
             if result.returncode:
                 failures.append(("file_formats", asset, result.stderr))
         counts["file_formats"] = len(assets)
@@ -301,7 +301,7 @@ def main():
             classification = invalid_cases.get(case_dir.name)
             if classification:
                 errors = verify_invalid_text_case(case_dir, expected, classification,
-                    args.next_usdcat, args.pcp_oracle_python, args.pcp_oracle_version, oracle_env)
+                    args.lusdcat, args.pcp_oracle_python, args.pcp_oracle_version, oracle_env)
                 if errors:
                     failures.append(('invalid_text', case_dir, '\n'.join(errors)))
                 else:
@@ -319,7 +319,7 @@ def main():
             # fallback registered (e.g. case1 requires /FergusCloak/rig, which
             # only composes under standin=render). next's default is now
             # fallback-free like stock usdcat, so opt in here.
-            command = [args.next_usdcat, "-f", "--instance-mode", "native",
+            command = [args.lusdcat, "-f", "--instance-mode", "native",
                        "--variant-fallback", "standin=render,proxy"]
             for prim_path in expected.get("Composing", {}):
                 command.extend(("--require-prim", prim_path))
@@ -336,7 +336,7 @@ def main():
                     '--variant-fallback', 'standin=render,proxy', str(entry)]
                 oracle = subprocess.run(oracle_command, capture_output=True,
                                         text=True, env=oracle_env)
-                lossless_command = [args.next_usdcat, '--instance-mode', 'native',
+                lossless_command = [args.lusdcat, '--instance-mode', 'native',
                     '--variant-fallback', 'standin=render,proxy',
                     '--dump-pcp-json', '-', '--pcp-json-version', '2', str(entry)]
                 lossless = subprocess.run(lossless_command, capture_output=True, text=True)
@@ -356,7 +356,7 @@ def main():
                     except (ValueError, TypeError) as error:
                         oracle_results[case_dir.name] = [('<root>', '<oracle>', str(error))]
             if args.compare_pcp:
-                compare_command = [args.next_usdcat, "--instance-mode", "native",
+                compare_command = [args.lusdcat, "--instance-mode", "native",
                                    "--variant-fallback", "standin=render,proxy",
                                    "--dump-pcp-json", "-", str(entry)]
                 dump = subprocess.run(compare_command, stdout=subprocess.PIPE,
@@ -390,7 +390,7 @@ def main():
         assets = sorted((root / "value_resolution" / "tests" / "assets").glob(
             "*/entry.usd"))
         for asset in assets:
-            result = run((args.next_usdcat, "-f", str(asset)))
+            result = run((args.lusdcat, "-f", str(asset)))
             if result.returncode:
                 failures.append(("value_resolution", asset, result.stderr))
         counts["value_resolution"] = len(assets)

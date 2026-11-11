@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Bounded per-prim tessellation shared by CPU and GPU next-loader paths.
+// Bounded per-prim tessellation shared by CPU and GPU core-loader paths.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -11,7 +11,7 @@ class UsdPrim;
 
 namespace lusdr {
 
-struct GeneratedMeshNext {
+struct GeneratedMeshCore {
   std::vector<float> points;
   std::vector<int32_t> counts;
   std::vector<int32_t> indices;
@@ -22,15 +22,15 @@ struct GeneratedMeshNext {
 };
 
 // GPU vertex attributes cannot share a position across distinct face corners.
-void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
+void ExpandGeneratedMeshCornersCore(const GeneratedMeshCore &mesh,
                                     std::vector<float> *points,
                                     std::vector<float> *normals,
                                     std::vector<float> *uvs,
                                     std::vector<uint32_t> *indices);
 
-bool IsTriangleMeshNext(const lightusd::UsdPrim &prim);
-bool GenerateAnalyticMeshNext(const lightusd::Stage &stage,
+bool IsTriangleMeshCore(const lightusd::UsdPrim &prim);
+bool GenerateAnalyticMeshCore(const lightusd::Stage &stage,
                               const lightusd::UsdPrim &prim, double time,
-                              GeneratedMeshNext *out);
+                              GeneratedMeshCore *out);
 
 }  // namespace lusdr

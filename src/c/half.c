@@ -4,12 +4,12 @@
  * half.c -- C11 IEEE 754 half (float16) <-> float32 conversion.
  *
  * Crate stores half/half2/half3/half4/quath as packed uint16 components. The
- * next Value model has no 16-bit storage, so half arrays materialize into a
+ * The core Value model has no 16-bit storage, so half arrays materialize into a
  * float buffer (widening is exact) and re-encode by narrowing back to half
  * (round-to-nearest-even). Half-origin values round-trip byte-exact: a float
  * widened from a half has zero low mantissa bits, so narrowing reproduces it.
  *
- * This is the C core of src/next/crate/crate-format.hh's HalfToFloat /
+ * This is the C core of src/crate/crate-format.hh's HalfToFloat /
  * FloatToHalf; the C++ header forwards here so the bit twiddling lives once and
  * is available to C consumers (e.g. the C ABI).
  */

@@ -1066,7 +1066,7 @@ bool CrateReader::Impl::ReadSpecs() {
 }
 
 bool CrateReader::Impl::ReadPaths() {
-  CratePhaseTimer timer(options_.enable_timing, "next_crate_paths");
+  CratePhaseTimer timer(options_.enable_timing, "core_crate_paths");
   const CrateSection* section = toc_.find("PATHS");
   if (!section) {
     AddError("Missing PATHS section");

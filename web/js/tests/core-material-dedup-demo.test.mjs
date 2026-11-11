@@ -19,8 +19,8 @@ try {
    return {error:window.renderError,backend:d?.params.backend,counts:d?.currentCounts,sceneBackend:d?.currentUsd?.__backend,
     objects:d?.root?.children.length,status:document.querySelector('#status').textContent};
   });
-  assert.equal(result.error,null,JSON.stringify(result));assert.equal(result.backend,'next');
-  assert.equal(result.sceneBackend,'next');assert.ok(result.counts.meshes>0,JSON.stringify(result));assert.ok(result.objects>0);
+  assert.equal(result.error,null,JSON.stringify(result));assert.equal(result.backend,'core');
+  assert.equal(result.sceneBackend,'core');assert.ok(result.counts.meshes>0,JSON.stringify(result));assert.ok(result.objects>0);
   output.push(result.counts);
  }
  assert.equal(output[0].meshes,output[1].meshes);assert.equal(output[0].materials,output[1].materials);

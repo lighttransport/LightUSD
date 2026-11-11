@@ -68,12 +68,12 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                        SKIP_RETURN_CODE 77 TIMEOUT 300)
 
   if(LUSDR_PYTHON)
-    add_test(NAME lusdview-next-mesh-materials
+    add_test(NAME lusdview-core-mesh-materials
       COMMAND ${LUSDR_PYTHON}
-              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-next-mesh-materials.py"
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-core-mesh-materials.py"
               "$<TARGET_FILE:lusdview>"
-              --output "${CMAKE_BINARY_DIR}/lusdview-next-mesh-materials")
-    set_tests_properties(lusdview-next-mesh-materials PROPERTIES
+              --output "${CMAKE_BINARY_DIR}/lusdview-core-mesh-materials")
+    set_tests_properties(lusdview-core-mesh-materials PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 600
                          LABELS "lusdview;vulkan;rt")
   endif()
@@ -334,7 +334,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     set_tests_properties(lusdview-hip-bvh-refit
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800)
     # Skinning must also reach INSTANCED prototypes (a shared prototype behind
-    # `instanceable = true`), which the next loader used to convert but never
+    # `instanceable = true`), which the core loader used to convert but never
     # skin -- every instance rendered the rest pose. Asserts the rig actually
     # animates inside the instance; CPU/GPU are not pixel-compared here (a
     # GPU-skinned prototype is de-instanced onto the material shader).
@@ -376,7 +376,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       )
     set_tests_properties(lusdview-texture-fit PROPERTIES SKIP_RETURN_CODE 77)
 
-    # A non-instanced blendshape mesh must animate on the default --next loader.
+    # A non-instanced blendshape mesh must animate on the default --core loader.
     # Morph used to be built only for instanced prototypes, so a plain
     # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
     # (Vulkan); skips without a device.
@@ -447,7 +447,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     endif()
 
     # Raster LOD must reach NON-instanced meshes, which also requires each one
-    # to carry its own AABB (the next loader used to hand every static mesh the
+    # to carry its own AABB (the core loader used to hand every static mesh the
     # scene-spanning box, disabling the per-mesh frustum cull along with it).
     add_test(
       NAME lusdview-noninstanced-lod
@@ -468,7 +468,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
 
     # The ray tracer traces vertex buffers, so the raster vertex shader's
-    # deform never reaches it. --next --rt used to give up and re-run the whole
+    # deform never reaches it. --core --rt used to give up and re-run the whole
     # converter per time code; it now re-poses the retained rest vertices.
     add_test(
       NAME lusdview-rt-skinning
@@ -527,7 +527,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     #                     placements come from positions/orientations/scales arrays
     #                     rather than from prims referencing it. It caught the
     #                     orientation quaternion being read imaginary-first when the
-    #                     next stage stores it real-first: a 30-degree Z rotation
+    #                     core stage stores it real-first: a 30-degree Z rotation
     #                     decoded as a 150-degree X rotation, i.e. upside-down.
     foreach(deform_case skin-xform skin-animation morph-subsets morph-skin instanced-proto
                         pointinstancer)
@@ -563,7 +563,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                          PROPERTIES SKIP_RETURN_CODE 77 LABELS "lusdview")
 
     # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
-    # through poseNextDrawForTracer instead of the vertex shader. It used to be
+    # through poseCoreDrawForTracer instead of the vertex shader. It used to be
     # pinned to the load-time CPU bake -- a second deform implementation, free to
     # disagree with the shader's, and it did. Skips (77) where CUDA is absent.
     add_test(
@@ -827,12 +827,12 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                   LABELS "lusdview")
 
   add_test(
-    NAME lusdview-next-nonmesh-extraction
+    NAME lusdview-core-nonmesh-extraction
     COMMAND bash
-            "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-next-nonmesh-extraction.sh"
+            "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-core-nonmesh-extraction.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
-  set_tests_properties(lusdview-next-nonmesh-extraction
+  set_tests_properties(lusdview-core-nonmesh-extraction
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 75
                                   LABELS "lusdview")
 
@@ -1005,7 +1005,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                   ENVIRONMENT "LUSDVIEW_XVFB=1")
 
   # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
-  # one does not -- identically on GL and Vulkan. The --next loader used to
+  # one does not -- identically on GL and Vulkan. The --core loader used to
   # drop the authored flag entirely, and Vulkan never culled anything.
   add_test(
     NAME lusdview-double-sided
@@ -1015,7 +1015,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     )
   set_tests_properties(lusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
 
-  # UsdPreviewSurface specular workflow + IOR on --next (audit T12): a colored
+  # UsdPreviewSurface specular workflow + IOR on --core (audit T12): a colored
   # specularColor must tint the highlight (not fall back to white dielectric),
   # identically on GL and VK.
   add_test(

@@ -33,7 +33,7 @@ try {
   assert.equal(await page.$eval('#udimMaxTiles', input => input.value), '100');
   const results = await page.evaluate(async ({scene, tile}) => {
     const {loadWasm, convertFolderToUSDZ, parseUSDZEntries} = await import('./src/usdzconvert.js');
-    const native = await loadWasm(() => import('./src/lightusd/lightusd_combined.js'));
+    const native = await loadWasm(() => import('./src/lightusd/lightusd.js'));
     const assets = new Map([['root.usda', new TextEncoder().encode(scene)],
       ['textures/tile.1001.png', new Uint8Array(tile)]]);
     const results = [];
@@ -44,7 +44,7 @@ try {
       results.push({kind: 'main', mode, root: new TextDecoder().decode(entries[0].data),
         atlases: entries.filter(e => /udim_.*\.png/.test(e.name)).length});
     }
-    for (const pipeline of ['legacy', 'next-only', 'stream']) {
+    for (const pipeline of ['legacy', 'core', 'stream']) {
       for (const mode of ['grid', 'dense']) {
         const worker = new Worker('./usdzconvert.worker.js', {type: 'module'});
         try {
@@ -57,7 +57,7 @@ try {
             };
             worker.postMessage({type: 'convert', files: [...assets].map(([path, bytes]) =>
               ({path, file: new File([bytes], path.split('/').pop())})),
-              opts: {pipeline, flatten: pipeline !== 'next-only', udimBake: mode,
+              opts: {pipeline, flatten: pipeline !== 'core', udimBake: mode,
                 reencode: false, rootLayerFormat: 'usda', rootPath: 'root.usda'}});
           });
           const entries = parseUSDZEntries(result.usdz);

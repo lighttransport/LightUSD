@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify that lusdrender's next-loader mask is also a payload composition filter.
+# Verify that lusdrender's core-loader mask is also a payload composition filter.
 set -uo pipefail
 
 LUSDRENDER="${1:?usage: $0 /path/to/lusdrender}"

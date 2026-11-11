@@ -3,7 +3,7 @@ import {LightUSDLoader} from '../lightusd/LightUSDLoader.js';
 // Geometry diagnostic adapter. Material overrides are explicit in provenance.
 import { BufferGeometry, BufferAttribute, Matrix4 } from 'three';
 import {createCoreRenderInspector,getCoreInspectorMesh} from '../lightusd/CoreRenderInspector.js';
-import { HttpAssetResolver,flattenNextOverHttp } from '../../http-asset-resolver.js';
+import { HttpAssetResolver,flattenOverHttp } from '../../http-asset-resolver.js';
 import { surfaceDocument } from './scene.js';
 import { appendRectLights } from './usd-lights.js';
 import { USDTextureSources } from './usd-texture-sources.js';
@@ -121,7 +121,7 @@ async function nativeModule() {
   if (!nativePromise) {
     nativePromise=(async()=>{
       const loader=new LightUSDLoader();
-      await loader.init({backend:'next'});
+      await loader.init({backend:'core'});
       return loader.native_;
     })().catch(error=>{nativePromise=null;throw error;});
   }
@@ -134,7 +134,7 @@ export async function loadShaderBallGeometry(onStatus = () => {}, { authoredLigh
   const resolver=new HttpAssetResolver({baseUrl:new URL('.',url).href});
   resolver.textures=new USDTextureSources();
   onStatus('Composing ShaderBall layers and references…');
-  const flattened=await flattenNextOverHttp({renderer:{native},rootBytes:new Uint8Array(await response.arrayBuffer()),
+  const flattened=await flattenOverHttp({renderer:{native},rootBytes:new Uint8Array(await response.arrayBuffer()),
     filename:url.href,resolver,onStatus,packageAssets:false,
     variantOverrides:{'/standard_shader_ball_scene{surface_geometry}':'triangulated'}});
   const document=new native.LayerDocument();

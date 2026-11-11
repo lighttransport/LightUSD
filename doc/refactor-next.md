@@ -6,7 +6,7 @@
 > see [core.md](core.md#migrating-from-next) for the mapping.
 
 Status: **post-roadmap cleanup**. The original 10-phase roadmap has landed.
-Use `scripts/run-next-checks.sh` for a focused standalone validation pass before
+Use `scripts/run-core-checks.sh` for a focused standalone validation pass before
 and after follow-up refactors.
 
 Landed so far:
@@ -109,9 +109,9 @@ Landed so far:
   re-entrantly-called methods (ComputePrimIndex, Invalidate) split into a public
   entry (locks once) + a lock-free `*_locked` worker; internal callers use the
   worker, so `api_mu_` is now a plain `std::mutex`.
-  `LIGHTUSD_NEXT_RECURSIVE_LOCK` restores the recursive mutex as an escape
+  `LIGHTUSD_RECURSIVE_LOCK` restores the recursive mutex as an escape
   hatch. TSAN-clean with threads on.
-- **Phase 9 (F4, opt-in)** — `LIGHTUSD_NEXT_FINE_LOCKS` makes `api_mu_` a
+- **Phase 9 (F4, opt-in)** — `LIGHTUSD_FINE_LOCKS` makes `api_mu_` a
   `std::shared_timed_mutex`: read-only queries + the ComputePrimIndex cache-hit
   fast path take a shared lock (concurrent), builds/writers take the exclusive
   lock; the write-lock double-check in `ComputePrimIndex_locked` keeps a
@@ -120,16 +120,16 @@ Landed so far:
   (incl. 8-thread×1000-iter concurrent queries on one shared cache).
   **Follow-up (post-roadmap review):** the READ_LOCK/WRITE_LOCK call sites and
   the `PcpMutex` policy selection (`pcp/cache-lock.hh`) had been written but
-  `LIGHTUSD_NEXT_FINE_LOCKS` was never exposed as a CMake `option()` — every
+  `LIGHTUSD_FINE_LOCKS` was never exposed as a CMake `option()` — every
   build silently fell back to the default single-exclusive-mutex policy no
   matter what a caller intended, i.e. T1 was still live in every actual build.
-  Added the option to `src/next/CMakeLists.txt` (requires
-  `LIGHTUSD_NEXT_ENABLE_THREAD`). Turning it on for the first time also
+  Added the option to `src/CMakeLists.txt` (requires
+  `LIGHTUSD_ENABLE_THREAD`). Turning it on for the first time also
   surfaced two bugs the option's absence had kept latent: (1)
   `PropNameTable::is_frozen()` had no definition at all under
   `LIGHTUSD_ENABLE_THREAD` (only the non-threaded stub existed), so any
   threaded build referencing it failed to link -- fixed with an atomic-load
-  read of the published snapshot pointer; (2) `test_tydra_next.cc`'s
+  read of the published snapshot pointer; (2) `test_tydra.cc`'s
   `TestNameTableFreezeStability` asserted that interning a new name while
   frozen unfreezes the table -- true under the *old* freeze() scheme, but
   freeze() was redesigned (see the F4 bullet's "lock-free reader" note above)
@@ -137,8 +137,8 @@ Landed so far:
   path instead, specifically so a concurrent lock-free reader is never
   disturbed. The test predates that redesign and was never caught because
   `is_frozen()` was a dead stub always returning `false`. Verified with a
-  TSan build (clang, `LIGHTUSD_NEXT_ENABLE_THREAD=ON` +
-  `LIGHTUSD_NEXT_FINE_LOCKS=ON`): 9 test binaries × 3 runs, 0 races; default
+  TSan build (clang, `LIGHTUSD_ENABLE_THREAD=ON` +
+  `LIGHTUSD_FINE_LOCKS=ON`): 9 test binaries × 3 runs, 0 races; default
   (non-threaded) ctest suite still 35/35.
 - **Phase 9 (F3)** — `layer_stacks`/`path_table` are `std::deque` (stable
   element addresses): a PrimIndex borrows raw pointers into these tables and
@@ -240,10 +240,10 @@ complete.** The sections below are the original spec.
 The 10-phase roadmap is complete. The active work is now cleanup, validation,
 and behavior-neutral split work:
 
-1. **Docs/status hygiene** — keep this file, `src/next/README.md`, and
+1. **Docs/status hygiene** — keep this file, `src/README.md`, and
    `doc/memory-and-performance.md` aligned with landed behavior and benchmark
    deltas. When changing next test coverage, also update `doc/testing-cpp.md`.
-2. **Standalone validation polish** — `scripts/run-next-checks.sh` is the
+2. **Standalone validation polish** — `scripts/run-core-checks.sh` is the
    canonical next smoke/regression entrypoint. Keep `next` outside the main
    regression gate until the assert-based tests are fully converted or otherwise
    hardened, even though the standalone CMake now forces asserts on for test
@@ -268,7 +268,7 @@ and behavior-neutral split work:
    mixed USDA/USDC/USDZ dependency graphs. Basic filesystem USDA sublayers and
    references are supported and covered. Compressed bool arrays are decoded
    (compressed-integral lanes canonicalized to true/false in
-   `src/next/crate/crate-reader-arrays.cc`) and covered by regression tests.
+   `src/crate/crate-reader-arrays.cc`) and covered by regression tests.
 
 Recently closed cleanup items:
 
@@ -340,7 +340,7 @@ already fixed — check "Landed so far" first, always.
 
 | # | Problem | Evidence |
 |---|---------|----------|
-| T1 | ~~One `std::recursive_mutex api_mu_` serializes every public cache entry point when `LIGHTUSD_ENABLE_THREAD` is ON.~~ **CLOSED** — Phase 9 F6 dropped the recursive engine mutex (plain `std::mutex` + lock-free `*_locked` internals); Phase 9 F4 added the `LIGHTUSD_NEXT_FINE_LOCKS` shared/exclusive policy on top, and the CMake option to actually turn it on landed in the post-roadmap follow-up (see the F4 bullet above) — until then the option existed in code but was unreachable, so every real build still paid the T1 cost regardless of intent. | `pcp/cache.cc:24,79` (historical) |
+| T1 | ~~One `std::recursive_mutex api_mu_` serializes every public cache entry point when `LIGHTUSD_ENABLE_THREAD` is ON.~~ **CLOSED** — Phase 9 F6 dropped the recursive engine mutex (plain `std::mutex` + lock-free `*_locked` internals); Phase 9 F4 added the `LIGHTUSD_FINE_LOCKS` shared/exclusive policy on top, and the CMake option to actually turn it on landed in the post-roadmap follow-up (see the F4 bullet above) — until then the option existed in code but was unreachable, so every real build still paid the T1 cost regardless of intent. | `pcp/cache.cc:24,79` (historical) |
 | T2 | `LayerRegistry` holds its mutex **across file parse**, so the "parallel" layer prefetch in `PrewarmPrimIndices` parses one file at a time. | `pcp/layer-registry.cc:69-92`; `cache.cc:936-951` — **STATUS UNCLEAR**: Phase 9 F2 ("LayerRegistry parses outside the lock") claims this closed; not re-verified line-by-line in the post-roadmap review, worth a fresh read before relying on it. |
 | T3 | Race inventory if the big lock were removed: `path_table`/interning, `layer_stacks` vector reallocation under readers, `index_cache`/`sources_cache`, `site_to_indices`, deferred-payload set mutation mid-expansion (S7), instance maps, registry counters. | `pcp/cache.cc:92-121, 556-559` — covered by Phase 9 F3 (deque-stable addressing) and F5 (deterministic prototype assignment); TSan-clean per the F4 bullet, but see the F4 follow-up note: that TSan pass predates the CMake-wiring fix, so it never actually ran the fine-locks code path either. Re-verified in the post-roadmap review (9 binaries × 3 runs, 0 races) — see F4 bullet. |
 
@@ -351,7 +351,7 @@ already fixed — check "Landed so far" first, always.
 | I1 | Instance key omits accumulated variant selections and layer offsets; variant content contributes a pointer-derived stack id (S4). OpenUSD's `PcpInstanceKey` includes all authored variant selections from every node; `Usd_InstanceKey` additionally hashes load rules relative to the instance. | `pcp/cache.cc:315-336`; `pxr/usd/pcp/instanceKey.cpp:54-68`, `pxr/usd/usd/instanceKey.cpp:42-106` |
 | I2 | Instanceable predicate = "any spec authored `instanceable=true`" instead of strongest-opinion; authored `false` is indistinguishable from unauthored (`bool`, not tri-state). | `pcp/cache.cc:302-310`; `layer/prim-spec.hh` |
 | I3 | No instance↔prototype path-translation API for consumers (Tydra); nested instancing structurally works but is untested. | `pcp/cache.hh:67-101` |
-| I4 | PointInstancer typed accessors, transform/mask-style data extraction, prototype mesh bindings, lightweight Tydra draw refs, prototype-relative transforms, per-draw material IDs, unresolved-prototype diagnostics, bounds-checked draw view resolution, O(1) per-instancer draw ranges, draw/prototype binding validators, and opt-in transformed mesh duplication now exist. | `src/next/schema/geom-point-instancer.hh`; `src/tydra/next/render-extract.hh`; `src/tydra/next/render-data.hh` |
+| I4 | PointInstancer typed accessors, transform/mask-style data extraction, prototype mesh bindings, lightweight Tydra draw refs, prototype-relative transforms, per-draw material IDs, unresolved-prototype diagnostics, bounds-checked draw view resolution, O(1) per-instancer draw ranges, draw/prototype binding validators, and opt-in transformed mesh duplication now exist. | `src/schema/geom-point-instancer.hh`; `src/tydra/render-extract.hh`; `src/tydra/render-data.hh` |
 
 ---
 
@@ -412,7 +412,7 @@ its host, 1000-deep authored hierarchy, reference chain at exactly `max_depth`.
 - `tests/fuzzer/next_compose_fuzzmain.cc` — split input into length-prefixed
   pseudo-layers, register via `Cache::PreloadLayer` + stub resolver,
   `ComposeStageFromLayer` with `max_depth=64`. The only harness exercising Phase 1.
-- New `LIGHTUSD_NEXT_BUILD_FUZZERS` option in `src/next/CMakeLists.txt`
+- New `LIGHTUSD_BUILD_FUZZERS` option in `src/CMakeLists.txt`
   (clang-only, `-fsanitize=fuzzer,address`).
 - `next_usdcat` CLI (~100 LOC: load + compose + print) and a `corpus-parse-next`
   CTest entry mirroring `corpus-parse-native` (commit `88412f30`), gated on
@@ -464,12 +464,12 @@ Gate: `bench_lazy_mem eager` should approach `lazy` for the clone portion;
    `Cache::TranslatePathToPrototype(path)` (longest registered instance prefix,
    recurse for nesting, iteration-capped) returns empty when `path` is under no
    instance; `TranslatePathFromPrototype(proto_path, instance_root)` is the
-   single-instance inverse. `src/next/pcp/cache.{hh,cc}`.
+   single-instance inverse. `src/pcp/cache.{hh,cc}`.
 3. Nested-instancing tests: **DONE** — `test_pcp.cc:test_path_translation`
    covers prototype-within-prototype (two-level rewrite through both prototype
    roots), recompose identity consistency, and empty-on-no-instance exclusion.
 4. Port the PointInstancer compute API: **DONE** —
-   `src/next/schema/geom-point-instancer.{hh,cc}` provides `GetPrototypes`,
+   `src/schema/geom-point-instancer.{hh,cc}` provides `GetPrototypes`,
    the instance arrays, `ComputeInstanceTransforms(time)`, and
    `ComputeMaskAtTime(time)` (per-instance visibility from `invisibleIds` +
    `inactiveIds`, id-mapped via `ids`); same preliminary limitations (velocities
@@ -558,7 +558,7 @@ rules with ancestor/descendant resolution) + `PcpCache::_includedPayloads`.
 
 No TBB; C++14 only; everything behind `LIGHTUSD_ENABLE_THREAD` macros that compile
 to nothing when OFF. Sub-steps independently landable with the big lock as fallback
-(`LIGHTUSD_NEXT_FINE_LOCKS` escape hatch during bring-up).
+(`LIGHTUSD_FINE_LOCKS` escape hatch during bring-up).
 
 1. **LayerRegistry parallel parse (T2; biggest practical win, independent):**
    per-key `map<string, shared_future<shared_ptr<Layer>>>` under a small mutex;
@@ -620,28 +620,28 @@ invalidation coupling, thread-safety) — only after Phases 3, 4, and 9.
 - Speed: new pcp compose bench + `benchmark_next`.
 - Robustness: ASAN build for Phase-1 crash tests; each fuzzer ≥1h locally after
   Phase 2; `corpus-parse-next` with `USD_WG_ASSETS_DIR` set.
-- Threading: `build/next-tsan` with `LIGHTUSD_NEXT_ENABLE_THREAD=ON`; stress tests opt-in.
+- Threading: `build/next-tsan` with `LIGHTUSD_ENABLE_THREAD=ON`; stress tests opt-in.
 - Determinism: `next_test_usdcat_roundtrip` + serial/parallel grouping parity guard
   Phases 4/5/9.
 
 ## 5. Critical files
 
-- `src/next/pcp/cache.{hh,cc}` — Phases 1, 4, 5, 6, 9
-- `src/next/types/value.{hh,cc}` — Phase 3
-- `src/next/composition/composition.cc` — Phases 1, 4, 7
-- `src/next/layer/prim-spec.{hh,cc}` — Phases 1, 7 (ListOp), 8
-- `src/next/parser/ascii-parser.cc` — Phases 1, 7
-- `src/next/crate/crate-reader.cc`, `crate/crate-data-source.hh` — Phases 2, 8
-- `src/next/pcp/layer-registry.cc` — Phase 9
-- New: `src/next/schema/geom-point-instancer.{hh,cc}`, `src/next/pcp/load-rules.{hh,cc}`,
+- `src/pcp/cache.{hh,cc}` — Phases 1, 4, 5, 6, 9
+- `src/types/value.{hh,cc}` — Phase 3
+- `src/composition/composition.cc` — Phases 1, 4, 7
+- `src/layer/prim-spec.{hh,cc}` — Phases 1, 7 (ListOp), 8
+- `src/parser/ascii-parser.cc` — Phases 1, 7
+- `src/crate/crate-reader.cc`, `crate/crate-data-source.hh` — Phases 2, 8
+- `src/pcp/layer-registry.cc` — Phase 9
+- New: `src/schema/geom-point-instancer.{hh,cc}`, `src/pcp/load-rules.{hh,cc}`,
   `tests/fuzzer/next_*`, `tests/next/test_pointinstancer.cc`
-- `src/next/CMakeLists.txt`, top-level `CMakeLists.txt` (corpus gate)
+- `src/CMakeLists.txt`, top-level `CMakeLists.txt` (corpus gate)
 
 ---
 
 ## Phase 2 results (fuzzers + corpus gate)
 
-Three libFuzzer harnesses (`LIGHTUSD_NEXT_BUILD_FUZZERS=ON`, clang) +
+Three libFuzzer harnesses (`LIGHTUSD_BUILD_FUZZERS=ON`, clang) +
 `next_usdcat` CLI + `next_corpus_parse` CTest gate. The fuzzers found **7
 crashes** in the first minutes, all now fixed and pinned by
 `tests/next/test_crash_regressions.cc` (replayed under ASAN/UBSAN):
@@ -665,7 +665,7 @@ sessions, compose 1.86M runs — all clean.
 Corpus gate (`next_corpus_parse`, usd-wg/assets, 280 files): **0 FAIL /
 0 CRASH** — every corpus file now loads (a few USDC files still report
 warnings on unsupported binary value types). Registered as a regression
-ratchet (`--max-fail 3`, `src/next/CMakeLists.txt`); the ratchet replaced
+ratchet (`--max-fail 3`, `src/CMakeLists.txt`); the ratchet replaced
 the original `--max-fail 220` baseline (15 PASS / 46 WARN / 219 FAIL) as the
 list-op qualifier, dictionary-metadata, and compressed/extra array-type gaps
 closed. Ratchet down further as remaining warnings close.

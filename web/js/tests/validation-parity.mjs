@@ -44,7 +44,7 @@ function skipIfStaleWasm() {
   const sources = [
     path.join(repoRoot, 'src', 'usd-validation.cc'),
     path.join(repoRoot, 'src', 'usd-validation.hh'),
-    path.join(repoRoot, 'web', 'binding.cc'),
+    path.join(repoRoot, 'web', 'binding-legacy.cc'),
   ];
   const newestSourceTime = Math.max(
     ...sources.filter((filePath) => fs.existsSync(filePath))

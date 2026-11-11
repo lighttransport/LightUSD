@@ -18,7 +18,7 @@
 //     pulled over HTTP — composition arcs first (references/payloads/sublayers),
 //     then textures — so the whole scene resolves from the remote location.
 //
-// Core composition requests missing layers through NextFlattenSession. Asset
+// Core composition requests missing layers through FlattenSession. Asset
 // paths retain their authoring-layer anchors, then fetched bytes are packaged
 // under safe archive names for the incremental RenderStream renderer.
 
@@ -203,7 +203,7 @@ function buildUsdzFromEntries(rootName, rootBytes, entries) {
   return out;
 }
 
-function prepareNextRoot(rootBytes, filename, resolver) {
+function prepareCoreRoot(rootBytes, filename, resolver) {
   const seedAssets = new Map();
   if (isUsdz(filename)) {
     const entries = parseUSDZEntries(rootBytes);
@@ -232,8 +232,8 @@ function prepareNextRoot(rootBytes, filename, resolver) {
   };
 }
 
-function openNextFlattenSession(native, prepared) {
-  const session = new native.NextFlattenSession();
+function openFlattenSession(native, prepared) {
+  const session = new native.FlattenSession();
   try {
     const begin = session.begin(prepared.rootBytes, prepared.rootName, true);
     if (!begin?.success) throw new Error(`Core flatten begin failed: ${begin?.error || 'unknown'}`);
@@ -242,7 +242,7 @@ function openNextFlattenSession(native, prepared) {
   } catch (error) { session.delete(); throw error; }
 }
 
-async function resolveNextAsset(resolver, assetPath) {
+async function resolveCoreAsset(resolver, assetPath) {
   const path = normalizeAssetKey(assetPath);
   // A root served from an assets directory may also author that prefix.
   const candidates = path.startsWith('assets/') ? [path, path.slice(7)] : [path];
@@ -263,10 +263,10 @@ async function resolveNextAsset(resolver, assetPath) {
   throw lastError || new Error(`Could not resolve ${assetPath}`);
 }
 
-export async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus, preloadedAssets = [], packageAssets = true, variantOverrides = {} }) {
+export async function flattenOverHttp({ renderer, rootBytes, filename, resolver, onStatus, preloadedAssets = [], packageAssets = true, variantOverrides = {} }) {
   const native = renderer.native;
-  if (!native?.NextFlattenSession) throw new Error('Core HTTP composition requires NextFlattenSession');
-  const prepared = prepareNextRoot(rootBytes, filename, resolver);
+  if (!native?.FlattenSession) throw new Error('Core HTTP composition requires FlattenSession');
+  const prepared = prepareCoreRoot(rootBytes, filename, resolver);
   for (const asset of preloadedAssets) {
     if (!asset?.key || !asset.bytes) continue;
     const url = asset.url || resolver.rewrite(asset.key);
@@ -275,7 +275,7 @@ export async function flattenNextOverHttp({ renderer, rootBytes, filename, resol
     prepared.seedAssets.set(asset.key, asset.bytes);
     prepared.seedAssets.set(url, asset.bytes);
   }
-  const session = openNextFlattenSession(native, prepared);
+  const session = openFlattenSession(native, prepared);
   try {
     for(const [key,selection] of Object.entries(variantOverrides))session.setVariantOverride(key,selection);
     let result;
@@ -284,7 +284,7 @@ export async function flattenNextOverHttp({ renderer, rootBytes, filename, resol
       if (!step?.success) throw new Error(`Core flatten failed: ${step?.error || 'unknown'}`);
       if (step.status === 'need-layer') {
         const key = step.key;
-        const bytes = findAssetByKey(prepared.seedAssets, key) || (await resolveNextAsset(resolver, key))[1];
+        const bytes = findAssetByKey(prepared.seedAssets, key) || (await resolveCoreAsset(resolver, key))[1];
         const provided = session.provideLayer(key, bytes);
         if (!provided?.success) throw new Error(`Core dependency failed: ${key}: ${provided?.error || 'unknown'}`);
         onStatus?.(`Resolved dependency layer: ${key}`);
@@ -305,7 +305,7 @@ export async function flattenNextOverHttp({ renderer, rootBytes, filename, resol
       let fetchedPayload = false;
       if (!bytes) {
         try {
-          const [, fetched, url] = await resolveNextAsset(resolver, assetPath);
+          const [, fetched, url] = await resolveCoreAsset(resolver, assetPath);
           bytes = fetched;
           identity = url || assetPath;
           fetchedPayload = true;
@@ -336,14 +336,14 @@ export async function flattenNextOverHttp({ renderer, rootBytes, filename, resol
 }
 
 // Compose to a portable, core-renderable package without retaining a native handle.
-export const composeOverHttp = flattenNextOverHttp;
+export const composeOverHttp = flattenOverHttp;
 
 export async function renderHttpUSD({ renderer, rootBytes, filename, baseUrl, label, onStatus, preloadedAssets = [] }) {
   const loadStart = performance.now();
   const jsStart = jsHeapBytes();
   const resolver = new HttpAssetResolver({baseUrl});
   onStatus?.(`Loading ${label} with core HTTP composition...`);
-  const flattened = await flattenNextOverHttp({renderer, rootBytes, filename, resolver, onStatus, preloadedAssets});
+  const flattened = await flattenOverHttp({renderer, rootBytes, filename, resolver, onStatus, preloadedAssets});
   const result = await renderer.loadBytesIncremental(flattened.usdz, 'http-composed.usdz');
   return {
     backend: 'core', requestedBackend: 'core', result,

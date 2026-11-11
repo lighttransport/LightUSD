@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildNextDemoScene } from '../next-scene.js';
+import { buildCoreScene } from '../core-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
@@ -128,7 +128,7 @@ async function ensureLoader() {
   setStatus('Initializing LightUSD WASM...');
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'core' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -251,14 +251,14 @@ async function loadUSD(url, label) {
   setStatus(`Parsing ${label}...`);
   const usd = await new Promise((resolve, reject) => {
     loader.parse(data, filename, resolve, reject, {
-      backend: 'next',
+      backend: 'core',
       maxMemoryLimitMB: 512,
       preferredMaterialType: 'usdpreviewsurface',
     });
   });
 
   setStatus(`Building scene...`);
-  const { node: threeNode } = await buildNextDemoScene(usd, { envMap, sourceUrl: url });
+  const { node: threeNode } = await buildCoreScene(usd, { envMap, sourceUrl: url });
 
   // Replace world
   world.clear();
@@ -311,12 +311,12 @@ async function loadLocalFile(file) {
   setStatus(`Reading ${file.name}...`);
   const usd = await new Promise((resolve, reject) => {
     loader.parse(data, file.name, resolve, reject, {
-      backend: 'next',
+      backend: 'core',
       maxMemoryLimitMB: 512,
       preferredMaterialType: 'usdpreviewsurface',
     });
   });
-  const { node: threeNode } = await buildNextDemoScene(usd, { envMap });
+  const { node: threeNode } = await buildCoreScene(usd, { envMap });
   world.clear();
   world.add(threeNode);
   scene.environment = envMap;

@@ -76,7 +76,7 @@ try {
     const status=await page.$eval('#status',element=>element.textContent);
     assert.ok(!status.startsWith('Error:'),status+' '+consoleErrors.join('\n'));
     assert.equal(await page.$eval('#mesh-count',element=>element.textContent),'1');
-    assert.match(await page.$eval('#status',element=>element.textContent),/backend: next/);
+    assert.match(await page.$eval('#status',element=>element.textContent),/backend: core/);
     const edited=await page.evaluate(()=>{
       const material=window._debugMaterialX.sceneState.materials[0];
       const parameter=material.userData.rawData.openPBR.coat_ior;

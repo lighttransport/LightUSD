@@ -4,7 +4,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-// Instanced flat-shaded prototype (large-scene --next path). Per-instance 3x4
+// Instanced flat-shaded prototype (large-scene --core path). Per-instance 3x4
 // object-to-world (instance-rate, rows = output x/y/z) at locations 3/4/5 -- the
 // unused skin slots, leaving location 8 free for the per-vertex morph CSR --
 // plus per-instance color/opacity + per-vertex prototype color. Mirrors the GL

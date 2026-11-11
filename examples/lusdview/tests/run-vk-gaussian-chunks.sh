@@ -57,7 +57,7 @@ print(f"PASS: Gaussian chunks rendered ({colored} colored pixels)")
 PY
 
 # Half-precision schema aliases must reach the same analytic point path.
-half_log="$(timeout 90s "$LUSDVIEW" --next --headless --backend vk --rt \
+half_log="$(timeout 90s "$LUSDVIEW" --core --headless --backend vk --rt \
   --frames 3 --screenshot "$TMP/gaussian-half.ppm" \
   "$ROOT/tests/usda/lusdview-gaussian-half.usda" 2>&1)"
 half_rc=$?
@@ -75,7 +75,7 @@ fi
 # An ordinary Points-only scene has no triangle TLAS. RT mode must draw its
 # carrier fallback immediately instead of clearing forever while waiting for a
 # TLAS that will never be built.
-points_log="$(timeout 90s "$LUSDVIEW" --next --headless --backend vk --rt \
+points_log="$(timeout 90s "$LUSDVIEW" --core --headless --backend vk --rt \
   --frames 3 --screenshot "$TMP/points.ppm" \
   "$ROOT/tests/usda/lusdrender-points.usda" 2>&1)"
 points_rc=$?

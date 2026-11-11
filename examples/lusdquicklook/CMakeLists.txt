@@ -93,7 +93,7 @@ endif()
 # app can hold a small memory budget.
 if(NOT TARGET lightusd_core)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src
-                   ${CMAKE_BINARY_DIR}/lusdquicklook_next_build)
+                   ${CMAKE_BINARY_DIR}/lusdquicklook_core_build)
 endif()
 
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE

@@ -16,7 +16,7 @@ Per-instance frustum culling tests the prototype's REST-pose protoAabb. Without
 padding protoAabb by the GPU morph's displacement, the morph instance's rest box
 (off-screen) tests Outside and the instance is wrongly culled -- its visible
 morphed cube at the origin disappears (3/4 instances visible). With the pad
-(DrawMeshCPU::morphExtent, BuildMorphChannelsNext) it is kept (4/4 visible).
+(DrawMeshCPU::morphExtent, BuildMorphChannelsCore) it is kept (4/4 visible).
 
 Driven by run-inst-morph-cull.sh, which asserts 4/4 instances visible.
 """

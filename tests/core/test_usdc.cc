@@ -691,7 +691,7 @@ void test_array_edit_rep_rejected() {
   std::vector<uint8_t> buf;
   assert(writer.WriteLayerToMemory(buf, layer).success);
 
-  // Locate the embedded rep. Next's dict block layout is
+  // Locate the embedded rep. Core's dict block layout is
   // [u32 keyIdx][i64 recOffset=8][u64 ValueRep]: find the constant
   // recOffset (u64 == 8) followed by a non-inlined, non-array Double rep.
   const uint64_t kRecOff = 8;

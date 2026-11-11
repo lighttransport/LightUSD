@@ -3,7 +3,7 @@
  *
  * decimal.c -- C11 decimal integer parsing for the ASCII parser.
  *
- * The pure-digit decimal helpers from src/next/parser/value-parser-numeric.hh.
+ * The pure-digit decimal helpers from src/parser/value-parser-numeric.hh.
  * They reject/saturate exactly as the C++ originals: NUL-terminated input, a
  * leading sign (optional '+'), and saturation (or overflow failure for the
  * checked variants) rather than undefined behaviour. The float-token coercion

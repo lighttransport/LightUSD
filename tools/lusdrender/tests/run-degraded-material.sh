@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender next-loader degraded-material regression. The shared Tydra material
+# lusdrender core-loader degraded-material regression. The shared Tydra material
 # resolver must keep the shared converter's per-material degraded surface for an
 # unsupported shader, and the degradation must be reported in the load summary.
 set -uo pipefail
@@ -47,7 +47,7 @@ def Xform "World" {
 }
 USDA
 
-"$LUSDRENDER" "$ASSET" "$OUT" -rtPreview --materialResolver tydra-next \
+"$LUSDRENDER" "$ASSET" "$OUT" -rtPreview --materialResolver tydra \
   -w 64 -height 64 -autoframe -viewDir 0,0,-1 -ambient 1 -noShadows \
   -samples 1 -stats >"$LOG" 2>&1
 rc=$?

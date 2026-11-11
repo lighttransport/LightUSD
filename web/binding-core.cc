@@ -2,9 +2,9 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
 // Lean Emscripten binding for the core + Tydra render path.
-// This intentionally avoids the legacy lightusd_static library and exposes the
+// This intentionally avoids the lightusd_legacy_static library and exposes the
 // RenderStream contract consumed by web/js/src/lightusd/LightUSDLoader.js for
-// first-stage `backend=next` browser coverage.
+// first-stage `backend=core` browser coverage.
 
 #include <new>
 #include "binding-core-api.h"
@@ -64,11 +64,11 @@
 
 namespace tn = lightusd;
 namespace tr = lightusd::tydra;
-using lightusd::web_core::NextPropertyConnections;
-using lightusd::web_core::NextConnectionPrimPath;
-using lightusd::web_core::BuildNextNodeGraphJson;
+using lightusd::web_core::PropertyConnections;
+using lightusd::web_core::ConnectionPrimPath;
+using lightusd::web_core::BuildNodeGraphJson;
 using lightusd::web_core::CanonicalMaterialGraph;
-using lightusd::web_core::AppendNextPhysicsPrimJSON;
+using lightusd::web_core::AppendPhysicsPrimJSON;
 
 using namespace lightusd::web_core;
 
@@ -81,16 +81,16 @@ using namespace lightusd::web_core;
 // providing dependency layer bytes (USDA / USDC / USDZ, fetched over HTTP or
 // pulled from a package) until the flatten converges, then receives a
 // flattened USDC buffer. One instance = one session; mirrors the legacy
-// module's nextFlattenAsyncBegin/ProvideLayer/Step/End protocol with the
+// module's flattenAsyncBegin/ProvideLayer/Step/End protocol with the
 // session id replaced by the instance.
-EM_JS(int, NextFlattenEmitChunk,
+EM_JS(int, FlattenEmitChunk,
       (uint32_t callback_id, const uint8_t* data, uint32_t size), {
-  return Module['__lightusdNextFlattenEmit'](
+  return Module['__lightusdFlattenEmit'](
       callback_id, Number(data), size);
 });
-class NextFlattenSession {
+class FlattenSession {
  public:
-  NextFlattenSession() = default;
+  FlattenSession() = default;
 
   bool beginBytes(const uint8_t* root_bytes, uint32_t root_size,
                   const uint8_t* root_name, uint32_t root_name_size,
@@ -235,7 +235,7 @@ class NextFlattenSession {
 
     tn::CrateReadOptions read_options;
     std::string parse_error;
-    std::unique_ptr<tn::Layer> layer = ParseNextLayerBytes(
+    std::unique_ptr<tn::Layer> layer = ParseLayerBytes(
         reinterpret_cast<const uint8_t*>(root_.data()), root_.size(), root_name_,
         read_options, &parse_error);
     if (!layer) {
@@ -288,7 +288,7 @@ class NextFlattenSession {
     const std::string path(reinterpret_cast<const char*>(path_bytes), path_size);
     tn::CrateReadOptions read_options;
     std::string parse_error;
-    std::unique_ptr<tn::Layer> layer = ParseNextLayerBytes(
+    std::unique_ptr<tn::Layer> layer = ParseLayerBytes(
         reinterpret_cast<const uint8_t*>(root_.data()), root_.size(), root_name_,
         read_options, &parse_error);
     if (!layer) {
@@ -349,7 +349,7 @@ class NextFlattenSession {
     }
     tn::CrateReadOptions read_options;
     std::string parse_error;
-    std::unique_ptr<tn::Layer> layer = ParseNextLayerBytes(
+    std::unique_ptr<tn::Layer> layer = ParseLayerBytes(
         reinterpret_cast<const uint8_t*>(root_.data()), root_.size(), root_name_,
         read_options, &parse_error);
     if (!layer) {
@@ -604,7 +604,7 @@ class NextFlattenSession {
       }
       consumed->insert(key);
       const std::string& src = it->second;
-      std::unique_ptr<tn::Layer> layer = ParseNextLayerBytes(
+      std::unique_ptr<tn::Layer> layer = ParseLayerBytes(
           reinterpret_cast<const uint8_t*>(src.data()), src.size(), key,
           read_opts, error);
       if (!layer) return nullptr;
@@ -629,7 +629,7 @@ class NextFlattenSession {
       opts.write.streaming = true;
       tn::CrateWriteSink sink = [&](const uint8_t* data, size_t size) -> bool {
         if (size > static_cast<size_t>((std::numeric_limits<uint32_t>::max)()) ||
-            !NextFlattenEmitChunk(callback_id, data, static_cast<uint32_t>(size))) {
+            !FlattenEmitChunk(callback_id, data, static_cast<uint32_t>(size))) {
           aborted = true;
           return false;
         }
@@ -776,83 +776,83 @@ class NextFlattenSession {
 
 namespace lightusd {
 namespace web_core {
-int NextFlattenBegin(void* object, const uint8_t* root, uint32_t root_size,
+int FlattenBegin(void* object, const uint8_t* root, uint32_t root_size,
                      const uint8_t* name, uint32_t name_size, bool lazy_arrays) {
-  return static_cast<NextFlattenSession*>(object)->beginBytes(
+  return static_cast<FlattenSession*>(object)->beginBytes(
              root, root_size, name, name_size, lazy_arrays) ? 1 : 0;
 }
 
-int NextFlattenProvideLayer(void* object, const uint8_t* key,
+int FlattenProvideLayer(void* object, const uint8_t* key,
                             uint32_t key_size, const uint8_t* data,
                             uint32_t data_size) {
-  return static_cast<NextFlattenSession*>(object)->provideLayerBytes(
+  return static_cast<FlattenSession*>(object)->provideLayerBytes(
              key, key_size, data, data_size) ? 1 : 0;
 }
 
-int NextFlattenAddSublayer(void* object, const uint8_t* path,
+int FlattenAddSublayer(void* object, const uint8_t* path,
                            uint32_t path_size) {
-  return static_cast<NextFlattenSession*>(object)->addSublayerBytes(
+  return static_cast<FlattenSession*>(object)->addSublayerBytes(
       path, path_size) ? 1 : 0;
 }
 
-int NextFlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
+int FlattenAddPrimArc(void* object, uint8_t kind, uint8_t list_op,
                           const uint8_t* prim_path, uint32_t prim_size,
                           const uint8_t* asset_path, uint32_t asset_size,
                           const uint8_t* target_path, uint32_t target_size) {
-  return static_cast<NextFlattenSession*>(object)->addPrimArcBytes(
+  return static_cast<FlattenSession*>(object)->addPrimArcBytes(
       kind, list_op, prim_path, prim_size, asset_path, asset_size, target_path,
       target_size) ? 1 : 0;
 }
 
-int NextFlattenSetCompositionMask(void* object, uint32_t mask) {
-  return static_cast<NextFlattenSession*>(object)->setCompositionMask(mask);
+int FlattenSetCompositionMask(void* object, uint32_t mask) {
+  return static_cast<FlattenSession*>(object)->setCompositionMask(mask);
 }
 
-int NextFlattenSetRebaseAssetPaths(void* object, bool enabled) {
-  return static_cast<NextFlattenSession*>(object)->setRebaseAssetPaths(enabled);
+int FlattenSetRebaseAssetPaths(void* object, bool enabled) {
+  return static_cast<FlattenSession*>(object)->setRebaseAssetPaths(enabled);
 }
 
-int NextFlattenSetAssetPathRemap(void* object, const uint8_t* json,
+int FlattenSetAssetPathRemap(void* object, const uint8_t* json,
                                 uint32_t json_size) {
   if (json_size && !json) return -1;
-  return static_cast<NextFlattenSession*>(object)->setAssetPathRemapJSON(
+  return static_cast<FlattenSession*>(object)->setAssetPathRemapJSON(
       json, json_size);
 }
 
-int NextFlattenRemapLayerAssetPaths(void* object, const uint8_t* json,
+int FlattenRemapLayerAssetPaths(void* object, const uint8_t* json,
                                    uint32_t json_size) {
   if (json_size && !json) return -1;
-  return static_cast<NextFlattenSession*>(object)->remapLayerAssetPathsJSON(
+  return static_cast<FlattenSession*>(object)->remapLayerAssetPathsJSON(
       json, json_size);
 }
 
-  int NextFlattenSetMaxInputBytes(void* object, uint32_t limit_bytes) {
-  return static_cast<NextFlattenSession*>(object)->setMaxInputBytes(limit_bytes);
+  int FlattenSetMaxInputBytes(void* object, uint32_t limit_bytes) {
+  return static_cast<FlattenSession*>(object)->setMaxInputBytes(limit_bytes);
 }
 
-int NextFlattenMaxInputBytes(void* object) {
-  return static_cast<int>(static_cast<NextFlattenSession*>(object)->maxInputBytes());
+int FlattenMaxInputBytes(void* object) {
+  return static_cast<int>(static_cast<FlattenSession*>(object)->maxInputBytes());
 }
 
-int NextFlattenSetMaxOutputBytes(void* object, uint32_t limit_bytes) {
-  return static_cast<NextFlattenSession*>(object)->setMaxOutputBytes(limit_bytes);
+int FlattenSetMaxOutputBytes(void* object, uint32_t limit_bytes) {
+  return static_cast<FlattenSession*>(object)->setMaxOutputBytes(limit_bytes);
 }
 
-int NextFlattenMaxOutputBytes(void* object) {
-  return static_cast<int>(static_cast<NextFlattenSession*>(object)->maxOutputBytes());
+int FlattenMaxOutputBytes(void* object) {
+  return static_cast<int>(static_cast<FlattenSession*>(object)->maxOutputBytes());
 }
 
-int NextFlattenInputBytes(void* object) {
-  return static_cast<int>(static_cast<NextFlattenSession*>(object)->inputBytes());
+int FlattenInputBytes(void* object) {
+  return static_cast<int>(static_cast<FlattenSession*>(object)->inputBytes());
 }
 
-int NextFlattenPreflightLayer(void* object, const uint8_t* key,
+int FlattenPreflightLayer(void* object, const uint8_t* key,
                               uint32_t key_size, uint32_t data_size) {
-  return static_cast<NextFlattenSession*>(object)->preflightLayerBytes(
+  return static_cast<FlattenSession*>(object)->preflightLayerBytes(
       key, key_size, data_size);
 }
 
-int NextFlattenSetVariant(void* object, const uint8_t* key,
+int FlattenSetVariant(void* object, const uint8_t* key,
                           uint32_t key_size, const uint8_t* selection,
                           uint32_t selection_size) {
   if ((key_size && !key) || (selection_size && !selection)) return -1;
@@ -861,17 +861,17 @@ int NextFlattenSetVariant(void* object, const uint8_t* key,
   const std::string selection_text = selection_size
       ? std::string(reinterpret_cast<const char*>(selection), selection_size)
       : std::string();
-  static_cast<NextFlattenSession*>(object)->setVariantOverride(
+  static_cast<FlattenSession*>(object)->setVariantOverride(
       key_text, selection_text);
   return 0;
 }
 
-void NextFlattenEnd(void* object) {
-  static_cast<NextFlattenSession*>(object)->end();
+void FlattenEnd(void* object) {
+  static_cast<FlattenSession*>(object)->end();
 }
 
-int NextFlattenError(void* object, uint8_t* out, uint32_t cap) {
-  const std::string& error = static_cast<NextFlattenSession*>(object)->error();
+int FlattenError(void* object, uint8_t* out, uint32_t cap) {
+  const std::string& error = static_cast<FlattenSession*>(object)->error();
   if (error.size() > static_cast<size_t>((std::numeric_limits<int>::max)()))
     return -1;
   if (out && cap >= error.size() && !error.empty())
@@ -879,29 +879,29 @@ int NextFlattenError(void* object, uint8_t* out, uint32_t cap) {
   return static_cast<int>(error.size());
 }
 
-int NextFlattenStep(void* object, uint32_t callback_id,
+int FlattenStep(void* object, uint32_t callback_id,
                     lightusd_wasm_flatten_step_info* out) {
-  return static_cast<NextFlattenSession*>(object)->step(callback_id, out);
+  return static_cast<FlattenSession*>(object)->step(callback_id, out);
 }
 
-int NextFlattenStepBuffer(void* object, uint8_t kind, uint32_t index,
+int FlattenStepBuffer(void* object, uint8_t kind, uint32_t index,
                           uint8_t* out, uint32_t cap) {
-  return static_cast<NextFlattenSession*>(object)->stepBuffer(
+  return static_cast<FlattenSession*>(object)->stepBuffer(
       kind, index, out, cap);
 }
 
-int NextFlattenLayerDependencyCount(void* object) {
-  return static_cast<NextFlattenSession*>(object)->layerDependencyCount();
+int FlattenLayerDependencyCount(void* object) {
+  return static_cast<FlattenSession*>(object)->layerDependencyCount();
 }
 
-void NextFlattenReleaseStep(void* object) {
-  static_cast<NextFlattenSession*>(object)->releaseStep();
+void FlattenReleaseStep(void* object) {
+  static_cast<FlattenSession*>(object)->releaseStep();
 }
 }  // namespace web_core
 }  // namespace lightusd
-class NextUSDZConverterNative {
+class USDZConverterNative {
  public:
-  NextUSDZConverterNative() = default;
+  USDZConverterNative() = default;
 
   std::string error() const { return error_; }
   std::string warn() const { return warn_; }
@@ -1076,7 +1076,7 @@ class NextUSDZConverterNative {
     root["upAxis"] = stage_.GetMeta().upAxis;
     root["prims"] = lightusd::minijson::Value::array();
     for (const tn::UsdPrim& prim : stage_.GetRootPrims()) {
-      AppendNextPhysicsPrimJSON(prim, &root["prims"]);
+      AppendPhysicsPrimJSON(prim, &root["prims"]);
     }
     error_.clear();
     return root.dump();
@@ -1442,7 +1442,7 @@ class NextUSDZConverterNative {
     const bool ok = tn::LoadUSDFromMemoryOwned(
         std::move(input), &stage, load_opts, &warn_, &error_);
     if (!ok) {
-      if (error_.empty()) error_ = "next-core USD load failed";
+      if (error_.empty()) error_ = "core USD load failed";
       return false;
     }
 
@@ -1463,7 +1463,7 @@ class NextUSDZConverterNative {
     tn::USDCWriteResult wr =
         tn::WriteUSDCToMemory(rewrite_data_, stage, write_options);
     if (!wr.success) {
-      error_ = wr.error.empty() ? "next-core USDC write failed" : wr.error;
+      error_ = wr.error.empty() ? "core USDC write failed" : wr.error;
       rewrite_data_.clear();
       return false;
     }
@@ -1676,40 +1676,40 @@ static std::string usddiffJson(const uint8_t* left, size_t left_size,
 // templates or per-signature invoker registration.
 namespace lightusd {
 namespace web_core {
-int NextConverterUDIM(void* object, bool apply, const uint8_t* data, uint32_t size) {
-  return static_cast<NextUSDZConverterNative*>(object)->udimLayer(apply, data, size);
+int ConverterUDIM(void* object, bool apply, const uint8_t* data, uint32_t size) {
+  return static_cast<USDZConverterNative*>(object)->udimLayer(apply, data, size);
 }
-int NextConverterUDIMCopy(void* object, uint8_t* out, uint32_t cap) {
-  return static_cast<NextUSDZConverterNative*>(object)->udimCopy(out, cap);
+int ConverterUDIMCopy(void* object, uint8_t* out, uint32_t cap) {
+  return static_cast<USDZConverterNative*>(object)->udimCopy(out, cap);
 }
-int NextConverterRewrite(void* object, const uint8_t* data, uint32_t size,
+int ConverterRewrite(void* object, const uint8_t* data, uint32_t size,
                          const lightusd_wasm_rewrite_options* options,
                          lightusd_wasm_rewrite_info* out) {
-  return static_cast<NextUSDZConverterNative*>(object)->rewriteRoot(
+  return static_cast<USDZConverterNative*>(object)->rewriteRoot(
       data, size, *options, out) ? 1 : 0;
 }
-int NextConverterRewriteBuffer(void* object, uint8_t* out, uint32_t cap) {
-  const auto& data = static_cast<NextUSDZConverterNative*>(object)->rewriteData();
+int ConverterRewriteBuffer(void* object, uint8_t* out, uint32_t cap) {
+  const auto& data = static_cast<USDZConverterNative*>(object)->rewriteData();
   if (data.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
     return -1;
   if (out && cap >= data.size()) std::memcpy(out, data.data(), data.size());
   return static_cast<int>(data.size());
 }
-int NextConverterString(void* object, uint8_t kind, uint8_t* out,
+int ConverterString(void* object, uint8_t kind, uint8_t* out,
                         uint32_t cap) {
-  const auto* converter = static_cast<NextUSDZConverterNative*>(object);
+  const auto* converter = static_cast<USDZConverterNative*>(object);
   const std::string value = kind == 0 ? converter->error() : converter->warn();
   if (value.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
     return -1;
   if (out && cap >= value.size()) std::memcpy(out, value.data(), value.size());
   return static_cast<int>(value.size());
 }
-int NextConverterSetBytes(void* object, uint8_t kind, const uint8_t* name,
+int ConverterSetBytes(void* object, uint8_t kind, const uint8_t* name,
                           uint32_t name_size, const uint8_t* data,
                           uint32_t size) {
   if (size > (uint32_t{1} << 30) || (name_size && !name) ||
       (size && !data)) return -1;
-  auto* converter = static_cast<NextUSDZConverterNative*>(object);
+  auto* converter = static_cast<USDZConverterNative*>(object);
   if ((kind == 0 || kind == 2) && converter->preflightRoot(size) != 0) {
     return 0;
   }
@@ -1725,7 +1725,7 @@ int NextConverterSetBytes(void* object, uint8_t kind, const uint8_t* name,
       : std::string();
   return converter->createURDFPhysicsScene(json) ? 1 : 0;
 }
-int NextConverterSetMesh(void* object, const uint8_t* name,
+int ConverterSetMesh(void* object, const uint8_t* name,
                          uint32_t name_size, const float* positions,
                          uint32_t position_count, const float* normals,
                          uint32_t normal_count, const float* uvs,
@@ -1734,21 +1734,21 @@ int NextConverterSetMesh(void* object, const uint8_t* name,
   const std::string key = name_size
       ? std::string(reinterpret_cast<const char*>(name), name_size)
       : std::string();
-  return static_cast<NextUSDZConverterNative*>(object)->setMeshBuffer(
+  return static_cast<USDZConverterNative*>(object)->setMeshBuffer(
       key, positions, position_count, normals, normal_count, uvs, uv_count,
       indices, index_count) ? 1 : 0;
 }
-int NextConverterPreflightMesh(void* object, const uint8_t* name,
+int ConverterPreflightMesh(void* object, const uint8_t* name,
                                uint32_t name_size, uint32_t position_count,
                                uint32_t normal_count, uint32_t uv_count,
                                uint32_t index_count) {
-  return static_cast<NextUSDZConverterNative*>(object)->preflightMesh(
+  return static_cast<USDZConverterNative*>(object)->preflightMesh(
       name, name_size, position_count, normal_count, uv_count, index_count) == 0
       ? 1 : 0;
 }
-int NextConverterControl(void* object, uint8_t kind, int32_t first,
+int ConverterControl(void* object, uint8_t kind, int32_t first,
                          int32_t second) {
-  auto* converter = static_cast<NextUSDZConverterNative*>(object);
+  auto* converter = static_cast<USDZConverterNative*>(object);
   if (kind == 0) {
     converter->clearURDFMeshBuffers();
     return 0;
@@ -1777,46 +1777,46 @@ int NextConverterControl(void* object, uint8_t kind, int32_t first,
   return -1;
 }
 
-int NextConverterRootPreflight(void* object, uint32_t size) {
-  return static_cast<NextUSDZConverterNative*>(object)->preflightRoot(size);
+int ConverterRootPreflight(void* object, uint32_t size) {
+  return static_cast<USDZConverterNative*>(object)->preflightRoot(size);
 }
 
-int NextConverterPreflightAsset(void* object, const uint8_t* name,
+int ConverterPreflightAsset(void* object, const uint8_t* name,
                                 uint32_t name_size, uint32_t size) {
-  return static_cast<NextUSDZConverterNative*>(object)->preflightAsset(
+  return static_cast<USDZConverterNative*>(object)->preflightAsset(
       name, name_size, size);
 }
-int NextConverterExport(void* object, uint8_t kind) {
-  return static_cast<NextUSDZConverterNative*>(object)->exportData(kind) ? 1 : 0;
+int ConverterExport(void* object, uint8_t kind) {
+  return static_cast<USDZConverterNative*>(object)->exportData(kind) ? 1 : 0;
 }
-int NextConverterExportConfigured(void* object, const uint8_t* data, uint32_t size) {
-  return static_cast<NextUSDZConverterNative*>(object)->exportConfiguredJSON(data, size) ? 1 : 0;
+int ConverterExportConfigured(void* object, const uint8_t* data, uint32_t size) {
+  return static_cast<USDZConverterNative*>(object)->exportConfiguredJSON(data, size) ? 1 : 0;
 }
-int NextConverterExportWithOptions(void* object, uint8_t kind,
+int ConverterExportWithOptions(void* object, uint8_t kind,
                                    uint8_t root_format) {
   if (kind != 3 || root_format > 1) return -1;
-  return static_cast<NextUSDZConverterNative*>(object)->exportData(
+  return static_cast<USDZConverterNative*>(object)->exportData(
       kind, root_format) ? 1 : 0;
 }
-int NextConverterExportWithRemap(void* object, const uint8_t* data,
+int ConverterExportWithRemap(void* object, const uint8_t* data,
                                  uint32_t size, uint8_t root_format) {
   if (root_format > 1) return -1;
-  return static_cast<NextUSDZConverterNative*>(object)->
+  return static_cast<USDZConverterNative*>(object)->
       exportAsUSDZWithRemapJSON(data, size, root_format == 1) ? 1 : 0;
 }
-int NextConverterExportBuffer(void* object, uint8_t* out, uint32_t cap) {
-  const auto& data = static_cast<NextUSDZConverterNative*>(object)->exportBytes();
+int ConverterExportBuffer(void* object, uint8_t* out, uint32_t cap) {
+  const auto& data = static_cast<USDZConverterNative*>(object)->exportBytes();
   if (data.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
     return -1;
   if (out && cap >= data.size()) std::memcpy(out, data.data(), data.size());
   return static_cast<int>(data.size());
 }
-const uint8_t* NextConverterExportData(void* object) {
-  const auto& data = static_cast<NextUSDZConverterNative*>(object)->exportBytes();
+const uint8_t* ConverterExportData(void* object) {
+  const auto& data = static_cast<USDZConverterNative*>(object)->exportBytes();
   return data.empty() ? nullptr : data.data();
 }
 
-uint8_t* NextDiffJSON(const lightusd_wasm_diff_options* options,
+uint8_t* DiffJSON(const lightusd_wasm_diff_options* options,
                       const uint8_t* left, uint32_t left_size,
                       const uint8_t* left_name, uint32_t left_name_size,
                       const uint8_t* right, uint32_t right_size,
@@ -1840,23 +1840,23 @@ uint8_t* NextDiffJSON(const lightusd_wasm_diff_options* options,
   return result;
 }
 
-void* NextCreateObject(uint32_t kind) {
+void* CreateObject(uint32_t kind) {
   switch (kind) {
-    case 1: return new (std::nothrow) NextUSDZConverterNative;
-    case 3: return new (std::nothrow) NextFlattenSession;
+    case 1: return new (std::nothrow) USDZConverterNative;
+    case 3: return new (std::nothrow) FlattenSession;
     case 4: return new (std::nothrow) RenderStream;
-    case 5: return new (std::nothrow) NextAssetStore;
-    case 6: return new (std::nothrow) NextLayerDocument;
+    case 5: return new (std::nothrow) AssetStore;
+    case 6: return new (std::nothrow) LayerDocument;
     default: return nullptr;
   }
 }
-void NextDestroyObject(uint32_t kind, void* object) {
+void DestroyObject(uint32_t kind, void* object) {
   switch (kind) {
-    case 1: delete static_cast<NextUSDZConverterNative*>(object); return;
-    case 3: delete static_cast<NextFlattenSession*>(object); return;
+    case 1: delete static_cast<USDZConverterNative*>(object); return;
+    case 3: delete static_cast<FlattenSession*>(object); return;
     case 4: delete static_cast<RenderStream*>(object); return;
-    case 5: delete static_cast<NextAssetStore*>(object); return;
-    case 6: delete static_cast<NextLayerDocument*>(object); return;
+    case 5: delete static_cast<AssetStore*>(object); return;
+    case 6: delete static_cast<LayerDocument*>(object); return;
     default: return;
   }
 }

@@ -172,7 +172,7 @@ After `build-wasm.sh`, the following files should exist in `web/js/src/lightusd/
 - `lightusd_mcp.js`, `lightusd_mcp.wasm` and the `_64` variants
 
 The core `lightusd*` modules are the lean core + Tydra builds used
-by `LightUSDLoader` by default. The deprecated `useNextOnlyWasm` option and
+by `LightUSDLoader` by default. The deprecated `useCoreOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
 The core distribution also contains `lightusd_geometry`, `lightusd_raytrace`,

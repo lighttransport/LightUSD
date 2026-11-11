@@ -1,0 +1,2146 @@
+[
+  {
+    "legacyMethod": "addAssetSearchPath",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "addAssetSearchPath",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "allocateZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "allocateZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "appendAssetChunk",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "appendAssetChunk"
+  },
+  {
+    "legacyMethod": "applyUDIM",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "applyUDIM",
+    "behaviorTest": "udim-bake.test.mjs"
+  },
+  {
+    "legacyMethod": "applyVariantSelection",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy selects in place on its loaded layer; core applies FlattenSession.setVariantOverride before begin(). The three-argument form maps to a prim-scoped key (\"<prim>{<set>}\"); the one-argument form, which legacy forces on every variant set, maps to one set-name override per set.",
+    "workflow": [
+      "setVariantOverride",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "assetExists",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "assetExists",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "cancelParsing",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "cancelParsing",
+    "edgeDifference": "An idle call cancels nothing on either product; legacy records it as cancelRequested in its progress record, core does not. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Called from the callback it cancels the load (stage \"cancelled\")."
+  },
+  {
+    "legacyMethod": "cancelZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "cancelZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "clearAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "clearAssetSearchPaths",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "clearAssets",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "clearAssets"
+  },
+  {
+    "legacyMethod": "clearURDFMeshBuffers",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "clearURDFMeshBuffers",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "composeInherits",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composePayload",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeReferences",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeSublayers",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "addSublayer",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "composeVariants",
+    "family": "composition_and_variants",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "computeMeshTangents",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "computeMeshTangents"
+  },
+  {
+    "legacyMethod": "createSampleScene",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "createSampleScene",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "createURDFPhysicsScene",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "createURDFPhysicsScene",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
+    "edgeDifference": "Next authors every legacy attribute with the same values (URDF prim hierarchy, meshes, joints, collider purpose=guide, Newton scene settings and MuJoCo/Newton contact and mesh-collision attributes and APIs) and additionally authors mjc:timestep and mjc:contype/conaffinity."
+  },
+  {
+    "legacyMethod": "debugLogMemory",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "debugLogMemory"
+  },
+  {
+    "legacyMethod": "deleteAsset",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "deleteAsset",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "deleteAssetByName",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "deleteAssetByName",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "deleteAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "deleteAssetByUUID",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "describeUDIM",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "describeUDIM",
+    "behaviorTest": "udim-bake.test.mjs"
+  },
+  {
+    "legacyMethod": "encodeImageNative",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "encodeImageNative"
+  },
+  {
+    "legacyMethod": "error",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "error",
+    "knownDifference": "Next product contract: failures report the core parser's located message (\"Line N, column M: ...\"); legacy reports its own parser error stack. Empty-string results for idle and successful loads match."
+  },
+  {
+    "legacyMethod": "exportAsUSDA",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDC",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZ",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "exportAsUSDZ",
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "exportAsUSDZWithOptions",
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportAsUSDZWithRemap",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "exportAsUSDZWithRemap",
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Both rewrite the root layer's asset path; core packages the asset under the remapped name, while legacy keeps the original entry name and leaves the remapped reference dangling."
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "load",
+      "exportUSDCToBuffer"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDZWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDZ",
+    "workflow": [
+      {
+        "surface": "LayerDocument",
+        "method": "load"
+      },
+      {
+        "surface": "AssetStore",
+        "method": "setAsset"
+      },
+      {
+        "surface": "LayerDocument",
+        "method": "exportUSDZ"
+      }
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "exportStageAsUSDCToBufferWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "begin",
+      "exportUSDCToBuffer"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Next keeps mesh geometry arrays (points, faceVertexCounts, faceVertexIndices) in the stage export; legacy loses those the converter consumed. All other content matches."
+  },
+  {
+    "legacyMethod": "extractPayloadAssetPaths",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "extractPayloadAssetPaths",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractPhysicsSceneJSON",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "extractPhysicsSceneJSON",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
+    "knownDifference": "Both describe the same prims in the same order, but core's physics JSON is its own contract: schema fallback properties and geometry arrays instead of legacy's specifier/flag/matrix fields and point/face counts."
+  },
+  {
+    "legacyMethod": "extractReferencesAssetPaths",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "extractReferencesAssetPaths",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractSublayerAssetPaths",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "extractSublayerAssetPaths",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "extractUnresolvedTexturePaths",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "extractUnresolvedTexturePaths",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Next lists authored texture asset paths that did not resolve (for example shader.usda's 0/teapot_*.png); legacy returns an empty list for those. Resolved textures agree. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "extractVariants",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "extractVariants",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "finalizeStreamingAsset",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "finalizeStreamingAsset",
+    "edgeDifference": "A zero-length stream cannot be finalized in legacy; core finalizes it as an empty asset."
+  },
+  {
+    "legacyMethod": "finalizeZeroCopyBuffer",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "finalizeZeroCopyBuffer"
+  },
+  {
+    "legacyMethod": "findAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "findAssetByUUID",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "flattenAsyncBegin",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin"
+    ]
+  },
+  {
+    "legacyMethod": "flattenAsyncBeginRemap",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap"
+    ]
+  },
+  {
+    "legacyMethod": "flattenAsyncBeginRemapVariants",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride"
+    ]
+  },
+  {
+    "legacyMethod": "flattenAsyncEnd",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "end"
+    ]
+  },
+  {
+    "legacyMethod": "flattenAsyncProvideLayer",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "provideLayer"
+    ]
+  },
+  {
+    "legacyMethod": "flattenAsyncStep",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenBuffer",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ],
+    "edgeDifference": "Output is byte-identical to FlattenSession for Crate roots; the legacy entry point rejects a USDA root (\"Invalid USDC magic bytes\"), which a FlattenSession accepts."
+  },
+  {
+    "legacyMethod": "flattenBufferRemap",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenBufferRemapVariants",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenBufferToSink",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenBufferToSinkRemap",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenBufferToSinkRemapVariants",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenLayer",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "coreEquivalent": "step",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "Next keeps a referenced layer's relative asset path as authored (@old.png@) where legacy re-anchors it (@./old.png@), per core's relative-asset-path policy."
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSink",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetch",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetchRemap",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetchRemapVariants",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ]
+  },
+  {
+    "legacyMethod": "flattenUSDC",
+    "family": "flatten",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "behaviorTest": "core-flatten-behavior-parity.test.mjs",
+    "workflow": [
+      "begin",
+      "step"
+    ],
+    "edgeDifference": "Output is byte-identical to FlattenSession for Crate roots; the legacy entry point rejects a USDA root (\"Invalid USDC magic bytes\"), which a FlattenSession accepts."
+  },
+  {
+    "legacyMethod": "generateBoneTexture",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "generateBoneTexture",
+    "edgeDifference": "Bone textures are identical for bound meshes; core also skins a mesh that binds a skeleton without applying SkelBindingAPI, which legacy leaves unskinned."
+  },
+  {
+    "legacyMethod": "getActiveZeroCopyBuffers",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getActiveZeroCopyBuffers"
+  },
+  {
+    "legacyMethod": "getAllAnimationInfos",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAllAnimationInfos"
+  },
+  {
+    "legacyMethod": "getAllAnimations",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAllAnimations"
+  },
+  {
+    "legacyMethod": "getAllAssetUUIDs",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAllAssetUUIDs",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAllLights",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAllLights",
+    "knownDifference": "Includes core's additional PortalLight/filter records (see numLights). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAllSkeletons",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAllSkeletons"
+  },
+  {
+    "legacyMethod": "getAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAllowParentRelativeAssetPaths",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAnimation",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAnimation",
+    "knownDifference": "Next skeletal animations are array channels (valueStride/elementCount/jointRemap) rather than legacy per-joint tracks; clips are named \"<name>_Anim\" and carry primPath/startTime/endTime instead of legacy value-clip metadata. Custom-property values match legacy. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAnimationInfo",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getAnimationInfo",
+    "knownDifference": "Next reports one channel per skeletal animation (legacy one track per joint TRS), names clips after the source prim (\"<name>_Anim\"), counts the skeleton node as a target, and exposes startTime/endTime instead of legacy value-clip fields. duration matches (last key time). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getAsset",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAsset",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetByUUID",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetByUUID",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheDataAsMemoryView",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetCacheDataAsMemoryView",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetCacheMaxSizeBytes",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCacheSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetCacheSizeBytes",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetCount",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetCount",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetHash",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetHash",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetSearchPaths",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetSearchPaths",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getAssetUUID",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "getBaseWorkingPath",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "edgeDifference": "Default spelling differs: legacy reports \"./\", core reports the resolver working directory \".\"; set/get round-trips match."
+  },
+  {
+    "legacyMethod": "getCamera",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getCamera",
+    "knownDifference": "Next camera records use primPath, type/typeCode, fovX/fovY, nearClip/farClip, aperture offsets, exposure, focus, fStop, shutter and stereo fields plus the transform; legacy uses absPath/displayName/projection/xfov/yfov/znear/zfar/aspectRatio. Shared values match. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getCombineUDIMTiles",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getCombineUDIMTiles",
+    "knownDifference": "Legacy defaults to combining UDIM tiles; core intentionally defaults to sparse tiles (false) for editor workflows. Setter/getter behavior is covered, but the product default differs.",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getDefaultRootNode",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getDefaultRootNode",
+    "knownDifference": "Next node records add primPath/type/visible/worldMatrix/prototypePath fields and omit legacy prototypeIndex/instanceId; displayName falls back to the prim name. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getDefaultRootNodeId",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getDefaultRootNodeId"
+  },
+  {
+    "legacyMethod": "getDeferTangentComputation",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getDeferTangentComputation",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getEnableBoneReduction",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getEnableBoneReduction",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getEnableValueClips",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getEnableValueClips",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getImage",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getImageCopy",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getImageCopy: core reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1 and string colorSpace plus color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getImageCopy",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getImageCopy",
+    "knownDifference": "Next reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1, string colorSpace and color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getImagePtr",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getImageView",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getImageView: same image record contract as getImageCopy (componentType/mipLevels/name, numeric colorSpace; an undecoded image reports 0 width/height and 4 channels) with a borrowed pixel view only for decoded images. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getInstance",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getInstance",
+    "knownDifference": "Instance ids follow core's native-instance enumeration: records are the instancing prims with their world matrices and resolved prototype mesh ids. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getInstancesForMesh",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getInstancesForMesh"
+  },
+  {
+    "legacyMethod": "getLight",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getLight",
+    "knownDifference": "Next records use primPath, enableShadow, typeCode, light-link/filter targets and type-specific shape fields; legacy adds absPath/displayName/position/direction, all shape fields with defaults, shapingConeAngle (degrees), guideRadius and texture/geometry links. Next names distant lights \"directional\", reports shaped sphere lights as \"spot\" with a radian cone angle, and includes PortalLights. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getLightWithFormat",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getLightWithFormat"
+  },
+  {
+    "legacyMethod": "getMMapZeroCopy",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMMapZeroCopy",
+    "knownDifference": "Legacy reports its mmap flag (false by default); core throws because core WASM assets are never mmap-backed (explicit product decision)."
+  },
+  {
+    "legacyMethod": "getMaterial",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMaterial"
+  },
+  {
+    "legacyMethod": "getMaterialWithFormat",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "material-format-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMaterialWithFormat"
+  },
+  {
+    "legacyMethod": "getMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMaxMemoryLimitMB",
+    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getMemoryStats",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMemoryStats",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Mesh, material, texture, image, light and asset counts match; node, buffer and cache-byte fields report each product's own accounting."
+  },
+  {
+    "legacyMethod": "getMesh",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMesh",
+    "knownDifference": "Next returns borrowed heap descriptors ({ptr,length,comps,dtype}) for geometry, a non-indexed triangle soup, primPath/localMatrix/worldMatrix/material, and an unbound mesh uses the fallback material id; legacy returns indexed typed arrays with face counts/uvSets/normalsFormat. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshCopy",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMeshCopy",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Owned copies of core's non-indexed geometry (uv0, vertexCount, local/world matrices, material); legacy returns indexed arrays with face counts, uvSets and packed normals. An unbound mesh uses the fallback material id. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshPrimvarsJSON",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMeshPrimvarsJSON",
+    "knownDifference": "Next reports every primvar of the retained mesh (legacy returned an empty set for the interpolation fixture) and omits legacy's \"render node is not a GeomMesh\" error for plain meshes. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMeshPtr",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMeshGeometryView",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "knownDifference": "Maps to getMeshGeometryView: f32 geometry views plus skin/bind-transform and matrix fields; legacy returns indexed descriptors (snorm8 normals, faceVertexCounts, submesh flags). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getMhProfileJSON",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "getMhProfileJSON",
+    "workflow": [
+      "load",
+      "getMhProfileJSON"
+    ],
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeFlattenRenderTree",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getFlattenRenderTree",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMaterialDedup",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMaterialDedup",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMeshMerge",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMeshMerge",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getNativeMeshMergeBakeTransform",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getMeshMergeBakeTransform",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getProgress",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getProgress",
+    "knownDifference": "Next product contract: the record tracks each load (stage \"complete\"/\"error\"/\"cancelled\", byte counts, errorMessage equal to error()). Legacy reports stage \"idle\" with \"Conversion complete\" after loading, keeps that record after a failed parse, and keeps cancelRequested set after an idle cancelParsing(). Idle records match."
+  },
+  {
+    "legacyMethod": "getRootNode",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getRootNode",
+    "knownDifference": "Same node record contract as getDefaultRootNode: core adds primPath/type/visible/worldMatrix/prototypePath, omits prototypeIndex/instanceId, and falls back to the prim name for displayName. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getRoundBoneCount",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getRoundBoneCount",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getSceneMetadata",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getSceneMetadata",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getShadingGraphJSON",
+    "family": "render_scene_queries",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "getShadingGraphJSON",
+    "workflow": [
+      "load",
+      "getShadingGraphJSON"
+    ],
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getSkeleton",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getSkeleton",
+    "knownDifference": "Next adds primPath/joints/rootJoint/jointCount/animationSourcePath; skeleton ids follow core's traversal order (legacy orders them differently) and joint names are leaf names instead of full joint paths. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getSkeletonJointsFlat",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getSkeletonJointsFlat",
+    "knownDifference": "joint_names are leaf joint names in core and full joint paths in legacy; other arrays match. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "getSphereSubdivisions",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getSphereSubdivisions",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getStreamingAssetUUID",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getStreamingAssetUUID"
+  },
+  {
+    "legacyMethod": "getStreamingProgress",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getStreamingProgress",
+    "edgeDifference": "An overflowing chunk is rejected by both, but legacy still appends it (current > total, percentage > 100); core leaves the transfer at its expected size."
+  },
+  {
+    "legacyMethod": "getTargetBoneCount",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getTargetBoneCount",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getTexture",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getTexture"
+  },
+  {
+    "legacyMethod": "getUDIMTexture",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getUDIMTexture"
+  },
+  {
+    "legacyMethod": "getURI",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getURI",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getUpAxis",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getUpAxis",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipEndTime",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getValueClipEndTime",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipSampleRate",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getValueClipSampleRate",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipStartTime",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getValueClipStartTime",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getValueClipUseTimeRange",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "getZeroCopyBufferPtr",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getZeroCopyBufferPtr"
+  },
+  {
+    "legacyMethod": "getZeroCopyBufferPtrAtOffset",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getZeroCopyBufferPtrAtOffset"
+  },
+  {
+    "legacyMethod": "getZeroCopyProgress",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "getZeroCopyProgress"
+  },
+  {
+    "legacyMethod": "hasAsset",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "hasAsset",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasInherits",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "hasInherits",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasPayload",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "hasPayload",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasReferences",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "hasReferences",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasSublayers",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "hasSublayers",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "hasVariants",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "hasVariants",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "isParsingInProgress",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "isParsingInProgress",
+    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true inside the callback."
+  },
+  {
+    "legacyMethod": "isStreamingAssetComplete",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "isStreamingAssetComplete",
+    "edgeDifference": "A zero-length stream is never complete in legacy; core treats it as complete."
+  },
+  {
+    "legacyMethod": "layerToJSON",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportJSON",
+    "workflow": [
+      "load",
+      "exportJSON"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "An attribute authoring both a default and `.connect` keeps its connection in core Layer JSON; legacy drops it. All other Layer JSON content matches."
+  },
+  {
+    "legacyMethod": "layerToJSONWithOptions",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportJSONWithOptions",
+    "workflow": [
+      "load",
+      "exportJSONWithOptions"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
+    "edgeDifference": "An attribute authoring both a default and `.connect` keeps its connection in core Layer JSON; legacy drops it. All other Layer JSON content matches. Both products emit the same document for every embed/array mode."
+  },
+  {
+    "legacyMethod": "layerToRenderScene",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "beginFromLayerDocument",
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "layerToString",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadAsLayerFromBinary",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "load",
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Returns {success, primCount} instead of a boolean."
+  },
+  {
+    "legacyMethod": "loadAsLayerFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "loadWithProgress",
+    "workflow": [
+      "loadWithProgress"
+    ],
+    "coreNameMatch": false,
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Returns {success, primCount} and reports progress to the loadWithProgress callback."
+  },
+  {
+    "legacyMethod": "loadAsLayerFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "load",
+    "workflow": [
+      {
+        "surface": "AssetStore",
+        "method": "getAsset"
+      },
+      {
+        "surface": "LayerDocument",
+        "method": "load"
+      }
+    ],
+    "behaviorTest": "core-loading-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadFromBinary",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "begin",
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Success agrees on the shared corpus; core returns the begin() record (success, counts, error) instead of a boolean. A missing sublayer or reference asset also fails core composition, while legacy never composes on load. Next loads some meshes that legacy's converter rejects."
+  },
+  {
+    "legacyMethod": "loadFromBinaryAsync",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "beginAsync",
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Both resolve after the call returns; legacy resolves {success, meshCount, materialCount, textureCount}, core the full begin() record."
+  },
+  {
+    "legacyMethod": "loadFromBinaryWithProgress",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "begin",
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy updates its polled progress record synchronously; core reports phases to RenderStream.setProgressCallback during begin().",
+    "workflow": [
+      {
+        "surface": "RenderStream",
+        "method": "setProgressCallback"
+      },
+      {
+        "surface": "RenderStream",
+        "method": "begin"
+      }
+    ]
+  },
+  {
+    "legacyMethod": "loadFromCachedAsset",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "beginCachedAsset",
+    "behaviorTest": "core-loading-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "loadLayerFromJSON",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "loadJSON",
+    "workflow": [
+      "loadJSON"
+    ],
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Legacy-exported JSON imports on both; core requires the root typeName to be \"Layer\", which legacy does not check."
+  },
+  {
+    "legacyMethod": "loadTest",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "load",
+    "workflow": [
+      "load"
+    ],
+    "behaviorTest": "core-loading-behavior-parity.test.mjs",
+    "edgeDifference": "Maps to LayerDocument.load(bytes), returning {success, primCount} instead of a boolean."
+  },
+  {
+    "legacyMethod": "lodVariantCount",
+    "family": "composition_and_variants",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "lodVariantCount",
+    "behaviorTest": "core-composition-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "markZeroCopyBytesWritten",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "markZeroCopyBytesWritten",
+    "edgeDifference": "An over-count mark fails on both, but legacy clamps its written count to the buffer size; core leaves the count unchanged."
+  },
+  {
+    "legacyMethod": "mcpCreateContext",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "mcpResourcesList",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "mcpResourcesRead",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "mcpSelectContext",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "mcpToolsCall",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "mcpToolsList",
+    "family": "mcp",
+    "coreNameMatch": false,
+    "parityStatus": "product_decision",
+    "productDecision": "MCP server/context integration is provided by the dedicated MCP server product (lightusd_mcp WASM module and native lightusd-mcp, built on the core C API; same tool contract minus run_script/texture tools), outside core-only scene-core WASM.",
+    "behaviorTest": "core-mcp-server.test.mjs"
+  },
+  {
+    "legacyMethod": "numAnimations",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numAnimations"
+  },
+  {
+    "legacyMethod": "numCameras",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numCameras"
+  },
+  {
+    "legacyMethod": "numImages",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numImages"
+  },
+  {
+    "legacyMethod": "numInstances",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numInstances",
+    "knownDifference": "Next enumerates one instance per native-instance prim (17 in instancing-001); legacy enumerates its prototype-expanded instance records (11). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "numLights",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numLights",
+    "knownDifference": "Next exports PortalLight prims as rect lights (and light filters as inert point lights with a warning); legacy omits them. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+  },
+  {
+    "legacyMethod": "numMaterials",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numMaterials",
+    "edgeDifference": "Counts and ids match (bound materials in mesh order, deduplicated when enabled); an unbound mesh uses a trailing fallback record id equal to numMaterials where legacy reports -1."
+  },
+  {
+    "legacyMethod": "numMeshes",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numMeshes"
+  },
+  {
+    "legacyMethod": "numRootNodes",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numRootNodes"
+  },
+  {
+    "legacyMethod": "numSkeletons",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numSkeletons"
+  },
+  {
+    "legacyMethod": "numTextures",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numTextures"
+  },
+  {
+    "legacyMethod": "numUDIMTextures",
+    "family": "render_scene_queries",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "numUDIMTextures"
+  },
+  {
+    "legacyMethod": "ok",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "ok"
+  },
+  {
+    "legacyMethod": "releaseSourceLayer",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "releaseSourceLayer"
+  },
+  {
+    "legacyMethod": "remapLayerAssetPaths",
+    "family": "layer_export_and_validation",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "FlattenSession",
+    "coreEquivalent": "remapLayerAssetPaths",
+    "workflow": [
+      "begin",
+      "remapLayerAssetPaths"
+    ],
+    "behaviorTest": "core-layer-export-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "reset",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "reset"
+  },
+  {
+    "legacyMethod": "resetProgress",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "resetProgress",
+    "edgeDifference": "Both reset to the same idle record. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Next rejects resetProgress with TypeError while a parse is running."
+  },
+  {
+    "legacyMethod": "setAllowParentRelativeAssetPaths",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "setAllowParentRelativeAssetPaths",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setAsset",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "setAsset",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "edgeDifference": "Next returns whether an existing entry was replaced (legacy returns undefined) and rejects an empty identifier, which legacy stores."
+  },
+  {
+    "legacyMethod": "setAssetCacheMaxSizeBytes",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "setAssetCacheMaxSizeBytes",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setAssetFromRawPointer",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "setAssetFromRawPointer",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setBaseWorkingPath",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "setBaseWorkingPath",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setCollisionMesh",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "setCollisionMesh",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setCombineUDIMTiles",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setCombineUDIMTiles",
+    "knownDifference": "The setter accepts canonical booleans on both products, but core rejects legacy Embind coercions such as numeric/string inputs. Its default is also false (sparse tiles), while legacy defaults to true (combined atlas).",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setDeferTangentComputation",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setDeferTangentComputation",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value. Tangent values match; legacy re-indexes a mesh when computing deferred tangents, so its stream length can differ."
+  },
+  {
+    "legacyMethod": "setEnableBoneReduction",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setEnableBoneReduction",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setEnableComposition",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setEnableComposition",
+    "knownDifference": "Legacy stores the flag but never composes on load (its use is commented out); core composes arcs when enabled. Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setEnableValueClips",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setEnableValueClips",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setLoadTextureInNative",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setLoadTextureInNative",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value. Next decodes textures from an attached AssetStore (legacy: setAsset), expands RGB to RGBA, and reports unknown image sizes as 0 instead of -1."
+  },
+  {
+    "legacyMethod": "setMMapZeroCopy",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setMMapZeroCopy",
+    "knownDifference": "Legacy stores the mmap flag; core validates and throws because core WASM assets are never mmap-backed (explicit product decision)."
+  },
+  {
+    "legacyMethod": "setMaxMemoryLimitMB",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setMaxMemoryLimitMB",
+    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "setNativeFlattenRenderTree",
+    "family": "loader_configuration",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setFlattenRenderTree",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMaterialDedup",
+    "family": "loader_configuration",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setMaterialDedup",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMeshMerge",
+    "family": "loader_configuration",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setMeshMerge",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setNativeMeshMergeBakeTransform",
+    "family": "loader_configuration",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setMeshMergeBakeTransform",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setRoundBoneCount",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setRoundBoneCount",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setSphereSubdivisions",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setSphereSubdivisions",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setTargetBoneCount",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setTargetBoneCount",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setUSDCExportLimitMB",
+    "family": "loader_configuration",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "setUSDCExportLimitMB",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "The file-size cap matches legacy exportAsUSDC on USDZConverterNative.exportAsUSDC; core also rejects when an up-front working-set estimate exceeds the memory cap, which legacy does not enforce."
+  },
+  {
+    "legacyMethod": "setValueClipSampleRate",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setValueClipSampleRate",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setValueClipTimeRange",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setValueClipTimeRange",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setValueClipUseTimeRange",
+    "family": "loader_configuration",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "setValueClipUseTimeRange",
+    "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value."
+  },
+  {
+    "legacyMethod": "setVisualMesh",
+    "family": "schema_and_image_utilities",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "USDZConverterNative",
+    "coreEquivalent": "setVisualMesh",
+    "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
+    "edgeDifference": "Invalid uploads fail on both; a null positions array returns false in legacy and throws TypeError in core."
+  },
+  {
+    "legacyMethod": "startStreamingAsset",
+    "family": "streaming_buffers",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "startStreamingAsset"
+  },
+  {
+    "legacyMethod": "testValueMemoryUsage",
+    "family": "test_only",
+    "coreNameMatch": false,
+    "parityStatus": "test_only_excluded",
+    "knownDifference": "This debug memory-probe helper constructs synthetic values for the legacy memory-usage CLI and tests; it is not a product loading/diagnostics API."
+  },
+  {
+    "legacyMethod": "validateFromBinary",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "known_behavior_gap",
+    "coreSurface": "ValidatorFeature",
+    "coreEquivalent": "validateFromBinary",
+    "knownDifference": "For USDC, core now validates the decoded crate structure and reports the crate checked-group. The compatibility adapter preserves the CrateReader threading warning text without legacy's source-location prefix. Parse-failure wording differs.",
+    "behaviorTest": "core-validation-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "validateLoadedLayer",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "validateLoadedLayer",
+    "behaviorTest": "core-validation-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "verifyAssetHash",
+    "family": "asset_resolution_and_cache",
+    "coreNameMatch": false,
+    "parityStatus": "behavior_verified",
+    "coreSurface": "AssetStore",
+    "coreEquivalent": "verifyAssetHash",
+    "behaviorTest": "core-asset-cache-behavior-parity.test.mjs"
+  },
+  {
+    "legacyMethod": "warn",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "warn"
+  },
+  {
+    "legacyMethod": "wasCancelled",
+    "family": "loading_and_diagnostics",
+    "coreNameMatch": true,
+    "parityStatus": "behavior_verified",
+    "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "wasCancelled",
+    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true after a callback-driven cancellation and cleared by the core begin()."
+  }
+]

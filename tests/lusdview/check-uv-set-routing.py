@@ -9,7 +9,7 @@ Three bugs, one behind the other:
      RenderTexture::uv_primvar pointed at a set that did not exist.
   2. Even when it did exist, nothing routed it: every texture sampled uv0. The
      second set reached the GPU only as a debug AOV.
-  3. Even once it was extracted AND routed, it never reached the GPU on the --next
+  3. Even once it was extracted AND routed, it never reached the GPU on the --core
      path: uv0 rides inside DrawVertex, but uv1 is a parallel array, and the batch
      builder appended the vertices without it. Every batched draw got an EMPTY uv1,
      so the sampler fetched one fixed coordinate and the crop came out FLAT.
@@ -129,7 +129,7 @@ def stdev_of_lit(px):
 
 
 def render(binary, model, out_png, backend):
-    args = [binary, "--backend", backend, "--next", "--frames", "4",
+    args = [binary, "--backend", backend, "--core", "--frames", "4",
             "--no-grid", "--view-dir", "0,0,-1",
             "--screenshot", out_png, model]
     args[1:1] = vk_device_args(backend)

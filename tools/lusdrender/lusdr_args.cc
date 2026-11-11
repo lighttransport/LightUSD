@@ -228,10 +228,10 @@ void PrintUsage(const char *prog) {
       << "                         Resolve a Vulkan large-scene preset over existing\n"
       << "                         backend/LOD/memory knobs. Explicit CLI flags win;\n"
       << "                         texture resize/compression flags are unchanged.\n"
-      << "  -materialResolver legacy|tydra-next|compare\n"
-      << "                         Next-loader material resolver. tydra-next is\n"
-      << "                         the default; legacy is the compatibility path;\n"
-      << "                         compare renders legacy and reports differences.\n"
+      << "  -materialResolver legacy|tydra|compare\n"
+      << "                         Core material resolver. tydra is the default;\n"
+      << "                         legacy is the compatibility path; compare\n"
+      << "                         renders legacy and reports differences.\n"
       << "  -materialShading legacy|lightrt-bsdf\n"
       << "                         CPU material shading path. lightrt-bsdf is an\n"
       << "                         experimental opt-in direct-light BSDF path.\n"
@@ -671,12 +671,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       std::string mode = v;
       if (mode == "legacy") {
         opt->material_resolver = Options::MaterialResolver::Legacy;
-      } else if (mode == "tydra-next") {
-        opt->material_resolver = Options::MaterialResolver::TydraNext;
+      } else if (mode == "tydra") {
+        opt->material_resolver = Options::MaterialResolver::Tydra;
+      } else if (mode == "tydra-next") {  // deprecated alias
+        std::cerr << "WARN: -materialResolver tydra-next is deprecated; use tydra.\n";
+        opt->material_resolver = Options::MaterialResolver::Tydra;
       } else if (mode == "compare") {
         opt->material_resolver = Options::MaterialResolver::Compare;
       } else {
-        std::cerr << "Invalid material resolver. Expected legacy, tydra-next, or compare.\n";
+        std::cerr << "Invalid material resolver. Expected legacy, tydra, or compare.\n";
         return false;
       }
     }

@@ -2,7 +2,7 @@
 //
 // lmetalview - preview scene construction.
 //
-// Loading is deliberately built on the public next C API
+// Loading is deliberately built on the public lightusd_core C API
 // (lightusd_stage_load + lightusd_render_convert), so the example consumes the
 // same composed stage / Tydra conversion surface as every other language
 // binding. Pixel decoding is the one thing the C API does not do (tydra records
@@ -475,8 +475,8 @@ size_t AttrElement(const VertexAttr& a, uint32_t corner, uint32_t point,
 // Geometry stays in the bind pose. Per-vertex joint influences, the per-joint
 // pose palette and blend-shape deltas are retained here and re-evaluated when
 // the time changes, so playback never re-converts or re-uploads geometry. The
-// math follows examples/lusdview/next_scene_loader.cc (PoseNextSkeleton) but
-// uses only the public next C API: lightusd_skel_sample_*, lightusd_attr_eval
+// math follows examples/lusdview/core_scene_loader.cc (PoseCoreSkeleton) but
+// uses only the public lightusd_core C API: lightusd_skel_sample_*, lightusd_attr_eval
 // and lightusd_prim_world_transform.
 // ---------------------------------------------------------------------------
 
@@ -707,7 +707,7 @@ lightusd_prim ResolveAnimationPrim(lightusd_stage* stage,
   return lightusd_prim{};
 }
 
-// Ports PoseNextSkeleton from lusdview. Returns the per-joint skin matrix that
+// Ports PoseCoreSkeleton from lusdview. Returns the per-joint skin matrix that
 // takes a geomBind-space point into the posed skeleton space.
 bool PoseSkeleton(lightusd_stage* stage, lightusd_prim skeleton,
                   lightusd_prim animation, double time,
@@ -3906,7 +3906,7 @@ bool BuildSceneData(lightusd_stage* stage, lightusd_render_scene* render,
       }
     } else {
       // tydra records texture metadata only by design; decode here through the
-      // shared next TextureDecoder (same code path as lusdview/lusdrender).
+      // shared core TextureDecoder (same code path as lusdview/lusdrender).
       const bool srgb =
           info.color_space ==
           static_cast<uint8_t>(lightusd::tydra::ColorSpace::sRGB);

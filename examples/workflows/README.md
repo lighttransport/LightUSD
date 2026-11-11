@@ -1,4 +1,4 @@
-# Small next API workflows
+# Small core API workflows
 
 These examples use `lightusd` and `lightusd::tydra`. Inputs are
 caller-supplied; generated files go to explicitly named output paths.
@@ -8,11 +8,11 @@ Build from the repository root:
 ```sh
 cmake -S . -B build_ninja -G Ninja -DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_TESTS=ON
 cmake --build build_ninja -j8
-ctest --test-dir build_ninja -R '^(next_workflow_examples|workflow_tools|next_gltf_export)$' --output-on-failure
+ctest --test-dir build_ninja -R '^(core_workflow_examples|core_comprehensive_example)$' --output-on-failure
 ```
 
-The four C++ examples also build in the standalone `src/next` project with
-`LIGHTUSD_NEXT_BUILD_EXAMPLES=ON` (default for standalone builds).
+The four C++ examples also build in the standalone `src/` project with
+`LIGHTUSD_BUILD_EXAMPLES=ON` (default for standalone builds).
 
 | Executable | What it demonstrates |
 |---|---|

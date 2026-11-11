@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
- * LightUSD C API over the "next" core (lightusd).
+ * LightUSD C API over the core implementation (lightusd_core).
  *
  * Design:
  * - C11, no exceptions cross the boundary (the core is built -fno-exceptions).
@@ -808,7 +808,7 @@ LIGHTUSD_API lightusd_status lightusd_backplate_get_info(
 LIGHTUSD_API void lightusd_backplate_destroy(lightusd_backplate* plate);
 
 /* Validate and sample a SkelAnimation prim at numeric time, returning its
- * authored joint count. This uses the same schema evaluation as native next. */
+ * authored joint count. This uses the same schema evaluation as native. */
 LIGHTUSD_API lightusd_status lightusd_skel_animation_joint_count_at_time(
     const lightusd_stage* stage, lightusd_prim p, double time, size_t* out);
 

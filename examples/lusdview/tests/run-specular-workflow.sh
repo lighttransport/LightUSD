@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # doubleSided regression's sibling: UsdPreviewSurface specular workflow + IOR on
-# the lusdview `--next` loader (audit T12). The loader read only the metallic
+# the lusdview `--core` loader (audit T12). The loader read only the metallic
 # workflow, so `useSpecularWorkflow=1` fell back to a fixed dielectric F0 (0.04)
 # and `inputs:specularColor` was ignored -- a colored specular highlight rendered
 # plain white. It now computes F0 = specularColor (spec workflow) / dielectric
@@ -113,5 +113,5 @@ if [ -n "${dom[gl]:-}" ] && [ -n "${dom[vk]:-}" ]; then
 fi
 
 [ "$fail" -eq 0 ] || exit 1
-echo "PASS: specular workflow + specularColor honored on --next (GL and VK)"
+echo "PASS: specular workflow + specularColor honored on --core (GL and VK)"
 exit 0

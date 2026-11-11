@@ -20,7 +20,7 @@
 
 namespace lusdql {
 
-namespace tnext = ::lightusd;
+namespace core = ::lightusd;
 namespace tyn = ::lightusd::tydra;
 
 const char* LoadPhaseName(LoadPhase phase) {
@@ -1251,28 +1251,28 @@ void RunLoad(const std::string& path, const Options& opts,
   progress(LoadPhase::Open, 0, "opening");
 
   // ---- Load + compose ------------------------------------------------------
-  tnext::StageSessionOptions sopts;
+  core::StageSessionOptions sopts;
   sopts.compose = opts.compose;
   if (budget.stage > 0) {
     sopts.load.limits.max_resident_bytes = static_cast<size_t>(budget.stage);
   }
   // The composed stage is all we need; dropping the parsed dependency layers
   // and the PCP cache afterwards is a large part of staying inside the budget.
-  sopts.cache_retention = tnext::CacheRetention::LayersOnly;
+  sopts.cache_retention = core::CacheRetention::LayersOnly;
 
   bool budget_hit_during_compose = false;
   std::string budget_why;
 
   sopts.progress_callback =
-      [&](const tnext::ProgressEvent& e) -> bool {
+      [&](const core::ProgressEvent& e) -> bool {
     if (ctrl->cancel.load()) return false;
 
     LoadPhase phase = LoadPhase::Open;
     switch (e.phase) {
-      case tnext::ProgressPhase::RootLoad: phase = LoadPhase::Open; break;
-      case tnext::ProgressPhase::Compose:
-      case tnext::ProgressPhase::Recompose:
-      case tnext::ProgressPhase::PreviewCompose:
+      case core::ProgressPhase::RootLoad: phase = LoadPhase::Open; break;
+      case core::ProgressPhase::Compose:
+      case core::ProgressPhase::Recompose:
+      case core::ProgressPhase::PreviewCompose:
         phase = LoadPhase::Compose;
         break;
     }
@@ -1289,7 +1289,7 @@ void RunLoad(const std::string& path, const Options& opts,
     return true;
   };
 
-  tnext::StageSession session;
+  core::StageSession session;
   std::string load_error;
   bool opened = false;
   try {
@@ -1311,9 +1311,9 @@ void RunLoad(const std::string& path, const Options& opts,
     // preview beats no preview, as long as we say so.
     degraded.uncomposed = true;
     degraded.detail = budget_why;
-    tnext::StageSessionOptions flat = sopts;
+    core::StageSessionOptions flat = sopts;
     flat.compose = false;
-    flat.progress_callback = [&](const tnext::ProgressEvent&) -> bool {
+    flat.progress_callback = [&](const core::ProgressEvent&) -> bool {
       return !ctrl->cancel.load();
     };
     try {
@@ -1414,7 +1414,7 @@ void RunLoad(const std::string& path, const Options& opts,
     fail("stage is still retained by an active snapshot");
     return;
   }
-  tnext::Stage conversion_stage = std::move(*taken_stage);
+  core::Stage conversion_stage = std::move(*taken_stage);
   try {
     result = converter.ConvertToSink(conversion_stage, &sink);
   } catch (const std::bad_alloc&) {

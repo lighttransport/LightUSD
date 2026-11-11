@@ -21,7 +21,7 @@ for (const streaming of [false,true]) for (const rootLayerFormat of ['usda','usd
   assert.ok(jpeg,[...archive.entries.keys()].join(','));
   assert.equal(jpeg[1][0],255); assert.equal(jpeg[1][1],216);
   assert.ok(!archive.entries.has('tex.png'));
-  const reader=new native.NextUSDZConverterNative();
+  const reader=new native.USDZConverterNative();
   try {
     assert.equal(reader.loadFromBinary(result.usdz,'result.usdz'),true,reader.error());
     assert.ok(reader.exportAsUSDA().includes('@'+jpeg[0]+'@'));
@@ -63,7 +63,7 @@ for(const streaming of [false,true])for(const fitStrategy of [null,'size','quali
  const texture=[...archive.entries].find(([name])=>/\.(png|jpe?g)$/.test(name));assert.ok(texture);
  assert.ok(!archive.entries.has('deps/tex.bmp'));
  const decoded=native.convertImage(texture[1],{format:'png'});assert.equal(decoded.success,true,decoded.error);
- const reader=new native.NextUSDZConverterNative();
+ const reader=new native.USDZConverterNative();
  try {
   assert.ok(reader.loadFromBinary(result.usdz,'arkit.usdz'),reader.error());
   const text=reader.exportAsUSDA();assert.match(text,/upAxis = "Y"/);assert.ok(text.includes('@'+texture[0]+'@'));

@@ -68,7 +68,7 @@ EMSCRIPTEN_KEEPALIVE uint32_t lightusd_wasm_create(uint32_t kind) {
     slots = static_cast<Slot*>(allocation);
     slots[slot_count++] = Slot{nullptr, 1, 0};
   }
-  void* object = NextCreateObject(kind);
+  void* object = CreateObject(kind);
   if (!object) return 0;
   slots[index].object = object;
   slots[index].kind = kind;
@@ -89,7 +89,7 @@ EMSCRIPTEN_KEEPALIVE void lightusd_wasm_destroy(uint32_t handle) {
   slot->object = nullptr;
   // Never wrap: a retired slot cannot make an old handle valid again.
   slot->generation = slot->generation == max_generation ? 0 : slot->generation + 1;
-  lightusd::web_core::NextDestroyObject(kind, object);
+  lightusd::web_core::DestroyObject(kind, object);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_udim(
@@ -97,12 +97,12 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_udim(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || apply > 1 || size > 4*1024*1024 ||
       (size && (!data || reinterpret_cast<uintptr_t>(data) > emscripten_get_heap_size() || size > emscripten_get_heap_size() - reinterpret_cast<uintptr_t>(data)))) return -1;
-  return lightusd::web_core::NextConverterUDIM(slot->object, apply != 0, data, size);
+  return lightusd::web_core::ConverterUDIM(slot->object, apply != 0, data, size);
 }
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_udim_copy(uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || (cap && (!out || reinterpret_cast<uintptr_t>(out) > emscripten_get_heap_size() || cap > emscripten_get_heap_size()-reinterpret_cast<uintptr_t>(out)))) return -1;
-  return lightusd::web_core::NextConverterUDIMCopy(slot->object, out, cap);
+  return lightusd::web_core::ConverterUDIMCopy(slot->object, out, cap);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_rewrite(
@@ -116,7 +116,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_rewrite(
       size > (uint32_t{1} << 30) || (size && !data) || options->format > 1 ||
       !std::isfinite(options->max_memory) || options->max_memory < 0 ||
       options->max_memory >= std::ldexp(1.0, sizeof(size_t) * 8)) return -1;
-  return lightusd::web_core::NextConverterRewrite(
+  return lightusd::web_core::ConverterRewrite(
       slot->object, data, size, options, out);
 }
 
@@ -124,14 +124,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_rewrite_buffer(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1) return -1;
-  return lightusd::web_core::NextConverterRewriteBuffer(slot->object, out, cap);
+  return lightusd::web_core::ConverterRewriteBuffer(slot->object, out, cap);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_string(
     uint32_t handle, uint8_t kind, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || kind > 1) return -1;
-  return lightusd::web_core::NextConverterString(slot->object, kind, out, cap);
+  return lightusd::web_core::ConverterString(slot->object, kind, out, cap);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_set_bytes(
@@ -140,7 +140,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_set_bytes(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || kind > 2 || name_size > (1u << 20) ||
       size > (1u << 30) || (name_size && !name) || (size && !data)) return -1;
-  return lightusd::web_core::NextConverterSetBytes(
+  return lightusd::web_core::ConverterSetBytes(
       slot->object, kind, name, name_size, data, size);
 }
 
@@ -150,7 +150,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_asset_preflight(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || name_size > (1u << 20) ||
       (name_size && !name) || byte_size > (1u << 30)) return -1;
-  return lightusd::web_core::NextConverterPreflightAsset(
+  return lightusd::web_core::ConverterPreflightAsset(
       slot->object, name, name_size, byte_size);
 }
 
@@ -164,7 +164,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_mesh_preflight(
       (name_size && !name) || position_count > max_values ||
       normal_count > max_values || uv_count > max_values ||
       index_count > max_values) return -1;
-  return lightusd::web_core::NextConverterPreflightMesh(
+  return lightusd::web_core::ConverterPreflightMesh(
       slot->object, name, name_size, position_count, normal_count, uv_count,
       index_count);
 }
@@ -183,7 +183,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_set_mesh(
       index_count > max_values || (position_count && !positions) ||
       (normal_count && !normals) || (uv_count && !uvs) ||
       (index_count && !indices)) return -1;
-  return lightusd::web_core::NextConverterSetMesh(
+  return lightusd::web_core::ConverterSetMesh(
       slot->object, name, name_size, positions, position_count,
       normals, normal_count, uvs, uv_count, indices, index_count);
 }
@@ -192,7 +192,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_control(
     uint32_t handle, uint8_t kind, int32_t first, int32_t second) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || kind > 7) return -1;
-  return lightusd::web_core::NextConverterControl(
+  return lightusd::web_core::ConverterControl(
       slot->object, kind, first, second);
 }
 
@@ -200,28 +200,28 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_root_preflight(
     uint32_t handle, uint32_t size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1) return -1;
-  return lightusd::web_core::NextConverterRootPreflight(slot->object, size);
+  return lightusd::web_core::ConverterRootPreflight(slot->object, size);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export(
     uint32_t handle, uint8_t kind) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || kind > 3) return -1;
-  return lightusd::web_core::NextConverterExport(slot->object, kind);
+  return lightusd::web_core::ConverterExport(slot->object, kind);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_configured(
     uint32_t handle, const uint8_t* data, uint32_t size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || (!data && size)) return -1;
-  return lightusd::web_core::NextConverterExportConfigured(slot->object, data, size);
+  return lightusd::web_core::ConverterExportConfigured(slot->object, data, size);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_with_options(
     uint32_t handle, uint8_t kind, uint8_t root_format) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1) return -1;
-  return lightusd::web_core::NextConverterExportWithOptions(
+  return lightusd::web_core::ConverterExportWithOptions(
       slot->object, kind, root_format);
 }
 
@@ -230,7 +230,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_with_remap(
     uint8_t root_format) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1 || (!remap_json && remap_json_size)) return -1;
-  return lightusd::web_core::NextConverterExportWithRemap(
+  return lightusd::web_core::ConverterExportWithRemap(
       slot->object, remap_json, remap_json_size, root_format);
 }
 
@@ -238,7 +238,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_converter_export_buffer(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1) return -1;
-  return lightusd::web_core::NextConverterExportBuffer(slot->object, out, cap);
+  return lightusd::web_core::ConverterExportBuffer(slot->object, out, cap);
 }
 
 EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_wasm_converter_export_data(
@@ -246,13 +246,13 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_wasm_converter_export_data(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 1) return 0;
   return reinterpret_cast<uintptr_t>(
-      lightusd::web_core::NextConverterExportData(slot->object));
+      lightusd::web_core::ConverterExportData(slot->object));
 }
 
 EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_wasm_asset_store_snapshot(uint32_t handle) {
   const Slot* store = Lookup(handle);
   if (!store || store->kind != 5) return nullptr;
-  const auto text = static_cast<const lightusd::web_core::NextAssetStore*>(store->object)->snapshotMetadata();
+  const auto text = static_cast<const lightusd::web_core::AssetStore*>(store->object)->snapshotMetadata();
   if (text.size() > (size_t(64) << 20)) return nullptr;
   auto* output = static_cast<uint8_t*>(std::malloc(text.size() + 1));
   if (output) std::memcpy(output, text.c_str(), text.size() + 1);
@@ -265,7 +265,7 @@ EMSCRIPTEN_KEEPALIVE uint8_t* lightusd_wasm_diff_json(
     const uint8_t* left_name, uint32_t left_name_size,
     const uint8_t* right, uint32_t right_size,
     const uint8_t* right_name, uint32_t right_name_size) {
-  return lightusd::web_core::NextDiffJSON(
+  return lightusd::web_core::DiffJSON(
       options, left, left_size, left_name, left_name_size,
       right, right_size, right_name, right_name_size);
 }
@@ -309,7 +309,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_begin(
     const uint8_t* name, uint32_t name_size, uint8_t lazy_arrays) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenBegin(
+  return lightusd::web_core::FlattenBegin(
       slot->object, root, root_size, name, name_size, lazy_arrays != 0);
 }
 
@@ -318,7 +318,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_provide_layer(
     const uint8_t* data, uint32_t data_size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenProvideLayer(
+  return lightusd::web_core::FlattenProvideLayer(
       slot->object, key, key_size, data, data_size);
 }
 
@@ -327,7 +327,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_add_sublayer(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || !path || path_size == 0 ||
       path_size > (1u << 20)) return -1;
-  return lightusd::web_core::NextFlattenAddSublayer(
+  return lightusd::web_core::FlattenAddSublayer(
       slot->object, path, path_size);
 }
 
@@ -341,7 +341,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_add_prim_arc(
       !target_path || !target_size || (asset_size && !asset_path) ||
       prim_size > (1u << 20) || asset_size > (1u << 20) ||
       target_size > (1u << 20)) return -1;
-  return lightusd::web_core::NextFlattenAddPrimArc(
+  return lightusd::web_core::FlattenAddPrimArc(
       slot->object, kind, list_op, prim_path, prim_size, asset_path, asset_size,
       target_path, target_size);
 }
@@ -350,14 +350,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_composition_mask(
     uint32_t handle, uint32_t mask) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || mask > 63) return -1;
-  return lightusd::web_core::NextFlattenSetCompositionMask(slot->object, mask);
+  return lightusd::web_core::FlattenSetCompositionMask(slot->object, mask);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_rebase_asset_paths(
     uint32_t handle, uint8_t enabled) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || enabled > 1) return -1;
-  return lightusd::web_core::NextFlattenSetRebaseAssetPaths(
+  return lightusd::web_core::FlattenSetRebaseAssetPaths(
       slot->object, enabled != 0);
 }
 
@@ -366,7 +366,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_asset_path_remap(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || (json_size && !json) ||
       json_size > (1u << 30)) return -1;
-  return lightusd::web_core::NextFlattenSetAssetPathRemap(
+  return lightusd::web_core::FlattenSetAssetPathRemap(
       slot->object, json, json_size);
 }
 
@@ -375,7 +375,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_remap_layer_asset_paths(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || (json_size && !json) ||
       json_size > (1u << 30)) return -1;
-  return lightusd::web_core::NextFlattenRemapLayerAssetPaths(
+  return lightusd::web_core::FlattenRemapLayerAssetPaths(
       slot->object, json, json_size);
 }
 
@@ -383,7 +383,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_max_input_bytes(
     uint32_t handle, uint32_t limit_bytes) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenSetMaxInputBytes(slot->object,
+  return lightusd::web_core::FlattenSetMaxInputBytes(slot->object,
                                                          limit_bytes);
 }
 
@@ -391,14 +391,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_max_input_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenMaxInputBytes(slot->object);
+  return lightusd::web_core::FlattenMaxInputBytes(slot->object);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_max_output_bytes(
     uint32_t handle, uint32_t limit_bytes) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenSetMaxOutputBytes(slot->object,
+  return lightusd::web_core::FlattenSetMaxOutputBytes(slot->object,
                                                           limit_bytes);
 }
 
@@ -406,14 +406,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_max_output_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenMaxOutputBytes(slot->object);
+  return lightusd::web_core::FlattenMaxOutputBytes(slot->object);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_input_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenInputBytes(slot->object);
+  return lightusd::web_core::FlattenInputBytes(slot->object);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_preflight_layer(
@@ -421,7 +421,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_preflight_layer(
     uint32_t data_size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenPreflightLayer(
+  return lightusd::web_core::FlattenPreflightLayer(
       slot->object, key, key_size, data_size);
 }
 
@@ -430,14 +430,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_set_variant(
     const uint8_t* selection, uint32_t selection_size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenSetVariant(
+  return lightusd::web_core::FlattenSetVariant(
       slot->object, key, key_size, selection, selection_size);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_end(uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  lightusd::web_core::NextFlattenEnd(slot->object);
+  lightusd::web_core::FlattenEnd(slot->object);
   return 0;
 }
 
@@ -445,7 +445,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_error(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenError(slot->object, out, cap);
+  return lightusd::web_core::FlattenError(slot->object, out, cap);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_step(
@@ -454,7 +454,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_step(
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3 || !out ||
       out->struct_size < sizeof(lightusd_wasm_flatten_step_info)) return -1;
-  return lightusd::web_core::NextFlattenStep(slot->object, callback_id, out);
+  return lightusd::web_core::FlattenStep(slot->object, callback_id, out);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_step_buffer(
@@ -462,7 +462,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_step_buffer(
     uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenStepBuffer(
+  return lightusd::web_core::FlattenStepBuffer(
       slot->object, kind, index, out, cap);
 }
 
@@ -470,14 +470,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_layer_dependency_count(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  return lightusd::web_core::NextFlattenLayerDependencyCount(slot->object);
+  return lightusd::web_core::FlattenLayerDependencyCount(slot->object);
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_flatten_release_step(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 3) return -1;
-  lightusd::web_core::NextFlattenReleaseStep(slot->object);
+  lightusd::web_core::FlattenReleaseStep(slot->object);
   return 0;
 }
 
@@ -698,7 +698,7 @@ lightusd_wasm_render_stream_asset_finalize_to_store(
   return static_cast<lightusd::web_core::RenderStream*>(render->object)
       ->finalizeStreamingAssetToStore(
           name, name_size,
-          *static_cast<lightusd::web_core::NextAssetStore*>(store->object));
+          *static_cast<lightusd::web_core::AssetStore*>(store->object));
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_stream_asset_cancel(
@@ -796,7 +796,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_begin_layer_document(
   if (!render || render->kind != 4 || !layer || layer->kind != 6) return -1;
   return static_cast<lightusd::web_core::RenderStream*>(render->object)
       ->beginFromLayerDocument(
-          *static_cast<lightusd::web_core::NextLayerDocument*>(layer->object));
+          *static_cast<lightusd::web_core::LayerDocument*>(layer->object));
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_preflight_input(
@@ -815,7 +815,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_begin_cached_asset(
   if (!render || render->kind != 4 || !store || store->kind != 5) return -1;
   return static_cast<lightusd::web_core::RenderStream*>(render->object)
       ->beginCachedAsset(
-          *static_cast<lightusd::web_core::NextAssetStore*>(store->object),
+          *static_cast<lightusd::web_core::AssetStore*>(store->object),
           identifier, identifier_size);
 }
 
@@ -1881,7 +1881,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_register(
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
   std::string registered;
-  const int status = static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  const int status = static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->registerMemoryAsset(identifier, identifier_size, bytes, byte_size,
                             &registered);
   if (status != 0) return status;
@@ -1903,7 +1903,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_raw(
   const uintptr_t identifier_address = reinterpret_cast<uintptr_t>(identifier);
   if (identifier_size && (identifier_address > heap_size ||
       identifier_size > heap_size - identifier_address)) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setAssetFromRawPointer(identifier, identifier_size,
                                reinterpret_cast<const uint8_t*>(bytes),
                                byte_size);
@@ -1916,7 +1916,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_import_asset_store(
   if (!render || render->kind != 4 || !store || store->kind != 5) return -1;
   return static_cast<lightusd::web_core::RenderStream*>(render->object)
       ->importAssetStore(
-          *static_cast<lightusd::web_core::NextAssetStore*>(store->object));
+          *static_cast<lightusd::web_core::AssetStore*>(store->object));
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_render_clear_imported_asset_store(
@@ -1931,7 +1931,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_unregister(
     uint32_t handle, const uint8_t* identifier, uint32_t identifier_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->unregisterMemoryAsset(identifier, identifier_size);
 }
 
@@ -1941,7 +1941,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_read(
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
   std::vector<uint8_t> bytes;
-  const int status = static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  const int status = static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->readMemoryAsset(identifier, identifier_size, &bytes);
   if (status <= 0) return status == 0 ? -2 : -1;
   if (bytes.size() > static_cast<size_t>((std::numeric_limits<int32_t>::max)()))
@@ -1958,7 +1958,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_view(
   if (!slot || slot->kind != 5 || !out_data || !out_size) return -1;
   const uint8_t* data = nullptr;
   uint32_t byte_size = 0;
-  const int status = static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  const int status = static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->borrowedAssetView(identifier, identifier_size, &data, &byte_size);
   if (status != 1) return status;
   *out_data = reinterpret_cast<uintptr_t>(data);
@@ -1971,7 +1971,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_alias(
     const uint8_t* resolved, uint32_t resolved_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setAlias(authored, authored_size, resolved, resolved_size);
 }
 
@@ -1979,7 +1979,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_identifier_count(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->identifierCount();
 }
 
@@ -1987,7 +1987,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_identifier_copy(
     uint32_t handle, int32_t index, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->identifierCopy(index, out, cap);
 }
 
@@ -1995,7 +1995,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_base_path(
     uint32_t handle, const uint8_t* path, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setBaseWorkingPath(path, size);
 }
 
@@ -2003,7 +2003,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_base_path(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->baseWorkingPathCopy(out, cap);
 }
 
@@ -2011,7 +2011,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_add_search_path(
     uint32_t handle, const uint8_t* path, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->addSearchPath(path, size);
 }
 
@@ -2019,7 +2019,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_clear_search_paths(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->clearSearchPaths();
 }
 
@@ -2027,7 +2027,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_search_path_count(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->searchPathCount();
 }
 
@@ -2035,7 +2035,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_search_path_copy(
     uint32_t handle, int32_t index, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->searchPathCopy(index, out, cap);
 }
 
@@ -2043,7 +2043,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_allow_parent_paths(
     uint32_t handle, int32_t allow) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5 || (allow != 0 && allow != 1)) return -1;
-  static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setAllowParentRelativeAssetPaths(allow != 0);
   return 0;
 }
@@ -2052,7 +2052,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_get_allow_parent_paths(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->allowParentRelativeAssetPaths() ? 1 : 0;
 }
 
@@ -2061,7 +2061,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_streaming_uuid(
     uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->streamingAssetUuid(identifier, size, out, cap);
 }
 
@@ -2070,7 +2070,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_uuid(
     uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->assetUuid(identifier, size, out, cap);
 }
 
@@ -2079,7 +2079,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_find_uuid(
     uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->findAssetByUuid(uuid, size, out, cap);
 }
 
@@ -2088,7 +2088,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_hash(
     uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->assetHash(identifier, size, out, cap);
 }
 
@@ -2097,7 +2097,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_verify_hash(
     const uint8_t* hash, uint32_t hash_size) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->verifyAssetHash(identifier, identifier_size, hash, hash_size);
 }
 
@@ -2105,7 +2105,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_delete_uuid(
     uint32_t handle, const uint8_t* uuid, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->deleteAssetByUuid(uuid, size);
 }
 
@@ -2113,7 +2113,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_memory_limit(
     uint32_t handle, uint32_t limit_bytes) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setMemoryLimit(limit_bytes);
 }
 
@@ -2121,7 +2121,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_memory_limit(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->memoryLimit();
 }
 
@@ -2129,7 +2129,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_memory_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->memoryBytes();
 }
 
@@ -2137,7 +2137,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_metadata_limit(
     uint32_t handle, uint64_t limit_bytes) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setMetadataLimit(limit_bytes);
 }
 
@@ -2145,7 +2145,7 @@ EMSCRIPTEN_KEEPALIVE uint64_t lightusd_wasm_asset_store_metadata_limit(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return 0;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->metadataLimit();
 }
 
@@ -2153,7 +2153,7 @@ EMSCRIPTEN_KEEPALIVE uint64_t lightusd_wasm_asset_store_metadata_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return 0;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->metadataBytes();
 }
 
@@ -2161,7 +2161,7 @@ EMSCRIPTEN_KEEPALIVE uint64_t lightusd_wasm_asset_store_cache_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return 0;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->cacheSizeBytes();
 }
 
@@ -2169,7 +2169,7 @@ EMSCRIPTEN_KEEPALIVE uint64_t lightusd_wasm_asset_store_cache_max_bytes(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return 0;
-  return static_cast<const lightusd::web_core::NextAssetStore*>(slot->object)
+  return static_cast<const lightusd::web_core::AssetStore*>(slot->object)
       ->cacheMaxSizeBytes();
 }
 
@@ -2177,7 +2177,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_cache_max_bytes(
     uint32_t handle, uint64_t limit_bytes) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  static_cast<lightusd::web_core::NextAssetStore*>(slot->object)
+  static_cast<lightusd::web_core::AssetStore*>(slot->object)
       ->setCacheMaxSizeBytes(limit_bytes);
   return 0;
 }
@@ -2185,14 +2185,14 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_set_cache_max_bytes(
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_asset_store_clear(uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 5) return -1;
-  return static_cast<lightusd::web_core::NextAssetStore*>(slot->object)->clear();
+  return static_cast<lightusd::web_core::AssetStore*>(slot->object)->clear();
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_load(
     uint32_t handle, const uint8_t* bytes, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->load(bytes, size);
 }
 
@@ -2200,7 +2200,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_load_json(
     uint32_t handle, const uint8_t* bytes, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->loadJSON(bytes, size);
 }
 
@@ -2208,9 +2208,9 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_load_with_progress(
     uint32_t handle, const uint8_t* bytes, uint32_t size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)->load(
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)->load(
       bytes, size, [](const char* phase, size_t current, size_t total) {
-        return lightusd::web_core::reportNextLayerLoadProgress(
+        return lightusd::web_core::reportLayerLoadProgress(
             phase, static_cast<double>(current), static_cast<double>(total));
       });
 }
@@ -2219,7 +2219,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_mh_profile_json_size(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->mhProfileJSONSize();
 }
 
@@ -2227,7 +2227,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_mh_profile_json_copy(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->mhProfileJSONCopy(out, cap);
 }
 
@@ -2235,7 +2235,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_shading_graph_json_size(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->shadingGraphJSONSize();
 }
 
@@ -2243,7 +2243,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_shading_graph_json_copy(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->shadingGraphJSONCopy(out, cap);
 }
 
@@ -2251,13 +2251,13 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_export_usdz(
     uint32_t handle, uint32_t asset_store_handle, uint8_t root_format) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6 || root_format > 1) return -1;
-  lightusd::web_core::NextAssetStore* assets = nullptr;
+  lightusd::web_core::AssetStore* assets = nullptr;
   if (asset_store_handle) {
     Slot* asset_slot = Lookup(asset_store_handle);
     if (!asset_slot || asset_slot->kind != 5) return -1;
-    assets = static_cast<lightusd::web_core::NextAssetStore*>(asset_slot->object);
+    assets = static_cast<lightusd::web_core::AssetStore*>(asset_slot->object);
   }
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->exportUsdz(assets, root_format);
 }
 
@@ -2266,7 +2266,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_export_usdz_copy(
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
   const auto* document =
-      static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object);
+      static_cast<const lightusd::web_core::LayerDocument*>(slot->object);
   const int32_t size = document->exportUsdzSize();
   if (size < 0 || (!out && cap)) return -1;
   if (!out || cap < static_cast<uint32_t>(size)) return size;
@@ -2281,7 +2281,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_define_prim(
     const uint8_t* type, uint32_t type_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->definePrim(path, path_size, type, type_size);
 }
 
@@ -2289,7 +2289,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_remove_prim(
     uint32_t handle, const uint8_t* path, uint32_t path_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->removePrim(path, path_size);
 }
 
@@ -2298,7 +2298,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_remove_attribute(
     const uint8_t* name, uint32_t name_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->removeAttribute(path, path_size, name, name_size);
 }
 
@@ -2308,7 +2308,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_string(
     uint32_t value_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setStringAttribute(path, path_size, name, name_size, value, value_size);
 }
 
@@ -2317,7 +2317,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_number(
     const uint8_t* name, uint32_t name_size, double value) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setNumberAttribute(path, path_size, name, name_size, value);
 }
 
@@ -2328,7 +2328,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_attribute_metadata(
     uint32_t payload_size, double number, int32_t integer) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setAttributeMetadata(path, path_size, name, name_size, key, key_size,
                              kind, payload, payload_size, number, integer);
 }
@@ -2339,7 +2339,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_get_attribute_metadata(
     uint32_t key_size, uint8_t* kind, uint8_t* out, uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->getAttributeMetadata(path, path_size, name, name_size, key, key_size,
                             kind, out, cap);
 }
@@ -2349,7 +2349,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_stage_metadata(
     const uint8_t* text, uint32_t text_size, double number) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setStageMetadata(key, key_size, kind, text, text_size, number);
 }
 
@@ -2359,7 +2359,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_prim_metadata(
     const uint8_t* payload, uint32_t payload_size, uint32_t count) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setPrimMetadata(path, path_size, key, key_size, kind, payload,
                         payload_size, count);
 }
@@ -2370,7 +2370,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_get_prim_metadata(
     uint8_t* out, uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->getPrimMetadata(path, path_size, key, key_size, kind, count, out, cap);
 }
 
@@ -2379,7 +2379,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_prim_metadata_is_authored(
     const uint8_t* key, uint32_t key_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->primMetadataIsAuthored(path, path_size, key, key_size);
 }
 
@@ -2387,7 +2387,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_get_stage_metadata_number(
     uint32_t handle, const uint8_t* key, uint32_t key_size, double* out) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->getStageMetadataNumber(key, key_size, out);
 }
 
@@ -2396,7 +2396,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_get_stage_metadata_string(
     uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->getStageMetadataString(key, key_size, out, cap);
 }
 
@@ -2404,7 +2404,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_stage_metadata_is_authored(
     uint32_t handle, const uint8_t* key, uint32_t key_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->stageMetadataIsAuthored(key, key_size);
 }
 
@@ -2414,7 +2414,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_relationship_targets(
     uint32_t packed_size, uint32_t count) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setRelationshipTargets(path, path_size, name, name_size,
                                packed_targets, packed_size, count);
 }
@@ -2424,7 +2424,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_relationship_target_count(
     const uint8_t* name, uint32_t name_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->relationshipTargetCount(path, path_size, name, name_size);
 }
 
@@ -2434,7 +2434,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_relationship_target_copy(
     uint32_t cap) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->relationshipTargetCopy(path, path_size, name, name_size, index, out, cap);
 }
 
@@ -2443,7 +2443,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_remove_relationship(
     const uint8_t* name, uint32_t name_size) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->removeRelationship(path, path_size, name, name_size);
 }
 
@@ -2454,7 +2454,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_typed(
     uint32_t data_size, uint32_t count) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->setAttribute(path, path_size, name, name_size, type, type_size,
                      is_array, data, data_size, count);
 }
@@ -2462,27 +2462,27 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_set_typed(
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_prim_count(uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->primCount();
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_loaded(uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->loaded();
 }
 
 EMSCRIPTEN_KEEPALIVE void lightusd_wasm_layer_end(uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return;
-  static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)->end();
+  static_cast<lightusd::web_core::LayerDocument*>(slot->object)->end();
 }
 
 EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_error_size(uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->errorSize();
 }
 
@@ -2490,7 +2490,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_error_copy(
     uint32_t handle, uint8_t* out, uint32_t cap) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->errorCopy(out, cap);
 }
 
@@ -2498,7 +2498,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_export_usda_size(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->exportUsdaSize();
 }
 
@@ -2506,7 +2506,7 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_wasm_layer_export_usda_data(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return 0;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->exportUsdaData();
 }
 
@@ -2514,7 +2514,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_export_json_size(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->exportJSONSize();
 }
 
@@ -2522,7 +2522,7 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_wasm_layer_export_json_data(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return 0;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->exportJSONData();
 }
 
@@ -2530,7 +2530,7 @@ EMSCRIPTEN_KEEPALIVE int32_t lightusd_wasm_layer_export_usdc_size(
     uint32_t handle) {
   Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return -1;
-  return static_cast<lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<lightusd::web_core::LayerDocument*>(slot->object)
       ->exportUsdcSize();
 }
 
@@ -2538,7 +2538,7 @@ EMSCRIPTEN_KEEPALIVE uintptr_t lightusd_wasm_layer_export_usdc_data(
     uint32_t handle) {
   const Slot* slot = Lookup(handle);
   if (!slot || slot->kind != 6) return 0;
-  return static_cast<const lightusd::web_core::NextLayerDocument*>(slot->object)
+  return static_cast<const lightusd::web_core::LayerDocument*>(slot->object)
       ->exportUsdcData();
 }
 }

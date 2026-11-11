@@ -115,7 +115,7 @@ void test_write_usdc() {
   PASS();
 }
 
-void test_readback_next() {
+void test_readback_core() {
   TEST("Read back with next library");
   Stage stage2;
   std::string warn2, err2;
@@ -192,7 +192,7 @@ int main() {
   printf("======================\n\n");
 
   test_write_usdc();
-  test_readback_next();
+  test_readback_core();
   test_usdcat_parse();
   test_usdcat_prims();
 

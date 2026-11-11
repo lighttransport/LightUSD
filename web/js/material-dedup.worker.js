@@ -1,5 +1,5 @@
 import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
-import { isNextScene } from './src/lightusd/NextRenderSceneUtils.js';
+import { isScene } from './src/lightusd/RenderSceneUtils.js';
 
 let loader = null;
 let activeBytes = null;
@@ -11,10 +11,10 @@ async function ensureLoader() {
 		suppressNativeInfoLogs: true
 	});
 	// Workers do not inherit the page's location query parameters, so
-	// backend=next/wasm=next cannot select the module implicitly here. This
-	// worker is exclusively the next conversion path; load the full next-only
+	// backend=core cannot select the module implicitly here. This
+	// worker is exclusively the core conversion path; load the full core
 	// RenderStream explicitly instead of the legacy USDC-only shim.
-	await loader.init({ backend: 'next' });
+	await loader.init({ backend: 'core' });
 	return loader;
 }
 
@@ -26,8 +26,8 @@ function addTransferable(list, seen, value) {
 	list.push(buffer);
 }
 
-function serializeNextScene(usd) {
-	if (!isNextScene(usd)) {
+function serializeScene(usd) {
+	if (!isScene(usd)) {
 		throw new Error('worker conversion only supports next render scenes');
 	}
 	const transfer = [];
@@ -41,7 +41,7 @@ function serializeNextScene(usd) {
 	}
 	return {
 		payload: {
-			__backend: 'next',
+			__backend: 'core',
 			filename: usd.filename || '',
 			meshes,
 			stats: usd.getStats ? usd.getStats() : (usd.stats || {}),
@@ -91,7 +91,7 @@ async function convert(id, msg) {
 	const usd = await new Promise((resolve, reject) => {
 		loader.parse(activeBytes, activeName, resolve, reject, {
 			...options,
-			backend: 'next',
+			backend: 'core',
 			// This worker serializes only mesh payloads, native stats and scene
 			// metadata. Avoid materializing the full 69k-node render hierarchy,
 			// point-instancer draws, lights and cameras merely to discard them.
@@ -105,7 +105,7 @@ async function convert(id, msg) {
 	});
 
 	try {
-		const { payload, transfer } = serializeNextScene(usd);
+		const { payload, transfer } = serializeScene(usd);
 		self.postMessage({ type: 'result', id, payload }, transfer);
 	} finally {
 		if (usd && typeof usd.delete === 'function') {

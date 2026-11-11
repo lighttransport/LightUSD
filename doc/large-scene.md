@@ -1,5 +1,9 @@
 # Loading large USD scenes in LightUSD
 
+> Historical engineering log, updated to the current core names. The core
+> libraries and `lusdcat` are the default products. Retired module aliases
+> are no longer accepted; legacy is available only through explicit opt-in builds.
+
 Production USD scenes are 10–20 GB on disk, spread across thousands of payloaded
 files. This document analyzes three publicly-available scenes — **reference scene**
 (Disney), **ALab** (Animal Logic), and **benchmark scene** (Activision) — and describes
@@ -209,7 +213,7 @@ large-scene-load <scene.usd[a]> [--mode=none|all|budget] [--budget-mb=N]
 ### 2.5.1 ALab per-element geometry, textures, and procedurals
 
 Before loading the complete ALab set, representative elements were measured
-individually from `<asset-root>/alab/_merged_ALab` with `lusdview --next`,
+individually from `<asset-root>/alab/_merged_ALab` with `lusdview --core`,
 `--load-payloads`, the `alab` large-scene profile, one headless Vulkan frame at
 time 1004, and `--timing`. Geometry-only cases use the modelling fragment;
 full cases use the entity layer, which adds surfacing/lighting and filesystem
@@ -336,7 +340,7 @@ silently truncate the asset.
 Both viewers compose benchmark scene through the `next` loader (`LoadUSDComposed`,
 payloads eager), which handles its `..`-relative payload paths and variant LOD.
 The **default Tydra loader rejects benchmark scene** ("Unsafe asset path" on the
-`..`-relative payloads), so lusdview must use `--next`.
+`..`-relative payloads), so lusdview must use `--core`.
 
 **Scene facts.** The default (root-authored) LOD is `districtLod = proxy`
 (12.67 M default-purpose triangles + ~26 M `purpose = guide` breadcrumb/endpoint
@@ -368,14 +372,14 @@ districts at the origin; they now reuse the CPU path's world-space,
 purpose-filtered, masked collection. (Native instances are not yet emitted on
 the GPU path — negligible for benchmark scene: ~29 K of 12.70 M tris.)
 
-**lusdview** (`--next`) — frame a scene camera with the new `--camera` flag:
+**lusdview** (`--core`) — frame a scene camera with the new `--camera` flag:
 
 ```sh
-./build/lusdview --headless --next --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
-./build/lusdview --headless --next --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
+./build/lusdview --headless --core --backend gl --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # best shading
+./build/lusdview --headless --core --backend vk --camera phospate_mine_overview --frames 6 --screenshot out.ppm $M   # raster
 ```
 
-- `--camera <name>` resolves the named USD Camera's world pose from the `--next`
+- `--camera <name>` resolves the named USD Camera's world pose from the `--core`
   stage and drives the orbit rig (lusdview otherwise auto-fits the whole scene
   and ignores USD cameras).
 - The **GL** backend renders the district cleanly (buildings, terrain, the mine
@@ -383,7 +387,7 @@ the GPU path — negligible for benchmark scene: ~29 K of 12.70 M tris.)
   geometric-normal shading (dark, low contrast — a *shading* limitation, not a
   geometry one). This path was unblocked by fixing a latent
   `normalize(vec3(0))` NaN in `mesh.vert` that clipped every zero-normal mesh
-  (the `--next` flat preview stores zero normals); before the fix `--next`
+  (the `--core` flat preview stores zero normals); before the fix `--core`
   rasterized **nothing** on VK (even plain suzanne).
 - lusdview's 30 M default `--max-tris` budget **truncates** benchmark scene; raise it
   (`--max-tris 40000000`) to load the whole proxy (the log prints `truncated`).
@@ -472,24 +476,24 @@ if [ ! -f "$1" ]; then
 fi
 
 # Structural compose profile (deferred geometry payloads)
-LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+LIGHTUSD_TIMING=1 "$NEXT_TUSD" -l \
   --compose-threads-auto --defer-payloads "$1"
 
 # Flattened USDA output check (native instance flattening behavior)
-LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+LIGHTUSD_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --defer-payloads -o "/tmp/$(basename "$1").usda" "$1"
 
 # Flattened USDC output profile
-LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f \
+LIGHTUSD_TIMING=1 "$NEXT_TUSD" -f \
   --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
 
 # Low-memory flatten to USDC (§10.74): same bytes, about 0.44x the peak RSS on
 # full45, about 2.3x the wall time. --batch-prims sets the batch size.
-LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -f --memory-profile low \
+LIGHTUSD_TIMING=1 "$NEXT_TUSD" -f --memory-profile low \
   --compose-threads-auto --load-payloads -o "/tmp/$(basename "$1").usdc" "$1"
 ```
 
-2) `tydra_to_renderscene`: `--next` conversion and low-memory release path:
+2) `tydra_to_renderscene`: `--core` conversion and low-memory release path:
 
 ```sh
 [ -x "$NEXT_RENDER" ] || { echo "SKIP: tydra_to_renderscene not found at $NEXT_RENDER"; exit 0; }
@@ -498,15 +502,15 @@ if [ ! -f "$1" ]; then
   exit 0
 fi
 
-"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+"$NEXT_RENDER" --core --compose-threads-auto --defer-payloads \
   --memstat --timecode 0 "$1"
 
 # Static-scene benchmark (skip time-sample animation extraction)
-"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads --no-animation \
+"$NEXT_RENDER" --core --compose-threads-auto --defer-payloads --no-animation \
   --memstat --timecode 0 "$1"
 
 # Low-memory mode (releases next Stage static geometry arrays after conversion)
-"$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+"$NEXT_RENDER" --core --compose-threads-auto --defer-payloads \
   --lowmem --memstat --timecode 0 "$1"
 ```
 
@@ -515,17 +519,17 @@ fi
 ```sh
 # benchmark scene (proxy composition baseline)
 BENCHMARK=<asset-root>/benchmark/benchmark.usda
-[ -f "$BENCHMARK" ] && LIGHTUSD_NEXT_TIMING=1 "$NEXT_TUSD" -l \
+[ -f "$BENCHMARK" ] && LIGHTUSD_TIMING=1 "$NEXT_TUSD" -l \
   --compose-threads-auto --defer-payloads "$BENCHMARK"
 
 # ALab merged scene proxy mode
 ALAB=<asset-root>/alab/_merged_ALab/entry.usda
-[ -f "$ALAB" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+[ -f "$ALAB" ] && "$NEXT_RENDER" --core --compose-threads-auto --defer-payloads \
   --lowmem --memstat "$ALAB"
 
 # reference scene payload-heavy scene
 REFERENCE_SCENE=<asset-root>/reference_scene/usd/reference_scene.usda
-[ -f "$REFERENCE_SCENE" ] && "$NEXT_RENDER" --next --compose-threads-auto --defer-payloads \
+[ -f "$REFERENCE_SCENE" ] && "$NEXT_RENDER" --core --compose-threads-auto --defer-payloads \
   --lowmem --memstat "$REFERENCE_SCENE"
 ```
 
@@ -601,7 +605,7 @@ W=benchmark_mine_full.usda   # the wrapper above
 ./build/tools/lusdrender/lusdrender $W mine_vkr.png -vkr \
     -camera phospate_mine_overview -purpose default,render,proxy -w 1280 -height 720 -maxMem 45
 # lusdview VK rasterizer (raise --max-tris; full mine is ~88 M unique / ~184 M effective tris):
-./build/lusdview --headless --next --backend vk --camera phospate_mine_overview \
+./build/lusdview --headless --core --backend vk --camera phospate_mine_overview \
     --max-tris 60000000 --frames 4 --screenshot mine_vk.ppm $W
 ```
 
@@ -618,7 +622,7 @@ rest proxy):
 The mine at full LOD reveals geometry the proxy lacks — lattice crane towers,
 domed silos, palm trees, detailed buildings, the circular tank, rocks and
 pipework. Note lusdview counts ~88 M unique tris for the full mine (more than
-lusdrender's 35 M) because the `--next` converter expands instancing differently;
+lusdrender's 35 M) because the `--core` converter expands instancing differently;
 its 30 M `--max-tris` default truncates heavily, so raise it for raster (which
 scales) but expect `--rt`/`--cuda` to stay capped on 16 GiB VRAM.
 
@@ -656,7 +660,7 @@ to 512 px JPEG for the repo. The colored speckles in some frames are neighboring
 districts still at `proxy`, drawn with their `displayColor`. The default-tri
 count is per *district*, so it is identical across that district's cameras.)
 
-#### Per-district `lusdview --next` composition measurements
+#### Per-district `lusdview --core` composition measurements
 
 These measurements promote one district to `districtLod = "full"` in a stronger
 wrapper layer and leave the other 44 districts at their authored `proxy` LOD.
@@ -718,7 +722,7 @@ def Xform "world" {
 
 This preserves the authored world transform while allowing the viewer or a
 streaming scheduler to load/convert each child independently. The following
-comparison used `--next --load-payloads --large-scene-profile balanced`, one
+comparison used `--core --load-payloads --large-scene-profile balanced`, one
 headless Vulkan frame, and the same timing flags as the table above. The
 software Vulkan backend was used because the NVIDIA driver was unavailable.
 
@@ -813,12 +817,12 @@ cost charge ignores per-district size variation — so on a tight machine lower
 
 `-lodStream` (above) is a lusdrender, ray-tracing, load-time selection. The
 interactive **lusdview** rasterizer hits a different wall on a fully assembled
-scene. The Moana reference_scene (`<asset-root>/reference_scene`) composes via `--next` to
+scene. The Moana reference_scene (`<asset-root>/reference_scene`) composes via `--core` to
 **83,801 draws / 42.9 M instances / 56.5 M unique tris**, and after instance
 dedup the geometry itself fits comfortably in 16 GiB VRAM (instance transforms
 ~2.06 GiB). The problem is **draw/buffer count**: the per-mesh raster path
 creates ~84 k host-visible Vulkan buffers and stalls for **7+ minutes** before
-the first frame. (A plain `--next --backend vk` whole-reference_scene run times out in
+the first frame. (A plain `--core --backend vk` whole-reference_scene run times out in
 the buffer-creation loop, not on memory.)
 
 **`--max-draw-meshes N` / `--max-gpu-mem <GiB>` (GPU-budget LOD).**
@@ -837,7 +841,7 @@ M=<asset-root>/reference_scene/usd/reference_scene.usda
 # 40 GiB host cgroup; keep the 4000 biggest meshes full, cap full VRAM at 16 GiB,
 # merge the other ~79.8 k meshes into one bbox proxy:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
-  ./build/lusdview --headless --next --backend vk \
+  ./build/lusdview --headless --core --backend vk \
     --max-tris 80000000 --max-gpu-mem 16 --max-draw-meshes 4000 \
     --frames 2 --screenshot reference_scene.ppm $M
 ```
@@ -910,7 +914,7 @@ M=<asset-root>/reference_scene/usd/reference_scene.usda
 # Whole reference_scene, VK raster, robust auto-frame; collapse anything under 48 px to a
 # box, drop anything under 1 px:
 systemd-run --user --scope -p MemoryMax=44G -p MemorySwapMax=2G \
-  ./build/lusdview --headless --next --backend vk \
+  ./build/lusdview --headless --core --backend vk \
     --raster-lod --raster-lod-cull-px 1 --raster-lod-full-px 48 \
     --max-tris 80000000 --frames 4 --screenshot reference_scene.ppm $M
 ```
@@ -948,7 +952,7 @@ single global threshold rather than a per-prototype importance score.
 `lusdview --large-scene-profile off|auto|benchmark|reference_scene|alab` is a preset layer
 over the existing Vulkan large-scene flags. It is meant for repeatable benchmark scene,
 reference scene, and ALab smoke/performance runs without memorizing the full flag list:
-profiles enable `--next`, prefer the Vulkan backend, enable raster/RT LOD, set
+profiles enable `--core`, prefer the Vulkan backend, enable raster/RT LOD, set
 conservative draw/VRAM budgets, and print the resolved settings at startup.
 `auto` only applies a profile when the input path clearly names benchmark scene, reference scene
 or Moana, or ALab; otherwise it resolves to `off`.
@@ -1009,7 +1013,7 @@ over 30.0 M unique triangles (≈17.5 B effective), no LOD, no proxy.
 M=<asset-root>/reference_scene/usd/reference_scene.usda
 # Full reference_scene, HIP ray tracing, framed on the hero shot camera.
 # --max-instances 0 = unlimited (the 16 M default truncates by mesh order).
-./build/lusdview --headless --next --hip \
+./build/lusdview --headless --core --hip \
   --camera shotCam --max-instances 0 --rt-samples 2 \
   --frames 4 --screenshot reference_scene.ppm $M
 ```
@@ -1028,8 +1032,8 @@ bare ironwood trees.
 
 Notes and gotchas:
 
-- **`--next` is mandatory.** The standard Tydra loader rejects the reference_scene's
-  `..`-relative payloads (same "Unsafe asset path" as benchmark scene, §2.6.1); `--next`
+- **`--core` is mandatory.** The standard Tydra loader rejects the reference_scene's
+  `..`-relative payloads (same "Unsafe asset path" as benchmark scene, §2.6.1); `--core`
   composes them. `--hip` then traces whatever geometry the loader produced — it
   does **not** apply the §2.6.4 raster box-proxy LOD.
 - **`--max-instances 0`.** The ray tracer defaults to a 16 M instance cap; the
@@ -1055,7 +1059,7 @@ profile instead of allowing legacy point/curve triangle proxies to expand
 without a limit:
 
 ```sh
-./build/lusdview --headless --next --cuda --load-payloads \
+./build/lusdview --headless --core --cuda --load-payloads \
   --large-scene-profile instance-heavy --max-tris 20000000 \
   --max-instances 2000000 --vram-budget 12 --rt-samples 1 \
   --frames 1 --screenshot reference_scene-cuda.png $M
@@ -1156,8 +1160,8 @@ later sections; the tables and recipes are in git history
 
 Measured on the workstation that hosts the benchmark scene checkout
 (`/path/to/benchmark`, 10.5 GB, 63,684 files; 32 cores, 125 GiB RAM,
-NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, formerly `next_usdcat`),
-`--compose-threads-auto`, `LIGHTUSD_NEXT_TIMING=1`.
+NVMe). Tooling: the next-core CLI (`build-core/lusdcat`, formerly `next_usdcat`),
+`--compose-threads-auto`, `LIGHTUSD_TIMING=1`.
 
 | Case | threads | load+compose | write | total | peak RSS | output |
 |---|---:|---:|---:|---:|---:|---|
@@ -1170,7 +1174,7 @@ NVMe). Tooling: the next-core CLI (`build-next/lusdcat`, formerly `next_usdcat`)
 | whole reference_scene at full LOD (all 45 districts `full`) | 1 | **79.1 min** (sources 20.5 min, structure 24.6 min, compose 34.8 min, flatten 8.8 min, finalize 7.1 min) | 35.3 min | **114.4 min (1.9 h)** | ~59 GiB | **3.01 GB USDC** (61,833,354 paths/specs) |
 | whole reference_scene at full LOD | auto | *not re-measured* | — | — | — | — |
 
-**The threaded next core is the default for native builds** (`LIGHTUSD_NEXT_ENABLE_THREAD`
+**The threaded next core is the default for native builds** (`LIGHTUSD_ENABLE_THREAD`
 now defaults ON outside Emscripten; WASM stays OFF). Every figure above is
 byte-verified: the threaded and single-threaded outputs hash identically
 (SHA-256) for the 190 MB USDA, the 286 MB proxy USDC and the 580 MB district
@@ -1307,13 +1311,13 @@ Reproduce with:
 ```sh
 M=/path/to/benchmark/benchmark.usda
 # threaded (default for native builds)
-LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
+LIGHTUSD_TIMING=1 ./build-core/lusdcat -f --compose-threads-auto \
   --defer-payloads -o /tmp/benchmark.usda "$M"          # proxy structure
-LIGHTUSD_NEXT_TIMING=1 ./build-next/lusdcat -f --compose-threads-auto \
+LIGHTUSD_TIMING=1 ./build-core/lusdcat -f --compose-threads-auto \
   --load-payloads -o /tmp/benchmark.usdc "$M"            # proxy + payloads
 # single-threaded reference (build configured with
-# -DLIGHTUSD_NEXT_ENABLE_THREAD=OFF)
-LIGHTUSD_NEXT_TIMING=1 ./build-next-st/lusdcat -f --compose-threads 1 \
+# -DLIGHTUSD_ENABLE_THREAD=OFF)
+LIGHTUSD_TIMING=1 ./build-core-st/lusdcat -f --compose-threads 1 \
   --load-payloads -o /tmp/benchmark-st.usdc "$M"
 sha256sum /tmp/benchmark.usdc /tmp/benchmark-st.usdc      # must match
 ```
@@ -1388,7 +1392,7 @@ remaining gap (≤100 MB, ≤0.2 s) is the interpreter and NumPy, not duplicate
 scene data.
 
 **Allocator matters more than the binding.** The native CLI links jemalloc
-(`LIGHTUSD_NEXT_TOOLS_ALLOCATOR` auto-detect); the abi3 extension uses the
+(`LIGHTUSD_TOOLS_ALLOCATOR` auto-detect); the abi3 extension uses the
 platform allocator (glibc here). On the eager path:
 
 | Allocator | wall | CPU | peak RSS | RSS after close |
@@ -1774,7 +1778,7 @@ guard.
 
 On a fully-composed large scene the **write phase dominates** total wall-clock
 (benchmark scene ~57 %, reference scene ~63 % before this work). The `src/next` USDA writer
-(`src/next/writer/{value-printer,usda-writer,dtoa}.{hh,cc}`) was optimized in two
+(`src/writer/{value-printer,usda-writer,dtoa}.{hh,cc}`) was optimized in two
 passes. Every change is **byte-identical** to the serial writer — verified by
 `cmp`/sha256 against the prior binary across the 615-file `tests/usda` +
 `tests/usdc` corpus and on benchmark scene + reference scene (10.18 GB hash match) + ALab, in both
@@ -1839,13 +1843,13 @@ element-range chunks formatted concurrently:
 New `value-printer` API: `ArrayElementCount`, `IsChunkableType`,
 `IsChunkableArray`, and `PrintArrayRangeToStream` (formatting an element range is
 byte-identical to the full array printer — the foundation of chunk splitting). The
-serial path (`LIGHTUSD_NEXT_NUM_THREADS=1`) is untouched and remains the
+serial path (`LIGHTUSD_NUM_THREADS=1`) is untouched and remains the
 correctness oracle. The auto worker cap was raised 8 → 16 now that the balanced
 design scales with cores (both scenes still improve at 16+).
 
 Tests: `test_array_range_split_parity` (range reconstruction == full print across
 types and cut points) and `test_parallel_writer_parity` (1-thread vs 8-thread
-byte-identical) in `tests/next/test_writer.cc`.
+byte-identical) in `tests/core/test_writer.cc`.
 
 The remaining serial cost is the ~6 s Phase-1 build walk on reference scene (not yet
 overlapped with Phase 2) — the next available lever.
@@ -1859,7 +1863,7 @@ They exercise different serializers:
 - `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
   text through the optimized parallel ASCII writer. On the local 32-thread /
   16-core workstation, reference scene writes ~10.8 GB of USDA text to `/dev/null` in
-  about **14 s** with `LIGHTUSD_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+  about **14 s** with `LIGHTUSD_NUM_THREADS=16` and `--compose-threads 16`.
 - `-o out.usdc` uses the next crate writer. reference scene's crate output is only
   ~2.5 GB, but the write phase is still about **36-40 s** even when the output
   path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
@@ -1871,7 +1875,7 @@ serial per-spec structural build and global interning/dedup tables over ~4.25M
 specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
 and array encoding are a smaller slice. Threaded crate writer paths help
 moderately: for reference scene, a `/dev/null`-symlink USDC write was ~47.6 s with
-`LIGHTUSD_NEXT_NUM_THREADS=1` and ~36.1 s with `LIGHTUSD_NEXT_NUM_THREADS=16`,
+`LIGHTUSD_NUM_THREADS=1` and ~36.1 s with `LIGHTUSD_NUM_THREADS=16`,
 but they do not remove the global-dedup floor. Writing the same USDC to
 `/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
 not disk I/O.
@@ -1945,7 +1949,7 @@ carrier. Curve conversion similarly skips retaining authored control points in
 the viewer-only `RenderCurves` result after tessellation, removing another full
 control-point allocation while preserving the default library API behavior.
 
-Progressive `lusdview --next` loads now apply the same bounded producer queue to
+Progressive `lusdview --core` loads now apply the same bounded producer queue to
 non-mesh carriers: each Points/Gaussian chunk and each Curves carrier is handed
 to the renderer as soon as conversion produces it. The completed `DrawScene`
 retains only carrier metadata and bounds for selection/purpose controls, rather
@@ -2142,23 +2146,23 @@ allocates a second full-mesh remap table while processing a very large mesh.
 cd build && cmake --build . -j16
 # cross-directory cwp anchoring regression test (§3.1):
 cd build && ctest -R feat-large-scene --output-on-failure
-# the same suite end-to-end on the next::pcp::Cache backend (extent budget,
+# the same suite end-to-end on the lightusd::pcp::Cache backend (extent budget,
 # worker-thread snapshot, cross-layer payload-owner anchoring):
-cmake -S . -B build-next-pcp -DCMAKE_BUILD_TYPE=Release \
+cmake -S . -B build-core-pcp -DCMAKE_BUILD_TYPE=Release \
   -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_BUILD_EXAMPLES=OFF -DLIGHTUSD_BUILD_TOOLS=OFF
-cd build-next-pcp && make feat-large-scene -j16 && \
+cd build-core-pcp && make feat-large-scene -j16 && \
   ctest -R feat-large-scene --output-on-failure
 # focused payload-policy owner-anchor regression (next pcp unit level):
-cd build-next && ctest -R 'next_test_pcp$' --output-on-failure
+cd build-next && ctest -R 'core_test_pcp$' --output-on-failure
 # structural load within budget (absolute path works from any cwd now):
 <build>/large-scene-load <asset-root>/benchmark/benchmark.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
 # full composition + USDA writer stress checks:
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
+env LIGHTUSD_TIMING=1 build-core/lusdcat -f -o /dev/null \
   <asset-root>/reference_scene/usd/reference_scene.usda
-env LIGHTUSD_NEXT_TIMING=1 build-next/lusdcat -f -o /dev/null \
+env LIGHTUSD_TIMING=1 build-core/lusdcat -f -o /dev/null \
   <asset-root>/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
@@ -2376,7 +2380,7 @@ RSS ratios 1.001, 1.000 and 1.005. Its matching rewrite hashes are USDC
 `a8d085175ee96b67a66a023b2e1ca1618956562824b27728521e322444731884`
 (3,537,903,797 bytes) and USDA
 `5ca18bdadea9d1f009ce54a01eed4bb967115b091faa1df31890e5b208880819`
-(10,039,453,727 bytes). The rewritten crate reopens with next and OpenUSD.
+(10,039,453,727 bytes). The rewritten crate reopens with the core loader and OpenUSD.
 
 ## 9. Automatic arc-layer reader budget follow-up
 
@@ -2583,7 +2587,7 @@ Sanitizers and thread checking (all in build trees outside the repository):
 |---|---|---|
 | ASan + UBSan (value-name lifetime is the risk here) | `Debug`, `-fsanitize=address,undefined -fno-sanitize=vptr`, standalone `next` | 70/71 pass, **zero sanitizer reports** |
 | ASan district crate parse | same tree, `lusdcat -l` on the 580 MB composed district | 735,484 prims, no reports (156 s, ASan-slow) |
-| TSan with `LIGHTUSD_NEXT_FINE_LOCKS=ON` | `Debug`, `LIGHTUSD_NEXT_BUILD_TSAN_TESTS=ON` | 5/5 pass (`tsan_propname`, `pcp_parallel`, `usdc_reader`, `crate_dict`, `instance_group`) |
+| TSan with `LIGHTUSD_FINE_LOCKS=ON` | `Debug`, `LIGHTUSD_BUILD_TSAN_TESTS=ON` | 5/5 pass (`tsan_propname`, `pcp_parallel`, `usdc_reader`, `crate_dict`, `instance_group`) |
 
 The one ASan failure is `next_test_instance_group`'s wall-clock gate
 (`BuildStage=16.0 s` against a 6 s bound). That check already exempts itself
@@ -2707,7 +2711,7 @@ identical to within 2 MiB.
 Reproduce (quiet host, ~85 GiB resident, one run at a time):
 
 ```sh
-python3 tests/next/bench-large-scene.py \
+python3 tests/core/bench-large-scene.py \
   --baseline <baseline-lusdcat> --candidate build_ninja/lusdcat \
   --manifest full45-parse.json --output /tmp/r-full45 \
   --repeat 2 --warmup 1 --max-load 20 --min-available-gib 10 \
@@ -2779,7 +2783,7 @@ reproduce today's bytes.
 ### 10.2 Changes
 
 **A. Optional jemalloc configuration compiled into the CLI tools**
-(`src/next/tools/jemalloc-conf.cc`, CMake `LIGHTUSD_NEXT_JEMALLOC_CONF`,
+(`src/tools/jemalloc-conf.cc`, CMake `LIGHTUSD_JEMALLOC_CONF`,
 **default empty**). jemalloc reads the `malloc_conf` symbol before
 `/etc/malloc.conf` and `MALLOC_CONF`, so both still override it; the TU is only
 compiled into `lusdcat` when the allocator found is jemalloc and the variable
@@ -2812,7 +2816,7 @@ so these are directional, not a timed claim):
 With the host's THP `defrag=madvise`, a huge-page fault on a `MADV_HUGEPAGE`
 range compacts synchronously; at a 75 GiB resident set on a fragmented host
 those stalls land on the serial walk. Since full45 is the target, THP stays
-opt-in (`-DLIGHTUSD_NEXT_JEMALLOC_CONF=thp:always` or `MALLOC_CONF=thp:always`
+opt-in (`-DLIGHTUSD_JEMALLOC_CONF=thp:always` or `MALLOC_CONF=thp:always`
 at run time) for working sets well below free memory. The measurements in
 §10.3 labelled "A + B" and "A–D" include `thp:always`; the final B–E pair does
 not.
@@ -2868,7 +2872,7 @@ composed geometry prims no longer allocate a `ColdData` at all.
 
 ### 10.3 Measurements
 
-All runs: `tests/next/bench-large-scene.py`, `/dev/null` sink, warm inputs,
+All runs: `tests/core/bench-large-scene.py`, `/dev/null` sink, warm inputs,
 one warmup plus three alternating pairs, `--max-load 24 --min-available-gib 8
 --max-process-swap-mib 512 --max-rss-growth 0.05`, baseline
 `lusdcat-base-7bc83b3b5` (medians; RSS gate = largest peak ratio ≤ 1.05).
@@ -3151,7 +3155,7 @@ USDC) is identical to the baseline binary, including a run with the parallel
 threshold forced to zero so every fixture exercises the worker path; the full
 native ctest suite (67 tests) passes.
 
-A `LIGHTUSD_NEXT_ENABLE_THREAD=OFF` native build also compiles again: the
+A `LIGHTUSD_ENABLE_THREAD=OFF` native build also compiles again: the
 compactor's thread-count computation in `cache.cc` sat outside the thread
 guard. Its lusdcat reproduces the district hash and the 227-fixture sweep.
 
@@ -3552,7 +3556,7 @@ reference scene 0.963 (RSS 1.017); ALab 1.018 (serial walk; noise). Hashes: full
 `2f7176c8…`; ctest 67/67; no-thread build OK; TSan with the walk forced on
 (ALab, reference scene) race-free and hash-identical.
 
-**Deferred opinion fill** (`-DLIGHTUSD_NEXT_DEFERRED_FILL=ON`, off by
+**Deferred opinion fill** (`-DLIGHTUSD_DEFERRED_FILL=ON`, off by
 default; run-time switch `CompositionOptions::defer_opinion_fill`, set by
 lusdcat for `-f` to USDC). The composition builds the skeleton layer (option
 1's materialized prims) and installs a `PrimFiller` (`DeferredFiller`) on it
@@ -3715,7 +3719,7 @@ On full45:
 - writer `tables` −1 s and `fields_specs` −1.3 s (smaller metadata).
 
 **Deferred fill re-measured after round 12** (`lusdcat-R12def` =
-`-DLIGHTUSD_NEXT_DEFERRED_FILL=ON`, paired vs `lusdcat-R12b`, zero swap):
+`-DLIGHTUSD_DEFERRED_FILL=ON`, paired vs `lusdcat-R12b`, zero swap):
 
 | case | wall | peak RSS | notes |
 |---|---:|---:|---|
@@ -3877,7 +3881,7 @@ unchanged. Fixes were needed in 7 places, all writers or pointer returns:
 - the C API and USDA writer's `&...get()`;
 - memory accounting.
 
-The metadata headers are included inside `namespace lightusd::next` by
+The metadata headers are included inside `namespace lightusd` by
 `prim-spec.hh`, so `prim-spec.hh` includes `lazy-containers.hh` first.
 
 Results:
@@ -4273,7 +4277,7 @@ The inputs and benchmark kit were copied to the host; network addresses,
 hostnames, and user directory names are omitted.
 
 On the benchmark host, jemalloc is linked through the runtime `.so.2`
-(`-DLIGHTUSD_NEXT_ALLOC_JEMALLOC=...`; no `-dev` symlink).
+(`-DLIGHTUSD_ALLOC_JEMALLOC=...`; no `-dev` symlink).
 
 Benchmark-host smoke results:
 
@@ -4304,10 +4308,10 @@ maximum over runs.
 
 **Candidates.**
 - Native:
-  - glibc 2.43 (`-DLIGHTUSD_NEXT_ALLOCATOR=system`);
+  - glibc 2.43 (`-DLIGHTUSD_ALLOCATOR=system`);
   - system jemalloc 5.3 (the current `auto` pick);
   - **mimalloc v3.6.0, vendored in `src/external/mimalloc`**
-    (`-DLIGHTUSD_NEXT_ALLOCATOR=mimalloc`: `src/static.c` as an OBJECT
+    (`-DLIGHTUSD_ALLOCATOR=mimalloc`: `src/static.c` as an OBJECT
     library with `MI_MALLOC_OVERRIDE`, so it replaces malloc / new in
     `lusdcat`).
 - WASM, through the new `LIGHTUSD_WASM_MALLOC` option (web/CMakeLists.txt;
@@ -4356,7 +4360,7 @@ at a 4–5% lower peak.
 **WASM** (one fresh node process per run, ×3 interleaved). Workloads:
 - `render`: `RenderStream.begin` plus `getMeshCopy` of every mesh, the
   path a web viewer takes;
-- `flatten`: `NextFlattenSession`.
+- `flatten`: `FlattenSession`.
 
 Inputs are self-contained reference scene elements flattened natively
 (`$BENCH_ROOT/wasm-inputs`). "heap" is the final wasm linear
@@ -4385,7 +4389,7 @@ wasm64 only.
 
 **Adopted (2026-10-27).**
 - Native CLI tools default to the vendored mimalloc
-  (`LIGHTUSD_NEXT_ALLOCATOR=mimalloc`), compiled with
+  (`LIGHTUSD_ALLOCATOR=mimalloc`), compiled with
   `MI_DEFAULT_PURGE_DELAY=0` (a local hook in `src/util/options.c`; the
   `MIMALLOC_PURGE_DELAY` env var still overrides it). `auto` keeps the old
   installed-library search (jemalloc, tcmalloc, mimalloc). Fresh default
@@ -4499,7 +4503,7 @@ walk has emitted `donate_after` items. On full45 that produces **2.09 M tasks
 for 12.3 M items**: the hierarchy is broad and shallow, so the natural
 hand-off unit (a depth-≥ 7 subtree) is ~5 items.
 
-Measured cost (one full45 flatten on benchmark host, `LIGHTUSD_NEXT_TIMING=1`, temporary
+Measured cost (one full45 flatten on benchmark host, `LIGHTUSD_TIMING=1`, temporary
 per-task timers; R22 = current `main`-line tree):
 
 | counter | value |
@@ -4652,7 +4656,7 @@ Verification:
 - Staged mode (`WriteLayerToMemory`): parallel and `SERIAL_FIELDS=1` writes of
   the district are byte-identical.
 - ctest 61/61 (1 skip). Non-threaded build compiles and its district hash
-  matches; the `LIGHTUSD_NEXT_DEFERRED_FILL=ON` build compiles and still takes
+  matches; the `LIGHTUSD_DEFERRED_FILL=ON` build compiles and still takes
   the serial path (`tables` 69 ms on the district).
 
 ### 10.30 OpenUSD v26.11.1 on the reference scenes (2026-10-27)
@@ -4782,7 +4786,7 @@ A2 stores.
 
 The warm phase's merge (rounds 8–10) was 7.4–7.9 s of the 16.5 s warm on
 full45. Phase timers in `MergeSources` (summed over the 32 worker merges,
-`LIGHTUSD_NEXT_TIMING`; total `merge_loop` 5.97 s + `destroy` 1.21 s):
+`LIGHTUSD_TIMING`; total `merge_loop` 5.97 s + `destroy` 1.21 s):
 
 | phase | s | parallel? |
 |---|---:|---|
@@ -5494,7 +5498,7 @@ The full CTest run passed 60 tests with one expected skip. Keep R66.
 ### 10.74 Low-memory profile: batched compose streamed into the writer (2026-10-28)
 
 `lusdcat -f --memory-profile low ... -o out.usdc` (library entry
-`pcp::FlattenToUSDCFileBatched`, `src/next/pcp/batched-compose.{hh,cc}`)
+`pcp::FlattenToUSDCFileBatched`, `src/pcp/batched-compose.{hh,cc}`)
 flattens to USDC with the composed stage, its composition sources and the
 source layers never resident all at once. The output is byte-identical to
 the default profile. The goal was a full45 peak of about twice the source
@@ -6150,7 +6154,7 @@ A jemalloc heap profile at the same point agreed (12.19 GB in use;
 `StreamWriteBatch`/`ReserveTables` 6.37 GB), and a batch-to-batch diff
 showed the rest was pcp cache and still-resident source layers.
 
-**Change.** `src/next/crate/spill-array.hh` adds `SpillVec<T>` (behind the
+**Change.** `src/crate/spill-array.hh` adds `SpillVec<T>` (behind the
 type-erased `SpillColumnBase`), used for those five columns:
 
 - Elements live in ~8 MiB chunks. `CrateWriteOptions::spill_columns_bytes`
@@ -7300,10 +7304,10 @@ before versus 4.9/4.9 ms after; warmed total mesh-copy time was 76.2 versus
 Scoped/unscoped indexed, indices-disabled, merged and face-varying output parity
 passes; 47 scopes opened and closed, including injected query failure.
 
-The permanent `web/js/tests/next-mesh-budget-cache.test.mjs` compares cached
+The permanent `web/js/tests/core-mesh-budget-cache.test.mjs` compares cached
 queries to a fresh scan after scope reopening. Eight cases cover limit changes,
 asset addition/removal/clear, retained USDC export and forced heap growth, with
-owned points surviving growth. It accepts `LIGHTUSD_NEXT_MODULE` for a specific
+owned points surviving growth. It accepts `LIGHTUSD_MODULE` for a specific
 built module, or the standard wasm32/memory64 product path. Fresh wasm32 passes
 at 85.1 MiB guarded group RSS. Native lazy-value tests and a bounded 8-thread
 1600-materialization/saturation probe pass. Fresh native Layer build passes
@@ -7474,7 +7478,7 @@ with one frontier root per batch was deliberately interrupted and archived as
 The follow-up profile attributes the overhead instead of changing policy. Four
 warm-cache, rotated-order laps used four compose/parse/writer threads, the
 production batching defaults and an 8 GiB process guard; every run reproduced
-the same 732547046-byte output. `LIGHTUSD_NEXT_TIMING=1` supplied the phase
+the same 732547046-byte output. `LIGHTUSD_TIMING=1` supplied the phase
 splits, `time -v` the user/system time, peak RSS and 512-byte block I/O, and a
 100 ms sampler the scratch-dir residency.
 

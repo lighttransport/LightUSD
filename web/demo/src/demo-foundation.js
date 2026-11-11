@@ -20,11 +20,11 @@ import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
 import { buildNodeIndexMap } from 'lightusd/USDAnimationConverter.js';
 import { extractUSDSceneAnimations } from 'lightusd/USDSceneAnimationPipeline.js';
 import {
-  buildNextThreeNode,
-  isNextScene,
-  nextCountsFromScene,
-  readNextSceneMeta
-} from 'lightusd-next-demo-utils';
+  buildThreeNode,
+  isScene,
+  countsFromScene,
+  readSceneMeta
+} from 'lightusd-core-demo-utils';
 import { Report } from './app-report.js';
 import { applyUSDMaterialFeatures } from './usd-material-features.js';
 
@@ -56,16 +56,16 @@ function escapeHTML(value) {
     .replaceAll('"', '&quot;');
 }
 
-const BACKEND_CHOICES = ['next'];
+const BACKEND_CHOICES = ['core'];
 
 function selectedBackend() {
   const value = new URLSearchParams(window.location.search).get('backend');
-  return BACKEND_CHOICES.includes(value) ? value : 'next';
+  return BACKEND_CHOICES.includes(value) ? value : 'core';
 }
 
 function setBackendAndReload(backend) {
   const url = new URL(window.location.href);
-  url.searchParams.set('backend', BACKEND_CHOICES.includes(backend) ? backend : 'next');
+  url.searchParams.set('backend', BACKEND_CHOICES.includes(backend) ? backend : 'core');
   window.location.href = url.toString();
 }
 
@@ -380,7 +380,7 @@ class DemoApp {
       this.currentSourceUrl = url;
       let usd;
       if (this.config.useComposition) {
-        usd = await this.loadComposedNext(data, url);
+        usd = await this.loadComposedCore(data, url);
       } else {
         Report.progress(40, 'Parsing USD');
         usd = await this.parseUSD(data, this.currentSourceName);
@@ -432,7 +432,7 @@ class DemoApp {
       this.currentSourceBytes = new Uint8Array(data);
       this.currentSourceName = hero.name;
       this.currentSourceUrl = '';
-      const usd = await this.loadComposedNextFromFiles(data, hero.webkitRelativePath || hero.name, byKey);
+      const usd = await this.loadComposedCoreFromFiles(data, hero.webkitRelativePath || hero.name, byKey);
       await this.displayUSD(usd, 'MetaHuman export folder');
       Report.done();
     } catch (error) {
@@ -467,7 +467,7 @@ class DemoApp {
     return bytes;
   }
 
-  nextParseOptions(extra = {}) {
+  parseOptions(extra = {}) {
     return {
       backend: this.params.backend,
       maxMemoryLimitMB: 512,
@@ -481,26 +481,26 @@ class DemoApp {
 
   parseUSD(data, filename, extra = {}) {
     return new Promise((resolve, reject) => {
-      this.loader.parse(data, filename, resolve, reject, this.nextParseOptions(extra));
+      this.loader.parse(data, filename, resolve, reject, this.parseOptions(extra));
     });
   }
 
-  async loadComposedNext(rootBytes, rootUrl) {
-    const Session = this.loader.native_?.NextFlattenSession;
+  async loadComposedCore(rootBytes, rootUrl) {
+    const Session = this.loader.native_?.FlattenSession;
     if (typeof Session !== 'function') {
-      throw new Error('NextFlattenSession is unavailable in this WASM build.');
+      throw new Error('FlattenSession is unavailable in this WASM build.');
     }
     const session = new Session();
     const rootName = rootUrl.split(/[?#]/)[0].split('/').pop() || 'root.usda';
     const begin = session.begin(rootBytes, rootName, true);
     if (!begin?.success) {
       session.delete?.();
-      throw new Error(begin?.error || 'Failed to start next composition.');
+      throw new Error(begin?.error || 'Failed to start USD composition.');
     }
     try {
       for (let iteration = 0; iteration < 64; iteration++) {
         const step = session.step(null);
-        if (!step?.success) throw new Error(step?.error || 'Next composition failed.');
+        if (!step?.success) throw new Error(step?.error || 'core composition failed.');
         if (step.status === 'need-layer') {
           const dependency = await this.fetchDependencyLayer(step.key, rootUrl);
           const provided = session.provideLayer(step.key, dependency);
@@ -512,18 +512,18 @@ class DemoApp {
         if (step.status === 'done' && step.data) {
           return this.parseUSD(new Uint8Array(step.data), `${rootName}.flattened.usdc`);
         }
-        throw new Error(`Unexpected next composition status: ${step.status}`);
+        throw new Error(`Unexpected composition status: ${step.status}`);
       }
-      throw new Error('Next composition exceeded the dependency-layer limit.');
+      throw new Error('core composition exceeded the dependency-layer limit.');
     } finally {
       session.end();
       session.delete?.();
     }
   }
 
-  async loadComposedNextFromFiles(rootBytes, rootName, filesByKey) {
-    const Session = this.loader.native_?.NextFlattenSession;
-    if (typeof Session !== 'function') throw new Error('NextFlattenSession is unavailable in this WASM build.');
+  async loadComposedCoreFromFiles(rootBytes, rootName, filesByKey) {
+    const Session = this.loader.native_?.FlattenSession;
+    if (typeof Session !== 'function') throw new Error('FlattenSession is unavailable in this WASM build.');
     const session = new Session();
     const rootKey = normalizedAssetKey(rootName);
     const rootDirectory = rootKey.includes('/') ? rootKey.slice(0, rootKey.lastIndexOf('/') + 1) : '';
@@ -584,7 +584,7 @@ class DemoApp {
       this.scene.environment = this.envMap;
     }
 
-    if (isNextScene(usd)) await this.hydrateNextExternalAssets(usd);
+    if (isScene(usd)) await this.hydrateCoreExternalAssets(usd);
     const builtScene = await this.buildThreeRoot(usd);
     const sceneRoot = builtScene.node;
 
@@ -617,7 +617,7 @@ class DemoApp {
     // Scene extensions may need the copied mesh/curve arrays to build custom
     // GPU representations. Release them only after synchronous callbacks have
     // consumed the adapter data.
-    if (!this.config.preserveBuildData && isNextScene(usd) && typeof usd.releaseBuildData === 'function') {
+    if (!this.config.preserveBuildData && isScene(usd) && typeof usd.releaseBuildData === 'function') {
       usd.releaseBuildData();
     }
   }
@@ -628,12 +628,12 @@ class DemoApp {
   }
 
   async buildThreeRoot(usd) {
-    if (isNextScene(usd)) {
-      const built = buildNextThreeNode(usd, {
+    if (isScene(usd)) {
+      const built = buildThreeNode(usd, {
         skipTextures: false,
         lazyTextures: true,
         releaseBuildData: false,
-        onProgress: (info) => this.setStatus(info.message || 'Building next scene...')
+        onProgress: (info) => this.setStatus(info.message || 'Building USD scene...')
       });
       if (built.textureManager) {
         await built.textureManager.startLoading({
@@ -680,7 +680,7 @@ class DemoApp {
     return { node: root, nodeIndexMap: null };
   }
 
-  async hydrateNextExternalAssets(usd) {
+  async hydrateCoreExternalAssets(usd) {
     if (!this.currentSourceUrl || !usd?.archiveEntries) return;
     const records = Array.isArray(usd.textures) ? usd.textures : [];
     let indexedTextures = [];
@@ -729,7 +729,7 @@ class DemoApp {
   }
 
   getSceneUpAxis(usd) {
-    if (isNextScene(usd)) return String(readNextSceneMeta(usd).upAxis || 'Y').toUpperCase();
+    if (isScene(usd)) return String(readSceneMeta(usd).upAxis || 'Y').toUpperCase();
     try {
       const metadata = getUSDSceneMetadata(usd);
       const axis = metadata.fileUpAxis || metadata.upAxis || (usd?.getUpAxis ? usd.getUpAxis() : 'Y');
@@ -1023,8 +1023,8 @@ class DemoApp {
       return;
     }
     try {
-      if (isNextScene(this.currentUsd)) {
-        this.exportCurrentNext(kind);
+      if (isScene(this.currentUsd)) {
+        this.exportCurrentCore(kind);
         return;
       }
       if (kind === 'usda') {
@@ -1055,15 +1055,15 @@ class DemoApp {
     }
   }
 
-  exportCurrentNext(kind) {
-    const Exporter = this.loader.native_?.NextUSDZConverterNative;
+  exportCurrentCore(kind) {
+    const Exporter = this.loader.native_?.USDZConverterNative;
     if (typeof Exporter !== 'function' || !this.currentSourceBytes) {
-      throw new Error('The next exporter or original USD bytes are unavailable.');
+      throw new Error('The exporter or original USD bytes are unavailable.');
     }
     const exporter = new Exporter();
     try {
       if (!exporter.loadFromBinary(this.currentSourceBytes, this.currentSourceName || 'scene.usd')) {
-        throw new Error(exporter.error?.() || 'Next exporter could not load the scene.');
+        throw new Error(exporter.error?.() || 'core exporter could not load the scene.');
       }
       if (kind === 'usda') {
         const data = exporter.exportAsUSDA();
@@ -1083,12 +1083,12 @@ class DemoApp {
   }
 
   showExportNotes(usd) {
-    const hasNextExporter = isNextScene(usd) &&
-      typeof this.loader.native_?.NextUSDZConverterNative === 'function' &&
+    const hasExporter = isScene(usd) &&
+      typeof this.loader.native_?.USDZConverterNative === 'function' &&
       !!this.currentSourceBytes;
-    const hasUSDA = hasNextExporter || typeof usd.exportAsUSDA === 'function' || typeof usd.layerToString === 'function';
-    const hasUSDC = hasNextExporter || typeof usd.exportAsUSDC === 'function';
-    const hasUSDZ = hasNextExporter || typeof usd.exportAsUSDZ === 'function';
+    const hasUSDA = hasExporter || typeof usd.exportAsUSDA === 'function' || typeof usd.layerToString === 'function';
+    const hasUSDC = hasExporter || typeof usd.exportAsUSDC === 'function';
+    const hasUSDZ = hasExporter || typeof usd.exportAsUSDZ === 'function';
     this.setNotes([
       hasUSDA ? 'USDA export is available for the loaded layer.' : 'USDA export is not available for the loaded scene.',
       hasUSDC && hasUSDZ
@@ -1132,7 +1132,7 @@ class DemoApp {
   }
 
   updateStats(usd, label) {
-    const nextCounts = isNextScene(usd) ? nextCountsFromScene(usd) : null;
+    const nextCounts = isScene(usd) ? countsFromScene(usd) : null;
     const countValue = (getter) => {
       if (typeof getter !== 'function') {
         return Number.isFinite(getter) ? getter : 0;

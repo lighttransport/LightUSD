@@ -5,7 +5,7 @@
  *
  * UTF-8 decoding plus the AOUSD (Core Spec section 8) identifier, namespaced
  * property and textual path grammar. Pure, allocation-free, and the single
- * implementation shared by the C++ header (src/next/prim/identifier.hh), the
+ * implementation shared by the C++ header (src/prim/identifier.hh), the
  * lexer and any C consumer. Character classes come from the shared XID module
  * (src/unicode-xid-c.c).
  */

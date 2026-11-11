@@ -3,7 +3,7 @@
 //
 // LightUSD - lusdcat
 //
-// The unified lusdcat CLI for the src/next module (formerly `next_usdcat`).
+// The unified lusdcat CLI for the core module (formerly `next_usdcat`).
 // The usd-wg asset-corpus regression gate (tests/parse-asset-corpus.mjs) drives
 // next the same way it drives the legacy loader; `next_usdcat` remains an
 // alias of this target for scripts that still use the old name:
@@ -36,22 +36,6 @@
 #include "load-usd.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
-
-// Environment variables were renamed in 1.1 (LIGHTUSD_NEXT_NUM_THREADS ->
-// LIGHTUSD_NUM_THREADS, LIGHTUSD_NEXT_TIMING -> LIGHTUSD_TIMING). Read the new
-// name first and fall back to the old one for one release.
-static const char* GetEnvCompat(const char* name, const char* old_name) {
-  if (const char* v = std::getenv(name)) return v;
-  const char* v = std::getenv(old_name);
-  if (v) {
-    static bool warned = false;
-    if (!warned) {
-      std::fprintf(stderr, "WARN : %s is deprecated; use %s\n", old_name, name);
-      warned = true;
-    }
-  }
-  return v;
-}
 
 using namespace lightusd;
 
@@ -651,14 +635,14 @@ int main(int argc, char **argv) {
                          "output; using the default profile\n");
   }
   if (parse_threads < 0) {
-    const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS");
+    const char* nt = std::getenv("LIGHTUSD_NUM_THREADS");
     parse_threads = nt ? std::atoi(nt) : 0;
   }
 
   // Opt-in wall-clock attribution (load+compose vs write). Printed to stderr with
   // a non-"WARN/ERR : " prefix so the corpus categorizer ignores it; off unless
   // LIGHTUSD_TIMING is set. Used to prioritize/measure perf work.
-  const bool timing = GetEnvCompat("LIGHTUSD_TIMING", "LIGHTUSD_NEXT_TIMING") != nullptr;
+  const bool timing = std::getenv("LIGHTUSD_TIMING") != nullptr;
   const auto set_crate_limits = [&](CrateLimits& limits, size_t& array_limit) {
     if (!max_crate_elements) return;
     limits.max_tokens = max_crate_elements;
@@ -670,7 +654,7 @@ int main(int argc, char **argv) {
     array_limit = max_crate_elements;
   };
   if (timing) {
-    // The next library emits its [next_build]/[next_warm]/[next_compose] timing
+    // The core library emits its [core_build]/[core_warm]/[core_compose] timing
     // through lightusd::logging now (not a hardcoded stderr fprintf). Point the
     // logger at stderr and enable Info so those lines appear like before.
     lightusd::logging::Logger::getInstance().setStream(&std::cerr);
@@ -713,7 +697,7 @@ int main(int argc, char **argv) {
 
     if (output_usdc) {
       USDCWriteOptions options;
-      const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS");
+      const char* nt = std::getenv("LIGHTUSD_NUM_THREADS");
       options.crate_options.num_threads = write_threads >= 0 ? write_threads
                                                            : (nt ? std::atoi(nt) : 0);
       options.crate_options.enable_timing = timing;
@@ -741,7 +725,7 @@ int main(int argc, char **argv) {
     wopts.enable_timing = timing;
     wopts.emit_custom = openusd_compat;
     wopts.num_threads = 0;  // auto; LIGHTUSD_NUM_THREADS overrides (1 = serial)
-    if (const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS")) {
+    if (const char* nt = std::getenv("LIGHTUSD_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
     if (write_threads >= 0) wopts.num_threads = write_threads;
@@ -838,7 +822,7 @@ int main(int argc, char **argv) {
     opts.num_threads = compose_threads;
     opts.load_payloads = load_payloads;
     // Forward the CLI timing flag to the library (which no longer reads the env):
-    // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
+    // gates the [core_compose]/[core_build]/[core_warm] diagnostics.
     opts.enable_timing = timing;
     // The stage is written right after composing: free the composition cache
     // while the writer starts.
@@ -855,7 +839,7 @@ int main(int argc, char **argv) {
       if (batch_roots > 0) bopts.roots_per_batch = static_cast<size_t>(batch_roots);
       CrateWriteOptions wopts;
       wopts.num_threads = 0;
-      if (const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS"))
+      if (const char* nt = std::getenv("LIGHTUSD_NUM_THREADS"))
         wopts.num_threads = std::atoi(nt);
       if (write_threads >= 0) wopts.num_threads = write_threads;
       wopts.enable_timing = timing;
@@ -1003,12 +987,12 @@ int main(int argc, char **argv) {
   if (flatten && output_usdc) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NUM_THREADS overrides
-    copts.crate_options.enable_timing = timing;  // [next_crate_write] phases
+    copts.crate_options.enable_timing = timing;  // [core_crate_write] phases
     // The composed stage is discarded right after this write: let the writer
     // release each prim's values once they are encoded (byte-identical).
     copts.crate_options.consume_values = consume_values;
     copts.crate_options.consume_prims = consume_values;
-    if (const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS")) {
+    if (const char* nt = std::getenv("LIGHTUSD_NUM_THREADS")) {
       copts.crate_options.num_threads = std::atoi(nt);
     }
     if (write_threads >= 0) copts.crate_options.num_threads = write_threads;
@@ -1061,7 +1045,7 @@ int main(int argc, char **argv) {
     // build). Default auto (= hardware_concurrency); LIGHTUSD_NUM_THREADS
     // overrides (1 = serial). Output is byte-identical regardless of count.
     wopts.num_threads = 0;  // auto
-    if (const char* nt = GetEnvCompat("LIGHTUSD_NUM_THREADS", "LIGHTUSD_NEXT_NUM_THREADS")) {
+    if (const char* nt = std::getenv("LIGHTUSD_NUM_THREADS")) {
       wopts.num_threads = std::atoi(nt);
     }
     if (write_threads >= 0) wopts.num_threads = write_threads;

@@ -20,7 +20,7 @@ function parseArgs() {
     pretty: true,
     verbose: false,
     summary: false,
-    backend: 'next',
+    backend: 'core',
     maxMemoryMB: 500
   };
 
@@ -52,8 +52,8 @@ function parseArgs() {
       options.summary = true;
     } else if (arg === '--backend') {
       options.backend = args[++i];
-      if (!['legacy', 'next', 'auto'].includes(options.backend)) {
-        console.error('Error: Backend must be "legacy", "next", or "auto"');
+      if (!['legacy', 'core', 'auto'].includes(options.backend)) {
+        console.error('Error: Backend must be "legacy", "core", or "auto"');
         process.exit(1);
       }
     } else if (arg === '--max-memory-mb') {
@@ -94,7 +94,7 @@ Options:
   --mesh [id]             Dump mesh vertex data (all meshes or specific mesh by ID)
   --no-pretty             Disable pretty-printing for JSON/YAML
   --summary               Print counts/timing only; do not dump material payloads
-  --backend <name>        Loader backend: legacy, next, or auto (default: next)
+  --backend <name>        Loader backend: legacy, core, or auto (default: core)
   --max-memory-mb <n>     Native loader memory limit, 0 disables (default: 500)
   -v, --verbose           Enable verbose logging
   -h, --help              Show this help message

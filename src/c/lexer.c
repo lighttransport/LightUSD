@@ -4,7 +4,7 @@
  * lexer.c -- C11 USDA lexical primitives.
  *
  * The byte-classification and keyword/number scanning core of
- * src/next/parser/lexer.cc: identifier-start (UTF-8 XID + '_'), ASCII digit/
+ * src/parser/lexer.cc: identifier-start (UTF-8 XID + '_'), ASCII digit/
  * hex classification, the inf/infinity/nan special-float word matcher, the
  * keyword table lookup, and the numeric-literal length scanner. The stateful
  * Lexer class (position/line/column, token construction) stays C++.

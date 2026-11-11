@@ -117,7 +117,7 @@ struct MaterialConfig {
   bool load_textures = true;
   bool allow_missing_textures = true;
   // Pack decoded UDIM tiles into a single atlas instead of retaining sparse
-  // per-tile records. Disabled by default for the editor-oriented next path.
+  // per-tile records. Disabled by default for the editor-oriented core path.
   bool combine_udim_tiles = false;
 
   // Assign a generated default PreviewSurface material to meshes/curves that
@@ -204,7 +204,7 @@ struct ConverterConfig {
   // authored.
   std::string asset_base_dir;
 
-  // Optional next-core AssetResolver (non-owning). When set it takes over
+  // Optional core AssetResolver (non-owning). When set it takes over
   // texture asset-path resolution (anchor/working-dir/search paths +
   // suffix fallback) instead of the plain asset_base_dir prefix above.
   const ::lightusd::AssetResolver* asset_resolver = nullptr;
