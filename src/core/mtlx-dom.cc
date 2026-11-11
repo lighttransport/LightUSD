@@ -93,14 +93,13 @@ const std::vector<MtlxElem> &StandardMtlxNodeDefs() {
     } while (false);
 #define MTLX_STD_INPUT(name, type, has_default, default_value)                \
     do {                                                                      \
-      if (has_default) {                                                      \
-        MtlxElem input;                                                       \
-        input.tag = "input";                                                 \
-        input.SetAttr("name", name);                                         \
-        input.SetAttr("type", type);                                         \
+      MtlxElem input;                                                         \
+      input.tag = "input";                                                   \
+      input.SetAttr("name", name);                                           \
+      input.SetAttr("type", type);                                           \
+      if (has_default)                                                       \
         input.SetAttr("value", default_value);                              \
-        result.back().children.push_back(std::move(input));                   \
-      }                                                                       \
+      result.back().children.push_back(std::move(input));                     \
     } while (false);
 #include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
 #undef MTLX_STD_INPUT
