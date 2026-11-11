@@ -2,7 +2,7 @@
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 //
 // Shared helpers for the next MCP tools: base64 with request limits, session
-// lookups, next value <-> JSON conversion, and prim-tree JSON.
+// lookups, core value <-> JSON conversion, and prim-tree JSON.
 #pragma once
 
 #include <cstddef>
@@ -47,7 +47,7 @@ json ValueToJSON(const ::lightusd::Value& value, const std::string& type_name,
                  size_t max_elements = 1000);
 
 // Parse {"type": "<usd type>", "value": <json>} (a string value for a
-// non-string type is taken as a USDA literal) into a next value.
+// non-string type is taken as a USDA literal) into a core value.
 bool ValueFromJSON(const json& j, std::string* type_name, ::lightusd::Value* out,
                    std::string* err);
 

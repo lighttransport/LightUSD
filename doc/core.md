@@ -47,6 +47,14 @@ also use core. Standalone `LIGHTUSD_WASM_PRODUCT=legacy` is opt-in and emits
 The browser loader always uses core; explicit legacy requests warn.
 Python wheels link only the core libraries and never build `src/legacy/`.
 
+Meson also defaults to core and Tydra. It builds the canonical CMake targets
+without maintaining a separate source list. `lightusd_dep` and `tydra_dep`
+export their resolved include paths, feature definitions, and link dependencies.
+Use `-Dlegacy=true` to add `lightusd_legacy_dep`, and `-Dlegacy_tydra=true`
+for its older converter. Meson's `-Dtests=true` builds the core API smoke test.
+The older standalone Meson fuzz harness requires explicit `-Dlegacy=true`;
+maintained core fuzzers use CMake's `LIGHTUSD_BUILD_FUZZERS` option.
+
 See [the C++ testing guide](testing-cpp.md) and
 [the WASM regression procedure](../web/js/docs/regression.md) for validation.
 

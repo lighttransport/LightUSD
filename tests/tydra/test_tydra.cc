@@ -4840,7 +4840,7 @@ def Xform "Root"
 }
 
 void TestValueClipBaking() {
-  std::cout << "Testing next value-clip baking...\n";
+  std::cout << "Testing core value-clip baking...\n";
 
   const std::string root = R"(#usda 1.0
 (

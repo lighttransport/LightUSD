@@ -1786,22 +1786,17 @@ ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 
 ## Fuzzing
 
-Fuzzer targets live under `tests/fuzzer/`. They are built separately from the CMake test suite using Meson and libFuzzer.
-
-Documented setup in `tests/fuzzer/README.md`:
+Core libFuzzer harnesses are built with the canonical CMake project:
 
 ```bash
-CXX=clang++ CC=clang meson build -Db_sanitize=address
-cd build
-ninja
+CC=clang CXX=clang++ cmake -S . -B build_ninja/fuzz -G Ninja \
+  -DLIGHTUSD_BUILD_FUZZERS=ON
+cmake --build build_ninja/fuzz
 ```
 
-Examples from the current README:
-
-```bash
-./fuzz_lightusd -max_len=128m
-./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
-```
+See `tests/fuzzer/README.md` for core harness targets and corpus setup. The
+standalone Meson harnesses use the legacy implementation and require explicit
+`-Dlegacy=true`; keep those builds compile-only.
 
 Relevant fuzz entry points include:
 

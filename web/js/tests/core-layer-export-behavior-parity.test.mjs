@@ -118,22 +118,22 @@ const materialBytes = fixture('tests/usda/c-core-material-queries.usda');
       walk(json.primSpecs);
       return dropped;
     };
-    const nextJSON = JSON.parse(document.exportJSON().text);
-    assert.equal(dropValueConnections(nextJSON), 2, 'value+connection attributes keep connections');
+    const coreJSON = JSON.parse(document.exportJSON().text);
+    assert.equal(dropValueConnections(coreJSON), 2, 'value+connection attributes keep connections');
     assert.equal(dropValueConnections(JSON.parse(loader.layerToJSON())), 0);
-    assert.deepEqual(nextJSON, JSON.parse(loader.layerToJSON()), 'layerToJSON');
+    assert.deepEqual(coreJSON, JSON.parse(loader.layerToJSON()), 'layerToJSON');
     exercised.set('layerToJSON', 'delta');
     // Both products emit the same document for either embed/array mode.
     for (const [embed, mode] of [[false, 'base64'], [true, 'buffer']]) {
-      const nextOptioned = JSON.parse(document.exportJSONWithOptions(embed, mode).text);
-      dropValueConnections(nextOptioned);
-      assert.deepEqual(nextOptioned, JSON.parse(loader.layerToJSONWithOptions(embed, mode)),
+      const coreOptioned = JSON.parse(document.exportJSONWithOptions(embed, mode).text);
+      dropValueConnections(coreOptioned);
+      assert.deepEqual(coreOptioned, JSON.parse(loader.layerToJSONWithOptions(embed, mode)),
         `layerToJSONWithOptions ${embed}/${mode}`);
     }
     exercised.set('layerToJSONWithOptions', 'delta');
-    const nextCrate = document.exportUSDC();
-    assert.equal(nextCrate.success, true);
-    assert.deepEqual(layerPrims(new Uint8Array(nextCrate.data)), expected);
+    const coreCrate = document.exportUSDC();
+    assert.equal(coreCrate.success, true);
+    assert.deepEqual(layerPrims(new Uint8Array(coreCrate.data)), expected);
     for (const method of ['exportAsUSDC', 'exportLayerAsUSDCWithOptions']) {
       const bytes = method === 'exportAsUSDC' ? loader.exportAsUSDC()
         : loader.exportLayerAsUSDCWithOptions({});
@@ -141,12 +141,12 @@ const materialBytes = fixture('tests/usda/c-core-material-queries.usda');
       note(method, 'match');
     }
     const legacyBuffer = new Uint8Array(1 << 16);
-    const nextBuffer = new Uint8Array(1 << 16);
+    const coreBuffer = new Uint8Array(1 << 16);
     const legacyWritten = loader.exportLayerAsUSDCToBufferWithOptions(legacyBuffer, {});
-    const nextWritten = document.exportUSDCToBuffer(nextBuffer, {});
+    const coreWritten = document.exportUSDCToBuffer(coreBuffer, {});
     assert.equal(legacyWritten.success, true);
-    assert.equal(nextWritten.success, true);
-    assert.deepEqual(layerPrims(nextBuffer.subarray(0, nextWritten.size)),
+    assert.equal(coreWritten.success, true);
+    assert.deepEqual(layerPrims(coreBuffer.subarray(0, coreWritten.size)),
       layerPrims(legacyBuffer.subarray(0, legacyWritten.size)));
     note('exportLayerAsUSDCToBufferWithOptions', 'match');
   } finally { loader.delete(); document.delete(); }
@@ -160,18 +160,18 @@ const materialBytes = fixture('tests/usda/c-core-material-queries.usda');
     assert.equal(loader.loadFromBinary(materialBytes, 'm.usda'), true);
     assert.equal(stream.begin(materialBytes, 'm.usda').success, true);
     const legacyBuffer = new Uint8Array(1 << 16);
-    const nextBuffer = new Uint8Array(1 << 16);
+    const coreBuffer = new Uint8Array(1 << 16);
     const legacyWritten = loader.exportStageAsUSDCToBufferWithOptions(legacyBuffer, {});
-    const nextWritten = stream.exportUSDCToBuffer(nextBuffer, {});
+    const coreWritten = stream.exportUSDCToBuffer(coreBuffer, {});
     assert.equal(legacyWritten.success, true);
-    assert.equal(nextWritten.success, true);
+    assert.equal(coreWritten.success, true);
     // Known delta: legacy's stage export loses the mesh geometry arrays the
     // converter consumed; core keeps them. Everything else matches.
-    const nextStage = layerPrims(nextBuffer.subarray(0, nextWritten.size));
+    const coreStage = layerPrims(coreBuffer.subarray(0, coreWritten.size));
     const geometry = ['points', 'faceVertexCounts', 'faceVertexIndices'];
-    assert.deepEqual(geometry.filter(key => key in nextStage['/World/Triangle'].properties), geometry);
-    for (const key of geometry) delete nextStage['/World/Triangle'].properties[key];
-    assert.deepEqual(nextStage, layerPrims(legacyBuffer.subarray(0, legacyWritten.size)));
+    assert.deepEqual(geometry.filter(key => key in coreStage['/World/Triangle'].properties), geometry);
+    for (const key of geometry) delete coreStage['/World/Triangle'].properties[key];
+    assert.deepEqual(coreStage, layerPrims(legacyBuffer.subarray(0, legacyWritten.size)));
     exercised.set('exportStageAsUSDCToBufferWithOptions', 'delta');
   } finally { loader.delete(); stream.delete(); }
 }
@@ -265,12 +265,12 @@ function flatten(remap) {
     // packs the asset under its original name (a dangling reference); core
     // packs it under the remapped name.
     const remap = {'surface.png': 'tex/surface.png'};
-    const nextRemapped = packageContents(converter.exportAsUSDZWithRemap(remap));
+    const coreRemapped = packageContents(converter.exportAsUSDZWithRemap(remap));
     const legacyRemapped = packageContents(loader.exportAsUSDZWithRemap(remap));
-    assert.deepEqual(Object.keys(nextRemapped.assets), ['tex/surface.png']);
+    assert.deepEqual(Object.keys(coreRemapped.assets), ['tex/surface.png']);
     assert.deepEqual(Object.keys(legacyRemapped.assets), ['surface.png']);
-    assert.deepEqual(nextRemapped.prims, legacyRemapped.prims, 'remapped root layer');
-    assert.deepEqual(nextRemapped.assets['tex/surface.png'], legacyRemapped.assets['surface.png']);
+    assert.deepEqual(coreRemapped.prims, legacyRemapped.prims, 'remapped root layer');
+    assert.deepEqual(coreRemapped.assets['tex/surface.png'], legacyRemapped.assets['surface.png']);
     exercised.set('exportAsUSDZWithRemap', 'delta');
   } finally { loader.delete(); converter.delete(); }
 }

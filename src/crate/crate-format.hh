@@ -22,7 +22,7 @@ namespace lightusd {
 // ============================================================
 //
 // Crate stores half/half2/half3/half4/quath as packed uint16 components. The
-// next Value model has no 16-bit storage, so half arrays materialize into a
+// core Value model has no 16-bit storage, so half arrays materialize into a
 // float buffer (widening is exact) and re-encode by narrowing back to half
 // (round-to-nearest-even). Half-origin values round-trip byte-exact: a float
 // widened from a half has zero low mantissa bits, so narrowing reproduces it.

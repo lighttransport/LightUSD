@@ -2,7 +2,7 @@
 // Copyright 2026 - Present Light Transport Entertainment Inc.
 //
 // Regression test for the core URDF/MJCF JSON -> USD converter
-// (src/tydra/next/urdf-to-usd.cc). The payload exercises every builder
+// (src/tydra/urdf-to-usd.cc). The payload exercises every builder
 // ported from the legacy converter (links/inertia, meshes, native collision
 // shapes, joints + limits/frames/mimic, physics scene options, Newton
 // actuators, sites, tendons, equalities, MjcActuators, keyframes, sensors,
@@ -250,7 +250,7 @@ void TestScopesAndScene() {
   assert(TypeName(scene, "physics:gravityDirection") == "vector3f");
   assert(Uniform(scene, "physics:gravityDirection"));
   assert(Near(D(scene, "mjc:option:timestep"), 0.004));
-  assert(Near(D(scene, "mjc:timestep"), 0.004));  // next-only flat name
+  assert(Near(D(scene, "mjc:timestep"), 0.004));  // core flat name
   assert(Near(D(scene, "mjc:option:impratio"), 10));
   assert(*Val(scene, "mjc:option:iterations").as_int() == 50);
   assert(Tok(scene, "mjc:option:integrator") == "implicitfast");
@@ -323,8 +323,8 @@ void TestLinks() {
   assert(*Val(box, "mjc:condim").as_int() == 1);
   assert(*Val(box, "mjc:geomContype").as_int() == 2);
   assert(*Val(box, "mjc:geomConaffinity").as_int() == 4);
-  assert(*Val(box, "mjc:contype").as_int() == 2);       // next-only
-  assert(*Val(box, "mjc:conaffinity").as_int() == 4);   // next-only
+  assert(*Val(box, "mjc:contype").as_int() == 2);       // core
+  assert(*Val(box, "mjc:conaffinity").as_int() == 4);   // core
   assert(Near(D(box, "mjc:margin"), 0.01));
   assert(Near(D(box, "newton:contactMargin"), 0.01));
   assert(Doubles(box, "mjc:geomFriction") ==

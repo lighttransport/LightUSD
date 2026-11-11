@@ -1,4 +1,10 @@
-project('fuzz_lightusd', 'c', 'cpp', default_options : ['cpp_std=c++17'])
+project('fuzz_lightusd_legacy', 'c', 'cpp', default_options : ['cpp_std=c++17'])
+
+# The maintained core fuzzers are configured with CMake's
+# LIGHTUSD_BUILD_FUZZERS option. This older harness is explicitly opt-in.
+if not get_option('legacy')
+  error('Legacy harness disabled; use CMake -DLIGHTUSD_BUILD_FUZZERS=ON for core fuzzers, or explicitly set -Dlegacy=true')
+endif
 
 lightusd_sources=[
   '../../src/legacy/asset-resolution.cc',

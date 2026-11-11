@@ -6,7 +6,7 @@
     "BasicInherits_root": {
       "text": "usda/root.usd",
       "sha256": "9df617a492b166de0eaf7ee71eb7857e6dad7b52778568b9083a289dd327567b",
-      "nextDiagnostic": "cannot contain variant selections",
+      "coreDiagnostic": "cannot contain variant selections",
       "stockDiagnostic": "Inherit paths cannot contain variant selections",
       "binaryRootPresent": false,
       "binaryDependencies": {
@@ -18,7 +18,7 @@
     "ErrorRelocateWithVariantSelection_root": {
       "text": "usda/root.usd",
       "sha256": "626aa30174e394531f168f6f57089e29cc73d567c81fd0d11443754f8a1cd095",
-      "nextDiagnostic": "cannot contain variant selections",
+      "coreDiagnostic": "cannot contain variant selections",
       "stockDiagnostic": "is not a valid relocates source path",
       "binaryRootPresent": false,
       "binaryDependencies": {
@@ -28,7 +28,7 @@
     "SubrootReferenceAndVariants_root": {
       "text": "usda/root.usd",
       "sha256": "c7caf49b7ac36369664335d601d60737cade9c09fbff3f9e23e1a8ea78be7fe3",
-      "nextDiagnostic": "cannot contain variant selections",
+      "coreDiagnostic": "cannot contain variant selections",
       "stockDiagnostic": "Reference paths cannot contain variant selections",
       "binaryRootPresent": false,
       "binaryDependencies": {

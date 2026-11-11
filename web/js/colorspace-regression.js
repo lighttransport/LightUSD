@@ -58,7 +58,7 @@ const expected = kit.samples.map((sample) => sample.expectedLinear);
 const tolerance = floatSupported ? 0.006 : 2.5 / 255;
 const comparison = comparePixelSamples(actual, expected, tolerance);
 
-// Render a real 8-bit texture through the same shader hook used by the next
+// Render a real 8-bit texture through the same shader hook used by the core
 // USD loader. This validates texture fetch -> AP0/AP1 gamut conversion ->
 // float pixel readback without requiring a wide-gamut monitor.
 function renderWideGamutTexture(sourceColorSpace, bytes, resolved = null) {
@@ -194,9 +194,9 @@ def Xform "World" {
 
 async function createBackendThreeMaterials() {
   const bytes = new TextEncoder().encode(BACKEND_MTLX_USDA);
-  const next = await loadWasm(() => import(/* @vite-ignore */
+  const core = await loadWasm(() => import(/* @vite-ignore */
     new URL('./src/lightusd/lightusd.js', import.meta.url).href));
-  const adapter = await RenderSceneAdapter.create(next, bytes, 'colorspace-browser.usda');
+  const adapter = await RenderSceneAdapter.create(core, bytes, 'colorspace-browser.usda');
   let adapterMaterial;
   try {
     const {node} = buildThreeNode(adapter, {skipTextures:true});
@@ -212,14 +212,14 @@ async function createBackendThreeMaterials() {
     if (!adapterMaterial) throw new Error('Core adapter produced no material');
   } finally {adapter.delete();}
 
-  const stream = new next.RenderStream();
-  let nextMaterial;
+  const stream = new core.RenderStream();
+  let coreMaterial;
   try {
     const begun = stream.begin(bytes);
     if (!begun?.success) throw new Error(begun?.error || stream.error());
     const mesh = stream.getMesh(0);
     if (mesh.error) throw new Error(mesh.error);
-    nextMaterial = createMaterial({
+    coreMaterial = createMaterial({
       material: mesh.material,
       texturePaths: {}
     }, {}, null, true);
@@ -227,7 +227,7 @@ async function createBackendThreeMaterials() {
     stream.end();
     stream.delete();
   }
-  return { adapter: adapterMaterial, stream: nextMaterial };
+  return { adapter: adapterMaterial, stream: coreMaterial };
 }
 
 function renderBackendMaterialPixels(materials) {

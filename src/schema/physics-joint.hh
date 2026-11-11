@@ -105,7 +105,7 @@ bool GetPhysicsRevoluteJointData(const Stage& stage, const UsdPrim& prim,
 struct PhysicsSphericalJointData : public PhysicsJointData {
   float coneAngle0Limit = -1.0f;
   float coneAngle1Limit = -1.0f;
-  // Backward-compatible aliases for older next consumers.
+  // Backward-compatible aliases for older core consumers.
   float coneAngleLimit = -1.0f;
   float coneAngleLimitY = -1.0f;
   float coneAngleLimitZ = -1.0f;

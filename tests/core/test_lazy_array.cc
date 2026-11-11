@@ -948,7 +948,7 @@ int main() {
 
   // ---- 8.3: mmap-backed CrateDataSource ------------------------------------
   {
-    const char* path = "/tmp/next_lazy_mmap.usdc";
+    const char* path = "/tmp/core_lazy_mmap.usdc";
     {
       std::ofstream f(path, std::ios::binary);
       f.write(reinterpret_cast<const char*>(buf.data()),

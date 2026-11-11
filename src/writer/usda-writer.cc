@@ -94,7 +94,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
   const PrintOptions po = MakeArrayPrintOpts(opts);
-  CratePhaseTimer timer(opts.enable_timing, "next_usda_write");
+  CratePhaseTimer timer(opts.enable_timing, "core_usda_write");
   using Clock = std::chrono::steady_clock;
   const auto now = [&]() {
     return opts.enable_timing ? Clock::now() : Clock::time_point{};
@@ -449,7 +449,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   for (auto& th : pool) th.join();
   timer.lap("pipeline");
   if (opts.enable_timing) {
-    LIGHTUSD_LOG_I("[next_usda_write] build_work=" << build_work_ms
+    LIGHTUSD_LOG_I("[core_usda_write] build_work=" << build_work_ms
                    << "ms format_work=" << format_work_ms
                    << "ms writer_wait=" << writer_wait_ms
                    << "ms direct=" << direct_ms << "ms ranges=" << R

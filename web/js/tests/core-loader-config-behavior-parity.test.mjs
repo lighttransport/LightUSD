@@ -25,7 +25,7 @@ const {default: createCore} = await import(new URL(
   import.meta.url));
 const coreModule = await createCore();
 const matrix = JSON.parse(fs.readFileSync(new URL('./core-wasm-parity-gaps.json', import.meta.url)));
-const nextName = new Map(matrix.map(row => [row.legacyMethod, row.coreEquivalent || row.legacyMethod]));
+const coreName = new Map(matrix.map(row => [row.legacyMethod, row.coreEquivalent || row.legacyMethod]));
 const encode = text => new TextEncoder().encode(text);
 
 const exercised = new Map();  // legacy method -> 'match' | 'delta'
@@ -39,7 +39,7 @@ const outcome = fn => {
   } catch (error) { return {throws: error.constructor.name}; }
 };
 const call = (target, method, args, legacy) =>
-  outcome(() => target[legacy ? method : nextName.get(method)](...args));
+  outcome(() => target[legacy ? method : coreName.get(method)](...args));
 
 // ------------------------------------------------------------ settings
 const settings = [
@@ -128,32 +128,32 @@ for (const [setter, getter, values, loose] of settings) {
     }
     // debugLogMemory: same record shape; heap sizes are product-specific.
     const legacyLog = loader.debugLogMemory('probe');
-    const nextLog = stream.debugLogMemory('probe');
-    assert.deepEqual(Object.keys(nextLog).sort(), Object.keys(legacyLog).sort());
-    assert.equal(nextLog.label, legacyLog.label);
-    assert.ok(nextLog.heapBytes > 0 && legacyLog.heapBytes > 0);
+    const coreLog = stream.debugLogMemory('probe');
+    assert.deepEqual(Object.keys(coreLog).sort(), Object.keys(legacyLog).sort());
+    assert.equal(coreLog.label, legacyLog.label);
+    assert.ok(coreLog.heapBytes > 0 && legacyLog.heapBytes > 0);
     note('debugLogMemory', 'match');
   } finally { loader.delete(); stream.delete(); }
 }
 
 // ------------------------------------------------------------- effects
-function loadBoth(source, configure, {legacyAssets = {}, nextStore} = {}) {
+function loadBoth(source, configure, {legacyAssets = {}, coreStore} = {}) {
   const loader = new legacyModule.LightUSDLoaderNative();
   const stream = new coreModule.RenderStream();
   configure(loader, true);
   configure(stream, false);
   for (const [name, bytes] of Object.entries(legacyAssets)) {
     loader.setAsset(name, bytes);
-    if (!nextStore) stream.provideAsset(name, bytes);
+    if (!coreStore) stream.provideAsset(name, bytes);
   }
-  if (nextStore) stream.setAssetStore(nextStore);
+  if (coreStore) stream.setAssetStore(coreStore);
   assert.equal(loader.loadFromBinary(encode(source), 'scene.usda'), true, loader.error());
   const loaded = stream.begin(encode(source), 'scene.usda');
   assert.equal(loaded.success, true, loaded.error || stream.error());
   return {loader, stream, done() { loader.delete(); stream.delete(); }};
 }
 const set = (target, legacy, method, value) =>
-  target[legacy ? method : nextName.get(method)](value);
+  target[legacy ? method : coreName.get(method)](value);
 const triangles = (target, legacy, id) => legacy
   ? target.getMesh(id).faceVertexIndices.length / 3
   : (target.getMeshCopy(id).indices?.length ?? target.getMeshCopy(id).points.length / 3) / 3;
@@ -200,12 +200,12 @@ for (const [reduce, target, round] of [[false, 4, false], [true, 4, false], [tru
   });
   try {
     const legacyMesh = scene.loader.getMesh(0);
-    const nextMesh = scene.stream.getMeshCopy(0);
-    assert.equal(nextMesh.elementSize, legacyMesh.elementSize,
+    const coreMesh = scene.stream.getMeshCopy(0);
+    assert.equal(coreMesh.elementSize, legacyMesh.elementSize,
       `influence width reduce=${reduce} target=${target} round=${round}`);
     const round3 = values => Array.from(values, v => Math.round(v * 1e5) / 1e5);
-    assert.deepEqual(round3(nextMesh.jointWeights), round3(legacyMesh.jointWeights));
-    assert.deepEqual(Array.from(nextMesh.jointIndices), Array.from(legacyMesh.jointIndices));
+    assert.deepEqual(round3(coreMesh.jointWeights), round3(legacyMesh.jointWeights));
+    assert.deepEqual(Array.from(coreMesh.jointIndices), Array.from(legacyMesh.jointIndices));
   } finally { scene.done(); }
 }
 for (const method of ['setEnableBoneReduction', 'setTargetBoneCount', 'setRoundBoneCount'])
@@ -407,7 +407,7 @@ for (const flatten of [false, true]) {
 note('setNativeFlattenRenderTree', 'match');
 
 // Native texture decoding: legacy reads setAsset bytes, core an attached
-// AssetStore. Next expands RGB to RGBA and reports unknown sizes as 0.
+// AssetStore. Core expands RGB to RGBA and reports unknown sizes as 0.
 function onePixelPNG() {
   const table = Array.from({length: 256}, (_, n) => {
     let c = n;
@@ -453,27 +453,27 @@ for (const native of [false, true]) {
   store.setAsset('red.png', onePixelPNG());
   const scene = loadBoth(textureSource,
     (object, legacy) => set(object, legacy, 'setLoadTextureInNative', native),
-    {legacyAssets: {'red.png': onePixelPNG()}, nextStore: store});
+    {legacyAssets: {'red.png': onePixelPNG()}, coreStore: store});
   try {
     const legacyImage = scene.loader.getImage(0);
-    const nextImage = scene.stream.getImageCopy(0);
-    assert.equal(nextImage.decoded, legacyImage.decoded);
-    assert.equal(nextImage.uri, legacyImage.uri);
+    const coreImage = scene.stream.getImageCopy(0);
+    assert.equal(coreImage.decoded, legacyImage.decoded);
+    assert.equal(coreImage.uri, legacyImage.uri);
     if (native) {
-      assert.deepEqual([nextImage.width, nextImage.height], [legacyImage.width, legacyImage.height]);
-      assert.deepEqual([legacyImage.channels, nextImage.channels], [3, 4]);
+      assert.deepEqual([coreImage.width, coreImage.height], [legacyImage.width, legacyImage.height]);
+      assert.deepEqual([legacyImage.channels, coreImage.channels], [3, 4]);
     } else {
-      assert.deepEqual([legacyImage.width, nextImage.width], [-1, 0]);
+      assert.deepEqual([legacyImage.width, coreImage.width], [-1, 0]);
     }
 
     // Memory statistics: resource counts match; node, buffer and cache-byte
     // fields report each product's own accounting.
     const legacyStats = scene.loader.getMemoryStats();
-    const nextStats = scene.stream.getMemoryStats();
-    assert.deepEqual(Object.keys(nextStats).sort(), Object.keys(legacyStats).sort());
+    const coreStats = scene.stream.getMemoryStats();
+    assert.deepEqual(Object.keys(coreStats).sort(), Object.keys(legacyStats).sort());
     for (const key of ['numMeshes', 'numMaterials', 'numTextures', 'numImages', 'numLights',
       'assetCacheCount'])
-      assert.equal(nextStats[key], legacyStats[key], `getMemoryStats().${key}`);
+      assert.equal(coreStats[key], legacyStats[key], `getMemoryStats().${key}`);
   } finally { scene.done(); store.delete(); }
 }
 exercised.set('setLoadTextureInNative', 'delta');
@@ -482,12 +482,12 @@ exercised.set('getMemoryStats', 'delta');
 // Composition: legacy stores the flag but never composes on load; core does.
 {
   const source = `#usda 1.0\ndef Xform "Proto" {\n ${quad('Q')}\n}\ndef Xform "Inst" (\n references = </Proto>\n) {\n}\n`;
-  for (const [enabled, legacyMeshes, nextMeshes] of [[true, 1, 2], [false, 1, 1]]) {
+  for (const [enabled, legacyMeshes, coreMeshes] of [[true, 1, 2], [false, 1, 1]]) {
     const scene = loadBoth(source,
       (object, legacy) => set(object, legacy, 'setEnableComposition', enabled));
     try {
       assert.equal(scene.loader.numMeshes(), legacyMeshes);
-      assert.equal(scene.stream.numMeshes(), nextMeshes);
+      assert.equal(scene.stream.numMeshes(), coreMeshes);
     } finally { scene.done(); }
   }
 }

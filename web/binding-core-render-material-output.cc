@@ -43,8 +43,8 @@ static matser::RenderMaterial ToSerialMaterial(
   if (src.preview_surface) {
     matser::PreviewSurfaceShader shader;
     shader.useSpecularWorkflow = src.preview_surface->use_specular_workflow;
-#define COPY_PREVIEW_PARAM(field, next_field) \
-    CopyMaterialParam(shader.field, src.preview_surface->next_field)
+#define COPY_PREVIEW_PARAM(field, core_field) \
+    CopyMaterialParam(shader.field, src.preview_surface->core_field)
     COPY_PREVIEW_PARAM(diffuseColor, diffuse_color);
     COPY_PREVIEW_PARAM(emissiveColor, emissive_color);
     COPY_PREVIEW_PARAM(specularColor, specular_color);

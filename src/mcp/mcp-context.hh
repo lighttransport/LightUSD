@@ -3,7 +3,7 @@
 //
 // Per-session state of the next MCP server. Stages and loaded layers are
 // public C API stage handles (each owned exclusively by the session); diff
-// sessions keep next layers directly.
+// sessions keep core layers directly.
 #pragma once
 
 #include <array>

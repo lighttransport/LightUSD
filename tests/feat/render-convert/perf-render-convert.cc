@@ -47,8 +47,7 @@
 #endif
 
 #if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_CORE
-// The next pipeline headers live under src/next; consumers add src/ and
-// src/next to their include path.
+// The core pipeline headers use the src/ include directory.
 #include "lightusd-core.hh"
 #include "tydra/render-converter.hh"
 #endif
@@ -60,7 +59,7 @@ namespace {
 struct Options {
   int prims = 256;    // synthetic meshes when generating
   int iters = 3;
-  int threads = 0;    // next-converter workers (0 = auto)
+  int threads = 0;    // core-converter workers (0 = auto)
   int legacy_threads = -2;  // legacy converter num_threads (-2 = default)
   bool json = false;
   bool legacy_only = false;
@@ -414,7 +413,7 @@ BenchResult Bench(const std::string &path, int iters, int num_threads) {
 
 #if PERFRC_HAS_CORE
 
-// ---------------------------- next pipeline -----------------------------
+// ---------------------------- core pipeline -----------------------------
 
 namespace core_bench {
 
@@ -468,7 +467,7 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
 
   lightusd::StageSession session;
   if (!session.OpenFile(path)) {
-    res.err = "next StageSession open failed: " + session.GetError();
+    res.err = "core StageSession open failed: " + session.GetError();
     return res;
   }
   const lightusd::StageSnapshot stage_snapshot = session.GetSnapshot();
@@ -488,7 +487,7 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
     lightusd::tydra::ConvertResult result = conv.Convert(stage);
     const auto t1 = std::chrono::steady_clock::now();
     if (!result.success) {
-      res.err = "next Convert failed: " + result.error;
+      res.err = "core Convert failed: " + result.error;
       return res;
     }
     times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
@@ -551,7 +550,7 @@ int main(int argc, char **argv) {
 
   if (opts.core_only && !have_core) {
     std::fprintf(stderr,
-                 "next converter not compiled in (build with "
+                 "core converter not compiled in (build with "
                  "PERFRC_ENABLE_CORE)\n");
     return 1;
   }
@@ -589,16 +588,16 @@ int main(int argc, char **argv) {
   if (want_core) {
     BenchResult r = core_bench::Bench(scene_path, opts.iters, opts.threads);
     if (!r.ok) {
-      std::fprintf(stderr, "next: %s\n", r.err.c_str());
+      std::fprintf(stderr, "core: %s\n", r.err.c_str());
       all_ok = false;
     } else if (opts.json) {
       std::printf(
-          "{\"pipeline\":\"next\",\"ms\":%.3f,\"threads\":%d,\"meshes\":%zu,"
+          "{\"pipeline\":\"core\",\"ms\":%.3f,\"threads\":%d,\"meshes\":%zu,"
           "\"faces\":%zu,\"tris\":%zu,\"hash\":%016llx}\n",
           r.ms, opts.threads, r.meshes, r.faces, r.tris,
           static_cast<unsigned long long>(r.hash));
     } else {
-      std::printf("[next]   median %.3f ms (threads=%d) | meshes %zu "
+      std::printf("[core]   median %.3f ms (threads=%d) | meshes %zu "
                   "faces %zu tris %zu | hash %016llx\n",
                   r.ms, opts.threads, r.meshes, r.faces, r.tris,
                   static_cast<unsigned long long>(r.hash));

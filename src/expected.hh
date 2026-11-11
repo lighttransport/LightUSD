@@ -3,7 +3,7 @@
 //
 // LightUSD - minimal expected<T, E>.
 //
-// The next product needs only a narrow slice of std::expected: construct from a
+// The core product needs only a narrow slice of std::expected: construct from a
 // value or from make_unexpected(e), test with operator bool, dereference with
 // operator*, and read value()/error(). The vendored nonstd/expected.hpp is
 // 3,494 lines and is pulled into 14 translation units through the pcp/validation

@@ -572,3 +572,6 @@ MUJOCO_LOG.TXT
 
 # Local regression/comparison logs; may contain machine-specific paths.
 /reglogs/
+
+# Meson subproject lock generated during configuration
+/subprojects/.wraplock

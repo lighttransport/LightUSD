@@ -5,7 +5,7 @@
 //
 // Native pcp-style composition for the `next` module. Mirrors the DESIGN of the
 // main library's composition-graph.hh / src/pcp (PrimIndex DAG, LIVRPS strength
-// ordering) but is fully standalone (only next/ + STL). C++14.
+// ordering) but is fully standalone (only core headers + STL). C++14.
 
 #pragma once
 

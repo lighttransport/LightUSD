@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// path-expression-eval.hh (next-local)
+// path-expression-eval.hh (core-local)
 //
 // Self-contained matcher for SdfPathExpression, backed by the C11 core
 // (src/c/path-expr.c). Predicate evaluation and expression-reference
@@ -18,7 +18,7 @@
 
 namespace lightusd {
 // See path-expression.hh for the inline namespace.
-inline namespace next_path_expr {
+inline namespace path_expr {
 
 // Caller-provided hooks. Both are optional; when unset the matcher evaluates
 // structurally (predicates pass, references match nothing).
@@ -90,5 +90,5 @@ inline bool MatchPath(const ParsedPathExpression &expr, const std::string &path,
                                  const_cast<void *>(static_cast<const void *>(&ctx))) == 1;
 }
 
-} // inline namespace next_path_expr
+} // inline namespace path_expr
 } // namespace lightusd

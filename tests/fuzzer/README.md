@@ -23,10 +23,15 @@ $ sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-8 10
 $ sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-8 10
 ```
 
-## How to compile
+## Legacy harnesses (compile-only)
+
+These standalone Meson harnesses require explicit legacy opt-in. For current
+core fuzzing, use the CMake harnesses described below.
+
+### How to compile
 
 ```
-$ CXX=clang++ CC=clang meson build -Db_sanitize=address
+$ CXX=clang++ CC=clang meson setup build -Dlegacy=true -Db_sanitize=address
 $ cd build
 $ ninja
 ```

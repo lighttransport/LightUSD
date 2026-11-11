@@ -88,6 +88,6 @@ int main() {
     assert(lr.rules().size() == 1);
   }
 
-  std::cout << "All next/pcp LoadRules tests passed." << std::endl;
+  std::cout << "All pcp LoadRules tests passed." << std::endl;
   return 0;
 }

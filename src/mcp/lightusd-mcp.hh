@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2025-Present Light Transport Entertainment, Inc.
 //
-// LightUSD MCP server (next product). Hosts per-session contexts and exposes
+// LightUSD MCP server (core product). Hosts per-session contexts and exposes
 // the MCP tools/resources surface two ways:
 //  - the session string API used by embedders (same contract as the legacy
 //    LightUSDLoaderNative mcp* methods), and

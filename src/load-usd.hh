@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Focused high-level USD load and write API for the next product.
+// Focused high-level USD load and write API for the core product.
 #pragma once
 
 #include <string>

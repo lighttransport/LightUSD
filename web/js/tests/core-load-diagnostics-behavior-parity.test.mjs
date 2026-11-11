@@ -116,7 +116,7 @@ try {
   note('reset', 'match');
 } finally { loader.delete(); stream.delete(); }
 
-// Next-only: the progress callback observes the parse and can cancel it.
+// Core: the progress callback observes the parse and can cancel it.
 // Legacy loads synchronously without a JS callback, so it has no equivalent.
 {
   const cancelling = new coreModule.RenderStream();

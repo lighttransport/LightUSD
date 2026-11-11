@@ -7,7 +7,7 @@ card with 13 GiB free -- so the viewer skips it when the scene comfortably fits.
 That decision had NO test at all: a regression that flipped it either way showed
 up only as a slow (or needlessly degraded) large-scene run, never as a failure.
 
-This asserts the decision itself, read back from the `next: texture-fit=` line,
+This asserts the decision itself, read back from the `core: texture-fit=` line,
 using --vram-budget to rehearse different card sizes on a tiny scene:
 
   1. `never`  -> always skips, even on a 1 GiB card;
@@ -91,7 +91,7 @@ def main():
         return SKIP
     base = decision(probe)
     if not base:
-        print("FAIL: no 'next: texture-fit=' line. The decision must be logged "
+        print("FAIL: no 'core: texture-fit=' line. The decision must be logged "
               "unconditionally, otherwise it cannot be diagnosed from a log.\n"
               + probe[-1200:])
         return 1

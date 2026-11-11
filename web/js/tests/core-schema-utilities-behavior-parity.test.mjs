@@ -91,21 +91,21 @@ function layer(usda) {
     assert.deepEqual([a, b], [{value: false}, {throws: 'TypeError'}]);
     exercised.set('setVisualMesh', 'delta');
     const legacyPositions = positions();
-    const nextPositions = positions();
+    const corePositions = positions();
     assert.equal(loader.setVisualMesh('tri', legacyPositions, normals, uv, indices), true);
-    assert.equal(converter.setVisualMesh('tri', nextPositions, normals, uv, indices), true);
+    assert.equal(converter.setVisualMesh('tri', corePositions, normals, uv, indices), true);
     [a, b] = both(target => target.setCollisionMesh('collider', positions(), undefined, null,
       new Uint32Array(indices)));
     assert.deepEqual(b, a);
     note('setCollisionMesh', 'match');
     // Buffers are copied at upload time.
-    legacyPositions.fill(9); nextPositions.fill(9);
+    legacyPositions.fill(9); corePositions.fill(9);
 
     [a, b] = both(target => target.createURDFPhysicsScene(robot));
     assert.deepEqual([a, b], [{value: true}, {value: true}]);
     const legacyRobot = layer(loader.exportAsUSDA());
     const coreRobot = layer(converter.exportAsUSDA());
-    // Next authors every legacy engine attribute (Newton scene settings,
+    // Core authors every legacy engine attribute (Newton scene settings,
     // MuJoCo/Newton contact and mesh-collision attributes) with the same
     // values, plus mjc:timestep and mjc:contype/conaffinity.
     const engineOnly = {
@@ -129,10 +129,10 @@ function layer(usda) {
     // fallbacks instead of legacy's flags and matrices);
     // both describe the same prims in the same order.
     const legacyPhysics = JSON.parse(loader.extractPhysicsSceneJSON());
-    const nextPhysics = JSON.parse(converter.extractPhysicsSceneJSON());
-    assert.deepEqual(nextPhysics.prims.map(prim => prim.path), legacyPhysics.prims.map(prim => prim.path));
-    assert.deepEqual(nextPhysics.prims.map(prim => prim.type), legacyPhysics.prims.map(prim => prim.type));
-    assert.notDeepEqual(Object.keys(nextPhysics.prims[0]).sort(), Object.keys(legacyPhysics.prims[0]).sort());
+    const corePhysics = JSON.parse(converter.extractPhysicsSceneJSON());
+    assert.deepEqual(corePhysics.prims.map(prim => prim.path), legacyPhysics.prims.map(prim => prim.path));
+    assert.deepEqual(corePhysics.prims.map(prim => prim.type), legacyPhysics.prims.map(prim => prim.type));
+    assert.notDeepEqual(Object.keys(corePhysics.prims[0]).sort(), Object.keys(legacyPhysics.prims[0]).sort());
     exercised.set('extractPhysicsSceneJSON', 'delta');
 
     [a, b] = both(target => target.clearURDFMeshBuffers());
@@ -193,21 +193,21 @@ def Mesh "Q" (prepend apiSchemas = ["MaterialBindingAPI"]) {
     for (const [format, extension] of [['png', 'png'], ['bmp', 'bmp'], ['tiff', 'tiff'], ['exr', 'exr']]) {
       for (const [channels, pixels] of [[4, rgba], [3, rgb]]) {
         const legacyBytes = loader.encodeImageNative(pixels, 2, 2, channels, format);
-        const nextBytes = stream.encodeImageNative(pixels, 2, 2, channels, format);
-        assert.ok(legacyBytes instanceof Uint8Array && nextBytes instanceof Uint8Array, format);
+        const coreBytes = stream.encodeImageNative(pixels, 2, 2, channels, format);
+        assert.ok(legacyBytes instanceof Uint8Array && coreBytes instanceof Uint8Array, format);
         if (format === 'tiff') {
           // Baseline uncompressed TIFF (not a texture format the decoder
           // reads): both files must carry the raw pixel strip.
           const holds = bytes => Buffer.from(bytes).indexOf(Buffer.from(pixels)) >= 0;
-          assert.ok(holds(legacyBytes) && holds(nextBytes), `${format}/${channels}: pixel strip`);
+          assert.ok(holds(legacyBytes) && holds(coreBytes), `${format}/${channels}: pixel strip`);
           continue;
         }
         if (format === 'exr') {
           // Both products use the same TinyEXR writer.
-          assert.deepEqual(nextBytes, legacyBytes, `${format}/${channels}: identical EXR`);
+          assert.deepEqual(coreBytes, legacyBytes, `${format}/${channels}: identical EXR`);
           continue;
         }
-        assert.deepEqual(decodePixels(nextBytes, extension), decodePixels(legacyBytes, extension),
+        assert.deepEqual(decodePixels(coreBytes, extension), decodePixels(legacyBytes, extension),
           `${format}/${channels}: decoded pixels`);
       }
     }
@@ -230,23 +230,23 @@ def Mesh "Q" (prepend apiSchemas = ["MaterialBindingAPI"]) {
     const byName = (target, mesh) => new Map(Array.from({length: target.numMeshes()},
       (_, i) => [mesh(target, i).primName, i]));
     const legacyMeshes = byName(loader, (target, i) => target.getMesh(i));
-    const nextMeshes = byName(stream, (target, i) => target.getMeshCopy(i));
-    assert.deepEqual([...nextMeshes.keys()].sort(), [...legacyMeshes.keys()].sort());
+    const coreMeshes = byName(stream, (target, i) => target.getMeshCopy(i));
+    assert.deepEqual([...coreMeshes.keys()].sort(), [...legacyMeshes.keys()].sort());
     const norm = texture => JSON.parse(JSON.stringify(texture,
       (key, value) => ArrayBuffer.isView(value) ? Array.from(value) : value));
     let skinned = 0;
     for (const [name, legacyId] of legacyMeshes) {
       for (const influences of [0, 2]) {
         const legacyTexture = norm(loader.generateBoneTexture(legacyId, influences));
-        const nextTexture = norm(stream.generateBoneTexture(nextMeshes.get(name), influences));
+        const coreTexture = norm(stream.generateBoneTexture(coreMeshes.get(name), influences));
         if (name === 'Body') {
           // Body binds a skeleton without applying SkelBindingAPI: legacy
           // does not skin it, core skins it leniently.
           assert.deepEqual(legacyTexture, {error: 'Mesh has no skinning data'});
-          assert.ok(nextTexture.textureData?.length > 0 && nextTexture.vertexCount === 12);
+          assert.ok(coreTexture.textureData?.length > 0 && coreTexture.vertexCount === 12);
           continue;
         }
-        assert.deepEqual(nextTexture, legacyTexture, `${name} bone texture (${influences})`);
+        assert.deepEqual(coreTexture, legacyTexture, `${name} bone texture (${influences})`);
         if (!legacyTexture.error) ++skinned;
       }
     }

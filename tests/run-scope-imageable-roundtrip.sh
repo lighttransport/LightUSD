@@ -18,9 +18,9 @@ SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LUSDCAT="${1:-${LUSDCAT:-$REPO_ROOT/build/lusdcat}}"
-# next lusdcat needs --rewrite-layer for a compose-free layer round-trip
+# Core lusdcat needs --rewrite-layer for a compose-free layer round-trip
 # (USDC output is otherwise rejected); legacy lusdcat writes the layer as-is.
-# Detect next by its "loaded: N prims" summary. Override via LUSDCAT_LAYER_ARGS.
+# Detect core by its "loaded: N prims" summary. Override via LUSDCAT_LAYER_ARGS.
 if [ -z "${LUSDCAT_LAYER_ARGS+x}" ]; then
   LUSDCAT_LAYER_ARGS=""
   _probe=$(mktemp --suffix=.usda); printf '#usda 1.0\n' > "$_probe"
@@ -428,7 +428,7 @@ for expect in \
   grep -qF "$expect" "$TMP/relationships-rt.usda" || lost="$lost
     $expect"
 done
-# custom + list-op: legacy spells `append custom varying rel r = <..>`, next
+# custom + list-op: legacy spells `append custom varying rel r = <..>`, core
 # and pxr spell a `custom varying rel r` declaration + `append varying rel r`.
 grep -qF 'append custom varying rel myrel2 = </W>' "$TMP/relationships-rt.usda" ||
   { grep -qF 'custom varying rel myrel2' "$TMP/relationships-rt.usda" &&
@@ -1373,7 +1373,7 @@ fi
 "$LUSDCAT" $LUSDCAT_LAYER_ARGS "$TMP/empty.usdc" > "$TMP/empty-rt.usda" 2>/dev/null
 bad=""
 # Each entry is "legacy spelling|pxr spelling". Legacy keeps target-less
-# list-edit qualifiers and `custom` inline on `.timeSamples`; pxr (and next
+# list-edit qualifiers and `custom` inline on `.timeSamples`; pxr (and core
 # lusdcat, which matches it byte-for-byte) drops the target-less qualifier to a
 # bare declaration and writes `custom float plain` as its own line.
 for expect in \

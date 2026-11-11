@@ -463,7 +463,7 @@ bool LargeSceneLoader::Load(const std::string &filename,
   rconf.allow_absolute_paths = true;
   _resolver->SetConfig(rconf);
 
-  // 2. Load the root layer using the next module's layer loader, which
+  // 2. Load the root layer using the core module's layer loader, which
   //    dispatches by extension to the next USDA/USDC readers and returns
   //    a shared_ptr<::lightusd::Layer> (the type that Cache::Open expects).
   std::string resolved_path = _resolver->ResolvePath(filename);

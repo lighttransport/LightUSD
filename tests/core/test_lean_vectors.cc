@@ -6,7 +6,7 @@
 // The expected values in tests/core/generated/lean/*.inc are computed by the
 // Lean 4 formalization of the AOUSD USD Core Specification v1.1.0 under
 // the usdspec-conformance repo (lake exe usdspec-gen in verif/lean). Each section below replays one vector
-// table against the corresponding src/next implementation. The tables are
+// table against the corresponding src implementation. The tables are
 // COMMITTED; this binary is self-contained and never skips.
 //
 // Usage: test_lean_vectors [--combine-chain <corpus data_types/tests/combine_chain dir>]

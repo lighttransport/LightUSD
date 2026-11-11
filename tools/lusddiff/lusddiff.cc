@@ -1068,7 +1068,7 @@ void print_usage() {
   std::cout << "  -r, --recursive  Compare USDZ entries recursively; directories recurse automatically.\n";
   std::cout << "  -f, --flatten\n";
   std::cout << "              Compose both inputs before comparing them. Uses the\n";
-  std::cout << "              dependency-free next PCP path and loads payloads.\n";
+  std::cout << "              dependency-free core PCP path and loads payloads.\n";
   std::cout << "  -n, --noeffect\n";
   std::cout << "              Accepted for OpenUSD usddiff compatibility. lusddiff\n";
   std::cout << "              never edits its inputs, so this is always the default.\n";
@@ -1261,49 +1261,49 @@ int main(int argc, char **argv) {
   if (flatten) {
     lightusd::Stage stage1;
     lightusd::Stage stage2;
-    std::string next_warn;
-    std::string next_err;
-    if (!lightusd::LoadUSDComposed(file1, &stage1, &next_warn,
-                                         &next_err)) {
-      std::cerr << "Error loading/composing " << file1 << ": " << next_err
+    std::string core_warn;
+    std::string core_err;
+    if (!lightusd::LoadUSDComposed(file1, &stage1, &core_warn,
+                                         &core_err)) {
+      std::cerr << "Error loading/composing " << file1 << ": " << core_err
                 << std::endl;
       return 2;
     }
-    if (!next_warn.empty()) {
-      std::cerr << "Warning loading/composing " << file1 << ": " << next_warn
+    if (!core_warn.empty()) {
+      std::cerr << "Warning loading/composing " << file1 << ": " << core_warn
                 << std::endl;
     }
-    next_warn.clear();
-    next_err.clear();
-    if (!lightusd::LoadUSDComposed(file2, &stage2, &next_warn,
-                                         &next_err)) {
-      std::cerr << "Error loading/composing " << file2 << ": " << next_err
+    core_warn.clear();
+    core_err.clear();
+    if (!lightusd::LoadUSDComposed(file2, &stage2, &core_warn,
+                                         &core_err)) {
+      std::cerr << "Error loading/composing " << file2 << ": " << core_err
                 << std::endl;
       return 2;
     }
-    if (!next_warn.empty()) {
-      std::cerr << "Warning loading/composing " << file2 << ": " << next_warn
+    if (!core_warn.empty()) {
+      std::cerr << "Warning loading/composing " << file2 << ": " << core_warn
                 << std::endl;
     }
 
     lightusd::Layer layer1 = stage1.Flatten();
     lightusd::Layer layer2 = stage2.Flatten();
-    const lightusd::DiffOptions& next_opts = diff_opts;
+    const lightusd::DiffOptions& core_opts = diff_opts;
 
     std::unordered_map<std::string, lightusd::PrimSpecDiff> ps_diffs;
     std::unordered_map<std::string, lightusd::PropDiff> prop_diffs;
     lightusd::LayerMetaDiff meta_diff;
-    lightusd::Diff(layer1, layer2, ps_diffs, prop_diffs, next_opts,
+    lightusd::Diff(layer1, layer2, ps_diffs, prop_diffs, core_opts,
                          &meta_diff);
     const bool has_diffs =
         !ps_diffs.empty() || !prop_diffs.empty() || meta_diff.changed();
     if (!quiet) {
       if (json_output) {
         std::cout << lightusd::DiffToJSON(layer1, layer2, file1, file2,
-                                                next_opts);
+                                                core_opts);
       } else if (has_diffs) {
         std::cout << lightusd::DiffToText(layer1, layer2, file1, file2,
-                                                next_opts);
+                                                core_opts);
       } else {
         std::cout << "No differences found." << std::endl;
       }

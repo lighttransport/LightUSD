@@ -115,7 +115,7 @@ void EmitCoreGraphValue(std::ostream& os, const Value& value) {
 }
 
 // Preserve the programmable MaterialX graph in the same compact JSON schema
-// consumed by the shared lusdview graph compiler. The next converter already
+// consumed by the shared lusdview graph compiler. The core converter already
 // resolves simple constants and images; this record retains the full utility
 // node topology for descriptor-backed renderers instead of silently baking it.
 std::string BuildCoreMaterialXGraphJson(const Stage& stage,
@@ -538,7 +538,7 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         if (sp.IsValid()) candidates.push_back(sp);
       }
     }
-    // External MaterialX references are synthesized by the next layer
+    // External MaterialX references are synthesized by the core layer
     // registry with this relationship instead of outputs:mtlx:surface.
     if (const std::vector<::lightusd::Path>* sources =
             prim.GetRelationship("mtlx:surface:source")) {

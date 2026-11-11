@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Test for the native PCP-style lazy composition cache (next/pcp).
+// Test for the native PCP-style lazy composition cache (pcp).
 // Phase 1: internal references + lazy ComputePrimIndex + BuildStage.
 
 #include <algorithm>
@@ -794,7 +794,7 @@ static void test_crate_style_variant_holder() {
 // parse as a qualified relationship, not choke ("Expected attribute type").
 static void test_usda_connection_and_custom_rel() {
   std::cout << "test_usda_connection_and_custom_rel..." << std::endl;
-  const std::string f = "/tmp/next_usda_conn.usda";
+  const std::string f = "/tmp/core_usda_conn.usda";
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -829,8 +829,8 @@ static void test_usda_connection_and_custom_rel() {
 // file that authored the variant.
 static void test_variant_option_payload_arc() {
   std::cout << "test_variant_option_payload_arc..." << std::endl;
-  const std::string geo = "/tmp/next_varopt_geo.usd";
-  const std::string root = "/tmp/next_varopt_root.usda";
+  const std::string geo = "/tmp/core_varopt_geo.usd";
+  const std::string root = "/tmp/core_varopt_root.usda";
   {
     std::ofstream o(geo);
     o << "#usda 1.0\n"
@@ -848,7 +848,7 @@ static void test_variant_option_payload_arc() {
          ")\n{\n"
          "    variantSet \"model\" = {\n"
          "        \"render\" ( prepend payload = "
-         "@./next_varopt_geo.usd@</geo> ) {\n        }\n"
+         "@./core_varopt_geo.usd@</geo> ) {\n        }\n"
          "        \"proxy\" {\n        }\n"
          "    }\n}\n";
   }
@@ -873,10 +873,10 @@ static void test_variant_option_payload_arc() {
 // boundary, not an asset-specific prim or property name.
 static void test_variant_content_payload_anchor() {
   std::cout << "test_variant_content_payload_anchor..." << std::endl;
-  if (::system("mkdir -p /tmp/next_variant_anchor/sub") != 0) { /* ignore */ }
-  const std::string root = "/tmp/next_variant_anchor/root.usda";
-  const std::string variants = "/tmp/next_variant_anchor/sub/variants.usda";
-  const std::string payload = "/tmp/next_variant_anchor/sub/payload.usda";
+  if (::system("mkdir -p /tmp/core_variant_anchor/sub") != 0) { /* ignore */ }
+  const std::string root = "/tmp/core_variant_anchor/root.usda";
+  const std::string variants = "/tmp/core_variant_anchor/sub/variants.usda";
+  const std::string payload = "/tmp/core_variant_anchor/sub/payload.usda";
   {
     std::ofstream o(payload);
     o << "#usda 1.0\n"
@@ -907,7 +907,7 @@ static void test_variant_content_payload_anchor() {
          "over \"Asset\" ( variants = { string model = \"render\" } ) {}\n";
   }
   AssetResolver resolver;
-  resolver.SetWorkingDirectory("/tmp/next_variant_anchor");
+  resolver.SetWorkingDirectory("/tmp/core_variant_anchor");
   Stage stage;
   std::string warn, err;
   PCP_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err),
@@ -971,14 +971,14 @@ static void test_parallel_compose_byte_identical() {
 // (the 13.5k-line Island residual: indexed-primvar `:indices = None`).
 static void test_value_block_roundtrip() {
   std::cout << "test_value_block_roundtrip..." << std::endl;
-  const std::string base = "/tmp/next_block_base.usda";
-  const std::string root = "/tmp/next_block_root.usda";
+  const std::string base = "/tmp/core_block_base.usda";
+  const std::string root = "/tmp/core_block_root.usda";
   // A weaker sublayer authors a real index array; the stronger root blocks it.
   { std::ofstream o(base);
     o << "#usda 1.0\ndef Mesh \"M\"\n{\n"
          "    int[] primvars:displayColor:indices = [0, 1, 2]\n}\n"; }
   { std::ofstream o(root);
-    o << "#usda 1.0\n(\n    subLayers = [ @./next_block_base.usda@ ]\n)\n"
+    o << "#usda 1.0\n(\n    subLayers = [ @./core_block_base.usda@ ]\n)\n"
          "over Mesh \"M\"\n{\n"
          "    int[] primvars:displayColor:indices = None\n}\n"; }
   AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
@@ -1003,7 +1003,7 @@ static void test_value_block_roundtrip() {
 // contains an instance references another /Flattened_Prototype_M).
 static void test_extracted_prototypes() {
   std::cout << "test_extracted_prototypes..." << std::endl;
-  const std::string f = PcpScratchPath("next_extract.usda");
+  const std::string f = PcpScratchPath("core_extract.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -1059,7 +1059,7 @@ static void test_extracted_prototypes() {
 
 static void test_extracted_prototypes_collision_and_remap() {
   std::cout << "test_extracted_prototypes_collision_and_remap..." << std::endl;
-  const std::string f = PcpScratchPath("next_extract_collision.usda");
+  const std::string f = PcpScratchPath("core_extract_collision.usda");
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -1734,7 +1734,7 @@ static void test_specialize_chain() {
 // and expands once (fewer PrimIndex nodes), without changing composed values.
 static void test_cross_layer_arc_dedup() {
   std::cout << "test_cross_layer_arc_dedup..." << std::endl;
-  const std::string sub = "/tmp/next_pcp_listop_sub.usda";
+  const std::string sub = "/tmp/core_pcp_listop_sub.usda";
   {
     std::ofstream f(sub);
     f << "#usda 1.0\n"
@@ -1744,7 +1744,7 @@ static void test_cross_layer_arc_dedup() {
   }
   auto root_layer = std::make_shared<Layer>();
   {
-    root_layer->meta().subLayers.push_back("next_pcp_listop_sub.usda");
+    root_layer->meta().subLayers.push_back("core_pcp_listop_sub.usda");
     LayerBuilder rb(*root_layer);
     rb.begin_prim("World", "Xform");
     rb.begin_prim("Dup", "");  // same site as the sublayer, same reference
@@ -1766,7 +1766,7 @@ static void test_cross_layer_arc_dedup() {
     pcp::CompositionOptions opts;
     opts.apply_list_ops = flag;
     auto opened = pcp::Cache::Open(resolver, root_layer,
-                                   "/tmp/next_pcp_listop_root.usda", opts);
+                                   "/tmp/core_pcp_listop_root.usda", opts);
     assert(opened);
     pcp::Cache cache = std::move(*opened);
     const pcp::PrimIndex *idx =
@@ -1822,7 +1822,7 @@ static void test_inherits_specializes() {
 // name->Value without flags, so the variant graft silently dropped them.)
 static void test_variant_inline_property_flags() {
   std::cout << "test_variant_inline_property_flags..." << std::endl;
-  const std::string root = "/tmp/next_pcp_varflags.usda";
+  const std::string root = "/tmp/core_pcp_varflags.usda";
   {
     std::ofstream f(root);
     f << "#usda 1.0\n"
@@ -1859,7 +1859,7 @@ static void test_variant_inline_property_flags() {
 
 static void test_variant_option_authored_state() {
   std::cout << "test_variant_option_authored_state..." << std::endl;
-  const std::string root = "/tmp/next_pcp_var_authored_state.usda";
+  const std::string root = "/tmp/core_pcp_var_authored_state.usda";
   {
     std::ofstream f(root);
     // Authored `hidden = 0` on the SELECTED option is a real opinion and must
@@ -2003,17 +2003,17 @@ static void test_variants_v2() {
 // subtree (the holder, non-instanceable) and the others reference it.
 static void test_flatten_instances() {
   std::cout << "test_flatten_instances..." << std::endl;
-  const std::string asset = "/tmp/next_fi_asset.usda";
-  const std::string root = "/tmp/next_fi_root.usda";
+  const std::string asset = "/tmp/core_fi_asset.usda";
+  const std::string root = "/tmp/core_fi_root.usda";
   { std::ofstream f(asset);
     f << "#usda 1.0\ndef Xform \"Model\" { def Mesh \"M\" { int n = 1 } }\n"; }
   { std::ofstream f(root);
     f << "#usda 1.0\n"
          "def Xform \"W\"\n{\n"
          "    def \"A\" (\n        instanceable = true\n"
-         "        prepend references = @next_fi_asset.usda@</Model>\n    ) {}\n"
+         "        prepend references = @core_fi_asset.usda@</Model>\n    ) {}\n"
          "    def \"B\" (\n        instanceable = true\n"
-         "        prepend references = @next_fi_asset.usda@</Model>\n    ) {}\n"
+         "        prepend references = @core_fi_asset.usda@</Model>\n    ) {}\n"
          "}\n"; }
 
   AssetResolver resolver;
@@ -2758,8 +2758,8 @@ static void test_cross_layer_listops() {
   assert(!q_on.first && q_on.second && "explicit list must replace the weak arc");
 
   // Empty explicit list: still authored, and must clear weaker references.
-  const std::string empty_sub = "/tmp/next_pcp_empty_explicit_sub.usda";
-  const std::string empty_root = "/tmp/next_pcp_empty_explicit_root.usda";
+  const std::string empty_sub = "/tmp/core_pcp_empty_explicit_sub.usda";
+  const std::string empty_root = "/tmp/core_pcp_empty_explicit_root.usda";
   {
     std::ofstream f(empty_sub);
     f << "#usda 1.0\n"
@@ -2777,7 +2777,7 @@ static void test_cross_layer_listops() {
     std::ofstream f(empty_root);
     f << "#usda 1.0\n"
          "(\n"
-         "    subLayers = [@next_pcp_empty_explicit_sub.usda@]\n"
+         "    subLayers = [@core_pcp_empty_explicit_sub.usda@]\n"
          ")\n"
          "def \"E\" (\n"
          "    references = []\n"
@@ -2927,8 +2927,8 @@ static void test_authored_arc_fidelity_fixture() {
 
 static void test_listop_edit_does_not_clear_other_arc_fields() {
   std::cout << "test_listop_edit_does_not_clear_other_arc_fields..." << std::endl;
-  const std::string weak = "/tmp/next_pcp_listop_sibling_weak.usda";
-  const std::string root = "/tmp/next_pcp_listop_sibling_root.usda";
+  const std::string weak = "/tmp/core_pcp_listop_sibling_weak.usda";
+  const std::string root = "/tmp/core_pcp_listop_sibling_root.usda";
   {
     std::ofstream f(weak);
     f << "#usda 1.0\n"
@@ -2946,7 +2946,7 @@ static void test_listop_edit_does_not_clear_other_arc_fields() {
     std::ofstream f(root);
     f << "#usda 1.0\n"
          "(\n"
-         "    subLayers = [@next_pcp_listop_sibling_weak.usda@]\n"
+         "    subLayers = [@core_pcp_listop_sibling_weak.usda@]\n"
          ")\n"
          "def \"P\" (\n"
          "    prepend references = </Lib/Ref>\n"
@@ -2983,15 +2983,15 @@ static void test_listop_edit_does_not_clear_other_arc_fields() {
 static void test_compose_from_file() {
   std::cout << "test_compose_from_file..." << std::endl;
 
-  const std::string ref = "/tmp/next_pcp_ref.usda";
-  const std::string root = "/tmp/next_pcp_root.usda";
+  const std::string ref = "/tmp/core_pcp_ref.usda";
+  const std::string root = "/tmp/core_pcp_root.usda";
   { std::ofstream f(ref); f << "#usda 1.0\ndef Mesh \"Geom\"\n{\n}\n"; }
   {
     std::ofstream f(root);
     f << "#usda 1.0\n"
          "def Xform \"World\"\n{\n"
          "    def \"Q\" (\n"
-         "        prepend references = [@next_pcp_ref.usda@</Geom>]\n"
+         "        prepend references = [@core_pcp_ref.usda@</Geom>]\n"
          "    )\n    {\n    }\n}\n";
   }
 
@@ -3185,7 +3185,7 @@ static void test_payload_policy_owner_anchor() {
 static void test_sublayer_stack_composition() {
   std::cout << "test_sublayer_stack_composition..." << std::endl;
 
-  const std::string sub = "/tmp/next_pcp_sublayer_sub.usda";
+  const std::string sub = "/tmp/core_pcp_sublayer_sub.usda";
   {
     std::ofstream f(sub);
     f << "#usda 1.0\n"
@@ -3221,7 +3221,7 @@ static void test_sublayer_stack_composition() {
 
   auto root_layer = std::make_shared<Layer>();
   {
-    root_layer->meta().subLayers.push_back("next_pcp_sublayer_sub.usda");
+    root_layer->meta().subLayers.push_back("core_pcp_sublayer_sub.usda");
     LayerBuilder rb(*root_layer);
     rb.begin_prim("World", "Xform");
     rb.begin_prim("StrongChild", "Scope");
@@ -3234,7 +3234,7 @@ static void test_sublayer_stack_composition() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto opened = pcp::Cache::Open(resolver, root_layer,
-                                 "/tmp/next_pcp_sublayer_root.usda");
+                                 "/tmp/core_pcp_sublayer_root.usda");
   assert(opened && "sublayer Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
   Stage stage;
@@ -3334,14 +3334,14 @@ static void test_usdz_package_layers() {
     Stage sub_stage =
         BuildSinglePrimStage("World", "Xform", "weakVal", 42);
     USDZWriteResult wr =
-        WriteUSDZToFile("/tmp/next_pcp_sublayer_pkg.usdz", sub_stage);
+        WriteUSDZToFile("/tmp/core_pcp_sublayer_pkg.usdz", sub_stage);
     assert(wr.success && "failed to write sublayer USDZ fixture");
 
     {
-      std::ofstream f("/tmp/next_pcp_usdz_sublayer_root.usda");
+      std::ofstream f("/tmp/core_pcp_usdz_sublayer_root.usda");
       f << "#usda 1.0\n"
            "(\n"
-           "    subLayers = [@next_pcp_sublayer_pkg.usdz@]\n"
+           "    subLayers = [@core_pcp_sublayer_pkg.usdz@]\n"
            ")\n"
            "def Xform \"World\"\n"
            "{\n"
@@ -3351,7 +3351,7 @@ static void test_usdz_package_layers() {
 
     Stage stage;
     std::string warn, err;
-    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_sublayer_root.usda",
+    bool ok = LoadUSDComposed("/tmp/core_pcp_usdz_sublayer_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
     assert(ok && "LoadUSDComposed failed for direct USDZ sublayer");
@@ -3367,17 +3367,17 @@ static void test_usdz_package_layers() {
     Stage ref_stage =
         BuildSinglePrimStage("Asset", "Xform", "pkgVal", 99);
     USDZWriteResult wr =
-        WriteUSDZToFile("/tmp/next_pcp_ref_pkg.usdz", ref_stage);
+        WriteUSDZToFile("/tmp/core_pcp_ref_pkg.usdz", ref_stage);
     assert(wr.success && "failed to write reference USDZ fixture");
 
     {
-      std::ofstream f("/tmp/next_pcp_usdz_ref_root.usda");
+      std::ofstream f("/tmp/core_pcp_usdz_ref_root.usda");
       f << "#usda 1.0\n"
            "def Xform \"World\"\n"
            "{\n"
            "    def Xform \"P\" (\n"
            "        prepend references = "
-           "[@next_pcp_ref_pkg.usdz[root.usdc]@</Asset>]\n"
+           "[@core_pcp_ref_pkg.usdz[root.usdc]@</Asset>]\n"
            "    )\n"
            "    {\n"
            "    }\n"
@@ -3386,7 +3386,7 @@ static void test_usdz_package_layers() {
 
     Stage stage;
     std::string warn, err;
-    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_ref_root.usda",
+    bool ok = LoadUSDComposed("/tmp/core_pcp_usdz_ref_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
     assert(ok && "LoadUSDComposed failed for USDZ package reference");
@@ -3413,19 +3413,19 @@ static void test_usdz_package_layers() {
         "{\n"
         "    custom int siblingVal = 123\n"
         "}\n";
-    WriteTwoEntryUSDZ("/tmp/next_pcp_multi_pkg.usdz", root_usda,
+    WriteTwoEntryUSDZ("/tmp/core_pcp_multi_pkg.usdz", root_usda,
                       sibling_usda);
 
     {
       AssetResolver package_resolver;
       const ResolvedAsset escaped = package_resolver.Resolve(
           "../../sibling.usda",
-          "/tmp/next_pcp_multi_pkg.usdz[root.usda]",
+          "/tmp/core_pcp_multi_pkg.usdz[root.usda]",
           /*allow_suffix_fallback=*/false);
       assert(!escaped.exists &&
              "package-relative parent traversal escaped above archive root");
       const ResolvedAsset explicit_escaped = package_resolver.Resolve(
-          "/tmp/next_pcp_multi_pkg.usdz[../sibling.usda]", "",
+          "/tmp/core_pcp_multi_pkg.usdz[../sibling.usda]", "",
           /*allow_suffix_fallback=*/false);
       assert(!explicit_escaped.exists &&
              "explicit package path accepted parent traversal");
@@ -3434,7 +3434,7 @@ static void test_usdz_package_layers() {
     {
       Stage direct_stage;
       std::string direct_warn, direct_err;
-      bool direct_ok = LoadUSDComposed("/tmp/next_pcp_multi_pkg.usdz",
+      bool direct_ok = LoadUSDComposed("/tmp/core_pcp_multi_pkg.usdz",
                                        &direct_stage, &direct_warn, &direct_err);
       if (!direct_ok) std::cout << "  [diag] err=" << direct_err << std::endl;
       assert(direct_ok && "direct-root USDZ composition failed");
@@ -3455,13 +3455,13 @@ static void test_usdz_package_layers() {
           "    {\n"
           "    }\n"
           "}\n";
-      WriteTwoEntryUSDZ("/tmp/next_pcp_payload_pkg.usdz",
+      WriteTwoEntryUSDZ("/tmp/core_pcp_payload_pkg.usdz",
                         payload_root_usda, sibling_usda);
 
       StageSessionOptions session_options;
       session_options.composition.load_payloads = false;
       StageSession session;
-      assert(session.OpenFile("/tmp/next_pcp_payload_pkg.usdz",
+      assert(session.OpenFile("/tmp/core_pcp_payload_pkg.usdz",
                               session_options) &&
              "StageSession failed to open deferred package payload");
       assert(session.IsComposed());
@@ -3493,16 +3493,16 @@ static void test_usdz_package_layers() {
     }
 
     {
-      std::ofstream f("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+      std::ofstream f("/tmp/core_pcp_usdz_pkg_anchor_root.usda");
       f << "#usda 1.0\n"
            "(\n"
-           "    subLayers = [@next_pcp_multi_pkg.usdz[root.usda]@]\n"
+           "    subLayers = [@core_pcp_multi_pkg.usdz[root.usda]@]\n"
            ")\n";
     }
 
     Stage stage;
     std::string warn, err;
-    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_pkg_anchor_root.usda",
+    bool ok = LoadUSDComposed("/tmp/core_pcp_usdz_pkg_anchor_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
     assert(ok && "LoadUSDComposed failed for package-internal reference");
@@ -3512,20 +3512,20 @@ static void test_usdz_package_layers() {
            "relative reference inside USDZ package did not resolve to sibling entry");
   }
 
-  std::remove("/tmp/next_pcp_sublayer_pkg.usdz");
-  std::remove("/tmp/next_pcp_usdz_sublayer_root.usda");
-  std::remove("/tmp/next_pcp_ref_pkg.usdz");
-  std::remove("/tmp/next_pcp_usdz_ref_root.usda");
-  std::remove("/tmp/next_pcp_multi_pkg.usdz");
-  std::remove("/tmp/next_pcp_payload_pkg.usdz");
-  std::remove("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+  std::remove("/tmp/core_pcp_sublayer_pkg.usdz");
+  std::remove("/tmp/core_pcp_usdz_sublayer_root.usda");
+  std::remove("/tmp/core_pcp_ref_pkg.usdz");
+  std::remove("/tmp/core_pcp_usdz_ref_root.usda");
+  std::remove("/tmp/core_pcp_multi_pkg.usdz");
+  std::remove("/tmp/core_pcp_payload_pkg.usdz");
+  std::remove("/tmp/core_pcp_usdz_pkg_anchor_root.usda");
   std::cout << "  OK" << std::endl;
 }
 
 static void test_sublayer_cycle_and_depth() {
   std::cout << "test_sublayer_cycle_and_depth..." << std::endl;
 
-  const std::string cycle_root = "/tmp/next_pcp_cycle_root.usda";
+  const std::string cycle_root = "/tmp/core_pcp_cycle_root.usda";
   {
     std::ofstream f(cycle_root);
     f << "#usda 1.0\n"
@@ -3535,7 +3535,7 @@ static void test_sublayer_cycle_and_depth() {
   }
   auto cycle_layer = std::make_shared<Layer>();
   {
-    cycle_layer->meta().subLayers.push_back("next_pcp_cycle_root.usda");
+    cycle_layer->meta().subLayers.push_back("core_pcp_cycle_root.usda");
     LayerBuilder lb(*cycle_layer);
     lb.begin_prim("Root", "Xform");
     lb.end_prim();
@@ -3562,7 +3562,7 @@ static void test_sublayer_cycle_and_depth() {
     assert(cycle_reported && "cycle must still be diagnosed");
   }
 
-  const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
+  const std::string depth_sub = "/tmp/core_pcp_depth_sub.usda";
   {
     std::ofstream f(depth_sub);
     f << "#usda 1.0\n"
@@ -3573,7 +3573,7 @@ static void test_sublayer_cycle_and_depth() {
 
   auto root_layer = std::make_shared<Layer>();
   {
-    root_layer->meta().subLayers.push_back("next_pcp_depth_sub.usda");
+    root_layer->meta().subLayers.push_back("core_pcp_depth_sub.usda");
     LayerBuilder lb(*root_layer);
     lb.begin_prim("Root", "Xform");
     lb.end_prim();
@@ -3582,18 +3582,18 @@ static void test_sublayer_cycle_and_depth() {
   pcp::CompositionOptions opts;
   opts.max_depth = 0;
   auto opened = pcp::Cache::Open(resolver, root_layer,
-                                 "/tmp/next_pcp_depth_root.usda", opts);
+                                 "/tmp/core_pcp_depth_root.usda", opts);
   assert(!opened && "sublayer depth overflow should fail Cache::Open");
 
   auto missing_layer = std::make_shared<Layer>();
-  missing_layer->meta().subLayers.push_back("next_pcp_unwritten_sublayer_93c4.usda");
+  missing_layer->meta().subLayers.push_back("core_pcp_unwritten_sublayer_93c4.usda");
   LayerBuilder missing_builder(*missing_layer);
   missing_builder.begin_prim("Survivor", "Xform");
   missing_builder.end_prim();
   missing_builder.finalize();
   std::string missing_warn;
   auto missing_opened = pcp::Cache::Open(resolver, missing_layer,
-      "/tmp/next_pcp_missing_root.usda", {}, &missing_warn);
+      "/tmp/core_pcp_missing_root.usda", {}, &missing_warn);
   assert(missing_opened && "permissive missing sublayer keeps the valid root");
   assert(missing_warn.find("Failed to load sublayer") != std::string::npos);
   bool missing_reported = false;
@@ -3607,7 +3607,7 @@ static void test_sublayer_cycle_and_depth() {
   pcp::CompositionOptions strict_missing;
   strict_missing.error_when_asset_not_found = true;
   auto failed_open = pcp::Cache::Open(resolver, missing_layer,
-      "/tmp/next_pcp_missing_root.usda", strict_missing, &missing_warn);
+      "/tmp/core_pcp_missing_root.usda", strict_missing, &missing_warn);
   assert(!failed_open && !failed_open.error().empty());
 
   std::remove(cycle_root.c_str());
@@ -4259,8 +4259,8 @@ static void test_variant_selected_field() {
 // DEFAULT active=true used to flip it back — the inverse of LIVRPS).
 static void test_active_survives_weaker_arc() {
   std::cout << "test_active_survives_weaker_arc..." << std::endl;
-  const std::string ref = "/tmp/next_act_ref.usda";
-  const std::string root = "/tmp/next_act_root.usda";
+  const std::string ref = "/tmp/core_act_ref.usda";
+  const std::string root = "/tmp/core_act_root.usda";
   {
     std::ofstream o(ref);
     o << "#usda 1.0\ndef Xform \"R\"\n{\n    float x = 1\n}\n";
@@ -4270,7 +4270,7 @@ static void test_active_survives_weaker_arc() {
     o << "#usda 1.0\n"
          "def Xform \"A\" (\n"
          "    active = false\n"
-         "    prepend references = @./next_act_ref.usda@</R>\n"
+         "    prepend references = @./core_act_ref.usda@</R>\n"
          ")\n{\n}\n";
   }
   AssetResolver resolver;
@@ -4293,8 +4293,8 @@ static void test_active_survives_weaker_arc() {
 // In-scope targets keep retargeting.
 static void test_out_of_scope_targets_dropped() {
   std::cout << "test_out_of_scope_targets_dropped..." << std::endl;
-  const std::string asset = "/tmp/next_scope_asset.usda";
-  const std::string root = "/tmp/next_scope_root.usda";
+  const std::string asset = "/tmp/core_scope_asset.usda";
+  const std::string root = "/tmp/core_scope_root.usda";
   {
     std::ofstream o(asset);
     o << "#usda 1.0\n"
@@ -4310,7 +4310,7 @@ static void test_out_of_scope_targets_dropped() {
     std::ofstream o(root);
     o << "#usda 1.0\n"
          "def Xform \"W\" (prepend references = "
-         "@./next_scope_asset.usda@</Model>)\n{\n}\n";
+         "@./core_scope_asset.usda@</Model>)\n{\n}\n";
   }
   AssetResolver resolver;
   resolver.SetWorkingDirectory("/tmp");
@@ -4340,8 +4340,8 @@ static void test_deferred_payload_marker_order() {
   PCP_CHECK(directory != nullptr, "create isolated PCP temporary directory");
   if (!directory) return;
   const std::string temp_dir(directory);
-  const std::string pay1 = temp_dir + "/next_def_p1.usda";
-  const std::string pay2 = temp_dir + "/next_def_p2.usda";
+  const std::string pay1 = temp_dir + "/core_def_p1.usda";
+  const std::string pay2 = temp_dir + "/core_def_p2.usda";
   {
     std::ofstream o(pay1);
     o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
@@ -4351,15 +4351,15 @@ static void test_deferred_payload_marker_order() {
     o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
   }
   for (int order = 0; order < 2; ++order) {
-    const std::string root = temp_dir + "/next_def_root.usda";
+    const std::string root = temp_dir + "/core_def_root.usda";
     {
       std::ofstream o(root);
       o << "#usda 1.0\n"
            "def Xform \"A\" (prepend payload = [";
       if (order == 0) {
-      o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      o << "@./core_def_p2.usda@</P2>, @./core_def_p1.usda@</P1>";
       } else {
-        o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
+        o << "@./core_def_p1.usda@</P1>, @./core_def_p2.usda@</P2>";
       }
       o << "])\n{\n}\n";
     }
@@ -4400,8 +4400,8 @@ static void test_deferred_payload_marker_order() {
 // parsed and skipped with a warning until composition plumbs them through).
 static void test_sublayer_offset_parses() {
   std::cout << "test_sublayer_offset_parses..." << std::endl;
-  const std::string sub = "/tmp/next_slo_sub.usda";
-  const std::string root = "/tmp/next_slo_root.usda";
+  const std::string sub = "/tmp/core_slo_sub.usda";
+  const std::string root = "/tmp/core_slo_root.usda";
   {
     std::ofstream o(sub);
     o << "#usda 1.0\ndef Xform \"p\" { float a = 1 }\n";
@@ -4409,7 +4409,7 @@ static void test_sublayer_offset_parses() {
   {
     std::ofstream o(root);
     o << "#usda 1.0\n(\n"
-         "    subLayers = [ @./next_slo_sub.usda@ (offset = 10; scale = 2) ]\n"
+         "    subLayers = [ @./core_slo_sub.usda@ (offset = 10; scale = 2) ]\n"
          ")\n";
   }
   AssetResolver resolver;
@@ -4871,8 +4871,8 @@ static void test_specifier_resolution() {
 // against the source's composed expression variables).
 static void test_expression_sublayer_and_variant_selection() {
   std::cout << "test_expression_sublayer_and_variant_selection..." << std::endl;
-  const std::string sub = "/tmp/next_exprvar_sub.usda";
-  const std::string root = "/tmp/next_exprvar_root.usda";
+  const std::string sub = "/tmp/core_exprvar_sub.usda";
+  const std::string root = "/tmp/core_exprvar_root.usda";
   {
     std::ofstream o(sub);
     o << "#usda 1.0\n"
@@ -4883,7 +4883,7 @@ static void test_expression_sublayer_and_variant_selection() {
     o << "#usda 1.0\n"
          "(\n"
          "    expressionVariables = {\n"
-         "        string SUB = \"next_exprvar_sub.usda\"\n"
+         "        string SUB = \"core_exprvar_sub.usda\"\n"
          "        string COLOR = \"green\"\n"
          "    }\n"
          "    subLayers = [@`${SUB}`@]\n"
@@ -4927,43 +4927,43 @@ static void test_expression_sublayer_and_variant_selection() {
 static void test_layer_stack_identity_expression_vars() {
   std::cout << "test_layer_stack_identity_expression_vars..." << std::endl;
   {
-    std::ofstream o("/tmp/next_stackid_sub_a.usda");
+    std::ofstream o("/tmp/core_stackid_sub_a.usda");
     o << "#usda 1.0\ndef Xform \"X\" { int tag = 1 }\n";
   }
   {
-    std::ofstream o("/tmp/next_stackid_sub_b.usda");
+    std::ofstream o("/tmp/core_stackid_sub_b.usda");
     o << "#usda 1.0\ndef Xform \"X\" { int tag = 2 }\n";
   }
   {
     // The shared lib: its only content arrives through an EXPRESSION-valued
     // sublayer path; the variable is authored by the REFERENCING stacks.
-    std::ofstream o("/tmp/next_stackid_lib.usda");
+    std::ofstream o("/tmp/core_stackid_lib.usda");
     o << "#usda 1.0\n( subLayers = [@`${SUB}`@] )\n";
   }
   {
-    std::ofstream o("/tmp/next_stackid_mid_a.usda");
+    std::ofstream o("/tmp/core_stackid_mid_a.usda");
     o << "#usda 1.0\n"
-         "( expressionVariables = { string SUB = \"next_stackid_sub_a.usda\" } )\n"
-         "def Xform \"P\" (references = @next_stackid_lib.usda@</X>) {}\n";
+         "( expressionVariables = { string SUB = \"core_stackid_sub_a.usda\" } )\n"
+         "def Xform \"P\" (references = @core_stackid_lib.usda@</X>) {}\n";
   }
   {
-    std::ofstream o("/tmp/next_stackid_mid_b.usda");
+    std::ofstream o("/tmp/core_stackid_mid_b.usda");
     o << "#usda 1.0\n"
-         "( expressionVariables = { string SUB = \"next_stackid_sub_b.usda\" } )\n"
-         "def Xform \"Q\" (references = @next_stackid_lib.usda@</X>) {}\n";
+         "( expressionVariables = { string SUB = \"core_stackid_sub_b.usda\" } )\n"
+         "def Xform \"Q\" (references = @core_stackid_lib.usda@</X>) {}\n";
   }
   {
-    std::ofstream o("/tmp/next_stackid_root.usda");
+    std::ofstream o("/tmp/core_stackid_root.usda");
     o << "#usda 1.0\n"
-         "def Xform \"A\" (references = @next_stackid_mid_a.usda@</P>) {}\n"
-         "def Xform \"B\" (references = @next_stackid_mid_b.usda@</Q>) {}\n";
+         "def Xform \"A\" (references = @core_stackid_mid_a.usda@</P>) {}\n"
+         "def Xform \"B\" (references = @core_stackid_mid_b.usda@</Q>) {}\n";
   }
 
   AssetResolver resolver;
   Stage stage;
   pcp::CompositionOptions opts;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile("/tmp/next_stackid_root.usda", resolver,
+  assert(pcp::ComposeStageFromFile("/tmp/core_stackid_root.usda", resolver,
                                    &stage, opts, &warn, &err));
   const Value* a = stage.GetPrimAtPath("/A").GetPropertyValue("tag");
   const Value* b = stage.GetPrimAtPath("/B").GetPropertyValue("tag");
@@ -4981,7 +4981,7 @@ static void test_layer_stack_identity_expression_vars() {
 // weakest->strongest AOUSD list-op merge across a sublayer stack.
 static void test_cross_layer_string_listop_matrix() {
   std::cout << "test_cross_layer_string_listop_matrix..." << std::endl;
-  const std::string weak_path = "/tmp/next_listop_weak.usda";
+  const std::string weak_path = "/tmp/core_listop_weak.usda";
   {
     std::ofstream o(weak_path);
     o << "#usda 1.0\n"
@@ -5010,11 +5010,11 @@ static void test_cross_layer_string_listop_matrix() {
        {"NewAPI", "CollectionAPI:b"}},
   };
   for (const Case& c : cases) {
-    const std::string root_path = "/tmp/next_listop_root.usda";
+    const std::string root_path = "/tmp/core_listop_root.usda";
     {
       std::ofstream o(root_path);
       o << "#usda 1.0\n"
-           "( subLayers = [@next_listop_weak.usda@] )\n"
+           "( subLayers = [@core_listop_weak.usda@] )\n"
            "over \"P\" (\n    "
         << c.edit << "\n) {}\n";
     }
@@ -5045,8 +5045,8 @@ static void test_cross_layer_string_listop_matrix() {
 // prim.
 static void test_p2_ref_no_default_prim() {
   std::cout << "test_p2_ref_no_default_prim..." << std::endl;
-  const std::string lib = "/tmp/next_p2_nodef_lib.usda";
-  const std::string root = "/tmp/next_p2_nodef_root.usda";
+  const std::string lib = "/tmp/core_p2_nodef_lib.usda";
+  const std::string root = "/tmp/core_p2_nodef_root.usda";
   {
     std::ofstream o(lib);
     o << "#usda 1.0\n"
@@ -5057,7 +5057,7 @@ static void test_p2_ref_no_default_prim() {
     std::ofstream o(root);
     o << "#usda 1.0\n"
          "def Xform \"Hello\" (prepend references = "
-         "@./next_p2_nodef_lib.usda@) { }\n";
+         "@./core_p2_nodef_lib.usda@) { }\n";
   }
   AssetResolver resolver;
   resolver.SetWorkingDirectory("/tmp");
@@ -5082,7 +5082,7 @@ static void test_p2_ref_no_default_prim() {
 // active=true re-activation keeps the subtree.
 static void test_p2_inactive_subtree_pruned() {
   std::cout << "test_p2_inactive_subtree_pruned..." << std::endl;
-  const std::string f = "/tmp/next_p2_inactive.usda";
+  const std::string f = "/tmp/core_p2_inactive.usda";
   {
     std::ofstream o(f);
     o << "#usda 1.0\n"
@@ -5106,8 +5106,8 @@ static void test_p2_inactive_subtree_pruned() {
 
   // Re-activation: root-authored active=true is stronger than the referenced
   // prim's active=false — the referenced subtree must survive.
-  const std::string ref = "/tmp/next_p2_react_ref.usda";
-  const std::string root = "/tmp/next_p2_react_root.usda";
+  const std::string ref = "/tmp/core_p2_react_ref.usda";
+  const std::string root = "/tmp/core_p2_react_root.usda";
   {
     std::ofstream o(ref);
     o << "#usda 1.0\n"
@@ -5119,7 +5119,7 @@ static void test_p2_inactive_subtree_pruned() {
     std::ofstream o(root);
     o << "#usda 1.0\n"
          "def Xform \"P\" (active = true\n"
-         "                 prepend references = @./next_p2_react_ref.usda@</R>"
+         "                 prepend references = @./core_p2_react_ref.usda@</R>"
          ")\n{\n}\n";
   }
   Stage stage2;
@@ -5192,8 +5192,8 @@ static void test_subroot_implied_class_strength() {
 // ancestor chain must include the root stack).
 static void test_p2_implied_subroot_class() {
   std::cout << "test_p2_implied_subroot_class..." << std::endl;
-  const std::string models = "/tmp/next_p2_models.usda";
-  const std::string root = "/tmp/next_p2_models_root.usda";
+  const std::string models = "/tmp/core_p2_models.usda";
+  const std::string root = "/tmp/core_p2_models_root.usda";
   {
     std::ofstream o(models);
     o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
@@ -5205,7 +5205,7 @@ static void test_p2_implied_subroot_class() {
   {
     std::ofstream o(root);
     o << "#usda 1.0\n"
-         "def Xform \"World\" (references = @./next_p2_models.usda@)\n{\n"
+         "def Xform \"World\" (references = @./core_p2_models.usda@)\n{\n"
          "    over \"_class_X\" { double a = 2 }\n"
          "}\n";
   }
@@ -5223,8 +5223,8 @@ static void test_p2_implied_subroot_class() {
   std::remove(root.c_str());
 
   // Root-level class inherited by a CHILD of the referenced root prim.
-  const std::string lib2 = "/tmp/next_p2_models2.usda";
-  const std::string root2 = "/tmp/next_p2_models2_root.usda";
+  const std::string lib2 = "/tmp/core_p2_models2.usda";
+  const std::string root2 = "/tmp/core_p2_models2_root.usda";
   {
     std::ofstream o(lib2);
     o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
@@ -5237,7 +5237,7 @@ static void test_p2_implied_subroot_class() {
     std::ofstream o(root2);
     o << "#usda 1.0\n"
          "over \"_class_X\" { double a = 2 }\n"
-         "def Xform \"World\" (references = @./next_p2_models2.usda@) { }\n";
+         "def Xform \"World\" (references = @./core_p2_models2.usda@) { }\n";
   }
   Stage stage2;
   warn.clear(); err.clear();
@@ -5382,7 +5382,7 @@ static void test_local_opinions_require_composition() {
 // silently drop those prims.
 static void test_spec_lookup_filter_exactness() {
   std::cout << "test_spec_lookup_filter_exactness..." << std::endl;
-  const std::string dir = "/tmp/next_spec_filter";
+  const std::string dir = "/tmp/core_spec_filter";
   assert(::system(("mkdir -p " + dir).c_str()) == 0);
   constexpr int kRefChildren = 128;
   {
@@ -5607,7 +5607,7 @@ static void test_strict_failed_arc_and_variant_dependencies() {
 
 // The high-level loader must honor an explicit one-thread composition budget.
 static void test_composed_loader_serial_thread_budget() {
-  const std::string file = "/tmp/next_pcp_serial_budget_" + std::to_string(getpid()) + ".usda";
+  const std::string file = "/tmp/core_pcp_serial_budget_" + std::to_string(getpid()) + ".usda";
   {
     std::ofstream out(file);
     out << "#usda 1.0\ndef Xform \"Source\" {}\ndef Xform \"World\" {\n";
@@ -5740,6 +5740,6 @@ int main() {
     std::cerr << g_pcp_check_failures << " PCP_CHECK failure(s)." << std::endl;
     return 1;
   }
-  std::cout << "All next/pcp tests passed." << std::endl;
+  std::cout << "All pcp tests passed." << std::endl;
   return 0;
 }

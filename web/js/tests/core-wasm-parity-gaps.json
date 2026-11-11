@@ -68,7 +68,7 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "cancelParsing",
-    "edgeDifference": "An idle call cancels nothing on either product; legacy records it as cancelRequested in its progress record, core does not. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Called from the callback it cancels the load (stage \"cancelled\")."
+    "edgeDifference": "An idle call cancels nothing on either product; legacy records it as cancelRequested in its progress record, core does not. Core additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Called from the callback it cancels the load (stage \"cancelled\")."
   },
   {
     "legacyMethod": "cancelZeroCopyBuffer",
@@ -203,7 +203,7 @@
     "coreSurface": "USDZConverterNative",
     "coreEquivalent": "createURDFPhysicsScene",
     "behaviorTest": "core-schema-utilities-behavior-parity.test.mjs",
-    "edgeDifference": "Next authors every legacy attribute with the same values (URDF prim hierarchy, meshes, joints, collider purpose=guide, Newton scene settings and MuJoCo/Newton contact and mesh-collision attributes and APIs) and additionally authors mjc:timestep and mjc:contype/conaffinity."
+    "edgeDifference": "Core authors every legacy attribute with the same values (URDF prim hierarchy, meshes, joints, collider purpose=guide, Newton scene settings and MuJoCo/Newton contact and mesh-collision attributes and APIs) and additionally authors mjc:timestep and mjc:contype/conaffinity."
   },
   {
     "legacyMethod": "debugLogMemory",
@@ -267,7 +267,7 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "error",
-    "knownDifference": "Next product contract: failures report the core parser's located message (\"Line N, column M: ...\"); legacy reports its own parser error stack. Empty-string results for idle and successful loads match."
+    "knownDifference": "Core product contract: failures report the core parser's located message (\"Line N, column M: ...\"); legacy reports its own parser error stack. Empty-string results for idle and successful loads match."
   },
   {
     "legacyMethod": "exportAsUSDA",
@@ -384,7 +384,7 @@
       "exportUSDCToBuffer"
     ],
     "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
-    "edgeDifference": "Next keeps mesh geometry arrays (points, faceVertexCounts, faceVertexIndices) in the stage export; legacy loses those the converter consumed. All other content matches."
+    "edgeDifference": "Core keeps mesh geometry arrays (points, faceVertexCounts, faceVertexIndices) in the stage export; legacy loses those the converter consumed. All other content matches."
   },
   {
     "legacyMethod": "extractPayloadAssetPaths",
@@ -431,7 +431,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "extractUnresolvedTexturePaths",
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
-    "knownDifference": "Next lists authored texture asset paths that did not resolve (for example shader.usda's 0/teapot_*.png); legacy returns an empty list for those. Resolved textures agree. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core lists authored texture asset paths that did not resolve (for example shader.usda's 0/teapot_*.png); legacy returns an empty list for those. Resolved textures agree. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "extractVariants",
@@ -632,7 +632,7 @@
       "end"
     ],
     "behaviorTest": "core-layer-export-behavior-parity.test.mjs",
-    "edgeDifference": "Next keeps a referenced layer's relative asset path as authored (@old.png@) where legacy re-anchors it (@./old.png@), per core's relative-asset-path policy."
+    "edgeDifference": "Core keeps a referenced layer's relative asset path as authored (@old.png@) where legacy re-anchors it (@./old.png@), per core's relative-asset-path policy."
   },
   {
     "legacyMethod": "flattenMultiBufferToSink",
@@ -756,7 +756,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getAllLights",
-    "knownDifference": "Includes core's additional PortalLight/filter records (see numLights). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Includes core's additional PortalLight/filter records (see numLights). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getAllSkeletons",
@@ -784,7 +784,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getAnimation",
-    "knownDifference": "Next skeletal animations are array channels (valueStride/elementCount/jointRemap) rather than legacy per-joint tracks; clips are named \"<name>_Anim\" and carry primPath/startTime/endTime instead of legacy value-clip metadata. Custom-property values match legacy. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core skeletal animations are array channels (valueStride/elementCount/jointRemap) rather than legacy per-joint tracks; clips are named \"<name>_Anim\" and carry primPath/startTime/endTime instead of legacy value-clip metadata. Custom-property values match legacy. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getAnimationInfo",
@@ -794,7 +794,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getAnimationInfo",
-    "knownDifference": "Next reports one channel per skeletal animation (legacy one track per joint TRS), names clips after the source prim (\"<name>_Anim\"), counts the skeleton node as a target, and exposes startTime/endTime instead of legacy value-clip fields. duration matches (last key time). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core reports one channel per skeletal animation (legacy one track per joint TRS), names clips after the source prim (\"<name>_Anim\"), counts the skeleton node as a target, and exposes startTime/endTime instead of legacy value-clip fields. duration matches (last key time). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getAsset",
@@ -895,7 +895,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getCamera",
-    "knownDifference": "Next camera records use primPath, type/typeCode, fovX/fovY, nearClip/farClip, aperture offsets, exposure, focus, fStop, shutter and stereo fields plus the transform; legacy uses absPath/displayName/projection/xfov/yfov/znear/zfar/aspectRatio. Shared values match. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core camera records use primPath, type/typeCode, fovX/fovY, nearClip/farClip, aperture offsets, exposure, focus, fStop, shutter and stereo fields plus the transform; legacy uses absPath/displayName/projection/xfov/yfov/znear/zfar/aspectRatio. Shared values match. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getCombineUDIMTiles",
@@ -915,7 +915,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getDefaultRootNode",
-    "knownDifference": "Next node records add primPath/type/visible/worldMatrix/prototypePath fields and omit legacy prototypeIndex/instanceId; displayName falls back to the prim name. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core node records add primPath/type/visible/worldMatrix/prototypePath fields and omit legacy prototypeIndex/instanceId; displayName falls back to the prim name. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getDefaultRootNodeId",
@@ -961,7 +961,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "getImageCopy",
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
-    "knownDifference": "Maps to getImageCopy: core reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1 and string colorSpace plus color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Maps to getImageCopy: core reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1 and string colorSpace plus color-transform fields). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getImageCopy",
@@ -971,7 +971,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getImageCopy",
-    "knownDifference": "Next reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1, string colorSpace and color-transform fields). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core reports componentType/mipLevels/name and a numeric colorSpace; an undecoded image reports 0 width/height and 4 channels (legacy -1, string colorSpace and color-transform fields). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getImagePtr",
@@ -981,7 +981,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "getImageView",
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
-    "knownDifference": "Maps to getImageView: same image record contract as getImageCopy (componentType/mipLevels/name, numeric colorSpace; an undecoded image reports 0 width/height and 4 channels) with a borrowed pixel view only for decoded images. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Maps to getImageView: same image record contract as getImageCopy (componentType/mipLevels/name, numeric colorSpace; an undecoded image reports 0 width/height and 4 channels) with a borrowed pixel view only for decoded images. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getInstance",
@@ -991,7 +991,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getInstance",
-    "knownDifference": "Instance ids follow core's native-instance enumeration: records are the instancing prims with their world matrices and resolved prototype mesh ids. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Instance ids follow core's native-instance enumeration: records are the instancing prims with their world matrices and resolved prototype mesh ids. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getInstancesForMesh",
@@ -1010,7 +1010,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getLight",
-    "knownDifference": "Next records use primPath, enableShadow, typeCode, light-link/filter targets and type-specific shape fields; legacy adds absPath/displayName/position/direction, all shape fields with defaults, shapingConeAngle (degrees), guideRadius and texture/geometry links. Next names distant lights \"directional\", reports shaped sphere lights as \"spot\" with a radian cone angle, and includes PortalLights. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core records use primPath, enableShadow, typeCode, light-link/filter targets and type-specific shape fields; legacy adds absPath/displayName/position/direction, all shape fields with defaults, shapingConeAngle (degrees), guideRadius and texture/geometry links. Core names distant lights \"directional\", reports shaped sphere lights as \"spot\" with a radian cone angle, and includes PortalLights. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getLightWithFormat",
@@ -1056,7 +1056,7 @@
     "parityStatus": "known_behavior_gap",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getMaxMemoryLimitMB",
-    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Core also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
     "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
   },
   {
@@ -1077,7 +1077,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getMesh",
-    "knownDifference": "Next returns borrowed heap descriptors ({ptr,length,comps,dtype}) for geometry, a non-indexed triangle soup, primPath/localMatrix/worldMatrix/material, and an unbound mesh uses the fallback material id; legacy returns indexed typed arrays with face counts/uvSets/normalsFormat. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core returns borrowed heap descriptors ({ptr,length,comps,dtype}) for geometry, a non-indexed triangle soup, primPath/localMatrix/worldMatrix/material, and an unbound mesh uses the fallback material id; legacy returns indexed typed arrays with face counts/uvSets/normalsFormat. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getMeshCopy",
@@ -1087,7 +1087,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "getMeshCopy",
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
-    "knownDifference": "Owned copies of core's non-indexed geometry (uv0, vertexCount, local/world matrices, material); legacy returns indexed arrays with face counts, uvSets and packed normals. An unbound mesh uses the fallback material id. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Owned copies of core's non-indexed geometry (uv0, vertexCount, local/world matrices, material); legacy returns indexed arrays with face counts, uvSets and packed normals. An unbound mesh uses the fallback material id. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getMeshPrimvarsJSON",
@@ -1097,7 +1097,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getMeshPrimvarsJSON",
-    "knownDifference": "Next reports every primvar of the retained mesh (legacy returned an empty set for the interpolation fixture) and omits legacy's \"render node is not a GeomMesh\" error for plain meshes. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core reports every primvar of the retained mesh (legacy returned an empty set for the interpolation fixture) and omits legacy's \"render node is not a GeomMesh\" error for plain meshes. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getMeshPtr",
@@ -1107,7 +1107,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "getMeshGeometryView",
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
-    "knownDifference": "Maps to getMeshGeometryView: f32 geometry views plus skin/bind-transform and matrix fields; legacy returns indexed descriptors (snorm8 normals, faceVertexCounts, submesh flags). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Maps to getMeshGeometryView: f32 geometry views plus skin/bind-transform and matrix fields; legacy returns indexed descriptors (snorm8 normals, faceVertexCounts, submesh flags). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getMhProfileJSON",
@@ -1166,7 +1166,7 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getProgress",
-    "knownDifference": "Next product contract: the record tracks each load (stage \"complete\"/\"error\"/\"cancelled\", byte counts, errorMessage equal to error()). Legacy reports stage \"idle\" with \"Conversion complete\" after loading, keeps that record after a failed parse, and keeps cancelRequested set after an idle cancelParsing(). Idle records match."
+    "knownDifference": "Core product contract: the record tracks each load (stage \"complete\"/\"error\"/\"cancelled\", byte counts, errorMessage equal to error()). Legacy reports stage \"idle\" with \"Conversion complete\" after loading, keeps that record after a failed parse, and keeps cancelRequested set after an idle cancelParsing(). Idle records match."
   },
   {
     "legacyMethod": "getRootNode",
@@ -1176,7 +1176,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getRootNode",
-    "knownDifference": "Same node record contract as getDefaultRootNode: core adds primPath/type/visible/worldMatrix/prototypePath, omits prototypeIndex/instanceId, and falls back to the prim name for displayName. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Same node record contract as getDefaultRootNode: core adds primPath/type/visible/worldMatrix/prototypePath, omits prototypeIndex/instanceId, and falls back to the prim name for displayName. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getRoundBoneCount",
@@ -1217,7 +1217,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getSkeleton",
-    "knownDifference": "Next adds primPath/joints/rootJoint/jointCount/animationSourcePath; skeleton ids follow core's traversal order (legacy orders them differently) and joint names are leaf names instead of full joint paths. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core adds primPath/joints/rootJoint/jointCount/animationSourcePath; skeleton ids follow core's traversal order (legacy orders them differently) and joint names are leaf names instead of full joint paths. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getSkeletonJointsFlat",
@@ -1227,7 +1227,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "getSkeletonJointsFlat",
-    "knownDifference": "joint_names are leaf joint names in core and full joint paths in legacy; other arrays match. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "joint_names are leaf joint names in core and full joint paths in legacy; other arrays match. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "getSphereSubdivisions",
@@ -1427,7 +1427,7 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "isParsingInProgress",
-    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true inside the callback."
+    "edgeDifference": "Idle and post-load results match. Core additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true inside the callback."
   },
   {
     "legacyMethod": "isStreamingAssetComplete",
@@ -1539,7 +1539,7 @@
     "coreSurface": "RenderStream",
     "coreEquivalent": "begin",
     "behaviorTest": "core-loading-behavior-parity.test.mjs",
-    "edgeDifference": "Success agrees on the shared corpus; core returns the begin() record (success, counts, error) instead of a boolean. A missing sublayer or reference asset also fails core composition, while legacy never composes on load. Next loads some meshes that legacy's converter rejects."
+    "edgeDifference": "Success agrees on the shared corpus; core returns the begin() record (success, counts, error) instead of a boolean. A missing sublayer or reference asset also fails core composition, while legacy never composes on load. Core loads some meshes that legacy's converter rejects."
   },
   {
     "legacyMethod": "loadFromBinaryAsync",
@@ -1708,7 +1708,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "numInstances",
-    "knownDifference": "Next enumerates one instance per native-instance prim (17 in instancing-001); legacy enumerates its prototype-expanded instance records (11). Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core enumerates one instance per native-instance prim (17 in instancing-001); legacy enumerates its prototype-expanded instance records (11). Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "numLights",
@@ -1718,7 +1718,7 @@
     "behaviorTest": "core-render-scene-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "numLights",
-    "knownDifference": "Next exports PortalLight prims as rect lights (and light filters as inert point lights with a warning); legacy omits them. Next RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
+    "knownDifference": "Core exports PortalLight prims as rect lights (and light filters as inert point lights with a warning); legacy omits them. Core RenderStream record shape is the product contract; the exact field differences are pinned in core-render-scene-contract.json."
   },
   {
     "legacyMethod": "numMaterials",
@@ -1823,7 +1823,7 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "resetProgress",
-    "edgeDifference": "Both reset to the same idle record. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Next rejects resetProgress with TypeError while a parse is running."
+    "edgeDifference": "Both reset to the same idle record. Core additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. Core rejects resetProgress with TypeError while a parse is running."
   },
   {
     "legacyMethod": "setAllowParentRelativeAssetPaths",
@@ -1842,7 +1842,7 @@
     "coreSurface": "AssetStore",
     "coreEquivalent": "setAsset",
     "behaviorTest": "core-asset-cache-behavior-parity.test.mjs",
-    "edgeDifference": "Next returns whether an existing entry was replaced (legacy returns undefined) and rejects an empty identifier, which legacy stores."
+    "edgeDifference": "Core returns whether an existing entry was replaced (legacy returns undefined) and rejects an empty identifier, which legacy stores."
   },
   {
     "legacyMethod": "setAssetCacheMaxSizeBytes",
@@ -1938,7 +1938,7 @@
     "behaviorTest": "core-loader-config-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "setLoadTextureInNative",
-    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value. Next decodes textures from an attached AssetStore (legacy: setAsset), expands RGB to RGBA, and reports unknown image sizes as 0 instead of -1."
+    "edgeDifference": "Canonical values match; legacy Embind coerces non-canonical input (1 for a boolean, out-of-range, fractional or non-finite numbers) or silently ignores it, while core throws TypeError/RangeError and keeps the previous value. Core decodes textures from an attached AssetStore (legacy: setAsset), expands RGB to RGBA, and reports unknown image sizes as 0 instead of -1."
   },
   {
     "legacyMethod": "setMMapZeroCopy",
@@ -1957,7 +1957,7 @@
     "parityStatus": "known_behavior_gap",
     "coreSurface": "RenderStream",
     "coreEquivalent": "setMaxMemoryLimitMB",
-    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Next also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
+    "knownDifference": "The core product uses an architecture-independent 1 GiB default; legacy defaults to 2 GiB on wasm32 and 8 GiB on memory64. Core also rejects limits outside 1..8192 MiB, while legacy preserves signed integer values. This is an intentional untrusted-input safety policy difference.",
     "behaviorTest": "core-loader-config-behavior-parity.test.mjs"
   },
   {
@@ -2141,6 +2141,6 @@
     "behaviorTest": "core-load-diagnostics-behavior-parity.test.mjs",
     "coreSurface": "RenderStream",
     "coreEquivalent": "wasCancelled",
-    "edgeDifference": "Idle and post-load results match. Next additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true after a callback-driven cancellation and cleared by the core begin()."
+    "edgeDifference": "Idle and post-load results match. Core additionally reports and controls a running parse from the RenderStream progress callback; legacy loads synchronously without a JS callback and has no equivalent. It is true after a callback-driven cancellation and cleared by the core begin()."
   }
 ]

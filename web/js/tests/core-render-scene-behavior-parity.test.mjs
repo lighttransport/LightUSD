@@ -31,7 +31,7 @@ const fixture = name => new Uint8Array(fs.readFileSync(new URL(`../../../${name}
 const matrix = JSON.parse(fs.readFileSync(new URL('./core-wasm-parity-gaps.json', import.meta.url)));
 // Call each legacy query's mapped core method (e.g. getMeshPtr ->
 // getMeshGeometryView, getImage -> getImageCopy).
-const nextName = new Map(matrix.map(row => [row.legacyMethod, row.coreEquivalent || row.legacyMethod]));
+const coreName = new Map(matrix.map(row => [row.legacyMethod, row.coreEquivalent || row.legacyMethod]));
 
 // Values are compared after rounding (float32 vs double storage) and with
 // typed arrays as plain arrays. Heap pointers, memory-dependent sizes and
@@ -59,9 +59,9 @@ const digest = value => {
   for (let i = 0; i < text.length; ++i) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
   return `#${text.length}:${hash.toString(16)}`;
 };
-const contract = (legacyValue, nextValue) => {
+const contract = (legacyValue, coreValue) => {
   const a = norm(legacyValue);
-  const b = norm(nextValue);
+  const b = norm(coreValue);
   const plain = x => !x || typeof x !== 'object' || Array.isArray(x);
   if (plain(a) || plain(b)) {
     return JSON.stringify(a) === JSON.stringify(b) ? {same: true}
@@ -88,9 +88,9 @@ const keyOf = record => record?.absPath ?? record?.abs_path ?? record?.primPath 
 
 const observed = {};  // "fixture :: call" -> contract
 const methods = new Set();
-function record(label, method, legacyValue, nextValue) {
+function record(label, method, legacyValue, coreValue) {
   methods.add(method);
-  observed[`${label} :: ${method}`] = contract(legacyValue, nextValue);
+  observed[`${label} :: ${method}`] = contract(legacyValue, coreValue);
 }
 function loadBoth(name, {assets = {}} = {}) {
   const loader = new legacyModule.LightUSDLoaderNative();
@@ -110,7 +110,7 @@ function loadBoth(name, {assets = {}} = {}) {
 // Same call with the same arguments on both products.
 function same(scene, label, method, args = []) {
   record(label, method, outcome(() => scene.loader[method](...args)),
-    outcome(() => scene.stream[nextName.get(method)](...args)));
+    outcome(() => scene.stream[coreName.get(method)](...args)));
 }
 // Collection getters: pair records by prim path.
 function byPath(scene, label, countMethod, method) {
@@ -124,11 +124,11 @@ function byPath(scene, label, countMethod, method) {
     return out;
   };
   const legacyItems = collect(scene.loader);
-  const nextItems = collect(scene.stream);
-  const keys = [...new Set([...legacyItems.keys(), ...nextItems.keys()])].sort();
+  const coreItems = collect(scene.stream);
+  const keys = [...new Set([...legacyItems.keys(), ...coreItems.keys()])].sort();
   for (const key of keys) {
     record(`${label} ${key}`, method, legacyItems.get(key) ?? {missing: true},
-      nextItems.get(key) ?? {missing: true});
+      coreItems.get(key) ?? {missing: true});
   }
 }
 
@@ -175,9 +175,9 @@ function byPath(scene, label, countMethod, method) {
     const flat = target => new Map(Array.from({length: target.numSkeletons()},
       (_, i) => [keyOf(target.getSkeleton(i)), target.getSkeletonJointsFlat(i)]));
     const legacyFlat = flat(scene.loader);
-    const nextFlat = flat(scene.stream);
+    const coreFlat = flat(scene.stream);
     for (const key of [...legacyFlat.keys()].sort())
-      record(`${label} ${key}`, 'getSkeletonJointsFlat', legacyFlat.get(key), nextFlat.get(key));
+      record(`${label} ${key}`, 'getSkeletonJointsFlat', legacyFlat.get(key), coreFlat.get(key));
     const paths = list => list.map(keyOf).sort();
     record(label, 'getAllSkeletons', paths(scene.loader.getAllSkeletons()),
       paths(scene.stream.getAllSkeletons()));
@@ -186,9 +186,9 @@ function byPath(scene, label, countMethod, method) {
     const clips = target => new Map(Array.from({length: target.numAnimations()},
       (_, i) => [keyOf(target.getAnimation(i)), i]));
     const legacyClips = clips(scene.loader);
-    const nextClips = clips(scene.stream);
+    const coreClips = clips(scene.stream);
     for (const key of [...legacyClips.keys()].sort()) {
-      const [a, b] = [legacyClips.get(key), nextClips.get(key)];
+      const [a, b] = [legacyClips.get(key), coreClips.get(key)];
       record(`${label} ${key}`, 'getAnimationInfo', scene.loader.getAnimationInfo(a),
         b === undefined ? {missing: true} : scene.stream.getAnimationInfo(b));
       record(`${label} ${key}`, 'getAnimation', scene.loader.getAnimation(a),
@@ -265,15 +265,15 @@ function onePixelPNG() {
   const loader = new legacyModule.LightUSDLoaderNative();
   const stream = new coreModule.RenderStream();
   try {
-    for (const [legacyName, nextName] of [['getNativeMeshMerge', 'getMeshMerge'],
+    for (const [legacyName, coreName] of [['getNativeMeshMerge', 'getMeshMerge'],
       ['getNativeMaterialDedup', 'getMaterialDedup'],
       ['getNativeMeshMergeBakeTransform', 'getMeshMergeBakeTransform'],
       ['getNativeFlattenRenderTree', 'getFlattenRenderTree']]) {
-      const setter = nextName.replace(/^get/, 'set');
+      const setter = coreName.replace(/^get/, 'set');
       for (const value of [true, false]) {
         loader[legacyName.replace(/^get/, 'set')](value);
         stream[setter](value);
-        record(`flags ${value}`, legacyName, loader[legacyName](), stream[nextName]());
+        record(`flags ${value}`, legacyName, loader[legacyName](), stream[coreName]());
       }
     }
   } finally { loader.delete(); stream.delete(); }

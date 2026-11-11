@@ -18,7 +18,7 @@
 // beside the modelling reference's geo variant, and every component dropped to
 // zero meshes (workbench: ~28 meshes raw-flatten -> 4 drawn). With the fix the
 // raw flatten recovers the full geometry (workbench ~1327 meshes, matching the
-// next/pcp engine's 1336).
+// pcp engine's 1336).
 //
 // Fixtures: tests/usda/feat-payload-variant-{main,bind}.usda
 

@@ -6,7 +6,7 @@
 // The 8-bit image resize entry point, split out of tydra/texture-util.hh.
 // texture-util.hh pulls image-writer.hh (PngEncoder) which reaches the legacy
 // value-type layer; next-side consumers only need this small API, so including
-// it directly keeps the legacy headers out of the next build.
+// it directly keeps the legacy headers out of the core build.
 //
 #pragma once
 

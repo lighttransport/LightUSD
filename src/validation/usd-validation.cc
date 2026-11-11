@@ -934,7 +934,7 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
 
   ValidateRelocates(metas.relocates, kLayerLocation, "/", result);
 
-  // upAxis: the next parser stores the raw token; guard against non-X/Y/Z.
+  // upAxis: the core parser stores the raw token; guard against non-X/Y/Z.
   if (metas.upAxis_set && metas.upAxis != "X" && metas.upAxis != "Y" &&
       metas.upAxis != "Z") {
     AddWarning(result, "core.layer.upAxis", kLayerLocation,

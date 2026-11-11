@@ -4,7 +4,7 @@
 // LightUSD - dragonbox-based float-to-string (dtoa)
 //
 // Same shortest-round-trippable formatter lightusd uses in `src/str-util.cc`
-// (`dtos`), ported into the standalone next module. Emits OpenUSD-compatible
+// (`dtos`), ported into the standalone core module. Emits OpenUSD-compatible
 // notation (pxr_double_conversion ToShortest/ToShortestSingle): the shortest
 // decimal that round-trips the value, fixed for decimal exponents in [-6, 15)
 // and scientific outside, with NO `+` on positive exponents, NO zero-padding,

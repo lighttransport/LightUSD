@@ -73,7 +73,7 @@ render_rt lantern-rt-nosubd "$LANTERN" --subdivision-level 0 --no-subdivision-au
 grep -qE 'drawn tris [1-9][0-9]*' "$OUT/opaque-rt.log" || {
   echo "FAIL: opaque RT sentinel drew no geometry"; exit 1;
 }
-awk '/next: .*unique tris/ { for (i=1;i<=NF;i++) if ($(i+1)=="unique" && $i+0>0 && $i+0<100000) ok=1 }
+awk '/core: .*unique tris/ { for (i=1;i<=NF;i++) if ($(i+1)=="unique" && $i+0>0 && $i+0<100000) ok=1 }
      END { exit ok ? 0 : 1 }' "$OUT/lantern-rt-nosubd.log" || {
   echo "FAIL: Lantern no-subdivision RT did not retain lightweight topology"; exit 1;
 }

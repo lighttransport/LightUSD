@@ -140,7 +140,7 @@ class RenderSceneConverter::Impl {
 
   /// Resolve an authored asset path against the directory of the LAYER THAT
   /// AUTHORED IT (`asset_anchor_id`, carried through composition -- see
-  /// next/layer/asset-anchor.hh), falling back to `config_.asset_base_dir` when
+  /// layer/asset-anchor.hh), falling back to `config_.asset_base_dir` when
   /// the prim has no anchor. Anchoring at the stage root instead would break any
   /// scene whose look layers reach their textures with `../..`.
   std::string ResolveAssetPath(const std::string& file,

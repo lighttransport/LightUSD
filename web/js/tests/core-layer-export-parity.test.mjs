@@ -79,16 +79,16 @@ const legacyUrl = process.env.LIGHTUSD_LEGACY_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_LEGACY_MODULE)).href
   : new URL(legacyDefault, import.meta.url).href;
 const legacyModule = await loadWasm(() => import(legacyUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+const coreGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
                         : '../src/lightusd/lightusd.js';
-const {default: createCoreModule} = await import(new URL(nextGlue, import.meta.url));
+const {default: createCoreModule} = await import(new URL(coreGlue, import.meta.url));
 const coreModule = await createCoreModule();
 const bytes = new Uint8Array(fs.readFileSync(new URL(
   '../../../tests/usda/c-core-material-queries.usda', import.meta.url)));
 const legacyLoader = new legacyModule.LightUSDLoaderNative();
-const nextDocument = new coreModule.LayerDocument();
+const coreDocument = new coreModule.LayerDocument();
 const legacyReload = new coreModule.LayerDocument();
-const nextReload = new coreModule.LayerDocument();
+const coreReload = new coreModule.LayerDocument();
 try {
   const unloadedLegacy = new legacyModule.LightUSDLoaderNative();
   const unloadedNext = new coreModule.LayerDocument();
@@ -99,7 +99,7 @@ try {
       'unloaded-layer error must precede caller-buffer validation');
   } finally { unloadedLegacy.delete(); unloadedNext.delete(); }
   assert.equal(legacyLoader.loadAsLayerFromBinary(bytes, 'layer-export-parity.usda'), true, legacyLoader.error());
-  const loaded = nextDocument.load(bytes);
+  const loaded = coreDocument.load(bytes);
   assert.equal(loaded.success, true, loaded.error);
   const jsonSource = new TextEncoder().encode([
     '#usda 1.0',
@@ -487,11 +487,11 @@ try {
       accessors: [{bufferView: 0, componentType: 'UNSIGNED_BYTE', count: 3,
         type: 'SCALAR'}]};
     const legacyTables = new legacyModule.LightUSDLoaderNative();
-    const nextTables = new coreModule.LayerDocument();
+    const coreTables = new coreModule.LayerDocument();
     try {
       assert.equal(legacyTables.loadLayerFromJSON(JSON.stringify(tableJSON)), true,
         legacyTables.error());
-      assert.equal(nextTables.loadJSON(JSON.stringify(tableJSON)).success, true);
+      assert.equal(coreTables.loadJSON(JSON.stringify(tableJSON)).success, true);
       for (const change of [
         doc => { doc.buffers[0].byteLength = 4; },
         doc => { doc.buffers[0].uri = 'data:application/octet-stream;base64,AQI!'; },
@@ -505,10 +505,10 @@ try {
         const input = JSON.stringify(invalid);
         assert.equal(legacyTables.loadLayerFromJSON(input), false,
           'legacy rejects malformed optional Layer JSON tables');
-        assert.equal(nextTables.loadJSON(input).success, false,
+        assert.equal(coreTables.loadJSON(input).success, false,
           'core rejects the same malformed optional Layer JSON tables');
       }
-    } finally { legacyTables.delete(); nextTables.delete(); }
+    } finally { legacyTables.delete(); coreTables.delete(); }
     // Array edits keep their canonical `edit [...]` text and matrices use the
     // legacy `( (...) )` spelling in Layer JSON; both re-import into core.
     const editSource = new TextEncoder().encode([
@@ -527,11 +527,11 @@ try {
         editLegacy.error());
       assert.equal(editNext.load(editSource).success, true);
       const legacyEdit = JSON.parse(editLegacy.layerToJSON()).primSpecs.W.properties;
-      const nextEdit = JSON.parse(editNext.exportJSON().text).primSpecs.W.properties;
-      assert.equal(nextEdit.ints.attribute.value,
+      const coreEdit = JSON.parse(editNext.exportJSON().text).primSpecs.W.properties;
+      assert.equal(coreEdit.ints.attribute.value,
         'edit [write 123 to [0]; append 234; prepend 99; erase [1]; resize 8 fill 7]');
-      assert.equal(nextEdit.pairs.attribute.value, '[( (1, 0), (0, 1) ), ( (2, 0), (0, 2) )]');
-      assert.deepEqual(nextEdit, legacyEdit,
+      assert.equal(coreEdit.pairs.attribute.value, '[( (1, 0), (0, 1) ), ( (2, 0), (0, 2) )]');
+      assert.deepEqual(coreEdit, legacyEdit,
         'core Layer JSON matches legacy for array edits and matrix text');
       const reimported = editReload.loadJSON(editLegacy.layerToJSON());
       assert.equal(reimported.success, true, reimported.error);
@@ -558,10 +558,10 @@ try {
           bothLegacy.error());
         assert.equal(bothNext.load(bothSource).success, true);
         const legacyBoth = JSON.parse(bothLegacy.layerToJSON()).primSpecs.S.properties['inputs:c'];
-        const nextBoth = JSON.parse(bothNext.exportJSON().text).primSpecs.S.properties['inputs:c'];
+        const coreBoth = JSON.parse(bothNext.exportJSON().text).primSpecs.S.properties['inputs:c'];
         assert.equal(legacyBoth.attribute.connection, undefined);
-        assert.equal(nextBoth.attribute.connection, '/T.outputs:rgb');
-        assert.equal(nextBoth.attribute.value, legacyBoth.attribute.value);
+        assert.equal(coreBoth.attribute.connection, '/T.outputs:rgb');
+        assert.equal(coreBoth.attribute.value, legacyBoth.attribute.value);
         const imported = bothReload.loadJSON(bothLegacy.layerToJSON());
         assert.equal(imported.success, true, imported.error);
         const reloaded = JSON.parse(bothReload.exportJSON().text).primSpecs.S.properties['inputs:c'];
@@ -702,10 +702,10 @@ def Material "Mat" (
   const tooSmallLegacy = new Uint8Array(legacyBytes.length - 1).fill(0xa5);
   const tooSmallNext = new Uint8Array(legacyBytes.length - 1).fill(0xa5);
   const legacySmallResult = legacyLoader.exportLayerAsUSDCToBufferWithOptions(tooSmallLegacy, {});
-  const nextSmallResult = nextDocument.exportUSDCToBuffer(tooSmallNext, {});
+  const coreSmallResult = coreDocument.exportUSDCToBuffer(tooSmallNext, {});
   assert.equal(legacySmallResult.success, false);
-  assert.equal(nextSmallResult.success, false);
-  assert.equal(nextSmallResult.error, legacySmallResult.error);
+  assert.equal(coreSmallResult.success, false);
+  assert.equal(coreSmallResult.error, legacySmallResult.error);
   assert.deepEqual(tooSmallNext, new Uint8Array(legacyBytes.length - 1).fill(0xa5),
     'too-small core output buffer remains unchanged');
   assert.deepEqual(tooSmallLegacy, new Uint8Array(legacyBytes.length - 1).fill(0xa5),
@@ -716,45 +716,45 @@ def Material "Mat" (
     [new Uint8Array(0), 'USDC export output buffer is empty.']
   ]) {
     const oldResult = legacyLoader.exportLayerAsUSDCToBufferWithOptions(badBuffer, {});
-    const newResult = nextDocument.exportUSDCToBuffer(badBuffer, {});
+    const newResult = coreDocument.exportUSDCToBuffer(badBuffer, {});
     assert.equal(oldResult.error, expectedError);
     assert.equal(newResult.error, oldResult.error);
   }
-  const nextExport = nextDocument.exportUSDC();
-  assert.equal(nextExport.success, true, nextExport.error);
-  assert.ok(nextExport.data.length > 0);
+  const coreExport = coreDocument.exportUSDC();
+  assert.equal(coreExport.success, true, coreExport.error);
+  assert.ok(coreExport.data.length > 0);
   const crateProgress = [];
-  const crateProgressResult = nextReload.loadWithProgress(nextExport.data, event => {
+  const crateProgressResult = coreReload.loadWithProgress(coreExport.data, event => {
     crateProgress.push(event);
   });
   assert.equal(crateProgressResult.success, true, crateProgressResult.error);
   assert.ok(crateProgress.length > 0, 'USDC load reports crate progress');
   const legacyOutputBuffer = new Uint8Array(legacyBytes.length + 4).fill(0xcc);
-  const nextOutputBuffer = new Uint8Array(nextExport.data.length + 4).fill(0xcc);
+  const coreOutputBuffer = new Uint8Array(coreExport.data.length + 4).fill(0xcc);
   const legacyBufferResult = legacyLoader.exportLayerAsUSDCToBufferWithOptions(
     legacyOutputBuffer, {});
-  const nextBufferResult = nextDocument.exportUSDCToBuffer(nextOutputBuffer, {});
+  const coreBufferResult = coreDocument.exportUSDCToBuffer(coreOutputBuffer, {});
   assert.equal(legacyBufferResult.success, true, legacyBufferResult.error);
-  assert.equal(nextBufferResult.success, true, nextBufferResult.error);
-  assert.equal(nextBufferResult.size, nextExport.data.length);
-  assert.deepEqual(nextOutputBuffer.subarray(0, nextBufferResult.size), nextExport.data);
-  assert.deepEqual(nextOutputBuffer.subarray(nextBufferResult.size), new Uint8Array(4).fill(0xcc),
+  assert.equal(coreBufferResult.success, true, coreBufferResult.error);
+  assert.equal(coreBufferResult.size, coreExport.data.length);
+  assert.deepEqual(coreOutputBuffer.subarray(0, coreBufferResult.size), coreExport.data);
+  assert.deepEqual(coreOutputBuffer.subarray(coreBufferResult.size), new Uint8Array(4).fill(0xcc),
     'core output buffer tail remains unchanged');
   assert.deepEqual(legacyOutputBuffer.subarray(0, legacyBufferResult.size), legacyBytes);
   const oldReload = legacyReload.load(legacyBytes);
   assert.equal(oldReload.success, true, oldReload.error);
-  const newReload = nextReload.load(nextExport.data);
+  const newReload = coreReload.load(coreExport.data);
   assert.equal(newReload.success, true, newReload.error);
   const legacyUSDA = legacyReload.exportUSDA();
-  const nextUSDA = nextReload.exportUSDA();
+  const coreUSDA = coreReload.exportUSDA();
   assert.equal(legacyUSDA.success, true, legacyUSDA.error);
-  assert.equal(nextUSDA.success, true, nextUSDA.error);
-  assert.equal(nextUSDA.text, legacyUSDA.text,
+  assert.equal(coreUSDA.success, true, coreUSDA.error);
+  assert.equal(coreUSDA.text, legacyUSDA.text,
     'optioned legacy layer USDC and core LayerDocument USDC must reload identically');
-  const nextStream = new coreModule.RenderStream();
+  const coreStream = new coreModule.RenderStream();
   try {
-    const streamLoad = nextStream.begin(bytes);
-    assert.equal(streamLoad.success, true, streamLoad.error || nextStream.error());
+    const streamLoad = coreStream.begin(bytes);
+    assert.equal(streamLoad.success, true, streamLoad.error || coreStream.error());
     const legacyStageBytes = legacyLoader.exportAsUSDC();
     assert.ok(legacyStageBytes?.length > 0, legacyLoader.error());
     for (const [target, expectedError] of [
@@ -763,14 +763,14 @@ def Material "Mat" (
       [new Uint8Array(0), 'USDC export output buffer is empty.']
     ]) {
       const oldResult = legacyLoader.exportStageAsUSDCToBufferWithOptions(target, {});
-      const newResult = nextStream.exportUSDCToBuffer(target, {});
+      const newResult = coreStream.exportUSDCToBuffer(target, {});
       assert.equal(oldResult.error, expectedError);
       assert.equal(newResult.error, oldResult.error);
     }
     const oldSmall = new Uint8Array(legacyStageBytes.length - 1).fill(0x5a);
     const newSmall = new Uint8Array(legacyStageBytes.length - 1).fill(0x5a);
     const oldSmallResult = legacyLoader.exportStageAsUSDCToBufferWithOptions(oldSmall, {});
-    const newSmallResult = nextStream.exportUSDCToBuffer(newSmall, {});
+    const newSmallResult = coreStream.exportUSDCToBuffer(newSmall, {});
     assert.equal(oldSmallResult.error, 'USDC export output buffer too small.');
     assert.equal(newSmallResult.error, oldSmallResult.error);
     assert.deepEqual(newSmall, new Uint8Array(legacyStageBytes.length - 1).fill(0x5a),
@@ -779,7 +779,7 @@ def Material "Mat" (
     const oldStageOutput = new Uint8Array(stageOutputCapacity).fill(0xcc);
     const newStageOutput = new Uint8Array(stageOutputCapacity).fill(0xcc);
     const oldStageResult = legacyLoader.exportStageAsUSDCToBufferWithOptions(oldStageOutput, {});
-    const newStageResult = nextStream.exportUSDCToBuffer(newStageOutput, {});
+    const newStageResult = coreStream.exportUSDCToBuffer(newStageOutput, {});
     assert.equal(oldStageResult.success, true, oldStageResult.error);
     assert.equal(newStageResult.success, true, newStageResult.error);
     assert.deepEqual(newStageOutput.subarray(newStageResult.size),
@@ -798,8 +798,8 @@ def Material "Mat" (
       assert.equal(newStageUSDA.text, oldStageUSDA.text,
         'Stage-oriented legacy USDC and core RenderStream USDC must reload identically');
     } finally { oldStageReload.delete(); newStageReload.delete(); }
-  } finally { nextStream.delete(); }
+  } finally { coreStream.delete(); }
 } finally {
-  legacyLoader.delete(); nextDocument.delete(); legacyReload.delete(); nextReload.delete();
+  legacyLoader.delete(); coreDocument.delete(); legacyReload.delete(); coreReload.delete();
 }
 console.log('ok - legacy optioned layer USDC export and caller-buffer contract match LayerDocument workflow');

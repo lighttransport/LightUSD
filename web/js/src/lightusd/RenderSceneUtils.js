@@ -457,7 +457,7 @@ function bakeMaterialXTextureOps(texture, ops) {
 
 // Resolve the image and pixel-operation chain feeding one OpenPBR input.
 // This mirrors the legacy demo's graph-aware texture path, but lives in the
-// shared core scene builder so every next consumer gets identical behavior.
+// shared core scene builder so every core consumer gets identical behavior.
 export function materialXTextureSpecForParam(nodeGraphData, paramName) {
   if (!nodeGraphData || !paramName) return null;
   const graph = nodeGraphData.nodegraph || nodeGraphData;
@@ -1015,7 +1015,7 @@ export function createMaterial(entry, adapter, textureManager, skipTextures) {
     }
     const openPBRParam = rawData.openPBR?.[graphParamForMap[mapProperty]] ||
       (mapProperty === 'normalMap' ? rawData.openPBR?.normal : null);
-    // The next node-graph JSON intentionally keeps the graph structural and
+    // The core node-graph JSON intentionally keeps the graph structural and
     // may omit SdfAssetPath metadata. Its reconstructed OpenPBR parameter
     // retains that colorspace, so consult it before PreviewSurface metadata.
     const authored = graphSpec?.colorspace || openPBRParam?.colorspace ||

@@ -88,7 +88,7 @@ bool ParseLayerJSONMetadataValue(const minijson::Value& encoded,
     bool is_array = false;
     const tn::TypeId type = tn::ParseTypeName(type_name, is_array);
     if (type == tn::TypeId::Invalid) return false;
-    // Legacy typed asset metadata uses an object payload. The next Value
+    // Legacy typed asset metadata uses an object payload. The core Value
     // stores the authored path; resolvedPath is a transient resolver hint.
     if (type == tn::TypeId::AssetPath && !is_array) {
       const minijson::Value& asset = encoded["value"];

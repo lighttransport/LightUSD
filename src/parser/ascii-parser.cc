@@ -359,7 +359,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
 bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
                                      bool fast) {
-  CratePhaseTimer timer(options_.enable_timing, "next_usda_parse");
+  CratePhaseTimer timer(options_.enable_timing, "core_usda_parse");
   errors_.clear();
   warnings_.clear();
   depth_ = 0;

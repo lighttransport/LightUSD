@@ -4,7 +4,7 @@
 Two artifacts are produced from the same JSON:
 
 * a C11 data module under ``src/c`` (``generated-schema-tables.{c,h}``)
-  consumed by the next product, and
+  consumed by the core product, and
 * the rule metadata cross-check used by ``tools/lusdchecker``.
 
 The C11 module is the next-side source of truth: it is compiled by the C

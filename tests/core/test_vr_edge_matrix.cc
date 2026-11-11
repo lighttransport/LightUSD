@@ -54,7 +54,7 @@ const std::vector<Expectation> kExpectations = {
 #undef VR_EDGE_CASE
 };
 
-// Flatten a resolved next Value into doubles. `want` is the expected lane
+// Flatten a resolved core Value into doubles. `want` is the expected lane
 // count (arrays flatten every element).
 bool FlattenCore(const Value& v, size_t want, std::vector<double>* out) {
   out->clear();

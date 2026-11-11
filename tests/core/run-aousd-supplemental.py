@@ -148,7 +148,7 @@ def verify_invalid_text_case(case_dir, expected, classification, lusdcat,
         errors.append('binary root presence differs from the reviewed release')
     for flags in (['-l'], ['--dump-pcp-json', '-', '--pcp-json-version', '2']):
         result = subprocess.run([lusdcat, *flags, str(text)], capture_output=True, text=True)
-        if result.returncode == 0 or classification['nextDiagnostic'] not in result.stderr:
+        if result.returncode == 0 or classification['coreDiagnostic'] not in result.stderr:
             errors.append('negative text did not produce the required rejection: ' + ' '.join(flags))
     oracle_script = str(pathlib.Path(__file__).with_name('dump-pcp-oracle.py'))
     if oracle_python:

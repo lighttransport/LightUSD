@@ -12,9 +12,9 @@ const legacyUrl = process.env.LIGHTUSD_LEGACY_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_LEGACY_MODULE)).href
   : new URL(legacyDefault, import.meta.url).href;
 const legacyModule = await loadWasm(() => import(legacyUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+const coreGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
                         : '../src/lightusd/lightusd.js';
-const {default: createCoreModule} = await import(new URL(nextGlue, import.meta.url));
+const {default: createCoreModule} = await import(new URL(coreGlue, import.meta.url));
 const coreModule = await createCoreModule();
 const validator = await coreModule.loadFeature('validator');
 const legacy = new legacyModule.LightUSDLoaderNative();
@@ -28,18 +28,18 @@ const cases = [
   '../../../tests/usdc/cube-000.usdc'
 ];
 const options = JSON.stringify({groups: ['core', 'geom', 'shade', 'lux', 'physics', 'crate']});
-let nextLayer = null;
+let coreLayer = null;
 try {
   assert.equal(typeof validator.validateFromBinary, 'function');
   assert.equal(typeof coreModule.LayerDocument, 'function');
-  nextLayer = new coreModule.LayerDocument();
-  assert.equal(typeof nextLayer.validateLoadedLayer, 'function');
-  assert.deepEqual(JSON.parse(nextLayer.validateLoadedLayer('{}')), {
+  coreLayer = new coreModule.LayerDocument();
+  assert.equal(typeof coreLayer.validateLoadedLayer, 'function');
+  assert.deepEqual(JSON.parse(coreLayer.validateLoadedLayer('{}')), {
     parse_ok: false, ok: false,
     error: 'No Layer is loaded. Use loadAsLayerFromBinary first.'
   });
-  assert.throws(() => nextLayer.validateLoadedLayer(), TypeError);
-  assert.throws(() => nextLayer.validateLoadedLayer({}), TypeError);
+  assert.throws(() => coreLayer.validateLoadedLayer(), TypeError);
+  assert.throws(() => coreLayer.validateLoadedLayer({}), TypeError);
   for (const fixture of cases) {
     const bytes = new Uint8Array(fs.readFileSync(new URL(fixture, import.meta.url)));
     const filename = path.basename(fixture);
@@ -65,57 +65,57 @@ try {
   const usdcBytes = new Uint8Array(fs.readFileSync(new URL(cases[3], import.meta.url)));
   const legacyCoreOnly = JSON.parse(
     legacy.validateFromBinary(usdcBytes, 'cube-000.usdc', '{}'));
-  const nextCoreOnly = JSON.parse(
+  const coreOnlyReport = JSON.parse(
     validator.validateFromBinary(usdcBytes, 'cube-000.usdc', '{}'));
-  assert.match(nextCoreOnly.warn, /Threading is disabled for this build\./);
+  assert.match(coreOnlyReport.warn, /Threading is disabled for this build\./);
   delete legacyCoreOnly.warn;
-  delete nextCoreOnly.warn;
+  delete coreOnlyReport.warn;
   delete legacyCoreOnly.spec_version;
-  delete nextCoreOnly.spec_version;
-  assert.deepEqual(nextCoreOnly, legacyCoreOnly,
+  delete coreOnlyReport.spec_version;
+  assert.deepEqual(coreOnlyReport, legacyCoreOnly,
     'the legacy core group also enables crate checks when options omit explicit groups');
   const cleanBytes = new Uint8Array(fs.readFileSync(new URL(cases[0], import.meta.url)));
   legacy.reset();
   assert.equal(legacy.loadAsLayerFromBinary(cleanBytes, 'clean.usda'), true, legacy.error());
-  assert.equal(nextLayer.load(cleanBytes).success, true, nextLayer.error());
+  assert.equal(coreLayer.load(cleanBytes).success, true, coreLayer.error());
   const alloc = coreModule._lightusd_wasm_alloc;
   const validationAllocations = [];
   coreModule._lightusd_wasm_alloc = size => {
     validationAllocations.push(Number(size));
     return alloc(size);
   };
-  let nextLoadedResult;
+  let coreLoadedResult;
   try {
-    nextLoadedResult = JSON.parse(nextLayer.validateLoadedLayer(options));
+    coreLoadedResult = JSON.parse(coreLayer.validateLoadedLayer(options));
   } finally {
     coreModule._lightusd_wasm_alloc = alloc;
   }
   assert.deepEqual(validationAllocations, [],
     'loaded-layer validation transfers the retained USDA directly to the validator heap');
   const legacyLoadedResult = JSON.parse(legacy.validateLoadedLayer(options));
-  delete nextLoadedResult.spec_version;
+  delete coreLoadedResult.spec_version;
   delete legacyLoadedResult.spec_version;
-  assert.deepEqual(nextLoadedResult,
+  assert.deepEqual(coreLoadedResult,
     legacyLoadedResult,
     'loaded-layer validation must preserve the legacy result for authored USDA');
-  assert.deepEqual(nextLayer.definePrim('/ValidationAdded', 'Xform'),
+  assert.deepEqual(coreLayer.definePrim('/ValidationAdded', 'Xform'),
     {success: true});
-  const afterEdit = JSON.parse(nextLayer.validateLoadedLayer(options));
+  const afterEdit = JSON.parse(coreLayer.validateLoadedLayer(options));
   assert.equal(afterEdit.parse_ok, true);
   assert.equal(afterEdit.ok, true,
     'validation must use the document current state after edits');
   const badBytes = new TextEncoder().encode('not USD');
-  const nextBad = JSON.parse(validator.validateFromBinary(badBytes, 'bad.usda', '{}'));
+  const coreBad = JSON.parse(validator.validateFromBinary(badBytes, 'bad.usda', '{}'));
   const legacyBad = JSON.parse(legacy.validateFromBinary(badBytes, 'bad.usda', '{}'));
-  assert.equal(nextBad.parse_ok, false);
+  assert.equal(coreBad.parse_ok, false);
   assert.equal(legacyBad.parse_ok, false);
-  assert.equal(nextBad.ok, false);
+  assert.equal(coreBad.ok, false);
   assert.equal(legacyBad.ok, false);
-  assert.ok(nextBad.error && legacyBad.error);
-  assert.notEqual(nextBad.error, legacyBad.error,
+  assert.ok(coreBad.error && legacyBad.error);
+  assert.notEqual(coreBad.error, legacyBad.error,
     'parser diagnostic wording is a known legacy/core difference');
 } finally {
-  nextLayer?.delete();
+  coreLayer?.delete();
   legacy.delete();
 }
 const matrix = JSON.parse(fs.readFileSync(new URL('./core-wasm-parity-gaps.json', import.meta.url)));

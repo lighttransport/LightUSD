@@ -827,7 +827,7 @@ class DemoApp {
     targetMaterial.needsUpdate = true;
   }
 
-  async applySkinningAndAnimation(usd, threeNode, nextNodeIndexMap = null) {
+  async applySkinningAndAnimation(usd, threeNode, coreNodeIndexMap = null) {
     const metadata = getUSDSceneMetadata(usd);
     const skinningData = extractSkinnedMeshData(usd, { logger: console, verbose: false });
     const skeletonData = buildSkeletonDataFromUSD(usd, {
@@ -835,7 +835,7 @@ class DemoApp {
       hasSkinnedMeshData: skinningData.hasSkinnedMeshData
     });
 
-    const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
+    const nodeIndexMap = coreNodeIndexMap || buildNodeIndexMap(threeNode);
     const skinningResult = applyUSDSceneSkinningPipeline({
       threeNode,
       characterGroup: this.world,
@@ -1132,7 +1132,7 @@ class DemoApp {
   }
 
   updateStats(usd, label) {
-    const nextCounts = isScene(usd) ? countsFromScene(usd) : null;
+    const coreCounts = isScene(usd) ? countsFromScene(usd) : null;
     const countValue = (getter) => {
       if (typeof getter !== 'function') {
         return Number.isFinite(getter) ? getter : 0;
@@ -1176,17 +1176,17 @@ class DemoApp {
       Source: label,
       Backend: 'core',
       'Up axis': this.currentUpAxis || this.getSceneUpAxis(usd),
-      Meshes: nextCounts?.meshes ?? countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
-      Materials: nextCounts?.materials ?? countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),
-      Textures: nextCounts?.textures ?? countNumber(usd?.numTextures && usd.numTextures.bind(usd)),
+      Meshes: coreCounts?.meshes ?? countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
+      Materials: coreCounts?.materials ?? countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),
+      Textures: coreCounts?.textures ?? countNumber(usd?.numTextures && usd.numTextures.bind(usd)),
       Images: countNumber(usd?.numImages && usd.numImages.bind(usd)),
-      Lights: nextCounts?.lights ?? countNumber(usd?.numLights && usd.numLights.bind(usd)),
-      Cameras: nextCounts?.cameras ?? countNumber(usd?.numCameras && usd.numCameras.bind(usd)),
-      Nodes: nextCounts?.nodes ?? countNumber(usd?.numNodes && usd.numNodes.bind(usd)),
-      PointInstancers: nextCounts?.pointInstancers ?? countNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
-      PointInstanceDraws: nextCounts?.pointInstanceDraws ?? countNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
-      Skeletons: nextCounts?.skeletons ?? countNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
-      Animations: nextCounts?.animations ?? countNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
+      Lights: coreCounts?.lights ?? countNumber(usd?.numLights && usd.numLights.bind(usd)),
+      Cameras: coreCounts?.cameras ?? countNumber(usd?.numCameras && usd.numCameras.bind(usd)),
+      Nodes: coreCounts?.nodes ?? countNumber(usd?.numNodes && usd.numNodes.bind(usd)),
+      PointInstancers: coreCounts?.pointInstancers ?? countNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
+      PointInstanceDraws: coreCounts?.pointInstanceDraws ?? countNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+      Skeletons: coreCounts?.skeletons ?? countNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
+      Animations: coreCounts?.animations ?? countNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
       UnsupportedRenderables: unsupportedRenderables
     };
     this.statsEl.innerHTML = Object.entries(stats)

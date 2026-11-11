@@ -1,67 +1,77 @@
 # LightUSD Meson build options
-# Source list synchronized with CMakeLists.txt
+# Targets are imported from the canonical CMake project.
 
-option('tydra', type: 'boolean', value: false,
-       description: 'Build the legacy Tydra scene converter')
+option('tydra', type: 'boolean', value: true,
+       description: 'Build the core Tydra scene converter')
+option('legacy', type: 'boolean', value: false,
+       description: 'Also build the opt-in legacy implementation')
+option('legacy_tydra', type: 'boolean', value: false,
+       description: 'Build legacy Tydra (requires legacy=true)')
+option('cmake_args', type: 'array', value: [],
+       description: 'Additional CMake options, including cross-compilation toolchain settings')
+option('cmake_jobs', type: 'integer', value: 8, min: 1,
+       description: 'Parallel jobs in the canonical CMake library build')
+option('tests', type: 'boolean', value: false,
+       description: 'Build and run the core API smoke test')
 
 # -- Core features (default ON) --
 option('builtin_image_loader', type: 'boolean', value: true,
-       description: 'Build with built-in image loader (stb_image and fpng)')
+       description: 'Legacy only: Build with built-in image loader (stb_image and fpng)')
 option('usdmtlx', type: 'boolean', value: true,
-       description: 'Build with MaterialX support')
+       description: 'Legacy only: Build with MaterialX support')
 option('json', type: 'boolean', value: true,
-       description: 'Build with JSON support')
+       description: 'Legacy only: Build with JSON support')
 option('usdobj', type: 'boolean', value: true,
        description: 'Build with usdObj support (import Wavefront .obj)')
 option('usdvox', type: 'boolean', value: true,
-       description: 'Build with usdVox support (import MagicaVoxel .vox)')
+       description: 'Legacy only: Build with usdVox support (import MagicaVoxel .vox)')
 option('exr', type: 'boolean', value: true,
        description: 'Build with EXR HDR texture support')
 option('colorio', type: 'boolean', value: true,
-       description: 'Build with Color IO baked LUT support')
+       description: 'Legacy only: Build with Color IO baked LUT support')
 option('audio', type: 'boolean', value: true,
-       description: 'Build with Audio support (MP3 and WAV)')
+       description: 'Legacy only: Build with Audio support (MP3 and WAV)')
 option('zstd', type: 'boolean', value: true,
-       description: 'Enable zstd compression for USD files')
+       description: 'Legacy only: Enable zstd compression for USD files')
 option('pxr_compat_api', type: 'boolean', value: true,
-       description: 'Build with pxr compatible API')
+       description: 'Legacy only: Build with pxr compatible API')
 
 # -- Module control (default ON) --
 option('module_usda_reader', type: 'boolean', value: true,
-       description: 'Build with USDA reader feature')
+       description: 'Legacy only: Build with USDA reader feature')
 option('module_usda_writer', type: 'boolean', value: true,
-       description: 'Build with USDA writer feature')
+       description: 'Legacy only: Build with USDA writer feature')
 option('module_usdc_reader', type: 'boolean', value: true,
-       description: 'Build with USDC reader feature')
+       description: 'Legacy only: Build with USDC reader feature')
 option('module_usdc_writer', type: 'boolean', value: true,
-       description: 'Build with USDC writer feature')
+       description: 'Legacy only: Build with USDC writer feature')
 
 # -- Optional features (default OFF) --
 option('usdfbx', type: 'boolean', value: false,
-       description: 'Build with usdFbx support (import FBX)')
+       description: 'Legacy only: Build with usdFbx support (import FBX)')
 option('meshopt', type: 'boolean', value: false,
-       description: 'Build with meshoptimizer support')
+       description: 'Legacy only: Build with meshoptimizer support')
 option('alac_audio', type: 'boolean', value: false,
-       description: 'Build with ALAC (M4A) audio support')
+       description: 'Legacy only: Build with ALAC (M4A) audio support')
 option('mcp_server', type: 'boolean', value: false,
        description: 'Build with C++ MCP server (HTTP) support')
 option('qjs', type: 'boolean', value: false,
-       description: 'Build with QuickJS (JavaScript) support')
+       description: 'Legacy only: build with QuickJS (JavaScript) support')
 option('wamr', type: 'boolean', value: false,
-       description: 'Build with WAMR (WebAssembly Micro Runtime) support')
+       description: 'Legacy only: Build with WAMR (WebAssembly Micro Runtime) support')
 option('geogram', type: 'boolean', value: false,
-       description: 'Build with Geogram library for advanced geometry processing')
+       description: 'Legacy only: Build with Geogram library for advanced geometry processing')
 option('remotery', type: 'boolean', value: false,
-       description: 'Build with Remotery profiling support')
+       description: 'Legacy only: Build with Remotery profiling support')
 option('production_build', type: 'boolean', value: false,
        description: 'Build for production (disable debug print, shorter error messages)')
 option('debug_print', type: 'boolean', value: false,
-       description: 'Enable debug print (for debugging)')
+       description: 'Legacy only: Enable debug print (for debugging)')
 option('shared_lib', type: 'boolean', value: false,
-       description: 'Also build shared library')
+       description: 'Build the shared C API library (and legacy shared library when enabled)')
 
 # -- System library options --
 option('system_zlib', type: 'boolean', value: false,
-       description: 'Use system zlib instead of bundled miniz')
+       description: 'Legacy only: Use system zlib instead of bundled miniz')
 option('system_zstd', type: 'boolean', value: false,
-       description: 'Use system zstd instead of bundled version')
+       description: 'Legacy only: Use system zstd instead of bundled version')

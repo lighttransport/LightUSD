@@ -574,7 +574,7 @@ void test_name_table_registration() {
   std::cout << "Testing name-table registration completeness..." << std::endl;
 
   // Names interned by the kId* accessors in geom-mesh.cc, geom-xform.cc,
-  // geom-point-instancer.cc, stage.cc and tydra/next/render-converter.cc.
+  // geom-point-instancer.cc, stage.cc and tydra/render-converter.cc.
   static const char* kAccessorNames[] = {
       "accelerations",        "angularVelocities",  "clippingRange",
       "cornerIndices",        "cornerSharpnesses",  "creaseIndices",

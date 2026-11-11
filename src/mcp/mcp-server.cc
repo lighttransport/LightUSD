@@ -23,7 +23,7 @@ namespace {
 constexpr size_t kMaxMessageBytes = 16 * 1024 * 1024;
 constexpr const char* kProtocolVersion = "2025-06-18";
 
-// Tools of the shared legacy schema set that the next product does not
+// Tools of the shared legacy schema set that the core product does not
 // provide (scripting engine, image processing, unimplemented stub).
 const std::set<std::string>& UnsupportedTools() {
   static const std::set<std::string> kTools = {

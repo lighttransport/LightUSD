@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
       CHECK(bool(snapshot), "stage_snapshot is valid after budget load");
 #if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
       // (legacy BuildStage has a known duplicate same-name prim quirk with
-      // nested payloads, so content presence is pinned on the next backend.)
+      // nested payloads, so content presence is pinned on the core backend.)
       if (snapshot) {
         CHECK(HasPrim(*snapshot, "/World/P/M"),
               "payload content composed and visible via snapshot");

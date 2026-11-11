@@ -201,38 +201,38 @@ try {
   legacyColor.delete();
 }
 
-const nextColor = loadNext(COLOR_USDA);
-let nextMeta;
-let nextWorking;
+const coreColor = loadNext(COLOR_USDA);
+let coreMeta;
+let coreWorking;
 try {
-  nextMeta = nextColor.getSceneMetadata();
-  const mesh = nextColor.getMesh(0);
+  coreMeta = coreColor.getSceneMetadata();
+  const mesh = coreColor.getMesh(0);
   assert(!mesh.error, mesh.error);
-  nextWorking = Array.from(mesh.material.baseColor);
+  coreWorking = Array.from(mesh.material.baseColor);
 } finally {
-  nextColor.end();
-  nextColor.delete();
+  coreColor.end();
+  coreColor.delete();
 }
 
 assert.equal(legacyMeta.renderSettingsPrimPath, '/World/Settings');
-assert.equal(nextMeta.renderSettingsPrimPath, '/World/Settings');
+assert.equal(coreMeta.renderSettingsPrimPath, '/World/Settings');
 assert.equal(legacyMeta.workingColorSpace, 'lin_ap1_scene');
-assert.equal(nextMeta.workingColorSpace, 'lin_ap1_scene');
+assert.equal(coreMeta.workingColorSpace, 'lin_ap1_scene');
 const expectedDisplay = [0.05087609, 0.21404114, 0.52252155];
 const legacyDisplay = multiply3(Array.from(legacyMeta.workingToDisplayLinear),
   legacyWorking);
-const nextDisplay = multiply3(Array.from(nextMeta.workingToDisplayLinear),
-  nextWorking);
+const coreDisplay = multiply3(Array.from(coreMeta.workingToDisplayLinear),
+  coreWorking);
 assertNear(legacyDisplay, expectedDisplay, 3e-4, 'legacy display-linear');
-assertNear(nextDisplay, expectedDisplay, 3e-4, 'core display-linear');
-assertNear(nextDisplay, legacyDisplay, 3e-5, 'backend parity');
+assertNear(coreDisplay, expectedDisplay, 3e-4, 'core display-linear');
+assertNear(coreDisplay, legacyDisplay, 3e-5, 'backend parity');
 
 // The core binding exports the already-resolved transform because custom
 // ColorSpaceDefinitionAPI properties are stage-local and unavailable once the
 // RenderScene is handed to Three.js.
-const nextCustomTexture = loadNext(CUSTOM_TEXTURE_USDA);
+const coreCustomTexture = loadNext(CUSTOM_TEXTURE_USDA);
 try {
-  const mesh = nextCustomTexture.getMesh(0);
+  const mesh = coreCustomTexture.getMesh(0);
   assert(!mesh.error, mesh.error);
   const meta = mesh.material.textureMetadata.baseColor;
   assert.equal(meta.sourceColorSpace, 'studio_ap0');
@@ -247,8 +247,8 @@ try {
     -0.015378, -0.152975, 1.168353
   ], 3e-4, 'core custom texture transform');
 } finally {
-  nextCustomTexture.end();
-  nextCustomTexture.delete();
+  coreCustomTexture.end();
+  coreCustomTexture.delete();
 }
 
 const legacyCustomTexture = loadLegacy(
@@ -284,20 +284,20 @@ try {
 } finally {
   legacyRaw.delete();
 }
-const nextRaw = loadNext(RAW_USDA);
-let nextRawWorking;
+const coreRaw = loadNext(RAW_USDA);
+let coreRawWorking;
 try {
-  const mesh = nextRaw.getMesh(0);
+  const mesh = coreRaw.getMesh(0);
   assert(!mesh.error, mesh.error);
-  nextRawWorking = Array.from(mesh.material.baseColor);
+  coreRawWorking = Array.from(mesh.material.baseColor);
 } finally {
-  nextRaw.end();
-  nextRaw.delete();
+  coreRaw.end();
+  coreRaw.delete();
 }
 const authoredRaw = [0.25, 0.5, 0.75];
 const decodedChromatic = [0.05087609, 0.21404114, 0.52252155];
 assertNear(legacyRawWorking, authoredRaw, 1e-7, 'legacy raw bypass');
-assertNear(nextRawWorking, authoredRaw, 1e-7, 'core raw bypass');
+assertNear(coreRawWorking, authoredRaw, 1e-7, 'core raw bypass');
 
 // MaterialXConfig and property-level colorSpace metadata must survive graph
 // reconstruction in both backends.
@@ -323,9 +323,9 @@ try {
   legacyMtlx.delete();
 }
 
-const nextMtlx = loadNext(MTLX_USDA);
+const coreMtlx = loadNext(MTLX_USDA);
 try {
-  const mesh = nextMtlx.getMesh(0);
+  const mesh = coreMtlx.getMesh(0);
   assert(!mesh.error, mesh.error);
   assert.equal(mesh.material.materialXConfig.authored, true);
   assert.equal(mesh.material.materialXConfig.version, '1.39');
@@ -340,8 +340,8 @@ try {
     .find((candidate) => candidate.name === 'value');
   assert.equal(input?.colorspace, 'srgb_rec709_scene');
 } finally {
-  nextMtlx.end();
-  nextMtlx.delete();
+  coreMtlx.end();
+  coreMtlx.delete();
 }
 
 // With no property metadata, MaterialXConfigAPI's AP1 document space is the
@@ -360,21 +360,21 @@ try {
 } finally {
   legacyMtlxConfigured.delete();
 }
-const nextMtlxConfigured = loadNext(MTLX_CONFIG_DEFAULT_USDA);
-let nextMtlxConfiguredColor;
+const coreMtlxConfigured = loadNext(MTLX_CONFIG_DEFAULT_USDA);
+let coreMtlxConfiguredColor;
 try {
-  const mesh = nextMtlxConfigured.getMesh(0);
+  const mesh = coreMtlxConfigured.getMesh(0);
   assert(!mesh.error, mesh.error);
-  nextMtlxConfiguredColor = Array.from(mesh.material.baseColor);
+  coreMtlxConfiguredColor = Array.from(mesh.material.baseColor);
 } finally {
-  nextMtlxConfigured.end();
-  nextMtlxConfigured.delete();
+  coreMtlxConfigured.end();
+  coreMtlxConfigured.delete();
 }
 assertNear(legacyMtlxConfiguredColor, expectedConfigured, 3e-5,
   'legacy MaterialXConfig default transform');
-assertNear(nextMtlxConfiguredColor, expectedConfigured, 3e-5,
+assertNear(coreMtlxConfiguredColor, expectedConfigured, 3e-5,
   'core MaterialXConfig default transform');
-assertNear(nextMtlxConfiguredColor, legacyMtlxConfiguredColor, 3e-5,
+assertNear(coreMtlxConfiguredColor, legacyMtlxConfiguredColor, 3e-5,
   'MaterialXConfig backend parity');
 
 const legacyMtlxInherited = loadLegacy(
@@ -388,26 +388,26 @@ try {
 } finally {
   legacyMtlxInherited.delete();
 }
-const nextMtlxInherited = loadNext(MTLX_INHERITED_API_USDA);
-let nextMtlxInheritedColor;
+const coreMtlxInherited = loadNext(MTLX_INHERITED_API_USDA);
+let coreMtlxInheritedColor;
 try {
-  const mesh = nextMtlxInherited.getMesh(0);
+  const mesh = coreMtlxInherited.getMesh(0);
   assert(!mesh.error, mesh.error);
-  nextMtlxInheritedColor = Array.from(mesh.material.baseColor);
+  coreMtlxInheritedColor = Array.from(mesh.material.baseColor);
 } finally {
-  nextMtlxInherited.end();
-  nextMtlxInherited.delete();
+  coreMtlxInherited.end();
+  coreMtlxInherited.delete();
 }
 assertNear(legacyMtlxInheritedColor, authoredRaw, 3e-5,
   'legacy inherited ColorSpaceAPI precedence');
-assertNear(nextMtlxInheritedColor, authoredRaw, 3e-5,
+assertNear(coreMtlxInheritedColor, authoredRaw, 3e-5,
   'core inherited ColorSpaceAPI precedence');
 
 console.log(JSON.stringify({
   pass: true,
   workingColorSpace: 'lin_ap1_scene',
   legacyDisplay,
-  nextDisplay,
+  coreDisplay,
   rawBypass: authoredRaw,
   materialXConfig: true,
   nodeGraphColorSpace: 'srgb_rec709_scene',

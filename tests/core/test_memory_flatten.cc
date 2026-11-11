@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Memory-rooted layer loading + flatten tests for src/next:
+// Memory-rooted layer loading + flatten tests for src:
 // pcp::LoadLayerFromMemory[Owned] content dispatch (USDA / USDC / USDZ),
 // AssetResolver::ReadAsset + pipeline::MakeResolverLayerLoader (no
 // filesystem), and pipeline::FlattenUSDMemoryToUSDCOwned for USDA roots with

@@ -94,7 +94,7 @@ go=$(lit "$TMP/gonly.png")
 [ "$go" -gt 0 ] && [ "$go" -lt "$g" ] \
   || fail "-purpose guide wrong: $go lit px (default=$d, showGuide=$g)"
 
-# 3. Next path: the invisible mesh must be pruned from the stats.
+# 3. Core path: the invisible mesh must be pruned from the stats.
 tris=$("$R" "$TMP/scene.usda" "$TMP/next.png" -rtPreview -w 32 -height 32 -samples 1 -autoframe -stats 2>&1 | grep -E "^triangles:" | grep -oE "[0-9]+")
 [ "$tris" = "2" ] \
   || fail "core path collected $tris triangles; expected 2 (invisible pruned, guide kept-but-tagged)"

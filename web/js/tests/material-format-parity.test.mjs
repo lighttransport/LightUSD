@@ -12,9 +12,9 @@ const legacyUrl = process.env.LIGHTUSD_LEGACY_MODULE
   ? pathToFileURL(path.resolve(process.env.LIGHTUSD_LEGACY_MODULE)).href
   : new URL(legacyDefault, import.meta.url).href;
 const legacyModule = await loadWasm(() => import(legacyUrl));
-const nextGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
+const coreGlue = wasm64 ? '../src/lightusd/lightusd_64.js'
                         : '../src/lightusd/lightusd.js';
-const {default: createCoreModule} = await import(new URL(nextGlue, import.meta.url));
+const {default: createCoreModule} = await import(new URL(coreGlue, import.meta.url));
 const coreModule = await createCoreModule();
 
 for (const fixture of [
@@ -29,8 +29,8 @@ for (const fixture of [
     assert.equal(legacyLoaded, true, legacy.error());
     const load = core.begin(bytes);
     assert.equal(load.success, true, load.error || core.error());
-    const nextMaterial = core.getAllMaterials()[0];
-    assert.ok(nextMaterial, `core material is missing for ${fixture}`);
+    const coreMaterial = core.getAllMaterials()[0];
+    assert.ok(coreMaterial, `core material is missing for ${fixture}`);
 
     if (fixture.includes('c-core-material-queries')) {
       const expected = legacy.getMaterialWithFormat(0, 'legacy');
@@ -42,13 +42,13 @@ for (const fixture of [
 
     for (const format of ['json', 'xml', 'legacy', '']) {
       const oldResult = legacy.getMaterialWithFormat(0, format);
-      const nextResult = core.getMaterialWithFormat(nextMaterial.id, format);
-      assert.deepEqual(nextResult, oldResult,
+      const coreResult = core.getMaterialWithFormat(coreMaterial.id, format);
+      assert.deepEqual(coreResult, oldResult,
         `${format} material serialization differs for ${fixture}`);
     }
     assert.deepEqual(core.getMaterialWithFormat(-1, 'legacy'),
       legacy.getMaterialWithFormat(-1, 'legacy'));
-    assert.deepEqual(core.getMaterialWithFormat(nextMaterial.id, 'bad'),
+    assert.deepEqual(core.getMaterialWithFormat(coreMaterial.id, 'bad'),
       legacy.getMaterialWithFormat(0, 'bad'));
   } finally {
     legacy.delete();
@@ -106,14 +106,14 @@ def Xform "World" {
     assert.equal(legacy.loadFromBinary(bytes, path.basename(fixture)), true, legacy.error());
     const load = core.begin(bytes);
     assert.equal(load.success, true, load.error || core.error());
-    const nextLights = core.getAllLights();
-    const nextLightIds = new Map(nextLights.map(light => [light.primPath, light.index]));
+    const coreLights = core.getAllLights();
+    const coreLightIds = new Map(coreLights.map(light => [light.primPath, light.index]));
     const legacyLights = legacy.getAllLights();
     assert.ok(legacyLights.length > 0);
     let serializedLights = 0;
     for (let legacyId = 0; legacyId < legacyLights.length; ++legacyId) {
       const legacyLight = legacyLights[legacyId];
-      const lightId = nextLightIds.get(legacyLight.absPath);
+      const lightId = coreLightIds.get(legacyLight.absPath);
       assert.notEqual(lightId, undefined,
         `core render scene is missing legacy light ${legacyLight.absPath}`);
       for (const format of ['json', 'xml']) {

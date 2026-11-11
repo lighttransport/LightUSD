@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// path-expression.hh (next-local)
+// path-expression.hh (core-local)
 //
 // C++ adapter over the C11 SdfPathExpression core (src/c/path-expr.c).
-// The next product owns this adapter instead of including the legacy
+// The core product owns this adapter instead of including the legacy
 // core/path-expression.hh, which drags the legacy value-type layer into every
-// next translation unit.
+// core translation unit.
 //
 // The C++ surface mirrors the legacy names and semantics exactly
 // (Parse / GetText / valid / empty / ops / patterns / refs, plus the matcher
@@ -21,11 +21,9 @@
 #include "c/lightusd-core-c.h"
 
 namespace lightusd {
-// The legacy library (src/core/path-expression.hh) defines different classes
-// under the same lightusd:: names. This inline namespace gives the next
-// versions distinct mangled names, so a binary linking both libraries gets no
-// duplicate (MSVC LNK2005) or silently merged (ELF) definitions.
-inline namespace next_path_expr {
+// Keep adapter types and implementation helpers in their own inline namespace.
+// Legacy counterparts live separately in lightusd::legacy.
+inline namespace path_expr {
 
 // A single component of a path pattern (the portion following the literal
 // prefix path). A "stretch" component (`//`) has empty text and no predicate.
@@ -304,5 +302,5 @@ inline std::string PathPattern::GetText() const {
   return result;
 }
 
-} // inline namespace next_path_expr
+} // inline namespace path_expr
 } // namespace lightusd

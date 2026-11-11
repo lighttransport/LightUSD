@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Composition arc-expansion tests for src/next: references (internal +
+// Composition arc-expansion tests for src: references (internal +
 // external, with subtree grafting), payloads, inherits, specializes, local
 // override strength, arc clearing, and cycle safety.
 
@@ -412,7 +412,7 @@ static PrimVariantSetData MakeModelingVariantSet(bool populated) {
 //   /C1 references @geom@</Chair>, selects non-default "ChairB"
 //   geom/Chair: populated variantSet + its own (weaker) default "ChairA"
 // The main backend (examples/lusdcat) regressed on the larger Kitchen_set chain;
-// the next backend composes all arcs per-prim before ApplyVariants, so the local
+// the core backend composes all arcs per-prim before ApplyVariants, so the local
 // selection is still present when the variant is baked. Confirms that here.
 static void test_variant_selection_over_reference() {
   std::cout << "[variants: local selection wins over referenced default]\n";
@@ -530,7 +530,7 @@ static void test_many_variant_bearing_references() {
         "every reference bakes the selected holder and drops unselected LODs");
 }
 
-// Regression: the next backend must resolve the arcs authored on an
+// Regression: the core backend must resolve the arcs authored on an
 // EXTERNALLY-referenced target (its payload / nested references), not just the
 // arcs on the prim itself. The exact Pixar Kitchen_set Chair.usd shape:
 //   /C1 references @asset@</Chair>, selects non-default "ChairB"

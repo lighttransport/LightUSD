@@ -47,7 +47,7 @@ function normalizer() {
   return {norm, uuid};
 }
 const legacySide = normalizer();
-const nextSide = normalizer();
+const coreSide = normalizer();
 
 const outcome = (fn, side) => {
   try { return {value: side.norm(fn())}; }
@@ -58,18 +58,18 @@ function note(method, kind) {
   if (exercised.get(method) !== 'delta') exercised.set(method, kind);
 }
 // Same arguments (or per-side arguments) on both products must agree.
-function same(method, legacyTarget, nextTarget, legacyArgs, nextArgs = legacyArgs) {
+function same(method, legacyTarget, coreTarget, legacyArgs, coreArgs = legacyArgs) {
   const a = outcome(() => legacyTarget[method](...legacyArgs), legacySide);
-  const b = outcome(() => nextTarget[method](...nextArgs), nextSide);
+  const b = outcome(() => coreTarget[method](...coreArgs), coreSide);
   assert.deepEqual(b, a, `${method}(${legacyArgs.map(String).join(', ')}) must match legacy`);
   note(method, 'match');
   return a.value;
 }
 // A documented delta: pin each product's result so a change on either side fails.
-function delta(method, legacyTarget, nextTarget, args, legacyExpected, nextExpected) {
+function delta(method, legacyTarget, coreTarget, args, legacyExpected, coreExpected) {
   assert.deepEqual(outcome(() => legacyTarget[method](...args), legacySide), legacyExpected,
     `legacy ${method} delta changed`);
-  assert.deepEqual(outcome(() => nextTarget[method](...args), nextSide), nextExpected,
+  assert.deepEqual(outcome(() => coreTarget[method](...args), coreSide), coreExpected,
     `core ${method} delta changed`);
   exercised.set(method, 'delta');
 }
@@ -114,13 +114,13 @@ try {
   same('verifyAssetHash', loader, store, ['a.usda', loader.getAssetHash('a.usda')],
     ['a.usda', store.getAssetHash('a.usda')]);
   const legacyUuid = loader.getAssetUUID('a.usda');
-  const nextUuid = store.getAssetUUID('a.usda');
+  const coreUuid = store.getAssetUUID('a.usda');
   assert.match(legacyUuid, UUID);
-  assert.match(nextUuid, UUID);
+  assert.match(coreUuid, UUID);
   same('getAssetUUID', loader, store, ['a.usda']);
-  same('findAssetByUUID', loader, store, [legacyUuid], [nextUuid]);
+  same('findAssetByUUID', loader, store, [legacyUuid], [coreUuid]);
   same('findAssetByUUID', loader, store, ['00000000-0000-4000-8000-000000000000']);
-  same('getAssetByUUID', loader, store, [legacyUuid], [nextUuid]);
+  same('getAssetByUUID', loader, store, [legacyUuid], [coreUuid]);
   same('getAssetByUUID', loader, store, ['00000000-0000-4000-8000-000000000000']);
   same('getAllAssetUUIDs', loader, store, []);
   same('getAssetCacheDataAsMemoryView', loader, store, ['a.usda']);
@@ -187,11 +187,11 @@ try {
   // Overflowing chunk: both reject, but legacy still appends the byte.
   same('appendAssetChunk', loader, stream, ['s.usda', bytes('g')]);
   const legacyStreamToken = legacySide.norm(loader.getStreamingAssetUUID('s.usda'));
-  const nextStreamToken = nextSide.norm(stream.getStreamingAssetUUID('s.usda'));
+  const coreStreamToken = coreSide.norm(stream.getStreamingAssetUUID('s.usda'));
   delta('getStreamingProgress', loader, stream, ['s.usda'],
     {value: {complete: true, current: 7, exists: true, percentage: 700 / 6, total: 6, uuid: legacyStreamToken}},
     {value: {complete: true, current: 6, exists: true, percentage: 100, total: 6,
-      uuid: nextStreamToken}});
+      uuid: coreStreamToken}});
   same('isStreamingAssetComplete', loader, stream, ['s.usda']);
   same('finalizeStreamingAsset', loader, stream, ['s.usda']);
   for (const method of ['isStreamingAssetComplete', 'getStreamingProgress', 'getStreamingAssetUUID'])
@@ -210,21 +210,21 @@ try {
   same('allocateZeroCopyBuffer', loader, stream, ['zero', 0, 0], ['zero', 0]);
   same('allocateZeroCopyBuffer', loader, stream, ['big', 9, 8], ['big', 9, 8]);
   const legacyBuffer = loader.allocateZeroCopyBuffer('zc.bin', 4, 0);
-  const nextBuffer = stream.allocateZeroCopyBuffer('zc.bin', 4);
-  assert.deepEqual(nextSide.norm(nextBuffer), legacySide.norm(legacyBuffer));
+  const coreBuffer = stream.allocateZeroCopyBuffer('zc.bin', 4);
+  assert.deepEqual(coreSide.norm(coreBuffer), legacySide.norm(legacyBuffer));
   note('allocateZeroCopyBuffer', 'match');
-  const [lu, nu] = [legacyBuffer.uuid, nextBuffer.uuid];
+  const [lu, nu] = [legacyBuffer.uuid, coreBuffer.uuid];
   same('getActiveZeroCopyBuffers', loader, stream, []);
   const legacyPtr = loader.getZeroCopyBufferPtr(lu);
-  const nextPtr = stream.getZeroCopyBufferPtr(nu);
+  const corePtr = stream.getZeroCopyBufferPtr(nu);
   assert.equal(legacyPtr, legacyBuffer.bufferPtr);
-  assert.equal(nextPtr, nextBuffer.bufferPtr);
+  assert.equal(corePtr, coreBuffer.bufferPtr);
   note('getZeroCopyBufferPtr', 'match');
   assert.equal(loader.getZeroCopyBufferPtrAtOffset(lu, 3), legacyPtr + 3);
-  assert.equal(stream.getZeroCopyBufferPtrAtOffset(nu, 3), nextPtr + 3);
+  assert.equal(stream.getZeroCopyBufferPtrAtOffset(nu, 3), corePtr + 3);
   same('getZeroCopyBufferPtrAtOffset', loader, stream, [lu, 4], [nu, 4]);
   legacyModule.HEAPU8.set([9, 8, 7, 6], legacyPtr);
-  coreModule.HEAPU8.set([9, 8, 7, 6], nextPtr);
+  coreModule.HEAPU8.set([9, 8, 7, 6], corePtr);
   same('getZeroCopyProgress', loader, stream, [lu], [nu]);
   same('markZeroCopyBytesWritten', loader, stream, [lu, 2], [nu, 2]);
   same('getZeroCopyProgress', loader, stream, [lu], [nu]);

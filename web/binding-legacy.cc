@@ -1577,7 +1577,7 @@ struct EMAssetResolutionResolver {
   }
 
   /// Move the raw bytes out of a zero-copy buffer (and erase it), for callers
-  /// that want to adopt the streamed input directly (e.g. the next flatten
+  /// that want to adopt the streamed input directly (e.g. the core flatten
   /// pipeline) instead of caching it as an asset. Returns empty on unknown uuid.
   std::string takeZeroCopyBufferString(const std::string &uuid) {
     auto it = zerocopy_buffers.find(uuid);
@@ -9532,7 +9532,7 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 // RenderStream — incremental, low-memory render-data extraction.
 //
 // Loads the root USD layer (the caller extracts it from the .usdz in JS and
-// keeps the texture entries there, off the WASM heap) into the next pipeline
+// keeps the texture entries there, off the WASM heap) into the core pipeline
 // with lazy arrays, so the source sits in the heap exactly once (~= input size).
 // getMesh(i) then materializes a SINGLE mesh's geometry on demand into a reused
 // scratch and returns zero-copy descriptors; the next getMesh(i) overwrites the

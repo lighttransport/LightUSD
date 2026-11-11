@@ -243,15 +243,15 @@ assert.deepEqual(layerDocument.setAttribute('/Root/Added', 'wide', 'uint64', 900
 assert.throws(() => layerDocument.setAttribute('/Root/Added', 'bad', 'int', [1.5]), /out of range/);
 assert.throws(() => layerDocument.setAttribute('/Root/Added', 'badHalf', 'half', 65520), /out of range/);
 assert.equal(layerDocument.primCount(), 2);
-const nextAlloc = module['_lightusd_wasm_alloc'];
+const exportAlloc = module['_lightusd_wasm_alloc'];
 let exportStagingAllocations = 0;
 module['_lightusd_wasm_alloc'] = size => {
   ++exportStagingAllocations;
-  return nextAlloc(size);
+  return exportAlloc(size);
 };
 let editedLayer;
 try { editedLayer = layerDocument.exportUSDA(); }
-finally { module['_lightusd_wasm_alloc'] = nextAlloc; }
+finally { module['_lightusd_wasm_alloc'] = exportAlloc; }
 assert.equal(exportStagingAllocations, 0,
   'USDA export copies directly from the retained C output into JS ownership');
 assert.equal(editedLayer.success, true, editedLayer.error);

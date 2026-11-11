@@ -411,7 +411,7 @@ static void test_stress_parallel() {
 
 static void test_parallel_same_asset_parse_once() {
   std::cout << "test_parallel_same_asset_parse_once..." << std::endl;
-  const std::string asset_path = "/tmp/next_pcp_parallel_shared.usda";
+  const std::string asset_path = "/tmp/core_pcp_parallel_shared.usda";
   {
     std::ofstream f(asset_path);
     f << "#usda 1.0\n"
@@ -428,7 +428,7 @@ static void test_parallel_same_asset_parse_once() {
     lb.begin_prim("World", "Xform");
     for (int i = 0; i < kNumPrims; ++i) {
       lb.begin_prim("R" + std::to_string(i), "");
-      lb.current()->meta().references.push_back("@next_pcp_parallel_shared.usda@</A>");
+      lb.current()->meta().references.push_back("@core_pcp_parallel_shared.usda@</A>");
       lb.end_prim();
     }
     lb.end_prim();
@@ -567,8 +567,8 @@ static void test_file_layer_reclamation() {
   assert(created);
   directory = created;
 #endif
-  const std::string paths[] = {directory + "/next_reclaim_a.usdc",
-                               directory + "/next_reclaim_b.usdc"};
+  const std::string paths[] = {directory + "/core_reclaim_a.usdc",
+                               directory + "/core_reclaim_b.usdc"};
   for (const auto& path : paths) {
     Layer layer;
     LayerBuilder b(layer);
@@ -688,7 +688,7 @@ static void test_file_layer_reclamation() {
 static void test_layer_registry_inflight_failure_diagnostics() {
   std::cout << "test_layer_registry_inflight_failure_diagnostics..." << std::endl;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  const std::string asset_path = "/tmp/next_registry_bad.usda";
+  const std::string asset_path = "/tmp/core_registry_bad.usda";
   {
     std::ofstream f(asset_path);
     f << "#usda 1.0\n";
@@ -956,6 +956,6 @@ int main() {
   test_size_gated_layer_parsing();
   test_file_layer_reclamation();
   test_layer_registry_inflight_failure_diagnostics();
-  std::cout << "All next/pcp parallel tests passed." << std::endl;
+  std::cout << "All pcp parallel tests passed." << std::endl;
   return 0;
 }

@@ -56,20 +56,20 @@ const renderCases = [
   ['tests/usda/geommesh-001.usda', false, true],
   ['tests/usda/simple-mesh-point.usda', false, true],
 ];
-for (const [name, legacyOk, nextOk] of renderCases) {
+for (const [name, legacyOk, coreOk] of renderCases) {
   const bytes = fixture(name);
   const file = name.split('/').pop();
   const loader = new legacyModule.LightUSDLoaderNative();
   const stream = new coreModule.RenderStream();
   try {
     const legacyResult = loader.loadFromBinary(bytes, file);
-    const nextResult = stream.begin(bytes, file);
+    const coreResult = stream.begin(bytes, file);
     assert.equal(typeof legacyResult, 'boolean');
     assert.equal(legacyResult, legacyOk, `legacy loadFromBinary ${name}: ${loader.error()}`);
-    assert.equal(nextResult.success, nextOk, `core begin ${name}: ${stream.error()}`);
-    assert.equal(stream.ok(), nextOk);
-    if (nextOk) assert.equal(nextResult.meshCount, stream.numMeshes());
-    else assert.equal(nextResult.error, stream.error());
+    assert.equal(coreResult.success, coreOk, `core begin ${name}: ${stream.error()}`);
+    assert.equal(stream.ok(), coreOk);
+    if (coreOk) assert.equal(coreResult.meshCount, stream.numMeshes());
+    else assert.equal(coreResult.error, stream.error());
   } finally { loader.delete(); stream.delete(); }
 }
 exercised.set('loadFromBinary', 'delta');
@@ -83,20 +83,20 @@ exercised.set('loadFromBinary', 'delta');
   const stream = new coreModule.RenderStream();
   try {
     const legacyPromise = loader.loadFromBinaryAsync(bytes, 'cube.usda');
-    const nextPromise = stream.beginAsync(bytes, 'cube.usda');
-    assert.ok(legacyPromise instanceof Promise && nextPromise instanceof Promise);
-    const [legacyResult, nextResult] = await Promise.all([legacyPromise, nextPromise]);
+    const corePromise = stream.beginAsync(bytes, 'cube.usda');
+    assert.ok(legacyPromise instanceof Promise && corePromise instanceof Promise);
+    const [legacyResult, coreResult] = await Promise.all([legacyPromise, corePromise]);
     assert.deepEqual(Object.keys(legacyResult).sort(),
       ['materialCount', 'meshCount', 'success', 'textureCount']);
-    assert.equal(nextResult.success, legacyResult.success);
-    assert.equal(nextResult.meshCount, legacyResult.meshCount);
+    assert.equal(coreResult.success, legacyResult.success);
+    assert.equal(coreResult.meshCount, legacyResult.meshCount);
     assert.equal(stream.numMaterials(), legacyResult.materialCount);
     assert.equal(stream.numTextures(), legacyResult.textureCount);
-    const [legacyBad, nextBad] = await Promise.all([
+    const [legacyBad, coreBad] = await Promise.all([
       loader.loadFromBinaryAsync(broken, 'bad.usda'), stream.beginAsync(broken, 'bad.usda')]);
-    assert.equal(nextBad.success, legacyBad.success);
-    assert.equal(nextBad.success, false);
-    assert.ok(legacyBad.error && nextBad.error);
+    assert.equal(coreBad.success, legacyBad.success);
+    assert.equal(coreBad.success, false);
+    assert.ok(legacyBad.error && coreBad.error);
   } finally { loader.delete(); stream.delete(); }
   exercised.set('loadFromBinaryAsync', 'delta');
 }
@@ -161,7 +161,7 @@ const layerCases = [
   // Reference dictionaries are retained under strict, untrusted parsing.
   ['tests/usdc/refs-customdata-001.usdc', true, true],
 ];
-for (const [name, legacyOk, nextOk] of layerCases) {
+for (const [name, legacyOk, coreOk] of layerCases) {
   const bytes = fixture(name);
   const file = name.split('/').pop();
   const loader = new legacyModule.LightUSDLoaderNative();
@@ -170,8 +170,8 @@ for (const [name, legacyOk, nextOk] of layerCases) {
   try {
     assert.equal(loader.loadAsLayerFromBinary(bytes, file), legacyOk, `legacy layer ${name}`);
     const loaded = plain.load(bytes);
-    assert.equal(loaded.success, nextOk, `core layer ${name}: ${loaded.error}`);
-    if (nextOk) assert.ok(Number.isInteger(loaded.primCount));
+    assert.equal(loaded.success, coreOk, `core layer ${name}: ${loaded.error}`);
+    if (coreOk) assert.ok(Number.isInteger(loaded.primCount));
     if (name.includes('refs-customdata')) {
       const text = plain.exportUSDA();
       assert.equal(text.success, true, text.error);
@@ -185,8 +185,8 @@ for (const [name, legacyOk, nextOk] of layerCases) {
     }
     assert.equal(loader.loadAsLayerFromBinaryWithProgress(bytes, file), legacyOk);
     let callbacks = 0;
-    assert.equal(progress.loadWithProgress(bytes, () => { ++callbacks; return true; }).success, nextOk);
-    if (nextOk) assert.ok(callbacks > 0);
+    assert.equal(progress.loadWithProgress(bytes, () => { ++callbacks; return true; }).success, coreOk);
+    if (coreOk) assert.ok(callbacks > 0);
     assert.equal(loader.loadTest(file, bytes), legacyOk, `legacy loadTest ${name}`);
   } finally { loader.delete(); plain.delete(); progress.delete(); }
 }

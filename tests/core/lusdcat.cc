@@ -3,10 +3,7 @@
 //
 // LightUSD - lusdcat
 //
-// The unified lusdcat CLI for the core module (formerly `next_usdcat`).
-// The usd-wg asset-corpus regression gate (tests/parse-asset-corpus.mjs) drives
-// next the same way it drives the legacy loader; `next_usdcat` remains an
-// alias of this target for scripts that still use the old name:
+// The unified core CLI, also used by the usd-wg asset-corpus regression gate.
 //   lusdcat [-l|-f] file.usd[acz]
 //     -l  load only (parse the single layer; default)
 //     -f  flatten (compose sublayers/references/payloads/... via pcp, print USDA)
