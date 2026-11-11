@@ -34,7 +34,7 @@ the pre-1.1 implementation to `src/legacy/` (compiled with
 | `#include "next/..."`, `#include "tydra/next/..."` | `#include "..."`, `#include "tydra/..."` |
 | `lightusd::next::`, `lightusd::tydra::next::` | `lightusd::`, `lightusd::tydra::` |
 | legacy `lightusd::` API | `lightusd::legacy::` (compile-only) |
-| CMake targets `lightusd_next`, `tydra_next` | `lightusd_core`, `tydra` (old names are aliases for one release) |
+| CMake targets `lightusd_next`, `tydra_next` | `lightusd_core`, `tydra` (old names removed) |
 | `LIGHTUSD_NEXT_*` options | `LIGHTUSD_*` (old names accepted with a deprecation warning) |
 | `-DLIGHTUSD_NATIVE_PRODUCT=next\|legacy` | core is always built; `-DLIGHTUSD_BUILD_LEGACY=ON` adds legacy |
 | `tests/next/`, ctest `next_test_*` | `tests/core/`, `core_*` (label `core`) |

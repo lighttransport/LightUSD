@@ -47,10 +47,10 @@ unset(_lightusd_core_options)
 # budget checks in the parsers.
 # ---------------------------------------------------------------------------
 option(LIGHTUSD_HARDENING
-       "Apply release hardening flags (stack protector, FORTIFY, RELRO, CFI) to shipped next targets"
+       "Apply release hardening flags (stack protector, FORTIFY, RELRO, CFI) to the shipped core targets"
        ON)
 
-function(lightusd_next_harden tgt)
+function(lightusd_harden tgt)
   if(NOT LIGHTUSD_HARDENING)
     return()
   endif()
@@ -336,11 +336,9 @@ if(UNIX)
   target_link_libraries(lightusd_core_c PUBLIC m)
 endif()
 target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-lightusd_next_harden(lightusd_core_c)
-option(LIGHTUSD_USE_PCH "Use a precompiled header for native next C++ sources" ON)
+lightusd_harden(lightusd_core_c)
+option(LIGHTUSD_USE_PCH "Use a precompiled header for the native core C++ sources" ON)
 add_library(lightusd_core STATIC ${LIGHTUSD_CORE_SOURCES} ${LIGHTUSD_HEADERS})
-# Pre-1.1 target name; remove after one release.
-add_library(lightusd_next ALIAS lightusd_core)
 if(NOT LIGHTUSD_NATIVE_IO)
   target_compile_definitions(lightusd_core PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
 endif()
@@ -391,7 +389,7 @@ target_link_libraries(lightusd_validation PUBLIC lightusd_core)
 target_compile_features(lightusd_validation PRIVATE cxx_std_17)
 set_target_properties(lightusd_validation PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-lightusd_next_harden(lightusd_validation)
+lightusd_harden(lightusd_validation)
 if(NOT MSVC)
   target_compile_options(lightusd_validation PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions;-fno-rtti>)
@@ -408,7 +406,7 @@ set_target_properties(lightusd_core PROPERTIES
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
 )
-lightusd_next_harden(lightusd_core)
+lightusd_harden(lightusd_core)
 
 # Silence warnings from the vendored zmij translation unit (third-party code:
 # __int128 pedantic, sign-compare, unused params -- not ours to fix).
@@ -648,13 +646,13 @@ option(LIGHTUSD_BUILD_TESTS "Build tests for stable LightUSD" OFF)
 # without requiring test registration. Default ON for native standalone builds;
 # WASM/WASI builds have no command line to drive so they skip it.
 if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
-  set(_lightusd_next_tools_default OFF)
+  set(_lightusd_core_tools_default OFF)
 else()
-  set(_lightusd_next_tools_default ON)
+  set(_lightusd_core_tools_default ON)
 endif()
 option(LIGHTUSD_BUILD_LUSDCAT
-    "Build next CLI tools (lusdcat)" ${_lightusd_next_tools_default})
-unset(_lightusd_next_tools_default)
+    "Build the lusdcat CLI" ${_lightusd_core_tools_default})
+unset(_lightusd_core_tools_default)
 set(LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT "" CACHE PATH
     "External AOUSD Core supplemental release checkout")
 
@@ -988,7 +986,7 @@ if((LIGHTUSD_BUILD_LUSDCAT OR LIGHTUSD_BUILD_TESTS) AND NOT TARGET lusdcat)
             COMPILE_DEFINITIONS
             "LIGHTUSD_JEMALLOC_CONF=\"${LIGHTUSD_JEMALLOC_CONF}\"")
     endif()
-    lightusd_next_harden(lusdcat)
+    lightusd_harden(lusdcat)
     # Keep the CLI at the build root (`build_ninja/lusdcat`), matching the
     # legacy tool layout so scripts and AGENTS.md commands work unchanged.
     set_target_properties(lusdcat PROPERTIES
@@ -1100,7 +1098,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/lightusd-textools.cmake")
 if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tydra
                      ${CMAKE_CURRENT_BINARY_DIR}/tydra_build)
-    lightusd_next_harden(tydra)
+    lightusd_harden(tydra)
 endif()
 
 # ============================================================
@@ -1144,8 +1142,8 @@ add_library(lightusd_validation_c STATIC
 target_link_libraries(lightusd_validation_c PUBLIC lightusd_c lightusd_validation)
 target_include_directories(lightusd_validation_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(lightusd_validation_c PRIVATE cxx_std_17)
-lightusd_next_harden(lightusd_validation_c)
-lightusd_next_harden(lightusd_c)
+lightusd_harden(lightusd_validation_c)
+lightusd_harden(lightusd_c)
 
 # Fuzz the C ABI itself: the installed boundary used by JS/WASM, Python and
 # engine bindings. The C++ internals already have their own harnesses; this one
@@ -1223,7 +1221,7 @@ if(LIGHTUSD_WITH_TYDRA)
         c-api/lightusd-import-c.cc
         c-api/lightusd-volumetric-c.cc)
     target_link_libraries(lightusd_render_c PUBLIC lightusd_c tydra)
-    lightusd_next_harden(lightusd_render_c)
+    lightusd_harden(lightusd_render_c)
     list(APPEND LIGHTUSD_C_TARGETS lightusd_render_c)
     # Native OBJ/URDF/MJCF/COLLADA import (parsers, MJCF macro expansion and
     # the USD writer) through the C import API.
@@ -1346,7 +1344,7 @@ if(LIGHTUSD_BUILD_SHARED_C_API)
     set_target_properties(lightusd_core lightusd_core_c lightusd_validation PROPERTIES POSITION_INDEPENDENT_CODE ON)
     add_library(lightusd_c_shared SHARED ${LIGHTUSD_C_SOURCES} c-api/lightusd-validation-c.cc)
     target_link_libraries(lightusd_c_shared PRIVATE lightusd_core lightusd_validation)
-    lightusd_next_harden(lightusd_c_shared)
+    lightusd_harden(lightusd_c_shared)
     if(LIGHTUSD_WITH_TYDRA)
         set_target_properties(tydra PROPERTIES POSITION_INDEPENDENT_CODE ON)
         target_sources(lightusd_c_shared PRIVATE
@@ -1480,7 +1478,7 @@ if(LIGHTUSD_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/bench_scene_readback.cc)
     target_link_libraries(bench_scene_readback PRIVATE tydra lightusd_core)
 
-    # Also defined by src/tydra/next under LIGHTUSD_TYDRA_BUILD_TESTS (processed
+    # Also defined by src/tydra under LIGHTUSD_TYDRA_BUILD_TESTS (processed
     # earlier); reuse that target instead of failing with a duplicate.
     if(NOT TARGET test_tydra)
       add_executable(test_tydra

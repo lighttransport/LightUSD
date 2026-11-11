@@ -875,9 +875,9 @@ int main() {
 
     // Filesystem facade: USDA root + USDA sublayer must compose and write USDC.
     {
-      const char* sub_path = "/tmp/lightusd_next_flatten_usda_sub.usda";
-      const char* ref_path = "/tmp/lightusd_next_flatten_usda_ref.usda";
-      const char* root_path = "/tmp/lightusd_next_flatten_usda_root.usda";
+      const char* sub_path = "/tmp/lightusd_flatten_usda_sub.usda";
+      const char* ref_path = "/tmp/lightusd_flatten_usda_ref.usda";
+      const char* root_path = "/tmp/lightusd_flatten_usda_root.usda";
       {
         std::ofstream sub(sub_path, std::ios::binary);
         sub << "#usda 1.0\n"
@@ -908,13 +908,13 @@ int main() {
         std::ofstream root(root_path, std::ios::binary);
         root << "#usda 1.0\n"
                 "(\n"
-                "  subLayers = [@./lightusd_next_flatten_usda_sub.usda@]\n"
+                "  subLayers = [@./lightusd_flatten_usda_sub.usda@]\n"
                 ")\n"
                 "def Xform \"World\"\n"
                 "{\n"
                 "  def Xform \"Local\" {}\n"
                 "  def Xform \"RefSlot\" (\n"
-                "    prepend references = [@./lightusd_next_flatten_usda_ref.usda@</Referenced>]\n"
+                "    prepend references = [@./lightusd_flatten_usda_ref.usda@</Referenced>]\n"
                 "  ) {}\n"
                 "}\n";
       }

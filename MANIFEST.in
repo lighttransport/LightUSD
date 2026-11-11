@@ -59,7 +59,7 @@ prune tools
 prune subprojects
 exclude resume-*.md
 prune scripts
-# Transitive standalone-next inputs. Headers are inexpensive and keeping the
+# Transitive standalone core inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
 recursive-include src *.h *.hh *.hpp *.inc *.inl *.txt
 include src/core/color-transform.cc src/core/logger.cc src/core/minijson.cc

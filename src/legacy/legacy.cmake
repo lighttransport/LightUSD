@@ -1624,7 +1624,7 @@ endif()
 # Optional: next::pcp::Cache backend for LargeSceneLoader
 #
 if(LIGHTUSD_LEGACY_USE_CORE_PCP AND NOT TARGET lightusd_core)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_next_build)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src lightusd_core_build)
 endif()
 
 #

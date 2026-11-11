@@ -157,14 +157,14 @@ endif()
 set_target_properties(${TEST_TARGET_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 #
-# `next` schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
+# Core schema unit tests (UsdSkel readers). A SEPARATE executable on purpose:
 # linking lightusd_core into unit-test-lightusd alongside lightusd_static makes
 # that binary's concurrency tests flaky (overlapping objects in the two static
-# libs), so these are isolated rather than destabilizing the 997 tests there.
+# libs), so these are isolated rather than destabilizing the legacy suite there.
 #
 if(TARGET lightusd_core)
-  set(CORE_TEST_TARGET unit-test-next)
-  add_executable(${CORE_TEST_TARGET} unit-next-main.cc unit-next-usdskel.cc)
+  set(CORE_TEST_TARGET unit-test-core)
+  add_executable(${CORE_TEST_TARGET} unit-core-main.cc unit-core-usdskel.cc)
   if(WIN32 AND MSVC)
     target_compile_options(${CORE_TEST_TARGET} PRIVATE /wd4005)
   endif()

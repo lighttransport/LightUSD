@@ -2658,9 +2658,9 @@ the base, add only techvar files that are missing" union keeps the placeholders
 and composes `entry.usda` to a 397 KB / 0.2 s stage instead of 732 MB /
 24,466 prims.
 
-WASM32: both web products build cleanly (`-DLIGHTUSD_WASM_PRODUCT=next`,
-342 targets; `=legacy`, 411 targets, `MinSizeRel`). The next module was also
-exercised functionally in Node: `lightusd_next_converter_rewrite` on five
+WASM32: both web products build cleanly (`-DLIGHTUSD_WASM_PRODUCT=core`,
+342 targets; `=legacy`, 411 targets, `MinSizeRel`). The core module was also
+exercised functionally in Node: `lightusd_wasm_converter_rewrite` on five
 `tests/usdc` crates (suzanne, curves, usdskel-001, shader,
 skeleton-purpose-001) returns bytes identical to the native `lusdcat
 --rewrite-layer --output-format usdc` rewrite of the same fixture — e.g.

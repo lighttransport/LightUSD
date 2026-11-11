@@ -5,15 +5,4 @@ if(@LIGHTUSD_ENABLE_THREAD@)
   find_dependency(Threads)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/LightUSDTargets.cmake")
-# Pre-1.1 target names (the core library was `lightusd_next`, Tydra
-# `tydra_next`). Remove after one release.
-foreach(_lusd_pair "lightusd_next;lightusd_core" "tydra_next;tydra")
-  list(GET _lusd_pair 0 _lusd_old)
-  list(GET _lusd_pair 1 _lusd_new)
-  if(TARGET lightusd::${_lusd_new} AND NOT TARGET lightusd::${_lusd_old})
-    add_library(lightusd::${_lusd_old} INTERFACE IMPORTED)
-    set_target_properties(lightusd::${_lusd_old} PROPERTIES
-      INTERFACE_LINK_LIBRARIES lightusd::${_lusd_new})
-  endif()
-endforeach()
 check_required_components(LightUSD)

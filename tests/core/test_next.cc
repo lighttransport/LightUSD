@@ -842,7 +842,7 @@ def Mesh "MeshA" {
   // POSIX builds, avoiding the extra full-file string copy kept by the string
   // input path above.
   {
-    const char* path = "/tmp/lightusd_next_usda_lazy_mmap_test.usda";
+    const char* path = "/tmp/lightusd_usda_lazy_mmap_test.usda";
     {
       std::ofstream f(path, std::ios::binary);
       f << input;
@@ -1354,7 +1354,7 @@ void test_stage_change_set_aggregation() {
 
 void test_stage_session_variants() {
   std::cout << "Testing StageSession path-scoped variants..." << std::endl;
-  const char* path = "/tmp/lightusd_next_stage_session.usda";
+  const char* path = "/tmp/lightusd_stage_session.usda";
   {
     std::ofstream ofs(path);
     ofs << R"(#usda 1.0
@@ -1489,8 +1489,8 @@ def Mesh "M" {
 void test_stage_session_payloads_and_cancel() {
   std::cout << "Testing StageSession payload edits and cancellation..."
             << std::endl;
-  const char* root_path = "/tmp/lightusd_next_session_root.usda";
-  const char* payload_path = "/tmp/lightusd_next_session_payload.usda";
+  const char* root_path = "/tmp/lightusd_session_root.usda";
+  const char* payload_path = "/tmp/lightusd_session_payload.usda";
   {
     std::ofstream ofs(payload_path);
     ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 7\n}\n";
@@ -1498,9 +1498,9 @@ void test_stage_session_payloads_and_cancel() {
   {
     std::ofstream ofs(root_path);
     ofs << "#usda 1.0\ndef Xform \"P\" (payload = "
-           "@lightusd_next_session_payload.usda@</Payload>) {}\n"
+           "@lightusd_session_payload.usda@</Payload>) {}\n"
            "def Xform \"Q\" (payload = "
-           "@lightusd_next_session_payload.usda@</Payload>) {}\n";
+           "@lightusd_session_payload.usda@</Payload>) {}\n";
   }
 
   StageSessionOptions options;

@@ -1085,7 +1085,7 @@ void test_usda_backend_parity() {
   assert(ostream_result.bytes_written == expected.size());
   assert(oss.str() == expected);
 
-  const char* path = "/tmp/lightusd_next_writer_backend_parity.usda";
+  const char* path = "/tmp/lightusd_writer_backend_parity.usda";
   USDAWriteResult file_result = WriteUSDAToFile(path, stage, opts);
   assert(file_result.success);
   assert(file_result.bytes_written == expected.size());
@@ -1152,7 +1152,7 @@ void test_usda_layer_backend_parity() {
   assert(ostream_result.bytes_written == expected.size());
   assert(oss.str() == expected);
 
-  const std::string path = "/tmp/lightusd_next_layer_backend_parity.usda";
+  const std::string path = "/tmp/lightusd_layer_backend_parity.usda";
   USDAWriteResult file_result = WriteLayerToFile(path, layer, opts);
   assert(file_result.success);
   assert(file_result.bytes_written == expected.size());

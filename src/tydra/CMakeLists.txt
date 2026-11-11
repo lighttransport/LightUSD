@@ -105,9 +105,7 @@ add_library(tydra STATIC
     ${TYDRA_SOURCES}
     ${TYDRA_HEADERS}
 )
-# Pre-1.1 target name; remove after one release.
-add_library(tydra_next ALIAS tydra)
-option(LIGHTUSD_TYDRA_USE_PCH "Use a precompiled header for tydra/next C++ sources" ON)
+option(LIGHTUSD_TYDRA_USE_PCH "Use a precompiled header for Tydra C++ sources" ON)
 if(LIGHTUSD_TYDRA_USE_PCH)
   target_precompile_headers(tydra PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_LIST_DIR}/pch.hh>")

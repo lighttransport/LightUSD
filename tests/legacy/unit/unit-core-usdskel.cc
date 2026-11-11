@@ -5,7 +5,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
-#include "unit-next-usdskel.h"
+#include "unit-core-usdskel.h"
 
 #include <cmath>
 #include <cstdint>
@@ -18,7 +18,7 @@
 #include "schema/usd-skel.hh"
 #include "stage/stage.hh"
 
-// Regression tests for the `next` UsdSkel readers. Each of these guarded a bug
+// Regression tests for the core UsdSkel readers. Each of these guarded a bug
 // that failed SILENTLY: the data came back empty (or as an identity transform),
 // so a skinned scene simply rendered its rest pose with no warning and no error.
 //
@@ -67,7 +67,7 @@ def SkelRoot "Rig"
 }
 )";
 
-// Compose `kSkelUsda` into a next Stage (hermetic: parsed straight from memory).
+// Compose `kSkelUsda` into a core Stage (hermetic: parsed straight from memory).
 bool BuildSkelStage(lightusd::Stage *stage) {
   std::string warn, err;
   const std::string src(kSkelUsda);
@@ -98,7 +98,7 @@ bool BuildSkelStage(lightusd::Stage *stage) {
 // `primvars:skel:` prefix) and are matrix4d[], i.e. DOUBLES. Reading only the
 // prefixed name -- or asking for a float array -- yields nothing, and an empty
 // bind pose silently becomes the IDENTITY, which skews every skinning matrix.
-void test_next_skel_bind_rest_transforms(void) {
+void test_core_skel_bind_rest_transforms(void) {
   lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
@@ -133,7 +133,7 @@ void test_next_skel_bind_rest_transforms(void) {
 // The SkelAnimation's `joints` is a token[] ARRAY. Reading it with the scalar
 // token accessors leaves it EMPTY, which drops the entire animation (every joint
 // keeps its rest transform, so the rig renders unposed at every time code).
-void test_next_skelanim_joints_is_an_array(void) {
+void test_core_skelanim_joints_is_an_array(void) {
   lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
@@ -156,11 +156,11 @@ void test_next_skelanim_joints_is_an_array(void) {
   }
 }
 
-// next's canonical quaternion layout is REAL-FIRST (w, x, y, z): the crate reader
+// the core's canonical quaternion layout is REAL-FIRST (w, x, y, z): the crate reader
 // swizzles disk's imaginary-first order into it, and USDA parses in authored
 // order. A consumer that unpacks the flat array as (x, y, z, w) builds a garbage
 // quaternion. Sanity anchor: the IDENTITY quat reads as (1,0,0,0), NOT (0,0,0,1).
-void test_next_skelanim_rotations_are_real_first(void) {
+void test_core_skelanim_rotations_are_real_first(void) {
   lightusd::Stage stage;
   if (!BuildSkelStage(&stage)) {
     TEST_CHECK(false);
