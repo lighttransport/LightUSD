@@ -285,6 +285,168 @@ static void CheckDump(int id, const char *xml, const char *dump) {
   }
 }
 
+static void CheckTypedMtlxGraphResolution() {
+  const auto elem = [](const std::string &tag, const std::string &name) {
+    MtlxElem value;
+    value.tag = tag;
+    if (!name.empty()) value.SetAttr("name", name);
+    return value;
+  };
+  const auto add_port = [&elem](MtlxElem *parent, const std::string &tag,
+                                const std::string &name,
+                                const std::string &type) {
+    MtlxElem port = elem(tag, name);
+    port.SetAttr("type", type);
+    parent->children.push_back(std::move(port));
+  };
+  MtlxLibrary library;
+  MtlxElem constant_def = elem("nodedef", "ND_test_constant");
+  constant_def.SetAttr("node", "testconstant");
+  constant_def.SetAttr("type", "float");
+  add_port(&constant_def, "output", "out", "float");
+  library.AddNodeDef(constant_def, {});
+  MtlxElem add_def = elem("nodedef", "ND_test_add");
+  add_def.SetAttr("node", "testadd");
+  add_def.SetAttr("type", "float");
+  add_port(&add_def, "input", "in1", "float");
+  add_port(&add_def, "input", "in2", "float");
+  add_port(&add_def, "output", "out", "float");
+  library.AddNodeDef(add_def, {});
+
+  const auto constant_node = [&elem](const std::string &name) {
+    MtlxElem node = elem("testconstant", name);
+    node.SetAttr("type", "float");
+    node.SetAttr("nodedef", "ND_test_constant");
+    return node;
+  };
+  const auto add_node = [&elem](const std::string &name) {
+    MtlxElem node = elem("testadd", name);
+    node.SetAttr("type", "float");
+    node.SetAttr("nodedef", "ND_test_add");
+    return node;
+  };
+
+  MtlxElem root = elem("materialx", "");
+  MtlxElem helper = elem("nodegraph", "helper");
+  helper.children.push_back(constant_node("source"));
+  MtlxElem helper_output = elem("output", "value");
+  helper_output.SetAttr("type", "float");
+  helper_output.SetAttr("nodename", "source");
+  helper.children.push_back(helper_output);
+  root.children.push_back(helper);
+
+  MtlxElem graph = elem("nodegraph", "main");
+  MtlxElem graph_input = elem("input", "gain");
+  graph_input.SetAttr("type", "float");
+  graph.children.push_back(graph_input);
+  graph.children.push_back(constant_node("seed"));
+  MtlxElem sum = add_node("sum");
+  MtlxElem from_nodegraph = elem("input", "in1");
+  from_nodegraph.SetAttr("type", "float");
+  from_nodegraph.SetAttr("nodegraph", "helper");
+  from_nodegraph.SetAttr("output", "value");
+  sum.children.push_back(from_nodegraph);
+  MtlxElem from_interface = elem("input", "in2");
+  from_interface.SetAttr("type", "float");
+  from_interface.SetAttr("interfacename", "gain");
+  sum.children.push_back(from_interface);
+  graph.children.push_back(sum);
+  MtlxElem output = elem("output", "out");
+  output.SetAttr("type", "float");
+  output.SetAttr("nodename", "sum");
+  graph.children.push_back(output);
+  root.children.push_back(graph);
+
+  g_checks++;
+  MtlxResolvedGraph resolved;
+  std::string error;
+  if (!ResolveMtlxGraph(root, root.children[1], library, {}, &resolved, &error) ||
+      resolved.node_order != std::vector<std::string>({"seed", "sum"})) {
+    Fail("MTLX_GRAPH_RESOLVE", 0,
+         error.empty() ? "dependency order or resolved graph differed" : error);
+  }
+  std::vector<std::string> graph_order;
+  g_checks++;
+  if (!ResolveMtlxGraphs(root, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_RESOLVE", 0,
+         error.empty() ? "nodegraph dependency order differed" : error);
+  }
+
+  MtlxElem wrong_type = root.children[1];
+  wrong_type.children[2].children[0].SetAttr("type", "integer");
+  g_checks++;
+  if (ResolveMtlxGraph(root, wrong_type, library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_TYPE", 0, "mismatched input type was accepted");
+  }
+
+  MtlxElem wrong_node_type = root.children[1];
+  wrong_node_type.children[1].SetAttr("type", "integer");
+  g_checks++;
+  if (ResolveMtlxGraph(root, wrong_node_type, library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_NODE_TYPE", 0, "node type differing from its nodedef was accepted");
+  }
+
+  MtlxElem wrong_category = root.children[1];
+  wrong_category.children[1].tag = "otherconstant";
+  g_checks++;
+  if (ResolveMtlxGraph(root, wrong_category, library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_NODE_CATEGORY", 0,
+         "node category differing from its nodedef was accepted");
+  }
+
+  MtlxElem missing_source = root.children[1];
+  missing_source.children[2].children[0].SetAttr("nodegraph", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(root, missing_source, library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_SOURCE", 0, "missing nodegraph source was accepted");
+  }
+
+  MtlxElem cyclic = elem("nodegraph", "cycle");
+  MtlxElem a = add_node("a");
+  MtlxElem a_in1 = elem("input", "in1");
+  a_in1.SetAttr("type", "float");
+  a_in1.SetAttr("nodename", "b");
+  a.children.push_back(a_in1);
+  MtlxElem a_in2 = elem("input", "in2");
+  a_in2.SetAttr("type", "float");
+  a_in2.SetAttr("value", "1");
+  a.children.push_back(a_in2);
+  MtlxElem b = add_node("b");
+  MtlxElem b_in1 = elem("input", "in1");
+  b_in1.SetAttr("type", "float");
+  b_in1.SetAttr("nodename", "a");
+  b.children.push_back(b_in1);
+  MtlxElem b_in2 = elem("input", "in2");
+  b_in2.SetAttr("type", "float");
+  b_in2.SetAttr("value", "1");
+  b.children.push_back(b_in2);
+  cyclic.children.push_back(a);
+  cyclic.children.push_back(b);
+  g_checks++;
+  if (ResolveMtlxGraph(root, cyclic, library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CYCLE", 0, "cyclic graph was accepted");
+  }
+
+  MtlxElem graph_cycle = root;
+  MtlxElem helper_cycle_node = add_node("helper_cycle");
+  MtlxElem helper_cycle_input = elem("input", "in1");
+  helper_cycle_input.SetAttr("type", "float");
+  helper_cycle_input.SetAttr("nodegraph", "main");
+  helper_cycle_input.SetAttr("output", "out");
+  helper_cycle_node.children.push_back(helper_cycle_input);
+  MtlxElem helper_cycle_value = elem("input", "in2");
+  helper_cycle_value.SetAttr("type", "float");
+  helper_cycle_value.SetAttr("value", "1");
+  helper_cycle_node.children.push_back(helper_cycle_value);
+  graph_cycle.children[0].children.push_back(helper_cycle_node);
+  graph_cycle.children[0].children[1].SetAttr("nodename", "helper_cycle");
+  g_checks++;
+  if (ResolveMtlxGraphs(graph_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_CYCLE", 0, "cross-nodegraph dependency cycle was accepted");
+  }
+}
+
 static void CheckMtlxDocumentXInclude() {
   g_checks++;
   MtlxDocument doc;
@@ -423,6 +585,7 @@ static void CheckMtlxDocumentXInclude() {
 }
 
 int main() {
+  CheckTypedMtlxGraphResolution();
 #define MTLX_NAME(id, text, spec, ref) CheckName(id, text, spec, ref);
 #include "generated/lean-mtlx/mtlx-name.inc"
 #undef MTLX_NAME

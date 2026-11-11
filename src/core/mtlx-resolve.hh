@@ -208,6 +208,27 @@ class MtlxLibrary {
   std::vector<MtlxNodeDefInfo> defs_;
 };
 
+// Validation result for one nodegraph. Nodes are listed in dependency order,
+// so every node feeding another node appears first. The current resolver
+// records names while preserving the source DOM for authored values/ports.
+struct MtlxResolvedGraph {
+  std::vector<std::string> node_order;
+};
+
+// Resolve and validate a nodegraph against the nodedef library in `library`.
+// This checks node signatures, input bindings, interface types, output types,
+// and cycles. `document` supplies sibling nodegraphs referenced by `nodegraph`
+// ports; `outer` is the enclosing scope, innermost first.
+bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
+                      const MtlxLibrary &library, const MtlxScope &outer,
+                      MtlxResolvedGraph *resolved, std::string *err);
+
+// Validate every top-level nodegraph and reject cycles between nodegraph
+// implementations. `graph_order` is dependency-first.
+bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
+                       std::vector<std::string> *graph_order,
+                       std::string *err);
+
 // True when the element is a node instance (not a nodedef, nodegraph,
 // typedef, look, ... element).
 bool IsMtlxNodeElem(const MtlxElem &e);

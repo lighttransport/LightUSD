@@ -1062,6 +1062,367 @@ bool IsMtlxNodeElem(const MtlxElem &e) {
   return true;
 }
 
+namespace {
+
+const MtlxElem *FindMtlxChild(const MtlxElem &parent, const char *tag,
+                              const std::string &name) {
+  for (const MtlxElem &child : parent.children) {
+    if (child.tag == tag && child.Name() == name) return &child;
+  }
+  return nullptr;
+}
+
+const MtlxElem *FindMtlxNode(const MtlxElem &graph, const std::string &name) {
+  for (const MtlxElem &child : graph.children) {
+    if (IsMtlxNodeElem(child) && child.Name() == name) return &child;
+  }
+  return nullptr;
+}
+
+bool MtlxNodeOutputType(const MtlxLibrary &library, const MtlxElem &node,
+                        const MtlxScope &outer, const std::string &output,
+                        std::string *type, std::string *err) {
+  MtlxScope scope;
+  scope.reserve(outer.size() + 1);
+  scope.push_back(&node);
+  scope.insert(scope.end(), outer.begin(), outer.end());
+  if (const MtlxNodeDefInfo *def = library.ResolveReference(node, scope)) {
+    const std::vector<MtlxPort> outputs = library.ActiveOutputs(*def);
+    const std::string requested = output.empty() ? "out" : output;
+    for (const MtlxPort &port : outputs) {
+      if (port.name == requested) {
+        *type = port.type;
+        return true;
+      }
+    }
+    if (outputs.size() == 1 && outputs[0].name == "out" && requested == "out") {
+      *type = outputs[0].type;
+      return true;
+    }
+    *err = "node '" + node.Name() + "' has no output '" + requested + "'";
+    return false;
+  }
+  if (output.empty() || output == "out") {
+    if (const std::string *declared = node.Attr("type")) {
+      *type = *declared;
+      return true;
+    }
+  }
+  *err = "cannot resolve output type for node '" + node.Name() + "'";
+  return false;
+}
+
+}  // namespace
+
+bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
+                      const MtlxLibrary &library, const MtlxScope &outer,
+                      MtlxResolvedGraph *resolved, std::string *err) {
+  std::string ignored_error;
+  if (!err) err = &ignored_error;
+  err->clear();
+  if (!resolved) {
+    if (err) *err = "missing resolved-graph output";
+    return false;
+  }
+  resolved->node_order.clear();
+  if (graph.tag != "nodegraph") {
+    if (err) *err = "expected a nodegraph element";
+    return false;
+  }
+
+  MtlxScope graph_scope;
+  graph_scope.reserve(outer.size() + 1);
+  graph_scope.push_back(&graph);
+  graph_scope.insert(graph_scope.end(), outer.begin(), outer.end());
+
+  std::vector<const MtlxElem *> nodes;
+  for (const MtlxElem &child : graph.children) {
+    if (!IsMtlxNodeElem(child)) continue;
+    if (child.Name().empty()) {
+      if (err) *err = "nodegraph contains an unnamed node";
+      return false;
+    }
+    if (FindMtlxNode(graph, child.Name()) != &child) {
+      if (err) *err = "duplicate node name '" + child.Name() + "'";
+      return false;
+    }
+    nodes.push_back(&child);
+  }
+
+  std::vector<std::vector<size_t>> successors(nodes.size());
+  std::vector<size_t> indegree(nodes.size(), 0);
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    const MtlxElem &node = *nodes[i];
+    MtlxScope node_scope;
+    node_scope.reserve(graph_scope.size() + 1);
+    node_scope.push_back(&node);
+    node_scope.insert(node_scope.end(), graph_scope.begin(), graph_scope.end());
+    const MtlxNodeDefInfo *def = library.ResolveReference(node, node_scope);
+    if (!def) {
+      if (err) *err = "cannot resolve nodedef for node '" + node.Name() +
+                      "' in category '" + node.tag + "'";
+      return false;
+    }
+    if (node.tag != def->node && node.tag != def->key) {
+      *err = "node '" + node.Name() + "' category '" + node.tag +
+             "' does not match nodedef category '" + def->node + "'";
+      return false;
+    }
+    const std::string declared_output_type = library.OutType(*def);
+    if (!node.AttrOr("type").empty() && declared_output_type != "multioutput" &&
+        node.AttrOr("type") != declared_output_type) {
+      *err = "node '" + node.Name() + "' has type " + node.AttrOr("type") +
+             ", nodedef requires " + declared_output_type;
+      return false;
+    }
+    const std::vector<MtlxPort> declared_inputs =
+        library.ActiveInputs(*def);
+
+    for (const MtlxElem &input : node.children) {
+      if (input.tag != "input") continue;
+      const std::string input_name = input.Name();
+      const MtlxPort *declared = nullptr;
+      for (const MtlxPort &port : declared_inputs) {
+        if (port.name == input_name) {
+          declared = &port;
+          break;
+        }
+      }
+      if (!declared) {
+        if (err) *err = "input '" + input_name + "' is not declared by the nodedef of node '" +
+                        node.Name() + "'";
+        return false;
+      }
+      const std::string input_type = input.AttrOr(
+          "type", declared ? declared->type : std::string());
+      if (declared && !input.AttrOr("type").empty() &&
+          input.AttrOr("type") != declared->type) {
+        if (err) *err = "input '" + input_name + "' on node '" + node.Name() +
+                        "' has type " + input.AttrOr("type") +
+                        ", nodedef requires " + declared->type;
+        return false;
+      }
+      if (input_type.empty()) {
+        if (err) *err = "cannot resolve type of input '" + input_name +
+                        "' on node '" + node.Name() + "'";
+        return false;
+      }
+
+      const std::string *node_name = input.Attr("nodename");
+      const std::string *graph_name = input.Attr("nodegraph");
+      const std::string *interface_name = input.Attr("interfacename");
+      const int binding_count = (node_name != nullptr) + (graph_name != nullptr) +
+                                (interface_name != nullptr);
+      if (binding_count > 1) {
+        if (err) *err = "input '" + input_name + "' has multiple connection bindings";
+        return false;
+      }
+      if (node_name) {
+        const MtlxElem *source = FindMtlxNode(graph, *node_name);
+        if (!source) {
+          if (err) *err = "input '" + input_name + "' on node '" + node.Name() +
+                          "' references missing node '" + *node_name + "'";
+          return false;
+        }
+        std::string source_type;
+        if (!MtlxNodeOutputType(library, *source, graph_scope,
+                                input.AttrOr("output", "out"), &source_type, err))
+          return false;
+        if (source_type != input_type) {
+          if (err) *err = "connection to input '" + input_name + "' on node '" +
+                          node.Name() + "' has type " + source_type +
+                          ", expected " + input_type;
+          return false;
+        }
+        size_t source_pos = 0;
+        while (source_pos < nodes.size() && nodes[source_pos] != source) ++source_pos;
+        if (source_pos == nodes.size()) {
+          if (err) *err = "internal node lookup failure";
+          return false;
+        }
+        successors[source_pos].push_back(i);
+        ++indegree[i];
+      } else if (graph_name) {
+        const MtlxElem *source_graph = FindMtlxChild(document, "nodegraph", *graph_name);
+        if (!source_graph) {
+          if (err) *err = "input '" + input_name + "' references missing nodegraph '" +
+                          *graph_name + "'";
+          return false;
+        }
+        const std::string output_name = input.AttrOr("output", "out");
+        const MtlxElem *output = FindMtlxChild(*source_graph, "output", output_name);
+        if (!output) {
+          if (err) *err = "nodegraph '" + *graph_name + "' has no output '" +
+                          output_name + "'";
+          return false;
+        }
+        const std::string source_name = output->AttrOr("nodename");
+        const MtlxElem *source = FindMtlxNode(*source_graph, source_name);
+        if (!source) {
+          if (err) *err = "output '" + output_name + "' of nodegraph '" +
+                          *graph_name + "' references missing node '" + source_name + "'";
+          return false;
+        }
+        std::string source_type;
+        MtlxScope source_scope{source_graph};
+        source_scope.insert(source_scope.end(), outer.begin(), outer.end());
+        if (!MtlxNodeOutputType(library, *source, source_scope,
+                                output->AttrOr("output", "out"), &source_type, err))
+          return false;
+        if (!output->AttrOr("type").empty() && output->AttrOr("type") != source_type) {
+          if (err) *err = "output '" + output_name + "' of nodegraph '" + *graph_name +
+                          "' declares type " + output->AttrOr("type") +
+                          ", source has type " + source_type;
+          return false;
+        }
+        if (source_type != input_type) {
+          if (err) *err = "nodegraph connection to input '" + input_name +
+                          "' has type " + source_type + ", expected " + input_type;
+          return false;
+        }
+      } else if (interface_name) {
+        const MtlxElem *interface = FindMtlxChild(graph, "input", *interface_name);
+        if (!interface) {
+          if (err) *err = "input '" + input_name + "' references missing graph interface '" +
+                          *interface_name + "'";
+          return false;
+        }
+        if (interface->AttrOr("type") != input_type) {
+          if (err) *err = "graph interface '" + *interface_name + "' has type " +
+                          interface->AttrOr("type") + ", expected " + input_type;
+          return false;
+        }
+      } else if (const std::string *value = input.Attr("value")) {
+        MtlxTypedValue parsed;
+        if (!ParseMtlxValue(input_type, *value, &parsed)) {
+          if (err) *err = "invalid value for input '" + input_name + "' on node '" +
+                          node.Name() + "'";
+          return false;
+        }
+      } else if ((!declared || !declared->has_value) &&
+                 !IsBuiltinMtlxType(input_type)) {
+        if (err) *err = "input '" + input_name + "' has no value or nodedef default";
+        return false;
+      }
+    }
+  }
+
+  for (const MtlxElem &output : graph.children) {
+    if (output.tag != "output") continue;
+    const std::string source_name = output.AttrOr("nodename");
+    const MtlxElem *source = FindMtlxNode(graph, source_name);
+    if (!source) {
+      if (err) *err = "graph output '" + output.Name() + "' references missing node '" +
+                      source_name + "'";
+      return false;
+    }
+    std::string source_type;
+    if (!MtlxNodeOutputType(library, *source, graph_scope,
+                            output.AttrOr("output", "out"), &source_type, err))
+      return false;
+    if (output.AttrOr("type") != source_type) {
+      if (err) *err = "graph output '" + output.Name() + "' has type " +
+                      output.AttrOr("type") + ", source has type " + source_type;
+      return false;
+    }
+  }
+
+  std::vector<size_t> ready;
+  for (size_t i = 0; i < indegree.size(); ++i) {
+    if (indegree[i] == 0) ready.push_back(i);
+  }
+  for (size_t cursor = 0; cursor < ready.size(); ++cursor) {
+    const size_t source = ready[cursor];
+    resolved->node_order.push_back(nodes[source]->Name());
+    for (size_t consumer : successors[source]) {
+      if (--indegree[consumer] == 0) ready.push_back(consumer);
+    }
+  }
+  if (resolved->node_order.size() != nodes.size()) {
+    resolved->node_order.clear();
+    if (err) *err = "nodegraph contains a cycle";
+    return false;
+  }
+  return true;
+}
+
+bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
+                       std::vector<std::string> *graph_order,
+                       std::string *err) {
+  std::string ignored_error;
+  if (!err) err = &ignored_error;
+  err->clear();
+  if (!graph_order) {
+    if (err) *err = "missing nodegraph-order output";
+    return false;
+  }
+  graph_order->clear();
+  std::vector<const MtlxElem *> graphs;
+  for (const MtlxElem &child : document.children) {
+    if (child.tag != "nodegraph") continue;
+    if (child.Name().empty()) {
+      if (err) *err = "document contains an unnamed nodegraph";
+      return false;
+    }
+    for (const MtlxElem *prior : graphs) {
+      if (prior->Name() == child.Name()) {
+        if (err) *err = "duplicate nodegraph name '" + child.Name() + "'";
+        return false;
+      }
+    }
+    graphs.push_back(&child);
+  }
+
+  const MtlxScope outer{&document};
+  for (const MtlxElem *graph : graphs) {
+    MtlxResolvedGraph resolved;
+    if (!ResolveMtlxGraph(document, *graph, library, outer, &resolved, err))
+      return false;
+  }
+
+  std::vector<std::vector<size_t>> successors(graphs.size());
+  std::vector<size_t> indegree(graphs.size(), 0);
+  for (size_t consumer = 0; consumer < graphs.size(); ++consumer) {
+    for (const MtlxElem &node : graphs[consumer]->children) {
+      if (!IsMtlxNodeElem(node)) continue;
+      for (const MtlxElem &input : node.children) {
+        if (input.tag != "input") continue;
+        const std::string *dependency_name = input.Attr("nodegraph");
+        if (!dependency_name) continue;
+        size_t dependency = 0;
+        while (dependency < graphs.size() &&
+               graphs[dependency]->Name() != *dependency_name)
+          ++dependency;
+        if (dependency == graphs.size()) {
+          if (err) *err = "nodegraph connection references missing graph '" +
+                          *dependency_name + "'";
+          return false;
+        }
+        successors[dependency].push_back(consumer);
+        ++indegree[consumer];
+      }
+    }
+  }
+
+  std::vector<size_t> ready;
+  for (size_t i = 0; i < indegree.size(); ++i) {
+    if (indegree[i] == 0) ready.push_back(i);
+  }
+  for (size_t cursor = 0; cursor < ready.size(); ++cursor) {
+    const size_t source = ready[cursor];
+    graph_order->push_back(graphs[source]->Name());
+    for (size_t consumer : successors[source]) {
+      if (--indegree[consumer] == 0) ready.push_back(consumer);
+    }
+  }
+  if (graph_order->size() != graphs.size()) {
+    graph_order->clear();
+    if (err) *err = "document nodegraphs contain a dependency cycle";
+    return false;
+  }
+  return true;
+}
+
 // ---- Canonical dump --------------------------------------------------------
 
 namespace {
