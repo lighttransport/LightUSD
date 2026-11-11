@@ -215,12 +215,15 @@ bool MtlxEvalApproxSupportedTag(const std::string& tag) {
       "tan", "asin", "acos", "atan2", "normalize", "magnitude",
       "distance", "rotate2d", "trianglewave", "range", "place2d",
       "reflect", "refract", "worleynoise2d", "worleynoise3d",
+      "unifiednoise2d", "unifiednoise3d",
       "ramplr", "ramptb", "ramp4", "splitlr",
       "splittb", "circle"};
   return supported.count(tag) != 0;
 }
 
 std::string MtlxTypeToUsdType(const std::string& type) {
+  if (type == "integer") return "int";
+  if (type == "boolean") return "bool";
   if (type == "float") return "float";
   if (type == "vector2") return "float2";
   if (type == "vector3") return "vector3f";
@@ -232,6 +235,16 @@ std::string MtlxTypeToUsdType(const std::string& type) {
 
 std::string MtlxValueForUsda(const std::string& type,
                              const std::string& value) {
+  if (type == "integer") {
+    char* end = nullptr;
+    const double numeric = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || *end != '\0' || !std::isfinite(numeric)) return {};
+    return std::to_string(static_cast<int>(std::lround(numeric)));
+  }
+  if (type == "boolean") {
+    return value == "0" || value == "0.000000" || value == "false"
+               ? "false" : "true";
+  }
   MtlxTypedValue parsed;
   if (!ParseMtlxValue(type, value, &parsed)) return {};
   if (MtlxTypeArity(type) <= 1) return value;

@@ -285,6 +285,83 @@ static float MtlxCellChannel(int x, int y, int z, bool is_3d,
          static_cast<float>(0xffffffffu);
 }
 
+static float MtlxNoiseGradient(uint32_t hash, float x, float y, float z) {
+  const uint32_t h = hash & 15u;
+  const float u = h < 8u ? x : y;
+  const float v = h < 4u ? y : (((h == 12u) || (h == 14u)) ? x : z);
+  return ((h & 1u) ? -u : u) + ((h & 2u) ? -v : v);
+}
+
+static float MtlxNoiseFade(float t) {
+  return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+static float MtlxPerlin3(const float p[3]) {
+  float f[3];
+  const int cell[3] = {static_cast<int>(std::floor(p[0])),
+                       static_cast<int>(std::floor(p[1])),
+                       static_cast<int>(std::floor(p[2]))};
+  for (int i = 0; i < 3; ++i) f[i] = p[i] - static_cast<float>(cell[i]);
+  const float u = MtlxNoiseFade(f[0]);
+  const float v = MtlxNoiseFade(f[1]);
+  const float w = MtlxNoiseFade(f[2]);
+  float corners[2][2][2];
+  for (int z = 0; z < 2; ++z) {
+    for (int y = 0; y < 2; ++y) {
+      for (int x = 0; x < 2; ++x) {
+        const uint32_t hash = MtlxHashInt3(cell[0] + x, cell[1] + y,
+                                           cell[2] + z);
+        corners[z][y][x] = MtlxNoiseGradient(
+            hash, f[0] - static_cast<float>(x),
+            f[1] - static_cast<float>(y), f[2] - static_cast<float>(z));
+      }
+    }
+  }
+  const float x00 = corners[0][0][0] + (corners[0][0][1] - corners[0][0][0]) * u;
+  const float x10 = corners[0][1][0] + (corners[0][1][1] - corners[0][1][0]) * u;
+  const float x01 = corners[1][0][0] + (corners[1][0][1] - corners[1][0][0]) * u;
+  const float x11 = corners[1][1][0] + (corners[1][1][1] - corners[1][1][0]) * u;
+  const float y0 = x00 + (x10 - x00) * v;
+  const float y1 = x01 + (x11 - x01) * v;
+  return 0.9820f * (y0 + (y1 - y0) * w);
+}
+
+static float MtlxPerlin2(float x, float y) {
+  const int ix = static_cast<int>(std::floor(x));
+  const int iy = static_cast<int>(std::floor(y));
+  const float fx = x - static_cast<float>(ix);
+  const float fy = y - static_cast<float>(iy);
+  const float u = MtlxNoiseFade(fx);
+  const float v = MtlxNoiseFade(fy);
+  auto gradient = [](uint32_t hash, float dx, float dy) {
+    const uint32_t h = hash & 7u;
+    const float a = h < 4u ? dx : dy;
+    const float b = 2.0f * (h < 4u ? dy : dx);
+    return ((h & 1u) ? -a : a) + ((h & 2u) ? -b : b);
+  };
+  const float a = gradient(MtlxHashInt2(ix, iy), fx, fy);
+  const float b = gradient(MtlxHashInt2(ix + 1, iy), fx - 1.0f, fy);
+  const float c = gradient(MtlxHashInt2(ix, iy + 1), fx, fy - 1.0f);
+  const float d = gradient(MtlxHashInt2(ix + 1, iy + 1),
+                           fx - 1.0f, fy - 1.0f);
+  const float low = a + (b - a) * u;
+  const float high = c + (d - c) * u;
+  return 0.6616f * (low + (high - low) * v);
+}
+
+static float MtlxFractal3(float p[3], int octaves, float lacunarity,
+                          float diminish) {
+  if (octaves < 0 || octaves > 64) return 0.0f;
+  float result = 0.0f;
+  float amplitude = 1.0f;
+  for (int i = 0; i < octaves; ++i) {
+    result += amplitude * MtlxPerlin3(p);
+    amplitude *= diminish;
+    for (int axis = 0; axis < 3; ++axis) p[axis] *= lacunarity;
+  }
+  return result;
+}
+
 static bool MtlxWorley(const MtlxConstantValue& coordinate, bool is_3d,
                       float jitter, int style, int components,
                       MtlxConstantValue* out) {
@@ -429,6 +506,103 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                          visiting, depth + 1);
   };
   auto starts = [&id](const char* prefix) { return id.rfind(prefix, 0) == 0; };
+
+  if (starts("ND_unifiednoise2d_") || starts("ND_unifiednoise3d_")) {
+    const bool is_3d = starts("ND_unifiednoise3d_");
+    MtlxConstantValue coordinate, frequency, offset, jitter, kind, style;
+    if (!input(is_3d ? "position" : "texcoord", &coordinate)) return false;
+    const int dimensions = is_3d ? 3 : 2;
+    if (coordinate.components < dimensions) return false;
+    frequency.components = dimensions;
+    offset.components = dimensions;
+    for (int i = 0; i < dimensions; ++i) frequency.value[static_cast<size_t>(i)] = 1.0f;
+    if (!input("freq", &frequency)) {
+      frequency.components = dimensions;
+      for (int i = 0; i < dimensions; ++i) frequency.value[static_cast<size_t>(i)] = 1.0f;
+    }
+    (void)input("offset", &offset);
+    const float jitter_value = input("jitter", &jitter)
+                                   ? jitter.component(0) : 1.0f;
+    const int noise_type = input("type", &kind)
+                               ? static_cast<int>(kind.component(0)) : 0;
+    const int style_value = input("style", &style)
+                                ? static_cast<int>(style.component(0)) : 0;
+
+    float p[3] = {coordinate.component(0) * frequency.component(0) + offset.component(0),
+                  coordinate.component(1) * frequency.component(1) + offset.component(1),
+                  is_3d ? coordinate.component(2) * frequency.component(2) + offset.component(2) : 0.0f};
+    const float angle_degrees = (jitter_value - 1.0f) * 90000.0f;
+    const float radians = angle_degrees * 0.01745329251994329577f;
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    float rotated[3] = {p[0], p[1], p[2]};
+    if (is_3d) {
+      const float axis_length = std::sqrt(1.01f);
+      const float axis[3] = {0.1f / axis_length, 1.0f / axis_length, 0.0f};
+      const float dot = axis[0] * p[0] + axis[1] * p[1];
+      const float cross[3] = {axis[1] * p[2], -axis[0] * p[2],
+                              axis[0] * p[1] - axis[1] * p[0]};
+      for (int i = 0; i < 3; ++i) {
+        rotated[i] = p[i] * cosine + cross[i] * sine +
+                     axis[i] * dot * (1.0f - cosine);
+      }
+    } else {
+      rotated[0] = p[0] * cosine - p[1] * sine;
+      rotated[1] = p[0] * sine + p[1] * cosine;
+    }
+
+    float noise = 0.0f;
+    if (noise_type == 0) {
+      noise = 0.5f * (is_3d ? MtlxPerlin3(rotated)
+                              : MtlxPerlin2(rotated[0], rotated[1])) + 0.5f;
+    } else if (noise_type == 1) {
+      const int x = static_cast<int>(std::floor(rotated[0]));
+      const int y = static_cast<int>(std::floor(rotated[1]));
+      const int z = is_3d ? static_cast<int>(std::floor(rotated[2])) : 0;
+      noise = is_3d
+          ? MtlxCellChannel(x, y, z, true, -1)
+          : static_cast<float>(MtlxHashInt2(x, y)) /
+                static_cast<float>(0xffffffffu);
+    } else if (noise_type == 2) {
+      MtlxConstantValue noise_value;
+      MtlxConstantValue worley_point;
+      worley_point.components = dimensions;
+      worley_point.value = {{p[0], p[1], p[2], 0.0f}};
+      if (!MtlxWorley(worley_point, is_3d, jitter_value, style_value, 1,
+                      &noise_value)) return false;
+      noise = noise_value.component(0);
+    } else if (noise_type == 3) {
+      MtlxConstantValue octaves, lacunarity, diminish;
+      const int octave_count = input("octaves", &octaves)
+                                   ? static_cast<int>(octaves.component(0)) : 3;
+      const float lacunarity_value = input("lacunarity", &lacunarity)
+                                         ? lacunarity.component(0) : 2.0f;
+      const float diminish_value = input("diminish", &diminish)
+                                       ? diminish.component(0) : 0.5f;
+      float fractal_point[3] = {is_3d ? rotated[0] : p[0],
+                                is_3d ? rotated[1] : p[1],
+                                is_3d ? rotated[2] : angle_degrees};
+      noise = MtlxFractal3(fractal_point, octave_count, lacunarity_value,
+                           diminish_value);
+    } else {
+      return false;
+    }
+
+    MtlxConstantValue out_min, out_max, clamp_output;
+    const float minimum = input("outmin", &out_min)
+                              ? out_min.component(0) : 0.0f;
+    const float maximum = input("outmax", &out_max)
+                              ? out_max.component(0) : 1.0f;
+    const bool clamp = !input("clampoutput", &clamp_output) ||
+                       clamp_output.component(0) != 0.0f;
+    noise = minimum + noise * (maximum - minimum);
+    if (clamp) noise = std::max(std::min(minimum, maximum),
+                                std::min(std::max(minimum, maximum), noise));
+    out->components = 1;
+    out->color_managed = false;
+    out->value[0] = noise;
+    return true;
+  }
 
   if (starts("ND_worleynoise2d_") || starts("ND_worleynoise3d_")) {
     const bool is_3d = starts("ND_worleynoise3d_");
