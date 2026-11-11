@@ -281,6 +281,11 @@ public:
 
   // Parse from XML
   bool ParseFromXML(const std::string& xml_string);
+  // Parse from XML authored at `anchor_path`, resolving XIncludes relative to
+  // each containing document. The plain in-memory overload remains useful for
+  // documents with no external references.
+  bool ParseFromXML(const std::string& xml_string,
+                    const std::string& anchor_path);
   bool ParseFromFile(const std::string& filename);
 
   // Document properties
@@ -303,6 +308,7 @@ public:
   const std::string& GetWarning() const { return warning_; }
 
 private:
+  bool ParseRoot(XMLNodePtr root);
   bool ParseElement(XMLNodePtr xml_node);
   MtlxValue ParseValue(const std::string& type, const std::string& value);
 

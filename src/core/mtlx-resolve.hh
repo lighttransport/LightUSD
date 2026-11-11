@@ -118,6 +118,12 @@ bool ParseMtlxVersion(const std::string &text, uint64_t *major,
 // Maps an href to document text. Returns false when the target is missing.
 using MtlxIncludeLoader =
     std::function<bool(const std::string &href, std::string *xml)>;
+// `including_href` is empty for the root document and names the document that
+// contains this include for recursively included libraries. This lets file
+// resolvers anchor nested hrefs to the correct source document.
+using MtlxAnchoredIncludeLoader = std::function<bool(
+    const std::string &href, const std::string &including_href,
+    std::string *xml)>;
 
 // Expand the XIncludes of `root` in place with reference-compatible
 // semantics: included children are imported first (in include order, first
@@ -125,6 +131,9 @@ using MtlxIncludeLoader =
 // namespace distributed onto children that lack them, namespaced children
 // renamed "ns:name"), then the document's own children are added.
 bool ExpandMtlxIncludes(MtlxElem *root, const MtlxIncludeLoader &loader,
+                        std::string *err);
+bool ExpandMtlxIncludes(MtlxElem *root,
+                        const MtlxAnchoredIncludeLoader &loader,
                         std::string *err);
 
 // ---- Node definitions (MtlxSpec/NodeDef.lean) -----------------------------

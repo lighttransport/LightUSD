@@ -3094,6 +3094,47 @@ void TestMaterialXUtilities() {
   assert(from_file.preview_surface);
   assert(std::abs(from_file.preview_surface->diffuse_color.value.x - 0.4f) < 0.001f);
 
+  const char *include_path = "tydra_materialx_include_test.mtlx";
+  const char *included_shader_path = "tydra_materialx_include_shader.mtlx";
+  {
+    std::ofstream shader_file(included_shader_path,
+                              std::ios::out | std::ios::binary);
+    assert(shader_file);
+    shader_file << R"(<materialx version="1.39">
+  <standard_surface name="IncludedSurface" type="surfaceshader">
+    <input name="base" type="float" value="1"/>
+    <input name="base_color" type="color3" value="0.2, 0.4, 0.6"/>
+    <input name="specular_roughness" type="float" value="0.3"/>
+  </standard_surface>
+</materialx>)";
+    assert(shader_file.good());
+  }
+  {
+    std::ofstream include_file(include_path, std::ios::out | std::ios::binary);
+    assert(include_file);
+    include_file << R"(<materialx version="1.39"
+      xmlns:xi="http://www.w3.org/2001/XInclude">
+  <xi:include href="tydra_materialx_include_shader.mtlx"/>
+  <surfacematerial name="IncludedMat" type="material">
+    <input name="surfaceshader" type="surfaceshader"
+           nodename="IncludedSurface"/>
+  </surfacematerial>
+</materialx>)";
+    assert(include_file.good());
+  }
+  RenderMaterial from_include;
+  if (!converter.ConvertFileToRenderMaterial(include_path, "IncludedMat",
+                                             &from_include)) {
+    std::cout << "  MaterialX XInclude conversion failed: "
+              << converter.GetError() << "\n";
+    assert(false);
+  }
+  std::remove(include_path);
+  std::remove(included_shader_path);
+  assert(from_include.preview_surface);
+  assert(std::abs(from_include.preview_surface->diffuse_color.value.x - 0.2f) <
+         0.001f);
+
   // A material wrapper may bind its shader through a nodegraph output rather
   // than a direct nodename. The converter must resolve that output to the
   // graph's shader node before dispatching the shader conversion.

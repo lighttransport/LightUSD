@@ -195,7 +195,8 @@ public:
   /// @return true on success
   bool ConvertToRenderMaterial(const std::string& mtlx_content,
                                 const std::string& material_name,
-                                RenderMaterial* out);
+                                RenderMaterial* out,
+                                const std::string& anchor_path = "");
 
   /// Convert MaterialX file to RenderMaterial
   bool ConvertFileToRenderMaterial(const std::string& filename,

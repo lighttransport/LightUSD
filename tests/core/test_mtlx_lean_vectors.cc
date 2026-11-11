@@ -15,7 +15,9 @@
 #include <string>
 #include <vector>
 
+#include "core/mtlx-dom.hh"
 #include "core/mtlx-resolve.hh"
+#include "pcp/layer-registry.hh"
 
 using namespace lightusd::mtlx;
 
@@ -283,6 +285,54 @@ static void CheckDump(int id, const char *xml, const char *dump) {
   }
 }
 
+static void CheckMtlxDocumentXInclude() {
+  g_checks++;
+  MtlxDocument doc;
+  if (!doc.ParseFromFile("tests/fixtures/mtlx-xinclude/main.mtlx")) {
+    Fail("MTLX_DOCUMENT_INCLUDE", 0, doc.GetError());
+    return;
+  }
+  const MtlxNodePtr node = doc.FindNode("included_constant");
+  if (!node) {
+    Fail("MTLX_DOCUMENT_INCLUDE", 0,
+         "node from a nested relative XInclude was not parsed");
+    return;
+  }
+  const MtlxInputPtr input = node->GetInput("value");
+  if (!input || input->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+      input->GetValue().float_vec.size() != 3 ||
+      std::fabs(input->GetValue().float_vec[0] - 0.25f) > 1.0e-6f ||
+      std::fabs(input->GetValue().float_vec[1] - 0.5f) > 1.0e-6f ||
+      std::fabs(input->GetValue().float_vec[2] - 0.75f) > 1.0e-6f) {
+    Fail("MTLX_DOCUMENT_INCLUDE", 0,
+         "included node input values were not preserved");
+  }
+
+  g_checks++;
+  std::string warn, err;
+  const std::shared_ptr<lightusd::Layer> layer =
+      lightusd::pcp::LoadLayerFromFile(
+          "tests/fixtures/mtlx-xinclude/main.mtlx", &warn, &err);
+  if (!layer ||
+      !layer->prim_at_path("/MaterialX/Shaders/included_constant")) {
+    Fail("MTLX_LAYER_INCLUDE", 0,
+         layer ? "included node was not emitted into the composition layer"
+               : err);
+  }
+
+  g_checks++;
+  MtlxDocument unsafe;
+  const std::string unsafe_xml =
+      "<materialx version=\"1.39\" "
+      "xmlns:xi=\"http://www.w3.org/2001/XInclude\">"
+      "<xi:include href=\"../outside.mtlx\"/></materialx>";
+  if (unsafe.ParseFromXML(unsafe_xml,
+                          "tests/fixtures/mtlx-xinclude/main.mtlx")) {
+    Fail("MTLX_DOCUMENT_INCLUDE_PATH", 0,
+         "parent-traversal XInclude unexpectedly succeeded");
+  }
+}
+
 int main() {
 #define MTLX_NAME(id, text, spec, ref) CheckName(id, text, spec, ref);
 #include "generated/lean-mtlx/mtlx-name.inc"
@@ -309,6 +359,8 @@ int main() {
 #undef MTLX_RESOLVE_LIB
 #undef MTLX_RESOLVE
 #undef MTLX_DUMP
+
+  CheckMtlxDocumentXInclude();
 
   std::printf("test_mtlx_lean_vectors: %d checks, %d failures\n", g_checks, g_fail);
   return g_fail == 0 ? 0 : 1;

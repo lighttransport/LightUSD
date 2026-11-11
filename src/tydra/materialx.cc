@@ -376,7 +376,8 @@ bool ApplyEvalToNodeInfoInput(const std::string& input_name,
 
 bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
                                              const std::string& material_name,
-                                             RenderMaterial* out) {
+                                             RenderMaterial* out,
+                                             const std::string& anchor_path) {
   if (!out) {
     error_ = "Output material is null";
     return false;
@@ -384,7 +385,10 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
 
   // Parse MaterialX document
   mtlx::MtlxDocument doc;
-  if (!doc.ParseFromXML(mtlx_content)) {
+  const bool parsed = anchor_path.empty()
+                          ? doc.ParseFromXML(mtlx_content)
+                          : doc.ParseFromXML(mtlx_content, anchor_path);
+  if (!parsed) {
     error_ = "Failed to parse MaterialX: " + doc.GetError();
     return false;
   }
@@ -562,7 +566,7 @@ bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
     return false;
   }
 
-  return ConvertToRenderMaterial(ss.str(), material_name, out);
+  return ConvertToRenderMaterial(ss.str(), material_name, out, filename);
 }
 
 bool MtlxConverter::ConvertUsdMtlxMaterial(const lightusd::Stage& stage,

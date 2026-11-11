@@ -2,6 +2,9 @@
 
 #include "core/native-io.hh"
 #include "core/mtlx-dom.hh"
+#include "core/mtlx-resolve.hh"
+#include "core/security-policy.hh"
+#include "resolver/asset-resolver.hh"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -9,6 +12,26 @@
 
 namespace lightusd {
 namespace mtlx {
+
+namespace {
+
+XMLNodePtr MtlxElemToXMLNode(const MtlxElem &elem) {
+  auto node = std::make_shared<XMLNode>(elem.tag);
+  for (const auto &attr : elem.attrs) node->SetAttribute(attr.first, attr.second);
+  for (const MtlxElem &child : elem.children)
+    node->AddChild(MtlxElemToXMLNode(child));
+  return node;
+}
+
+std::string MtlxIncludeAnchor(const std::string &root_path,
+                             const std::string &including_href) {
+  if (including_href.empty()) return root_path;
+  const size_t slash = root_path.find_last_of("/\\");
+  if (slash == std::string::npos) return including_href;
+  return root_path.substr(0, slash + 1) + including_href;
+}
+
+}  // namespace
 
 // Helper function to parse vector values
 static std::vector<float> ParseFloatVector(const std::string& str) {
@@ -269,8 +292,47 @@ bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
   }
 
   warning_ = parser.GetWarning();
+  return ParseRoot(parser.GetDocument().GetRoot());
+}
 
-  auto root = parser.GetDocument().GetRoot();
+bool MtlxDocument::ParseFromXML(const std::string &xml_string,
+                                const std::string &anchor_path) {
+  MtlxElem root;
+  if (!ParseMtlxXml(xml_string, &root, &error_)) {
+    error_ = "Failed to parse MaterialX XML: " + error_;
+    return false;
+  }
+
+  AssetResolver resolver;
+  std::string include_error;
+  const MtlxAnchoredIncludeLoader loader =
+      [&resolver, &anchor_path](const std::string &href,
+                               const std::string &including_href,
+                               std::string *xml) {
+        std::string normalized;
+        if (!security_policy::ValidateAndNormalizeAssetPath(href, &normalized))
+          return false;
+        const std::string source_path =
+            MtlxIncludeAnchor(anchor_path, including_href);
+        const ResolvedAsset asset = resolver.Resolve(normalized, source_path,
+                                                     false);
+        if (!asset.exists) return false;
+        std::vector<uint8_t> bytes;
+        if (!resolver.ReadAsset(asset, &bytes) ||
+            bytes.size() > 256u * 1024u * 1024u)
+          return false;
+        xml->assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        return true;
+      };
+  if (!ExpandMtlxIncludes(&root, loader, &include_error)) {
+    error_ = "Failed to resolve MaterialX XInclude: " + include_error;
+    return false;
+  }
+
+  return ParseRoot(MtlxElemToXMLNode(root));
+}
+
+bool MtlxDocument::ParseRoot(XMLNodePtr root) {
   if (!root || root->GetName() != "materialx") {
     error_ = "Invalid MaterialX document";
     return false;
@@ -303,7 +365,7 @@ bool MtlxDocument::ParseFromFile(const std::string& filename) {
   std::stringstream buffer;
   buffer << file.rdbuf();
 
-  return ParseFromXML(buffer.str());
+  return ParseFromXML(buffer.str(), filename);
 }
 
 bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {

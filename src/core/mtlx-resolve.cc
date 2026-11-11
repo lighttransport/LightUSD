@@ -753,7 +753,8 @@ void InitFrame(IncludeFrame *f) {
 
 }  // namespace
 
-bool ExpandMtlxIncludes(MtlxElem *root, const MtlxIncludeLoader &loader,
+bool ExpandMtlxIncludes(MtlxElem *root,
+                        const MtlxAnchoredIncludeLoader &loader,
                         std::string *err) {
   std::string local_err;
   if (!err) err = &local_err;
@@ -773,7 +774,7 @@ bool ExpandMtlxIncludes(MtlxElem *root, const MtlxIncludeLoader &loader,
         }
       }
       std::string text;
-      if (!loader || !loader(href, &text)) {
+      if (!loader || !loader(href, f.href, &text)) {
         *err = "missing include: " + href;
         return false;
       }
@@ -805,6 +806,18 @@ bool ExpandMtlxIncludes(MtlxElem *root, const MtlxIncludeLoader &loader,
     }
     ImportLibrary(&stack.back().imported, std::move(finished));
   }
+}
+
+bool ExpandMtlxIncludes(MtlxElem *root, const MtlxIncludeLoader &loader,
+                        std::string *err) {
+  return ExpandMtlxIncludes(
+      root,
+      MtlxAnchoredIncludeLoader([&loader](const std::string &href,
+                                          const std::string &,
+                                          std::string *xml) {
+        return loader && loader(href, xml);
+      }),
+      err);
 }
 
 // ---- Node definitions ------------------------------------------------------

@@ -682,7 +682,7 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
                                                std::string *err) {
   mtlx::MtlxDocument doc;
   if (!doc.ParseFromXML(
-          std::string(reinterpret_cast<const char *>(data), size))) {
+          std::string(reinterpret_cast<const char *>(data), size), key)) {
     if (err) {
       *err += "Failed to parse MaterialX layer: " + key +
               (doc.GetError().empty() ? std::string()
