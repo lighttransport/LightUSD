@@ -74,10 +74,48 @@ void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,
     ApplyMtlxNodeDefDefaults(&child, library, child_scope);
 }
 
+const std::vector<MtlxElem> &StandardMtlxNodeDefs() {
+  static const std::vector<MtlxElem> defs = [] {
+    std::vector<MtlxElem> result;
+#define MTLX_STD_NODEDEF(name, node, output_type, first_input, input_count) \
+    do {                                                                      \
+      MtlxElem def;                                                           \
+      def.tag = "nodedef";                                                   \
+      def.SetAttr("name", name);                                             \
+      def.SetAttr("node", node);                                             \
+      def.SetAttr("type", output_type);                                      \
+      MtlxElem output;                                                        \
+      output.tag = "output";                                                 \
+      output.SetAttr("name", "out");                                        \
+      output.SetAttr("type", output_type);                                   \
+      def.children.push_back(std::move(output));                             \
+      result.push_back(std::move(def));                                       \
+    } while (false);
+#define MTLX_STD_INPUT(name, type, has_default, default_value)                \
+    do {                                                                      \
+      if (has_default) {                                                      \
+        MtlxElem input;                                                       \
+        input.tag = "input";                                                 \
+        input.SetAttr("name", name);                                         \
+        input.SetAttr("type", type);                                         \
+        input.SetAttr("value", default_value);                              \
+        result.back().children.push_back(std::move(input));                   \
+      }                                                                       \
+    } while (false);
+#include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
+#undef MTLX_STD_INPUT
+#undef MTLX_STD_NODEDEF
+    return result;
+  }();
+  return defs;
+}
+
 void ApplyMtlxNodeDefDefaults(MtlxElem *root) {
   if (!root) return;
   MtlxLibrary library;
   library.AddFrom(*root);
+  for (const MtlxElem &def : StandardMtlxNodeDefs())
+    library.AddNodeDef(def, {});
   const MtlxScope outer = {root};
   for (MtlxElem &child : root->children)
     ApplyMtlxNodeDefDefaults(&child, library, outer);

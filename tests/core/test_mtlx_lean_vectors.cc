@@ -397,6 +397,29 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_SCOPED_ATTRIBUTES", 0,
          "scoped colorspace/fileprefix inheritance or override failed");
   }
+
+  g_checks++;
+  MtlxDocument standard_defaults;
+  const std::string standard_defaults_xml = R"(<materialx version="1.39">
+  <constant name="standard_default" type="color3"/>
+</materialx>)";
+  if (!standard_defaults.ParseFromXML(standard_defaults_xml)) {
+    Fail("MTLX_DOCUMENT_STDLIB_DEFAULT", 0, standard_defaults.GetError());
+    return;
+  }
+  const MtlxNodePtr standard_default =
+      standard_defaults.FindNode("standard_default");
+  const MtlxInputPtr standard_value =
+      standard_default ? standard_default->GetInput("value") : nullptr;
+  if (!standard_value ||
+      standard_value->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+      standard_value->GetValue().float_vec.size() != 3 ||
+      std::fabs(standard_value->GetValue().float_vec[0]) > 1.0e-6f ||
+      std::fabs(standard_value->GetValue().float_vec[1]) > 1.0e-6f ||
+      std::fabs(standard_value->GetValue().float_vec[2]) > 1.0e-6f) {
+    Fail("MTLX_DOCUMENT_STDLIB_DEFAULT", 0,
+         "standard-library nodedef default was not applied");
+  }
 }
 
 int main() {
