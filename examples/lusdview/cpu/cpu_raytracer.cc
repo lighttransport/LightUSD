@@ -1096,6 +1096,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Power)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::pow(std::max(a[cidx], 0.0f), b[cidx]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::SafePower)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = a[cidx] == 0.0f ? 0.0f :
+              std::copysign(std::pow(std::fabs(a[cidx]), b[cidx]), a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Minimum)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::min(a[cidx], b[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Maximum)) {

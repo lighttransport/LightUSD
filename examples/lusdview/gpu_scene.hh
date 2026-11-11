@@ -609,6 +609,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   ChiangHairAbsorption,
   Unknown,
   GeomProp,
+  SafePower = 136,
 };
 
 // Canonical, backend-neutral MaterialX graph record. Input indices refer to

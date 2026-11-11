@@ -335,6 +335,7 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
       else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
       else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 136) v[i] = sign(av) * pow(abs(av), bv);
       else if (op == 13) v[i] = min(av, bv);
       else if (op == 14) v[i] = max(av, bv);
       else if (op == 15) v[i] = abs(av);

@@ -1382,6 +1382,18 @@ int main() {
                  aliasesError.c_str());
     return 1;
   }
+  bool safePowerHasDedicatedOp = false;
+  for (const auto& node : aliasesMat.materialXGraph.nodes) {
+    if (node.name == "safe") {
+      safePowerHasDedicatedOp =
+          node.op == lusdview::MaterialXGraphOpCPU::SafePower;
+      break;
+    }
+  }
+  if (!safePowerHasDedicatedOp) {
+    std::fprintf(stderr, "safepower was not lowered to its sign-preserving op\n");
+    return 1;
+  }
   lusdview::DrawMaterialCPU randomColorMat;
   randomColorMat.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
     {"name":"randomColor","category":"randomcolor","type":"color3","inputs":[

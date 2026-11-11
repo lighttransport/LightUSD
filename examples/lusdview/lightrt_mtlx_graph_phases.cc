@@ -156,8 +156,9 @@ bool PackMaterialXGraphRuntimePhase(
     }
     else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
     else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
-    else if (cat == "power" || cat == "pow" || cat == "safepower")
+    else if (cat == "power" || cat == "pow")
       out.op = MaterialXGraphOpCPU::Power;
+    else if (cat == "safepower") out.op = MaterialXGraphOpCPU::SafePower;
     else if (cat == "min" || cat == "minimum")
       out.op = MaterialXGraphOpCPU::Minimum;
     else if (cat == "max" || cat == "maximum")
