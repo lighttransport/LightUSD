@@ -478,6 +478,107 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_ramplr_")) {
+    MtlxConstantValue left, right, texcoord;
+    if (!input("valuel", &left) || !input("valuer", &right) ||
+        !input("texcoord", &texcoord) || texcoord.components < 2) {
+      return false;
+    }
+    const float u = texcoord.component(0);
+    *out = MtlxBinary(left, right, [u](float a, float b) {
+      return a + (b - a) * u;
+    });
+    out->color_managed = left.color_managed || right.color_managed ||
+                         texcoord.color_managed;
+    return true;
+  }
+
+  if (starts("ND_ramptb_")) {
+    MtlxConstantValue top, bottom, texcoord;
+    if (!input("valuet", &top) || !input("valueb", &bottom) ||
+        !input("texcoord", &texcoord) || texcoord.components < 2) {
+      return false;
+    }
+    const float v = texcoord.component(1);
+    *out = MtlxBinary(bottom, top, [v](float b, float t) {
+      return b + (t - b) * v;
+    });
+    out->color_managed = top.color_managed || bottom.color_managed ||
+                         texcoord.color_managed;
+    return true;
+  }
+
+  if (starts("ND_ramp4_")) {
+    MtlxConstantValue top_left, top_right, bottom_left, bottom_right,
+        texcoord;
+    if (!input("valuetl", &top_left) || !input("valuetr", &top_right) ||
+        !input("valuebl", &bottom_left) ||
+        !input("valuebr", &bottom_right) || !input("texcoord", &texcoord) ||
+        texcoord.components < 2) {
+      return false;
+    }
+    const float u = texcoord.component(0);
+    const float v = texcoord.component(1);
+    const MtlxConstantValue bottom = MtlxBinary(
+        bottom_left, bottom_right,
+        [u](float a, float b) { return a + (b - a) * u; });
+    const MtlxConstantValue top = MtlxBinary(
+        top_left, top_right,
+        [u](float a, float b) { return a + (b - a) * u; });
+    *out = MtlxBinary(bottom, top,
+                      [v](float b, float t) { return b + (t - b) * v; });
+    out->color_managed = top_left.color_managed || top_right.color_managed ||
+                         bottom_left.color_managed ||
+                         bottom_right.color_managed ||
+                         texcoord.color_managed;
+    return true;
+  }
+
+  if (starts("ND_splitlr_")) {
+    MtlxConstantValue left, right, center, texcoord;
+    if (!input("valuel", &left) || !input("valuer", &right) ||
+        !input("center", &center) || !input("texcoord", &texcoord) ||
+        texcoord.components < 2) {
+      return false;
+    }
+    *out = texcoord.component(0) < center.component(0) ? left : right;
+    out->color_managed = out->color_managed || center.color_managed ||
+                         texcoord.color_managed;
+    return true;
+  }
+
+  if (starts("ND_splittb_")) {
+    MtlxConstantValue top, bottom, center, texcoord;
+    if (!input("valuet", &top) || !input("valueb", &bottom) ||
+        !input("center", &center) || !input("texcoord", &texcoord) ||
+        texcoord.components < 2) {
+      return false;
+    }
+    *out = texcoord.component(1) < center.component(0) ? bottom : top;
+    out->color_managed = out->color_managed || center.color_managed ||
+                         texcoord.color_managed;
+    return true;
+  }
+
+  if (starts("ND_circle_")) {
+    MtlxConstantValue texcoord, center, radius;
+    if (!input("texcoord", &texcoord) || !input("center", &center) ||
+        !input("radius", &radius) || texcoord.components < 2 ||
+        center.components < 2) {
+      return false;
+    }
+    const float dx = texcoord.component(0) - center.component(0);
+    const float dy = texcoord.component(1) - center.component(1);
+    out->components = 1;
+    out->value[0] = dx * dx + dy * dy <=
+                            radius.component(0) * radius.component(0)
+                        ? 1.0f
+                        : 0.0f;
+    out->color_managed = texcoord.color_managed || center.color_managed ||
+                         radius.color_managed;
+    return true;
+  }
+
   if (starts("ND_trianglewave_")) {
     MtlxConstantValue value;
     if (!input("in", &value)) return false;
