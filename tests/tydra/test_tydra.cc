@@ -296,6 +296,18 @@ void TestMtlxConstantEvaluatorLeanVectors() {
       usda += "    " + usd_input_type + " inputs:" + input_name + " = " +
               value + "\n";
     }
+    // The Lean atan2 vector intentionally omits inx to exercise the
+    // MaterialX nodedef default (1.0).
+    if (root.tag == "atan2") {
+      bool has_x = false;
+      for (const MtlxElem& child : root.children) {
+        if (child.tag == "input" && child.AttrOr("name") == "inx") {
+          has_x = true;
+          break;
+        }
+      }
+      if (!has_x) usda += "    float inputs:inx = 1.0\n";
+    }
     usda += "  }\n";
     selected.push_back(&vector);
   }
