@@ -19,14 +19,14 @@ lusdrender --mtlx material.mtlx material.png
 lusdrender --mtlx material.mtlx material.png --mtlx-material MyMaterial -w 512 -height 512
 ```
 
-This CPU-only entry point converts a supported MaterialX surface through the
-existing Tydra material converter, binds it to a generated sphere, and renders
-under a uniform white `DomeLight` with LightRT BSDF shading. The default image
-size is 512 by 512. `--mtlx-material` selects a named MaterialX material.
-Unsupported conversions fail with the converter's diagnostic. This is an
-entry-point smoke path; it does not yet evaluate arbitrary MaterialX node
-graphs directly, produce per-lobe/node-output AOVs, or implement the planned
-white-furnace and reference-image validation suite.
+This CPU-only entry point evaluates the selected MaterialX surface with
+LightRT's MaterialX graph evaluator at UV `(0.5, 0.5)`, binds the resulting
+OpenPBR parameter block to a generated sphere, and renders under a uniform
+white `DomeLight` with LightRT BSDF shading. The default image size is 512 by
+512. `--mtlx-material` selects a named MaterialX material. This validates the
+graph-to-OpenPBR-to-BSDF path for a single graph sample; it does not yet evaluate
+spatially varying graph outputs per pixel, produce per-lobe/node-output AOVs, or
+implement the planned white-furnace and reference-image validation suite.
 
 ### Build and link time
 

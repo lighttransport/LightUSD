@@ -62,6 +62,7 @@
 #include "lightusd-core.hh"
 #include "types/value.hh"
 #include "../../src/tydra/scene-access.hh"
+#include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
 extern "C" {
 #include "lightrt_c_tri.h"
@@ -103,32 +104,39 @@ struct GeneratedMtlxScene {
 bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
                               std::string *error) {
   if (!generated || opt.mtlx_file.empty()) return false;
-  lightusd::tydra::MtlxConverter converter;
-  lightusd::tydra::RenderMaterial material;
-  if (!converter.ConvertFileToRenderMaterial(opt.mtlx_file, opt.mtlx_material,
-                                             &material)) {
-    if (error) *error = converter.GetError();
+  std::ifstream source(opt.mtlx_file, std::ios::binary);
+  if (!source) {
+    if (error) *error = "cannot read MaterialX source: " + opt.mtlx_file;
     return false;
   }
-  if (material.default_fallback || !converter.GetWarning().empty() ||
-      material.shader_type != lightusd::tydra::RenderMaterial::ShaderType::PreviewSurface ||
-      !material.preview_surface) {
-    if (error) {
-      *error = converter.GetWarning().empty()
-                   ? "MaterialX validation currently requires a convertible standard_surface or UsdPreviewSurface"
-                   : converter.GetWarning();
-    }
+  std::ostringstream xml;
+  xml << source.rdbuf();
+  if (!source.good() && !source.eof()) {
+    if (error) *error = "failed reading MaterialX source: " + opt.mtlx_file;
     return false;
   }
-  const auto &ps = *material.preview_surface;
+  const size_t slash = opt.mtlx_file.find_last_of("/\\");
+  const std::string base_dir = slash == std::string::npos
+                                   ? "."
+                                   : opt.mtlx_file.substr(0, slash);
+  lightusd::tydra::LightRtOpenPBRParams pbr;
+  std::string eval_error;
+  const std::string xml_text = xml.str();
+  if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
+          xml_text.c_str(), opt.mtlx_material.empty()
+                                ? nullptr : opt.mtlx_material.c_str(),
+          base_dir.c_str(), &pbr, &eval_error)) {
+    if (error) *error = "LightRT MaterialX graph evaluation failed: " + eval_error;
+    return false;
+  }
   auto scalar = [](float v) {
     std::ostringstream out;
     out << std::setprecision(9) << (std::isfinite(v) ? v : 0.0f);
     return out.str();
   };
-  auto color = [&](const lightusd::tydra::ShaderParam &p) {
-    return "(" + scalar(p.value.x) + ", " + scalar(p.value.y) + ", " +
-           scalar(p.value.z) + ")";
+  auto color = [&](const float p[3]) {
+    return "(" + scalar(p[0]) + ", " + scalar(p[1]) + ", " +
+           scalar(p[2]) + ")";
   };
 
   static std::atomic<uint64_t> sequence{0};
@@ -155,18 +163,36 @@ bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
          "    def Material \"Material\" {\n"
          "        token outputs:surface.connect = </World/Material/Surface.outputs:surface>\n"
          "        def Shader \"Surface\" {\n"
-         "            uniform token info:id = \"UsdPreviewSurface\"\n"
-         "            color3f inputs:diffuseColor = " << color(ps.diffuse_color) << "\n"
-      << "            color3f inputs:emissiveColor = " << color(ps.emissive_color) << "\n"
-      << "            color3f inputs:specularColor = " << color(ps.specular_color) << "\n"
-      << "            float inputs:metallic = " << scalar(ps.metallic.value.x) << "\n"
-      << "            float inputs:roughness = " << scalar(ps.roughness.value.x) << "\n"
-      << "            float inputs:clearcoat = " << scalar(ps.clearcoat.value.x) << "\n"
-      << "            float inputs:clearcoatRoughness = " << scalar(ps.clearcoat_roughness.value.x) << "\n"
-      << "            float inputs:opacity = " << scalar(ps.opacity.value.x) << "\n"
-      << "            float inputs:opacityThreshold = " << scalar(ps.opacity_threshold.value.x) << "\n"
-      << "            float inputs:ior = " << scalar(ps.ior.value.x) << "\n"
-      << "            bool inputs:useSpecularWorkflow = " << (ps.use_specular_workflow ? "true" : "false") << "\n"
+         "            uniform token info:id = \"ND_open_pbr_surface_surfaceshader\"\n"
+      << "            float inputs:base_weight = " << scalar(pbr.baseWeight) << "\n"
+      << "            color3f inputs:base_color = " << color(pbr.baseColor) << "\n"
+      << "            float inputs:base_roughness = " << scalar(pbr.diffuseRoughness) << "\n"
+      << "            float inputs:base_metalness = " << scalar(pbr.metalness) << "\n"
+      << "            float inputs:specular_weight = " << scalar(pbr.specularWeight) << "\n"
+      << "            color3f inputs:specular_color = " << color(pbr.specularColor) << "\n"
+      << "            float inputs:specular_roughness = " << scalar(pbr.specularRoughness) << "\n"
+      << "            float inputs:specular_ior = " << scalar(pbr.specularIor) << "\n"
+      << "            float inputs:transmission_weight = " << scalar(pbr.transmission) << "\n"
+      << "            color3f inputs:transmission_color = " << color(pbr.transmissionColor) << "\n"
+      << "            float inputs:transmission_depth = " << scalar(pbr.transmissionDepth) << "\n"
+      << "            float inputs:subsurface_weight = " << scalar(pbr.subsurface) << "\n"
+      << "            color3f inputs:subsurface_color = " << color(pbr.subsurfaceColor) << "\n"
+      << "            color3f inputs:subsurface_radius = " << color(pbr.subsurfaceRadius) << "\n"
+      << "            float inputs:subsurface_scale = " << scalar(pbr.subsurfaceScale) << "\n"
+      << "            float inputs:coat_weight = " << scalar(pbr.coatWeight) << "\n"
+      << "            color3f inputs:coat_color = " << color(pbr.coatColor) << "\n"
+      << "            float inputs:coat_roughness = " << scalar(pbr.coatRoughness) << "\n"
+      << "            float inputs:coat_ior = " << scalar(pbr.coatIor) << "\n"
+      << "            float inputs:sheen_weight = " << scalar(pbr.sheenWeight) << "\n"
+      << "            color3f inputs:sheen_color = " << color(pbr.sheenColor) << "\n"
+      << "            float inputs:sheen_roughness = " << scalar(pbr.sheenRoughness) << "\n"
+      << "            float inputs:thin_film_weight = " << scalar(pbr.thinFilmWeight) << "\n"
+      << "            float inputs:thin_film_thickness = " << scalar(pbr.thinFilmThicknessNm) << "\n"
+      << "            float inputs:thin_film_ior = " << scalar(pbr.thinFilmIor) << "\n"
+      << "            float inputs:emission_luminance = " << scalar(pbr.emission) << "\n"
+      << "            color3f inputs:emission_color = " << color(pbr.emissionColor) << "\n"
+      << "            float inputs:opacity = " << scalar(pbr.opacity) << "\n"
+      << "            bool inputs:thin_walled = " << (pbr.geometryThinWalled ? "true" : "false") << "\n"
          "            token outputs:surface\n"
          "        }\n"
          "    }\n"
