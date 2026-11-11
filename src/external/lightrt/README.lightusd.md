@@ -65,6 +65,10 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   defaults at load, nearest-scope `fileprefix`, node fixes found by the
   Lean vectors, and a V-axis correction for `ramptb`, `ramp4` and `splittb`. `mtlx_stdlib_defs.inc`
   is generated (`lake exe mtlxspec-gen`); do not edit it by hand.
+- 2026-11-12: `mtlxrender/bsdf.c` is synchronized with LightRT
+  `mtlx-conformance` commit `7ba8efa`: the weighted Schlick response now
+  attenuates diffuse/subsurface energy, with a standalone white-furnace test
+  in LightRT and a CTest integration in `tools/lusdrender`.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
