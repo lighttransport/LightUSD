@@ -92,13 +92,45 @@ def Scope "M" {
     color3f inputs:in = (0.25, 0.5, 0.75)
     color3f inputs:amount = (0, 1, 1)
   }
+  def Shader "Range" {
+    uniform token info:id = "ND_range_float"
+    float inputs:in = 0.25
+    float inputs:inlow = 0
+    float inputs:inhigh = 1
+    float inputs:outlow = -1
+    float inputs:outhigh = 1
+    float inputs:gamma = 1
+  }
+  def Shader "Triangle" {
+    uniform token info:id = "ND_trianglewave_float"
+    float inputs:in = 0.25
+  }
+  def Shader "Place" {
+    uniform token info:id = "ND_place2d_vector2"
+    float2 inputs:texcoord = (0.25, 0.75)
+    float2 inputs:pivot = (0, 0)
+    float2 inputs:scale = (1, 1)
+    float2 inputs:offset = (0.5, -0.25)
+    float inputs:rotate = 0
+  }
+  def Shader "Reflect" {
+    uniform token info:id = "ND_reflect_vector3"
+    vector3f inputs:in = (1, -1, 0)
+    vector3f inputs:normal = (0, 1, 0)
+  }
+  def Shader "Refract" {
+    uniform token info:id = "ND_refract_vector3"
+    vector3f inputs:in = (0, 0, -1)
+    vector3f inputs:normal = (0, 0, 1)
+    float inputs:ior = 1
+  }
 }
 )USD";
   Stage stage;
   std::string warning, error;
   assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(text),
                            std::strlen(text), &stage, &warning, &error));
-  struct Case { const char* path; float expected[3]; int components; };
+  struct Case { const char* path; float expected[4]; int components; };
   const Case cases[] = {
       {"/M/SafePower", {-8.0f, 0.0f}, 1},
       {"/M/Atan2", {1.57079632679f, 0.0f}, 1},
@@ -108,6 +140,11 @@ def Scope "M" {
       {"/M/RgbToHsv", {1.0f / 12.0f, 1.0f, 1.0f}, 3},
       {"/M/HsvToRgb", {0.0f, 1.0f, 1.0f}, 3},
       {"/M/HsvAdjust", {0.25f, 0.5f, 0.75f}, 3},
+      {"/M/Range", {-0.5f}, 1},
+      {"/M/Triangle", {0.25f}, 1},
+      {"/M/Place", {0.75f, 0.5f}, 2},
+      {"/M/Reflect", {1.0f, 1.0f, 0.0f}, 3},
+      {"/M/Refract", {0.0f, 0.0f, -1.0f}, 3},
   };
   for (const Case& test : cases) {
     MtlxConstantValue value;

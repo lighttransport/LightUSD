@@ -457,6 +457,87 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_range_")) {
+    MtlxConstantValue value, in_low, in_high, out_low, out_high, gamma;
+    if (!input("in", &value) || !input("inlow", &in_low) ||
+        !input("inhigh", &in_high) || !input("outlow", &out_low) ||
+        !input("outhigh", &out_high) || !input("gamma", &gamma)) return false;
+    *out = value;
+    out->color_managed = value.color_managed || in_low.color_managed ||
+        in_high.color_managed || out_low.color_managed ||
+        out_high.color_managed || gamma.color_managed;
+    for (int i = 0; i < value.components; ++i) {
+      const float lo = in_low.component(i), hi = in_high.component(i);
+      const float denom = hi - lo;
+      const float t = denom != 0.0f
+          ? std::clamp((value.component(i) - lo) / denom, 0.0f, 1.0f)
+          : 0.0f;
+      out->value[static_cast<size_t>(i)] = out_low.component(i) +
+          std::pow(t, gamma.component(i)) * (out_high.component(i) - out_low.component(i));
+    }
+    return true;
+  }
+
+  if (starts("ND_trianglewave_")) {
+    MtlxConstantValue value;
+    if (!input("in", &value)) return false;
+    out->components = 1;
+    const float q = std::fmod(std::fabs(value.component(0)), 1.0f);
+    out->value[0] = 0.5f - std::fabs(q - 0.5f);
+    out->color_managed = value.color_managed;
+    return true;
+  }
+
+  if (starts("ND_place2d_")) {
+    MtlxConstantValue texcoord, pivot, scale, offset, rotation;
+    if (!input("texcoord", &texcoord) || !input("pivot", &pivot) ||
+        !input("scale", &scale) || !input("offset", &offset) ||
+        !input("rotate", &rotation) || texcoord.components < 2) return false;
+    const float x = texcoord.component(0) - pivot.component(0);
+    const float y = texcoord.component(1) - pivot.component(1);
+    const float radians = rotation.component(0) * (3.14159265358979323846f / 180.0f);
+    const float rx = x * std::cos(radians) - y * std::sin(radians);
+    const float ry = x * std::sin(radians) + y * std::cos(radians);
+    out->components = 2;
+    out->value[0] = rx / (scale.component(0) != 0.0f ? scale.component(0) : 1.0f) +
+                    pivot.component(0) + offset.component(0);
+    out->value[1] = ry / (scale.component(1) != 0.0f ? scale.component(1) : 1.0f) +
+                    pivot.component(1) + offset.component(1);
+    out->color_managed = texcoord.color_managed || pivot.color_managed ||
+                         scale.color_managed || offset.color_managed;
+    return true;
+  }
+
+  if (starts("ND_reflect_")) {
+    MtlxConstantValue value, normal;
+    if (!input("in", &value) || !input("normal", &normal) ||
+        value.components < 3 || normal.components < 3) return false;
+    float dot = 0.0f;
+    for (int i = 0; i < 3; ++i) dot += value.value[static_cast<size_t>(i)] * normal.value[static_cast<size_t>(i)];
+    *out = value;
+    for (int i = 0; i < 3; ++i) out->value[static_cast<size_t>(i)] -= 2.0f * dot * normal.value[static_cast<size_t>(i)];
+    out->color_managed = value.color_managed || normal.color_managed;
+    return true;
+  }
+
+  if (starts("ND_refract_")) {
+    MtlxConstantValue value, normal, ior;
+    if (!input("in", &value) || !input("normal", &normal) ||
+        !input("ior", &ior) || value.components < 3 || normal.components < 3) return false;
+    float dot = 0.0f;
+    for (int i = 0; i < 3; ++i) dot += value.value[static_cast<size_t>(i)] * normal.value[static_cast<size_t>(i)];
+    const float eta = ior.component(0);
+    const float k = 1.0f - eta * eta * (1.0f - dot * dot);
+    out->components = 3;
+    out->color_managed = value.color_managed || normal.color_managed || ior.color_managed;
+    for (int i = 0; i < 3; ++i) {
+      out->value[static_cast<size_t>(i)] = k < 0.0f ? 0.0f :
+          eta * value.value[static_cast<size_t>(i)] -
+          (eta * dot + std::sqrt(k)) * normal.value[static_cast<size_t>(i)];
+    }
+    return true;
+  }
+
   if (starts("ND_atan2_")) {
     MtlxConstantValue y, x;
     if (!input("iny", &y) || !input("inx", &x)) return false;
