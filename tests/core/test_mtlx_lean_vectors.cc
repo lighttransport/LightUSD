@@ -445,6 +445,22 @@ static void CheckTypedMtlxGraphResolution() {
   if (ResolveMtlxGraphs(graph_cycle, library, &graph_order, &error)) {
     Fail("MTLX_GRAPHS_CYCLE", 0, "cross-nodegraph dependency cycle was accepted");
   }
+
+  g_checks++;
+  MtlxDocument parsed_document;
+  const std::string graph_xml = R"(<materialx version="1.39">
+  <nodegraph name="validated">
+    <constant name="color" type="color3" nodedef="ND_constant_color3"/>
+    <output name="out" type="color3" nodename="color"/>
+  </nodegraph>
+</materialx>)";
+  std::vector<std::string> parsed_order;
+  if (!parsed_document.ParseFromXML(graph_xml) ||
+      !parsed_document.ResolveNodeGraphs(&parsed_order, &error) ||
+      parsed_order != std::vector<std::string>({"validated"})) {
+    Fail("MTLX_DOCUMENT_GRAPH_RESOLVE", 0,
+         error.empty() ? parsed_document.GetError() : error);
+  }
 }
 
 static void CheckMtlxDocumentXInclude() {

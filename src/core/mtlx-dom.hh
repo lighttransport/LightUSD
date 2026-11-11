@@ -298,6 +298,11 @@ public:
                     const std::string& anchor_path);
   bool ParseFromFile(const std::string& filename);
 
+  // Validate the parsed document's nodegraphs against embedded and standard
+  // nodedefs. Returns nodegraphs in dependency-first order.
+  bool ResolveNodeGraphs(std::vector<std::string>* graph_order,
+                         std::string* err) const;
+
   // Document properties
   const std::string& GetVersion() const { return version_; }
   const std::string& GetColorSpace() const { return colorspace_; }
@@ -325,6 +330,8 @@ private:
   std::string version_;
   std::string colorspace_;
   std::string namespace_;
+
+  XMLNodePtr parsed_root_;
 
   std::vector<MtlxNodePtr> nodes_;
   std::vector<MtlxNodeGraphPtr> nodegraphs_;

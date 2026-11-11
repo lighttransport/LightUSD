@@ -464,6 +464,11 @@ bool MtlxDocument::ParseRoot(XMLNodePtr root) {
     return false;
   }
 
+  parsed_root_ = root;
+  nodes_.clear();
+  nodegraphs_.clear();
+  materials_.clear();
+
   // Parse document attributes
   version_ = root->GetAttribute("version");
   colorspace_ = root->GetAttribute("colorspace");
@@ -477,6 +482,20 @@ bool MtlxDocument::ParseRoot(XMLNodePtr root) {
   }
 
   return true;
+}
+
+bool MtlxDocument::ResolveNodeGraphs(
+    std::vector<std::string> *graph_order, std::string *err) const {
+  if (!parsed_root_) {
+    if (err) *err = "MaterialX document has not been parsed";
+    return false;
+  }
+  MtlxElem root = XMLNodeToMtlxElem(parsed_root_);
+  MtlxLibrary library;
+  library.AddFrom(root);
+  for (const MtlxElem &def : StandardMtlxNodeDefs())
+    library.AddNodeDef(def, {});
+  return ResolveMtlxGraphs(root, library, graph_order, err);
 }
 
 bool MtlxDocument::ParseFromFile(const std::string& filename) {
