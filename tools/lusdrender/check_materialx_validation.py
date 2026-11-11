@@ -40,14 +40,18 @@ def main():
     if len(set(rgb)) <= 1:
         raise RuntimeError("MaterialX validation render appears blank")
 
-    emission_source = out_dir / "constant-emission.mtlx"
+    emission_source = out_dir / "connected-emission.mtlx"
     emission_source.write_text(
         '''<?xml version="1.0"?>
 <materialx version="1.39">
+  <multiply name="EmissionColor" type="color3">
+    <input name="in1" type="color3" value="0.4, 0.8, 1.2" />
+    <input name="in2" type="color3" value="0.5, 0.5, 0.5" />
+  </multiply>
   <standard_surface name="Emission" type="surfaceshader">
     <input name="base" type="float" value="0" />
     <input name="emission" type="float" value="1" />
-    <input name="emission_color" type="color3" value="0.2, 0.4, 0.6" />
+    <input name="emission_color" type="color3" nodename="EmissionColor" />
   </standard_surface>
   <surfacematerial name="EmissionMaterial" type="material">
     <input name="surfaceshader" type="surfaceshader" nodename="Emission" />
@@ -76,12 +80,12 @@ def main():
         text=True,
     )
     if emission.returncode:
-        raise RuntimeError(f"constant-emission render failed:\n{emission.stderr}")
+        raise RuntimeError(f"connected-emission render failed:\n{emission.stderr}")
     ew, eh, emission_rgba = read_png_rgba(emission_image)
     center = (eh // 2 * ew + ew // 2) * 4
     if (ew, eh) != (64, 64) or tuple(emission_rgba[center : center + 3]) != (124, 170, 203):
         actual = tuple(emission_rgba[center : center + 3])
-        raise RuntimeError(f"constant emission disagrees with analytic sRGB result: {actual}")
+        raise RuntimeError(f"connected emission disagrees with analytic sRGB result: {actual}")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
@@ -92,7 +96,7 @@ def main():
     if rejected.returncode == 0 or "CPU renderer only" not in rejected.stderr:
         raise RuntimeError("MaterialX validation accepted an unsupported GPU path")
 
-    print("PASS: MaterialX preview sphere and constant-emission analytic check")
+    print("PASS: MaterialX graph render and connected-emission analytic check")
     return 0
 
 
