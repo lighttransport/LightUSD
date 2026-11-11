@@ -332,7 +332,14 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
       else if (op == 8) v[i] = mix(av, bv, cv);
       else if (op == 9) v[i] = clamp(av, bv, cv);
-      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
+      else if (op == 10) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? av.x * bv.x
+                  : width == 2 ? dot(av.xy, bv.xy)
+                  : width == 3 ? dot(av.xyz, bv.xyz)
+                               : dot(av, bv);
+        v[i] = vec4(d);
+      }
       else if (op == 11) {
         int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
         vec4 n = width == 1 ? vec4(sign(av.x), 0.0, 0.0, 0.0)

@@ -170,6 +170,20 @@ for operation in ("Arcsine", "Arccosine", "Arctangent", "Contrast", "Screen",
                   "Swizzle"):
     require(cpu, rf"MaterialXGraphOpCPU::{operation}\b",
             f"CPU graph {operation} parity")
+require(cpu,
+        r"for\s*\(int lane = 0; lane < vectorComponents; \+\+lane\)\s*d \+= a\[lane\] \* b\[lane\]",
+        "CPU graph dot component width")
+for label, graph_shader in (
+    ("Vulkan RT", viewer_vk_shader),
+    ("Vulkan software RT", viewer_swrt_shader),
+    ("Vulkan raster", viewer_raster_shader),
+):
+    require(graph_shader,
+            r"op\s*==\s*8\)\s*v\[i\]\s*=\s*mix\(av,\s*bv,\s*cv\)",
+            f"{label} MaterialX mix extrapolation")
+    require(graph_shader,
+            r"op\s*==\s*10\)\s*\{\s*int width = clamp\(int\(floor\([^)]*p \+ 3u\][^)]*\)\), 1, 4\);\s*float d = width == 1 \? av\.x \* bv\.x\s*: width == 2 \? dot\(av\.xy, bv\.xy\)\s*: width == 3 \? dot\(av\.xyz, bv\.xyz\)\s*: dot\(av, bv\)",
+            f"{label} MaterialX dot component width")
 if "r<44" in shader:
     raise SystemExit("GPU material ABI mismatch: stale Vulkan graph route count")
 require(vk_header, r"LRT_VK_MATERIAL_PATH_LIGHT_FLOATS\s+16u", "LightRT host light stride")

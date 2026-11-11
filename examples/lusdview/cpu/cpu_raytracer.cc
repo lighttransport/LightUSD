@@ -1089,7 +1089,9 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Clamp)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::clamp(a[cidx], b[cidx], c[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Dot)) {
-        const float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        float d = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          d += a[lane] * b[lane];
         dst = {d, d, d, d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Normalized)) {
         float squaredLength = 0.0f;
