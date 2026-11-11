@@ -1914,7 +1914,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     add_test(NAME core_test_mtlx_lean_vectors
         COMMAND test_mtlx_lean_vectors
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_tests_properties(core_test_mtlx_lean_vectors
         PROPERTIES LABELS "core;mtlx;lean")
 
