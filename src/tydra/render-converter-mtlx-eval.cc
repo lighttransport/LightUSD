@@ -297,6 +297,15 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_safepower_")) {
+    MtlxConstantValue base, exponent;
+    if (!input("in1", &base) || !input("in2", &exponent)) return false;
+    *out = MtlxBinary(base, exponent, [](float x, float y) {
+      return x == 0.0f ? 0.0f : std::copysign(std::pow(std::fabs(x), y), x);
+    });
+    return true;
+  }
+
   if (starts("ND_mix_")) {
     MtlxConstantValue bg, fg, amount;
     if (!input("bg", &bg) || !input("fg", &fg) ||
@@ -380,6 +389,56 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         out->value[static_cast<size_t>(i)] /= length;
       }
     }
+    return true;
+  }
+
+  if (starts("ND_magnitude_")) {
+    MtlxConstantValue value;
+    if (!input("in", &value)) return false;
+    float length_squared = 0.0f;
+    for (int i = 0; i < value.components; ++i) {
+      const float component = value.component(i);
+      length_squared += component * component;
+    }
+    out->components = 1;
+    out->value[0] = std::sqrt(length_squared);
+    out->color_managed = value.color_managed;
+    return true;
+  }
+
+  if (starts("ND_distance_")) {
+    MtlxConstantValue a, b;
+    if (!input("in1", &a) || !input("in2", &b)) return false;
+    float length_squared = 0.0f;
+    const int components = std::max(a.components, b.components);
+    for (int i = 0; i < components; ++i) {
+      const float delta = a.component(i) - b.component(i);
+      length_squared += delta * delta;
+    }
+    out->components = 1;
+    out->value[0] = std::sqrt(length_squared);
+    out->color_managed = a.color_managed || b.color_managed;
+    return true;
+  }
+
+  if (starts("ND_atan2_")) {
+    MtlxConstantValue y, x;
+    if (!input("iny", &y) || !input("inx", &x)) return false;
+    *out = MtlxBinary(y, x, [](float yy, float xx) {
+      return std::atan2(yy, xx);
+    });
+    return true;
+  }
+
+  if (starts("ND_rotate2d_")) {
+    MtlxConstantValue value, amount;
+    if (!input("in", &value) || !input("amount", &amount) ||
+        value.components < 2) return false;
+    const float radians = amount.component(0) * (3.14159265358979323846f / 180.0f);
+    const float x = value.component(0), y = value.component(1);
+    *out = value;
+    out->value[0] = x * std::cos(radians) - y * std::sin(radians);
+    out->value[1] = x * std::sin(radians) + y * std::cos(radians);
     return true;
   }
 

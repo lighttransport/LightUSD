@@ -31,6 +31,7 @@
 #include "../../../src/tydra/scene-access.hh"
 #include "tydra/render-extract.hh"
 #include "tydra/render-converter.hh"
+#include "../../../src/tydra/render-converter-mtlx-eval.hh"
 #include "tydra/render-converter-assembly.hh"
 #include "tydra/asset-import/volumetric.hh"
 #include "tinyvdb_io.h"
@@ -50,6 +51,72 @@
 
 using namespace lightusd::tydra;
 using namespace lightusd;
+
+void TestMtlxConstantEvaluatorRealNodes() {
+  const char* text = R"USD(#usda 1.0
+def Scope "M" {
+  def Shader "SafePower" {
+    uniform token info:id = "ND_safepower_float"
+    float inputs:in1 = -2
+    float inputs:in2 = 3
+  }
+  def Shader "Atan2" {
+    uniform token info:id = "ND_atan2_float"
+    float inputs:iny = 1
+    float inputs:inx = 0
+  }
+  def Shader "Magnitude" {
+    uniform token info:id = "ND_magnitude_vector3"
+    vector3f inputs:in = (3, 4, 0)
+  }
+  def Shader "Distance" {
+    uniform token info:id = "ND_distance_vector3"
+    vector3f inputs:in1 = (1, 2, 2)
+    vector3f inputs:in2 = (4, 6, 2)
+  }
+  def Shader "Rotate" {
+    uniform token info:id = "ND_rotate2d_vector2"
+    float2 inputs:in = (1, 0)
+    float inputs:amount = 90
+  }
+}
+)USD";
+  Stage stage;
+  std::string warning, error;
+  assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(text),
+                           std::strlen(text), &stage, &warning, &error));
+  struct Case { const char* path; float expected[2]; int components; };
+  const Case cases[] = {
+      {"/M/SafePower", {-8.0f, 0.0f}, 1},
+      {"/M/Atan2", {1.57079632679f, 0.0f}, 1},
+      {"/M/Magnitude", {5.0f, 0.0f}, 1},
+      {"/M/Distance", {5.0f, 0.0f}, 1},
+      {"/M/Rotate", {0.0f, 1.0f}, 2},
+  };
+  for (const Case& test : cases) {
+    MtlxConstantValue value;
+    std::set<std::string> visiting;
+    const UsdPrim node = stage.GetPrimAtPath(test.path);
+    if (!EvalMtlxConstantNode(stage, node, 0.0, "", &value, &visiting, 0)) {
+      std::cerr << "MaterialX constant evaluation failed for " << test.path
+                << "\n";
+      for (const char* input : {"in", "amount"}) {
+        MtlxConstantValue debug;
+        std::set<std::string> input_visiting;
+        const bool ok = EvalMtlxInput(stage, node, input, 0.0, "", &debug,
+                                      &input_visiting, 0);
+        std::cerr << input << ": " << ok << " components=" << debug.components
+                  << "\n";
+      }
+      assert(false);
+    }
+    assert(value.components == test.components);
+    for (int i = 0; i < test.components; ++i) {
+      assert(std::fabs(value.value[static_cast<size_t>(i)] - test.expected[i]) <
+             1.0e-5f);
+    }
+  }
+}
 
 //
 // ChunkedArray Tests
@@ -8995,6 +9062,7 @@ static void TestGeneratedSmoothNormals() {
 }
 
 int main() {
+  TestMtlxConstantEvaluatorRealNodes();
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();
   std::cout << "=== Tydra Unit Tests ===\n\n";
