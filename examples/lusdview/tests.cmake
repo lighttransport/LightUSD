@@ -428,7 +428,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     set_tests_properties(lusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
 
     # Cross-tool parity oracle: ONE scene through BOTH binaries. lusdview and
-    # lusdrender consume the same tydra-next RenderScene, so they must read
+    # lusdrender consume the same Tydra RenderScene, so they must read
     # GeomSubset material bindings and the secondary UV set the same way.
     # Nothing else in the suite compares the two -- which is precisely how a run
     # of lusdview-only material/UV regressions stayed invisible while every

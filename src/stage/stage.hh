@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Stage
+// LightUSD - Stage
 // Composed scene representation built on top of Layer
 
 #pragma once

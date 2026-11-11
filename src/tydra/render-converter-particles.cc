@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - UsdVol ParticleField conversion (see render-data-particles.hh).
+// Tydra - UsdVol ParticleField conversion (see render-data-particles.hh).
 
 #include "render-converter-internal.hh"
 

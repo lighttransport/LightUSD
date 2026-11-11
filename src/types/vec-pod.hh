@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - POD vector aliases used by the render converter.
+// LightUSD - POD vector aliases used by the render converter.
 //
 // The converter historically reached for the legacy value-type layer
 // (`value-types.hh`, ~3000 lines of template-erasure machinery) just to get

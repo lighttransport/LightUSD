@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache implementation
+// LightUSD - PCP Cache implementation
 // Phase 1: sublayers + references.  Phase 2: ancestral opinions + deferred payloads.
 
 #pragma once

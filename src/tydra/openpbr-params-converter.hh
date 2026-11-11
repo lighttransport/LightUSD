@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Convert tydra-next render materials into the shared LightRT/OpenPBR block.
+// Convert Tydra render materials into the shared LightRT/OpenPBR block.
 #pragma once
 
 #include <initializer_list>

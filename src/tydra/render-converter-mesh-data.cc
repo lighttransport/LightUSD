@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Mesh topology and geometry extraction
+// Tydra - Mesh topology and geometry extraction
 
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"

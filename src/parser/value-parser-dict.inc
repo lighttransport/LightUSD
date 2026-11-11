@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - dictionary value parser.
+// LightUSD - dictionary value parser.
 // Included inside namespace lightusd.
 
 // Recursive dictionary body parser. Grammar (USD):

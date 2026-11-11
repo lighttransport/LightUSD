@@ -68,7 +68,7 @@ include src/ptx-loader.cc
 recursive-include src/external/textools/ptex/src *.c
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
-# Configure-time inputs: src and tydra-next CMake define these targets
+# Configure-time inputs: src and Tydra CMake define these targets
 # even though the wheel only builds the four library targets, so every source
 # they list must exist in the sdist (a missing file fails `cmake -S`).
 include src/core/host-services.cc src/image-loader.cc src/image-writer.cc src/io-util.cc src/usdVol.cc

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Stage Implementation
+// LightUSD - Stage Implementation
 
 #include "stage.hh"
 #include "prim/name-order.hh"

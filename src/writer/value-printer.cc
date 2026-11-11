@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Value Printer Implementation
+// LightUSD - Value Printer Implementation
 
 #include "value-printer.hh"
 #include "crate/crate-data-source.hh"

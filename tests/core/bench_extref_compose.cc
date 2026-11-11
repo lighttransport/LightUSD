@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - external-reference composition benchmark.
+// LightUSD - external-reference composition benchmark.
 //
 // Exercises Compositor::Compose over an EXTERNAL reference to a large library
 // layer, measuring peak RSS. The library has L prims; most are arc-free Mesh,

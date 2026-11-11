@@ -25,7 +25,7 @@ notes are removed rather than archived; find them in Git history.
 - [signed-zero.md](signed-zero.md) — IEEE-754 signed-zero handling in OpenUSD,
   AOUSD Core requirements and ambiguities, and bit-exact round-trip guidance.
 - [ousd-vs-lightusd.md](ousd-vs-lightusd.md) — AOUSD Core 1.0.1 / OpenUSD review of
-  LightUSD `next` and Tydra-next, with remediation status.
+  LightUSD core and Tydra, with remediation status.
 
 ## Schema Domains
 
@@ -95,7 +95,7 @@ notes are removed rather than archived; find them in Git history.
   roadmap (fuzzers, corpus gate, phase results).
 - [refactor-c-core.md](refactor-c-core.md) — C-style core consolidation,
   compile/object/WASM measurements, API migration, and remaining parity gates.
-- [core.md](core.md) — `src/next`, Next IO, and Tydra Next
+- [core.md](core.md) — `src/`, core IO, and Tydra
   overview.
 
 ## Build, Test, Release

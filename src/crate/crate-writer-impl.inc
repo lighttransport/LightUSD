@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - private CrateWriter implementation body.
+// LightUSD - private CrateWriter implementation body.
 // Included by crate-writer.cc; kept separate to make the public wrapper
 // translation unit navigable while the writer internals are being split.
 

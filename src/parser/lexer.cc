@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Lexer implementation
+// LightUSD - Lexer implementation
 
 #include "lexer.hh"
 #include "c/lightusd-core-c.h"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC CrateReader public API wrappers
+// LightUSD - USDC CrateReader public API wrappers
 
 #include "core/native-io.hh"
 #include "crate-reader-internal.hh"

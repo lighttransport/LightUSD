@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomCamera Schema Implementation
+// LightUSD - UsdGeomCamera Schema Implementation
 
 #include "usd-geom-camera.hh"
 #include "layer/prim-spec.hh"

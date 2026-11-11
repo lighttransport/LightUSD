@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA Reader
+// LightUSD - USDA Reader
 // High-level interface for reading USDA files
 
 #pragma once

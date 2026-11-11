@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA Writer
+// LightUSD - USDA Writer
 // Export Stage/Layer to USDA ASCII format
 
 #pragma once

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024-Present Light Transport Entertainment Inc.
 #
-# Tydra Next - CMake build configuration
+# Tydra - CMake build configuration
 
 cmake_minimum_required(VERSION 3.10)
 
@@ -224,7 +224,7 @@ if(WIN32)
   target_link_libraries(tydra PUBLIC psapi)
 endif()
 
-# Keep Tydra-next on the repository C++17 baseline.
+# Keep Tydra on the repository C++17 baseline.
 target_compile_features(tydra PUBLIC cxx_std_17)
 
 if(LIGHTUSD_ENABLE_THREAD)
@@ -274,7 +274,7 @@ target_sources(tydra PRIVATE
     $<TARGET_OBJECTS:lightusd_subdiv_objects>)
 
 # Optional: Build test
-option(LIGHTUSD_TYDRA_BUILD_TESTS "Build tests for Tydra Next" OFF)
+option(LIGHTUSD_TYDRA_BUILD_TESTS "Build tests for Tydra" OFF)
 
 if(LIGHTUSD_TYDRA_BUILD_TESTS)
     # src/next (LIGHTUSD_BUILD_TESTS) also defines test_tydra and

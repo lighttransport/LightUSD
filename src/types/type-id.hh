@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Type ID definitions
+// LightUSD - Type ID definitions
 // Standalone header with no dependencies beyond C++14 standard library
 
 #pragma once

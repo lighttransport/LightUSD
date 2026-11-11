@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomPointInstancer Schema
+// LightUSD - UsdGeomPointInstancer Schema
 // Convenience API for PointInstancer primitives
 
 #pragma once

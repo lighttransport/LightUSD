@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Scene Access Implementation
+// Tydra - Scene Access Implementation
 
 #include "scene-access.hh"
 #include "layer/prim-spec.hh"

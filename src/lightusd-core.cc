@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - High-level API Implementation
+// LightUSD - High-level API Implementation
 
 #include "load-usd.hh"
 #include "core/native-io.hh"

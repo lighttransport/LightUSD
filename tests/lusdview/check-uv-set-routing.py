@@ -3,7 +3,7 @@
 
 Three bugs, one behind the other:
 
-  1. tydra-next derived the SECONDARY UV set as `<primary> + "1"`, so only st1 /
+  1. Tydra derived the SECONDARY UV set as `<primary> + "1"`, so only st1 /
      UVMap1 / uv1 were ever extracted. A mesh whose second set is named `uvSet1`,
      `map2` or `UVMap.001` (all common) had no second set at all, and
      RenderTexture::uv_primvar pointed at a set that did not exist.
@@ -183,7 +183,7 @@ def check_backend(binary, secondary, primary, work, backend):
     if sec == pri:
         print(f"FAIL [{backend}]: routing a texture to `uvSet1` rendered exactly "
               f"the same image as routing it to `st`. The secondary UV set is "
-              f"either not extracted (tydra-next used to hard-code it as "
+              f"either not extracted (Tydra used to hard-code it as "
               f"<primary>+'1') or not routed (every texture sampled uv0).")
         return 1
 

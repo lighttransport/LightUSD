@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - minimal expected<T, E>.
+// LightUSD - minimal expected<T, E>.
 //
 // The next product needs only a narrow slice of std::expected: construct from a
 // value or from make_unexpected(e), test with operator bool, dereference with

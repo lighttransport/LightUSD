@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdMtlx Schema
+// LightUSD - UsdMtlx Schema
 // MaterialX node graph support: NodedefInput, MaterialXNodeGraph, MaterialXShader,
 // UsdMtlxNodeIO, UsdMtlxLightNode, etc.
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Internal render-converter scene-assembly helpers.
-#ifndef LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_ASSEMBLY_HH_
-#define LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_ASSEMBLY_HH_
+#ifndef LIGHTUSD_TYDRA_RENDER_CONVERTER_ASSEMBLY_HH_
+#define LIGHTUSD_TYDRA_RENDER_CONVERTER_ASSEMBLY_HH_
 
 #include <cstdint>
 #include <string>

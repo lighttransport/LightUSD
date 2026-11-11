@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Reader
+// LightUSD - USDC Reader
 // High-level interface for reading USDC binary files
 
 #pragma once

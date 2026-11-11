@@ -1,11 +1,11 @@
-// Node.js parity test for 1.0.0 next+tydra-next WASM (preview).
-//   node tests/next-tydra-node.test.mjs
-//   LIGHTUSD_WASM64=1 node tests/next-tydra-node.test.mjs
+// Node.js parity test for the core WASM module with Tydra.
+//   node tests/core-tydra-node.test.mjs
+//   LIGHTUSD_WASM64=1 node tests/core-tydra-node.test.mjs
 //
 // Checks:
 // - HEAPU8 exported runtime (zero-copy)
 // - NextFlattenSession + RenderStream APIs
-// - OpenPBR specular_ior + volume nodegraph JSON via tydra-next
+// - OpenPBR specular_ior + volume nodegraph JSON via Tydra
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,7 +30,7 @@ if (!fs.existsSync(wasmPath)) {
 const factory = (await import(`file://${gluePath}`)).default;
 assert.equal(typeof factory, 'function', 'factory is function');
 const instance = await factory();
-console.log(`loaded ${wasm64 ? 'wasm64' : 'wasm32'} next module`);
+console.log(`loaded ${wasm64 ? 'wasm64' : 'wasm32'} core module`);
 
 // 1. HEAPU8 zero-copy export
 assert.ok(instance.HEAPU8, 'HEAPU8 exported');
@@ -40,10 +40,10 @@ assert.ok(typeof instance.HEAPU8.byteLength === 'number');
 console.log(`ok - HEAPU8 ${instance.HEAPU8.byteLength} bytes`);
 
 // 2. API surface
-for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream', 'SubdivStreamer']) {
+for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
   assert.equal(typeof instance[api], 'function', `${api} exists`);
 }
-console.log('ok - APIs NextUSDZConverterNative/NextFlattenSession/RenderStream/SubdivStreamer');
+console.log('ok - APIs NextUSDZConverterNative/NextFlattenSession/RenderStream');
 
 // 3. NextFlattenSession smoke (lazy array flatten)
 {
@@ -69,7 +69,7 @@ def Xform "World" {
   sess.end();
 }
 
-// 4. RenderStream tydra-next: OpenPBR specular_ior + volume
+// 4. RenderStream Tydra: OpenPBR specular_ior + volume
 {
   const usda = `#usda 1.0
 (
@@ -86,8 +86,14 @@ def Xform "World" {
     token outputs:surface.connect = </World/DispMat/PS.outputs:surface>
     token outputs:displacement.connect = </World/DispMat/Disp.outputs:displacement>
     token outputs:volume.connect = </World/DispMat/Vol.outputs:volume>
-    def Shader "PS" { uniform token info:id = "UsdPreviewSurface" token outputs:surface }
-    def Shader "Disp" { uniform token info:id = "UsdPreviewSurface" token outputs:displacement }
+    def Shader "PS" {
+      uniform token info:id = "UsdPreviewSurface"
+      token outputs:surface
+    }
+    def Shader "Disp" {
+      uniform token info:id = "UsdPreviewSurface"
+      token outputs:displacement
+    }
     def Shader "Vol" {
       uniform token info:id = "UsdPreviewSurface"
       float inputs:density.connect = </World/DispMat/Density.outputs:out>
@@ -142,4 +148,4 @@ def Xform "World" {
   rs.end();
 }
 
-console.log(`next-tydra-node tests done (${wasm64 ? 'wasm64' : 'wasm32'})`);
+console.log(`core-tydra-node tests done (${wasm64 ? 'wasm64' : 'wasm32'})`);

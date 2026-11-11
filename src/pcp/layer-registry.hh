@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP LayerRegistry
+// LightUSD - PCP LayerRegistry
 //
 // Parse-once, resolved-path-keyed cache of layers. A referenced/sublayer file
 // is parsed exactly once and shared (shared_ptr) across every prim index that

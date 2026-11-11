@@ -66,7 +66,7 @@ this checkout, and the web gate against freshly built next and combined modules;
 a legacy-only `lightusd.js` lacks APIs required by the combined-module tests.
 
 After TU or include-boundary changes, also build next with
-`LIGHTUSD_USE_PCH=OFF` and `TYDRA_NEXT_USE_PCH=OFF`. The threaded optimized
+`LIGHTUSD_USE_PCH=OFF` and `LIGHTUSD_TYDRA_USE_PCH=OFF`. The threaded optimized
 ASan/UBSan configuration above can serve this purpose. This checks actual
 dependencies that a precompiled header can otherwise conceal, including the
 session logger, USDA printer metadata/threading types, schema predicates, and
@@ -497,7 +497,7 @@ CMake registers these tests when the corresponding targets are built (most in th
 | `feat-subdiv-verify` | Feature test (only when `LIGHTUSD_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
 | `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
 | `bench-render-convert` | Stage→renderable-mesh conversion benchmark (label `benchmark`) | `build/bench-render-convert --iters 1 --prims 64` |
-| `bench-render-convert-next` | Same, + tydra-next pipeline (only when `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
+| `bench-render-convert-next` | Same, + Tydra pipeline (only when `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
 | `unit-test-lightusd` | Acutest unit suite | `build/unit-test-lightusd` |
 | `mcp-test` | MCP server unit test (only when `LIGHTUSD_WITH_MCP_SERVER`) | `build/mcp-test` |
 
@@ -838,8 +838,8 @@ node tests/compare-usda.js --detailed-diff \
 raster/RT-renderable mesh conversion for both pipelines:
 
 - legacy `tydra::RenderSceneConverter::ConvertToRenderScene` (default target),
-- tydra-next `tydra::next::RenderSceneConverter::Convert` (when built with
-  `PERFRC_ENABLE_NEXT`: the `bench-render-convert-next` target, or the
+- Tydra `lightusd::tydra::RenderSceneConverter::Convert` (when built with
+  `PERFRC_ENABLE_CORE`: the `bench-render-convert-next` target, or the
   `bench_tydra_render` target in the standalone `src` tree).
 
 It generates a deterministic synthetic multi-mesh scene (`--prims N`, mixed
@@ -853,7 +853,7 @@ runs of the same build must print the same hash.
 ./build/bench-render-convert --prims 2048 --legacy-threads 0 --json
 ./build/bench-render-convert --prims 2048 --legacy-threads 1 --json
 
-# tydra-next with explicit worker count
+# Tydra with explicit worker count
 ./build/bench-render-convert-next --prims 2048 --threads 8
 ```
 
@@ -2821,7 +2821,7 @@ feature loader; constructors and functions belong to its returned module.
 ### Viewer, examples and tool consumers
 
 The compatibility product configures `lusdview` and the older examples/tools,
-while also linking the refactored next/Tydra-next libraries for their next paths.
+while also linking the core/Tydra libraries for their core paths.
 Use this build in addition to the standalone next checks:
 
 ```sh
@@ -3612,7 +3612,7 @@ the tool README.
 `tool-lusdrender-analytic-primitives` checks schema-default Cube/Sphere geometry,
 payload material bindings and transforms, native and point instances, masks,
 visibility/purpose, generated UVs, and animated radius/BVH invalidation. It uses
-small generated fixtures and requires no external assets. The Tydra next suite
+small generated fixtures and requires no external assets. The Tydra suite
 also checks default-time and interpolated analytic dimensions. See
 [headless GPU commands and texture coverage](lusdrender.md#analytic-geometry-regression).
 The same fixtures verify PreviewSurface image routing on generated and authored
@@ -3850,7 +3850,7 @@ covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
 `bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
 `bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
-The next-tydra converter also carries unit checks that (a) a texture asset
+The Tydra converter also carries unit checks that (a) a texture asset
 forwarded through a referenced material interface (`inputs:file.connect =
 </Mat.inputs:surfaceMap>`) resolves against the layer that authors the value,
 not the referenced look layer (`TestForwardedTextureAssetAnchor`), and (b) a
@@ -4043,7 +4043,8 @@ scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
 ## Legacy tests (compiled, not run)
 
 Since 1.1 the legacy implementation (`src/legacy/`, `-DLIGHTUSD_BUILD_LEGACY=ON`)
-is built but registers no CTest cases; its test programs live under
+is built but registers no CTest cases. Add `-DLIGHTUSD_WITH_LEGACY_TYDRA=ON`
+to compile the legacy scene converter and its test binaries. The legacy test programs live under
 `tests/legacy/` and still compile. Core replacements for the legacy-only
 shell drivers are `core_scope_imageable_roundtrip`, `core_variant_chain` and
 (with a pinned OpenUSD usdcat) `core_pxr_crate_fidelity`.

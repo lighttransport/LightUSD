@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - batched composition (see batched-compose.hh).
+// LightUSD - batched composition (see batched-compose.hh).
 
 #include "batched-compose.hh"
 #include "memory-trim.hh"

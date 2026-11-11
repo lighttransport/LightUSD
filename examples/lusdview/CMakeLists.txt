@@ -769,7 +769,7 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     OpenGL::GL
     ${CMAKE_DL_LIBS})
 
-# --- `next` lazy loader + tydra-next converter (large-scene preview path) -----
+# --- `next` lazy loader + Tydra converter (large-scene preview path) -----
 # Mirrors tools/lusdrender/CMakeLists.txt: build the next libs on demand (with
 # the std::thread parallel-compose path forced on) and link them. Used by
 # next_scene_loader.cc (the --next OpenGL mesh preview).
@@ -780,7 +780,7 @@ if(NOT TARGET lightusd_core)
 endif()
 if(NOT TARGET tydra)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra
-                   ${CMAKE_BINARY_DIR}/lusdview_tydra_next_build)
+                   ${CMAKE_BINARY_DIR}/lusdview_tydra_build)
 endif()
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE lightusd_render_c lightusd_core tydra)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND

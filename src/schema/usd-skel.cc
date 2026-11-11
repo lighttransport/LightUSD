@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdSkel Schema Implementation
+// LightUSD - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
 #include "layer/prim-spec.hh"
@@ -159,7 +159,7 @@ bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   // imaginary-first order into (CrateReader::Impl::UnpackQuatf), and which USDA
   // text authors directly. SkelAnimationData keeps that layout; consumers that
   // need xyzw (GPU / three.js quaternion order) swizzle at their own boundary
-  // -- tydra-next's AnimationChannel does, for one.
+  // -- Tydra's AnimationChannel does, for one.
   auto arr = val->as_float_array();
   if (arr) {
     out->assign(arr->begin(), arr->end());

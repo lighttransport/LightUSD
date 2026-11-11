@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdShade Schema APIs
+// LightUSD - UsdShade Schema APIs
 // Convenience accessors for USD materials and shaders
 
 #pragma once

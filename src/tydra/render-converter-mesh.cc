@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Tydra Next - Mesh conversion orchestration
+// Tydra - Mesh conversion orchestration
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
 #include "core/safe-arithmetic.hh"

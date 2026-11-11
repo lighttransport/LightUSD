@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA ASCII parser stage metadata.
+// LightUSD - USDA ASCII parser stage metadata.
 
 #include "ascii-parser-internal.hh"
 

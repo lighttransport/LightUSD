@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Lazy array reference tests
+// LightUSD - Lazy array reference tests
 //
 // Verifies that numeric POD arrays read from USDC come back as lazy references
 // into the retained source buffer, materialize correctly on access, and share
@@ -131,7 +131,7 @@ int main() {
     auto bad = CrateDataSource::Adopt(std::move(invalid), version);
     assert(!ProbeArrayBlock(bad, rep, 4, &ref));
   }
-  std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
+  std::cout << "=== LightUSD Lazy Array Tests ===" << std::endl;
 
   // Empty ArrayView must be safe to use with begin()/end() range APIs.
   {

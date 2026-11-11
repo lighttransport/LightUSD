@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USD Path representation
+// LightUSD - USD Path representation
 // Lightweight path class for USD scene hierarchy
 
 #pragma once

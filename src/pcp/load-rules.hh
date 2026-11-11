@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Payload load rules
+// LightUSD - Payload load rules
 //
 // An exception-free port of pxr UsdStageLoadRules: per-subtree rules that
 // govern whether payloads are included, resolved with ancestor/descendant

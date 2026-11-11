@@ -119,9 +119,9 @@ option(LIGHTUSD_BUILD_QUICKLOOK
 option(LIGHTUSD_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${LIGHTUSD_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
-option(LIGHTUSD_WITH_TYDRA
-       "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
-       ON)
+option(LIGHTUSD_WITH_LEGACY_TYDRA
+       "Build the legacy Tydra scene converter."
+       OFF)
 option(LIGHTUSD_WITH_PCP
        "Build the cached/lazy (partial-composition) composition cache (src/pcp)."
        ON)
@@ -220,9 +220,10 @@ option(LIGHTUSD_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 option(LIGHTUSD_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${LIGHTUSD_DEFAULT_WITH_PXR_COMPAT_API})
 
 # C API requires Tydra
-if (NOT LIGHTUSD_WITH_TYDRA AND LIGHTUSD_WITH_C_API)
-  message(WARNING "C API requires Tydra enabled, so disable C API build. Please do not set LIGHTUSD_WITH_TYDRA Off if you need C API library")
-  set(LIGHTUSD_WITH_C_API Off CACHE INTERNAL "" FORCE)
+set(LIGHTUSD_LEGACY_C_API_ENABLED ${LIGHTUSD_WITH_C_API})
+if (NOT LIGHTUSD_WITH_LEGACY_TYDRA AND LIGHTUSD_LEGACY_C_API_ENABLED)
+  message(WARNING "The legacy C API requires LIGHTUSD_WITH_LEGACY_TYDRA=ON. Disabling the legacy C API.")
+  set(LIGHTUSD_LEGACY_C_API_ENABLED OFF)
 endif ()
 
 option(LIGHTUSD_USE_SYSTEM_ZLIB
@@ -553,6 +554,7 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/legacy/image-util.cc
     ${PROJECT_SOURCE_DIR}/src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/src/imageproc/simd.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/usdz-convert.cc
     ${PROJECT_SOURCE_DIR}/src/udim-bake.cc
     ${PROJECT_SOURCE_DIR}/src/udim-mesh.cc
@@ -624,7 +626,7 @@ if (LIGHTUSD_WITH_PCP)
     )
 endif()
 
-if (LIGHTUSD_WITH_TYDRA)
+if (LIGHTUSD_WITH_LEGACY_TYDRA)
     list(APPEND LIGHTUSD_SOURCES
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/facial.cc
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/facial.hh
@@ -715,8 +717,6 @@ if (LIGHTUSD_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/bone-util.hh
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/layer-to-renderscene.cc
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/layer-to-renderscene.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/common-utils.cc
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/common-utils.hh
         ${PROJECT_SOURCE_DIR}/src/legacy/tydra/variant-support.hh
@@ -767,7 +767,7 @@ if (LIGHTUSD_WITH_TYDRA)
             ${PROJECT_SOURCE_DIR}/src/legacy/tydra/wasm-runtime.hh
         )
     endif(LIGHTUSD_WITH_WAMR)
-endif (LIGHTUSD_WITH_TYDRA)
+endif (LIGHTUSD_WITH_LEGACY_TYDRA)
 
 # Variant extraction utilities handled via variant-support.hh/cc in Tydra section
 
@@ -788,7 +788,7 @@ set(LIGHTUSD_DEP_SOURCES
 )
 
 # MikkTSpace tangent computation (zlib license, by Morten S. Mikkelsen)
-if(LIGHTUSD_WITH_TYDRA)
+if(LIGHTUSD_WITH_LEGACY_TYDRA)
   list(APPEND LIGHTUSD_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
 endif()
 
@@ -919,7 +919,7 @@ endif()
 
 if(LIGHTUSD_WITH_USDVOL)
   # usdVol.cc and tydra/vol build in lightusd_asset_import (shared with the
-  # next tydra), with tinyvdb from lightusd_tinyvdb.
+  # core Tydra converter), with tinyvdb from lightusd_tinyvdb.
 endif()
 
 if(LIGHTUSD_WITH_TIFF)
@@ -1338,7 +1338,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
                  ${LIGHTUSD_NLOHMANN_JSON_WARNING_FLAGS})
   endforeach()
 
-  if (LIGHTUSD_WITH_C_API)
+  if (LIGHTUSD_LEGACY_C_API_ENABLED)
     set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                 PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
   endif()
@@ -1358,7 +1358,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set_source_files_properties(${LIGHTUSD_SOURCES}
                               PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
 
-  if (LIGHTUSD_WITH_C_API)
+  if (LIGHTUSD_LEGACY_C_API_ENABLED)
     set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                 PROPERTIES COMPILE_FLAGS "${LIGHTUSD_COMPILE_FLAGS}")
   endif()
@@ -1374,7 +1374,7 @@ if(LIGHTUSD_CUSTOM_COMPILE_FLAGS)
     set_source_files_properties(${LIGHTUSD_SOURCES}
                               PROPERTIES COMPILE_FLAGS "${LIGHTUSD_CUSTOM_COMPILE_FLAGS}")
 
-    if (LIGHTUSD_WITH_C_API)
+    if (LIGHTUSD_LEGACY_C_API_ENABLED)
       set_source_files_properties(${LIGHTUSD_C_API_SOURCES}
                                   PROPERTIES COMPILE_FLAGS "${LIGHTUSD_CUSTOM_COMPILE_FLAGS}")
     endif()
@@ -1634,11 +1634,11 @@ endif()
 #
 # -- common target props
 #
-if(LIGHTUSD_WITH_TYDRA)
+if(LIGHTUSD_WITH_LEGACY_TYDRA)
   include(${PROJECT_SOURCE_DIR}/cmake/lightusd-rb-solver.cmake)
 endif()
 foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
-  if(LIGHTUSD_WITH_TYDRA)
+  if(LIGHTUSD_WITH_LEGACY_TYDRA)
     target_link_libraries(${LIGHTUSD_LIB_TARGET} lightusd_rb_solver)
   endif()
 
@@ -1865,10 +1865,10 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
                                PRIVATE "LIGHTUSD_WITH_QJS")
   endif(LIGHTUSD_WITH_QJS)
 
-  if(LIGHTUSD_WITH_TYDRA)
+  if(LIGHTUSD_WITH_LEGACY_TYDRA)
     target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "LIGHTUSD_WITH_TYDRA")
-  endif(LIGHTUSD_WITH_TYDRA)
+  endif(LIGHTUSD_WITH_LEGACY_TYDRA)
 
   if(LIGHTUSD_WITH_GEOGRAM)
     target_include_directories(${LIGHTUSD_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
@@ -1948,7 +1948,7 @@ endforeach()
 
 
 
-if(LIGHTUSD_WITH_C_API)
+if(LIGHTUSD_LEGACY_C_API_ENABLED)
   if(LIGHTUSD_BUILD_SHARED_LIBS)
     add_library(${BUILD_TARGET_C} SHARED ${LIGHTUSD_C_API_SOURCES})
     # Link with static(object) version of liblightusd to make dll monolitic
@@ -2009,7 +2009,7 @@ endif()
 if(LIGHTUSD_BUILD_EXAMPLES)
   # The canonical lusdcat target is owned by the core build.
   # usd-texcomp is registered by the core Tydra build.
-  if (LIGHTUSD_WITH_TYDRA)
+  if (LIGHTUSD_WITH_LEGACY_TYDRA)
     # tydra_api is registered by the core Tydra build.
     # tydra_to_renderscene is registered by the core example build.
     # variant-lister is a core example, registered by src/CMakeLists.txt.
@@ -2061,7 +2061,7 @@ if(LIGHTUSD_BUILD_TOOLS)
   # tools/lusdchecker is a core tool, added by the root CMakeLists.txt.
   # tools/lusddeps is a core tool, added by the root CMakeLists.txt.
   # lusddiff uses the Tydra diff-and-compare API.
-  if(LIGHTUSD_WITH_TYDRA)
+  if(LIGHTUSD_WITH_LEGACY_TYDRA)
     # tools/lusddiff is a core tool, added by the root CMakeLists.txt.
     # examples/lusdview (added earlier when LIGHTUSD_BUILD_GUI_VIEWER is also
     # ON) may have already pulled this in for its lightrt_c CPU RT backend.
@@ -2169,12 +2169,10 @@ if(LIGHTUSD_BUILD_TESTS)
   #
   # unit tester
   #
-  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/legacy/unit)
-
-  #
-  # MCP tests (requires MCP server enabled)
-  #
-  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/legacy/mcp)
+  if(LIGHTUSD_WITH_LEGACY_TYDRA)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/tests/legacy/unit)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/tests/legacy/mcp)
+  endif()
 
   #
   # Compression tester
@@ -2548,15 +2546,17 @@ if(LIGHTUSD_BUILD_TESTS)
     add_test(NAME feat-lightrt-uv COMMAND feat-lightrt-uv
       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
-    add_sanitizers(feat-value-clip)
-    target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-value-clip COMMAND feat-value-clip
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    if(LIGHTUSD_WITH_LEGACY_TYDRA)
+      add_executable(feat-value-clip tests/feat/value-clip/test-value-clip.cc)
+      add_sanitizers(feat-value-clip)
+      target_link_libraries(feat-value-clip PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_include_directories(feat-value-clip PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-value-clip COMMAND feat-value-clip
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
 
     # tydra value-level diff API (ULP tolerance, metadata reasons, value display)
-    if(LIGHTUSD_WITH_TYDRA)
+    if(LIGHTUSD_WITH_LEGACY_TYDRA)
       add_executable(feat-diff tests/feat/diff/test-diff.cc)
       add_sanitizers(feat-diff)
       target_link_libraries(feat-diff PRIVATE ${LIGHTUSD_TARGET_STATIC})
@@ -2719,12 +2719,14 @@ if(LIGHTUSD_BUILD_TESTS)
     endif()
 
     # PointInstancer instancing (compute API + Tydra expansion)
-    add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
-    add_sanitizers(feat-instancing)
-    target_link_libraries(feat-instancing PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-instancing COMMAND feat-instancing
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    if(LIGHTUSD_WITH_LEGACY_TYDRA)
+      add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
+      add_sanitizers(feat-instancing)
+      target_link_libraries(feat-instancing PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_include_directories(feat-instancing PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-instancing COMMAND feat-instancing
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
 
     # Cross-directory cwp anchoring (composition) via LargeSceneLoader
     add_executable(feat-large-scene tests/feat/large-scene/test-large-scene.cc)
@@ -2763,23 +2765,25 @@ if(LIGHTUSD_BUILD_TESTS)
     target_include_directories(feat-mtlx-export PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME feat-mtlx-export COMMAND feat-mtlx-export)
 
-    # Variant tests
-    add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
-    add_sanitizers(feat-variant-converter)
-    target_link_libraries(feat-variant-converter PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-variant-converter COMMAND feat-variant-converter
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    if(LIGHTUSD_WITH_LEGACY_TYDRA)
+      # Variant tests
+      add_executable(feat-variant-converter tests/feat/nestedVariantSet/test_variant_converter.cpp)
+      add_sanitizers(feat-variant-converter)
+      target_link_libraries(feat-variant-converter PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_include_directories(feat-variant-converter PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-variant-converter COMMAND feat-variant-converter
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
-    add_sanitizers(feat-variant-applier)
-    target_link_libraries(feat-variant-applier PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME feat-variant-applier COMMAND feat-variant-applier
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+      add_executable(feat-variant-applier tests/feat/nestedVariantSet/test_variant_applier.cpp)
+      add_sanitizers(feat-variant-applier)
+      target_link_libraries(feat-variant-applier PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_include_directories(feat-variant-applier PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME feat-variant-applier COMMAND feat-variant-applier
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
   endif()
 
-  if(LIGHTUSD_WITH_JSON)
+  if(LIGHTUSD_WITH_JSON AND LIGHTUSD_WITH_LEGACY_TYDRA)
     add_executable(feat-mtlx-grouped-params tests/feat/mtlx/test_grouped_params.cc)
     add_sanitizers(feat-mtlx-grouped-params)
     target_link_libraries(feat-mtlx-grouped-params PRIVATE ${LIGHTUSD_TARGET_STATIC})
@@ -2798,31 +2802,33 @@ if(LIGHTUSD_BUILD_TESTS)
     add_test(NAME bench-parse-opt COMMAND bench-parse-opt --quick)
     set_tests_properties(bench-parse-opt PROPERTIES LABELS "benchmark")
 
-    # Render-conversion benchmark: Stage -> raster/RT renderable mesh.
-    # Report-only (no timing gate): prints median conversion time plus a
-    # deterministic scene checksum for serial-vs-parallel byte-identity A/B
-    # checks. When the next-core backend is enabled, a combined binary also
-    # measures the tydra::next pipeline on the same input.
-    add_executable(bench-render-convert tests/feat/render-convert/perf-render-convert.cc)
-    add_sanitizers(bench-render-convert)
-    target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
-    target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
-    # Both binaries create/remove the same /tmp/perfrc_scene_64.usda fixture.
-    set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
-                         RESOURCE_LOCK render_convert_fixture)
-
-    if(LIGHTUSD_LEGACY_USE_CORE_PCP AND TARGET lightusd_core AND TARGET tydra)
-      add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
-      add_sanitizers(bench-render-convert-next)
-      target_link_libraries(bench-render-convert-next PRIVATE
-        ${LIGHTUSD_TARGET_STATIC} lightusd_core tydra)
-      target_include_directories(bench-render-convert-next PRIVATE
-        ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src)
-      target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_CORE=1)
-      add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
-      set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
+    if(LIGHTUSD_WITH_LEGACY_TYDRA)
+      # Render-conversion benchmark: Stage -> raster/RT renderable mesh.
+      # Report-only (no timing gate): prints median conversion time plus a
+      # deterministic scene checksum for serial-vs-parallel byte-identity A/B
+      # checks. When the next-core backend is enabled, a combined binary also
+      # measures the tydra::next pipeline on the same input.
+      add_executable(bench-render-convert tests/feat/render-convert/perf-render-convert.cc)
+      add_sanitizers(bench-render-convert)
+      target_link_libraries(bench-render-convert PRIVATE ${LIGHTUSD_TARGET_STATIC})
+      target_include_directories(bench-render-convert PRIVATE ${PROJECT_SOURCE_DIR}/src)
+      add_test(NAME bench-render-convert COMMAND bench-render-convert --iters 1 --prims 64)
+      # Both binaries create/remove the same /tmp/perfrc_scene_64.usda fixture.
+      set_tests_properties(bench-render-convert PROPERTIES LABELS "benchmark"
                            RESOURCE_LOCK render_convert_fixture)
+
+      if(LIGHTUSD_LEGACY_USE_CORE_PCP AND TARGET lightusd_core AND TARGET tydra)
+        add_executable(bench-render-convert-next tests/feat/render-convert/perf-render-convert.cc)
+        add_sanitizers(bench-render-convert-next)
+        target_link_libraries(bench-render-convert-next PRIVATE
+          ${LIGHTUSD_TARGET_STATIC} lightusd_core tydra)
+        target_include_directories(bench-render-convert-next PRIVATE
+          ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/src)
+        target_compile_definitions(bench-render-convert-next PRIVATE PERFRC_ENABLE_CORE=1)
+        add_test(NAME bench-render-convert-next COMMAND bench-render-convert-next --iters 1 --prims 64)
+        set_tests_properties(bench-render-convert-next PROPERTIES LABELS "benchmark"
+                             RESOURCE_LOCK render_convert_fixture)
+      endif()
     endif()
   endif()
 

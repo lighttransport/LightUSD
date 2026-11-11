@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Writer Test
+// LightUSD - USDC Writer Test
 
 #include <iostream>
 #include <fstream>
@@ -656,7 +656,7 @@ void test_writer_reuse_and_target_growth() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next USDC Writer Tests ===\n\n";
+  std::cout << "=== LightUSD USDC Writer Tests ===\n\n";
 
   try {
     test_crate_writer_basic();

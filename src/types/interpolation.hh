@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Time Sample Interpolation
+// LightUSD - Time Sample Interpolation
 // Provides interpolation for USD time-sampled values
 
 #pragma once

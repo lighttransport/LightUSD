@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Complex USDA parsing test
+// LightUSD - Complex USDA parsing test
 
 #include "layer/layer.hh"
 #include <iostream>
@@ -1010,7 +1010,7 @@ def Xform "W" (
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Complex USDA Tests ===" << std::endl;
+  std::cout << "=== LightUSD Complex USDA Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

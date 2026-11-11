@@ -892,7 +892,7 @@ static PyModuleDef_Slot module_slots[] = {
 static struct PyModuleDef moduledef = {
     PyModuleDef_HEAD_INIT,
     .m_name = "lightusd._core",
-    .m_doc = "LightUSD core binding (next-core + tydra-next).",
+    .m_doc = "LightUSD core binding (the core and Tydra).",
     .m_size = sizeof(lightusd_state),
     .m_methods = module_methods,
     .m_slots = module_slots,

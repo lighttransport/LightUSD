@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Crate table-count limits
+// LightUSD - USDC Crate table-count limits
 //
 // Security bounds on the crate's structural table sizes. They cap allocations a
 // malformed file could request from a small header value; every table is also

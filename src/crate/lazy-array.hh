@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Lazy array reference
+// LightUSD - Lazy array reference
 //
 // A LazyArrayRef points at an (undecoded) array value that still lives as bytes
 // inside a retained CrateDataSource buffer. Keeping the reference instead of a

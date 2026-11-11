@@ -41,7 +41,7 @@ if(NOT LIGHTUSD_ASSET_IMPORT_OBJ_ONLY AND NOT TARGET lightusd_asset_import)
     "${_lusd_import_root}/tydra/asset-import/mjcf-sdf.cc"
     "${_lusd_import_root}/tydra/asset-import/volumetric.cc"
     # UsdVol .vdb decoding and field resolution, shared by the legacy and
-    # next tydras (one copy for executables that link both).
+    # current Tydra converters (one copy for executables that link both).
     "${_lusd_import_root}/usdVol.cc"
     "${_lusd_import_root}/tydra/vol/volume-field.cc"
     "${_lusd_import_root}/external/pugixml.cpp")

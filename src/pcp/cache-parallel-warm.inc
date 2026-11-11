@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache parallel source warming and index prewarm.
+// LightUSD - PCP Cache parallel source warming and index prewarm.
 // Included inside Cache::Impl.
 
   bool BuildStage(Stage *stage, std::string *warn, std::string *err,

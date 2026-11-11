@@ -204,7 +204,7 @@ isBeach / isPandanusA + full `island.usda` all unchanged; `next` 23/23; smoke).
 
 Measured before → after on the same build (`-rtPreview -w 320 -height 180`;
 `sources` = the serial `[next_build]` source-resolution phase via
-`LIGHTUSD_NEXT_TIMING`; wall + peak RSS from `/usr/bin/time`):
+`LIGHTUSD_TIMING`; wall + peak RSS from `/usr/bin/time`):
 
 | scene | input | `sources` ms | wall s | peak RSS | md5 |
 |---|---|---|---|---|---|

@@ -1,8 +1,8 @@
-# LightUSD Next - Architecture Redesign
+# LightUSD - Architecture Redesign
 
 ## Overview
 
-The `src/next/` directory contains a complete redesign of LightUSD's core architecture, focusing on:
+The core implementation in `src/` contains a complete redesign of LightUSD's core architecture, focusing on:
 
 - **Minimal template usage** - Replace 78+ `DEFINE_TYPE_TRAIT` macros with runtime type dispatch
 - **Fast compilation times** - O(1) table lookup instead of 65+ if-else chains
@@ -15,9 +15,9 @@ API breakage and feature deletion are acceptable for this redesign. The goal is 
 
 ### Implemented Components
 
-Status here means the current `next` subset is implemented. It does not mean
+Status here means the current core subset is implemented. It does not mean
 legacy typed-schema parity; render-facing legacy schema compatibility is handled
-by extraction/downstream layers such as `tydra/next`.
+by extraction/downstream layers such as Tydra.
 
 | Component | Status | Files |
 |-----------|--------|-------|
@@ -57,17 +57,17 @@ by extraction/downstream layers such as `tydra/next`.
 | UsdLux | ✅ Complete | `schema/usd-lux.{hh,cc}` |
 | UsdShade | ✅ Complete | `schema/usd-shade.{hh,cc}` |
 | **Integration** | | |
-| Unified Header | ✅ Complete | `lightusd-next.{hh,cc}` |
-| **Tydra/Next** | | |
-| Render Data | ✅ Complete | `../tydra/next/render-data.{hh,cc}` |
-| Scene Access | ✅ Complete | `../tydra/next/scene-access.{hh,cc}` |
-| Render Converter | ✅ Complete | `../tydra/next/render-converter.{hh,cc}` |
-| MaterialX | ✅ Complete | `../tydra/next/materialx.{hh,cc}` |
+| Unified Header | ✅ Complete | `lightusd-core.{hh,cc}` |
+| **Tydra** | | |
+| Render Data | ✅ Complete | `tydra/render-data.{hh,cc}` |
+| Scene Access | ✅ Complete | `tydra/scene-access.{hh,cc}` |
+| Render Converter | ✅ Complete | `tydra/render-converter.{hh,cc}` |
+| MaterialX | ✅ Complete | `tydra/materialx.{hh,cc}` |
 
 ### Build Status
 
 ```bash
-# Configure, build, and run the standalone next smoke tests.
+# Configure, build, and run the standalone core smoke tests.
 scripts/run-next-checks.sh
 scripts/run-next-checks.sh --help
 
@@ -82,8 +82,8 @@ USD_WG_ASSETS_DIR=/path/to/usd-wg/assets RUN_CORPUS=1 scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
 RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
 
-# Manual labeled test selection after configuring with LIGHTUSD_NEXT_BUILD_TESTS=ON.
-ctest --test-dir build-next --output-on-failure -L next -LE 'benchmark|corpus'
+# Manual labeled test selection after configuring with LIGHTUSD_BUILD_TESTS=ON.
+ctest --test-dir build --output-on-failure -L core -LE 'benchmark|corpus'
 ```
 
 ## Architecture
@@ -166,7 +166,7 @@ Stage/Layer ──► WriteUSDC()  ──► USDC file (via CrateWriter)
 ## File Structure
 
 ```
-src/next/
+src/
 ├── CMakeLists.txt
 ├── README.md                    # This file
 ├── lightusd-core.hh            # Unified header (includes all components)
@@ -265,7 +265,7 @@ src/next/
     ├── usd-shade.hh            # Material, Shader, PreviewSurface
     └── usd-shade.cc
 
-src/tydra/next/                  # Tydra render data conversion
+src/tydra/                       # Tydra render data conversion
 ├── chunked-array.hh            # Memory-efficient arrays
 ├── render-data.hh              # RenderScene, RenderMesh, RenderMaterial
 ├── render-data.cc
@@ -294,11 +294,11 @@ current cleanup/refactor queue rather than a historical checklist.
   subhelpers or future sections being edited anyway.
 - Keep `doc/refactor-next.md`, `doc/memory-and-performance.md`, and this README
   synchronized with landed behavior and benchmark deltas. Update
-  `doc/testing-cpp.md` when next test coverage changes.
+  `doc/testing-cpp.md` when core test coverage changes.
 - Keep `scripts/run-next-checks.sh` as the canonical standalone smoke test for
-  the next module. The main regression build still excludes `next` by design;
-  next tests are run explicitly through the standalone build and web/WASM
-  next-product gates.
+  the core module. The main regression build registers the core tests;
+  remaining smoke checks are run explicitly through the standalone build and
+  web/WASM core-product gates.
 - Keep the public C render-session test covering full publication, incremental
   mesh updates, revision rejection, and ownership of earlier scene snapshots.
 
@@ -306,7 +306,7 @@ current cleanup/refactor queue rather than a historical checklist.
 
 - Make benchmark output diff-friendly: struct sizes, layer/stage memory stats,
   RSS, lazy/eager clone RSS, crate pass-through/reencode counts, and mmap-vs-heap
-  attribution. `benchmark_next memstats` and `benchmark_next memstats-file`
+  attribution. `benchmark_core memstats` and `benchmark_core memstats-file`
   provide the current stable key/value output.
 - Audit remaining large temporary buffers in the crate reader/writer and prefer
   reusable scratch storage or direct streaming where behavior stays identical.
@@ -315,7 +315,7 @@ current cleanup/refactor queue rather than a historical checklist.
 
 ### Format Parity
 
-- Keep next USDC writer compatibility checks covering memory/file byte parity
+- Keep core USDC writer compatibility checks covering memory/file byte parity
   and write -> read -> USDA text semantics; add optional pxrUSD `usdcat`
   comparison when available.
 - Keep explicit tests for unusual paths: compressed bool-array rejection,
@@ -390,7 +390,7 @@ Using `unique_ptr` for layer ownership makes:
 
 Measured with GCC 13.3.0 on Linux.
 
-| File | src/next/ | Original | Speedup |
+| File | src/ | Original | Speedup |
 |------|-----------|----------|---------|
 | value.cc vs value-types.cc | 0.31 sec | 5.85 sec | **19x** |
 | ascii-parser.cc | 0.70 sec | 5.47 sec | **8x** |
@@ -410,7 +410,7 @@ Measured with GCC 13.3.0 on Linux.
 
 ### Object File Sizes
 
-| File | src/next/ | Original | Reduction |
+| File | src/ | Original | Reduction |
 |------|-----------|----------|-----------|
 | ascii-parser.cc.o | 247 KB | 6.4 MB | **26x** |
 | value.cc.o vs value-types.cc.o | 94 KB | 3.2 MB | **34x** |
@@ -477,9 +477,9 @@ Measured with GCC 13.3.0 on Linux.
 ### Simple Usage (Unified Header)
 
 ```cpp
-#include "next/lightusd-core.hh"
+#include "lightusd-core.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 int main() {
   Stage stage;
@@ -518,11 +518,11 @@ scene model is `Layer`/`PrimSpec`/`Stage`; the unused recursive `Prim` and
 ### Detailed Reader/Writer API
 
 ```cpp
-#include "next/reader/usda-reader.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/stage/stage.hh"
+#include "reader/usda-reader.hh"
+#include "writer/usda-writer.hh"
+#include "stage/stage.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // Load USDA with options
 LoadOptions opts;
@@ -552,10 +552,10 @@ WriteUSDAToFile("output.usda", stage, write_opts);
 ### Geometry (Mesh, Xform)
 
 ```cpp
-#include "next/schema/geom-mesh.hh"
-#include "next/schema/geom-xform.hh"
+#include "schema/geom-mesh.hh"
+#include "schema/geom-xform.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 // Get all meshes from stage
 auto meshes = GetAllMeshes(stage);
@@ -601,9 +601,9 @@ if (xform.IsValid()) {
 ### Camera
 
 ```cpp
-#include "next/schema/usd-geom-camera.hh"
+#include "schema/usd-geom-camera.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 UsdPrim camPrim = stage.GetPrimAtPath("/World/Camera");
 if (IsCamera(camPrim)) {
@@ -627,9 +627,9 @@ if (IsCamera(camPrim)) {
 ### Lights
 
 ```cpp
-#include "next/schema/usd-lux.hh"
+#include "schema/usd-lux.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 stage.Traverse([&](const UsdPrim& prim) {
   if (IsLight(prim)) {
@@ -658,9 +658,9 @@ stage.Traverse([&](const UsdPrim& prim) {
 ### Materials and Shaders
 
 ```cpp
-#include "next/schema/usd-shade.hh"
+#include "schema/usd-shade.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 UsdPrim matPrim = stage.GetPrimAtPath("/Materials/Metal");
 if (IsMaterial(matPrim)) {
@@ -688,9 +688,9 @@ if (IsMaterial(matPrim)) {
 ### Attribute Evaluation
 
 ```cpp
-#include "next/eval/attribute-eval.hh"
+#include "eval/attribute-eval.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 AttributeEval eval(&stage);
 eval.SetTime(1.0);  // Frame 1
@@ -718,12 +718,12 @@ if (result.success) {
 }
 ```
 
-### MaterialX Conversion (in tydra/next)
+### MaterialX Conversion (in tydra/)
 
 ```cpp
-#include "tydra/next/materialx.hh"
+#include "tydra/materialx.hh"
 
-using namespace lightusd::tydra::next;
+using namespace lightusd::tydra;
 
 MtlxConverter converter;
 
@@ -757,9 +757,9 @@ if (converter.ConvertUsdMtlxMaterial(stage, matPrim, &material)) {
 ## Building a Stage Programmatically
 
 ```cpp
-#include "next/stage/stage.hh"
+#include "stage/stage.hh"
 
-using namespace lightusd::next;
+using namespace lightusd;
 
 StageBuilder builder;
 builder.SetDefaultPrim("World");

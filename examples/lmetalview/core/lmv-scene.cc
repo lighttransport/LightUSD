@@ -4,7 +4,7 @@
 //
 // Loading is deliberately built on the public next C API
 // (lightusd_stage_load + lightusd_render_convert), so the example consumes the
-// same composed stage / tydra-next conversion surface as every other language
+// same composed stage / Tydra conversion surface as every other language
 // binding. Pixel decoding is the one thing the C API does not do (tydra records
 // texture metadata only), so it runs through tydra::TextureDecoder here -
 // the same decoder lusdview and lusdrender use.
@@ -46,7 +46,7 @@ extern "C" {
 }
 
 // Vendored single-header decoder (PNG/JPEG/BMP/TGA/PSD/GIF/PNM + Radiance HDR).
-// tydra-next's TextureDecoder would pull the legacy image-loader/imageio stack
+// Tydra's TextureDecoder would pull the legacy image-loader/imageio stack
 // into this example, so a prefix-only viewer decodes its own preview textures.
 #if defined(__clang__)
 #pragma clang diagnostic push

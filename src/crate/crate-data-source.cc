@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate data source implementation
+// LightUSD - Crate data source implementation
 
 #include "crate-data-source.hh"
 

@@ -323,10 +323,10 @@ Separate attribute/connection/relationship specs and Variant/VariantSet authorin
 
 ---
 
-# `next` Crate Writer Performance & Remaining Opportunities
+# Core Crate Writer Performance & Remaining Opportunities
 
-Specific to `src/next/crate/`. Profiled on the public large scenes via
-`LIGHTUSD_NEXT_TIMING=1 build-next-release/lusdcat -f -o out.usdc <root>` (`next_usdcat` remains a CMake target alias)
+Specific to `src/crate/`. Profiled on the public large scenes via
+`LIGHTUSD_TIMING=1 build/lusdcat -f -o out.usdc <root>`
 (`--compose-threads N` / `--compose-threads-auto` control *composition* threads),
 write to a **seekable file**, not `/dev/null`
 — the crate writer seek-patches headers). `CrateWriteOptions::num_threads`

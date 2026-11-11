@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache spec lookup, payload policy, variants, and instancing.
+// LightUSD - PCP Cache spec lookup, payload policy, variants, and instancing.
 // Included inside Cache::Impl.
 
   // --- spec lookup --------------------------------------------------------

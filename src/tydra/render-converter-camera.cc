@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Tydra Next - camera conversion
+// Tydra - camera conversion
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
 #include "layer/prim-spec.hh"

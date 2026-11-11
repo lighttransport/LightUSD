@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Low-memory flatten pipeline implementation
+// LightUSD - Low-memory flatten pipeline implementation
 
 #include "core/native-io.hh"
 #include "flatten.hh"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA ASCII Parser implementation
+// LightUSD - USDA ASCII Parser implementation
 
 #include "core/native-io.hh"
 #include "layer/int64-listop.hh"

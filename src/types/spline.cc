@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - typed AOUSD spline support. See spline.hh.
+// LightUSD - typed AOUSD spline support. See spline.hh.
 
 #include "spline.hh"
 

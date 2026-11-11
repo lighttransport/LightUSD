@@ -1410,7 +1410,7 @@ int main(int argc, char** argv) {
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
-          "  --next        Use the default next-core + tydra-next loader "
+          "  --next        Use the default core + Tydra loader "
           "(compatibility flag).\n"
           "  --legacy-load Ignored (removed; prints a warning).\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"

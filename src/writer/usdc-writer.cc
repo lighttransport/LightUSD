@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Writer Implementation
+// LightUSD - USDC Writer Implementation
 
 #include "usdc-writer.hh"
 #include "usda-writer.hh"

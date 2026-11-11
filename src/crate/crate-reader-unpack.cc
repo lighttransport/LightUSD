@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Crate Reader scalar/value unpackers
+// LightUSD - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
 #include "writer/value-printer.hh"

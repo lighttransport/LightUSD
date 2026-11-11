@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // USD file-format detection (magic bytes / extension / file header), extracted
-// from the lightusd-next facade load path.
+// from the core facade load path.
 #pragma once
 #include <cstdint>
 #include <string>

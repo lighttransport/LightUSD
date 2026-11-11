@@ -28,8 +28,8 @@ produces separate legacy and next products:
 
 | Variant | CMake option | Module (`js/src/lightusd/`) | Contents | .wasm (MinSizeRel) |
 |---|---|---|---|---|
-| **legacy (deprecated)** | `-DLIGHTUSD_WASM_PRODUCT=legacy` | `lightusd.js/.wasm` | Compatibility loader and legacy Tydra RenderScene conversion; retained in CI | varies by toolchain |
-| **next** | `-DLIGHTUSD_WASM_PRODUCT=next` | `lightusd.js/.wasm` | next-core + Tydra-next (USDA/USDC/USDZ parse, composition, render extraction, streaming) | varies by toolchain |
+| **legacy (deprecated, compile-only)** | `-DLIGHTUSD_WASM_PRODUCT=legacy` | `lightusd_legacy.js/.wasm` | Compatibility loader and legacy Tydra RenderScene conversion; not published | varies by toolchain |
+| **core** | `-DLIGHTUSD_WASM_PRODUCT=core` | `lightusd.js/.wasm` | LightUSD core + Tydra (USDA/USDC/USDZ parse, composition, render extraction, streaming) | varies by toolchain |
 | **combined** (compatibility-only) | `-DLIGHTUSD_WASM_PRODUCT=combined` | `lightusd_combined.js/.wasm` | Both APIs in one module for transition testing; not the published default | varies by toolchain |
 
 Each variant emits a distinctly-named module, so builds never clobber each
@@ -37,27 +37,27 @@ other's output. `LIGHTUSD_WASM64=ON` combines with any variant and appends
 `_64` to the module name (`lightusd_64`, `lightusd_wasm_64`, or
 `lightusd_combined_64`).
 
-- **next** (`src/next/`) is the default AOUSD-aligned core (parser, crate,
+- **core** (`src/`) is the default AOUSD-aligned implementation (parser, crate,
   PCP composition, evaluation, validation, and writers), exposed through
-  Tydra-next and `RenderStream`.
+  Tydra and `RenderStream`.
 - **legacy** (`src/*.cc`) remains available in the package for compatibility
-  and continues to receive CI coverage. New integrations should use next.
+  and continues to receive CI coverage (build-only). New integrations should use core.
 
 ### Standard WASM32 build (2GB memory limit)
 
-Build the default next product:
+Build the default core product:
 
 ```bash
 $ emcmake cmake -S web -B web/build_ninja -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel
 $ cmake --build web/build_ninja
 ```
 
-### Next product
+### Core product
 
 ```bash
-# next -> js/src/lightusd/lightusd.js/.wasm
-$ emcmake cmake -S web -B web/cmake-build-next -G Ninja \
-    -DLIGHTUSD_WASM_PRODUCT=next -DCMAKE_BUILD_TYPE=MinSizeRel
+# core -> js/src/lightusd/lightusd.js/.wasm
+$ emcmake cmake -S web -B web/cmake-build-core -G Ninja \
+    -DLIGHTUSD_WASM_PRODUCT=core -DCMAKE_BUILD_TYPE=MinSizeRel
 $ cmake --build web/cmake-build-next
 ```
 
@@ -73,7 +73,7 @@ $ ninja -C build_64       # or: cmake --build build_64
 The package build script uses the **Ninja** generator with
 **`CMAKE_BUILD_TYPE=MinSizeRel`**. MinSizeRel
 applies emscripten's link-time `-Oz` (and drops runtime assertions), which is
-what keeps the module small. See the measured legacy and next sizes below. A plain
+what keeps the module small. See the measured legacy and core sizes below. A plain
 `Release` build does **not** apply link-time size optimization (emscripten links
 at `-O0`, pulling debug system libs + assertions), and produces a substantially
 larger `.wasm` from the same code. Always ship MinSizeRel.
@@ -93,7 +93,7 @@ The JavaScript wrapper automatically uses the appropriate native default based o
 **Note**: WASM64/MEMORY64 requires browsers with MEMORY64 support (Chrome 109+, Firefox 102+ with flags enabled).
 
 The generated modules are written to `web/js/src/lightusd/`. Use
-`web/npm/build-wasm.sh` for the reproducible legacy + next wasm32/wasm64 build.
+`web/npm/build-wasm.sh` for the reproducible core + MCP wasm32/wasm64 build.
 
 ## Known Issues
 

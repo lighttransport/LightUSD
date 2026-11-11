@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Binary Stream Reader
+// LightUSD - Binary Stream Reader
 // Simple binary file reading interface
 
 #pragma once

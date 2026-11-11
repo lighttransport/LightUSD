@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP cache local utility helpers.
+// LightUSD - PCP cache local utility helpers.
 
 #pragma once
 

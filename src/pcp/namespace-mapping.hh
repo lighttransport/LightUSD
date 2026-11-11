@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP namespace mapping + layer offset (header-only)
+// LightUSD - PCP namespace mapping + layer offset (header-only)
 //
 // Prefix remap (analogue of OpenUSD PcpMapFunction) used to translate a
 // referenced/inherited prim's namespace into the referencing prim's namespace.

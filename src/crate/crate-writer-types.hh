@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - crate writer type mapping helpers.
+// LightUSD - crate writer type mapping helpers.
 
 #pragma once
 

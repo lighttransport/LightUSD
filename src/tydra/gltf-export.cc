@@ -296,7 +296,7 @@ class Exporter {
   }
   bool Run() {
     if (!opt.max_output_bytes || opt.max_output_bytes > UINT32_MAX) { result.error = "GLB budget must be in 1..UINT32_MAX"; return false; }
-    document["asset"] = Json{{"version", "2.0"}, {"generator", "LightUSD Tydra-next"}};
+    document["asset"] = Json{{"version", "2.0"}, {"generator", "LightUSD Tydra"}};
     for (const char* key : {"bufferViews", "accessors", "meshes", "nodes", "materials", "images", "textures", "samplers"}) document[key] = Json::array();
     Materials();
     if (!result.error.empty() || !Meshes()) return false;

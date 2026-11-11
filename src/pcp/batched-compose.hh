@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - batched composition (low-memory flatten).
+// LightUSD - batched composition (low-memory flatten).
 //
 // Composes a stage in namespace batches instead of all at once. The composed
 // namespace is cut at a frontier of subtree roots found top-down; each batch

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Writer Test
+// LightUSD - Writer Test
 
 #include <iostream>
 #include <cstring>
@@ -1626,7 +1626,7 @@ def "P" (variantSets = "v"
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Writer Tests ===\n\n";
+  std::cout << "=== LightUSD Writer Tests ===\n\n";
 
   try {
     test_authored_property_order_roundtrips();

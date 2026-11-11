@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA float formatter (writer/dtoa) equivalence test.
+// LightUSD - USDA float formatter (writer/dtoa) equivalence test.
 //
 // dtos_to() takes a zmij fast path (src/external/zmij) for the common
 // fixed-notation window and falls back to the dragonbox renderer otherwise. The

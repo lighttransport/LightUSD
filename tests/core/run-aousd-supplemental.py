@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run lightusd-next against an external AOUSD Core supplemental release.
+"""Run the LightUSD core against an external AOUSD Core supplemental release.
 
 The corpus is intentionally not vendored. Point --suite-root (or
 AOUSD_CORE_SUPPLEMENTAL_ROOT) at releases/1.0.1 in the official

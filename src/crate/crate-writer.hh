@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate Writer
+// LightUSD - Crate Writer
 // Low-level binary USDC format writer
 
 #pragma once

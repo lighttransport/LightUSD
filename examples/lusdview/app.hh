@@ -190,7 +190,7 @@ class App
     loadOpts_.forceTextureDecode = on;
   }
 
-  // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
+  // Use the core lazy loader + Tydra converter (flat-shaded large-scene
   // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
   void setUseNextLoader(bool on) { useNextLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
@@ -589,7 +589,7 @@ class App
   float startupEnvmapRotationDegrees_{0.0f};
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
-  bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
+  bool useNextLoader_{false};  // --next: core loader + Tydra flat preview
   // Persistent public-C document owner, with temporary native query views.
   std::shared_ptr<ViewerDocument> nextSession_;
   std::shared_ptr<ViewerDocument> pendingNextSession_;

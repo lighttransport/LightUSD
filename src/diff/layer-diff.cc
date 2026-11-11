@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Layer / PrimSpec diff (see layer-diff.hh).
+// LightUSD - Layer / PrimSpec diff (see layer-diff.hh).
 
 #include "layer-diff.hh"
 #include "parser/extension-field.hh"

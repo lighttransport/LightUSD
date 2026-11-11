@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - lusdcat
+// LightUSD - lusdcat
 //
 // The unified lusdcat CLI for the src/next module (formerly `next_usdcat`).
 // The usd-wg asset-corpus regression gate (tests/parse-asset-corpus.mjs) drives

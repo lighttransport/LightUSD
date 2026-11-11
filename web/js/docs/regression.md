@@ -210,7 +210,7 @@ To exercise an isolated measurement build without replacing generated app
 files, run from `web/js` (use an absolute module path):
 
 ```sh
-LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/refactor-next/artifacts/lightusd.js" \
+LIGHTUSD_NEXT_MODULE="$PWD/../build_ninja/core-artifacts/lightusd.js" \
   NODE_OPTIONS="--loader $PWD/tests/next-module-override.mjs" \
   node tests/run-regression.mjs --profile node
 ```
@@ -229,9 +229,9 @@ inventory, typed streaming-buffer and asset-cache ownership/progress/error
 contracts, binary chunk copies, exact memory64 size_t/BigInt values, wasm32
 progress overflow, and standard SHA-256 digests across padding boundaries,
 alongside composition and flatten coverage. Set `LUSDCAT_PATH` to a native
-`lusdcat` built with `LIGHTUSD_NATIVE_PRODUCT=legacy` to include legacy validation
-parity. This check requires its `--validate-all` report; the default `next` CLI
-does not implement that legacy flag. Next validation has its own parity tests.
+`lusdcat` built with `-DLIGHTUSD_BUILD_LEGACY=ON` to include legacy validation
+parity. This check requires its `--validate-all` report; the default core CLI
+does not implement that legacy flag. Core validation has its own parity tests.
 
 ## Complete gate
 
@@ -263,17 +263,17 @@ bindings:
 bash ../demo/scripts/prepare-local-lightusd.sh
 ```
 
-This configures `web/build_ninja` for the combined legacy module and
-`web/build_next_ninja` for the next-only module, then writes the four generated
-artifacts under `web/js/src/lightusd/`.
+This configures `web/build_ninja` for the core product and `web/build_ninja/mcp`
+for the MCP server module, then writes the generated artifacts under
+`web/js/src/lightusd/`.
 
 The suites load the generated modules from `web/js/src/lightusd/`, so a build
 that writes elsewhere (for example a CMake cache with
 `LIGHTUSD_WASM_OUTPUT_DIRECTORY` pointing at its own `artifacts/` directory)
 leaves stale modules behind and the parity suites fail against the old glue
 instead of the current source. After such a build, copy the generated
-`lightusd_next.*`, `lightusd_combined.*`, `lightusd_wasm_64.*` and the
-`lightusd_{exr,validator,geometry,raytrace}[_64].*` feature modules into
+`lightusd.*`, `lightusd_64.*` and the
+`lightusd_{exr,validator,geometry,raytrace,mcp}[_64].*` feature modules into
 `web/js/src/lightusd/`, or re-run the preparation script above.
 
 The memory64 modules require Node 23 or newer
@@ -399,7 +399,7 @@ The default web build is deliberately non-threaded. Both
 generated compile commands must contain no `-pthread`, `PTHREAD`, or
 `LIGHTUSD_ENABLE_THREAD` define. `std::shared_ptr` remains valid here because
 it provides ownership/lifetime semantics; it does not enable parallel
-execution. The next-core WASM build uses `shared_ptr::use_count()` ownership
+execution. The core WASM build uses `shared_ptr::use_count()` ownership
 checks because `shared_ptr::unique()` is unavailable in the active C++20
 standard library.
 

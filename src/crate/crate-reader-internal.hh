@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - private CrateReader implementation details.
+// LightUSD - private CrateReader implementation details.
 
 #pragma once
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Internal point-instancer expanded-mesh helpers.
-#ifndef LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_INSTANCE_MESHES_HH_
-#define LIGHTUSD_TYDRA_NEXT_RENDER_CONVERTER_INSTANCE_MESHES_HH_
+#ifndef LIGHTUSD_TYDRA_RENDER_CONVERTER_INSTANCE_MESHES_HH_
+#define LIGHTUSD_TYDRA_RENDER_CONVERTER_INSTANCE_MESHES_HH_
 
 #include <cstddef>
 #include <string>

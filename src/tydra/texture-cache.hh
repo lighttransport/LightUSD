@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - shared texture decoding for the next path.
+// Tydra - shared texture decoding for the core path.
 //
-// tydra-next's converter records texture *metadata* (RenderTexture: asset path,
+// Tydra's converter records texture *metadata* (RenderTexture: asset path,
 // wrap, value scale/bias, channel) but never decodes pixels -- applications
 // supply their own decode so the converter stays filesystem- and
 // archive-agnostic. Both lusdview and lusdrender need the same thing, and had
@@ -204,7 +204,7 @@ class TextureDecoder {
 };
 
 /// Substitute the literal `<UDIM>` token in an asset path with a tile id.
-/// tydra-next carries the token through verbatim, so UDIM expansion is the
+/// Tydra carries the token through verbatim, so UDIM expansion is the
 /// application's job.
 std::string ReplaceUdimToken(const std::string& asset, int udim);
 

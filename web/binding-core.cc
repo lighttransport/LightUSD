@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Lean Emscripten binding for the next-core + tydra-next render path.
+// Lean Emscripten binding for the core + Tydra render path.
 // This intentionally avoids the legacy lightusd_static library and exposes the
 // RenderStream contract consumed by web/js/src/lightusd/LightUSDLoader.js for
 // first-stage `backend=next` browser coverage.

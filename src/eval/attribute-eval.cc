@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Attribute Evaluation Implementation
+// LightUSD - Attribute Evaluation Implementation
 
 #include "attribute-eval.hh"
 #include "value-clip.hh"

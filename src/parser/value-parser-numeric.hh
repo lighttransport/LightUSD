@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - numeric helpers shared by value-parser translation units.
+// LightUSD - numeric helpers shared by value-parser translation units.
 
 #pragma once
 

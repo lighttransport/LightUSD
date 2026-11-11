@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdPhysics forwarding header
+// LightUSD - UsdPhysics forwarding header
 // Convenience include that pulls in all physics sub-schemas.
 
 #pragma once

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - CrateWriter::Impl VALUE encoding helpers.
+// LightUSD - CrateWriter::Impl VALUE encoding helpers.
 // Included inside CrateWriter::Impl private section.
 
   // ============================================================

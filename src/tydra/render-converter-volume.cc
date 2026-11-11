@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - UsdVol Volume conversion
+// Tydra - UsdVol Volume conversion
 //
 // A Volume's `field:<name>` relationships each name one field prim
 // (OpenVDBAsset; Field3DAsset is recognized but has no reader). The field

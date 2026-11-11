@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - retained USDA text source for lazy array slices.
+// LightUSD - retained USDA text source for lazy array slices.
 
 #pragma once
 

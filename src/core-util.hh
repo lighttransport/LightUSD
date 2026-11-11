@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Small shared utilities for the next core (previously copy-pasted into the
-// pcp/pipeline/reader/lightusd-next TUs).
+// Small shared utilities for the core (previously copy-pasted into the
+// pcp/pipeline/reader/lightusd-core TUs).
 #pragma once
 #include <algorithm>
 #include <cctype>

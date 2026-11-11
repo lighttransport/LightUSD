@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Prim Printer
+// LightUSD - Prim Printer
 // Pretty-print Stage and UsdPrim for debugging
 
 #pragma once

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP arc list-op merge helpers.
+// LightUSD - PCP arc list-op merge helpers.
 // Included inside Cache::Impl.
 
   // --- cross-layer list-op merge (Phase 7 S5) -----------------------------

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Time Sample Interpolation Implementation
+// LightUSD - Time Sample Interpolation Implementation
 
 #include "interpolation.hh"
 #include "c/lightusd-core-c.h"

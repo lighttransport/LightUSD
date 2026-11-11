@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Mesh triangulation and normals
+// Tydra - Mesh triangulation and normals
 
 #include "render-converter-internal.hh"
 #include "core/safe-arithmetic.hh"

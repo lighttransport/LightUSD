@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - CrateWriter::Impl fieldset/spec construction.
+// LightUSD - CrateWriter::Impl fieldset/spec construction.
 // Included inside CrateWriter::Impl private section.
 
   bool EncodeRelocatesBlock(

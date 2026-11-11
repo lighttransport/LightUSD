@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Roundtrip Test
+// LightUSD - USDC Roundtrip Test
 // Creates a stage with multiple schema types, writes to USDC,
 // and verifies the binary output by parsing TOC/sections.
 
@@ -2630,7 +2630,7 @@ void test_property_slots_sorted_by_name() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next USDC Roundtrip Tests ===\n\n";
+  std::cout << "=== LightUSD USDC Roundtrip Tests ===\n\n";
 
   try {
     test_half_conversion();

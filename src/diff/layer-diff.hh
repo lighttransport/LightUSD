@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Layer / PrimSpec diff
+// LightUSD - Layer / PrimSpec diff
 //
 // Structural + value-level diff over two ::lightusd::Layer trees, mirroring the
 // legacy tydra diff-and-compare semantics (src/tydra/diff-and-compare.hh):

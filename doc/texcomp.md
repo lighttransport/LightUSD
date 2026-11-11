@@ -178,7 +178,7 @@ lusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
   transcoded to the chosen format), so minification stays correct without
   re-generating mips. Disabled by default; size-cap / budget resize falls back to
   the normal decode path.
-- Both scene loaders take this path: the default (tydra-next) loader resolves the
+- Both scene loaders take this path: the default (Tydra) loader resolves the
   `customData ktx2` hint through `RenderTexture::ktx2_hint` and reads the sibling
   asset itself, and the legacy loader (`--legacy-load`) goes through
   `RenderSceneConverterConfig::keep_compressed_textures`. `--texture-compress`

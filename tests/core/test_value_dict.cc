@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Dict (USD dictionary value) unit test
+// LightUSD - Dict (USD dictionary value) unit test
 //
 // Covers the O(1) key index on ::lightusd::Dict: insertion order is preserved (the
 // writer re-emits dicts as authored), set() is last-wins for a repeated key,
@@ -191,7 +191,7 @@ static void TestLargeDict() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Dict index test ===" << std::endl;
+  std::cout << "=== LightUSD Dict index test ===" << std::endl;
   TestStringIndex();
   TestDictAssignment();
   TestSmallDict();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Light Transport Entertainment Inc.
 //
-// LightUSD Next - AOUSD Core semantic validation.
+// LightUSD - AOUSD Core semantic validation.
 //
 // Port of the legacy validator (src/usd-validation.cc) onto the next-core
 // layer model. Rule ids / severities / messages mirror the legacy validator.

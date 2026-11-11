@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Low-memory flatten pipeline
+// LightUSD - Low-memory flatten pipeline
 //
 // One-call "load USD (lazy when crate-backed) -> compose/flatten (structural)
 // -> write USDC (verbatim byte pass-through)" facade. Designed for both native

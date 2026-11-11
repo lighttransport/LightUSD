@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - asset-path anchors.
+// LightUSD - asset-path anchors.
 
 #include "asset-anchor.hh"
 
@@ -166,7 +166,7 @@ size_t RebaseLayerAssetPaths(Layer* layer,
             if (variant.content) {
               // Variant content layers are shared by Layer::Clone. A resumable
               // composition retry must not mutate the cached parsed source.
-              if (!variant.content.unique())
+              if (variant.content.use_count() != 1)
                 variant.content =
                     std::make_shared<Layer>(variant.content->Clone());
               layers.push_back(variant.content.get());

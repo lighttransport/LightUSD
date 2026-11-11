@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Crate Reader
+// LightUSD - USDC Crate Reader
 // Binary USD file parser
 
 #pragma once

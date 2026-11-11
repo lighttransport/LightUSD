@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Prim Printer Implementation
+// LightUSD - Prim Printer Implementation
 //
 // Debug pretty-printer. Writes through the freestanding StreamWriter sink (no
 // iostream / ostringstream): the string-returning entry points serialize into a

@@ -140,7 +140,7 @@ struct Skeleton {
 
 //
 // USD Physics annotations extracted from ::lightusd::Stage.
-// These are descriptive data for render/tool consumers; tydra-next does not
+// These are descriptive data for render/tool consumers; Tydra does not
 // simulate physics.
 //
 struct PhysicsProperty {

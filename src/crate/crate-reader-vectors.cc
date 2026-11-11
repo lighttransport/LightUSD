@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate scalar vector value decode helpers.
+// LightUSD - Crate scalar vector value decode helpers.
 
 #include "crate-reader-internal.hh"
 

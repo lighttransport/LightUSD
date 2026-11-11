@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA Lexer
+// LightUSD - USDA Lexer
 // Simple tokenizer for USDA ASCII format
 
 #pragma once

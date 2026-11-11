@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - SpillVec: an append-only column that can move its oldest
+// LightUSD - SpillVec: an append-only column that can move its oldest
 // elements to an unlinked spill file once a shared in-memory budget is
 // exceeded.
 //

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - per-phase page-fault attribution.
+// LightUSD - per-phase page-fault attribution.
 //
 // The composed all-district layer reaches ~75 GiB, so "is this phase compute
 // bound or residency bound?" is the first question a phase timing has to

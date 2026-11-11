@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Immutable built-in type metadata
+// LightUSD - Immutable built-in type metadata
 
 #pragma once
 

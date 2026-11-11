@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate data source (retained USDC buffer)
+// LightUSD - Crate data source (retained USDC buffer)
 //
 // Owns the raw bytes of one loaded crate (USDC) plus the structural tables
 // needed to interpret ValueReps lazily (tokens / string indices). One per

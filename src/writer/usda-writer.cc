@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA Writer Implementation
+// LightUSD - USDA Writer Implementation
 
 #include "usda-writer.hh"
 #include "usda-writer-print.hh"

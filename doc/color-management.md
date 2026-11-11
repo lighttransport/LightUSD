@@ -1,7 +1,7 @@
 # Color management and rendering regression
 
 LightUSD resolves USD color-space opinions in both the legacy Tydra converter
-and `core-next`/`tydra-next`. The next implementation is the reference path;
+and the core/Tydra pair. The core implementation is the reference path;
 the legacy implementation shares the same dependency-free transfer-function
 and RGB-primary math.
 

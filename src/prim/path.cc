@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Path implementation
+// LightUSD - Path implementation
 
 #include "path.hh"
 #include "c/lightusd-core-c.h"  // lu_path_*

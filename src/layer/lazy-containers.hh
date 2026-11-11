@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - pointer-sized containers for sparse PrimSpec fields.
+// LightUSD - pointer-sized containers for sparse PrimSpec fields.
 //
 // A composed stage has ~10M PrimSpecs whose arc lists and legacy variant
 // selection are almost always empty; inline std::vector / std::string heads

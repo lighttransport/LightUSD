@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Unified Header
+// LightUSD - Unified Header
 //
 // This header provides the main entry point for the "next" architecture.
 // Built by default from the root CMake project (or `cmake -S src`).

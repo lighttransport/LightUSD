@@ -211,7 +211,7 @@ there (e.g. `lusdview-skinning-screenshot-diff`, `lusdview-instanced-prototype-s
 (`XCTEST_REAL_DISPLAY=1 scripts/xctest.sh ...`). On macOS/Windows the script just runs the
 command.
 
-The core (`src/`, `tests/core/`) is also a standalone CMake project (`cmake -S src`) with its own Debug test build; the root project registers the same tests in the main `ctest` tree. The legacy implementation (`src/legacy/`) is compiled with `-DLIGHTUSD_BUILD_LEGACY=ON` but registers no tests (see [Legacy tests](doc/testing-cpp.md#legacy-tests-compiled-not-run)).
+The core (`src/`, `tests/core/`) is also a standalone CMake project (`cmake -S src`) with its own Debug test build; the root project registers the same tests in the main `ctest` tree. The legacy implementation (`src/legacy/`) is compiled with `-DLIGHTUSD_BUILD_LEGACY=ON` but registers no tests; the legacy Tydra converter and legacy tydra-dependent tests additionally require `-DLIGHTUSD_WITH_LEGACY_TYDRA=ON` (see [Legacy tests](doc/testing-cpp.md#legacy-tests-compiled-not-run)).
 
 ### Web/WASM regression procedure
 
@@ -237,8 +237,8 @@ scripts/xctest.sh ctest --test-dir build -j8 --output-on-failure
 2. Confirm the legacy tree still compiles (no tests run)
 
 ```bash
-cmake -S . -B build_legacy -DLIGHTUSD_BUILD_LEGACY=ON -DLIGHTUSD_BUILD_TESTS=ON \
-  -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
+cmake -S . -B build_legacy -DLIGHTUSD_BUILD_LEGACY=ON -DLIGHTUSD_WITH_LEGACY_TYDRA=ON \
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build build_legacy -j16
 ```
 
@@ -282,6 +282,7 @@ cmake --build "$ROOT_DIR/build" -j"$JOBS"
 scripts/xctest.sh ctest --test-dir "$ROOT_DIR/build" -j8 --output-on-failure
 
 cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build_legacy" -DLIGHTUSD_BUILD_LEGACY=ON \
+  -DLIGHTUSD_WITH_LEGACY_TYDRA=ON \
   -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_EXAMPLES=ON
 cmake --build "$ROOT_DIR/build_legacy" -j"$JOBS"
 

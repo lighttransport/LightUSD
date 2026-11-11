@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdSkel Schema
+// LightUSD - UsdSkel Schema
 // Skeleton, SkelAnimation, BlendShape, SkelRoot convenience wrappers
 
 #pragma once

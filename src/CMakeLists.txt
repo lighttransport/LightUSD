@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2024-Present Light Transport Entertainment Inc.
 #
-# LightUSD Next - CMake build configuration
+# LightUSD - CMake build configuration
 # New modular architecture with minimal template usage
 
 cmake_minimum_required(VERSION 3.10)
@@ -642,7 +642,7 @@ endif()
 # build by default, so full regression runs must build this project separately
 # and run its ctests. Keep the tests in a Debug build: many test programs use
 # assert(), which is compiled out under NDEBUG.
-option(LIGHTUSD_BUILD_TESTS "Build tests for stable LightUSD Next" OFF)
+option(LIGHTUSD_BUILD_TESTS "Build tests for stable LightUSD" OFF)
 # `lusdcat` is the next-backed CLI (formerly `next_usdcat`). It is a tool, not
 # a test, so the default root build ships it
 # without requiring test registration. Default ON for native standalone builds;
@@ -1045,7 +1045,7 @@ endif()
 # ============================================================
 # libFuzzer harnesses (clang only)
 # ============================================================
-option(LIGHTUSD_BUILD_FUZZERS "Build libFuzzer harnesses for LightUSD Next (requires clang)" OFF)
+option(LIGHTUSD_BUILD_FUZZERS "Build libFuzzer harnesses for LightUSD (requires clang)" OFF)
 
 if(LIGHTUSD_BUILD_FUZZERS)
     if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR
@@ -1084,7 +1084,7 @@ if(LIGHTUSD_BUILD_FUZZERS)
     target_link_libraries(fuzz_tptex PRIVATE m)
 endif()
 
-# Tydra Next (render data conversion). Keep its target definition in its own
+# Tydra (render data conversion). Keep its target definition in its own
 # directory so standalone next-core and top-level consumers cannot drift.
 option(LIGHTUSD_WITH_TYDRA "Build render conversion and its C API" ON)
 
@@ -1099,7 +1099,7 @@ option(LIGHTUSD_BUILD_SHARED_C_API
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/lightusd-textools.cmake")
 if(LIGHTUSD_WITH_TYDRA AND NOT TARGET tydra)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tydra
-                     ${CMAKE_CURRENT_BINARY_DIR}/tydra_next_build)
+                     ${CMAKE_CURRENT_BINARY_DIR}/tydra_build)
     lightusd_next_harden(tydra)
 endif()
 
@@ -1386,6 +1386,8 @@ install(TARGETS lightusd_core_c lightusd_core lightusd_c lightusd_validation lig
 install(FILES core/host-services.hh core/native-io.hh DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/core)
 install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/next/c)
+install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/c)
 install(FILES c-api/lightusd-validation-c.h c-api/lightusd-validation-cpp.hh
               c-api/lightusd-c.h c-api/lightusd-cpp.hh
               c-api/lightusd-physics-c.h
@@ -1453,7 +1455,7 @@ foreach(c_target IN LISTS LIGHTUSD_C_TARGETS)
     endif()
 endforeach()
 
-# Tydra Next test
+# Tydra test
 if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_WITH_USDOBJ)
         add_executable(test_obj_reader ../tests/core/test_obj_reader.cc)
@@ -1501,7 +1503,7 @@ if(LIGHTUSD_BUILD_TESTS)
     )
     target_link_libraries(test_urdf_to_usd_core PRIVATE tydra lightusd_core)
 
-    # Render-conversion benchmark (tydra-next pipeline only; this standalone
+    # Render-conversion benchmark (Tydra pipeline only; this standalone
     # tree cannot build the legacy tydra converter).
     # Report-only: prints timings and a deterministic scene checksum used to
     # verify byte-identical output across serial/parallel A/B builds.

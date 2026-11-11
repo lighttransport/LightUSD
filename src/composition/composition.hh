@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Composition Arcs
+// LightUSD - Composition Arcs
 //
 // USD composition: references, payloads, inherits, specializes, variants
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - hand freed heap pages back to the OS now.
+// LightUSD - hand freed heap pages back to the OS now.
 //
 // Allocator purges and page advice are optional application capabilities.
 // The portable default is a no-op; native hooks live in host-services.cc.

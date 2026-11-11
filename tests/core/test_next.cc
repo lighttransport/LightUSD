@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Unit tests
+// LightUSD - Unit tests
 
 #include <iostream>
 #include <fstream>
@@ -2642,7 +2642,7 @@ void test_usda_fast_parse_equivalence() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Unit Tests ===" << std::endl;
+  std::cout << "=== LightUSD Unit Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

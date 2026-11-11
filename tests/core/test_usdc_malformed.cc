@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - generated malformed USDC/crate regressions
+// LightUSD - generated malformed USDC/crate regressions
 //
 // These cases are intentionally synthetic. Each buffer is just valid enough to
 // reach the targeted reader guard, then must reject cleanly without crashing or
@@ -641,7 +641,7 @@ int main() {
   TestWidenedArrayBudget();
   TestStringExpansionBudget();
   TestDeferredAndCompressedBudget();
-  std::cout << "=== LightUSD Next Malformed USDC Tests ===" << std::endl;
+  std::cout << "=== LightUSD Malformed USDC Tests ===" << std::endl;
 
   {
     std::vector<uint8_t> bytes(kCrateBootstrapSize, 0);

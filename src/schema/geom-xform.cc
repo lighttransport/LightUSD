@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomXform Schema Implementation
+// LightUSD - UsdGeomXform Schema Implementation
 
 #include "geom-xform.hh"
 #include "layer/property-index.hh"

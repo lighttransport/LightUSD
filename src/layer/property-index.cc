@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Property Index Implementation
+// LightUSD - Property Index Implementation
 
 #include "property-index.hh"
 #include <algorithm>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - scalar, tuple, matrix value parsers and type dispatch table.
+// LightUSD - scalar, tuple, matrix value parsers and type dispatch table.
 // Included inside value-parser.cc anonymous namespace.
 
 ParseResult ParseBool(Lexer& lexer) {

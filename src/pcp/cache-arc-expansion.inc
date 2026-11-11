@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache arc expansion.
+// LightUSD - PCP Cache arc expansion.
 // Included inside Cache::Impl: arc state and compiled method declarations.
 // Implementations live in cache-arcs.cc and cache-relocates.cc.
 

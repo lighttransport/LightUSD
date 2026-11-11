@@ -176,7 +176,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->emission = 1.0f;
   }
   if (mat.opacityTex >= 0) p->opacity = 1.0f;
-  // Match tydra-next's BuildRealtimePbrMaterial: inputs:specularColor is a
+  // Match Tydra's BuildRealtimePbrMaterial: inputs:specularColor is a
   // UsdPreviewSurface *specular-workflow* input whose schema fallback is
   // (0,0,0), so carrying it into the metallic workflow tints the whole
   // specular lobe to black. A bound texture is a multiplicative fallback and
@@ -191,7 +191,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
   }
   if (mat.coatRoughnessTex >= 0) p->coatRoughness = 1.0f;
-  // Match tydra-next's BuildRealtimePbrMaterial: the metallic workflow selects
+  // Match Tydra's BuildRealtimePbrMaterial: the metallic workflow selects
   // Storm's preview F0/F90 model (slot-41 sentinel) in the RT shaders. Without
   // this the legacy loader shades the same UsdPreviewSurface differently.
   p->previewSurfaceMetallicWorkflow = !mat.useSpecularWorkflow;

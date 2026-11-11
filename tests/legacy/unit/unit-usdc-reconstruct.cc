@@ -33,7 +33,7 @@ namespace {
 
 std::string GetUsdcFixturePath(const std::string &filename) {
   std::string base_dir = io::GetBaseDir(std::string(__FILE__));
-  std::string usdc_dir = io::JoinPath(base_dir, "../usdc");
+  std::string usdc_dir = io::JoinPath(base_dir, "../../usdc");
   return io::JoinPath(usdc_dir, filename);
 }
 

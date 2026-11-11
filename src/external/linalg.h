@@ -119,8 +119,8 @@ namespace linalg
         template<int A> struct make_seq_impl<A,3> { using type=seq<A+0,A+1,A+2>; };
         template<int A> struct make_seq_impl<A,4> { using type=seq<A+0,A+1,A+2,A+3>; };
         template<int A, int B> using make_seq = typename make_seq_impl<A,B-A>::type;
-        template<class T, int M, int... I> vec<T,sizeof...(I)> constexpr swizzle(const vec<T,M> & v, seq<I...> i) { return {getter<I>{}(v)...}; }
-        template<class T, int M, int N, int... I, int... J> mat<T,sizeof...(I),sizeof...(J)> constexpr swizzle(const mat<T,M,N> & m, seq<I...> i, seq<J...> j) { return {swizzle(getter<J>{}(m),i)...}; }
+        template<class T, int M, int... I> vec<T,sizeof...(I)> constexpr swizzle(const vec<T,M> & v, seq<I...>) { return {getter<I>{}(v)...}; }
+        template<class T, int M, int N, int... I, int... J> mat<T,sizeof...(I),sizeof...(J)> constexpr swizzle(const mat<T,M,N> & m, seq<I...> i, seq<J...>) { return {swizzle(getter<J>{}(m),i)...}; }
 
         // SFINAE helpers to determine result of function application
         template<class F, class... T> using ret_t = decltype(std::declval<F>()(std::declval<T>()...));
@@ -215,8 +215,8 @@ namespace linalg
         // NOTE: vec<T,1> does NOT have a constructor from pointer, this can conflict with initializing its single element from zero
         template<class U>
         constexpr explicit          vec(const vec<U,1> & v)             : vec(static_cast<T>(v.x)) {}
-        constexpr const T &         operator[] (int i) const            { return x; }
-        LINALG_CONSTEXPR14 T &      operator[] (int i)                  { return x; }
+        constexpr const T &         operator[] (int) const              { return x; }
+        LINALG_CONSTEXPR14 T &      operator[] (int)                      { return x; }
 
         template<class U, class=detail::conv_t<vec,U>> constexpr vec(const U & u) : vec(converter<vec,U>{}(u)) {}
         template<class U, class=detail::conv_t<U,vec>> constexpr operator U () const { return converter<U,vec>{}(*this); }
@@ -293,8 +293,8 @@ namespace linalg
         template<class U> 
         constexpr explicit          mat(const mat<U,M,1> & m)           : mat(V(m.x)) {}
         constexpr vec<T,1>          row(int i) const                    { return {x[i]}; }
-        constexpr const V &         operator[] (int j) const            { return x; }
-        LINALG_CONSTEXPR14 V &      operator[] (int j)                  { return x; }
+        constexpr const V &         operator[] (int) const              { return x; }
+        LINALG_CONSTEXPR14 V &      operator[] (int)                      { return x; }
 
         template<class U, class=detail::conv_t<mat,U>> constexpr mat(const U & u) : mat(converter<mat,U>{}(u)) {}
         template<class U, class=detail::conv_t<U,mat>> constexpr operator U () const { return converter<U,mat>{}(*this); }
@@ -557,7 +557,7 @@ namespace linalg
     template<class T, int M> constexpr mat<T,M,3> transpose(const mat<T,3,M> & m) { return {m.row(0), m.row(1), m.row(2)}; }
     template<class T, int M> constexpr mat<T,M,4> transpose(const mat<T,4,M> & m) { return {m.row(0), m.row(1), m.row(2), m.row(3)}; }
     template<class T, int M> constexpr mat<T,1,M> transpose(const vec<T,M> & m) { return transpose(mat<T,M,1>(m)); }
-    template<class T> constexpr mat<T,1,1> adjugate(const mat<T,1,1> & a) { return {vec<T,1>{1}}; }
+    template<class T> constexpr mat<T,1,1> adjugate(const mat<T,1,1> &) { return {vec<T,1>{1}}; }
     template<class T> constexpr mat<T,2,2> adjugate(const mat<T,2,2> & a) { return {{a.y.y, -a.x.y}, {-a.y.x, a.x.x}}; }
     template<class T> constexpr mat<T,3,3> adjugate(const mat<T,3,3> & a);
     template<class T> constexpr mat<T,4,4> adjugate(const mat<T,4,4> & a);

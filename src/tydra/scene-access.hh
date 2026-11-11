@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Scene Access API
+// Tydra - Scene Access API
 //
 // Provides traversal and query functions for ::lightusd::Stage
 

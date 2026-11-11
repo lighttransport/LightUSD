@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - SIMD scanning helpers (C++ forwarder)
+// LightUSD - SIMD scanning helpers (C++ forwarder)
 //
 // The implementation now lives in the C11 core (src/next/c/simd-scan.c) so the
 // scalar/SSE2/NEON kernels are shared. This TU only bridges the C++ namespace

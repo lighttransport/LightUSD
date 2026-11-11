@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Round-trip fidelity test
+// LightUSD - Round-trip fidelity test
 // Verifies that a rich scene survives USDA->write->USDA and USDC->read->USDC
 // round-trips with identical structure, values, metadata, dictionaries and
 // per-property metadata.
@@ -185,7 +185,7 @@ void test_usdc_roundtrip() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Round-trip Fidelity Tests ===" << std::endl;
+  std::cout << "=== LightUSD Round-trip Fidelity Tests ===" << std::endl;
   std::cout << std::endl;
   try {
     test_usda_roundtrip();

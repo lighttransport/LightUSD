@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDC Reader Unit Tests
+// LightUSD - USDC Reader Unit Tests
 
 #include <iostream>
 #include <cassert>
@@ -1002,7 +1002,7 @@ void test_lazy_quat_array_swizzle() {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next USDC Reader Tests ===" << std::endl;
+  std::cout << "=== LightUSD USDC Reader Tests ===" << std::endl;
   std::cout << std::endl;
 
   try {

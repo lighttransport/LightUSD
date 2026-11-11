@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdMtlx Schema Implementation
+// LightUSD - UsdMtlx Schema Implementation
 
 #include "usd-mtlx.hh"
 #include "schema-predicates.hh"

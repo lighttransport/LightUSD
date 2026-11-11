@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomMesh Schema
+// LightUSD - UsdGeomMesh Schema
 // Convenience API for Mesh primitives
 
 #pragma once

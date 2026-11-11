@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// lusdview - load a USD file via the `next` lazy loader + tydra-next converter
+// lusdview - load a USD file via the core lazy loader + Tydra converter
 // into a flat-shaded DrawScene.
 //
 // This is the large-scene preview path: the `next` loader composes
-// references/payloads with lazy mmap arrays, and the tydra-next
+// references/payloads with lazy mmap arrays, and the Tydra
 // RenderSceneConverter triangulates into a RenderScene we adapt to the
 // backend-neutral DrawScene the GL/Vulkan renderers already consume, including
 // instancing, Preview/OpenPBR materials, textures, animation, and streaming.

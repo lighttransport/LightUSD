@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Curves and instancers conversion
+// Tydra - Curves and instancers conversion
 
 #include "render-converter-internal.hh"
 #include "layer/layer.hh"

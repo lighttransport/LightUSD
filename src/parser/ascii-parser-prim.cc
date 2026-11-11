@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA ASCII parser prim/property bodies.
+// LightUSD - USDA ASCII parser prim/property bodies.
 
 #include "ascii-parser-internal.hh"
 #include "prim/identifier.hh"

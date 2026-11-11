@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache opinion composition and lazy prim/index composition.
+// LightUSD - PCP Cache opinion composition and lazy prim/index composition.
 // Included inside Cache::Impl.
 
   std::vector<std::string> ComposeInto(const std::vector<Src> &srcs,

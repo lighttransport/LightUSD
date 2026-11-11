@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - C11 SdfPathExpression core test.
+// LightUSD - C11 SdfPathExpression core test.
 //
 // Covers the C11 core in src/next/c/path-expr.c through its C++ adapter
 // (src/next/core/path-expression{,-eval}.hh). The behavioural contract mirrors

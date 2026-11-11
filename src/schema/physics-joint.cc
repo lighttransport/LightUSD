@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdPhysics Joint Schema Implementation
+// LightUSD - UsdPhysics Joint Schema Implementation
 
 #include "physics-joint.hh"
 #include <cstring>

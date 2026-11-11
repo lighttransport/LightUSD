@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP composition benchmark + struct memory stats.
+// LightUSD - PCP composition benchmark + struct memory stats.
 //
 // Phase-0 instrumentation for doc/refactor-next.md: captures the baseline
 // numbers that the later optimization phases (cycle-frame chain, FindSpecs

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - crate array-edit write performance + correctness
+// LightUSD - crate array-edit write performance + correctness
 //
 // Guards crate EncodeArrayEdit::lit_index against an O(N^2) regression: a
 // sparse array-edit default with N distinct literals used to cost O(N^2)

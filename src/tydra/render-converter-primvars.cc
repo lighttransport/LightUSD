@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Mesh primvar extraction
+// Tydra - Mesh primvar extraction
 
 #include "render-converter-internal.hh"
 #include "layer/prim-spec.hh"

@@ -48,9 +48,9 @@ async function loadScenes() {
 }
 ```
 
-The package ships the next module (`lightusd_next`) only; `LightUSDLoader`
+The package ships the core module (`lightusd`) only; `LightUSDLoader`
 uses it by default. The legacy module is no longer published: passing
-`backend: 'legacy'` logs a warning and loads with the next backend instead.
+`backend: 'legacy'` logs a warning and loads with the core backend instead.
 
 Deep imports such as `lightusd/LightUSDLoader.js` remain supported for existing code.
 
@@ -149,8 +149,8 @@ cd web/npm
 
 The script configures and builds:
 
-- `web/cmake-build-next` for wasm32 next (`LIGHTUSD_WASM_PRODUCT=next`)
-- `web/cmake-build-next64` for wasm64 next
+- `web/cmake-build-core` for wasm32 core (`LIGHTUSD_WASM_PRODUCT=core`)
+- `web/cmake-build-core64` for wasm64 core
 - `web/cmake-build-mcp` / `web/cmake-build-mcp64` for the MCP server module
   (`LIGHTUSD_WASM_PRODUCT=mcp`)
 
@@ -171,11 +171,11 @@ After `build-wasm.sh`, the following files should exist in `web/js/src/lightusd/
 - `lightusd_64.wasm`
 - `lightusd_mcp.js`, `lightusd_mcp.wasm` and the `_64` variants
 
-The `lightusd_next*` modules are the lean next-core + Tydra-next builds used
+The core `lightusd*` modules are the lean core + Tydra builds used
 by `LightUSDLoader` by default. The deprecated `useNextOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
-The next distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
+The core distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
 `lightusd_validator`, and `lightusd_exr`, each with `.js` / `.wasm` files and
 matching `_64` variants. Keep these files beside the main module, or supply
 `locateFeature(filename)` to resolve both feature JS and WASM files.
@@ -197,7 +197,7 @@ callback arrays borrow the geometry heap and must be copied to retain them.
 `loadFeature` shares pending and successful promises, allows retry after failure,
 and rejects mismatched ABI versions, pointer widths, or layouts. `featureInfo`
 reports that metadata. The old `loadEXR` / `loadValidator` loaders and feature
-constructors on the main next module have been removed. Load EXR before direct
+constructors on the main core module have been removed. Load EXR before direct
 synchronous EXR rendering/encoding calls, and validator before
 `LayerDocument.validateLoadedLayer()`.
 

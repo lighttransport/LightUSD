@@ -410,7 +410,7 @@ cmake --build build -j16 --target lusdview
 ```
 
 The compatibility product configures the viewer and links the refactored next
-and Tydra-next libraries used by its default loader. See
+and Tydra libraries used by its default loader. See
 [`doc/lusdview.md`](../../doc/lusdview.md#build) for the current Vulkan build setup.
 
 - **Vulkan** defaults on, using vendored headers, the runtime-loaded volk loader

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomPointInstancer Schema Implementation
+// LightUSD - UsdGeomPointInstancer Schema Implementation
 
 #include "geom-point-instancer.hh"
 #include "layer/prim-spec.hh"

@@ -54,6 +54,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "legacy" OR
   # The legacy WASM bindings link lightusd_static from the root project.
   set(LIGHTUSD_BUILD_LEGACY ON CACHE BOOL
       "Legacy implementation required by the selected WASM product" FORCE)
+  set(LIGHTUSD_WITH_LEGACY_TYDRA ON CACHE BOOL
+      "Legacy Tydra scene converter required by the selected WASM product" FORCE)
   message(DEPRECATION
     "The legacy WASM product is compile-only and not published; use LIGHTUSD_WASM_PRODUCT=core.")
 endif()
@@ -393,9 +395,9 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "mcp")
 endif()
 
 if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
-  message(STATUS "LightUSD WASM: building next-core + tydra-next only module")
-  set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in next/tydra-next libs" FORCE)
-  set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in next/tydra-next libs" FORCE)
+  message(STATUS "LightUSD WASM: building the core module with Tydra")
+  set(LIGHTUSD_CXX_RTTI OFF CACHE BOOL "Disable RTTI in core and Tydra libraries" FORCE)
+  set(LIGHTUSD_CXX_EXCEPTIONS OFF CACHE BOOL "Disable C++ exceptions in core and Tydra libraries" FORCE)
   set(LIGHTUSD_ENABLE_THREAD OFF CACHE BOOL "Disable next std::thread paths for WASM" FORCE)
   set(LIGHTUSD_BUILD_SHARED_C_API OFF CACHE BOOL
       "Do not build a shared C API in WASM" FORCE)

@@ -1117,7 +1117,7 @@ Strength order `Local > Inherit > Variant > Reference > Payload > Specialize`:
 
 ### Threading
 
-Built with `-DLIGHTUSD_NEXT_ENABLE_THREAD=ON`:
+Built with `-DLIGHTUSD_ENABLE_THREAD=ON`:
 
 - The `LayerRegistry` is thread-safe and serializes the same-asset resolve + parse
   + publish path, so a referenced/payload/sublayer file is parsed exactly once.

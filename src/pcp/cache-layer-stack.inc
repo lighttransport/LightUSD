@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache diagnostics and layer-stack setup.
+// LightUSD - PCP Cache diagnostics and layer-stack setup.
 // Included inside Cache::Impl.
 
   void AddIssue(ErrorCode code, const std::string &site,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Layer Implementation
+// LightUSD - Layer Implementation
 
 #include "int64-listop.hh"
 #include "layer.hh"

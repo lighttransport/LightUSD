@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - integer<->string formatting (C++ adapter).
+// LightUSD - integer<->string formatting (C++ adapter).
 //
 // The digit loop lives in the C11 core (src/next/c/strfmt.c, `lu_uint_to` /
 // `lu_int_to`); these wrappers forward to it so every "next" subsystem and C

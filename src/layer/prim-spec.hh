@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PrimSpec
+// LightUSD - PrimSpec
 // Unified prim specification that can serve as both spec and runtime prim
 // Avoids the PrimSpec→Prim tree duplication of the old design
 

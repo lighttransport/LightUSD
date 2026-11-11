@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - dragonbox-based float-to-string (dtoa)
+// LightUSD - dragonbox-based float-to-string (dtoa)
 //
 // Ported from src/str-util.cc `dtos` (Dragonbox algorithm by Junekey Jeon),
 // hardcoded to OpenUSD/usdcat notation. Only `jkj::dragonbox::to_decimal` is

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
- * LightUSD C API — tydra-next render-scene extraction.
+ * LightUSD C API — Tydra render-scene extraction.
  *
  * Convert a loaded stage into GPU-friendly render data (meshes, materials,
  * textures, lights, cameras, node hierarchy) with zero-copy buffer access.

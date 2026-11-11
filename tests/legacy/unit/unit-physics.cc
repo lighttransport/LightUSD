@@ -58,7 +58,7 @@ static bool parse_usda(const char *usda, Stage *stage, std::string *warn,
 
 static std::string UsdaFixturePath(const std::string &filename) {
   std::string base_dir = io::GetBaseDir(std::string(__FILE__));
-  std::string usda_dir = io::JoinPath(base_dir, "../usda");
+  std::string usda_dir = io::JoinPath(base_dir, "../../usda");
   return io::JoinPath(usda_dir, filename);
 }
 

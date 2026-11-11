@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate allocation-guard regression test
+// LightUSD - Crate allocation-guard regression test
 //
 // A malformed/hostile USDC array can claim a gigantic element count (up to
 // max_array_elements) in a tiny file; allocating count*elem before the
@@ -192,7 +192,7 @@ static std::shared_ptr<CrateDataSource> MakeSource(std::string bytes) {
 }
 
 int main() {
-  std::cout << "=== LightUSD Next Crate Allocation-Guard Test ===" << std::endl;
+  std::cout << "=== LightUSD Crate Allocation-Guard Test ===" << std::endl;
 
   // Element types spanning the largest in-memory strides.
   assert(RejectsHugeArray(CrateTypeId::Matrix4d));  // 128 B/elem

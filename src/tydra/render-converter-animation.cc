@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Tydra Next - Skeleton and animation conversion
+// Tydra - Skeleton and animation conversion
 #include "render-converter-internal.hh"
 #include "layer/prim-spec.hh"
 #include "schema/usd-skel.hh"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - registry of PrimSpec string list-op metadata fields.
+// LightUSD - registry of PrimSpec string list-op metadata fields.
 //
 // The AOUSD elective prim fields composed with SdfStringListOp semantics
 // (apiSchemas, variantSetNames, clipSets) share one merge rule: a STRONGER

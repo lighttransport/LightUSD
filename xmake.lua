@@ -12,7 +12,7 @@ set_languages("c11", "c++17")
 -- ============================================================================
 
 -- Core features (default ON)
-option("tydra",                {default = true,  description = "Build Tydra module"})
+option("tydra",                {default = false, description = "Build legacy Tydra"})
 option("builtin_image_loader", {default = true,  description = "Build with built-in image loader (stb_image and fpng)"})
 option("usdmtlx",             {default = true,  description = "Build with MaterialX support"})
 option("json",                 {default = true,  description = "Build with JSON support"})
@@ -60,8 +60,19 @@ target("lightusd_static")
     set_kind("static")
     set_languages("c11", "c++17")
 
-    -- Include directories
+    -- Include directories: src/legacy first (mirrors legacy.cmake's
+    -- include_directories(BEFORE)) so legacy `#include "tydra/render-data.hh"`
+    -- resolves to the legacy converter header, not the core Tydra one.
+    add_includedirs("src/legacy")
     add_includedirs("src", {public = true})
+
+    -- Force-include the legacy namespace bridge into every legacy C++ TU
+    -- (mirrors src/legacy/legacy.cmake / the root CMake build).
+    if is_plat("windows") then
+        add_cxxflags("/FI$(projectdir)/src/legacy/legacy-namespace.hh", {force = true})
+    else
+        add_cxxflags("-include $(projectdir)/src/legacy/legacy-namespace.hh", {force = true})
+    end
 
     -- PIC
     if not is_plat("windows") then
@@ -168,6 +179,7 @@ target("lightusd_static")
         "src/io-util.cc",
         "src/image-loader.cc",
         "src/image-writer.cc",
+        "src/tydra/texture-util.cc",
         "src/legacy/image-util.cc",
         "src/legacy/linear-algebra.cc",
         "src/legacy/value-eval-util.cc",
@@ -239,6 +251,7 @@ target("lightusd_static")
     end
     if has_config("exr") then
         add_defines("LIGHTUSD_WITH_EXR")
+        add_defines("LIGHTUSD_EXR_V3=1")
     end
     if has_config("colorio") then
         add_defines("LIGHTUSD_WITH_COLORIO")
@@ -347,7 +360,6 @@ target("lightusd_static")
             "src/legacy/tydra/render-scene-dump.cc",
             "src/legacy/tydra/bone-util.cc",
             "src/legacy/tydra/layer-to-renderscene.cc",
-            "src/tydra/texture-util.cc",
             "src/legacy/tydra/variant-support.cc",
             "src/legacy/tydra/variant-converter.cc",
             "src/legacy/tydra/variant-applier.cc",
@@ -408,16 +420,45 @@ target("lightusd_static")
         add_files("src/legacy/usdVox.cc")
     end
 
-    -- EXR (tinyexr v3)
+    -- EXR (TinyEXR v3 C API, pure-C11; HTJ2K/ZSTD compiled out)
+    -- Keep this list in sync with src/external/tinyexr/src/ and
+    -- cmake/lightusd-native-exr.cmake. Selects the v3 backend via
+    -- LIGHTUSD_EXR_V3 (image-loader.cc / image-writer.cc).
     if has_config("exr") then
-        if has_config("system_zlib") then
-            add_files("src/external/tinyexr_c_impl.c", {defines = {"TINYEXR_V3_HAS_DEFLATE=1", "TINYEXR_V3_NO_MINIZ=1"}})
-            add_files("src/external/tinyexr.cc", {defines = "TINYEXR_USE_MINIZ=0"})
-        else
-            add_files("src/external/tinyexr_c_impl.c")
-            add_files("src/external/tinyexr.cc")
-            add_includedirs("src/external")
-        end
+        add_files("src/external/tinyexr/src/exr_attr.c",
+                  "src/external/tinyexr/src/exr_b44.c",
+                  "src/external/tinyexr/src/exr_codec.c",
+                  "src/external/tinyexr/src/exr_color.c",
+                  "src/external/tinyexr/src/exr_context.c",
+                  "src/external/tinyexr/src/exr_convert.c",
+                  "src/external/tinyexr/src/exr_core.c",
+                  "src/external/tinyexr/src/exr_cpu.c",
+                  "src/external/tinyexr/src/exr_deep.c",
+                  "src/external/tinyexr/src/exr_deflate.c",
+                  "src/external/tinyexr/src/exr_fpnge.c",
+                  "src/external/tinyexr/src/exr_freestanding.c",
+                  "src/external/tinyexr/src/exr_half.c",
+                  "src/external/tinyexr/src/exr_mip.c",
+                  "src/external/tinyexr/src/exr_piz.c",
+                  "src/external/tinyexr/src/exr_pxr24.c",
+                  "src/external/tinyexr/src/exr_reader.c",
+                  "src/external/tinyexr/src/exr_resize.c",
+                  "src/external/tinyexr/src/exr_rle.c",
+                  "src/external/tinyexr/src/exr_simd_neon.c",
+                  "src/external/tinyexr/src/exr_simd_x86.c",
+                  "src/external/tinyexr/src/exr_source.c",
+                  "src/external/tinyexr/src/exr_source_part.c",
+                  "src/external/tinyexr/src/exr_spectral.c",
+                  "src/external/tinyexr/src/exr_stdio.c",
+                  "src/external/tinyexr/src/exr_thread.c",
+                  "src/external/tinyexr/src/exr_tonemap.c",
+                  "src/external/tinyexr/src/exr_util_simd_neon.c",
+                  "src/external/tinyexr/src/exr_util_simd_x86.c",
+                  "src/external/tinyexr/src/exr_writer.c",
+                  "src/external/tinyexr/src/exr_zip.c",
+                  {defines = {"EXR_NO_JPH", "EXR_NO_ZSTD"}, force = {cflags = "-w"}})
+        add_files("src/imageio/exr-codec.c")
+        add_includedirs("src/external/tinyexr/include", "src/external/tinyexr/src")
     end
 
     -- miniz (for EXR/TIFF when not using system zlib)

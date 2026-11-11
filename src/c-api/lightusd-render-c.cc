@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD C API — tydra-next render-scene implementation.
+// LightUSD C API — Tydra render-scene implementation.
 
 #include "lightusd-render-c.h"
 

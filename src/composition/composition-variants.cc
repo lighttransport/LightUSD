@@ -344,7 +344,7 @@ std::unique_ptr<Layer> Compositor::ExtractSubtreeIndexed(
   auto out = std::make_unique<Layer>();
   // The root itself, then its descendants: paths with the prefix "root/"
   // occupy ["root/", "root0") since '/' is 0x2F (see MeshPathIndex in
-  // tydra-next for the same construction).
+  // Tydra for the same construction).
   auto it = lower(root_path);
   if (it != sorted.end() && path_of(*it) == root_path) {
     const uint32_t idx_out = out->add_prim(src.prim(*it)->Clone());

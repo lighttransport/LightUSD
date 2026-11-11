@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdGeomCamera Schema API
+// LightUSD - UsdGeomCamera Schema API
 // Convenience accessors for USD camera
 
 #pragma once

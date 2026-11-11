@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdPhysics Applied API Schema Implementation
+// LightUSD - UsdPhysics Applied API Schema Implementation
 
 #include "physics-api.hh"
 #include "schema-predicates.hh"

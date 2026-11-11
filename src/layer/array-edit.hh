@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - sparse array edit (VtArrayEdit) text building & evaluation.
+// LightUSD - sparse array edit (VtArrayEdit) text building & evaluation.
 //
 // The next core carries an authored `edit [ <op>; ... ]` value as a
 // structured op list (PrimSpec::array_edit) whose literal elements are

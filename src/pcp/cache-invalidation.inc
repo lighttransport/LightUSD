@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache invalidation, payload loading, and load rules.
+// LightUSD - PCP Cache invalidation, payload loading, and load rules.
 // Included inside Cache::Impl.
 
   std::string ComputeInstanceKey(const Path &path, std::string *warn,

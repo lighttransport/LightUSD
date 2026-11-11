@@ -573,3 +573,6 @@ MUJOCO_LOG.TXT
 
 # Serena MCP tool state (local)
 .serena/
+
+# Local regression/comparison logs; may contain machine-specific paths.
+/reglogs/

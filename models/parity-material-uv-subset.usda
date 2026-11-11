@@ -1,7 +1,7 @@
 #usda 1.0
 (
     doc = """Cross-tool parity fixture: lusdview and lusdrender must interpret ONE
-tydra-next scene the same way. Four coplanar quads in a row, framed head-on by
+Tydra scene the same way. Four coplanar quads in a row, framed head-on by
 `Cam`, each face carrying a different material through a `materialBind` GeomSubset:
 
     face 0  -> Red      (constant diffuseColor)

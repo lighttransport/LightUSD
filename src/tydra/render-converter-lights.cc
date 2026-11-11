@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Tydra Next - light conversion
+// Tydra - light conversion
 #include "render-converter-internal.hh"
 #include "light-filter.hh"
 #include "eval/attribute-eval.hh"

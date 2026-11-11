@@ -22,7 +22,7 @@ cmake --build build_ninja -j16 --target lusdview
 ```
 
 The viewer is currently configured by the compatibility product. It also builds
-and links the refactored `lightusd_next`, `tydra_next` and public C API libraries;
+and links the core `lightusd_core`, `tydra` and public C API libraries;
 the viewer's default next loader uses those libraries. The next-only top-level
 product does not create the `lusdview` target.
 

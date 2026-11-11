@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// lusdview - `next` loader -> tydra-next RenderScene -> DrawScene adapter, plus
+// lusdview - core loader -> Tydra RenderScene -> DrawScene adapter, plus
 // PointInstancer extraction into GPU-instanced draws.
 
 #include "next_scene_loader.hh"
@@ -44,7 +44,7 @@
 
 #include "log.hh"
 
-// `next` + tydra-next (built on demand; see CMakeLists.txt).
+// core + Tydra (built on demand; see CMakeLists.txt).
 #include "layer/layer.hh"
 #include "layer/prim-spec.hh"
 #include "load-usd.hh"
@@ -906,7 +906,7 @@ bool PointInstanceHidden(size_t index, size_t instance_count, const Ids& ids,
   return hidden.count(static_cast<int64_t>(index)) != 0;
 }
 
-// One tydra-next float vertex attribute, sampled per triangulated corner in
+// One Tydra float vertex attribute, sampled per triangulated corner in
 // whatever interpolation it was authored with.
 struct NextAttr {
   const tydn::FloatChunked* data{nullptr};
@@ -1014,9 +1014,9 @@ NextAttr FindNextPrimvar(const tydn::RenderMesh& m, const char* name,
 }
 
 // Build interleaved DrawVertex geometry (mesh-LOCAL space) + indices from a
-// tydra-next RenderMesh. Returns false if there is no renderable geometry.
+// Tydra RenderMesh. Returns false if there is no renderable geometry.
 //
-// tydra-next keeps every primvar in its AUTHORED interpolation (constant /
+// Tydra keeps every primvar in its AUTHORED interpolation (constant /
 // uniform / vertex / varying / faceVarying) and hands us
 // `triangulated_face_vertex_indices` to index the faceVarying ones against the
 // triangulated topology. Production USD overwhelmingly authors faceVarying `st`
@@ -1048,7 +1048,7 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   const NextAttr nrm = MakeNextAttr(m.normals, m.normals_interp, 3);
   const NextAttr uv0 = MakeNextAttr(m.texcoords_0, m.texcoords_0_interp, 2);
   const NextAttr uv1 = MakeNextAttr(m.texcoords_1, m.texcoords_1_interp, 2);
-  // displayColor is color3f, but tydra-next also accepts a 4-component authoring
+  // displayColor is color3f, but Tydra also accepts a 4-component authoring
   // (rgba); the 4th component is folded into the alpha channel below. Component
   // count follows from the element count its interpolation implies.
   auto expectedElems = [&](tydn::Interpolation interp) -> size_t {
@@ -1065,7 +1065,7 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     if (elems > 0 && m.colors.size() == elems * 4) colorComps = 4;
   }
   const NextAttr col = MakeNextAttr(m.colors, m.colors_interp, colorComps);
-  // displayOpacity has a dedicated tydra-next channel. Older converter builds
+  // displayOpacity has a dedicated Tydra channel. Older converter builds
   // left it in the generic primvar bag, so retain that as a compatibility
   // fallback instead of silently dropping authored vertex alpha.
   const NextAttr builtinOpacity =
@@ -3615,7 +3615,7 @@ bool ReadPublicCameraPose(const lightusd_stage* stage, lightusd_prim prim,
 }
 
 // --- Phase 2 --next texture loading -----------------------------------------
-// The tydra-next converter records texture *metadata* (RenderTexture: asset
+// The Tydra converter records texture *metadata* (RenderTexture: asset
 // path, wrap, value scale/bias, channel) into a scratch RenderScene even with
 // load_textures=false, but never decodes pixels. Decoding is ours, and it runs
 // through tydra::TextureDecoder -- the same decoder lusdrender uses, so
@@ -3848,7 +3848,7 @@ bool NextResizeHDR(std::vector<float>* rgb, int width, int height, int w,
 }
 
 // Enumerate + decode UDIM tiles for a `<UDIM>`-tagged asset path into a UDIM
-// DrawTextureCPU. tydra-next carries the literal `<UDIM>` token through verbatim
+// DrawTextureCPU. Tydra carries the literal `<UDIM>` token through verbatim
 // (no udim handling in the converter), so we expand it ourselves: probe ids
 // 1001..1100, decode each existing tile (base_dir or .usdz), normalize to a
 // common size, and build the udimLayer[100] LUT the sampler2DArray path reads.
@@ -3988,7 +3988,7 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
     return idx;
   }
 
-  // UDIM: tydra-next carries the literal `<UDIM>` token through, so expand +
+  // UDIM: Tydra carries the literal `<UDIM>` token through, so expand +
   // decode tiles ourselves into a sampler2DArray-backed UDIM texture.
   if (lightusd::io::IsUDIMPath(asset)) {
     const int uidx = LoadNextUdimTexture(tc, draw, rt, asset, srgb);
@@ -4831,7 +4831,7 @@ int BuildNextMaterial(const lightusd_stage* stageHandle,
   // making the sparse OpenPBR branch degrade the scene at load time.
   if (rm.openpbr) dm.hasOpenPBRSurface = true;
 
-  // tydra-next has no dedicated coat_normal input, so the coat lobe reuses the
+  // Tydra has no dedicated coat_normal input, so the coat lobe reuses the
   // surface normal map. mesh_build.cc (legacy) already does this; without it the
   // --next path was the only loader leaving coatNormalTex unset.
   if (dm.coatNormalTex < 0 && dm.normalTex >= 0) {
@@ -8887,7 +8887,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   // GeomSubset per-face materials: when a mesh has `face` GeomSubset children
   // bound to materials, produce a per-triangle material id (else leave *triMat
-  // empty -> the caller uses the whole-mesh material). tydra-next's Convert()
+  // empty -> the caller uses the whole-mesh material). Tydra's Convert()
   // never fills material_subsets, so we read the GeomSubsets off the stage and
   // reconstruct the triangle->face mapping from the original face vertex counts
   // (fan/earcut both emit c-2 triangles per face, in face order).

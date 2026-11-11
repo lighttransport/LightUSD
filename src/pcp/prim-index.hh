@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP PrimIndex
+// LightUSD - PCP PrimIndex
 //
 // Per-prim composition graph (DAG of CompNodes in strength order). Mirrors the
 // design of composition_graph::PrimIndex but on next types. Standalone, C++14.

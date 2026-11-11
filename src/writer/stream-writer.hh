@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - StreamWriter: a buffered output sink for the USDA writer.
+// LightUSD - StreamWriter: a buffered output sink for the USDA writer.
 //
 // Decouples the writer from std stdio / std::cout so it works where stdio is not
 // natively available (WASM/WASI): the destination is a pluggable block-sink. The

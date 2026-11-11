@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Lazy array memory benchmark
+// LightUSD - Lazy array memory benchmark
 //
 // Demonstrates the composition memory win of lazy ValueRefs: cloning a prim K
 // times (as composition does per reference/payload) deep-copies every array in

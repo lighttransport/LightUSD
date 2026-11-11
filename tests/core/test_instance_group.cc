@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP instancing group-assignment performance + correctness
+// LightUSD - PCP instancing group-assignment performance + correctness
 //
 // Guards pcp::AssignPrototype (RegisterInstance) against an O(N^2) regression:
 // a single prototype group with N instanceable members used to cost O(N^2)

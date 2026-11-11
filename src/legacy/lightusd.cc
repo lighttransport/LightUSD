@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertinament Inc.
 
 #include "core/native-io.hh"
+#include "core/logger.hh"
 #include <algorithm>
 #include <array>
 #include <atomic>

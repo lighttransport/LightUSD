@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Render Scene Converter Implementation
+// Tydra - Render Scene Converter Implementation
 
 #include "core/safe-arithmetic.hh"
 #include "layer/prim-spec.hh"

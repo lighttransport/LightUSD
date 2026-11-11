@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Unit Tests
+// Tydra - Unit Tests
 
 #include <algorithm>
 #include "layer/asset-anchor.hh"
@@ -2776,7 +2776,7 @@ void TestMaterialXUtilities() {
   assert(std::abs(from_string.preview_surface->roughness.value.x - 0.35f) < 0.001f);
   assert(std::abs(from_string.preview_surface->opacity.value.x - 0.5f) < 0.001f);
 
-  const char* path = "next_tydra_materialx_test.mtlx";
+  const char* path = "tydra_materialx_test.mtlx";
   {
     std::ofstream ofs(path, std::ios::out | std::ios::binary);
     assert(ofs);
@@ -2976,7 +2976,7 @@ void TestExternalMaterialXImageGraph() {
   namespace fs = std::filesystem;
   std::error_code ec;
   const fs::path fixture =
-      fs::absolute("next_tydra_external_mtlx_test", ec);
+      fs::absolute("tydra_external_mtlx_test", ec);
   assert(!ec);
   fs::remove_all(fixture, ec);
   ec.clear();
@@ -3197,7 +3197,7 @@ void TestForwardedTextureAssetAnchor() {
   namespace fs = std::filesystem;
   std::error_code ec;
   const fs::path fixture =
-      fs::absolute("next_tydra_forwarded_anchor_test", ec);
+      fs::absolute("tydra_forwarded_anchor_test", ec);
   assert(!ec);
   fs::remove_all(fixture, ec);
   ec.clear();
@@ -3624,7 +3624,7 @@ def Xform "Root"
 }
 
 
-// 2026-07 tydra-next gap follow-ups: tangent generation, faceVarying corner
+// 2026-07 Tydra gap follow-ups: tangent generation, faceVarying corner
 // remap table, DomeLight environment texture, blendshape extraction.
 void TestAudit2026_07_Gaps() {
   std::cout << "TestAudit2026_07_Gaps..." << std::endl;
@@ -8997,7 +8997,7 @@ static void TestGeneratedSmoothNormals() {
 int main() {
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();
-  std::cout << "=== Tydra Next Unit Tests ===\n\n";
+  std::cout << "=== Tydra Unit Tests ===\n\n";
 
   // ChunkedArray tests
   TestChunkedArrayBasic();
@@ -9097,6 +9097,6 @@ int main() {
   TestFieldFallbackAndDenseBox();
   TestLevelSetGridChoice();
 
-  std::cout << "\n=== All Tydra Next tests PASSED ===\n";
+  std::cout << "\n=== All Tydra tests PASSED ===\n";
   return 0;
 }

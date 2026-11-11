@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache stage materialization and instance flattening.
+// LightUSD - PCP Cache stage materialization and instance flattening.
 // Included inside Cache::Impl.
 
   // --- BuildStage ---------------------------------------------------------

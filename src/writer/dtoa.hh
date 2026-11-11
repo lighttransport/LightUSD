@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - dragonbox-based float-to-string (dtoa)
+// LightUSD - dragonbox-based float-to-string (dtoa)
 //
 // Same shortest-round-trippable formatter lightusd uses in `src/str-util.cc`
 // (`dtos`), ported into the standalone next module. Emits OpenUSD-compatible

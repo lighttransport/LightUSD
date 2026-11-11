@@ -1,9 +1,10 @@
 # LightUSD Meson build options
 # Source list synchronized with CMakeLists.txt
 
+option('tydra', type: 'boolean', value: false,
+       description: 'Build the legacy Tydra scene converter')
+
 # -- Core features (default ON) --
-option('tydra', type: 'boolean', value: true,
-       description: 'Build Tydra module (scene converter for renderers, DCC, etc.)')
 option('builtin_image_loader', type: 'boolean', value: true,
        description: 'Build with built-in image loader (stb_image and fpng)')
 option('usdmtlx', type: 'boolean', value: true,

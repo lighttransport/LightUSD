@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Value Parser implementation
+// LightUSD - Value Parser implementation
 
 #include "value-parser.hh"
 #include "value-parser-numeric.hh"

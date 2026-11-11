@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Composition Implementation
+// LightUSD - Composition Implementation
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "layer/int64-listop.hh"

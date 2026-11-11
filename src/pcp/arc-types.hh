@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP composition arc types
+// LightUSD - PCP composition arc types
 //
 // Native pcp-style composition for the `next` module. Mirrors the DESIGN of the
 // main library's composition-graph.hh / src/pcp (PrimIndex DAG, LIVRPS strength

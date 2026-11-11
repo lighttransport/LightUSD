@@ -221,13 +221,10 @@ streamed into the USDZ archive.
 
 ## Tydra
 
-Tydra is LightUSD's USD-to-render-data layer. The legacy Tydra path converts the
-legacy `Stage` into `tydra::RenderScene`. Tydra does the same job for
-`lightusd::Stage` and lives under:
-
-```text
-src/tydra/
-```
+Tydra converts `lightusd::Stage` into `lightusd::tydra::RenderScene`.
+Its sources live in `src/tydra/`, and `LIGHTUSD_WITH_TYDRA` defaults to ON.
+The former converter lives in `src/legacy/tydra/`. To compile it, enable
+both `LIGHTUSD_BUILD_LEGACY` and `LIGHTUSD_WITH_LEGACY_TYDRA`.
 
 Important files:
 
@@ -241,7 +238,7 @@ Important files:
 Tydra is designed for fewer intermediate copies:
 
 - mesh arrays use chunked storage,
-- conversion can extract directly from next prim/value data,
+- conversion can extract directly from core prim/value data,
 - render data is shaped for WebGL/WebGPU/OpenGL/Vulkan style upload,
 - texture loading can be supplied by a host callback.
 

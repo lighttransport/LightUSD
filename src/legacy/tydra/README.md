@@ -124,9 +124,9 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
 - Vertex animation (points timeSamples)
 - Dedicated typed material/camera/light animation targets and exporter mappings
   beyond the current generic `CustomProperty` tracks.
-- Keep current Tydra and `tydra/next` render extraction behavior aligned for
+- Keep the legacy and core Tydra render extraction behavior aligned for
   material, texture, skeleton, and animation data.
 
-The maintained next-core and Tydra-next API documentation is in
+The maintained core and Tydra API documentation is in
 [`doc/core.md`](../../doc/core.md). This README describes
 the established legacy RenderScene API; it is not a release checklist.

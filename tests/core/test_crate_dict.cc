@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Binary USDC VtDictionary decode test
+// LightUSD - Binary USDC VtDictionary decode test
 //
 // Verifies the reverse-engineered pxr binary VtDictionary value encoding
 // (OpenUSD sdf/crateFile.cpp _RecursiveWrite/_RecursiveRead). The fixture below
@@ -167,7 +167,7 @@ static void TestDuplicateDictionaryKeys() {
 
 int main() {
   TestDuplicateDictionaryKeys();
-  std::cout << "=== LightUSD Next Binary Dict Decode Test ===" << std::endl;
+  std::cout << "=== LightUSD Binary Dict Decode Test ===" << std::endl;
 
   USDCLoadResult r = LoadUSDCFromMemory(kPxrDictUsdc, sizeof(kPxrDictUsdc));
   if (!r.success) {

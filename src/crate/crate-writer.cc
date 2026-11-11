@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Crate Writer Implementation
+// LightUSD - Crate Writer Implementation
 // Writes spec-compliant USDC with: tokens, strings, paths, fields,
 // fieldsets, specs, VALUE data section, time samples, metadata.
 

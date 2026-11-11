@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - USDA ASCII parser variant-set support.
+// LightUSD - USDA ASCII parser variant-set support.
 
 #include "ascii-parser-internal.hh"
 #include <algorithm>

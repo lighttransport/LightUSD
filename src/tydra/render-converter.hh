@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// Tydra Next - Render Scene Converter
+// Tydra - Render Scene Converter
 //
 // Converts ::lightusd::Stage to RenderScene with minimal intermediate copies
 

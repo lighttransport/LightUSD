@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Asset Resolution
+// LightUSD - Asset Resolution
 //
 // Resolves asset paths for references, payloads, and sublayers
 

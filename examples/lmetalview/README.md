@@ -78,7 +78,7 @@ re-composing the file, and decoded textures are cached across conversions.
 
 ## Materials
 
-tydra-next resolves `UsdPreviewSurface`, OpenPBR and MaterialX
+Tydra resolves `UsdPreviewSurface`, OpenPBR and MaterialX
 (`standard_surface`, `open_pbr_surface`, preview-surface, and material-local
 node graphs with constant/arithmetic/mix/image nodes) into the canonical packed
 OpenPBR block (`src/tydra/openpbr-params.hh`). The Metal shader evaluates an
@@ -137,7 +137,7 @@ color slots.
   decoded and the material falls back to its constant inputs.
 * Shadows use one 2×2 atlas for up to four directional/spot casters. There are
   no cascades, contact shadows or per-light shadow resolutions.
-* MaterialX node graphs are evaluated on the CPU by tydra-next and reduced to
+* MaterialX node graphs are evaluated on the CPU by Tydra and reduced to
   PBR parameters; arbitrary graph evaluation on the GPU is out of scope (the
   lusdview lightrt/MaterialX path covers that case).
 * The in-place path covers node transforms, light transforms plus

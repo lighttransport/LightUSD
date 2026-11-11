@@ -234,6 +234,7 @@ lightusd_sources = files(
   'src/io-util.cc',
   'src/image-loader.cc',
   'src/image-writer.cc',
+  'src/tydra/texture-util.cc',
   'src/legacy/image-util.cc',
   'src/legacy/linear-algebra.cc',
   'src/legacy/value-eval-util.cc',
@@ -319,7 +320,6 @@ if opt_tydra
     'src/legacy/tydra/render-scene-dump.cc',
     'src/legacy/tydra/bone-util.cc',
     'src/legacy/tydra/layer-to-renderscene.cc',
-    'src/tydra/texture-util.cc',
     'src/legacy/tydra/variant-support.cc',
     'src/legacy/tydra/variant-converter.cc',
     'src/legacy/tydra/variant-applier.cc',
@@ -446,7 +446,10 @@ endif
 # ============================================================================
 
 extra_link_libs = []
-lightusd_inc = include_directories('src')
+# src/legacy must come first (mirrors legacy.cmake's include_directories(BEFORE))
+# so legacy `#include "tydra/render-data.hh"` resolves to the legacy converter
+# header, not the core Tydra one.
+lightusd_inc = include_directories('src/legacy', 'src')
 
 # -- fpng (needs FPNG_NO_SSE=1) --
 if opt_builtin_image_loader
@@ -473,28 +476,53 @@ elif opt_zstd and opt_system_zstd
   lightusd_dep_sources += files('src/legacy/zstd-compression.cc')
 endif
 
-# -- EXR (tinyexr) --
+# -- EXR (TinyEXR v3 C API, pure-C11; HTJ2K/ZSTD compiled out) --
 if opt_exr
-  # Use TinyEXR v3 API by default
-  exr_c_args = []
-  exr_cpp_args = []
-  if opt_system_zlib
-    exr_c_args += ['-DTINYEXR_V3_HAS_DEFLATE=1', '-DTINYEXR_V3_NO_MINIZ=1']
-    exr_cpp_args += ['-DTINYEXR_USE_MINIZ=0']
-  endif
-  exr_inc = [lightusd_inc]
-  if not opt_system_zlib
-    exr_inc += include_directories('src/external')
-  endif
-
-  exr_lib = static_library('lightusd_exr',
-    'src/external/tinyexr_c_impl.c',
-    'src/external/tinyexr.cc',
-    include_directories: exr_inc,
-    c_args: exr_c_args,
-    cpp_args: exr_cpp_args,
+  # Vendored v3 C tree; keep this list in sync with src/external/tinyexr/src/
+  # and cmake/lightusd-native-exr.cmake. Selects the v3 backend via
+  # LIGHTUSD_EXR_V3 (image-loader.cc / image-writer.cc).
+  tinyexr_v3_sources = files(
+    'src/external/tinyexr/src/exr_attr.c',
+    'src/external/tinyexr/src/exr_b44.c',
+    'src/external/tinyexr/src/exr_codec.c',
+    'src/external/tinyexr/src/exr_color.c',
+    'src/external/tinyexr/src/exr_context.c',
+    'src/external/tinyexr/src/exr_convert.c',
+    'src/external/tinyexr/src/exr_core.c',
+    'src/external/tinyexr/src/exr_cpu.c',
+    'src/external/tinyexr/src/exr_deep.c',
+    'src/external/tinyexr/src/exr_deflate.c',
+    'src/external/tinyexr/src/exr_fpnge.c',
+    'src/external/tinyexr/src/exr_freestanding.c',
+    'src/external/tinyexr/src/exr_half.c',
+    'src/external/tinyexr/src/exr_mip.c',
+    'src/external/tinyexr/src/exr_piz.c',
+    'src/external/tinyexr/src/exr_pxr24.c',
+    'src/external/tinyexr/src/exr_reader.c',
+    'src/external/tinyexr/src/exr_resize.c',
+    'src/external/tinyexr/src/exr_rle.c',
+    'src/external/tinyexr/src/exr_simd_neon.c',
+    'src/external/tinyexr/src/exr_simd_x86.c',
+    'src/external/tinyexr/src/exr_source.c',
+    'src/external/tinyexr/src/exr_source_part.c',
+    'src/external/tinyexr/src/exr_spectral.c',
+    'src/external/tinyexr/src/exr_stdio.c',
+    'src/external/tinyexr/src/exr_thread.c',
+    'src/external/tinyexr/src/exr_tonemap.c',
+    'src/external/tinyexr/src/exr_util_simd_neon.c',
+    'src/external/tinyexr/src/exr_util_simd_x86.c',
+    'src/external/tinyexr/src/exr_writer.c',
+    'src/external/tinyexr/src/exr_zip.c',
+  )
+  tinyexr_v3_inc = include_directories('src/external/tinyexr/include',
+                                       'src/external/tinyexr/src')
+  exr_lib = static_library('lightusd_tinyexr_v3', tinyexr_v3_sources,
+    include_directories: tinyexr_v3_inc,
+    c_args: ['-DEXR_NO_JPH', '-DEXR_NO_ZSTD', '-w'],
     pic: true,
   )
+  lightusd_dep_sources += files('src/imageio/exr-codec.c')
+  lightusd_defines += ['-DLIGHTUSD_EXR_V3=1']
   extra_link_libs += exr_lib
 endif
 
@@ -631,11 +659,16 @@ if opt_remotery
   all_inc += include_directories('src/external/Remotery')
 endif
 
+# Every legacy C++ translation unit sees the shared `lightusd::<ns>` namespaces
+# through the legacy namespace bridge (mirrors src/legacy/legacy.cmake and the
+# root CMake build, which force-include this header via -include).
+legacy_ns_bridge = meson.project_source_root() + '/src/legacy/legacy-namespace.hh'
+
 lightusd_static = static_library('lightusd_static',
   lightusd_sources + lightusd_dep_sources,
   include_directories: all_inc,
   dependencies: ext_deps,
-  cpp_args: lightusd_defines,
+  cpp_args: lightusd_defines + ['-include', legacy_ns_bridge],
   c_args: lightusd_defines,
   link_with: extra_link_libs,
   pic: true,

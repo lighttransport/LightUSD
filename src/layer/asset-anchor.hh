@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - asset-path anchors.
+// LightUSD - asset-path anchors.
 //
 // A relative asset path (`asset inputs:file = @../tex/albedo.png@`) is anchored
 // to the DIRECTORY OF THE LAYER THAT AUTHORED IT, not to the stage's root

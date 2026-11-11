@@ -85,7 +85,7 @@ ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 ```
 
 Environment overrides: `LIGHTUSD_PY_LIMITED_API=0` (force a non-abi3 dev
-build), `LIGHTUSD_PY_ENABLE_THREAD=0` (compile next and Tydra-next without
+build), `LIGHTUSD_PY_ENABLE_THREAD=0` (compile the core and Tydra without
 optional worker-thread paths), `LIGHTUSD_PY_BUILD_DIR` (CMake build directory),
 `LIGHTUSD_CMAKE_ARGS` (extra CMake args), and `LIGHTUSD_TEST_ASSETS` (pytest
 asset dir). Thread-disabled builds use `build_py_ext_next_nothread/` by default

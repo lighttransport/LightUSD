@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
-// Tydra Next - Preview-surface material extraction
+// Tydra - Preview-surface material extraction
 #include "core/safe-arithmetic.hh"
 #include "layer/prim-spec.hh"
 #include "../core/path-expression-eval.hh"

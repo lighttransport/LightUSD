@@ -134,7 +134,7 @@ inline VertexAttribute PackToVertexAttribute(
 
 /// Store packed SNorm8x3 normals into a VertexAttribute.
 /// Format: Char3 (3 × int8) for SNorm8x3.
-inline VertexAttribute PackNormalsToVertexAttribute(
+[[maybe_unused]] inline VertexAttribute PackNormalsToVertexAttribute(
     const std::vector<PackedNormalSNorm8x3> &packed) {
   VertexAttribute attr;
   size_t byte_size;
@@ -147,7 +147,7 @@ inline VertexAttribute PackNormalsToVertexAttribute(
 
 /// Store packed SNorm16x3 normals into a VertexAttribute.
 /// Format: Short3 (3 × int16) for SNorm16x3.
-inline VertexAttribute PackNormalsToVertexAttribute(
+[[maybe_unused]] inline VertexAttribute PackNormalsToVertexAttribute(
     const std::vector<PackedNormalSNorm16x3> &packed) {
   VertexAttribute attr;
   size_t byte_size;

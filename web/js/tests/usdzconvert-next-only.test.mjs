@@ -1,4 +1,4 @@
-// Smoke test for usdzconvert with the next-core + tydra-next only WASM module.
+// Smoke test for usdzconvert with the core + Tydra only WASM module.
 //
 // Runs on the default wasm32 next glue; set LIGHTUSD_WASM64=1 to use
 // lightusd_64.js.

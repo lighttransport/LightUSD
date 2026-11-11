@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdShade Schema Implementation
+// LightUSD - UsdShade Schema Implementation
 
 #include "usd-shade.hh"
 #include "layer/prim-spec.hh"

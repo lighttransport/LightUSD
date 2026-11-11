@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP Cache stage opinion-fill pass.
+// LightUSD - PCP Cache stage opinion-fill pass.
 // Included inside Cache::Impl.
 
   // Per-prim opinion records collected by the structure pass, drained by

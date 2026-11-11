@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - PCP LayerRegistry implementation
+// LightUSD - PCP LayerRegistry implementation
 
 #include "core/native-io.hh"
 #include "layer-registry.hh"

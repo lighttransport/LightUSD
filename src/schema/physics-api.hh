@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - UsdPhysics Applied API Schemas
+// LightUSD - UsdPhysics Applied API Schemas
 // RigidBodyAPI, CollisionAPI, MaterialAPI, MeshCollisionAPI,
 // MassAPI, FilteredPairsAPI, ArticulationRootAPI, DriveAPI, LimitAPI
 

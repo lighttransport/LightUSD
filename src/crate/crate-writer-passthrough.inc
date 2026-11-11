@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - CrateWriter::Impl lazy-array pass-through helpers.
+// LightUSD - CrateWriter::Impl lazy-array pass-through helpers.
 // Included inside CrateWriter::Impl private section.
 
   // Numeric POD array types whose on-disk block is self-contained (no token /

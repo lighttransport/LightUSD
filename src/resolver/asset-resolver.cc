@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD Next - Asset Resolution Implementation
+// LightUSD - Asset Resolution Implementation
 
 #include "asset-resolver.hh"
 #include "safe-file-size.hh"
