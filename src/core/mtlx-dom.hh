@@ -299,6 +299,11 @@ public:
                     const std::string& anchor_path);
   bool ParseFromFile(const std::string& filename);
 
+  // Serialize the parsed document after XInclude expansion, version upgrades,
+  // scoped-attribute inheritance, and nodedef default application. Returns an
+  // empty string until parsing has completed successfully.
+  std::string GetResolvedXML() const;
+
   // Validate the parsed document's nodegraphs against embedded and standard
   // nodedefs. Returns nodegraphs in dependency-first order.
   bool ResolveNodeGraphs(std::vector<std::string>* graph_order,

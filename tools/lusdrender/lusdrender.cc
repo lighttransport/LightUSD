@@ -46,6 +46,7 @@
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "io-util.hh"
+#include "core/mtlx-dom.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/render-data.hh"
 #include "usdVol.hh"  // OpenVDB (.vdb) loader for the `core` volume path
@@ -104,15 +105,21 @@ struct GeneratedMtlxScene {
 bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
                               std::string *error) {
   if (!generated || opt.mtlx_file.empty()) return false;
-  std::ifstream source(opt.mtlx_file, std::ios::binary);
-  if (!source) {
-    if (error) *error = "cannot read MaterialX source: " + opt.mtlx_file;
+  lightusd::mtlx::MtlxDocument resolved_document;
+  if (!resolved_document.ParseFromFile(opt.mtlx_file)) {
+    if (error) *error = "MaterialX resolution failed: " +
+                        resolved_document.GetError();
     return false;
   }
-  std::ostringstream xml;
-  xml << source.rdbuf();
-  if (!source.good() && !source.eof()) {
-    if (error) *error = "failed reading MaterialX source: " + opt.mtlx_file;
+  std::vector<std::string> graph_order;
+  std::string graph_error;
+  if (!resolved_document.ResolveNodeGraphs(&graph_order, &graph_error)) {
+    if (error) *error = "MaterialX graph validation failed: " + graph_error;
+    return false;
+  }
+  const std::string xml_text = resolved_document.GetResolvedXML();
+  if (xml_text.empty()) {
+    if (error) *error = "MaterialX resolution produced an empty document";
     return false;
   }
   const size_t slash = opt.mtlx_file.find_last_of("/\\");
@@ -121,7 +128,6 @@ bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
                                    : opt.mtlx_file.substr(0, slash);
   lightusd::tydra::LightRtOpenPBRParams pbr;
   std::string eval_error;
-  const std::string xml_text = xml.str();
   if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
           xml_text.c_str(), opt.mtlx_material.empty()
                                 ? nullptr : opt.mtlx_material.c_str(),

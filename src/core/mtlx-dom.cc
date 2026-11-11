@@ -15,6 +15,38 @@ namespace mtlx {
 
 namespace {
 
+void AppendXmlEscaped(std::ostringstream *out, const std::string &text) {
+  for (char c : text) {
+    switch (c) {
+      case '&': *out << "&amp;"; break;
+      case '<': *out << "&lt;"; break;
+      case '>': *out << "&gt;"; break;
+      case '"': *out << "&quot;"; break;
+      case '\'': *out << "&apos;"; break;
+      default: *out << c; break;
+    }
+  }
+}
+
+void AppendXmlNode(std::ostringstream *out, const XMLNodePtr &node) {
+  if (!out || !node) return;
+  *out << '<' << node->GetName();
+  for (const auto &attr : node->GetAttributes()) {
+    *out << ' ' << attr.first << "=\"";
+    AppendXmlEscaped(out, attr.second);
+    *out << '"';
+  }
+  const auto &children = node->GetChildren();
+  if (children.empty() && node->GetText().empty()) {
+    *out << "/>";
+    return;
+  }
+  *out << '>';
+  AppendXmlEscaped(out, node->GetText());
+  for (const XMLNodePtr &child : children) AppendXmlNode(out, child);
+  *out << "</" << node->GetName() << '>';
+}
+
 XMLNodePtr MtlxElemToXMLNode(const MtlxElem &elem) {
   auto node = std::make_shared<XMLNode>(elem.tag);
   for (const auto &attr : elem.attrs) node->SetAttribute(attr.first, attr.second);
@@ -707,6 +739,14 @@ bool MtlxDocument::ParseFromFile(const std::string& filename) {
   buffer << file.rdbuf();
 
   return ParseFromXML(buffer.str(), filename);
+}
+
+std::string MtlxDocument::GetResolvedXML() const {
+  if (!parsed_root_) return std::string();
+  std::ostringstream out;
+  out << "<?xml version=\"1.0\"?>";
+  AppendXmlNode(&out, parsed_root_);
+  return out.str();
 }
 
 bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {

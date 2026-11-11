@@ -41,13 +41,31 @@ def main():
         raise RuntimeError("MaterialX validation render appears blank")
 
     emission_source = out_dir / "connected-emission.mtlx"
-    emission_source.write_text(
+    include_dir = out_dir / "connected-include"
+    include_dir.mkdir(parents=True, exist_ok=True)
+    (include_dir / "graph.mtlx").write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <xi:include href="nodes.mtlx" />
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    (include_dir / "nodes.mtlx").write_text(
         '''<?xml version="1.0"?>
 <materialx version="1.39">
   <multiply name="EmissionColor" type="color3">
     <input name="in1" type="color3" value="0.4, 0.8, 1.2" />
     <input name="in2" type="color3" value="0.5, 0.5, 0.5" />
   </multiply>
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    emission_source.write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39" xmlns:xi="http://www.w3.org/2001/XInclude">
+  <xi:include href="connected-include/graph.mtlx" />
   <standard_surface name="Emission" type="surfaceshader">
     <input name="base" type="float" value="0" />
     <input name="emission" type="float" value="1" />
