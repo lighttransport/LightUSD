@@ -321,15 +321,15 @@ int main(void) {
        check3("fractal2d-color", eval_named(&ctx, "fractal_color"),
               0.18168622f, 1.98365822f, -0.40455556f) && ok;
   ok = check3("worley2d-distance", eval_named(&ctx, "worley2_distance"),
-              0.604036f, 0.778409f, 0.907265f) && ok;
+              0.334542f, 0.463517f, 0.984037f) && ok;
   ok = check3("worley2d-solid", eval_named(&ctx, "worley2_solid"),
-              0.623529f, 0.580392f, 0.211765f) && ok;
+              0.960777f, 0.166139f, 0.444949f) && ok;
   { MtlxValue w = eval_named(&ctx, "worley3_distance");
-    ok = check1("worley3d-distance-f1", w, 0.724764287f) && ok;
-    if (!nearf_eps(w.v[1], 0.825379968f))
+    ok = check1("worley3d-distance-f1", w, 0.321671426f) && ok;
+    if (!nearf_eps(w.v[1], 0.943064690f))
       fprintf(stderr, "worley3d-distance-f2: got %.9f, expected %.9f\n",
-              w.v[1], 0.825379968f);
-    ok = nearf_eps(w.v[1], 0.825379968f) && ok;
+              w.v[1], 0.943064690f);
+    ok = nearf_eps(w.v[1], 0.943064690f) && ok;
   }
   ok = check3("noise2d-color", eval_named(&ctx, "noise2_color"),
               0.377306f, 1.246215f, 0.188793f) && ok;
@@ -340,7 +340,7 @@ int main(void) {
   ok = check1("unified-cell", eval_named(&ctx, "unified_cell"),
               0.860312760f) && ok;
   ok = check1("unified-worley", eval_named(&ctx, "unified_worley"),
-              0.623227179f) && ok;
+              0.371120334f) && ok;
   ok = check1("unified-fractal", eval_named(&ctx, "unified_fractal"),
               0.475442290f) && ok;
   ok = check1("unified3-fractal", eval_named(&ctx, "unified3_fractal"),

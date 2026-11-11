@@ -198,9 +198,15 @@ static float cellnoise(v3 p) {
     return (float)h / (float)0xffffffffu;
 }
 static float worley_cell_channel(int x,int y,int z,int d3,int channel){
+    if(channel>=0){
+        if(d3){
+            v3 values=mx_cell_vec3(x,y,z,0,0);
+            return channel==0?values.x:(channel==1?values.y:values.z);
+        }
+        return (float)mx_hash_int3(x,y,channel)/(float)0xffffffffu;
+    }
     uint32_t h=d3?mx_hash_int3(x,y,z):mx_hash_int2(x,y);
-    if(channel>=0)h=(h>>(channel*8))&255u;
-    return (float)h/(channel>=0?255.0f:(float)0xffffffffu);
+    return (float)h/(float)0xffffffffu;
 }
 static MtlxValue worley_value(v3 p,int d3,float jitter,int style,MtlxType type){
     int ix=(int)floorf(p.x),iy=(int)floorf(p.y),iz=d3?(int)floorf(p.z):0;
