@@ -1243,8 +1243,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         }
         hue = hue + b[0] - std::floor(hue + b[0]);
         const float sat = mx > 1.0e-6f ? chroma / mx : 0.0f;
-        const float s2 = std::clamp(sat * b[1], 0.0f, 1.0f);
-        const float v2 = std::max(mx * b[2], 0.0f);
+        const float s2 = sat * b[1];
+        const float v2 = mx * b[2];
         const float hp = hue * 6.0f, x = v2 * s2 *
             (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
         const float cc = v2 * s2, m = v2 - cc;

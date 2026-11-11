@@ -375,8 +375,18 @@ vec3 mtlxRgbToHsv(vec3 c) {
 }
 
 vec3 mtlxHsvToRgb(vec3 c) {
-  vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-  return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+  float h = fract(c.x) * 6.0;
+  float chroma = c.z * c.y;
+  float x = chroma * (1.0 - abs(mod(h, 2.0) - 1.0));
+  int sector = int(floor(h)) % 6;
+  vec3 rgb;
+  if (sector == 0) rgb = vec3(chroma, x, 0.0);
+  else if (sector == 1) rgb = vec3(x, chroma, 0.0);
+  else if (sector == 2) rgb = vec3(0.0, chroma, x);
+  else if (sector == 3) rgb = vec3(0.0, x, chroma);
+  else if (sector == 4) rgb = vec3(x, 0.0, chroma);
+  else rgb = vec3(chroma, 0.0, x);
+  return rgb + vec3(c.z - chroma);
 }
 
 vec3 mtlxBlackbody(float kelvin) {
@@ -944,8 +954,8 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
       else if (op == 48) {
         vec3 hsv = mtlxRgbToHsv(av.rgb);
         hsv.x = fract(hsv.x + bv.x);
-        hsv.y = clamp(hsv.y * bv.y, 0.0, 1.0);
-        hsv.z = max(hsv.z * bv.z, 0.0);
+        hsv.y *= bv.y;
+        hsv.z *= bv.z;
         v[i] = vec4(mtlxHsvToRgb(hsv), av.w);
       }
       else if (op == 49) {
