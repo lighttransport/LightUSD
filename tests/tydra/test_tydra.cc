@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -42,6 +43,7 @@
 #include "../../../src/tydra/urdf-to-usd.hh"
 #include "../../../src/pcp/cache.hh"
 #include "load-usd.hh"
+#include "core/mtlx-resolve.hh"
 #include "reader/usda-reader.hh"
 #include "schema/geom-mesh.hh"
 #include "schema/geom-point-instancer.hh"
@@ -141,6 +143,7 @@ def Scope "M" {
     float inputs:ior = 1
   }
 }
+
 )USD";
   Stage stage;
   std::string warning, error;
@@ -189,6 +192,148 @@ def Scope "M" {
              1.0e-5f);
     }
   }
+}
+namespace {
+using namespace lightusd::mtlx;
+
+struct LeanMtlxEvalApproxVector {
+  int id;
+  const char* body;
+  const char* node;
+  const char* payload;
+};
+
+#define MTLX_EVAL_APPROX(id, body, node, payload) {id, body, node, payload},
+const LeanMtlxEvalApproxVector kLeanMtlxEvalApproxVectors[] = {
+#include "../core/generated/lean-mtlx/mtlx-eval-approx.inc"
+};
+#undef MTLX_EVAL_APPROX
+
+bool MtlxEvalApproxSupportedTag(const std::string& tag) {
+  static const std::set<std::string> supported = {
+      "power", "safepower", "sqrt", "exp", "ln", "sin", "cos",
+      "tan", "asin", "acos", "atan2", "normalize", "magnitude",
+      "distance", "rotate2d", "trianglewave", "range", "place2d",
+      "reflect", "refract"};
+  return supported.count(tag) != 0;
+}
+
+std::string MtlxTypeToUsdType(const std::string& type) {
+  if (type == "float") return "float";
+  if (type == "vector2") return "float2";
+  if (type == "vector3") return "vector3f";
+  if (type == "vector4") return "float4";
+  if (type == "color3") return "color3f";
+  if (type == "color4") return "color4f";
+  return {};
+}
+
+std::string MtlxValueForUsda(const std::string& type,
+                             const std::string& value) {
+  MtlxTypedValue parsed;
+  if (!ParseMtlxValue(type, value, &parsed)) return {};
+  if (MtlxTypeArity(type) <= 1) return value;
+  return "(" + value + ")";
+}
+
+bool ParseLeanApproxPayload(const char* payload, std::vector<double>* values) {
+  if (!payload || !values) return false;
+  std::istringstream channels(payload);
+  std::string channel;
+  while (std::getline(channels, channel, ',')) {
+    const size_t slash = channel.find('/');
+    if (slash == std::string::npos) return false;
+    const std::string numerator_text = channel.substr(0, slash);
+    const std::string denominator_text = channel.substr(slash + 1);
+    char* numerator_end = nullptr;
+    char* denominator_end = nullptr;
+    const double numerator = std::strtod(numerator_text.c_str(), &numerator_end);
+    const double denominator = std::strtod(denominator_text.c_str(),
+                                           &denominator_end);
+    if (numerator_end == numerator_text.c_str() || *numerator_end != '\0' ||
+        denominator_end == denominator_text.c_str() ||
+        *denominator_end != '\0' || denominator == 0.0) {
+      return false;
+    }
+    values->push_back(numerator / denominator);
+  }
+  return !values->empty();
+}
+}  // namespace
+
+void TestMtlxConstantEvaluatorLeanVectors() {
+  std::string usda = "#usda 1.0\ndef Scope \"M\" {\n";
+  std::vector<const LeanMtlxEvalApproxVector*> selected;
+  for (const LeanMtlxEvalApproxVector& vector : kLeanMtlxEvalApproxVectors) {
+    MtlxElem root;
+    std::string parse_error;
+    if (!ParseMtlxXml(vector.body, &root, &parse_error)) {
+      std::cerr << "Could not parse generated MaterialX eval vector "
+                << vector.id << ": " << parse_error << "\n";
+      assert(false);
+    }
+    if (!MtlxEvalApproxSupportedTag(root.tag)) continue;
+    const std::string output_type = root.AttrOr("type");
+    const std::string usd_output_type = MtlxTypeToUsdType(output_type);
+    assert(!usd_output_type.empty());
+    const std::string prim_name = "V" + std::to_string(vector.id);
+    usda += "  def Shader \"" + prim_name + "\" {\n";
+    usda += "    uniform token info:id = \"ND_" + root.tag + "_" +
+            output_type + "\"\n";
+    for (const MtlxElem& child : root.children) {
+      if (child.tag != "input") continue;
+      const std::string input_name = child.AttrOr("name");
+      const std::string input_type = child.AttrOr("type");
+      const std::string usd_input_type = MtlxTypeToUsdType(input_type);
+      const std::string value = MtlxValueForUsda(input_type,
+                                                 child.AttrOr("value"));
+      if (input_name.empty() || usd_input_type.empty() || value.empty()) {
+        std::cerr << "Invalid generated input in eval vector " << vector.id
+                  << "\n";
+        assert(false);
+      }
+      usda += "    " + usd_input_type + " inputs:" + input_name + " = " +
+              value + "\n";
+    }
+    usda += "  }\n";
+    selected.push_back(&vector);
+  }
+  usda += "}\n";
+
+  Stage stage;
+  std::string warning, error;
+  assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
+                           usda.size(), &stage, &warning, &error));
+  size_t checked = 0;
+  for (const LeanMtlxEvalApproxVector* vector : selected) {
+    const std::string path = "/M/V" + std::to_string(vector->id);
+    MtlxConstantValue actual;
+    std::set<std::string> visiting;
+    if (!EvalMtlxConstantNode(stage, stage.GetPrimAtPath(path), 0.0, "",
+                              &actual, &visiting, 0)) {
+      std::cerr << "LightUSD constant evaluator rejected Lean vector "
+                << vector->id << " (" << vector->body << ")\n";
+      assert(false);
+    }
+    std::vector<double> expected;
+    assert(ParseLeanApproxPayload(vector->payload, &expected));
+    assert(actual.components == static_cast<int>(expected.size()));
+    for (size_t i = 0; i < expected.size(); ++i) {
+      if (std::fabs(static_cast<double>(actual.value[i]) - expected[i]) >
+          2.0e-5) {
+        std::cerr << "LightUSD/Lean eval mismatch for vector " << vector->id
+                  << " component " << i << ": got " << actual.value[i]
+                  << ", expected " << expected[i] << "\n";
+        assert(false);
+      }
+    }
+    ++checked;
+  }
+  assert(checked > 0);
+  std::cout << "Replayed " << checked
+            << " Lean MaterialX eval vectors through LightUSD constant folder"
+            << " (" << (std::size(kLeanMtlxEvalApproxVectors) - checked)
+            << " vectors are outside its currently supported node set)\n";
 }
 
 //
@@ -9136,6 +9281,7 @@ static void TestGeneratedSmoothNormals() {
 
 int main() {
   TestMtlxConstantEvaluatorRealNodes();
+  TestMtlxConstantEvaluatorLeanVectors();
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();
   std::cout << "=== Tydra Unit Tests ===\n\n";
