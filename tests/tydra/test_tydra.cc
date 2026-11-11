@@ -92,6 +92,22 @@ def Scope "M" {
     color3f inputs:in = (0.25, 0.5, 0.75)
     color3f inputs:amount = (0, 1, 1)
   }
+  def Shader "RgbToHsv4" {
+    uniform token info:id = "ND_rgbtohsv_color4"
+    color4f inputs:in = (1, 0.5, 0, 0.25)
+  }
+  def Shader "HsvToRgb4" {
+    uniform token info:id = "ND_hsvtorgb_color4"
+    color4f inputs:in = (0.5, 1, 1, 0.75)
+  }
+  def Shader "Asin" {
+    uniform token info:id = "ND_asin_float"
+    float inputs:in = 0.5
+  }
+  def Shader "Acos" {
+    uniform token info:id = "ND_acos_float"
+    float inputs:in = 0.5
+  }
   def Shader "Range" {
     uniform token info:id = "ND_range_float"
     float inputs:in = 0.25
@@ -140,6 +156,10 @@ def Scope "M" {
       {"/M/RgbToHsv", {1.0f / 12.0f, 1.0f, 1.0f}, 3},
       {"/M/HsvToRgb", {0.0f, 1.0f, 1.0f}, 3},
       {"/M/HsvAdjust", {0.25f, 0.5f, 0.75f}, 3},
+      {"/M/RgbToHsv4", {1.0f / 12.0f, 1.0f, 1.0f, 0.25f}, 4},
+      {"/M/HsvToRgb4", {0.0f, 1.0f, 1.0f, 0.75f}, 4},
+      {"/M/Asin", {0.5235987756f}, 1},
+      {"/M/Acos", {1.0471975512f}, 1},
       {"/M/Range", {-0.5f}, 1},
       {"/M/Triangle", {0.25f}, 1},
       {"/M/Place", {0.75f, 0.5f}, 2},

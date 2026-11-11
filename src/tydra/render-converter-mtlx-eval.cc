@@ -592,7 +592,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
   if (starts("ND_absval_") || starts("ND_floor_") ||
       starts("ND_ceil_") || starts("ND_round_") ||
       starts("ND_sqrt_") || starts("ND_exp_") ||
-      starts("ND_ln_") || starts("ND_sin_") || starts("ND_cos_") ||
+      starts("ND_ln_") || starts("ND_asin_") || starts("ND_acos_") ||
+      starts("ND_sin_") || starts("ND_cos_") ||
       starts("ND_tan_")) {
     MtlxConstantValue value;
     if (!input("in", &value)) return false;
@@ -607,6 +608,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
       else if (starts("ND_sqrt_")) y = std::sqrt(std::max(0.0f, x));
       else if (starts("ND_exp_")) y = std::exp(x);
       else if (starts("ND_ln_")) y = x > 0.0f ? std::log(x) : 0.0f;
+      else if (starts("ND_asin_")) y = std::asin(x);
+      else if (starts("ND_acos_")) y = std::acos(x);
       else if (starts("ND_sin_")) y = std::sin(x);
       else if (starts("ND_cos_")) y = std::cos(x);
       else if (starts("ND_tan_")) y = std::tan(x);
