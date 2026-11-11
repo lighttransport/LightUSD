@@ -93,6 +93,8 @@ static int add_node(Builder *b, const char *category, const char *name, MtlxType
 }
 
 static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix) {
+    /* The nearest enclosing `fileprefix` applies; an input may declare its own. */
+    if (xml_attr(x, "fileprefix")) fileprefix = xml_attr(x, "fileprefix");
     n->inputs = realloc(n->inputs, sizeof(MtlxInput) * (n->ninput + 1));
     MtlxInput *in = &n->inputs[n->ninput];
     memset(in, 0, sizeof(*in));
@@ -101,10 +103,11 @@ static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix
     in->type = parse_type(xml_attr(x, "type"));
     const char *val = xml_attr(x, "value");
     if (val) { in->has_value = 1; parse_value(val, in->type, &in->value); }
-    /* MaterialX `fileprefix` (on the <materialx> root and/or enclosing
-     * <nodegraph>) is prepended to every filename value in scope. e.g. the
-     * boombox material's fileprefix="boombox/" puts its textures in a
-     * subdirectory the search path could never reach by walking up. */
+    /* MaterialX `fileprefix` is prepended to every filename value in scope;
+     * the value declared by the nearest enclosing element (input, node,
+     * nodegraph, document) replaces any outer one. e.g. the boombox
+     * material's fileprefix="boombox/" puts its textures in a subdirectory
+     * the search path could never reach by walking up. */
     if (in->type == MV_FILENAME && in->value.s && fileprefix && fileprefix[0]) {
         size_t L = strlen(fileprefix) + strlen(in->value.s) + 1;
         char *full = (char *)malloc(L);
@@ -141,6 +144,87 @@ static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix
         snprintf(in->src_output, L, "I:%s", interfacename);
     }
     n->ninput++;
+}
+
+static void node_set_nodedef(MtlxNode *n, const XmlNode *x) {
+    const char *nd = xml_attr(x, "nodedef");
+    if (nd && nd[0]) n->nodedef = strdup(nd);
+}
+
+/* ---- standard-library node definitions --------------------------------
+ * mtlx_stdlib_defs.inc is generated from MaterialX libraries/stdlib/
+ * stdlib_defs.mtlx by the Lean model in the materialx-conformance repository
+ * (`lake exe mtlxspec-gen`): one row per <nodedef> with inheritance applied,
+ * followed by its inputs and their default value strings. */
+typedef struct { const char *name, *node, *out_type; int first, count; } StdNodeDef;
+typedef struct { const char *name, *type; int has_default; const char *dflt; } StdInput;
+
+static const StdNodeDef g_std_nodedefs[] = {
+#define MTLX_STD_NODEDEF(name, node, type, first, count) { name, node, type, first, count },
+#define MTLX_STD_INPUT(name, type, has_default, dflt)
+#include "mtlx_stdlib_defs.inc"
+#undef MTLX_STD_NODEDEF
+#undef MTLX_STD_INPUT
+};
+static const StdInput g_std_inputs[] = {
+#define MTLX_STD_NODEDEF(name, node, type, first, count)
+#define MTLX_STD_INPUT(name, type, has_default, dflt) { name, type, has_default, dflt },
+#include "mtlx_stdlib_defs.inc"
+#undef MTLX_STD_NODEDEF
+#undef MTLX_STD_INPUT
+};
+#define STD_NODEDEF_COUNT ((int)(sizeof(g_std_nodedefs) / sizeof(g_std_nodedefs[0])))
+
+/* MaterialX signature resolution: an explicit `nodedef`, else the first
+ * definition in library order with the node's category and output type whose
+ * declared inputs include every input the instance supplies, name and type. */
+static const StdNodeDef *find_std_nodedef(const MtlxNode *n) {
+    if (n->nodedef) {
+        for (int i = 0; i < STD_NODEDEF_COUNT; i++)
+            if (!strcmp(g_std_nodedefs[i].name, n->nodedef)) return &g_std_nodedefs[i];
+        return NULL;
+    }
+    for (int i = 0; i < STD_NODEDEF_COUNT; i++) {
+        const StdNodeDef *d = &g_std_nodedefs[i];
+        if (strcmp(d->node, n->category) || parse_type(d->out_type) != n->type) continue;
+        int exact = 1;
+        for (int j = 0; j < n->ninput && exact; j++) {
+            int found = 0;
+            for (int k = 0; k < d->count && !found; k++) {
+                const StdInput *p = &g_std_inputs[d->first + k];
+                found = !strcmp(p->name, n->inputs[j].name) && parse_type(p->type) == n->inputs[j].type;
+            }
+            exact = found;
+        }
+        if (exact) return d;
+    }
+    return NULL;
+}
+
+static void apply_stdlib_defaults(MtlxNode *n) {
+    if (!strcmp(n->category, "input")) return; /* synthetic interface node */
+    const StdNodeDef *d = find_std_nodedef(n);
+    if (!d) return;
+    for (int k = 0; k < d->count; k++) {
+        const StdInput *p = &g_std_inputs[d->first + k];
+        MtlxType t = parse_type(p->type);
+        /* Shader-typed and file inputs have no usable literal default. */
+        if (!p->has_default || t == MV_NONE || t == MV_FILENAME) continue;
+        /* The library default of `lumacoeffs` is the ACEScg triple; the
+         * evaluator substitutes its working-space coefficients instead. */
+        if (!strcmp(p->name, "lumacoeffs")) continue;
+        int present = 0;
+        for (int j = 0; j < n->ninput && !present; j++) present = !strcmp(n->inputs[j].name, p->name);
+        if (present) continue;
+        n->inputs = realloc(n->inputs, sizeof(MtlxInput) * (n->ninput + 1));
+        MtlxInput *in = &n->inputs[n->ninput++];
+        memset(in, 0, sizeof(*in));
+        in->src_node = -1;
+        in->name = strdup(p->name);
+        in->type = t;
+        in->has_value = 1;
+        parse_value(p->dflt, t, &in->value);
+    }
 }
 
 static int find_graph(const Builder *b, const char *name) {
@@ -197,10 +281,9 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
 
         if (!strcmp(tag, "nodegraph")) {
             int gid = add_graph(&b, xml_attr(el, "name"));
-            /* nodegraph fileprefix concatenates after the document one */
+            /* a nodegraph fileprefix replaces the document one within the graph */
             const char *gfp = xml_attr(el, "fileprefix");
-            char gpre[1024];
-            snprintf(gpre, sizeof(gpre), "%s%s", root_pre, gfp ? gfp : "");
+            const char *gpre = gfp ? gfp : root_pre;
             for (int j = 0; j < el->nchild; j++) {
                 const XmlNode *c = &el->children[j];
                 if (!strcmp(c->tag, "output")) {
@@ -220,16 +303,20 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
                     node_add_input(&b.d.nodes[nid], c, gpre);
                 } else {
                     int nid = add_node(&b, c->tag, xml_attr(c, "name"), parse_type(xml_attr(c, "type")), gid);
+                    node_set_nodedef(&b.d.nodes[nid], c);
+                    const char *npre = xml_attr(c, "fileprefix") ? xml_attr(c, "fileprefix") : gpre;
                     for (int k = 0; k < c->nchild; k++)
                         if (!strcmp(c->children[k].tag, "input"))
-                            node_add_input(&b.d.nodes[nid], &c->children[k], gpre);
+                            node_add_input(&b.d.nodes[nid], &c->children[k], npre);
                 }
             }
         } else if (is_shader_category(tag)) {
             int nid = add_node(&b, tag, xml_attr(el, "name"), parse_type(xml_attr(el, "type")), -1);
+            node_set_nodedef(&b.d.nodes[nid], el);
+            const char *npre = xml_attr(el, "fileprefix") ? xml_attr(el, "fileprefix") : root_pre;
             for (int k = 0; k < el->nchild; k++)
                 if (!strcmp(el->children[k].tag, "input"))
-                    node_add_input(&b.d.nodes[nid], &el->children[k], root_pre);
+                    node_add_input(&b.d.nodes[nid], &el->children[k], npre);
         } else if (!strcmp(tag, "surfacematerial") ||
                    !strcmp(tag, "volumematerial")) {
             b.d.mats = realloc(b.d.mats, sizeof(MtlxMaterial) * (b.d.nmat + 1));
@@ -267,11 +354,17 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
         } else {
             /* any other top-level node (constant, etc.) */
             int nid = add_node(&b, tag, xml_attr(el, "name"), parse_type(xml_attr(el, "type")), -1);
+            node_set_nodedef(&b.d.nodes[nid], el);
+            const char *npre = xml_attr(el, "fileprefix") ? xml_attr(el, "fileprefix") : root_pre;
             for (int k = 0; k < el->nchild; k++)
                 if (!strcmp(el->children[k].tag, "input"))
-                    node_add_input(&b.d.nodes[nid], &el->children[k], root_pre);
+                    node_add_input(&b.d.nodes[nid], &el->children[k], npre);
         }
     }
+
+    /* Bind every input a standard-library definition declares but the
+     * instance omits to the definition's default value. */
+    for (int i = 0; i < b.d.nnode; i++) apply_stdlib_defaults(&b.d.nodes[i]);
 
     /* ---- pass B: resolve input connections ---- */
     for (int i = 0; i < b.d.nnode; i++) {
@@ -355,6 +448,7 @@ void mtlx_free(MtlxDoc *d) {
         free(n->inputs);
         free(n->category);
         free(n->name);
+        free(n->nodedef);
     }
     free(d->nodes);
     for (int i = 0; i < d->nmat; i++) free(d->mats[i].name);

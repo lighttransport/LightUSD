@@ -37,6 +37,7 @@ typedef struct {
     char    *name;        /* node instance name */
     MtlxType type;        /* declared output type */
     int      graph_id;    /* owning nodegraph index, or -1 for document scope */
+    char    *nodedef;     /* explicit `nodedef` attribute, or NULL */
     MtlxInput *inputs;
     int      ninput;
 } MtlxNode;
