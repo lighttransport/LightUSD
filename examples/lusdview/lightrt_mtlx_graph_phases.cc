@@ -42,6 +42,14 @@ std::string NormalizeMtlxType(const std::string& type) {
   return "float";
 }
 
+int MtlxTypeComponents(const std::string& type) {
+  const std::string normalized = NormalizeMtlxType(type);
+  if (normalized == "vector2") return 2;
+  if (normalized == "vector3" || normalized == "color3") return 3;
+  if (normalized == "vector4" || normalized == "color4") return 4;
+  return 1;
+}
+
 std::string JsonString(const nlohmann::json& obj, const char* key,
                        const std::string& fallback = std::string()) {
   const auto it = obj.find(key);
@@ -131,6 +139,18 @@ bool PackMaterialXGraphRuntimePhase(
     MaterialXGraphNodeCPU out;
     out.name = name;
     const std::string type = JsonString(node, "type");
+    out.components = MtlxTypeComponents(type);
+    out.inputComponents = out.components;
+    const auto declaredInputsIt = node.find("inputs");
+    if (declaredInputsIt != node.end() && declaredInputsIt->is_array()) {
+      for (const auto& input : *declaredInputsIt) {
+        const std::string inputType = JsonString(input, "type");
+        if (!inputType.empty()) {
+          out.inputComponents = MtlxTypeComponents(inputType);
+          break;
+        }
+      }
+    }
     const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"), type);
     if (cat == "constant") out.op = MaterialXGraphOpCPU::Constant;
     else if (cat == "image" || cat == "gltf_image" || cat == "gltf_colorimage") {

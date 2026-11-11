@@ -618,6 +618,10 @@ enum class MaterialXGraphOpCPU : uint32_t {
 // the Vulkan descriptor-indexed image table resolves it to a resident texture.
 struct MaterialXGraphNodeCPU {
   MaterialXGraphOpCPU op{MaterialXGraphOpCPU::Unknown};
+  // MaterialX vector widths needed by the runtime evaluators. Scalar outputs
+  // such as length and distance still need the first input's vector width.
+  int components{4};
+  int inputComponents{3};
   int input[3]{-1, -1, -1};
   // Independent fallback values for the three possible inputs.  A single
   // shared fallback loses vector-valued MaterialX constants (for example the

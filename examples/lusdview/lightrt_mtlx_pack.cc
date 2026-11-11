@@ -170,6 +170,13 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
     }
     dst[base + 16] = static_cast<float>(textureId);
+    if (node.op == MaterialXGraphOpCPU::Normalized ||
+        node.op == MaterialXGraphOpCPU::Length ||
+        node.op == MaterialXGraphOpCPU::Distance) {
+      dst[base + 3] = static_cast<float>(
+          node.op == MaterialXGraphOpCPU::Normalized ? node.components
+                                                     : node.inputComponents);
+    }
     if (node.op == MaterialXGraphOpCPU::GeomProp) {
       const uint32_t hash = MaterialXGeomPropHash(node.geomPropName);
       float encoded = 0.0f;
@@ -238,6 +245,13 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
     for (int input = 0; input < 3; ++input)
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    if (node.op == MaterialXGraphOpCPU::Normalized ||
+        node.op == MaterialXGraphOpCPU::Length ||
+        node.op == MaterialXGraphOpCPU::Distance) {
+      dst[base + 3] = static_cast<float>(
+          node.op == MaterialXGraphOpCPU::Normalized ? node.components
+                                                     : node.inputComponents);
+    }
     if (node.op == MaterialXGraphOpCPU::SplitLR ||
         node.op == MaterialXGraphOpCPU::SplitTB ||
         node.op == MaterialXGraphOpCPU::IfGreater ||

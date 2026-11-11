@@ -1011,6 +1011,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       const auto a = ia >= 0 && ia < count ? values[ia] : fallback(0);
       const auto b = ib >= 0 && ib < count ? values[ib] : fallback(1);
       const auto c = ic >= 0 && ic < count ? values[ic] : fallback(2);
+      const int vectorComponents = std::clamp(static_cast<int>(std::floor(
+          scene.matGraph[p + 3] + 0.5f)), 1, 4);
       const int textureId = static_cast<int>(std::floor(
           scene.matGraph[p + 16] + 0.5f));
       auto& dst = values[i];
@@ -1090,9 +1092,14 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         dst = {d, d, d, d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Normalized)) {
-        const float length = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
-        dst = length > 1.0e-6f ? std::array<float, 4>{a[0] / length, a[1] / length,
-                                                       a[2] / length, a[3]} : a;
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float length = std::sqrt(squaredLength);
+        dst = a;
+        if (length > 1.0e-6f)
+          for (int lane = 0; lane < vectorComponents; ++lane)
+            dst[lane] = a[lane] / length;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Power)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::pow(std::max(a[cidx], 0.0f), b[cidx]);
@@ -1139,7 +1146,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
                a[0] * b[1] - a[1] * b[0], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Length)) {
-        const float l = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float l = std::sqrt(squaredLength);
         dst = {l, l, l, l};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise2D)) {
         const int channels=std::clamp(static_cast<int>(std::floor(c[3]+.5f)),1,4);
@@ -1396,8 +1406,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float cs = std::cos(angle), sn = std::sin(angle);
         dst = {a[0] * cs - a[1] * sn, a[0] * sn + a[1] * cs, a[2], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Distance)) {
-        const float x=a[0]-b[0], y=a[1]-b[1], z=a[2]-b[2];
-        const float d=std::sqrt(x*x+y*y+z*z); dst={d,d,d,d};
+        float squaredDistance = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane) {
+          const float delta = a[lane] - b[lane];
+          squaredDistance += delta * delta;
+        }
+        const float d = std::sqrt(squaredDistance); dst={d,d,d,d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Reflect)) {
         const float d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
         dst={a[0]-2*d*b[0],a[1]-2*d*b[1],a[2]-2*d*b[2],a[3]};

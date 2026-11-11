@@ -333,7 +333,14 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 8) v[i] = mix(av, bv, cv);
       else if (op == 9) v[i] = clamp(av, bv, cv);
       else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
-      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 11) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        vec4 n = width == 1 ? vec4(sign(av.x), 0.0, 0.0, 0.0)
+                 : width == 2 ? vec4(normalize(av.xy), 0.0, 0.0)
+                 : width == 3 ? vec4(normalize(av.xyz), av.w)
+                              : normalize(av);
+        v[i] = n;
+      }
       else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
       else if (op == 136) v[i] = sign(av) * pow(abs(av), bv);
       else if (op == 13) v[i] = min(av, bv);
@@ -352,7 +359,12 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 25) v[i] = step(av, bv);
       else if (op == 26) v[i] = smoothstep(bv, cv, av);
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
-      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 28) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float l = width == 1 ? abs(av.x) : width == 2 ? length(av.xy)
+                  : width == 3 ? length(av.xyz) : length(av);
+        v[i] = vec4(l);
+      }
       else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
       else if (op == 40) v[i] = vec4(fract(sin(dot(av.xyz + vec3(uv, uv.x + uv.y),
                                                         vec3(127.1, 311.7, 74.7))) *
@@ -379,6 +391,14 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
         v[i] = vec4(av.xy * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
                     vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]),
                     av.zw);
+      }
+      else if (op == 70) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? distance(av.x, bv.x)
+                  : width == 2 ? distance(av.xy, bv.xy)
+                  : width == 3 ? distance(av.xyz, bv.xyz)
+                               : distance(av, bv);
+        v[i] = vec4(d);
       }
       else v[i] = value;
   }

@@ -1829,6 +1829,41 @@ int main() {
     return 1;
   }
 
+  lusdview::DrawMaterialCPU vector4MathMat;
+  vector4MathMat.materialXNodeGraphJson = R"json({
+    "nodegraph":{"nodes":[
+      {"name":"n","category":"constant","type":"vector4",
+       "inputs":[{"value":[1.0,2.0,2.0,4.0]}]},
+      {"name":"normalized","category":"normalize","type":"vector4",
+       "inputs":[{"name":"in","type":"vector4","nodename":"n"}]},
+      {"name":"magnitude","category":"length","type":"float",
+       "inputs":[{"name":"in","type":"vector4","nodename":"n"}]},
+      {"name":"distance","category":"distance","type":"float",
+       "inputs":[{"name":"in1","type":"vector4","nodename":"n"},
+                 {"name":"in2","type":"vector4","value":[0,0,0,0]}]}
+    ],"outputs":[]},"connections":[]})json";
+  std::string vector4MathError;
+  if (!lusdview::CompileMaterialXGraphRuntime(&vector4MathMat,
+                                               &vector4MathError) ||
+      vector4MathMat.materialXGraph.nodes.size() != 4) {
+    std::fprintf(stderr, "MaterialX vector4 math graph failed: %s\n",
+                 vector4MathError.c_str());
+    return 1;
+  }
+  std::vector<float> vector4MathPack(lusdview::kRtMaterialGraphFloats, 0.0f);
+  lusdview::PackMaterialXGraphRuntime(vector4MathMat,
+                                      vector4MathPack.data());
+  for (size_t i = 1; i < vector4MathMat.materialXGraph.nodes.size(); ++i) {
+    const size_t nodeOffset = lusdview::kRtMaterialGraphHeaderFloats +
+        i * lusdview::kRtMaterialGraphNodeFloats;
+    if (!Near(vector4MathPack[nodeOffset + 3], 4.0f)) {
+      std::fprintf(stderr,
+                   "MaterialX vector4 width was not retained for %s\n",
+                   vector4MathMat.materialXGraph.nodes[i].name.c_str());
+      return 1;
+    }
+  }
+
   // Image evaluation must use the owning asset directory.  This exercises
   // the real vendored texture cache (rather than the historical no-image
   // stub) while keeping the graph's live texture lane marked as a runtime
