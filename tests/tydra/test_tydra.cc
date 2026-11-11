@@ -214,7 +214,8 @@ bool MtlxEvalApproxSupportedTag(const std::string& tag) {
       "power", "safepower", "sqrt", "exp", "ln", "sin", "cos",
       "tan", "asin", "acos", "atan2", "normalize", "magnitude",
       "distance", "rotate2d", "trianglewave", "range", "place2d",
-      "reflect", "refract", "ramplr", "ramptb", "ramp4", "splitlr",
+      "reflect", "refract", "worleynoise2d", "worleynoise3d",
+      "ramplr", "ramptb", "ramp4", "splitlr",
       "splittb", "circle"};
   return supported.count(tag) != 0;
 }

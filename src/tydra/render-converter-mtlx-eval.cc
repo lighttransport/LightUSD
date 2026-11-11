@@ -36,6 +36,7 @@
 #include <sstream>
 #include <iomanip>
 #include <atomic>
+#include <cstdint>
 #include <unordered_set>
 
 namespace lightusd { namespace tydra {
@@ -221,6 +222,122 @@ static void MtlxHsvToRgb(const float* hsv, float* rgb) {
   for (int i = 0; i < 3; ++i) rgb[i] = table[sector][i];
 }
 
+static uint32_t MtlxRotl32(uint32_t x, int k) {
+  return (x << k) | (x >> (32 - k));
+}
+
+static uint32_t MtlxHashFinalize(uint32_t a, uint32_t b, uint32_t c) {
+  c ^= b; c -= MtlxRotl32(b, 14);
+  a ^= c; a -= MtlxRotl32(c, 11);
+  b ^= a; b -= MtlxRotl32(a, 25);
+  c ^= b; c -= MtlxRotl32(b, 16);
+  a ^= c; a -= MtlxRotl32(c, 4);
+  b ^= a; b -= MtlxRotl32(a, 14);
+  c ^= b; c -= MtlxRotl32(b, 24);
+  return c;
+}
+
+static void MtlxHashMix(uint32_t* a, uint32_t* b, uint32_t* c) {
+  *a -= *c; *a ^= MtlxRotl32(*c, 4); *c += *b;
+  *b -= *a; *b ^= MtlxRotl32(*a, 6); *a += *c;
+  *c -= *b; *c ^= MtlxRotl32(*b, 8); *b += *a;
+  *a -= *c; *a ^= MtlxRotl32(*c, 16); *c += *b;
+  *b -= *a; *b ^= MtlxRotl32(*a, 19); *a += *c;
+  *c -= *b; *c ^= MtlxRotl32(*b, 4); *b += *a;
+}
+
+static uint32_t MtlxHashInt3(int x, int y, int z) {
+  uint32_t a = 0xdeadbeefu + (3u << 2u) + 13u;
+  uint32_t b = a, c = a;
+  a += static_cast<uint32_t>(x);
+  b += static_cast<uint32_t>(y);
+  c += static_cast<uint32_t>(z);
+  return MtlxHashFinalize(a, b, c);
+}
+
+static uint32_t MtlxHashInt2(int x, int y) {
+  uint32_t a = 0xdeadbeefu + (2u << 2u) + 13u;
+  uint32_t b = a, c = a;
+  a += static_cast<uint32_t>(x);
+  b += static_cast<uint32_t>(y);
+  return MtlxHashFinalize(a, b, c);
+}
+
+static uint32_t MtlxCellHash(int x, int y, int z, bool is_3d, int channel) {
+  if (channel >= 0 && is_3d) {
+    uint32_t a = 0xdeadbeefu + (4u << 2u) + 13u;
+    uint32_t b = a, c = a;
+    a += static_cast<uint32_t>(x);
+    b += static_cast<uint32_t>(y);
+    c += static_cast<uint32_t>(z);
+    MtlxHashMix(&a, &b, &c);
+    return MtlxHashFinalize(a + static_cast<uint32_t>(channel), b, c);
+  }
+  if (channel >= 0 && !is_3d) {
+    return MtlxHashInt3(x, y, channel);
+  }
+  return is_3d ? MtlxHashInt3(x, y, z) : MtlxHashInt2(x, y);
+}
+
+static float MtlxCellChannel(int x, int y, int z, bool is_3d,
+                             int channel) {
+  return static_cast<float>(MtlxCellHash(x, y, z, is_3d, channel)) /
+         static_cast<float>(0xffffffffu);
+}
+
+static bool MtlxWorley(const MtlxConstantValue& coordinate, bool is_3d,
+                      float jitter, int style, int components,
+                      MtlxConstantValue* out) {
+  if (!out || coordinate.components < (is_3d ? 3 : 2) ||
+      components < 1 || components > 3) return false;
+  const float p[3] = {coordinate.component(0), coordinate.component(1),
+                      is_3d ? coordinate.component(2) : 0.0f};
+  const int cell[3] = {static_cast<int>(std::floor(p[0])),
+                       static_cast<int>(std::floor(p[1])),
+                       is_3d ? static_cast<int>(std::floor(p[2])) : 0};
+  const float local[3] = {p[0] - cell[0], p[1] - cell[1],
+                          is_3d ? p[2] - cell[2] : 0.0f};
+  float nearest[3] = {1.0e6f, 1.0e6f, 1.0e6f};
+  float feature[3] = {0.0f, 0.0f, 0.0f};
+  for (int x = -1; x <= 1; ++x) {
+    for (int y = -1; y <= 1; ++y) {
+      for (int z = is_3d ? -1 : 0; z <= (is_3d ? 1 : 0); ++z) {
+        const int cx = cell[0] + x, cy = cell[1] + y, cz = cell[2] + z;
+        const float q[3] = {
+            x + (MtlxCellChannel(cx, cy, cz, is_3d, 0) - 0.5f) * jitter + 0.5f,
+            y + (MtlxCellChannel(cx, cy, cz, is_3d, 1) - 0.5f) * jitter + 0.5f,
+            is_3d ? z + (MtlxCellChannel(cx, cy, cz, true, 2) - 0.5f) * jitter + 0.5f : 0.0f};
+        const float dx = q[0] - local[0], dy = q[1] - local[1];
+        const float dz = is_3d ? q[2] - local[2] : 0.0f;
+        const float distance_squared = dx * dx + dy * dy + dz * dz;
+        if (distance_squared < nearest[0]) {
+          nearest[2] = nearest[1]; nearest[1] = nearest[0];
+          nearest[0] = distance_squared;
+          std::copy(q, q + 3, feature);
+        } else if (distance_squared < nearest[1]) {
+          nearest[2] = nearest[1]; nearest[1] = distance_squared;
+        } else if (distance_squared < nearest[2]) {
+          nearest[2] = distance_squared;
+        }
+      }
+    }
+  }
+  out->components = components;
+  out->color_managed = coordinate.color_managed;
+  for (int i = 0; i < components; ++i) {
+    if (style == 1) {
+      const int hx = static_cast<int>(std::floor(feature[0] - local[0] + p[0]));
+      const int hy = static_cast<int>(std::floor(feature[1] - local[1] + p[1]));
+      const int hz = is_3d ? static_cast<int>(std::floor(feature[2] - local[2] + p[2])) : 0;
+      out->value[static_cast<size_t>(i)] = MtlxCellChannel(
+          hx, hy, hz, is_3d, components == 1 ? -1 : i);
+    } else {
+      out->value[static_cast<size_t>(i)] = std::sqrt(nearest[i]);
+    }
+  }
+  return true;
+}
+
 bool EvalMtlxConstantConnection(const Stage& stage,
                                 const std::string& connection,
                                 double time_code,
@@ -312,6 +429,20 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                          visiting, depth + 1);
   };
   auto starts = [&id](const char* prefix) { return id.rfind(prefix, 0) == 0; };
+
+  if (starts("ND_worleynoise2d_") || starts("ND_worleynoise3d_")) {
+    const bool is_3d = starts("ND_worleynoise3d_");
+    MtlxConstantValue coordinate, jitter, style;
+    if (!input(is_3d ? "position" : "texcoord", &coordinate)) return false;
+    const float jitter_value = input("jitter", &jitter)
+                                   ? jitter.component(0) : 1.0f;
+    const int style_value = input("style", &style)
+                                ? static_cast<int>(style.component(0)) : 0;
+    const int components = id.find("_vector3") != std::string::npos ? 3
+        : (id.find("_vector2") != std::string::npos ? 2 : 1);
+    return MtlxWorley(coordinate, is_3d, jitter_value, style_value,
+                      components, out);
+  }
 
   if (id == "ND_constant_float" || id == "ND_constant_color3" ||
       id == "ND_constant_vector3" || id == "ND_constant_color4") {
