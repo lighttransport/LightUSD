@@ -331,6 +331,43 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_INCLUDE_PATH", 0,
          "parent-traversal XInclude unexpectedly succeeded");
   }
+
+  g_checks++;
+  MtlxDocument defaults;
+  const std::string defaults_xml = R"(<materialx version="1.39">
+  <nodedef name="ND_base" node="defaulted" type="color3">
+    <input name="value" type="color3" value="0.1, 0.2, 0.3"/>
+  </nodedef>
+  <nodedef name="ND_defaulted" node="defaulted" type="color3" inherit="ND_base"/>
+  <defaulted name="defaulted_node" type="color3" nodedef="ND_defaulted"/>
+  <defaulted name="wired_node" type="color3" nodedef="ND_defaulted">
+    <input name="value" type="color3" nodename="wire"/>
+  </defaulted>
+</materialx>)";
+  if (!defaults.ParseFromXML(defaults_xml)) {
+    Fail("MTLX_DOCUMENT_NODEDEF_DEFAULT", 0, defaults.GetError());
+    return;
+  }
+  const MtlxNodePtr defaulted_node = defaults.FindNode("defaulted_node");
+  const MtlxInputPtr defaulted_value =
+      defaulted_node ? defaulted_node->GetInput("value") : nullptr;
+  if (!defaulted_value ||
+      defaulted_value->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+      defaulted_value->GetValue().float_vec.size() != 3 ||
+      std::fabs(defaulted_value->GetValue().float_vec[0] - 0.1f) > 1.0e-6f ||
+      std::fabs(defaulted_value->GetValue().float_vec[1] - 0.2f) > 1.0e-6f ||
+      std::fabs(defaulted_value->GetValue().float_vec[2] - 0.3f) > 1.0e-6f) {
+    Fail("MTLX_DOCUMENT_NODEDEF_DEFAULT", 0,
+         "nodedef default input was not added to the node instance");
+  }
+  const MtlxNodePtr wired_node = defaults.FindNode("wired_node");
+  const MtlxInputPtr wired_value =
+      wired_node ? wired_node->GetInput("value") : nullptr;
+  if (!wired_value || wired_value->GetNodeName() != "wire" ||
+      wired_value->GetValue().type != MtlxValue::TYPE_NONE) {
+    Fail("MTLX_DOCUMENT_NODEDEF_BINDING", 0,
+         "nodedef default overwrote an authored node connection");
+  }
 }
 
 int main() {

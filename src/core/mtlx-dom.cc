@@ -23,6 +23,66 @@ XMLNodePtr MtlxElemToXMLNode(const MtlxElem &elem) {
   return node;
 }
 
+MtlxElem XMLNodeToMtlxElem(XMLNodePtr node) {
+  MtlxElem elem;
+  if (!node) return elem;
+  elem.tag = node->GetName();
+  for (const auto &attr : node->GetAttributes())
+    elem.attrs.emplace_back(attr.first, attr.second);
+  for (const XMLNodePtr &child : node->GetChildren())
+    elem.children.push_back(XMLNodeToMtlxElem(child));
+  return elem;
+}
+
+void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,
+                              const MtlxScope &outer) {
+  if (!elem) return;
+  if (IsMtlxNodeElem(*elem)) {
+    if (const MtlxNodeDefInfo *def = library.ResolveReference(*elem, outer)) {
+      for (const MtlxPort &port : library.ActiveInputs(*def)) {
+        if (!port.has_value) continue;
+        MtlxElem *input = nullptr;
+        for (MtlxElem &child : elem->children) {
+          if (child.tag == "input" && child.Name() == port.name) {
+            input = &child;
+            break;
+          }
+        }
+        if (!input) {
+          elem->children.emplace_back();
+          input = &elem->children.back();
+          input->tag = "input";
+          input->SetAttr("name", port.name);
+          input->SetAttr("type", port.type);
+          input->SetAttr("value", port.value);
+          continue;
+        }
+        if (input->Attr("value") || input->Attr("nodename") ||
+            input->Attr("nodegraph") || input->Attr("interfacename")) {
+          continue;
+        }
+        if (input->Attr("type") == nullptr) input->SetAttr("type", port.type);
+        input->SetAttr("value", port.value);
+      }
+    }
+  }
+  MtlxScope child_scope;
+  child_scope.reserve(outer.size() + 1);
+  child_scope.push_back(elem);
+  child_scope.insert(child_scope.end(), outer.begin(), outer.end());
+  for (MtlxElem &child : elem->children)
+    ApplyMtlxNodeDefDefaults(&child, library, child_scope);
+}
+
+void ApplyMtlxNodeDefDefaults(MtlxElem *root) {
+  if (!root) return;
+  MtlxLibrary library;
+  library.AddFrom(*root);
+  const MtlxScope outer = {root};
+  for (MtlxElem &child : root->children)
+    ApplyMtlxNodeDefDefaults(&child, library, outer);
+}
+
 std::string MtlxIncludeAnchor(const std::string &root_path,
                              const std::string &including_href) {
   if (including_href.empty()) return root_path;
@@ -292,7 +352,9 @@ bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
   }
 
   warning_ = parser.GetWarning();
-  return ParseRoot(parser.GetDocument().GetRoot());
+  MtlxElem root = XMLNodeToMtlxElem(parser.GetDocument().GetRoot());
+  ApplyMtlxNodeDefDefaults(&root);
+  return ParseRoot(MtlxElemToXMLNode(root));
 }
 
 bool MtlxDocument::ParseFromXML(const std::string &xml_string,
@@ -329,6 +391,7 @@ bool MtlxDocument::ParseFromXML(const std::string &xml_string,
     return false;
   }
 
+  ApplyMtlxNodeDefDefaults(&root);
   return ParseRoot(MtlxElemToXMLNode(root));
 }
 
