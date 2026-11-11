@@ -185,6 +185,42 @@ MtlxConstantValue MtlxBinary(const MtlxConstantValue& a,
   return out;
 }
 
+static void MtlxRgbToHsv(const float* rgb, float* hsv) {
+  const float maximum = std::max({rgb[0], rgb[1], rgb[2]});
+  const float minimum = std::min({rgb[0], rgb[1], rgb[2]});
+  const float delta = maximum - minimum;
+  float hue = 0.0f;
+  if (delta > 0.0f) {
+    if (rgb[0] == maximum) hue = (rgb[1] - rgb[2]) / delta;
+    else if (rgb[1] == maximum) hue = 2.0f + (rgb[2] - rgb[0]) / delta;
+    else hue = 4.0f + (rgb[0] - rgb[1]) / delta;
+    hue /= 6.0f;
+    if (hue < 0.0f) hue += 1.0f;
+  }
+  hsv[0] = hue;
+  hsv[1] = maximum != 0.0f ? delta / maximum : 0.0f;
+  hsv[2] = maximum;
+}
+
+static void MtlxHsvToRgb(const float* hsv, float* rgb) {
+  if (hsv[1] == 0.0f) {
+    rgb[0] = rgb[1] = rgb[2] = hsv[2];
+    return;
+  }
+  float hue = std::fmod(hsv[0], 1.0f);
+  if (hue < 0.0f) hue += 1.0f;
+  const float sector_position = hue * 6.0f;
+  const int sector = static_cast<int>(std::floor(sector_position)) % 6;
+  const float fraction = sector_position - std::floor(sector_position);
+  const float p = hsv[2] * (1.0f - hsv[1]);
+  const float q = hsv[2] * (1.0f - hsv[1] * fraction);
+  const float t = hsv[2] * (1.0f - hsv[1] * (1.0f - fraction));
+  const float table[6][3] = {{hsv[2], t, p}, {q, hsv[2], p},
+                             {p, hsv[2], t}, {p, q, hsv[2]},
+                             {t, p, hsv[2]}, {hsv[2], p, q}};
+  for (int i = 0; i < 3; ++i) rgb[i] = table[sector][i];
+}
+
 bool EvalMtlxConstantConnection(const Stage& stage,
                                 const std::string& connection,
                                 double time_code,
@@ -439,6 +475,33 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     *out = value;
     out->value[0] = x * std::cos(radians) - y * std::sin(radians);
     out->value[1] = x * std::sin(radians) + y * std::cos(radians);
+    return true;
+  }
+
+  if (starts("ND_rgbtohsv_") || starts("ND_hsvtorgb_")) {
+    MtlxConstantValue value;
+    if (!input("in", &value) || value.components < 3) return false;
+    *out = value;
+    float converted[3];
+    if (starts("ND_rgbtohsv_")) MtlxRgbToHsv(value.value.data(), converted);
+    else MtlxHsvToRgb(value.value.data(), converted);
+    for (int i = 0; i < 3; ++i) out->value[static_cast<size_t>(i)] = converted[i];
+    return true;
+  }
+
+  if (starts("ND_hsvadjust_")) {
+    MtlxConstantValue value, amount;
+    if (!input("in", &value) || !input("amount", &amount) ||
+        value.components < 3 || amount.components < 3) return false;
+    float hsv[3], rgb[3];
+    MtlxRgbToHsv(value.value.data(), hsv);
+    hsv[0] += amount.component(0);
+    hsv[1] *= amount.component(1);
+    hsv[2] *= amount.component(2);
+    MtlxHsvToRgb(hsv, rgb);
+    *out = value;
+    for (int i = 0; i < 3; ++i) out->value[static_cast<size_t>(i)] = rgb[i];
+    out->color_managed = value.color_managed || amount.color_managed;
     return true;
   }
 

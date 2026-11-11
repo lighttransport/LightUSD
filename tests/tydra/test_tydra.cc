@@ -79,19 +79,35 @@ def Scope "M" {
     float2 inputs:in = (1, 0)
     float inputs:amount = 90
   }
+  def Shader "RgbToHsv" {
+    uniform token info:id = "ND_rgbtohsv_color3"
+    color3f inputs:in = (1, 0.5, 0)
+  }
+  def Shader "HsvToRgb" {
+    uniform token info:id = "ND_hsvtorgb_color3"
+    color3f inputs:in = (0.5, 1, 1)
+  }
+  def Shader "HsvAdjust" {
+    uniform token info:id = "ND_hsvadjust_color3"
+    color3f inputs:in = (0.25, 0.5, 0.75)
+    color3f inputs:amount = (0, 1, 1)
+  }
 }
 )USD";
   Stage stage;
   std::string warning, error;
   assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(text),
                            std::strlen(text), &stage, &warning, &error));
-  struct Case { const char* path; float expected[2]; int components; };
+  struct Case { const char* path; float expected[3]; int components; };
   const Case cases[] = {
       {"/M/SafePower", {-8.0f, 0.0f}, 1},
       {"/M/Atan2", {1.57079632679f, 0.0f}, 1},
       {"/M/Magnitude", {5.0f, 0.0f}, 1},
       {"/M/Distance", {5.0f, 0.0f}, 1},
       {"/M/Rotate", {0.0f, 1.0f}, 2},
+      {"/M/RgbToHsv", {1.0f / 12.0f, 1.0f, 1.0f}, 3},
+      {"/M/HsvToRgb", {0.0f, 1.0f, 1.0f}, 3},
+      {"/M/HsvAdjust", {0.25f, 0.5f, 0.75f}, 3},
   };
   for (const Case& test : cases) {
     MtlxConstantValue value;
