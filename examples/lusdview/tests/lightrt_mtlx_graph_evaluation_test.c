@@ -192,8 +192,8 @@ int main(void) {
   int ok = check3("chain", eval_named(&ctx, "clamped"), 0.6f, 1.0f, 1.0f) &&
            check3("ramp-left", eval_named(&ctx, "ramp"), 0.75f, 0.0f, 0.25f) &&
            check3("split-left", eval_named(&ctx, "split"), 0.0f, 1.0f, 0.0f) &&
-           check3("ramp-tb", eval_named(&ctx, "ramp_tb"), 0.25f, 1.0f, 0.75f) &&
-           check3("split-tb-top", eval_named(&ctx, "split_tb"), 1.0f, 0.0f, 0.0f) &&
+           check3("ramp-tb", eval_named(&ctx, "ramp_tb"), 0.75f, 1.0f, 0.25f) &&
+           check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f, 1.0f) &&
            check3("screen", eval_named(&ctx, "screen"), 0.19f, 0.55f, 0.82f) &&
            check3("overlay", eval_named(&ctx, "overlay"), 0.07f, 0.4f, 0.79f) &&
            nearf_eps(eval_named(&ctx, "burn").v[0], -0.125f) &&
@@ -213,9 +213,9 @@ int main(void) {
   ok = check3("hsv-roundtrip", eval_named(&ctx, "rgb"), 0.2f, 0.4f, 0.8f) &&
        nearf_eps(eval_named(&ctx, "rotate").v[0], 0.0f) &&
        nearf_eps(eval_named(&ctx, "rotate").v[1], 1.0f) && ok;
-  ok = check3("ramp4", eval_named(&ctx, "quad"), 0.375f, 0.25f, 0.75f) &&
-       check3("switch-connected", eval_named(&ctx, "pick"), 0.375f, 0.25f,
-              0.75f) && ok;
+  ok = check3("ramp4", eval_named(&ctx, "quad"), 0.625f, 0.25f, 0.25f) &&
+       check3("switch-connected", eval_named(&ctx, "pick"), 0.625f, 0.25f,
+              0.25f) && ok;
   ok = check4("ramp", eval_named(&ctx, "full_ramp"), 0.5f, 0.0f, 0.0f,
               1.0f) &&
        check4("ramp-gradient", eval_named(&ctx, "gradient"), 0.15625f,
@@ -360,8 +360,8 @@ int main(void) {
   ctx.uv[1] = 0.9f;
   ok = check3("ramp-right", eval_named(&ctx, "ramp"), 0.2f, 0.0f, 0.8f) &&
        check3("split-right", eval_named(&ctx, "split"), 1.0f, 0.0f, 1.0f) && ok;
-  ok = check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f,
-              1.0f) && ok;
+  ok = check3("split-tb-top", eval_named(&ctx, "split_tb"), 1.0f, 0.0f,
+              0.0f) && ok;
   free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
 
   /* Cyclic graph edges must terminate through the evaluator's zero sentinel
