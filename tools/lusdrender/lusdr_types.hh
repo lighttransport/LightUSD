@@ -798,6 +798,10 @@ struct Options {
   TextureCompress texture_compress{TextureCompress::Off};  // -texCompress
   enum class UdimMode { Sparse, Atlas };
   UdimMode udim_mode{UdimMode::Sparse};  // -udim; sparse is the large-scene default
+  // MaterialX validation entry point. Kept at the end to preserve offsets of
+  // the existing Options fields used by other renderer translation units.
+  std::string mtlx_file;
+  std::string mtlx_material;
 };
 
 struct DirectShape {

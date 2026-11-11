@@ -507,6 +507,15 @@ if(LIGHTUSD_BUILD_TESTS)
                          TIMEOUT 45 LABELS "lusdrender;cpu;materialx;graph")
 
     add_test(
+      NAME tool-lusdrender-materialx-validation
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_validation.py
+              "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/materialx-validation)
+    set_tests_properties(tool-lusdrender-materialx-validation PROPERTIES
+                         TIMEOUT 45 LABELS "lusdrender;cpu;materialx;validation")
+
+    add_test(
       NAME tool-lusdrender-materialx-flake-parity
       COMMAND ${LUSDR_PYTHON}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_flake_parity.py

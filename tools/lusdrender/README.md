@@ -12,6 +12,22 @@ accepted with a warning and ignored.
 lusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 ```
 
+### MaterialX validation preview
+
+```sh
+lusdrender --mtlx material.mtlx material.png
+lusdrender --mtlx material.mtlx material.png --mtlx-material MyMaterial -w 512 -height 512
+```
+
+This CPU-only entry point converts a supported MaterialX surface through the
+existing Tydra material converter, binds it to a generated sphere, and renders
+under a uniform white `DomeLight` with LightRT BSDF shading. The default image
+size is 512 by 512. `--mtlx-material` selects a named MaterialX material.
+Unsupported conversions fail with the converter's diagnostic. This is an
+entry-point smoke path; it does not yet evaluate arbitrary MaterialX node
+graphs directly, produce per-lobe/node-output AOVs, or implement the planned
+white-furnace and reference-image validation suite.
+
 ### Build and link time
 
 On Linux, `lusdrender` automatically uses the first available fast linker in

@@ -14,11 +14,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
+#include <iomanip>
 
 #include "preview_gpu_budget.hh"
 #include "tydra/scene-preview-compute.hh"
 #include "tydra/scene-preview.hh"
 #include "tydra/render-converter.hh"
+#include "tydra/materialx.hh"
 // unconditionally (was only included under LIGHTUSD_WITH_QJS)
 #include <iostream>
 #include <mutex>
@@ -90,6 +92,98 @@ extern "C" {
 using namespace lusdr;
 
 namespace {
+
+struct GeneratedMtlxScene {
+  std::string path;
+  ~GeneratedMtlxScene() {
+    if (!path.empty()) std::remove(path.c_str());
+  }
+};
+
+bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
+                              std::string *error) {
+  if (!generated || opt.mtlx_file.empty()) return false;
+  lightusd::tydra::MtlxConverter converter;
+  lightusd::tydra::RenderMaterial material;
+  if (!converter.ConvertFileToRenderMaterial(opt.mtlx_file, opt.mtlx_material,
+                                             &material)) {
+    if (error) *error = converter.GetError();
+    return false;
+  }
+  if (material.default_fallback || !converter.GetWarning().empty() ||
+      material.shader_type != lightusd::tydra::RenderMaterial::ShaderType::PreviewSurface ||
+      !material.preview_surface) {
+    if (error) {
+      *error = converter.GetWarning().empty()
+                   ? "MaterialX validation currently requires a convertible standard_surface or UsdPreviewSurface"
+                   : converter.GetWarning();
+    }
+    return false;
+  }
+  const auto &ps = *material.preview_surface;
+  auto scalar = [](float v) {
+    std::ostringstream out;
+    out << std::setprecision(9) << (std::isfinite(v) ? v : 0.0f);
+    return out.str();
+  };
+  auto color = [&](const lightusd::tydra::ShaderParam &p) {
+    return "(" + scalar(p.value.x) + ", " + scalar(p.value.y) + ", " +
+           scalar(p.value.z) + ")";
+  };
+
+  static std::atomic<uint64_t> sequence{0};
+  const std::string temp_dir = lightusd::io::GetTempDir(opt.temp_directory,
+                                                        opt.host_services);
+  generated->path = temp_dir + "/lusdr_mtlx_validation_" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+      "_" + std::to_string(sequence.fetch_add(1)) + ".usda";
+  std::ofstream out(generated->path, std::ios::out | std::ios::trunc);
+  if (!out) {
+    if (error) *error = "cannot write temporary MaterialX validation scene: " + generated->path;
+    generated->path.clear();
+    return false;
+  }
+  out << "#usda 1.0\n(\n    defaultPrim = \"World\"\n"
+         "    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\n"
+         "def Xform \"World\" {\n"
+         "    def Sphere \"MaterialSphere\" (\n"
+         "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+         "    ) {\n"
+         "        double radius = 1\n"
+         "        rel material:binding = </World/Material>\n"
+         "    }\n"
+         "    def Material \"Material\" {\n"
+         "        token outputs:surface.connect = </World/Material/Surface.outputs:surface>\n"
+         "        def Shader \"Surface\" {\n"
+         "            uniform token info:id = \"UsdPreviewSurface\"\n"
+         "            color3f inputs:diffuseColor = " << color(ps.diffuse_color) << "\n"
+      << "            color3f inputs:emissiveColor = " << color(ps.emissive_color) << "\n"
+      << "            color3f inputs:specularColor = " << color(ps.specular_color) << "\n"
+      << "            float inputs:metallic = " << scalar(ps.metallic.value.x) << "\n"
+      << "            float inputs:roughness = " << scalar(ps.roughness.value.x) << "\n"
+      << "            float inputs:clearcoat = " << scalar(ps.clearcoat.value.x) << "\n"
+      << "            float inputs:clearcoatRoughness = " << scalar(ps.clearcoat_roughness.value.x) << "\n"
+      << "            float inputs:opacity = " << scalar(ps.opacity.value.x) << "\n"
+      << "            float inputs:opacityThreshold = " << scalar(ps.opacity_threshold.value.x) << "\n"
+      << "            float inputs:ior = " << scalar(ps.ior.value.x) << "\n"
+      << "            bool inputs:useSpecularWorkflow = " << (ps.use_specular_workflow ? "true" : "false") << "\n"
+         "            token outputs:surface\n"
+         "        }\n"
+         "    }\n"
+         "    def DomeLight \"UniformWhite\" {\n"
+         "        color3f inputs:color = (1, 1, 1)\n"
+         "        float inputs:intensity = 1\n"
+         "    }\n"
+         "}\n";
+  out.close();
+  if (!out) {
+    if (error) *error = "failed writing temporary MaterialX validation scene";
+    std::remove(generated->path.c_str());
+    generated->path.clear();
+    return false;
+  }
+  return true;
+}
 
 uint8_t FloatToByte(float v) {
   if (!std::isfinite(v)) return 0;
@@ -1469,6 +1563,25 @@ int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+  GeneratedMtlxScene generated_mtlx_scene;
+  if (!opt.mtlx_file.empty()) {
+    if (scenePreview.enabled) {
+      std::cerr << "--mtlx cannot be combined with scene-preview options.\n";
+      return EXIT_FAILURE;
+    }
+    std::string mtlx_error;
+    if (!BuildMtlxValidationScene(opt, &generated_mtlx_scene, &mtlx_error)) {
+      std::cerr << "MaterialX validation scene: " << mtlx_error << "\n";
+      return EXIT_FAILURE;
+    }
+    opt.input = generated_mtlx_scene.path;
+    if (!opt.width_explicit) opt.width = 512;
+    if (!opt.height_explicit) opt.height = 512;
+    opt.rt_preview = true;
+    opt.material_shading = Options::MaterialShading::LightRtBsdf;
+    opt.ambient = 0.0f;
+    std::cerr << "MaterialX validation: sphere, uniform white environment, CPU LightRT BSDF\n";
   }
   if (scenePreview.enabled) {
     scenePreview.options.time_code = std::isfinite(opt.timecode) ? opt.timecode : 0.0;

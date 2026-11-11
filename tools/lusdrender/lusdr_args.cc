@@ -96,6 +96,7 @@ void PrintUsage(const char *prog) {
       << "lusdrender - CPU preview raytrace renderer for USD\n\n"
       << "Usage:\n"
       << "  " << prog << " input.usd output.png [options]\n\n"
+      << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
       << "  -h, -help              Show this help.\n"
       << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
@@ -402,6 +403,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     OPT_MATCH(a == "-h" || a == "-help" || a == "--help") {
       PrintUsage(argv[0]);
       std::exit(EXIT_SUCCESS);
+    }
+    OPT_MATCH(a == "--mtlx") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->mtlx_file = v;
+    }
+    OPT_MATCH(a == "--mtlx-material") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->mtlx_material = v;
     }
     OPT_MATCH(a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
@@ -1177,9 +1188,26 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   // input is required there; an output positional is optional.
   const bool output_optional =
       opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
-  if (positional.empty() || positional.size() > 2 ||
-      (!output_optional && positional.size() != 2)) {
+  if (opt->mtlx_file.empty() && !opt->mtlx_material.empty()) {
+    std::cerr << "--mtlx-material requires --mtlx.\n";
+    return false;
+  }
+  if (!opt->mtlx_file.empty()) {
+    if (positional.size() != 1 || output_optional) {
+      PrintUsage(argv[0]);
+      return false;
+    }
+    opt->input = opt->mtlx_file;
+    opt->output = positional[0];
+  } else if (positional.empty() || positional.size() > 2 ||
+             (!output_optional && positional.size() != 2)) {
     PrintUsage(argv[0]);
+    return false;
+  }
+  if (!opt->mtlx_file.empty() &&
+      (opt->vulkan || opt->vulkan_rt || opt->vulkan_instanced || opt->use_d3d ||
+       opt->cuda || opt->hip || opt->path_trace)) {
+    std::cerr << "--mtlx validation mode currently uses the CPU renderer only.\n";
     return false;
   }
   if (opt->diagnostic_material != MaterialDiagnostic::None &&
@@ -1192,8 +1220,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     return false;
   }
   if (opt->diagnostic_emission) opt->gpu_shade = Options::GpuShadeMode::Cpu;
-  opt->input = positional[0];
-  opt->output = positional.size() > 1 ? positional[1] : std::string();
+  if (opt->mtlx_file.empty()) {
+    opt->input = positional[0];
+    opt->output = positional.size() > 1 ? positional[1] : std::string();
+  }
   if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
     std::cerr << "--path-trace requires -vkr, -cuda, or -hip.\n";
     return false;
