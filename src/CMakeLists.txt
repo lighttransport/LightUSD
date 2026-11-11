@@ -156,6 +156,7 @@ set(LIGHTUSD_CORE_SOURCES
     mtlx-xml-tokenizer.cc
     mtlx-xml-parser.cc
     core/mtlx-dom.cc
+    core/mtlx-resolve.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -932,6 +933,24 @@ if(LIGHTUSD_BUILD_TESTS)
         LIGHTUSD_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
     target_include_directories(test_lean_vectors PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core)
+
+    # Lean-generated MaterialX conformance vectors
+    # (tests/core/generated/lean-mtlx/*.inc, produced by `lake exe mtlxspec-gen`
+    # in the materialx-conformance repo; never skips).
+    add_executable(test_mtlx_lean_vectors
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/test_mtlx_lean_vectors.cc
+    )
+    target_link_libraries(test_mtlx_lean_vectors PRIVATE lightusd_core)
+    target_include_directories(test_mtlx_lean_vectors PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core)
+
+    # Canonical resolved-document dump of a .mtlx file (differential tests).
+    add_executable(lmtlxinfo
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/lmtlxinfo.cc
+    )
+    target_link_libraries(lmtlxinfo PRIVATE lightusd_core)
+    set_target_properties(lmtlxinfo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
@@ -1892,6 +1911,12 @@ if(LIGHTUSD_BUILD_TESTS)
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/test-pcp-json.py
                 --lusdcat $<TARGET_FILE:lusdcat>)
     set_tests_properties(core_pcp_json_contract PROPERTIES LABELS "core;aousd;lean;pcp")
+
+    add_test(NAME core_test_mtlx_lean_vectors
+        COMMAND test_mtlx_lean_vectors
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(core_test_mtlx_lean_vectors
+        PROPERTIES LABELS "core;mtlx;lean")
 
     add_test(NAME core_test_lean_vectors
         COMMAND test_lean_vectors
