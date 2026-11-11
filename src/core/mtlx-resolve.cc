@@ -1072,6 +1072,18 @@ const MtlxElem *FindMtlxChild(const MtlxElem &parent, const char *tag,
   return nullptr;
 }
 
+const MtlxElem *FindMtlxScopedChild(const MtlxElem &parent, const char *tag,
+                                   const std::string &name, const MtlxElem &at,
+                                   const MtlxScope &outer) {
+  std::string ns;
+  if (NamespaceAt(at, outer, &ns)) {
+    if (const MtlxElem *found =
+            FindMtlxChild(parent, tag, QualifyWith(&ns, name)))
+      return found;
+  }
+  return FindMtlxChild(parent, tag, name);
+}
+
 const MtlxElem *FindMtlxNode(const MtlxElem &graph, const std::string &name) {
   for (const MtlxElem &child : graph.children) {
     if (IsMtlxNodeElem(child) && child.Name() == name) return &child;
@@ -1243,7 +1255,10 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
         successors[source_pos].push_back(i);
         ++indegree[i];
       } else if (graph_name) {
-        const MtlxElem *source_graph = FindMtlxChild(document, "nodegraph", *graph_name);
+        MtlxScope input_scope{&input};
+        input_scope.insert(input_scope.end(), node_scope.begin(), node_scope.end());
+        const MtlxElem *source_graph = FindMtlxScopedChild(
+            document, "nodegraph", *graph_name, input, input_scope);
         if (!source_graph) {
           if (err) *err = "input '" + input_name + "' references missing nodegraph '" +
                           *graph_name + "'";
@@ -1389,10 +1404,21 @@ bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
         if (input.tag != "input") continue;
         const std::string *dependency_name = input.Attr("nodegraph");
         if (!dependency_name) continue;
+        MtlxScope input_scope{&input, &node, graphs[consumer], &document};
+        std::string ns;
+        const bool has_namespace = NamespaceAt(input, input_scope, &ns);
+        const std::string qualified_name =
+            has_namespace ? QualifyWith(&ns, *dependency_name) : *dependency_name;
         size_t dependency = 0;
         while (dependency < graphs.size() &&
-               graphs[dependency]->Name() != *dependency_name)
+               graphs[dependency]->Name() != qualified_name)
           ++dependency;
+        if (dependency == graphs.size() && qualified_name != *dependency_name) {
+          dependency = 0;
+          while (dependency < graphs.size() &&
+                 graphs[dependency]->Name() != *dependency_name)
+            ++dependency;
+        }
         if (dependency == graphs.size()) {
           if (err) *err = "nodegraph connection references missing graph '" +
                           *dependency_name + "'";

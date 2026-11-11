@@ -373,6 +373,17 @@ static void CheckTypedMtlxGraphResolution() {
          error.empty() ? "nodegraph dependency order differed" : error);
   }
 
+  MtlxElem namespaced_root = root;
+  namespaced_root.SetAttr("namespace", "studio");
+  namespaced_root.children[0].SetAttr("name", "studio:helper");
+  namespaced_root.children[1].SetAttr("name", "studio:main");
+  g_checks++;
+  if (!ResolveMtlxGraphs(namespaced_root, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"studio:helper", "studio:main"})) {
+    Fail("MTLX_GRAPHS_NAMESPACE", 0,
+         error.empty() ? "namespaced nodegraph dependency differed" : error);
+  }
+
   MtlxElem wrong_type = root.children[1];
   wrong_type.children[2].children[0].SetAttr("type", "integer");
   g_checks++;
