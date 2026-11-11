@@ -184,6 +184,10 @@ for label, graph_shader in (
     require(graph_shader,
             r"op\s*==\s*10\)\s*\{\s*int width = clamp\(int\(floor\([^)]*p \+ 3u\][^)]*\)\), 1, 4\);\s*float d = width == 1 \? av\.x \* bv\.x\s*: width == 2 \? dot\(av\.xy, bv\.xy\)\s*: width == 3 \? dot\(av\.xyz, bv\.xyz\)\s*: dot\(av, bv\)",
             f"{label} MaterialX dot component width")
+    if label != "Vulkan raster":
+        require(graph_shader,
+                r"op\s*==\s*21\)\s*v\[i\]\s*=\s*vec4\(graphRows\[p \+ 14u\] > 0\.5 \? uv1 : uv0, 0\.0, 1\.0\)",
+                f"{label} MaterialX texcoord set")
 if "r<44" in shader:
     raise SystemExit("GPU material ABI mismatch: stale Vulkan graph route count")
 require(vk_header, r"LRT_VK_MATERIAL_PATH_LIGHT_FLOATS\s+16u", "LightRT host light stride")

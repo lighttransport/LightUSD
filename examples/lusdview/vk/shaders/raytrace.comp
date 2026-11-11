@@ -906,7 +906,8 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
         float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722));
         v[i] = vec4(l, l, l, av.w);
       } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
-      else if (op == 21) v[i] = vec4(uv1, 0.0, 1.0);
+      else if (op == 21)
+        v[i] = vec4(graphRows[p + 14u] > 0.5 ? uv1 : uv0, 0.0, 1.0);
       else if (op == 22) v[i] = floor(av);
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
