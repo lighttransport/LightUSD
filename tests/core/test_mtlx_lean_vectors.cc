@@ -368,6 +368,35 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_NODEDEF_BINDING", 0,
          "nodedef default overwrote an authored node connection");
   }
+
+  g_checks++;
+  MtlxDocument scoped;
+  const std::string scoped_xml = R"(<materialx version="1.39"
+      colorspace="lin_rec709" fileprefix="textures/">
+  <image name="inherited_image" type="color3">
+    <input name="file" type="filename" value="albedo.exr"/>
+  </image>
+  <image name="overridden_image" type="color3">
+    <input name="file" type="filename" value="mask.exr" colorspace="data"/>
+  </image>
+</materialx>)";
+  if (!scoped.ParseFromXML(scoped_xml)) {
+    Fail("MTLX_DOCUMENT_SCOPED_ATTRIBUTES", 0, scoped.GetError());
+    return;
+  }
+  const MtlxNodePtr inherited_image = scoped.FindNode("inherited_image");
+  const MtlxInputPtr inherited_file =
+      inherited_image ? inherited_image->GetInput("file") : nullptr;
+  const MtlxNodePtr overridden_image = scoped.FindNode("overridden_image");
+  const MtlxInputPtr overridden_file =
+      overridden_image ? overridden_image->GetInput("file") : nullptr;
+  if (!inherited_file || inherited_file->GetColorSpace() != "lin_rec709" ||
+      inherited_file->GetFilePrefix() != "textures/" || !overridden_file ||
+      overridden_file->GetColorSpace() != "data" ||
+      overridden_file->GetFilePrefix() != "textures/") {
+    Fail("MTLX_DOCUMENT_SCOPED_ATTRIBUTES", 0,
+         "scoped colorspace/fileprefix inheritance or override failed");
+  }
 }
 
 int main() {

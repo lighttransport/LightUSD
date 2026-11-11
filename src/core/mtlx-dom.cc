@@ -83,6 +83,30 @@ void ApplyMtlxNodeDefDefaults(MtlxElem *root) {
     ApplyMtlxNodeDefDefaults(&child, library, outer);
 }
 
+void InheritMtlxAttributes(MtlxElem *elem, const MtlxScope &outer) {
+  if (!elem) return;
+  static const char *const kScopedAttributes[] = {
+      "colorspace", "fileprefix", "geomprefix", "namespace"};
+  for (const char *key : kScopedAttributes) {
+    if (elem->Attr(key)) continue;
+    std::string value;
+    if (ScopedMtlxAttr(key, outer, &value)) elem->SetAttr(key, value);
+  }
+  MtlxScope child_scope;
+  child_scope.reserve(outer.size() + 1);
+  child_scope.push_back(elem);
+  child_scope.insert(child_scope.end(), outer.begin(), outer.end());
+  for (MtlxElem &child : elem->children)
+    InheritMtlxAttributes(&child, child_scope);
+}
+
+void InheritMtlxAttributes(MtlxElem *root) {
+  if (!root) return;
+  const MtlxScope outer = {root};
+  for (MtlxElem &child : root->children)
+    InheritMtlxAttributes(&child, outer);
+}
+
 std::string MtlxIncludeAnchor(const std::string &root_path,
                              const std::string &including_href) {
   if (including_href.empty()) return root_path;
@@ -353,6 +377,7 @@ bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
 
   warning_ = parser.GetWarning();
   MtlxElem root = XMLNodeToMtlxElem(parser.GetDocument().GetRoot());
+  InheritMtlxAttributes(&root);
   ApplyMtlxNodeDefDefaults(&root);
   return ParseRoot(MtlxElemToXMLNode(root));
 }
@@ -391,6 +416,7 @@ bool MtlxDocument::ParseFromXML(const std::string &xml_string,
     return false;
   }
 
+  InheritMtlxAttributes(&root);
   ApplyMtlxNodeDefDefaults(&root);
   return ParseRoot(MtlxElemToXMLNode(root));
 }

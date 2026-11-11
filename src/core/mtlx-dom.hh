@@ -131,6 +131,16 @@ public:
     return "";
   }
 
+  std::string GetFilePrefix() const {
+    auto it = extra_attributes_.find("fileprefix");
+    return it == extra_attributes_.end() ? std::string() : it->second;
+  }
+
+  std::string GetNamespace() const {
+    auto it = extra_attributes_.find("namespace");
+    return it == extra_attributes_.end() ? std::string() : it->second;
+  }
+
   // Parse from XML node
   virtual bool ParseFromXML(XMLNodePtr xml_node);
 
