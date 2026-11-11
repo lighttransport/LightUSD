@@ -200,6 +200,9 @@ for label, graph_shader in (
     require(graph_shader,
             r"op\s*==\s*26\)\s*\{\s*vec4 t = clamp\(\(av - bv\) / max\(cv - bv, vec4\(1e-6\)\),",
             f"{label} MaterialX smoothstep degenerate range")
+    require(graph_shader,
+            r"op\s*==\s*33\)\s*\{\s*vec4 divisor = max\(abs\(bv\), vec4\(1e-6\)\);\s*v\[i\] = av - divisor \* trunc\(av / divisor\);",
+            f"{label} MaterialX modulo truncation")
 if "r<44" in shader:
     raise SystemExit("GPU material ABI mismatch: stale Vulkan graph route count")
 require(vk_header, r"LRT_VK_MATERIAL_PATH_LIGHT_FLOATS\s+16u", "LightRT host light stride")

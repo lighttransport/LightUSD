@@ -949,7 +949,10 @@ vec4 evalMaterialXGraphContext(uint mid, int route, vec2 uv0, vec2 uv1,
       else if (op == 30) v[i] = tan(av);
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
-      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 33) {
+        vec4 divisor = max(abs(bv), vec4(1e-6));
+        v[i] = av - divisor * trunc(av / divisor);
+      }
       else if (op == 41) v[i] = atan(av, bv);
       else if (op == 42) v[i] = sign(av);
       else if (op == 43) v[i] = round(av);
