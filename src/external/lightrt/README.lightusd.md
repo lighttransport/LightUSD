@@ -61,7 +61,7 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
 
 - 2026-11-11: `mtlxrender/mtlx_doc.{c,h}`, `mtlx_eval.c` and the new
   `mtlx_stdlib_defs.inc` were re-synced from LightRT branch `mtlx-conformance`
-  (`581c9a6`, on top of `formal-lean` `83471f4`): standard-library nodedef
+  (`8f6b9d3`, on top of `formal-lean` `83471f4`): standard-library nodedef
   defaults at load, nearest-scope `fileprefix`, and the node fixes found by the
   Lean vectors of the materialx-conformance repository. `mtlx_stdlib_defs.inc`
   is generated (`lake exe mtlxspec-gen`); do not edit it by hand.
