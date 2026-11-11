@@ -118,5 +118,46 @@ int main(void) {
              specular.x, specular.y, specular.z);
     }
   }
+
+  // A zero-specular, zero-subsurface, zero-metal OpenPBR base is Lambert:
+  // integrating f_r * cos(theta) over a uniform white hemisphere must return
+  // its base color at every view angle. This gives the validation renderer an
+  // analytic reference before display encoding.
+  OpenPBRParams lambert;
+  memset(&lambert, 0, sizeof(lambert));
+  lambert.base_weight = 1.0f;
+  lambert.base_color = v3_make(0.2f, 0.4f, 0.6f);
+  lambert.specular_weight = 0.0f;
+  lambert.specular_color = v3_splat(1.0f);
+  lambert.specular_roughness = 1.0f;
+  lambert.specular_ior = 1.5f;
+  lambert.transmission_color = v3_splat(1.0f);
+  lambert.subsurface_color = v3_splat(1.0f);
+  lambert.subsurface_radius = v3_splat(1.0f);
+  lambert.coat_color = v3_splat(1.0f);
+  lambert.coat_ior = 1.5f;
+  lambert.sheen_color = v3_splat(1.0f);
+  lambert.sheen_roughness = 0.5f;
+  lambert.normal = v3_make(0.0f, 0.0f, 1.0f);
+  lambert.opacity = 1.0f;
+  const v3 expected = lambert.base_color;
+  const float lambert_views[] = {1.0f, 0.2f};
+  for (size_t vi = 0;
+       vi < sizeof(lambert_views) / sizeof(lambert_views[0]); ++vi) {
+    const v3 actual = integrate(&lambert, lambert_views[vi], 0);
+    if (fabsf(actual.x - expected.x) > 0.002f ||
+        fabsf(actual.y - expected.y) > 0.002f ||
+        fabsf(actual.z - expected.z) > 0.002f) {
+      fprintf(stderr,
+              "FAIL: Lambert white-furnace view_cos=%.2f "
+              "expected=(%.5f,%.5f,%.5f) actual=(%.5f,%.5f,%.5f)\n",
+              lambert_views[vi], expected.x, expected.y, expected.z,
+              actual.x, actual.y, actual.z);
+      return 1;
+    }
+    printf("PASS: Lambert white-furnace view_cos=%.2f "
+           "albedo=(%.3f,%.3f,%.3f)\n",
+           lambert_views[vi], actual.x, actual.y, actual.z);
+  }
   return 0;
 }
