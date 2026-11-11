@@ -27,8 +27,11 @@ generated sphere, and renders under a uniform white `DomeLight` with LightRT
 BSDF shading. The default image size is 512 by 512. `--mtlx-material` selects a
 named MaterialX material. This validates the resolved graph-to-OpenPBR-to-BSDF
 path for a single graph sample; it does not yet evaluate spatially varying graph
-outputs per pixel, produce per-lobe/node-output AOVs, or implement the planned
-white-furnace and reference-image validation suite.
+outputs per pixel or produce per-lobe/node-output AOVs. The CPU BSDF also has a
+deterministic white-furnace CTest that integrates diffuse and specular response
+for diffuse, dielectric, metal, subsurface, coat, sheen, and colored materials
+at normal and grazing views. It does not replace the remaining MaterialXView/OSL
+reference-image comparisons or full lobe-vector coverage.
 
 ### Build and link time
 

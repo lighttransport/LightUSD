@@ -4,10 +4,10 @@
 
 /* ---- microfacet helpers ----------------------------------------------- */
 
-static v3 fresnel_schlick(float cos_t, v3 f0) {
+static v3 fresnel_schlick(float cos_t, v3 f0, float f90) {
     float m = clampf(1.0f - cos_t, 0.0f, 1.0f);
     float m5 = m * m * m * m * m;
-    return v3_add(f0, v3_scale(v3_sub(v3_splat(1.0f), f0), m5));
+    return v3_add(f0, v3_scale(v3_sub(v3_splat(f90), f0), m5));
 }
 static float fresnel_schlick_s(float cos_t, float f0) {
     float m = clampf(1.0f - cos_t, 0.0f, 1.0f);
@@ -173,6 +173,7 @@ typedef struct {
     v3    diff_color;  /* effective diffuse albedo (incl. subsurface tint) */
     float subsurface_w; /* normalized-diffusion strength */
     v3    F0;          /* specular reflectance at normal incidence */
+    float F90;         /* specular-weighted grazing reflectance */
     float alpha;       /* GGX roughness^2 */
     v3    sheen_color; float sheen_alpha, sheen_w;
     v3    coat_color; float coat_alpha, coat_w, coat_f0, coat_Ri;
@@ -202,6 +203,7 @@ static Layers extract(const OpenPBRParams *p) {
     float f0d = (p->specular_ior - 1.0f) / (p->specular_ior + 1.0f);
     f0d = f0d * f0d * p->specular_weight;
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
+    L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     L.ior = p->specular_ior;
     L.alpha = clampf(p->specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
 
@@ -296,13 +298,25 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         diffuse_shape = (1.0f - L->subsurface_w) +
                         L->subsurface_w * maxf(0.0f, ss);
     }
+    /* Preserve the energy left for the diffuse/subsurface response after the
+     * dielectric interface reflects part of the incident and outgoing flux.
+     * Use the same Schlick curve and authored specular weight as the specular
+     * lobe; this also keeps a disabled specular lobe from spuriously reaching
+     * unit reflectance at grazing angles. */
+    const v3 one = v3_splat(1.0f);
+    const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->F0, L->F90);
+    const v3 diffuse_fresnel_light = fresnel_schlick(NdotL, L->F0, L->F90);
+    const v3 diffuse_fresnel_attenuation = v3_mul(
+        v3_sub(one, diffuse_fresnel_view),
+        v3_sub(one, diffuse_fresnel_light));
     v3 diff = v3_mul(diff_alb,
-                     v3_scale(base_atten, MTLX_INV_PI * diffuse_shape));
+                     v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
+                              MTLX_INV_PI * diffuse_shape));
 
     float D = ggx_D(NdotH, L->alpha), G = ggx_G(NdotV, NdotL, L->alpha);
     /* Thin film replaces the plain Fresnel with the iridescent airy reflectance
      * (blended by the film weight); the substrate index is the specular IOR. */
-    v3 F = fresnel_schlick(VdotH, L->F0);
+    v3 F = fresnel_schlick(VdotH, L->F0, L->F90);
     if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f)
         F = v3_lerp(F, fresnel_airy(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);

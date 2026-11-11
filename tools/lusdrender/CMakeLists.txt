@@ -433,6 +433,22 @@ endif()
 # Tests (CPU checks run headless; GPU checks skip with 77 without a device).
 # ---------------------------------------------------------------------------
 if(LIGHTUSD_BUILD_TESTS)
+  set(LUSDR_MTLX_BSDF_DIR
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+  add_executable(lusdrender-bsdf-white-furnace
+    tests/bsdf_white_furnace.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-white-furnace PRIVATE
+    ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-white-furnace PRIVATE c_std_11)
+  if(UNIX)
+    target_link_libraries(lusdrender-bsdf-white-furnace PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-white-furnace
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-white-furnace>)
+  set_tests_properties(tool-lusdrender-bsdf-white-furnace PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;white-furnace")
+
   if(LIGHTUSD_PYTHON_EXECUTABLE)
     set(LUSDR_PYTHON "${LIGHTUSD_PYTHON_EXECUTABLE}")
   else()
