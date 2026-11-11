@@ -188,6 +188,18 @@ for label, graph_shader in (
         require(graph_shader,
                 r"op\s*==\s*21\)\s*v\[i\]\s*=\s*vec4\(graphRows\[p \+ 14u\] > 0\.5 \? uv1 : uv0, 0\.0, 1\.0\)",
                 f"{label} MaterialX texcoord set")
+    require(graph_shader,
+            r"op\s*==\s*136\)\s*v\[i\]\s*=\s*mix\(sign\(av\) \* pow\(abs\(av\), bv\), vec4\(0\.0\),\s*equal\(av, vec4\(0\.0\)\)\)",
+            f"{label} MaterialX safe power at zero")
+    require(graph_shader,
+            r"op\s*==\s*38\)\s*\{\s*float ang = radians\(av\.x\);\s*vec3 q = cv\.xyz;\s*float axisLength = length\(bv\.xyz\);\s*if \(axisLength > 1e-6\)",
+            f"{label} MaterialX zero-axis rotation")
+    require(graph_shader,
+            r"op\s*==\s*11\)\s*\{\s*int width = clamp\(int\(floor\([^)]*p \+ 3u\][^)]*\)\), 1, 4\);\s*float nlength = width == 1 \? abs\(av\.x\)",
+            f"{label} MaterialX normalize width and zero vector")
+    require(graph_shader,
+            r"op\s*==\s*26\)\s*\{\s*vec4 t = clamp\(\(av - bv\) / max\(cv - bv, vec4\(1e-6\)\),",
+            f"{label} MaterialX smoothstep degenerate range")
 if "r<44" in shader:
     raise SystemExit("GPU material ABI mismatch: stale Vulkan graph route count")
 require(vk_header, r"LRT_VK_MATERIAL_PATH_LIGHT_FLOATS\s+16u", "LightRT host light stride")

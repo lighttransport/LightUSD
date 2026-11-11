@@ -342,14 +342,18 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       }
       else if (op == 11) {
         int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
-        vec4 n = width == 1 ? vec4(sign(av.x), 0.0, 0.0, 0.0)
-                 : width == 2 ? vec4(normalize(av.xy), 0.0, 0.0)
-                 : width == 3 ? vec4(normalize(av.xyz), av.w)
-                              : normalize(av);
+        float nlength = width == 1 ? abs(av.x)
+                        : width == 2 ? length(av.xy)
+                        : width == 3 ? length(av.xyz) : length(av);
+        vec4 n = av;
+        if (nlength > 1e-6)
+          for (int lane = 0; lane < width; ++lane) n[lane] = av[lane] / nlength;
         v[i] = n;
       }
       else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
-      else if (op == 136) v[i] = sign(av) * pow(abs(av), bv);
+      else if (op == 136)
+        v[i] = mix(sign(av) * pow(abs(av), bv), vec4(0.0),
+                   equal(av, vec4(0.0)));
       else if (op == 13) v[i] = min(av, bv);
       else if (op == 14) v[i] = max(av, bv);
       else if (op == 15) v[i] = abs(av);
@@ -364,7 +368,11 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
       else if (op == 25) v[i] = step(av, bv);
-      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 26) {
+        vec4 t = clamp((av - bv) / max(cv - bv, vec4(1e-6)),
+                       vec4(0.0), vec4(1.0));
+        v[i] = t * t * (vec4(3.0) - 2.0 * t);
+      }
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
       else if (op == 28) {
         int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
@@ -388,11 +396,14 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
       else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
       else if (op == 38) {
-        vec3 axis = normalize(bv.xyz);
         float ang = radians(av.x);
         vec3 q = cv.xyz;
-        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
-                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        float axisLength = length(bv.xyz);
+        if (axisLength > 1e-6) {
+          vec3 axis = bv.xyz / axisLength;
+          v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                      axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        } else v[i] = cv;
       }
       else if (op == 39) {
         v[i] = vec4(av.xy * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
