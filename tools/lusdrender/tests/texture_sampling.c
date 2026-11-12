@@ -5,6 +5,7 @@
 
 #include "mtlx_eval.h"
 #include "mtlx_doc.h"
+#include "color.h"
 #include "texture.h"
 
 static int near(float actual, float expected, float tolerance) {
@@ -67,6 +68,13 @@ int main(int argc, char **argv) {
   }
 
   float sample[4];
+  if (!near(srgb_to_linear_f(10.0f / 255.0f), 0.00303527f, 2e-8f) ||
+      !near(srgb_to_linear_f(11.0f / 255.0f), 0.00334654f, 2e-8f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    fprintf(stderr, "FAIL: sRGB linear/power transfer branches\n");
+    return 1;
+  }
   texcache_sample_nearest_address(cache, linear_id, 0.25f, 0.75f,
                                   "clamp", "clamp", sample);
   if (!near(sample[0], 128.0f / 255.0f, 1e-6f) ||
