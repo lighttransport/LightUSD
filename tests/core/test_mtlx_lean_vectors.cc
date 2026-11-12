@@ -805,6 +805,45 @@ static void CheckTypedMtlxGraphResolution() {
       }
     }
   }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <constant name="src" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
+      <normalmap name="n" type="vector3" nodedef="ND_normalmap">
+        <input name="in" type="vector3" nodename="src"/>
+        <input name="space" type="string" value="object"/>
+      </normalmap>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_NORMALMAP_OBJECT", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr normal = graph ? graph->GetNode("n") : nullptr;
+      const MtlxNodePtr multiply = graph ? graph->GetNode("multiply") : nullptr;
+      const MtlxNodePtr subtract = graph ? graph->GetNode("subtract") : nullptr;
+      const MtlxInputPtr normal_in = normal ? normal->GetInput("in") : nullptr;
+      const MtlxInputPtr multiply_in = multiply ? multiply->GetInput("in1") : nullptr;
+      const MtlxInputPtr multiply_factor = multiply ? multiply->GetInput("in2") : nullptr;
+      const MtlxInputPtr subtract_in = subtract ? subtract->GetInput("in1") : nullptr;
+      const MtlxInputPtr subtract_offset = subtract ? subtract->GetInput("in2") : nullptr;
+      float factor = 0.0f, offset = 0.0f;
+      if (!normal || normal->GetCategory() != "normalize" ||
+          normal->GetNodeDef() != "ND_normalize_vector3" ||
+          normal->GetInput("space") || !normal_in ||
+          normal_in->GetNodeName() != "subtract" || !multiply ||
+          multiply->GetCategory() != "multiply" || !multiply_in ||
+          multiply_in->GetNodeName() != "src" || !multiply_factor ||
+          !multiply_factor->GetValueAsFloat(factor) || factor != 2.0f ||
+          !subtract || subtract->GetCategory() != "subtract" ||
+          !subtract_in || subtract_in->GetNodeName() != "multiply" ||
+          !subtract_offset || !subtract_offset->GetValueAsFloat(offset) ||
+          offset != 1.0f) {
+        Fail("MTLX_VERSION_UPGRADE_NORMALMAP_OBJECT", 0,
+             "object-space normalmap was not replaced by the reference normalization graph");
+      }
+    }
+  }
 
 }
 

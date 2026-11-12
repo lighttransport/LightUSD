@@ -312,6 +312,63 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
           child.SetAttr("value", "0");
         }
       }
+    } else if (elem->tag == "normalmap") {
+      bool object_space = false;
+      for (const MtlxElem &child : elem->children) {
+        if (child.tag == "input" && child.AttrOr("name") == "space" &&
+            child.AttrOr("value") == "object") {
+          object_space = true;
+          break;
+        }
+      }
+      if (object_space) {
+        const std::string multiply_name = unique_name("multiply");
+        const std::string subtract_name = unique_name("subtract");
+
+        MtlxElem multiply;
+        multiply.tag = "multiply";
+        multiply.SetAttr("name", multiply_name);
+        multiply.SetAttr("type", "vector3");
+        for (const MtlxElem &child : elem->children) {
+          if (child.tag != "input" || child.AttrOr("name") != "in") continue;
+          MtlxElem multiply_input = child;
+          multiply_input.SetAttr("name", "in1");
+          multiply.children.push_back(std::move(multiply_input));
+          break;
+        }
+        MtlxElem multiply_factor;
+        multiply_factor.tag = "input";
+        multiply_factor.SetAttr("name", "in2");
+        multiply_factor.SetAttr("type", "float");
+        multiply_factor.SetAttr("value", "2");
+        multiply.children.push_back(std::move(multiply_factor));
+
+        MtlxElem subtract;
+        subtract.tag = "subtract";
+        subtract.SetAttr("name", subtract_name);
+        subtract.SetAttr("type", "vector3");
+        subtract.children.push_back(
+            make_input("in1", "vector3", multiply_name));
+        MtlxElem subtract_offset;
+        subtract_offset.tag = "input";
+        subtract_offset.SetAttr("name", "in2");
+        subtract_offset.SetAttr("type", "float");
+        subtract_offset.SetAttr("value", "1");
+        subtract.children.push_back(std::move(subtract_offset));
+
+        elem->children.erase(
+            std::remove_if(elem->children.begin(), elem->children.end(),
+                           [](const MtlxElem &child) {
+                             return child.tag == "input";
+                           }),
+            elem->children.end());
+        elem->tag = "normalize";
+        if (elem->Attr("nodedef"))
+          elem->SetAttr("nodedef", "ND_normalize_vector3");
+        elem->children.push_back(make_input("in", "vector3", subtract_name));
+        generated.push_back(std::move(multiply));
+        generated.push_back(std::move(subtract));
+      }
     }
   }
 
