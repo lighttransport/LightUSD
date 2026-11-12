@@ -263,6 +263,56 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
             child.attrs.end());
       }
     }
+
+    if (elem->tag == "subsurface_bsdf") {
+      MtlxElem *radius = nullptr;
+      for (MtlxElem &child : elem->children) {
+        if (child.tag == "input" && child.AttrOr("name") == "radius") {
+          radius = &child;
+          break;
+        }
+      }
+      if (radius && radius->AttrOr("type") == "vector3") {
+        const std::string convert_name = unique_name("convert");
+        MtlxElem convert;
+        convert.tag = "convert";
+        convert.SetAttr("name", convert_name);
+        convert.SetAttr("type", "color3");
+        MtlxElem convert_input = *radius;
+        convert_input.SetAttr("name", "in");
+        convert_input.SetAttr("type", "vector3");
+        convert.children.push_back(std::move(convert_input));
+        generated.push_back(std::move(convert));
+
+        radius->attrs.erase(
+            std::remove_if(radius->attrs.begin(), radius->attrs.end(),
+                           [](const auto &attr) {
+                             return attr.first == "value" ||
+                                    attr.first == "nodename" ||
+                                    attr.first == "nodegraph" ||
+                                    attr.first == "output" ||
+                                    attr.first == "interfacename" ||
+                                    attr.first == "channels";
+                           }),
+            radius->attrs.end());
+        radius->SetAttr("type", "color3");
+        radius->SetAttr("nodename", convert_name);
+      }
+    } else if (elem->tag == "switch") {
+      for (MtlxElem &child : elem->children) {
+        if (child.tag != "input" || child.AttrOr("name") != "which") continue;
+        const std::string value = child.AttrOr("value");
+        MtlxTypedValue parsed;
+        if (child.AttrOr("type") == "integer" &&
+            ParseMtlxValue("integer", value, &parsed) && parsed.i >= 5) {
+          child.SetAttr("value", "0");
+        } else if (child.AttrOr("type") == "float" &&
+                   ParseMtlxValue("float", value, &parsed) &&
+                   parsed.num >= 5.0) {
+          child.SetAttr("value", "0");
+        }
+      }
+    }
   }
 
   MtlxElem *owner = parent ? parent : elem;

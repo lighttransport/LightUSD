@@ -747,6 +747,64 @@ static void CheckTypedMtlxGraphResolution() {
       }
     }
   }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <subsurface_bsdf name="s" type="BSDF"><input name="radius" type="vector3" value="1, 2, 3"/></subsurface_bsdf>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_SUBSURFACE_RADIUS", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr subsurface = graph ? graph->GetNode("s") : nullptr;
+      const MtlxInputPtr radius = subsurface ? subsurface->GetInput("radius") : nullptr;
+      const MtlxNodePtr convert = graph ? graph->GetNode("convert") : nullptr;
+      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      std::vector<float> radius_value;
+      if (!radius || radius->GetType() != "color3" ||
+          radius->GetNodeName() != "convert" || !convert ||
+          convert->GetCategory() != "convert" ||
+          convert->GetType() != "color3" || !convert_in ||
+          convert_in->GetType() != "vector3" ||
+          !convert_in->GetValueAsFloatVector(radius_value) ||
+          radius_value != std::vector<float>({1.0f, 2.0f, 3.0f})) {
+        Fail("MTLX_VERSION_UPGRADE_SUBSURFACE_RADIUS", 0,
+             "vector3 radius was not converted to color3");
+      }
+    }
+  }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <switch name="integer_switch" type="float"><input name="which" type="integer" value="5"/></switch>
+      <switch name="float_switch" type="float"><input name="which" type="float" value="6.5"/></switch>
+      <switch name="in_range" type="float"><input name="which" type="integer" value="4"/></switch>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_SWITCH_RANGE", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr integer_switch = graph ? graph->GetNode("integer_switch") : nullptr;
+      const MtlxNodePtr float_switch = graph ? graph->GetNode("float_switch") : nullptr;
+      const MtlxNodePtr in_range = graph ? graph->GetNode("in_range") : nullptr;
+      int integer_value = -1, in_range_value = -1;
+      float float_value = -1.0f;
+      if (!integer_switch || !integer_switch->GetInput("which") ||
+          !integer_switch->GetInput("which")->GetValueAsInt(integer_value) ||
+          integer_value != 0 || !float_switch ||
+          !float_switch->GetInput("which") ||
+          !float_switch->GetInput("which")->GetValueAsFloat(float_value) ||
+          float_value != 0.0f || !in_range ||
+          !in_range->GetInput("which") ||
+          !in_range->GetInput("which")->GetValueAsInt(in_range_value) ||
+          in_range_value != 4) {
+        Fail("MTLX_VERSION_UPGRADE_SWITCH_RANGE", 0,
+             "out-of-range switch selectors were not reset to zero");
+      }
+    }
+  }
 
 }
 
