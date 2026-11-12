@@ -1019,6 +1019,149 @@ void UpgradeMtlxChannels(MtlxElem *scope) {
       UpgradeMtlxChannels(&child);
 }
 
+void UpgradeMtlxLegacyOpgraphs(MtlxElem *root) {
+  if (!root || root->tag != "materialx") return;
+  for (MtlxElem &graph : root->children) {
+    if (graph.tag != "opgraph") continue;
+    graph.tag = "nodegraph";
+    for (MtlxElem &child : graph.children) {
+      if (child.tag == "output") {
+        for (const MtlxElem &parameter : child.children) {
+          if (parameter.tag != "parameter" ||
+              parameter.AttrOr("name") != "in")
+            continue;
+          const std::string node_name = parameter.AttrOr("value");
+          if (!node_name.empty()) child.SetAttr("nodename", node_name);
+          break;
+        }
+        child.children.clear();
+        continue;
+      }
+      if (!IsMtlxNodeElem(child)) continue;
+      std::vector<MtlxElem> upgraded_inputs;
+      for (MtlxElem &parameter : child.children) {
+        if (parameter.tag != "parameter") {
+          upgraded_inputs.push_back(std::move(parameter));
+          continue;
+        }
+        parameter.tag = "input";
+        if (child.tag == "constant" && parameter.AttrOr("name") == "color")
+          parameter.SetAttr("name", "value");
+        EraseMtlxAttr(&parameter, "publicname");
+        upgraded_inputs.push_back(std::move(parameter));
+      }
+      child.children = std::move(upgraded_inputs);
+    }
+  }
+}
+
+void UpgradeMtlxLegacyShaderFormat(MtlxElem *root) {
+  if (!root || root->tag != "materialx") return;
+  std::vector<std::pair<std::string, MtlxElem>> shaders;
+  for (const MtlxElem &child : root->children) {
+    if (child.tag != "shader") continue;
+    const std::string shader_name = child.Name();
+    const std::string category = child.AttrOr(
+        "shaderprogram", child.AttrOr("shadername", shader_name));
+    const std::string shader_type = child.AttrOr("shadertype");
+
+    MtlxElem node = child;
+    node.tag = category;
+    EraseMtlxAttr(&node, "shaderprogram");
+    EraseMtlxAttr(&node, "shadername");
+    EraseMtlxAttr(&node, "shadertype");
+    node.SetAttr("type", shader_type == "surface" ? "surfaceshader" :
+                          shader_type == "displacement" ? "displacementshader" :
+                          shader_type == "volume" ? "volumeshader" : shader_type);
+    for (MtlxElem &input : node.children) {
+      if (input.tag != "input") continue;
+      const std::string graph_output = input.AttrOr("graphoutput");
+      if (!graph_output.empty()) {
+        input.SetAttr("output", graph_output);
+        EraseMtlxAttr(&input, "graphoutput");
+      }
+      const std::string graph_name = input.AttrOr("graphname");
+      if (!graph_name.empty()) {
+        input.SetAttr("nodegraph", graph_name);
+        EraseMtlxAttr(&input, "graphname");
+      }
+    }
+    shaders.emplace_back(shader_name, std::move(node));
+  }
+
+  std::vector<std::pair<std::string, MtlxElem>> materials;
+  for (const MtlxElem &material : root->children) {
+    if (material.tag != "material") continue;
+    MtlxElem surface_material;
+    surface_material.tag = "surfacematerial";
+    surface_material.SetAttr("name", material.Name());
+    surface_material.SetAttr("type", "material");
+
+    for (const MtlxElem &child : material.children) {
+      if (child.tag == "override") {
+        for (const MtlxElem &shader_ref : material.children) {
+          if (shader_ref.tag != "shaderref") continue;
+          const std::string shader_name = shader_ref.AttrOr("name");
+          auto shader = std::find_if(
+              shaders.begin(), shaders.end(), [&](const auto &item) {
+                return item.first == shader_name;
+              });
+          if (shader == shaders.end()) continue;
+          const std::string public_name = child.Name();
+          for (MtlxElem &input : shader->second.children) {
+            if (input.tag != "input") continue;
+            if (input.AttrOr("publicname") != public_name &&
+                input.Name() != public_name)
+              continue;
+            for (const auto &attr : child.attrs)
+              if (attr.first != "name") input.SetAttr(attr.first, attr.second);
+          }
+        }
+        continue;
+      }
+      if (child.tag != "shaderref") continue;
+      const std::string shader_name = child.AttrOr("name");
+      auto shader = std::find_if(
+          shaders.begin(), shaders.end(), [&](const auto &item) {
+            return item.first == shader_name;
+          });
+      const std::string shader_type = shader == shaders.end()
+          ? "surfaceshader" : shader->second.AttrOr("type", "surfaceshader");
+      MtlxElem input;
+      input.tag = "input";
+      input.SetAttr("name", shader_type);
+      input.SetAttr("type", shader_type);
+      input.SetAttr("nodename", shader_name);
+      surface_material.children.push_back(std::move(input));
+    }
+    materials.emplace_back(material.Name(), std::move(surface_material));
+  }
+
+  std::vector<MtlxElem> upgraded;
+  for (const MtlxElem &child : root->children) {
+    if (child.tag == "shader") {
+      auto shader = std::find_if(
+          shaders.begin(), shaders.end(), [&](const auto &item) {
+            return item.first == child.Name();
+          });
+      if (shader != shaders.end()) {
+        for (MtlxElem &input : shader->second.children)
+          if (input.tag == "input") EraseMtlxAttr(&input, "publicname");
+        upgraded.push_back(shader->second);
+      }
+    } else if (child.tag == "material") {
+      auto material = std::find_if(
+          materials.begin(), materials.end(), [&](const auto &item) {
+            return item.first == child.Name();
+          });
+      if (material != materials.end()) upgraded.push_back(material->second);
+    } else {
+      upgraded.push_back(child);
+    }
+  }
+  root->children = std::move(upgraded);
+}
+
 void UpgradeMtlxShaderRefs(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   std::vector<MtlxElem> upgraded;
@@ -1205,8 +1348,18 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
   if (!ParseMtlxVersion(root->AttrOr("version"), &major, &minor) ||
-      major != 1 || (minor != 36 && minor != 37 && minor != 38)) {
+      major != 1 || (minor != 22 && minor != 25 && minor != 36 && minor != 37 &&
+                     minor != 38)) {
     return;
+  }
+  if (minor == 22) {
+    UpgradeMtlxLegacyOpgraphs(root);
+    UpgradeMtlxLegacyShaderFormat(root);
+    minor = 36;
+  }
+  if (minor == 25) {
+    UpgradeMtlxLegacyShaderFormat(root);
+    minor = 36;
   }
   if (minor == 36) {
     UpgradeMtlxElements(root, 36);
