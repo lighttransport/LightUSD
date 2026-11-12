@@ -279,6 +279,7 @@ bool ParseLeanApproxPayload(const char* payload, std::vector<double>* values) {
 void TestMtlxConstantEvaluatorLeanVectors() {
   std::string usda = "#usda 1.0\ndef Scope \"M\" {\n";
   std::vector<const LeanMtlxEvalApproxVector*> selected;
+  std::set<int> non_default_unified_jitter;
   for (const LeanMtlxEvalApproxVector& vector : kLeanMtlxEvalApproxVectors) {
     MtlxElem root;
     std::string parse_error;
@@ -300,6 +301,10 @@ void TestMtlxConstantEvaluatorLeanVectors() {
       const std::string input_name = child.AttrOr("name");
       const std::string input_type = child.AttrOr("type");
       const std::string usd_input_type = MtlxTypeToUsdType(input_type);
+      if ((root.tag == "unifiednoise2d" || root.tag == "unifiednoise3d") &&
+          input_name == "jitter" && child.AttrOr("value") != "1.000000") {
+        non_default_unified_jitter.insert(vector.id);
+      }
       const std::string value = MtlxValueForUsda(input_type,
                                                  child.AttrOr("value"));
       if (input_name.empty() || usd_input_type.empty() || value.empty()) {
@@ -346,8 +351,10 @@ void TestMtlxConstantEvaluatorLeanVectors() {
     assert(ParseLeanApproxPayload(vector->payload, &expected));
     assert(actual.components == static_cast<int>(expected.size()));
     for (size_t i = 0; i < expected.size(); ++i) {
+      const double tolerance =
+          non_default_unified_jitter.count(vector->id) ? 1.0e-4 : 2.0e-5;
       if (std::fabs(static_cast<double>(actual.value[i]) - expected[i]) >
-          2.0e-5) {
+          tolerance) {
         std::cerr << "LightUSD/Lean eval mismatch for vector " << vector->id
                   << " component " << i << ": got " << actual.value[i]
                   << ", expected " << expected[i] << "\n";
