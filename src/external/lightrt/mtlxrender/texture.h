@@ -1,5 +1,5 @@
 /*
- * texture.h - JPG/PNG texture cache (stb_image), bilinear sampling.
+ * texture.h - JPG/PNG texture cache (stb_image), filtered sampling.
  *
  * Textures are loaded once per relative path and sampled in [0,1] UV with
  * periodic wrap. sRGB textures are linearized at sample time (rgb only).
@@ -35,6 +35,15 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
                              const char *wrap_s, const char *wrap_t,
                              float out[4]);
 
+/* MaterialX filter selector: closest, linear (bilinear), or cubic
+ * (Catmull-Rom bicubic convolution). Unknown tokens fall back to linear. */
+void texcache_sample_address_filter(TextureCache *tc, int id, float u, float v,
+                                    const char *wrap_s, const char *wrap_t,
+                                    const char *filtertype, float out[4]);
+void texcache_sample_cubic_address(TextureCache *tc, int id, float u, float v,
+                                   const char *wrap_s, const char *wrap_t,
+                                   float out[4]);
+
 /* Box-filter a regular image over the UV footprint described by the two
  * screen-space gradients. Small footprints use the ordinary bilinear path;
  * larger footprints are integrated with a bounded 4x4 tap grid. */
@@ -42,6 +51,11 @@ void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
                                   float dudx, float dvdx, float dudy, float dvdy,
                                   const char *wrap_s, const char *wrap_t,
                                   float out[4]);
+void texcache_sample_address_grad_filter(TextureCache *tc, int id, float u, float v,
+                                         float dudx, float dvdx,
+                                         float dudy, float dvdy,
+                                         const char *wrap_s, const char *wrap_t,
+                                         const char *filtertype, float out[4]);
 
 /* Nearest-neighbor counterpart used by MaterialX image nodes that request
  * filtertype="closest". */
@@ -57,6 +71,14 @@ int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
 int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
                               float u, float v, float dudx, float dvdx,
                               float dudy, float dvdy, float out[4]);
+int texcache_sample_file_filter(TextureCache *tc, const char *path, int srgb,
+                                float u, float v, const char *filtertype,
+                                float out[4]);
+int texcache_sample_file_grad_filter(TextureCache *tc, const char *path,
+                                     int srgb, float u, float v,
+                                     float dudx, float dvdx, float dudy,
+                                     float dvdy, const char *filtertype,
+                                     float out[4]);
 
 int texcache_sample_file_nearest(TextureCache *tc, const char *path, int srgb,
                                  float u, float v, float out[4]);

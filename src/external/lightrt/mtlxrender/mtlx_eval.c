@@ -573,8 +573,8 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     const MtlxInput *us = find_input(n, "uaddressmode");
     const MtlxInput *vs = find_input(n, "vaddressmode");
     const MtlxInput *filter = find_input(n, "filtertype");
-    const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "closest");
+    const char *filtertype = filter && filter->has_value && filter->value.s
+                                 ? filter->value.s : "linear";
     const char *u_mode = us && us->has_value && us->value.s
                              ? us->value.s : "periodic";
     const char *v_mode = vs && vs->has_value && vs->value.s
@@ -589,28 +589,24 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     if (!outside_constant && path && !strstr(path, "<UDIM>")) {
         int id = texcache_get(ctx->tex, path, srgb);
         if (id >= 0) {
-            if (nearest) {
-                texcache_sample_nearest_address(ctx->tex, id, u, v,
-                    u_mode, v_mode, s);
-            } else if (ctx->has_uv_derivatives) {
-                texcache_sample_address_grad(ctx->tex, id, u, v,
+            if (ctx->has_uv_derivatives) {
+                texcache_sample_address_grad_filter(ctx->tex, id, u, v,
                     ctx->uv_dx[0], ctx->uv_dx[1], ctx->uv_dy[0], ctx->uv_dy[1],
-                    u_mode, v_mode, s);
+                    u_mode, v_mode, filtertype, s);
             } else {
-                texcache_sample_address(ctx->tex, id, u, v,
-                    u_mode, v_mode, s);
+                texcache_sample_address_filter(ctx->tex, id, u, v,
+                    u_mode, v_mode, filtertype, s);
             }
             sampled = 1;
         }
     } else if (!outside_constant && path) {
-        if (nearest) {
-            sampled = texcache_sample_file_nearest(ctx->tex, path, srgb, u, v, s);
-        } else if (ctx->has_uv_derivatives) {
-            sampled = texcache_sample_file_grad(
+        if (ctx->has_uv_derivatives) {
+            sampled = texcache_sample_file_grad_filter(
                 ctx->tex, path, srgb, u, v, ctx->uv_dx[0], ctx->uv_dx[1],
-                ctx->uv_dy[0], ctx->uv_dy[1], s);
+                ctx->uv_dy[0], ctx->uv_dy[1], filtertype, s);
         } else {
-            sampled = texcache_sample_file(ctx->tex, path, srgb, u, v, s);
+            sampled = texcache_sample_file_filter(ctx->tex, path, srgb,
+                                                  u, v, filtertype, s);
         }
     }
     if (!sampled) { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
@@ -643,12 +639,10 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
     int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     float s[4];
     const MtlxInput *filter = find_input(n, "filtertype");
-    const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "closest");
+    const char *filtertype = filter && filter->has_value && filter->value.s
+                                 ? filter->value.s : "linear";
     if (id >= 0) {
-        if (nearest) texcache_sample_nearest_address(
-            ctx->tex, id, u, v, "periodic", "mirror", s);
-        else if (ctx->has_view_derivatives) {
+        if (ctx->has_view_derivatives) {
             const float x = vd.v[0], y = vd.v[1], z = vd.v[2];
             const float xz2 = fmaxf(x * x + z * z, 1.0e-8f);
             const float yden = fmaxf(sqrtf(fmaxf(1.0f - y * y, 1.0e-8f)),
@@ -659,10 +653,11 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
                                (2.0f * (float)MTLX_PI * xz2);
             const float dvdx = ctx->dVdx.y / ((float)MTLX_PI * yden);
             const float dvdy = ctx->dVdy.y / ((float)MTLX_PI * yden);
-            texcache_sample_address_grad(ctx->tex, id, u, v, dudx, dvdx,
-                                          dudy, dvdy, "periodic", "mirror", s);
+            texcache_sample_address_grad_filter(ctx->tex, id, u, v, dudx, dvdx,
+                dudy, dvdy, "periodic", "mirror", filtertype, s);
         }
-        else texcache_sample_address(ctx->tex, id, u, v, "periodic", "mirror", s);
+        else texcache_sample_address_filter(ctx->tex, id, u, v,
+            "periodic", "mirror", filtertype, s);
     }
     else {
         MtlxValue d = in_or(ctx, n, "default", mv_zero(MV_COLOR3));
@@ -693,15 +688,14 @@ static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
     if(up==0){tc[1][0]=p.z;tc[1][1]=p.x;tc[2][0]=-p.y;tc[2][1]=p.x;dtx[1][0]=ctx->dPdx.z;dtx[1][1]=ctx->dPdx.x;dtx[2][0]=-ctx->dPdx.y;dtx[2][1]=ctx->dPdx.x;dty[1][0]=ctx->dPdy.z;dty[1][1]=ctx->dPdy.x;dty[2][0]=-ctx->dPdy.y;dty[2][1]=ctx->dPdy.x;}
     MtlxValue sample[3];const char *files[3]={"filex","filey","filez"};
     const MtlxInput *filter=find_input(n,"filtertype");
-    const int nearest=filter&&filter->has_value&&filter->value.s&&
-                      !strcmp(filter->value.s,"closest");
+    const char *filtertype=filter&&filter->has_value&&filter->value.s
+                               ?filter->value.s:"linear";
     for(int axis=0;axis<3;axis++){
         const MtlxInput *file=find_input(n,files[axis]);const char *path=file&&file->value.s?file->value.s:NULL;int id=path?texcache_get(ctx->tex,path,file?file->colorspace_srgb:0):-1;float s[4];
         if(id>=0){
-            if(nearest) texcache_sample_nearest_address(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",s);
-            else if(ctx->has_position_derivatives)
-                texcache_sample_address_grad(ctx->tex,id,tc[axis][0],tc[axis][1],dtx[axis][0],dtx[axis][1],dty[axis][0],dty[axis][1],"periodic","periodic",s);
-            else texcache_sample(ctx->tex,id,tc[axis][0],tc[axis][1],s);
+            if(ctx->has_position_derivatives)
+                texcache_sample_address_grad_filter(ctx->tex,id,tc[axis][0],tc[axis][1],dtx[axis][0],dtx[axis][1],dty[axis][0],dty[axis][1],"periodic","periodic",filtertype,s);
+            else texcache_sample_address_filter(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",filtertype,s);
         }else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
         sample[axis]=mv_zero(n->type);int nc=ncomp_of(&sample[axis]);if(nc<1)nc=1;for(int c=0;c<nc;c++)sample[axis].v[c]=s[c];
     }
@@ -738,8 +732,8 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
     int id = path ? texcache_get(ctx->tex, path, srgb) : -1;
     if (id < 0) return in_or(ctx, n, "default", mv_zero(n->type));
     const MtlxInput *filter = find_input(n, "filtertype");
-    const int nearest = filter && filter->has_value && filter->value.s &&
-                        !strcmp(filter->value.s, "closest");
+    const char *filtertype = filter && filter->has_value && filter->value.s
+                                 ? filter->value.s : "linear";
 
     MtlxValue tv = in_or(ctx, n, "tiling", mv_vec2(1, 1));
     float tile_x = tv.v[0], tile_y = (tv.v[1] != 0.0f ? tv.v[1] : tv.v[0]);
@@ -786,25 +780,23 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
     }
     float c[3][4];
     for (int i = 0; i < 3; i++) {
-        if (nearest) {
-            texcache_sample_nearest_address(ctx->tex, id, cx[i], cy[i],
-                                            "periodic", "periodic", c[i]);
-        } else if (ctx->has_uv_derivatives) {
+        if (ctx->has_uv_derivatives) {
             /* The transform is affine per tap; derive its Jacobian from the
              * same rotation and scale used to construct this lookup. */
             float dcxdu = tile_x * local_cr[i] / local_sc[i];
             float dcxdv = -tile_y * local_srn[i] / local_sc[i];
             float dcydu = tile_x * local_srn[i] / local_sc[i];
             float dcydv = tile_y * local_cr[i] / local_sc[i];
-            texcache_sample_address_grad(
+            texcache_sample_address_grad_filter(
                 ctx->tex, id, cx[i], cy[i],
                 dcxdu * ctx->uv_dx[0] + dcxdv * ctx->uv_dx[1],
                 dcydu * ctx->uv_dx[0] + dcydv * ctx->uv_dx[1],
                 dcxdu * ctx->uv_dy[0] + dcxdv * ctx->uv_dy[1],
                 dcydu * ctx->uv_dy[0] + dcydv * ctx->uv_dy[1],
-                "periodic", "periodic", c[i]);
+                "periodic", "periodic", filtertype, c[i]);
         } else {
-            texcache_sample(ctx->tex, id, cx[i], cy[i], c[i]);
+            texcache_sample_address_filter(ctx->tex, id, cx[i], cy[i],
+                                           "periodic", "periodic", filtertype, c[i]);
         }
     }
     /* blend weights: luminance(mix to 1 by contrast) * barycentric^7, normalized */

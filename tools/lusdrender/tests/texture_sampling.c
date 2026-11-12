@@ -87,6 +87,16 @@ int main(int argc, char **argv) {
     return fail("bilinear center sample", sample);
   }
 
+  texcache_sample_address_filter(cache, linear_id, 0.375f, 0.75f,
+                                 "clamp", "clamp", "cubic", sample);
+  if (!near(sample[0], 0.39998f, 2e-4f) ||
+      !near(sample[1], 0.60313f, 2e-4f) ||
+      !near(sample[2], 0.39998f, 2e-4f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    return fail("Catmull-Rom cubic reconstruction", sample);
+  }
+
   texcache_sample_nearest_address(cache, linear_id, -0.25f, 0.75f,
                                   "periodic", "clamp", sample);
   if (!near(sample[0], 0.0f, 1e-6f) || !near(sample[1], 1.0f, 1e-6f)) {
@@ -130,14 +140,16 @@ int main(int argc, char **argv) {
     return fail("sRGB decode", sample);
   }
 
-  const char *xml =
+  char xml[2048];
+  snprintf(xml, sizeof(xml),
       "<materialx version=\"1.39\">"
       "<image name=\"sample\" type=\"color3\">"
-      "<input name=\"file\" type=\"filename\" value=\"texture.ppm\"/>"
+      "<input name=\"file\" type=\"filename\" value=\"%s\"/>"
       "<input name=\"default\" type=\"color3\" value=\"0.1, 0.2, 0.3\"/>"
       "<input name=\"uaddressmode\" type=\"string\" value=\"constant\"/>"
       "<input name=\"vaddressmode\" type=\"string\" value=\"clamp\"/>"
-      "</image></materialx>";
+      "<input name=\"filtertype\" type=\"string\" value=\"cubic\"/>"
+      "</image></materialx>", filename);
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) {
     texcache_free(cache);
@@ -170,18 +182,26 @@ int main(int argc, char **argv) {
       near(fallback.v[0], 0.1f, 1e-6f) &&
       near(fallback.v[1], 0.2f, 1e-6f) &&
       near(fallback.v[2], 0.3f, 1e-6f);
+  context.uv[0] = 0.375f;
+  context.uv[1] = 0.75f;
+  memset(memo_done, 0, (size_t)doc->nnode * sizeof(char));
+  const MtlxValue cubic_image = mtlx_eval_node_test(&context, node);
+  const int cubic_image_ok = cubic_image.type == MV_COLOR3 &&
+      near(cubic_image.v[0], 0.39998f, 2e-4f) &&
+      near(cubic_image.v[1], 0.60313f, 2e-4f) &&
+      near(cubic_image.v[2], 0.39998f, 2e-4f);
   free(memo);
   free(memo_done);
   mtlx_free(doc);
-  if (!fallback_ok) {
+  if (!fallback_ok || !cubic_image_ok) {
     texcache_free(cache);
     remove(argv[1]);
-    fprintf(stderr, "FAIL: constant address mode did not return node default\n");
+    fprintf(stderr, "FAIL: MaterialX cubic filter or constant default behavior\n");
     return 1;
   }
 
   texcache_free(cache);
   remove(argv[1]);
-  puts("PASS: nearest, bilinear, all address modes, and sRGB sampling");
+  puts("PASS: nearest, bilinear, Catmull-Rom cubic, all address modes, and sRGB sampling");
   return 0;
 }

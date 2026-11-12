@@ -115,18 +115,34 @@ static int udim_path(const char *pattern, float u, float v, char *path,
 
 int texcache_sample_file(TextureCache *tc, const char *path, int srgb,
                          float u, float v, float out[4]) {
+    return texcache_sample_file_filter(tc, path, srgb, u, v, "linear", out);
+}
+
+int texcache_sample_file_filter(TextureCache *tc, const char *path, int srgb,
+                                float u, float v, const char *filtertype,
+                                float out[4]) {
     if (!tc || !path || !path[0] || !out) return 0;
     char resolved[1024];
     if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
     int id = texcache_get(tc, resolved, srgb);
     if (id < 0) return 0;
-    texcache_sample(tc, id, u - floorf(u), v - floorf(v), out);
+    texcache_sample_address_filter(tc, id, u - floorf(u), v - floorf(v),
+                                   "periodic", "periodic", filtertype, out);
     return 1;
 }
 
 int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
                               float u, float v, float dudx, float dvdx,
                               float dudy, float dvdy, float out[4]) {
+    return texcache_sample_file_grad_filter(tc, path, srgb, u, v, dudx, dvdx,
+                                            dudy, dvdy, "linear", out);
+}
+
+int texcache_sample_file_grad_filter(TextureCache *tc, const char *path,
+                                     int srgb, float u, float v,
+                                     float dudx, float dvdx, float dudy,
+                                     float dvdy, const char *filtertype,
+                                     float out[4]) {
     if (!tc || !path || !path[0] || !out) return 0;
     const char *udim = strstr(path, "<UDIM>");
     if (udim) {
@@ -145,10 +161,10 @@ int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
                 const float ax = ((float)x + 0.5f) * 0.25f - 0.5f;
                 const float ay = ((float)y + 0.5f) * 0.25f - 0.5f;
                 float sample[4];
-                if (!texcache_sample_file(tc, path, srgb,
+                if (!texcache_sample_file_filter(tc, path, srgb,
                                           u + ax * dudx + ay * dudy,
                                           v + ax * dvdx + ay * dvdy,
-                                          sample)) {
+                                          filtertype, sample)) {
                     out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f;
                     return 0;
                 }
@@ -162,9 +178,9 @@ int texcache_sample_file_grad(TextureCache *tc, const char *path, int srgb,
     if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
     int id = texcache_get(tc, resolved, srgb);
     if (id < 0) return 0;
-    texcache_sample_address_grad(tc, id, u - floorf(u), v - floorf(v),
-                                 dudx, dvdx, dudy, dvdy,
-                                 "periodic", "periodic", out);
+    texcache_sample_address_grad_filter(tc, id, u - floorf(u), v - floorf(v),
+                                        dudx, dvdx, dudy, dvdy,
+                                        "periodic", "periodic", filtertype, out);
     return 1;
 }
 
@@ -289,15 +305,75 @@ void texcache_sample_address(TextureCache *tc, int id, float u, float v,
     }
 }
 
+static float catmull_rom_weight(float x) {
+    x = fabsf(x);
+    if (x < 1.0f) return 1.5f * x * x * x - 2.5f * x * x + 1.0f;
+    if (x < 2.0f) return -0.5f * x * x * x + 2.5f * x * x - 4.0f * x + 2.0f;
+    return 0.0f;
+}
+
+void texcache_sample_cubic_address(TextureCache *tc, int id, float u, float v,
+                                   const char *wrap_s, const char *wrap_t,
+                                   float out[4]) {
+    if (id < 0 || id >= tc->ntex) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return;
+    }
+    const Texture *t = &tc->tex[id];
+    const float fu = u * t->w - 0.5f;
+    const float fv = (1.0f - v) * t->h - 0.5f;
+    const int x0 = (int)floorf(fu), y0 = (int)floorf(fv);
+    const float dx = fu - (float)x0, dy = fv - (float)y0;
+    const float wx[4] = {catmull_rom_weight(1.0f + dx),
+                         catmull_rom_weight(dx),
+                         catmull_rom_weight(1.0f - dx),
+                         catmull_rom_weight(2.0f - dx)};
+    const float wy[4] = {catmull_rom_weight(1.0f + dy),
+                         catmull_rom_weight(dy),
+                         catmull_rom_weight(1.0f - dy),
+                         catmull_rom_weight(2.0f - dy)};
+    float sum[4] = {0, 0, 0, 0};
+    for (int j = 0; j < 4; ++j) for (int i = 0; i < 4; ++i) {
+        int outside_x, outside_y;
+        const int x = address_index(x0 + i - 1, t->w, wrap_s, &outside_x);
+        const int y = address_index(y0 + j - 1, t->h, wrap_t, &outside_y);
+        float texel[4];
+        fetch_texel(t, x, y, texel);
+        const float weight = wx[i] * wy[j];
+        for (int c = 0; c < 4; ++c) sum[c] += texel[c] * weight;
+    }
+    for (int c = 0; c < 4; ++c) out[c] = sum[c];
+}
+
+void texcache_sample_address_filter(TextureCache *tc, int id, float u, float v,
+                                    const char *wrap_s, const char *wrap_t,
+                                    const char *filtertype, float out[4]) {
+    if (filtertype && !strcmp(filtertype, "closest"))
+        texcache_sample_nearest_address(tc, id, u, v, wrap_s, wrap_t, out);
+    else if (filtertype && !strcmp(filtertype, "cubic"))
+        texcache_sample_cubic_address(tc, id, u, v, wrap_s, wrap_t, out);
+    else
+        texcache_sample_address(tc, id, u, v, wrap_s, wrap_t, out);
+}
+
 void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
                                   float dudx, float dvdx, float dudy, float dvdy,
                                   const char *wrap_s, const char *wrap_t,
                                   float out[4]) {
+    texcache_sample_address_grad_filter(tc, id, u, v, dudx, dvdx, dudy, dvdy,
+                                        wrap_s, wrap_t, "linear", out);
+}
+
+void texcache_sample_address_grad_filter(TextureCache *tc, int id, float u, float v,
+                                         float dudx, float dvdx,
+                                         float dudy, float dvdy,
+                                         const char *wrap_s, const char *wrap_t,
+                                         const char *filtertype, float out[4]) {
     float span_u = fmaxf(fabsf(dudx), fabsf(dudy));
     float span_v = fmaxf(fabsf(dvdx), fabsf(dvdy));
     if (span_u * (id >= 0 && id < tc->ntex ? tc->tex[id].w : 0) <= 1.0f &&
         span_v * (id >= 0 && id < tc->ntex ? tc->tex[id].h : 0) <= 1.0f) {
-        texcache_sample_address(tc, id, u, v, wrap_s, wrap_t, out);
+        texcache_sample_address_filter(tc, id, u, v, wrap_s, wrap_t,
+                                       filtertype, out);
         return;
     }
     if (id < 0 || id >= tc->ntex) {
@@ -309,9 +385,9 @@ void texcache_sample_address_grad(TextureCache *tc, int id, float u, float v,
         float ax = ((float)x + 0.5f) * 0.25f - 0.5f;
         float ay = ((float)y + 0.5f) * 0.25f - 0.5f;
         float sample[4];
-        texcache_sample_address(tc, id, u + ax * dudx + ay * dudy,
-                                 v + ax * dvdx + ay * dvdy,
-                                 wrap_s, wrap_t, sample);
+        texcache_sample_address_filter(tc, id, u + ax * dudx + ay * dudy,
+                                       v + ax * dvdx + ay * dvdy,
+                                       wrap_s, wrap_t, filtertype, sample);
         for (int c = 0; c < 4; ++c) sum[c] += sample[c] * 0.0625f;
     }
     for (int c = 0; c < 4; ++c) out[c] = sum[c];
@@ -343,12 +419,5 @@ void texcache_sample_nearest_address(TextureCache *tc, int id, float u, float v,
 
 int texcache_sample_file_nearest(TextureCache *tc, const char *path, int srgb,
                                  float u, float v, float out[4]) {
-    if (!tc || !path || !path[0] || !out) return 0;
-    char resolved[1024];
-    if (udim_path(path, u, v, resolved, sizeof(resolved)) < 0) return 0;
-    int id = texcache_get(tc, resolved, srgb);
-    if (id < 0) return 0;
-    texcache_sample_nearest_address(tc, id, u - floorf(u), v - floorf(v),
-                                    "periodic", "periodic", out);
-    return 1;
+    return texcache_sample_file_filter(tc, path, srgb, u, v, "closest", out);
 }
