@@ -600,6 +600,50 @@ static void CheckTypedMtlxGraphResolution() {
   check_atan2_upgrade("1.37", 1.0f, 2.0f, "MTLX_VERSION_UPGRADE_ATAN2_137");
   check_atan2_upgrade("1.38", 2.0f, 1.0f, "MTLX_VERSION_UPGRADE_ATAN2_138");
 
+  // MaterialX 1.39.5 lowers both legacy color2 `ra` and vector2 `xy`
+  // channel bindings to this same separate2/combine2 graph.
+  auto check_color2_swizzle = [](const char *version, const char *source_type,
+                                 const char *channels, const char *case_name) {
+    MtlxDocument document;
+    const std::string xml = std::string("<materialx version=\"") + version +
+        "\"><nodegraph name=\"NG\"><constant name=\"c\" type=\"" +
+        source_type + "\"><input name=\"value\" type=\"" + source_type +
+        "\" value=\"0.25, 0.75\"/></constant>"
+        "<convert name=\"v\" type=\"vector2\"><input name=\"in\" type=\"" +
+        source_type + "\" nodename=\"c\" channels=\"" + channels +
+        "\"/></convert><output name=\"out\" type=\"vector2\" nodename=\"v\"/>"
+        "</nodegraph></materialx>";
+    if (!document.ParseFromXML(xml)) {
+      Fail(case_name, 0, document.GetError());
+      return;
+    }
+    const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+    const MtlxNodePtr source = graph ? graph->GetNode("c") : nullptr;
+    const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
+    const MtlxNodePtr separate = graph ? graph->GetNode("separate") : nullptr;
+    const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
+    const MtlxInputPtr convert_input = convert ? convert->GetInput("in") : nullptr;
+    const MtlxInputPtr separate_input = separate ? separate->GetInput("in") : nullptr;
+    const MtlxInputPtr combine_x = combine ? combine->GetInput("in1") : nullptr;
+    const MtlxInputPtr combine_y = combine ? combine->GetInput("in2") : nullptr;
+    if (!source || source->GetType() != "vector2" || !convert_input ||
+        convert_input->GetNodeName() != "swizzle" ||
+        !convert_input->GetChannels().empty() || !separate ||
+        separate->GetCategory() != "separate2" || !separate_input ||
+        separate_input->GetNodeName() != "c" || !combine ||
+        combine->GetCategory() != "combine2" || !combine_x || !combine_y ||
+        combine_x->GetNodeName() != "separate" ||
+        combine_x->GetOutput() != "outx" ||
+        combine_y->GetNodeName() != "separate" ||
+        combine_y->GetOutput() != "outy") {
+      Fail(case_name, 0, "color2/channel binding differs from MaterialX upgrade");
+    }
+  };
+  check_color2_swizzle("1.37", "color2", "ra",
+                       "MTLX_VERSION_UPGRADE_COLOR2_CHANNELS");
+  check_color2_swizzle("1.38", "vector2", "xy",
+                       "MTLX_VERSION_UPGRADE_CHANNELS_138");
+
 }
 
 static void CheckMtlxDocumentXInclude() {

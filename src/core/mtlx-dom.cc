@@ -270,6 +270,196 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
     owner->children.push_back(std::move(child));
 }
 
+namespace {
+
+void EraseMtlxAttr(MtlxElem *elem, const std::string &key) {
+  elem->attrs.erase(std::remove_if(elem->attrs.begin(), elem->attrs.end(),
+                                   [&](const auto &a) { return a.first == key; }),
+                    elem->attrs.end());
+}
+
+std::string UniqueMtlxChildName(const MtlxElem &scope,
+                                const std::vector<MtlxElem> &generated,
+                                const std::string &base) {
+  for (size_t suffix = 0;; ++suffix) {
+    const std::string candidate =
+        suffix == 0 ? base : base + "_" + std::to_string(suffix);
+    const bool in_scope = std::any_of(
+        scope.children.begin(), scope.children.end(),
+        [&](const MtlxElem &child) { return child.Name() == candidate; });
+    const bool in_generated = std::any_of(
+        generated.begin(), generated.end(), [&](const MtlxElem &child) {
+          return child.Name() == candidate;
+        });
+    if (!in_scope && !in_generated) return candidate;
+  }
+}
+
+std::string RemapColor2Channels(const std::string &channels) {
+  std::string result = channels;
+  for (char &c : result) {
+    if (c == 'r') c = 'x';
+    else if (c == 'a') c = 'y';
+  }
+  return result;
+}
+
+void UpgradeColor2ChannelAliases(MtlxElem *scope) {
+  if (!scope) return;
+  std::vector<std::string> color2_nodes;
+  for (const MtlxElem &child : scope->children) {
+    if (IsMtlxNodeElem(child) && child.AttrOr("type") == "color2")
+      color2_nodes.push_back(child.Name());
+  }
+  for (const std::string &source_name : color2_nodes) {
+    for (MtlxElem &child : scope->children) {
+      if (IsMtlxNodeElem(child)) {
+        for (MtlxElem &port : child.children) {
+          if (port.tag != "input" && port.tag != "output") continue;
+          if (port.AttrOr("nodename") != source_name) continue;
+          if (const std::string *channels = port.Attr("channels"))
+            port.SetAttr("channels", RemapColor2Channels(*channels));
+          if (const std::string *output = port.Attr("output"))
+            port.SetAttr("output", RemapColor2Channels(*output));
+        }
+      }
+      if (child.Name() != source_name) continue;
+      for (MtlxElem &input : child.children) {
+        if (input.tag == "input" && input.Name() == "channels") {
+          if (const std::string *value = input.Attr("value"))
+            input.SetAttr("value", RemapColor2Channels(*value));
+        }
+      }
+    }
+  }
+  for (MtlxElem &child : scope->children)
+    UpgradeColor2ChannelAliases(&child);
+}
+
+size_t MtlxChannelCount(const std::string &type) {
+  if (type == "float") return 1;
+  if (type == "vector2") return 2;
+  if (type == "vector3" || type == "color3") return 3;
+  if (type == "vector4" || type == "color4") return 4;
+  return 0;
+}
+
+std::string ConnectedNodeType(const MtlxElem &scope, const MtlxElem &port) {
+  const std::string source_name = port.AttrOr("nodename");
+  if (!source_name.empty()) {
+    for (const MtlxElem &node : scope.children) {
+      if (!IsMtlxNodeElem(node) || node.Name() != source_name) continue;
+      const std::string output_name = port.AttrOr("output");
+      if (!output_name.empty()) {
+        for (const MtlxElem &output : node.children)
+          if (output.tag == "output" && output.Name() == output_name)
+            return output.AttrOr("type");
+      }
+      return node.AttrOr("type");
+    }
+  }
+  const std::string interface_name = port.AttrOr("interfacename");
+  if (!interface_name.empty()) {
+    for (const MtlxElem &input : scope.children)
+      if (input.tag == "input" && input.Name() == interface_name)
+        return input.AttrOr("type");
+  }
+  return {};
+}
+
+std::string InferChannelSourceType(const std::string &channels,
+                                   const std::string &dest_type) {
+  if (channels == "xx" || channels == "xxx" || channels == "xxxx" ||
+      channels == "rr" || channels == "rrr") return "float";
+  if (channels == "xyz" || channels == "x" || channels == "y" ||
+      channels == "z") return "vector3";
+  if (channels == "rgba" || channels == "a") return "color4";
+  return dest_type == "color3" ? "color4" : "color3";
+}
+
+void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
+                        std::vector<MtlxElem> *generated) {
+  if (!port || !scope || !generated) return;
+  const std::string channels = port->AttrOr("channels");
+  if (channels.empty()) return;
+  const std::string dest_type = port->AttrOr("type");
+  const size_t dest_count = MtlxChannelCount(dest_type);
+  std::string source_type = ConnectedNodeType(*scope, *port);
+  if (source_type.empty() || source_type == "multioutput")
+    source_type = InferChannelSourceType(channels, dest_type);
+  const size_t source_count = MtlxChannelCount(source_type);
+  if (source_count == 0 || dest_count == 0) return;
+  if (source_type == "float" && dest_type == "float") {
+    EraseMtlxAttr(port, "channels");
+    return;
+  }
+  // The supported 1.38 channel conversion path lowers vector/color swizzles to
+  // separateN + combineN nodes. Scalar extraction and constant-only swizzles
+  // are handled by MaterialX's full upgrader and remain outside this port.
+  if (source_count == 1 || dest_count == 1) return;
+
+  const std::string separate_name =
+      UniqueMtlxChildName(*scope, *generated, "separate");
+  MtlxElem separate;
+  separate.tag = "separate" + std::to_string(source_count);
+  separate.SetAttr("name", separate_name);
+  separate.SetAttr("type", "multioutput");
+  MtlxElem separate_input = *port;
+  separate_input.tag = "input";
+  separate_input.SetAttr("name", "in");
+  separate_input.SetAttr("type", source_type);
+  EraseMtlxAttr(&separate_input, "channels");
+  separate.children.push_back(std::move(separate_input));
+
+  const std::string combine_name =
+      UniqueMtlxChildName(*scope, *generated, "swizzle");
+  MtlxElem combine;
+  combine.tag = "combine" + std::to_string(dest_count);
+  combine.SetAttr("name", combine_name);
+  combine.SetAttr("type", dest_type);
+  for (size_t i = 0; i < dest_count; ++i) {
+    const char channel = i < channels.size() ? channels[i] : channels[0];
+    MtlxElem input;
+    input.tag = "input";
+    input.SetAttr("name", "in" + std::to_string(i + 1));
+    input.SetAttr("type", "float");
+    const std::string channel_name = std::string("out") + channel;
+    input.SetAttr("nodename", separate_name);
+    input.SetAttr("output", channel_name);
+    combine.children.push_back(std::move(input));
+  }
+  generated->push_back(std::move(separate));
+  generated->push_back(std::move(combine));
+
+  EraseMtlxAttr(port, "nodename");
+  EraseMtlxAttr(port, "nodegraph");
+  EraseMtlxAttr(port, "output");
+  EraseMtlxAttr(port, "interfacename");
+  EraseMtlxAttr(port, "channels");
+  EraseMtlxAttr(port, "value");
+  port->SetAttr("nodename", combine_name);
+}
+
+void UpgradeMtlxChannels(MtlxElem *scope) {
+  if (!scope) return;
+  std::vector<MtlxElem> generated;
+  for (MtlxElem &child : scope->children) {
+    if (child.tag == "input" || child.tag == "output")
+      UpgradeChannelPort(&child, scope, &generated);
+    if (IsMtlxNodeElem(child)) {
+      for (MtlxElem &port : child.children)
+        if (port.tag == "input" || port.tag == "output")
+          UpgradeChannelPort(&port, scope, &generated);
+    }
+  }
+  for (MtlxElem &node : generated) scope->children.push_back(std::move(node));
+  for (MtlxElem &child : scope->children)
+    if (child.tag == "nodegraph" || child.tag == "material")
+      UpgradeMtlxChannels(&child);
+}
+
+}  // namespace
+
 void UpgradeMtlxVersion(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
@@ -278,11 +468,13 @@ void UpgradeMtlxVersion(MtlxElem *root) {
     return;
   }
   if (minor == 37) {
+    UpgradeColor2ChannelAliases(root);
     UpgradeMtlxElements(root, 37);
     minor = 38;
   }
   if (minor == 38) {
     UpgradeMtlxElements(root, 38);
+    UpgradeMtlxChannels(root);
     root->SetAttr("version", "1.39");
   }
 }
