@@ -37,6 +37,13 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     image = out_dir / "standard-surface.png"
 
+    invalid_mips = subprocess.run(
+        [exe, "--mtlx-mipmaps", "unused.usda", str(image)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if invalid_mips.returncode == 0 or "--mtlx-mipmaps requires --mtlx" not in invalid_mips.stderr:
+        raise RuntimeError("MaterialX mip option was accepted without --mtlx")
+
     run = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "-stats"],
         stdout=subprocess.PIPE,
@@ -281,6 +288,37 @@ def main():
         render_diagnostic(texture_source, "TextureMaterial", texture_image),
         "UV-driven image emission",
     )
+
+    checker = bytearray()
+    for y in range(256):
+        for x in range(256):
+            value = 255 if (x + y) % 2 else 0
+            checker.extend((value, value, value, 255))
+    write_png_rgba(out_dir / "checker.png", 256, 256, checker)
+    checker_source = out_dir / "checker.mtlx"
+    checker_source.write_text(
+        texture_source.read_text(encoding="utf-8").replace("gradient.png", "checker.png"),
+        encoding="utf-8",
+    )
+    rendered = []
+    for enabled in (False, True):
+        result_path = out_dir / ("checker-mip.pfm" if enabled else "checker-base.pfm")
+        command = [exe, "--mtlx", str(checker_source), str(result_path),
+                   "--mtlx-material", "TextureMaterial", "--aov", "mtlxNode:Gradient",
+                   "-w", "64", "-height", "64"]
+        if enabled:
+            command.append("--mtlx-mipmaps")
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True)
+        if result.returncode:
+            raise RuntimeError(f"MaterialX checker render failed:\n{result.stderr}")
+        _, _, values = read_pfm_rgb(result_path)
+        rendered.append([values[(y * 64 + x) * 3] for y in range(28, 36)
+                         for x in range(28, 36)])
+    if max(abs(v - 0.5) for v in rendered[1]) > 0.02:
+        raise RuntimeError("MaterialX mip filtering did not converge to the checker mean")
+    if max(abs(a - b) for a, b in zip(*rendered)) < 0.001:
+        raise RuntimeError("MaterialX mip option did not affect minified texture sampling")
 
     lobes_source = out_dir / "lobe-weights.mtlx"
     lobes_source.write_text(

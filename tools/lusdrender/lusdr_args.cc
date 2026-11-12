@@ -98,6 +98,7 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " input.usd output.png [options]\n\n"
       << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
+      << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
       << "  -h, -help              Show this help.\n"
       << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
       << "  --preview-kind gaussian|points|volume (default gaussian).\n"
@@ -413,6 +414,9 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v || !*v) return false;
       opt->mtlx_material = v;
+    }
+    OPT_MATCH(a == "--mtlx-mipmaps") {
+      opt->mtlx_mipmaps = true;
     }
     OPT_MATCH(a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
@@ -1201,6 +1205,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
   if (opt->mtlx_file.empty() && !opt->mtlx_material.empty()) {
     std::cerr << "--mtlx-material requires --mtlx.\n";
+    return false;
+  }
+  if (opt->mtlx_file.empty() && opt->mtlx_mipmaps) {
+    std::cerr << "--mtlx-mipmaps requires --mtlx.\n";
     return false;
   }
   if (!opt->mtlx_file.empty()) {

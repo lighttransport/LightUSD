@@ -523,6 +523,8 @@ conversion, HDR values, decoded-image integration and resident-budget leases.
 The CPU-only `mtlx_mip_evaluator_test` checks the volume closure work limit and the
 texture reader's decoded-memory limit. Run them headless with
 `scripts/xctest.sh ctest --test-dir build_ninja -R '^(core_test_tydra|mtlx_mip_evaluator_test)$' --output-on-failure`.
+`tool-lusdrender-materialx-validation` also renders a minified checker with
+`--mtlx-mipmaps` and checks the filtered node AOV against its linear mean.
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|

@@ -130,7 +130,7 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
   opt.mtlx_runtime = lusdview::CreateMaterialXSurfaceRuntime(
       xml_text.c_str(),
       opt.mtlx_material.empty() ? nullptr : opt.mtlx_material.c_str(),
-      base_dir.c_str(), &runtime_error);
+      base_dir.c_str(), &runtime_error, opt.mtlx_mipmaps);
   if (!opt.mtlx_runtime) {
     if (error) *error = "LightRT MaterialX runtime creation failed: " +
                         runtime_error;

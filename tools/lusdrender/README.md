@@ -29,6 +29,9 @@ renders under a uniform white `DomeLight` with LightRT BSDF shading. The
 resolved graph is evaluated at each sphere hit, with world position, shading
 and geometric normals, UVs, UV screen derivatives, and tangent directions. This
 preserves spatially varying procedural and texture outputs through the render.
+`--mtlx-mipmaps` enables precomputed linear-RGBA texture mipmaps for this
+validation path, selected using the hit's UV derivatives. These mipmaps are
+preloaded in addition to base textures and are not covered by `-texBudgetMb`.
 The default image size is 512 by 512. `--mtlx-material` selects a named
 MaterialX material. `--aov mtlxNode:NAME` writes the selected numeric node output
 to a float PFM image (scalar values are repeated into RGB; vectors and matrices
