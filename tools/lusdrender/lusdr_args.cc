@@ -126,7 +126,7 @@ void PrintUsage(const char *prog) {
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
       << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
-      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId> capture (.pfm for data; raw depth/normals also support -vkr)\n"
+      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId|mtlxNode:NAME|mtlxDiffuseWeight|mtlxSpecularWeight|mtlxCoatWeight|mtlxTransmissionWeight> capture (.pfm for data)\n"
       << "  --all-products        Render settings products; output is a filename prefix.\n"
       << "  -renderProduct <path>  Select one product from the settings.\n"
       << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
@@ -450,6 +450,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       else if (name == "geometricNormal") opt->aov = CaptureAov::GeometricNormal;
       else if (name == "shadingNormal") { opt->aov = CaptureAov::ShadingNormal; opt->smooth = true; }
       else if (name == "primId") opt->aov = CaptureAov::PrimId;
+      else if (name.rfind("mtlxNode:", 0) == 0 && name.size() > 9) {
+        opt->aov = CaptureAov::MaterialXNode;
+        opt->mtlx_aov_node = name.substr(9);
+      } else if (name == "mtlxDiffuseWeight")
+        opt->aov = CaptureAov::MaterialXDiffuseWeight;
+      else if (name == "mtlxSpecularWeight")
+        opt->aov = CaptureAov::MaterialXSpecularWeight;
+      else if (name == "mtlxCoatWeight")
+        opt->aov = CaptureAov::MaterialXCoatWeight;
+      else if (name == "mtlxTransmissionWeight")
+        opt->aov = CaptureAov::MaterialXTransmissionWeight;
       else { std::cerr << "Unknown AOV: " << name << "\n"; return false; }
       opt->aov_explicit = true;
       opt->rt_preview = true;
@@ -1210,9 +1221,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     std::cerr << "--mtlx validation mode currently uses the CPU renderer only.\n";
     return false;
   }
+  if (IsMaterialXAov(opt->aov) && opt->mtlx_file.empty()) {
+    std::cerr << "MaterialX node/lobe AOVs require --mtlx validation mode.\n";
+    return false;
+  }
   if (opt->diagnostic_material != MaterialDiagnostic::None &&
       opt->aov != CaptureAov::Color) {
     std::cerr << "-diagnosticMaterial cannot be combined with a data AOV.\n";
+    return false;
+  }
+  if (opt->diagnostic_emission && opt->aov != CaptureAov::Color) {
+    std::cerr << "-diagnosticEmission cannot be combined with a data AOV.\n";
     return false;
   }
   if (opt->diagnostic_emission && (opt->cuda || opt->hip || opt->vulkan_instanced || opt->use_d3d || opt->path_trace)) {

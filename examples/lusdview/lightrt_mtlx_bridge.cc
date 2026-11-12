@@ -1211,6 +1211,99 @@ bool EvaluateMaterialXSurfaceRuntimeAt(
   return true;
 }
 
+bool EvaluateMaterialXNodeRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    const char* nodeName, MaterialXNodeValue* out, std::string* err) {
+  if (err) err->clear();
+  if (!runtime || !runtime->doc || !runtime->tex || !nodeName || !nodeName[0] ||
+      !out) {
+    if (err) *err = "MaterialX node AOV request is not initialized";
+    return false;
+  }
+  int nodeId = -1;
+  for (int i = 0; i < runtime->doc->nnode; ++i) {
+    const char* name = runtime->doc->nodes[i].name;
+    if (name && std::strcmp(name, nodeName) == 0) {
+      if (nodeId >= 0) {
+        if (err) *err = "MaterialX node name is ambiguous: " + std::string(nodeName);
+        return false;
+      }
+      nodeId = i;
+    }
+  }
+  if (nodeId < 0) {
+    if (err) *err = "MaterialX node not found: " + std::string(nodeName);
+    return false;
+  }
+
+  MtlxThreadScratch& scratch = gMtlxScratch[runtime->id];
+  const size_t nodeCount = static_cast<size_t>(runtime->doc->nnode);
+  if (scratch.memo.size() != nodeCount) {
+    scratch.memo.resize(nodeCount);
+    scratch.memoDone.resize(nodeCount);
+  }
+  ShadeContext ctx{};
+  ctx.doc = runtime->doc;
+  ctx.tex = runtime->tex;
+  ctx.uv[0] = context.uv[0];
+  ctx.uv[1] = context.uv[1];
+  ctx.uv_dx[0] = context.uv_dx[0];
+  ctx.uv_dx[1] = context.uv_dx[1];
+  ctx.uv_dy[0] = context.uv_dy[0];
+  ctx.uv_dy[1] = context.uv_dy[1];
+  ctx.has_uv_derivatives = context.has_uv_derivatives ? 1 : 0;
+  ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
+  ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
+                   context.shading_normal[2]);
+  ctx.Ng = v3_make(context.geometric_normal[0], context.geometric_normal[1],
+                   context.geometric_normal[2]);
+  ctx.V = v3_make(context.view_direction[0], context.view_direction[1],
+                  context.view_direction[2]);
+  ctx.dpdu = v3_make(context.dpdu[0], context.dpdu[1], context.dpdu[2]);
+  ctx.dpdv = v3_make(context.dpdv[0], context.dpdv[1], context.dpdv[2]);
+  if (context.has_uv_derivatives) {
+    ctx.dPdx = v3_add(v3_scale(ctx.dpdu, context.uv_dx[0]),
+                      v3_scale(ctx.dpdv, context.uv_dx[1]));
+    ctx.dPdy = v3_add(v3_scale(ctx.dpdu, context.uv_dy[0]),
+                      v3_scale(ctx.dpdv, context.uv_dy[1]));
+    ctx.has_position_derivatives = 1;
+  }
+  ctx.memo = scratch.memo.data();
+  ctx.memo_done = scratch.memoDone.data();
+  const MtlxValue value = mtlx_eval_node_test(&ctx, nodeId);
+  switch (value.type) {
+    case MV_FLOAT:
+    case MV_INT:
+    case MV_BOOL:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[0];
+      out->rgb[2] = value.v[0];
+      return true;
+    case MV_COLOR3:
+    case MV_VEC3:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = value.v[2];
+      return true;
+    case MV_COLOR4:
+    case MV_VEC4:
+    case MV_MATRIX33:
+    case MV_MATRIX44:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = value.v[2];
+      return true;
+    case MV_VEC2:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = 0.0f;
+      return true;
+    default:
+      if (err) *err = "MaterialX node AOV requires a numeric node output";
+      return false;
+  }
+}
+
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,
     float v, DrawLightRtOpenPBRCPU* out, std::string* err) {

@@ -450,3 +450,9 @@ v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
     Layers L = extract(p);
     return eval_reflection_split(&L, N, wo, wi, pdf_out, out_diffuse, out_specular);
 }
+
+BsdfLobeWeights bsdf_lobe_weights(const OpenPBRParams *p) {
+    const Layers L = extract(p);
+    BsdfLobeWeights weights = {L.pd, L.ps, L.pc, L.pg};
+    return weights;
+}

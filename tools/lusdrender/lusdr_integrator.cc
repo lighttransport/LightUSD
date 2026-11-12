@@ -1452,13 +1452,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
-  if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
-  if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
-  if (opt.aov == CaptureAov::GeometricNormal) return Normalize(hit_geometric_normal);
-  if (opt.aov == CaptureAov::ShadingNormal) return Normalize(hit_shading_normal);
-  if (opt.aov == CaptureAov::PrimId) {
-    const float id = float(tri.capture_prim_id);
-    return Vec3{id, id, id};
+  if (!IsMaterialXAov(opt.aov)) {
+    if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
+    if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
+    if (opt.aov == CaptureAov::GeometricNormal)
+      return Normalize(hit_geometric_normal);
+    if (opt.aov == CaptureAov::ShadingNormal)
+      return Normalize(hit_shading_normal);
+    if (opt.aov == CaptureAov::PrimId) {
+      const float id = float(tri.capture_prim_id);
+      return Vec3{id, id, id};
+    }
   }
   const Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
   lightusd::tydra::LightRtOpenPBRParams dynamic_openpbr{};
@@ -1494,6 +1498,19 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     context.view_direction[1] = runtime_view.y;
     context.view_direction[2] = runtime_view.z;
     std::string eval_error;
+    if (opt.aov == CaptureAov::MaterialXNode) {
+      lusdview::MaterialXNodeValue value;
+      if (!lusdview::EvaluateMaterialXNodeRuntimeAt(
+              opt.mtlx_runtime.get(), context, opt.mtlx_aov_node.c_str(),
+              &value, &eval_error)) {
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true, std::memory_order_relaxed))
+          std::cerr << "MaterialX node AOV evaluation failed: " << eval_error
+                    << "\n";
+        return Vec3{0.0f, 0.0f, 0.0f};
+      }
+      return Vec3{value.rgb[0], value.rgb[1], value.rgb[2]};
+    }
     if (lusdview::EvaluateMaterialXSurfaceRuntimeAt(
             opt.mtlx_runtime.get(), context, &dynamic_openpbr, &eval_error)) {
       tri_openpbr = &dynamic_openpbr;
@@ -1522,6 +1539,25 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         std::cerr << "MaterialX hit evaluation failed: " << eval_error << "\n";
       }
     }
+  }
+  if (opt.aov == CaptureAov::MaterialXDiffuseWeight ||
+      opt.aov == CaptureAov::MaterialXSpecularWeight ||
+      opt.aov == CaptureAov::MaterialXCoatWeight ||
+      opt.aov == CaptureAov::MaterialXTransmissionWeight) {
+    if (!tri_openpbr) return Vec3{0.0f, 0.0f, 0.0f};
+    const OpenPBRParams params = OpenPBRParamsForMaterial(tri, tri.n, tri_openpbr);
+    const BsdfLobeWeights weights = bsdf_lobe_weights(&params);
+    float weight = 0.0f;
+    switch (opt.aov) {
+      case CaptureAov::MaterialXDiffuseWeight: weight = weights.diffuse; break;
+      case CaptureAov::MaterialXSpecularWeight: weight = weights.specular; break;
+      case CaptureAov::MaterialXCoatWeight: weight = weights.coat; break;
+      case CaptureAov::MaterialXTransmissionWeight:
+        weight = weights.transmission;
+        break;
+      default: break;
+    }
+    return Vec3{weight, weight, weight};
   }
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray; bounded recursion). Opaque hits (default

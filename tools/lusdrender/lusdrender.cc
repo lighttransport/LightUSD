@@ -136,6 +136,16 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
                         runtime_error;
     return false;
   }
+  if (opt.aov == CaptureAov::MaterialXNode) {
+    lusdview::MaterialXSurfaceContext context;
+    lusdview::MaterialXNodeValue value;
+    if (!lusdview::EvaluateMaterialXNodeRuntimeAt(
+            opt.mtlx_runtime.get(), context, opt.mtlx_aov_node.c_str(), &value,
+            &runtime_error)) {
+      if (error) *error = "MaterialX node AOV is invalid: " + runtime_error;
+      return false;
+    }
+  }
   lightusd::tydra::LightRtOpenPBRParams pbr;
   std::string eval_error;
   if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(

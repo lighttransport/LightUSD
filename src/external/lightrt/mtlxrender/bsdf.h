@@ -22,6 +22,13 @@ typedef struct {
     int   subsurface;  /* diffuse lobe flagged as subsurface entry */
 } BsdfSample;
 
+typedef struct {
+    float diffuse;
+    float specular;
+    float coat;
+    float transmission;
+} BsdfLobeWeights;
+
 /* Importance-sample the BSDF. Returns 0 if no valid sample. */
 int bsdf_sample(const OpenPBRParams *p, v3 N, v3 wo, pcg32 *rng, BsdfSample *out);
 
@@ -50,5 +57,10 @@ v3 bsdf_eval(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, float *pdf_out);
  * gets counted against both. Sheen and coat are grouped with the specular half. */
 v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, v3 *out_diffuse,
                    v3 *out_specular, float *pdf_out);
+
+/* Probabilities used to select diffuse, specular, coat and transmission
+ * lobes during importance sampling. These are diagnostic weights, not
+ * integrated energy fractions. */
+BsdfLobeWeights bsdf_lobe_weights(const OpenPBRParams *p);
 
 #endif /* MTLXRENDER_BSDF_H_ */

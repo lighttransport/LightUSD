@@ -17,6 +17,8 @@ lusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 ```sh
 lusdrender --mtlx material.mtlx material.png
 lusdrender --mtlx material.mtlx material.png --mtlx-material MyMaterial -w 512 -height 512
+lusdrender --mtlx material.mtlx node.pfm --mtlx-material MyMaterial --aov mtlxNode:BaseColor
+lusdrender --mtlx material.mtlx lobe.pfm --mtlx-material MyMaterial --aov mtlxDiffuseWeight
 ```
 
 This CPU-only entry point evaluates the selected MaterialX surface with
@@ -28,13 +30,17 @@ resolved graph is evaluated at each sphere hit, with world position, shading
 and geometric normals, UVs, UV screen derivatives, and tangent directions. This
 preserves spatially varying procedural and texture outputs through the render.
 The default image size is 512 by 512. `--mtlx-material` selects a named
-MaterialX material. Per-lobe/node-output AOVs and reference-image comparisons
-remain open. The CPU BSDF also has a
+MaterialX material. `--aov mtlxNode:NAME` writes the selected numeric node output
+to a float PFM image (scalar values are repeated into RGB; vectors and matrices
+show their first three components). The four `mtlx*Weight` AOVs show the
+LightRT BSDF's diffuse, specular, coat, or transmission sampling probability at
+each hit; these probabilities are diagnostic weights, not integrated energy
+fractions. Data AOVs require `.pfm` output. The CPU BSDF also has a
 deterministic white-furnace CTest that integrates diffuse and specular response
 for diffuse, dielectric, metal, subsurface, coat, sheen, and colored materials
 at normal and grazing views, plus an analytic Lambert check against its base
-color. It does not replace the remaining MaterialXView/OSL reference-image
-comparisons or full lobe-vector coverage.
+color. MaterialXView/OSL reference-image comparisons and full lobe-response
+parity remain open.
 
 Use `--displayTransform srgb` to compare linear render values against analytic
 MaterialX results without the default filmic curve. The CPU renderer honors

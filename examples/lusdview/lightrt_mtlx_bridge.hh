@@ -129,12 +129,19 @@ struct MaterialXSurfaceContext {
   bool has_uv_derivatives{false};
 };
 
+struct MaterialXNodeValue {
+  float rgb[3]{0.0f, 0.0f, 0.0f};
+};
+
 std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     const char* xml, const char* materialName, const char* baseDir,
     std::string* err);
 bool EvaluateMaterialXSurfaceRuntimeAt(
     MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
     tydra::LightRtOpenPBRParams* out, std::string* err);
+bool EvaluateMaterialXNodeRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    const char* nodeName, MaterialXNodeValue* out, std::string* err);
 
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,

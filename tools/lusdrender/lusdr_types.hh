@@ -607,7 +607,27 @@ struct CameraFrame {
   bool ortho{false};
 };
 
-enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNormal, PrimId };
+enum class CaptureAov {
+  Color,
+  Depth,
+  WorldNormal,
+  GeometricNormal,
+  ShadingNormal,
+  PrimId,
+  MaterialXNode,
+  MaterialXDiffuseWeight,
+  MaterialXSpecularWeight,
+  MaterialXCoatWeight,
+  MaterialXTransmissionWeight
+};
+
+inline bool IsMaterialXAov(CaptureAov aov) {
+  return aov == CaptureAov::MaterialXNode ||
+         aov == CaptureAov::MaterialXDiffuseWeight ||
+         aov == CaptureAov::MaterialXSpecularWeight ||
+         aov == CaptureAov::MaterialXCoatWeight ||
+         aov == CaptureAov::MaterialXTransmissionWeight;
+}
 enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
@@ -807,6 +827,7 @@ struct Options {
   std::string mtlx_file;
   std::string mtlx_material;
   std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
+  std::string mtlx_aov_node;
 };
 
 struct DirectShape {
