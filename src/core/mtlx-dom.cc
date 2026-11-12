@@ -114,6 +114,72 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
   for (size_t i = 0; i < original_child_count; ++i)
     UpgradeMtlxElements(&elem->children[i], minor_version, elem);
 
+  if (minor_version == 36 && IsMtlxNodeElem(*elem)) {
+    const std::string type = elem->AttrOr("type");
+    const std::string old_category = elem->tag;
+    if (old_category == "invert") {
+      if (type == "matrix33" || type == "matrix44") {
+        elem->tag = "invertmatrix";
+      }
+    } else if (old_category == "rotate") {
+      if (type == "vector2") elem->tag = "rotate2d";
+      else if (type == "vector3") elem->tag = "rotate3d";
+    } else if (old_category == "compare") {
+      elem->tag = "ifgreatereq";
+      for (MtlxElem &child : elem->children) {
+        if (child.AttrOr("name") == "intest")
+          child.SetAttr("name", "value1");
+        else if (child.AttrOr("name") == "cutoff")
+          child.SetAttr("name", "value2");
+        else if (child.AttrOr("name") == "in1")
+          child.SetAttr("name", "__upgrade_compare_in1");
+      }
+      for (MtlxElem &child : elem->children)
+        if (child.AttrOr("name") == "in2") child.SetAttr("name", "in1");
+      for (MtlxElem &child : elem->children)
+        if (child.AttrOr("name") == "__upgrade_compare_in1")
+          child.SetAttr("name", "in2");
+    } else if (old_category == "transformpoint" ||
+               old_category == "transformvector" ||
+               old_category == "transformnormal") {
+      const bool has_matrix = std::any_of(
+          elem->children.begin(), elem->children.end(),
+          [](const MtlxElem &child) {
+            return child.AttrOr("name") == "mat";
+          });
+      if (has_matrix) elem->tag = "transformmatrix";
+    } else if (old_category == "combine") {
+      size_t count = 0;
+      if (type == "vector2" || type == "color2") count = 2;
+      else if (type == "vector3" || type == "color3") count = 3;
+      else if (type == "vector4" || type == "color4") count = 4;
+      if (count) elem->tag = "combine" + std::to_string(count);
+    } else if (old_category == "separate") {
+      size_t count = 0;
+      for (const MtlxElem &child : elem->children) {
+        if (child.tag != "input" || child.AttrOr("name") != "in") continue;
+        const std::string source_type = child.AttrOr("type");
+        if (source_type == "vector2" || source_type == "color2") count = 2;
+        else if (source_type == "vector3" || source_type == "color3") count = 3;
+        else if (source_type == "vector4" || source_type == "color4") count = 4;
+        break;
+      }
+      if (count) elem->tag = "separate" + std::to_string(count);
+    } else if (old_category == "geomattrvalue") {
+      elem->tag = "geompropvalue";
+      if (const std::string *attrname = elem->Attr("attrname")) {
+        const std::string value = *attrname;
+        elem->attrs.erase(
+            std::remove_if(elem->attrs.begin(), elem->attrs.end(),
+                           [](const auto &attr) {
+                             return attr.first == "attrname";
+                           }),
+            elem->attrs.end());
+        elem->SetAttr("geomprop", value);
+      }
+    }
+  }
+
   if (minor_version == 37 && IsMtlxNodeElem(*elem)) {
     for (MtlxElem &child : elem->children)
       if (child.tag == "parameter") child.tag = "input";
@@ -1139,8 +1205,12 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
   if (!ParseMtlxVersion(root->AttrOr("version"), &major, &minor) ||
-      major != 1 || (minor != 37 && minor != 38)) {
+      major != 1 || (minor != 36 && minor != 37 && minor != 38)) {
     return;
+  }
+  if (minor == 36) {
+    UpgradeMtlxElements(root, 36);
+    minor = 37;
   }
   if (minor == 37) {
     UpgradeColor2ChannelAliases(root);
