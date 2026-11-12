@@ -54,9 +54,37 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
                                            const float uv[2],
                                            MtlxVolumeSample* out,
                                            const std::string& anchor_path) {
+  if (!uv) {
+    error_ = "Volume UV must be provided";
+    return false;
+  }
+  MtlxVolumeContext context;
+  context.uv[0] = uv[0];
+  context.uv[1] = uv[1];
+  return EvaluateVolumeMaterial(mtlx_content, material_name, context, out,
+                                anchor_path);
+}
+
+bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
+                                           const std::string& material_name,
+                                           const MtlxVolumeContext& input,
+                                           MtlxVolumeSample* out,
+                                           const std::string& anchor_path) {
   error_.clear();
-  if (!out || !uv || !std::isfinite(uv[0]) || !std::isfinite(uv[1])) {
-    error_ = "Volume output and finite UV must be provided";
+  const auto finite = [](const float* values, size_t count) {
+    for (size_t i = 0; i < count; ++i)
+      if (!std::isfinite(values[i])) return false;
+    return true;
+  };
+  if (!out || !finite(input.uv, 2) || !finite(input.position, 3) ||
+      !finite(input.shading_normal, 3) || !finite(input.geometric_normal, 3) ||
+      !finite(input.tangent, 3) || !finite(input.bitangent, 3) ||
+      !finite(input.view, 3) || !std::isfinite(input.time) ||
+      !std::isfinite(input.frame) ||
+      (input.has_uv_derivatives && (!finite(input.uv_dx, 2) || !finite(input.uv_dy, 2))) ||
+      (input.has_position_derivatives && (!finite(input.position_dx, 3) || !finite(input.position_dy, 3))) ||
+      (input.has_view_derivatives && (!finite(input.view_dx, 3) || !finite(input.view_dy, 3)))) {
+    error_ = "Volume output and finite sample context must be provided";
     return false;
   }
   mtlx::MtlxDocument parsed;
@@ -101,11 +129,27 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
   ShadeContext context{};
   context.doc = doc.get();
   context.tex = cache.get();
-  context.uv[0] = uv[0];
-  context.uv[1] = uv[1];
-  context.Ns = v3_make(0, 0, 1);
-  context.Ng = context.Ns;
-  context.V = context.Ns;
+  for (size_t i = 0; i < 2; ++i) {
+    context.uv[i] = input.uv[i];
+    context.uv_dx[i] = input.uv_dx[i];
+    context.uv_dy[i] = input.uv_dy[i];
+  }
+  const auto vec = [](const float v[3]) { return v3_make(v[0], v[1], v[2]); };
+  context.has_uv_derivatives = input.has_uv_derivatives;
+  context.P = vec(input.position);
+  context.dPdx = vec(input.position_dx);
+  context.dPdy = vec(input.position_dy);
+  context.has_position_derivatives = input.has_position_derivatives;
+  context.Ns = vec(input.shading_normal);
+  context.Ng = vec(input.geometric_normal);
+  context.dpdu = vec(input.tangent);
+  context.dpdv = vec(input.bitangent);
+  context.V = vec(input.view);
+  context.dVdx = vec(input.view_dx);
+  context.dVdy = vec(input.view_dy);
+  context.has_view_derivatives = input.has_view_derivatives;
+  context.time = input.time;
+  context.frame = input.frame;
   context.memo = memo.data();
   context.memo_done = done.data();
   MtlxVolumeParams volume{};

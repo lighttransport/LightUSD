@@ -3109,6 +3109,25 @@ void TestMaterialXUtilities() {
   assert(std::abs(volume_sample.scattering[0] - 0.4f) < 1e-6f);
   assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);
   assert(std::abs(volume_sample.anisotropy - 0.35f) < 1e-6f);
+  const char* spatial_volume = R"(<materialx version="1.39">
+    <position name="pos" type="vector3"/>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="pos"/></absorption_vdf>
+    <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  MtlxVolumeContext sample_context;
+  sample_context.position[0] = 0.25f;
+  sample_context.position[1] = 0.5f;
+  sample_context.position[2] = 0.75f;
+  MtlxVolumeSample spatial_sample;
+  assert(converter.EvaluateVolumeMaterial(spatial_volume, "Fog", sample_context,
+                                          &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
+  assert(std::abs(spatial_sample.absorption[2] - 0.75f) < 1e-6f);
+  sample_context.position[0] = std::numeric_limits<float>::infinity();
+  assert(!converter.EvaluateVolumeMaterial(spatial_volume, "Fog", sample_context,
+                                           &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
   assert(!converter.EvaluateVolumeMaterial(volume_mtlx, "Missing", volume_uv,
                                            &volume_sample));
   assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);

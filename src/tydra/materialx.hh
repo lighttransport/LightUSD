@@ -184,7 +184,24 @@ struct MtlxConvertOptions {
   size_t volume_texture_max_decoded_bytes = size_t(256) * 1024 * 1024;
 };
 
-/// Volume closure coefficients sampled at one UV location.
+/// Inputs to a volume graph at one sample point, in world space.
+struct MtlxVolumeContext {
+  float uv[2] = {0, 0};
+  float uv_dx[2] = {0, 0}, uv_dy[2] = {0, 0};
+  bool has_uv_derivatives = false;
+  float position[3] = {0, 0, 0};
+  float position_dx[3] = {0, 0, 0}, position_dy[3] = {0, 0, 0};
+  bool has_position_derivatives = false;
+  float shading_normal[3] = {0, 0, 1};
+  float geometric_normal[3] = {0, 0, 1};
+  float tangent[3] = {0, 0, 0}, bitangent[3] = {0, 0, 0};
+  float view[3] = {0, 0, 1};
+  float view_dx[3] = {0, 0, 0}, view_dy[3] = {0, 0, 0};
+  bool has_view_derivatives = false;
+  float time = 0, frame = 0;
+};
+
+/// Volume closure coefficients sampled at one location.
 struct MtlxVolumeSample {
   float absorption[3] = {0, 0, 0};
   float scattering[3] = {0, 0, 0};
@@ -226,6 +243,15 @@ public:
   bool EvaluateVolumeMaterial(const std::string& mtlx_content,
                               const std::string& material_name,
                               const float uv[2], MtlxVolumeSample* out,
+                              const std::string& anchor_path = "");
+
+  /// Evaluate with a caller-supplied world-space sample and optional screen
+  /// derivatives. Vectors should use the renderer's normal and view conventions.
+  /// Active components must be finite; output is unchanged on failure.
+  bool EvaluateVolumeMaterial(const std::string& mtlx_content,
+                              const std::string& material_name,
+                              const MtlxVolumeContext& sample_context,
+                              MtlxVolumeSample* out,
                               const std::string& anchor_path = "");
 
   /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
