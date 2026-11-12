@@ -122,6 +122,27 @@ int main(int argc, char **argv) {
     return fail("Catmull-Rom cubic reconstruction", sample);
   }
 
+  texcache_sample_address_grad_filter(cache, linear_id, 0.5f, 0.75f,
+                                      0.25f, 0.0f, 0.0f, 0.0f,
+                                      "clamp", "clamp", "closest", sample);
+  if (!near(sample[0], 0.0f, 1e-6f) || !near(sample[1], 1.0f, 1e-6f) ||
+      !near(sample[2], 0.0f, 1e-6f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    return fail("sub-texel derivative uses point filter", sample);
+  }
+  texcache_sample_address_grad_filter(cache, linear_id, 0.5f, 0.75f,
+                                      1.0f, 0.0f, 0.0f, 0.0f,
+                                      "clamp", "clamp", "closest", sample);
+  if (!near(sample[0], 64.0f / 255.0f, 1e-6f) ||
+      !near(sample[1], 191.5f / 255.0f, 1e-6f) ||
+      !near(sample[2], 64.0f / 255.0f, 1e-6f) ||
+      !near(sample[3], 1.0f, 1e-6f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    return fail("wide derivative uses 4x4 footprint integration", sample);
+  }
+
   texcache_sample_nearest_address(cache, linear_id, -0.25f, 0.75f,
                                   "periodic", "clamp", sample);
   if (!near(sample[0], 0.0f, 1e-6f) || !near(sample[1], 1.0f, 1e-6f)) {
@@ -257,6 +278,6 @@ int main(int argc, char **argv) {
 
   texcache_free(cache);
   remove(argv[1]);
-  puts("PASS: nearest, bilinear, Catmull-Rom cubic, UV row orientation, all address modes, and sRGB sampling");
+  puts("PASS: nearest, bilinear, Catmull-Rom cubic, derivative footprint, UV row orientation, all address modes, and sRGB sampling");
   return 0;
 }
