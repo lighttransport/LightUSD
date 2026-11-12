@@ -333,6 +333,21 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
   sample.emission[1] = volume.emission.y;
   sample.emission[2] = volume.emission.z;
   sample.anisotropy = volume.anisotropy;
+  static_assert(kMtlxVolumeMaxScatteringLobes == MTLX_MAX_VOLUME_SCATTERING_LOBES,
+                "MaterialX volume lobe limits must match");
+  sample.lobe_count = static_cast<size_t>(volume.lobe_count);
+  for (size_t i = 0; i < sample.lobe_count; ++i) {
+    const auto& lobe = volume.lobes[i];
+    if (!std::isfinite(lobe.scattering.x) || !std::isfinite(lobe.scattering.y) ||
+        !std::isfinite(lobe.scattering.z) || !std::isfinite(lobe.anisotropy)) {
+      impl_->error = "MaterialX volume scattering lobe produced a non-finite value";
+      return false;
+    }
+    sample.lobes[i].scattering[0] = lobe.scattering.x;
+    sample.lobes[i].scattering[1] = lobe.scattering.y;
+    sample.lobes[i].scattering[2] = lobe.scattering.z;
+    sample.lobes[i].anisotropy = lobe.anisotropy;
+  }
   *out = sample;
   return true;
 }

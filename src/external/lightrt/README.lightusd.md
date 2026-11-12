@@ -122,6 +122,10 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   `1 - weight * (1 - absorption)` for its absorption coefficient. The spec
   describes a normalized phase function and separate coefficients, so this
   interpretation and cross-target parity remain to be established.
+- 2026-11-13: Volume evaluation retains up to 64 distinct scattering phase
+  lobes while preserving aggregate coefficients and the legacy single-phase
+  field. Identical anisotropies are combined; evaluation fails on overflow.
+  This changes `MtlxVolumeParams` and all consumers must be rebuilt together.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

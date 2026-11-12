@@ -1426,9 +1426,24 @@ static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, v3 scale,
         out->absorption = v3_add(out->absorption,
             v3_mul(in_color(ctx, n, "absorption", v3_splat(0.0f)), scale));
         if (!strcmp(cat, "anisotropic_vdf") || !strcmp(cat, "subsurface_vdf")) {
-            out->scattering = v3_add(out->scattering,
-                v3_mul(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale));
-            out->anisotropy = in_float(ctx, n, "anisotropy", out->anisotropy);
+            const v3 scattering = v3_mul(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale);
+            const float anisotropy = in_float(ctx, n, "anisotropy", 0.0f);
+            out->scattering = v3_add(out->scattering, scattering);
+            out->anisotropy = anisotropy;
+            if (scattering.x != 0.0f || scattering.y != 0.0f || scattering.z != 0.0f) {
+                int i;
+                for (i = 0; i < out->lobe_count; ++i)
+                    if (out->lobes[i].anisotropy == anisotropy) break;
+                if (i == out->lobe_count) {
+                    if (i >= MTLX_MAX_VOLUME_SCATTERING_LOBES) {
+                        out->lobe_overflow = 1;
+                        return;
+                    }
+                    ++out->lobe_count;
+                    out->lobes[i].anisotropy = anisotropy;
+                }
+                out->lobes[i].scattering = v3_add(out->lobes[i].scattering, scattering);
+            }
         }
     }
 }
@@ -1594,6 +1609,7 @@ int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
     if (!supported_vdf(ctx, vdf, 0, &budget) ||
         !supported_edf(ctx, edf, 0, &budget)) return 1;
     eval_vdf(ctx, vdf, v3_splat(1.0f), out, 0);
+    if (out->lobe_overflow) return 1;
     out->emission = eval_edf(ctx, edf, 0);
     return 0;
 }

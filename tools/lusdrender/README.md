@@ -261,8 +261,9 @@ For an explicit MaterialX look on CPU volume previews, pass
 paths, and geometry-property nodes sample authored VDB fields in world space.
 The marcher integrates RGB absorption, scattering and EDF emission per step.
 MaterialX scattering uses the scene's finite, distant, and dome lights, a
-Henyey–Greenstein phase function, and geometry, level-set surface, and fog shadows
-when shadows are enabled. Dome lighting uses 16 deterministic phase-function
+Henyey–Greenstein phase functions for each VDF scattering lobe, and geometry,
+level-set surface, and fog shadows when shadows are enabled. Volume evaluation
+rejects graphs with more than 64 distinct scattering anisotropies. Dome lighting uses 16 deterministic phase-function
 samples per step, so small or bright environment features can be undersampled.
 Fog shadows accumulate RGB extinction through intersected media, using up to
 approximately 128 steps per medium on each light ray. Level-set surfaces cast

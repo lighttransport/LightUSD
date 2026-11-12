@@ -225,11 +225,18 @@ struct MtlxVolumeContext {
 };
 
 /// Volume closure coefficients sampled at one location.
+constexpr size_t kMtlxVolumeMaxScatteringLobes = 64;
+struct MtlxVolumeScatteringLobe {
+  float scattering[3] = {0, 0, 0};
+  float anisotropy = 0;
+};
 struct MtlxVolumeSample {
   float absorption[3] = {0, 0, 0};
   float scattering[3] = {0, 0, 0};
   float emission[3] = {0, 0, 0};
-  float anisotropy = 0;
+  float anisotropy = 0; // legacy single-phase approximation
+  MtlxVolumeScatteringLobe lobes[kMtlxVolumeMaxScatteringLobes];
+  size_t lobe_count = 0;
 };
 
 /// A parsed volume graph and its texture cache, reusable across sample points.

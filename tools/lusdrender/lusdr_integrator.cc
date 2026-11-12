@@ -2377,126 +2377,132 @@ static Vec3 CompositeMixedVolumes(
           const Vec3 world = Add(worg, Mul(wdir, midpoint));
           lightusd::tydra::MtlxVolumeSample sample;
           if (!sample_material(active.index, world, local, &sample)) return background;
-          Vec3 incident{0, 0, 0};
-          if (!std::isfinite(sample.anisotropy) || std::abs(sample.anisotropy) >= 1.0f) {
-            material_error->store(true, std::memory_order_relaxed); return background;
-          }
-          const float g = sample.anisotropy;
-          auto add_scattered_light = [&](const PreviewLight& light) {
-            auto accumulate = [&](const Vec3& l, Vec3 incoming, float max_t) {
-              if (++work > 1000000) { material_error->store(true, std::memory_order_relaxed); return; }
-              if (opt.shadows && light.shadow_enable &&
-                  (tlas ? OccludedTLAS(tlas, world, l, l, max_t)
-                        : Occluded(scene, tris, world, l, l, max_t, direct,
-                                   opt.purpose_mask, chunks))) return;
-              if (opt.shadows && light.shadow_enable) {
-                Vec3 transmittance;
-                if (!light_transmittance(world, l, max_t, &transmittance)) {
-                  material_error->store(true, std::memory_order_relaxed); return;
-                }
-                incoming = Vec3{incoming.x * transmittance.x, incoming.y * transmittance.y,
-                                incoming.z * transmittance.z};
-              }
-              const float cosine = std::clamp(Dot(l, Mul(wdir, 1.0f / world_speed)), -1.0f, 1.0f);
-              const float denom = 1.0f + g * g - 2.0f * g * cosine;
-              const float phase = (1.0f - g * g) / (4.0f * MTLX_PI * denom * std::sqrt(denom));
-              incident = Add(incident, Mul(incoming, phase));
-            };
-            const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
-            const bool shaped = light.kind == PreviewLight::Kind::Rect ||
-                                light.kind == PreviewLight::Kind::Disk ||
-                                light.kind == PreviewLight::Kind::Cylinder ||
-                                light.kind == PreviewLight::Kind::Mesh;
-            if (shaped || (sphere && Length(Sub(light.position, world)) > light.radius + 1.0e-5f)) {
-              // Stratified surface or solid-angle quadrature; invalid/back-facing
-              // samples have zero contribution and retain their share of the PDF.
-              constexpr int kAreaSamples = 16;
-              for (int i = 0; i < kAreaSamples; ++i) {
-                if (++work > 1000000) {
-                  material_error->store(true, std::memory_order_relaxed); return;
-                }
-                const float u = (float(i / 4) + 0.5f) * 0.25f;
-                const float v = (float(i % 4) + 0.5f) * 0.25f;
-                LightSample ls;
-                const bool valid = sphere ? SampleSphereLight(light, world, u, v, &ls)
-                                          : SampleAreaLight(light, world, u, v, &ls);
-                if (valid) accumulate(ls.wi, Mul(ls.radiance, 1.0f / (float(kAreaSamples) * ls.pdf)),
-                                      std::max(0.0f, ls.dist - 1.0e-3f));
-                if (material_error->load(std::memory_order_relaxed)) return;
-              }
-              return;
-            }
-            Vec3 l, incoming = light.radiance;
-            float max_t = 1.0e30f;
-            if (light.kind == PreviewLight::Kind::Distant) {
-              l = Normalize(Mul(light.direction, -1.0f));
-            } else {
-              const Vec3 delta = Sub(light.position, world);
-              const float dist = Length(delta);
-              if (dist <= 1.0e-6f) return;
-              l = Mul(delta, 1.0f / dist);
-              max_t = std::max(0.0f, dist - 1.0e-3f);
-              if (sphere) incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
-              if (!light.constant_attenuation)
-                incoming = Mul(incoming, 1.0f / std::max(1.0e-4f, dist * dist));
-            }
-            accumulate(l, incoming, max_t);
-          };
-          if (sample.scattering[0] > 0 || sample.scattering[1] > 0 || sample.scattering[2] > 0) {
-            for (const PreviewLight& light : lights.finite) {
-              add_scattered_light(light);
-              if (material_error->load(std::memory_order_relaxed)) return background;
-            }
-            for (const PreviewLight& light : lights.mesh) {
-              add_scattered_light(light);
-              if (material_error->load(std::memory_order_relaxed)) return background;
-            }
-            // Importance-sample the phase function. Its PDF cancels the phase
-            // factor, so averaging radiance gives the spherical integral.
-            if ((ibl && ibl->valid) || lights.has_dome) {
-              constexpr int kEnvSamples = 16;
-              const Vec3 axis = Mul(wdir, 1.0f / world_speed);
-              Vec3 u_axis, v_axis;
-              OrthoBasis(axis, &u_axis, &v_axis);
-              for (int i = 0; i < kEnvSamples; ++i) {
-                if (++work > 1000000) {
-                  material_error->store(true, std::memory_order_relaxed); return background;
-                }
-                const float u = (float(i) + 0.5f) / float(kEnvSamples);
-                float cosine = 2.0f * u - 1.0f;
-                if (std::abs(g) > 1.0e-4f) {
-                  const float q = (1.0f - g * g) / (1.0f - g + 2.0f * g * u);
-                  cosine = std::clamp((1.0f + g * g - q * q) / (2.0f * g), -1.0f, 1.0f);
-                }
-                const float sine = std::sqrt(std::max(0.0f, 1.0f - cosine * cosine));
-                const float phi = float(i) * 2.39996323f;
-                const Vec3 l = Add(Mul(axis, cosine),
-                    Mul(Add(Mul(u_axis, std::cos(phi)), Mul(v_axis, std::sin(phi))), sine));
-                Vec3 env = ibl && ibl->valid ? SampleEnv(ibl->env, EnvDir(*ibl, l))
-                                             : lights.env_color;
-                if (opt.shadows) {
-                  if (tlas ? OccludedTLAS(tlas, world, l, l, 1.0e30f)
-                           : Occluded(scene, tris, world, l, l, 1.0e30f, direct,
-                                      opt.purpose_mask, chunks)) continue;
-                  Vec3 transmittance;
-                  if (!light_transmittance(world, l, 1.0e30f, &transmittance)) {
-                    material_error->store(true, std::memory_order_relaxed); return background;
-                  }
-                  env = Vec3{env.x * transmittance.x, env.y * transmittance.y,
-                             env.z * transmittance.z};
-                }
-                incident = Add(incident, Mul(env, 1.0f / float(kEnvSamples)));
-              }
-            }
-          }
-          if (material_error->load(std::memory_order_relaxed)) return background;
-          const float incident_channels[3] = {incident.x, incident.y, incident.z};
           for (int c = 0; c < 3; ++c) {
             if (sample.absorption[c] < 0 || sample.scattering[c] < 0 || sample.emission[c] < 0) {
               material_error->store(true, std::memory_order_relaxed); return background;
             }
             extinction[c] += sample.absorption[c] + sample.scattering[c];
-            source[c] += sample.scattering[c] * incident_channels[c] + sample.emission[c];
+            source[c] += sample.emission[c];
+          }
+          for (size_t lobe_index = 0; lobe_index < sample.lobe_count; ++lobe_index) {
+            const auto& lobe = sample.lobes[lobe_index];
+            Vec3 incident{0, 0, 0};
+            if (!std::isfinite(lobe.anisotropy) || std::abs(lobe.anisotropy) >= 1.0f ||
+                lobe.scattering[0] < 0 || lobe.scattering[1] < 0 || lobe.scattering[2] < 0) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            const float g = lobe.anisotropy;
+            auto add_scattered_light = [&](const PreviewLight& light) {
+              auto accumulate = [&](const Vec3& l, Vec3 incoming, float max_t) {
+                if (++work > 1000000) { material_error->store(true, std::memory_order_relaxed); return; }
+                if (opt.shadows && light.shadow_enable &&
+                    (tlas ? OccludedTLAS(tlas, world, l, l, max_t)
+                          : Occluded(scene, tris, world, l, l, max_t, direct,
+                                     opt.purpose_mask, chunks))) return;
+                if (opt.shadows && light.shadow_enable) {
+                  Vec3 transmittance;
+                  if (!light_transmittance(world, l, max_t, &transmittance)) {
+                    material_error->store(true, std::memory_order_relaxed); return;
+                  }
+                  incoming = Vec3{incoming.x * transmittance.x, incoming.y * transmittance.y,
+                                  incoming.z * transmittance.z};
+                }
+                const float cosine = std::clamp(Dot(l, Mul(wdir, 1.0f / world_speed)), -1.0f, 1.0f);
+                const float denom = 1.0f + g * g - 2.0f * g * cosine;
+                const float phase = (1.0f - g * g) / (4.0f * MTLX_PI * denom * std::sqrt(denom));
+                incident = Add(incident, Mul(incoming, phase));
+              };
+              const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
+              const bool shaped = light.kind == PreviewLight::Kind::Rect ||
+                                  light.kind == PreviewLight::Kind::Disk ||
+                                  light.kind == PreviewLight::Kind::Cylinder ||
+                                  light.kind == PreviewLight::Kind::Mesh;
+              if (shaped || (sphere && Length(Sub(light.position, world)) > light.radius + 1.0e-5f)) {
+                // Stratified surface or solid-angle quadrature; invalid/back-facing
+                // samples have zero contribution and retain their share of the PDF.
+                constexpr int kAreaSamples = 16;
+                for (int i = 0; i < kAreaSamples; ++i) {
+                  if (++work > 1000000) {
+                    material_error->store(true, std::memory_order_relaxed); return;
+                  }
+                  const float u = (float(i / 4) + 0.5f) * 0.25f;
+                  const float v = (float(i % 4) + 0.5f) * 0.25f;
+                  LightSample ls;
+                  const bool valid = sphere ? SampleSphereLight(light, world, u, v, &ls)
+                                            : SampleAreaLight(light, world, u, v, &ls);
+                  if (valid) accumulate(ls.wi, Mul(ls.radiance, 1.0f / (float(kAreaSamples) * ls.pdf)),
+                                        std::max(0.0f, ls.dist - 1.0e-3f));
+                  if (material_error->load(std::memory_order_relaxed)) return;
+                }
+                return;
+              }
+              Vec3 l, incoming = light.radiance;
+              float max_t = 1.0e30f;
+              if (light.kind == PreviewLight::Kind::Distant) {
+                l = Normalize(Mul(light.direction, -1.0f));
+              } else {
+                const Vec3 delta = Sub(light.position, world);
+                const float dist = Length(delta);
+                if (dist <= 1.0e-6f) return;
+                l = Mul(delta, 1.0f / dist);
+                max_t = std::max(0.0f, dist - 1.0e-3f);
+                if (sphere) incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
+                if (!light.constant_attenuation)
+                  incoming = Mul(incoming, 1.0f / std::max(1.0e-4f, dist * dist));
+              }
+              accumulate(l, incoming, max_t);
+            };
+            if (lobe.scattering[0] > 0 || lobe.scattering[1] > 0 || lobe.scattering[2] > 0) {
+              for (const PreviewLight& light : lights.finite) {
+                add_scattered_light(light);
+                if (material_error->load(std::memory_order_relaxed)) return background;
+              }
+              for (const PreviewLight& light : lights.mesh) {
+                add_scattered_light(light);
+                if (material_error->load(std::memory_order_relaxed)) return background;
+              }
+              // Importance-sample the phase function. Its PDF cancels the phase
+              // factor, so averaging radiance gives the spherical integral.
+              if ((ibl && ibl->valid) || lights.has_dome) {
+                constexpr int kEnvSamples = 16;
+                const Vec3 axis = Mul(wdir, 1.0f / world_speed);
+                Vec3 u_axis, v_axis;
+                OrthoBasis(axis, &u_axis, &v_axis);
+                for (int i = 0; i < kEnvSamples; ++i) {
+                  if (++work > 1000000) {
+                    material_error->store(true, std::memory_order_relaxed); return background;
+                  }
+                  const float u = (float(i) + 0.5f) / float(kEnvSamples);
+                  float cosine = 2.0f * u - 1.0f;
+                  if (std::abs(g) > 1.0e-4f) {
+                    const float q = (1.0f - g * g) / (1.0f - g + 2.0f * g * u);
+                    cosine = std::clamp((1.0f + g * g - q * q) / (2.0f * g), -1.0f, 1.0f);
+                  }
+                  const float sine = std::sqrt(std::max(0.0f, 1.0f - cosine * cosine));
+                  const float phi = float(i) * 2.39996323f;
+                  const Vec3 l = Add(Mul(axis, cosine),
+                      Mul(Add(Mul(u_axis, std::cos(phi)), Mul(v_axis, std::sin(phi))), sine));
+                  Vec3 env = ibl && ibl->valid ? SampleEnv(ibl->env, EnvDir(*ibl, l))
+                                               : lights.env_color;
+                  if (opt.shadows) {
+                    if (tlas ? OccludedTLAS(tlas, world, l, l, 1.0e30f)
+                             : Occluded(scene, tris, world, l, l, 1.0e30f, direct,
+                                        opt.purpose_mask, chunks)) continue;
+                    Vec3 transmittance;
+                    if (!light_transmittance(world, l, 1.0e30f, &transmittance)) {
+                      material_error->store(true, std::memory_order_relaxed); return background;
+                    }
+                    env = Vec3{env.x * transmittance.x, env.y * transmittance.y,
+                               env.z * transmittance.z};
+                  }
+                  incident = Add(incident, Mul(env, 1.0f / float(kEnvSamples)));
+                }
+              }
+            }
+            if (material_error->load(std::memory_order_relaxed)) return background;
+            const float incident_channels[3] = {incident.x, incident.y, incident.z};
+            for (int c = 0; c < 3; ++c)
+              source[c] += lobe.scattering[c] * incident_channels[c];
           }
         } else {
           const float raw = SampleVolumeDensity(vd, local);

@@ -3169,6 +3169,48 @@ void TestMaterialXUtilities() {
   assert(std::abs(volume_sample.scattering[0] - 0.4f) < 1e-6f);
   assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);
   assert(std::abs(volume_sample.anisotropy - 0.35f) < 1e-6f);
+  assert(volume_sample.lobe_count == 1);
+  assert(std::abs(volume_sample.lobes[0].scattering[0] - 0.4f) < 1e-6f);
+  const char* mixed_phase_volume = R"(<materialx version="1.39">
+    <anisotropic_vdf name="a" type="VDF"><input name="scattering" type="vector3" value="0.4,0,0"/><input name="anisotropy" type="float" value="0.6"/></anisotropic_vdf>
+    <anisotropic_vdf name="b" type="VDF"><input name="scattering" type="vector3" value="0,0,0.2"/><input name="anisotropy" type="float" value="-0.6"/></anisotropic_vdf>
+    <add name="sum" type="VDF"><input name="in1" type="VDF" nodename="a"/><input name="in2" type="VDF" nodename="b"/></add>
+    <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="sum"/></volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  MtlxVolumeSample mixed_phase;
+  assert(converter.EvaluateVolumeMaterial(mixed_phase_volume, "Fog", volume_uv, &mixed_phase));
+  assert(mixed_phase.lobe_count == 2);
+  assert(std::abs(mixed_phase.lobes[0].anisotropy - 0.6f) < 1e-6f);
+  assert(std::abs(mixed_phase.lobes[1].anisotropy + 0.6f) < 1e-6f);
+  assert(std::abs(mixed_phase.lobes[0].scattering[0] - 0.4f) < 1e-6f);
+  assert(std::abs(mixed_phase.lobes[1].scattering[2] - 0.2f) < 1e-6f);
+  std::string too_many_lobes = "<materialx version=\"1.39\">";
+  std::vector<std::string> lobe_nodes;
+  for (size_t i = 0; i <= kMtlxVolumeMaxScatteringLobes; ++i) {
+    const std::string name = "lobe" + std::to_string(i);
+    too_many_lobes += "<anisotropic_vdf name=\"" + name + "\" type=\"VDF\">"
+        "<input name=\"scattering\" type=\"vector3\" value=\"1,0,0\"/>"
+        "<input name=\"anisotropy\" type=\"float\" value=\"" +
+        std::to_string(float(i) / 100.0f) + "\"/></anisotropic_vdf>";
+    lobe_nodes.push_back(name);
+  }
+  size_t next_node = 0;
+  while (lobe_nodes.size() > 1) {
+    std::vector<std::string> next;
+    for (size_t i = 0; i < lobe_nodes.size(); i += 2) {
+      if (i + 1 == lobe_nodes.size()) { next.push_back(lobe_nodes[i]); continue; }
+      const std::string name = "sum" + std::to_string(next_node++);
+      too_many_lobes += "<add name=\"" + name + "\" type=\"VDF\">"
+          "<input name=\"in1\" type=\"VDF\" nodename=\"" + lobe_nodes[i] + "\"/>"
+          "<input name=\"in2\" type=\"VDF\" nodename=\"" + lobe_nodes[i + 1] + "\"/></add>";
+      next.push_back(name);
+    }
+    lobe_nodes = std::move(next);
+  }
+  too_many_lobes += "<volume name=\"volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"" +
+      lobe_nodes[0] + "\"/></volume><volumematerial name=\"Fog\"><input name=\"volumeshader\" type=\"volumeshader\" nodename=\"volume\"/></volumematerial></materialx>";
+  assert(!converter.EvaluateVolumeMaterial(too_many_lobes, "Fog", volume_uv, &mixed_phase));
   const char* spatial_volume = R"(<materialx version="1.39">
     <position name="pos" type="vector3"/>
     <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="pos"/></absorption_vdf>

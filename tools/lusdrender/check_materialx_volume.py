@@ -362,6 +362,41 @@ def Volume "Volume2" {
         before_scene.write_text(scene_text.replace('def Volume "Volume" (',
                                 second_volume + '\ndef Volume "Volume" (', 1), encoding="utf-8")
         after_scene.write_text(scene_text + second_volume, encoding="utf-8")
+        phase_nodes = '''<anisotropic_vdf name="red" type="VDF"><input name="scattering" type="vector3" value="0.03,0,0"/><input name="anisotropy" type="float" value="0.6"/></anisotropic_vdf>
+  <anisotropic_vdf name="blue" type="VDF"><input name="scattering" type="vector3" value="0,0,0.03"/><input name="anisotropy" type="float" value="-0.6"/></anisotropic_vdf>'''
+        combined_graph = f'''<materialx version="1.39">{phase_nodes}
+  <add name="mixed" type="VDF"><input name="in1" type="VDF" nodename="red"/><input name="in2" type="VDF" nodename="blue"/></add>
+  <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="mixed"/></volume>
+  <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  <look name="Look"><materialassign name="a" geom="/Volume" material="Mat"/></look>
+</materialx>'''
+        def single_phase_graph(which, absorption):
+            return f'''<materialx version="1.39">{phase_nodes}
+  <absorption_vdf name="other" type="VDF"><input name="absorption" type="vector3" value="{absorption}"/></absorption_vdf>
+  <add name="mixed" type="VDF"><input name="in1" type="VDF" nodename="{which}"/><input name="in2" type="VDF" nodename="other"/></add>
+  <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="mixed"/></volume>
+  <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  <look name="Look"><materialassign name="a" geom="/Volume" material="Mat"/></look>
+</materialx>'''
+        phase_scene = tmp / "phase-light.usda"
+        phase_scene.write_text(scattering_scene.read_text(encoding="utf-8").replace(
+            'inputs:color = (1, 0.25, 0)', 'inputs:color = (1, 0.25, 1)'), encoding="utf-8")
+        graph.write_text(combined_graph, encoding="utf-8")
+        combined = render(1, "phase-combined", source=phase_scene, camera="/TestCam", extra=("-noShadows",))
+        reversed_graph = combined_graph.replace('nodename="red"/><input name="in2" type="VDF" nodename="blue"',
+                                                'nodename="blue"/><input name="in2" type="VDF" nodename="red"')
+        graph.write_text(reversed_graph, encoding="utf-8")
+        reversed_phase = render(1, "phase-reversed", source=phase_scene, camera="/TestCam", extra=("-noShadows",))
+        graph.write_text(single_phase_graph("red", "0,0,0.03"), encoding="utf-8")
+        red_only = render(1, "phase-red", source=phase_scene, camera="/TestCam", extra=("-noShadows",))
+        graph.write_text(single_phase_graph("blue", "0.03,0,0"), encoding="utf-8")
+        blue_only = render(1, "phase-blue", source=phase_scene, camera="/TestCam", extra=("-noShadows",))
+        if any(abs(a - b) > 1 for a, b in zip(combined, reversed_phase)):
+            raise RuntimeError("composed anisotropic VDFs depend on branch order")
+        if (any(abs(a - b) > 1 for a, b in zip(combined[0::4], red_only[0::4])) or
+            any(abs(a - b) > 1 for a, b in zip(combined[2::4], blue_only[2::4])) or
+            max(combined[0::4]) < 10 or max(combined[2::4]) < 10):
+            raise RuntimeError("composed anisotropic VDF channels differ from their individual phase responses")
         two_media = '''<materialx version="1.39">
   <absorption_vdf name="a" type="VDF"><input name="absorption" type="vector3" value="0.2,0.2,0.2"/></absorption_vdf>
   <uniform_edf name="red" type="EDF"><input name="color" type="color3" value="0.2,0,0"/></uniform_edf>

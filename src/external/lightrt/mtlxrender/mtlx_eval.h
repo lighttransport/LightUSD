@@ -56,11 +56,21 @@ typedef struct {
     float opacity;
 } OpenPBRParams;
 
+/* Preserve distinct phase functions in composed VDFs. Exceeding this bound
+ * fails volume evaluation rather than silently merging different lobes. */
+#define MTLX_MAX_VOLUME_SCATTERING_LOBES 64
+typedef struct {
+    v3 scattering;
+    float anisotropy;
+} MtlxVolumeScatteringLobe;
 typedef struct {
     v3 absorption;
     v3 scattering;
-    float anisotropy;
+    float anisotropy; /* legacy single-phase preview */
     v3 emission;
+    MtlxVolumeScatteringLobe lobes[MTLX_MAX_VOLUME_SCATTERING_LOBES];
+    int lobe_count;
+    int lobe_overflow;
 } MtlxVolumeParams;
 
 typedef struct {
