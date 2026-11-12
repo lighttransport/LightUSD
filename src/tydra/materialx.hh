@@ -205,7 +205,8 @@ public:
 
   /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
   /// derived-first look order wins. Named per-face subsets use their mesh
-  /// path followed by the subset name as their geometry path.
+  /// path followed by the subset name as their geometry path. Matching volume
+  /// assignments return an error until volume conversion is supported.
   /// On failure the scene is unchanged.
   bool ApplyLookToRenderScene(const std::string& mtlx_content,
                               const std::string& look_name,

@@ -3124,6 +3124,13 @@ void TestMaterialXUtilities() {
   assert(!converter.ApplyLookToRenderScene(mtlx, "Missing", &assigned_scene));
   assert(assigned_scene.materials.size() == 2);
   assert(assigned_scene.meshes[0].material_id == 0);
+  assigned_scene.volumes.resize(1);
+  assigned_scene.volumes[0].prim_path = "/World/Body/Volume";
+  assert(!converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
+  assert(converter.GetError().find("volumes") != std::string::npos);
+  assert(assigned_scene.materials.size() == 2);
+  assert(assigned_scene.meshes[0].material_id == 0);
+  assert(assigned_scene.volumes[0].material_id == -1);
 
   const char* path = "tydra_materialx_test.mtlx";
   {

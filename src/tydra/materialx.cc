@@ -611,6 +611,20 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
     if (!collect(points.prim_path, &points.material_id, nullptr)) return false;
   for (RenderCurves& curves : scene->curves)
     if (!collect(curves.prim_path, &curves.material_id, nullptr)) return false;
+  for (const RenderVolume& volume : scene->volumes) {
+    std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
+    std::string resolve_error;
+    if (!doc.GetMaterialAssignmentsForGeometry(look_name, volume.prim_path,
+                                                &matches, &resolve_error)) {
+      error_ = resolve_error;
+      return false;
+    }
+    if (!matches.empty()) {
+      error_ = "MaterialX look application to volumes is not supported: " +
+               volume.prim_path;
+      return false;
+    }
+  }
   const size_t base = scene->materials.size();
   if (base + new_materials.size() > static_cast<size_t>(INT32_MAX)) {
     error_ = "Too many render materials";
