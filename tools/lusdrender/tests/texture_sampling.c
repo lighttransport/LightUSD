@@ -75,6 +75,15 @@ int main(int argc, char **argv) {
     fprintf(stderr, "FAIL: sRGB linear/power transfer branches\n");
     return 1;
   }
+  if (!near(linear_to_srgb_f(0.001f), 0.01292f, 1e-7f) ||
+      !near(linear_to_srgb_f(0.5f), 0.735357f, 2e-6f) ||
+      !near(linear_to_srgb_f(-0.25f), 0.0f, 1e-7f) ||
+      !near(linear_to_srgb_f(1.25f), 1.0f, 1e-7f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    fprintf(stderr, "FAIL: linear-to-sRGB branches and input clamp\n");
+    return 1;
+  }
   texcache_sample_nearest_address(cache, linear_id, 0.25f, 0.75f,
                                   "clamp", "clamp", sample);
   if (!near(sample[0], 128.0f / 255.0f, 1e-6f) ||
