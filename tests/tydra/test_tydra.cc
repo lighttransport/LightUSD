@@ -3088,6 +3088,83 @@ void TestMaterialXUtilities() {
 )";
 
   MtlxConverter converter;
+  const char* volume_mtlx = R"(<materialx version="1.39">
+    <anisotropic_vdf name="fog" type="VDF">
+      <input name="absorption" type="vector3" value="0.1, 0.2, 0.3"/>
+      <input name="scattering" type="vector3" value="0.4, 0.3, 0.2"/>
+      <input name="anisotropy" type="float" value="0.35"/>
+    </anisotropic_vdf>
+    <uniform_edf name="glow" type="EDF"><input name="color" type="color3" value="0.2, 0.4, 0.8"/></uniform_edf>
+    <volume name="volume" type="volumeshader">
+      <input name="vdf" type="VDF" nodename="fog"/>
+      <input name="edf" type="EDF" nodename="glow"/>
+    </volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  MtlxVolumeSample volume_sample;
+  const float volume_uv[2] = {0.5f, 0.5f};
+  assert(converter.EvaluateVolumeMaterial(volume_mtlx, "Fog", volume_uv,
+                                          &volume_sample));
+  assert(std::abs(volume_sample.absorption[1] - 0.2f) < 1e-6f);
+  assert(std::abs(volume_sample.scattering[0] - 0.4f) < 1e-6f);
+  assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);
+  assert(std::abs(volume_sample.anisotropy - 0.35f) < 1e-6f);
+  assert(!converter.EvaluateVolumeMaterial(volume_mtlx, "Missing", volume_uv,
+                                           &volume_sample));
+  assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);
+  std::string nonfinite_volume = volume_mtlx;
+  nonfinite_volume.replace(nonfinite_volume.find("0.1, 0.2, 0.3"),
+                           std::strlen("0.1, 0.2, 0.3"), "nan, 0.2, 0.3");
+  assert(!converter.EvaluateVolumeMaterial(nonfinite_volume, "Fog", volume_uv,
+                                           &volume_sample));
+  assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);
+  const char* volume_texture_path = "tydra_volume_sample.ppm";
+  {
+    std::ofstream texture(volume_texture_path, std::ios::binary);
+    texture << "P6\n1 1\n255\n";
+    const unsigned char pixel[3] = {64, 128, 192};
+    texture.write(reinterpret_cast<const char*>(pixel), sizeof(pixel));
+    assert(texture.good());
+  }
+  const std::string textured_volume = R"(<materialx version="1.39">
+    <image name="density" type="vector3"><input name="file" type="filename" value="tydra_volume_sample.ppm"/></image>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="density"/></absorption_vdf>
+    <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  assert(converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
+                                          &volume_sample, "volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[0] - 64.0f / 255.0f) < 1e-5f);
+  assert(std::abs(volume_sample.absorption[2] - 192.0f / 255.0f) < 1e-5f);
+  std::remove(volume_texture_path);
+  assert(!converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
+                                           &volume_sample, "volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[0] - 64.0f / 255.0f) < 1e-5f);
+  std::string unsafe_volume = textured_volume;
+  unsafe_volume.replace(unsafe_volume.find("tydra_volume_sample.ppm"),
+                        std::strlen("tydra_volume_sample.ppm"),
+                        "../tydra_volume_sample.ppm");
+  assert(!converter.EvaluateVolumeMaterial(unsafe_volume, "Fog", volume_uv,
+                                           &volume_sample, "volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[0] - 64.0f / 255.0f) < 1e-5f);
+  ResolverConfig memory_config;
+  memory_config.allow_filesystem = false;
+  AssetResolver memory_resolver(memory_config);
+  memory_resolver.RegisterMemoryAsset("nested/tydra_volume_sample.ppm",
+      {'P', '6', '\n', '1', ' ', '1', '\n', '2', '5', '5', '\n', 64, 128, 192});
+  MtlxConvertOptions volume_options;
+  volume_options.volume_texture_resolver = &memory_resolver;
+  volume_options.volume_texture_max_decoded_bytes = 4;
+  converter.SetOptions(volume_options);
+  assert(converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
+                                          &volume_sample, "nested/volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  volume_options.volume_texture_max_decoded_bytes = 3;
+  converter.SetOptions(volume_options);
+  assert(!converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
+                                           &volume_sample, "nested/volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  converter.SetOptions(MtlxConvertOptions{});
   RenderMaterial from_string;
   if (!converter.ConvertToRenderMaterial(mtlx, "Mat", &from_string)) {
     std::cout << "  MaterialX string conversion failed: "

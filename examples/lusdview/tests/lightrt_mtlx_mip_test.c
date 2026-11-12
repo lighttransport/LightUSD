@@ -23,7 +23,68 @@ static int near(float actual, float expected, float tolerance) {
   return fabsf(actual - expected) <= tolerance;
 }
 
+static int read_memory_image(void *user, const char *path,
+                             const unsigned char **data, size_t *size) {
+  static const unsigned char ppm[] = "P6\n1 1\n255\n\xff\0\0";
+  (void)user;
+  if (strcmp(path, "memory.ppm")) return 0;
+  *data = ppm;
+  *size = sizeof(ppm) - 1;
+  return 1;
+}
+
+static int check_volume_work_limit(void) {
+  char xml[8192];
+  int used = snprintf(xml, sizeof(xml),
+      "<materialx version=\"1.39\"><absorption_vdf name=\"n0\" type=\"VDF\"/>");
+  for (int i = 1; i <= 17; ++i) {
+    if (used < 0 || (size_t)used >= sizeof(xml)) return 0;
+    used += snprintf(xml + used, sizeof(xml) - (size_t)used,
+        "<add name=\"n%d\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"n%d\"/><input name=\"in2\" type=\"VDF\" nodename=\"n%d\"/></add>",
+        i, i - 1, i - 1);
+  }
+  if (used < 0 || (size_t)used >= sizeof(xml)) return 0;
+  used += snprintf(xml + used, sizeof(xml) - (size_t)used,
+      "<volume name=\"volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"n17\"/></volume></materialx>");
+  if (used < 0 || (size_t)used >= sizeof(xml)) return 0;
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) return 0;
+  ShadeContext ctx;
+  memset(&ctx, 0, sizeof(ctx));
+  ctx.doc = doc;
+  MtlxVolumeParams out;
+  const int id = mtlx_find_node(doc, -1, "volume");
+  const int missing_memo_rejected = id >= 0 && mtlx_eval_volume(&ctx, id, &out) != 0;
+  ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
+  ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
+  const int bounded = ctx.memo && ctx.memo_done &&
+      mtlx_eval_volume(&ctx, id, &out) != 0;
+  free(ctx.memo);
+  free(ctx.memo_done);
+  mtlx_free(doc);
+  return missing_memo_rejected && bounded;
+}
+
 int main(void) {
+  if (!check_volume_work_limit()) return 1;
+  TextureCache *bounded = texcache_create(".");
+  if (!bounded) return 1;
+  texcache_set_reader(bounded, read_memory_image, NULL, 3);
+  if (texcache_get(bounded, "memory.ppm", 0) >= 0 ||
+      !texcache_had_load_failure(bounded)) {
+    texcache_free(bounded);
+    return 1;
+  }
+  texcache_free(bounded);
+  bounded = texcache_create(".");
+  if (!bounded) return 1;
+  texcache_set_reader(bounded, read_memory_image, NULL, 4);
+  if (texcache_get(bounded, "memory.ppm", 0) < 0 ||
+      texcache_had_load_failure(bounded)) {
+    texcache_free(bounded);
+    return 1;
+  }
+  texcache_free(bounded);
   const char *checker_path = "lightusd_mtlx_mip_checker.ppm";
   const char *srgb_path = "lightusd_mtlx_mip_srgb.ppm";
   const unsigned char checker_pixels[12] = {

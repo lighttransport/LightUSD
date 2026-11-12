@@ -7,9 +7,18 @@
 #ifndef MTLXRENDER_TEXTURE_H_
 #define MTLXRENDER_TEXTURE_H_
 
+#include <stddef.h>
+
 struct MtlxDoc;
 
 typedef struct TextureCache TextureCache;
+
+/* Reader data must remain valid until the callback is next invoked. */
+typedef int (*MtlxTextureReadFn)(void *user, const char *path,
+                                 const unsigned char **data, size_t *size);
+void texcache_set_reader(TextureCache *tc, MtlxTextureReadFn read_fn,
+                         void *user, size_t max_decoded_bytes);
+int texcache_had_load_failure(const TextureCache *tc);
 
 /* Preload every texture referenced by image and projection nodes, then freeze
  * the cache so subsequent texcache_get calls are read-only (thread-safe during

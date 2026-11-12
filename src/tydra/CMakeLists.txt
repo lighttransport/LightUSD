@@ -67,6 +67,12 @@ set(TYDRA_SOURCES
     render-session.cc
     texture-cache.cc
     materialx.cc
+    materialx-volume.cc
+    ../external/lightrt/mtlxrender/color.c
+    ../external/lightrt/mtlxrender/mtlx_doc.c
+    ../external/lightrt/mtlxrender/mtlx_eval.c
+    ../external/lightrt/mtlxrender/mtlx_xml.c
+    ../external/lightrt/mtlxrender/texture.c
     urdf-to-usd.cc
     urdf-to-usd-support.cc
     urdf-to-usd-profile.cc
@@ -105,6 +111,11 @@ add_library(tydra STATIC
     ${TYDRA_SOURCES}
     ${TYDRA_HEADERS}
 )
+target_compile_features(tydra PRIVATE c_std_11)
+target_compile_definitions(tydra PRIVATE LIGHTUSD_MTLX_STB_STATIC=1)
+target_include_directories(tydra PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../external"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../external/lightrt/mtlxrender")
 option(LIGHTUSD_TYDRA_USE_PCH "Use a precompiled header for Tydra C++ sources" ON)
 if(LIGHTUSD_TYDRA_USE_PCH)
   target_precompile_headers(tydra PRIVATE

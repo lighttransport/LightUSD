@@ -1303,39 +1303,46 @@ static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n,
 
 /* Volume closure parameters must not use the unknown-node fallback. */
 static int supported_volume_value(ShadeContext *ctx, const MtlxNode *n,
-                                  int depth) {
+                                  int depth, size_t *budget) {
     if (!n) return 1;
-    if (depth > 32) return 0;
+    if (depth > 32 || !*budget) return 0;
+    --*budget;
     if (strcmp(n->category, "input") && classify(n->category) == OP_UNKNOWN)
         return 0;
     for (int i = 0; i < n->ninput; ++i) {
+        if (!*budget) return 0;
+        --*budget;
         const int src = n->inputs[i].src_node;
         if (n->inputs[i].has_connection && src < 0) return 0;
         if (src >= ctx->doc->nnode) return 0;
         if (src >= 0 && !supported_volume_value(ctx, &ctx->doc->nodes[src],
-                                                 depth + 1)) return 0;
+                                                 depth + 1, budget)) return 0;
     }
     return 1;
 }
 
 static int supported_closure_values(ShadeContext *ctx, const MtlxNode *n,
-                                    int depth) {
+                                    int depth, size_t *budget) {
     for (int i = 0; i < n->ninput; ++i) {
+        if (!*budget) return 0;
+        --*budget;
         const MtlxInput *in = &n->inputs[i];
         if (in->has_connection && in->src_node < 0) return 0;
         if (in->type == MV_NONE || in->src_node < 0) continue;
         if (in->src_node >= ctx->doc->nnode ||
             !supported_volume_value(ctx, &ctx->doc->nodes[in->src_node],
-                                    depth + 1)) return 0;
+                                    depth + 1, budget)) return 0;
     }
     return 1;
 }
 
 /* Validate the closure branches consumed by eval_edf for volume emission. */
-static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
+static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth,
+                         size_t *budget) {
     if (!n) return 1;
-    if (depth > 32) return 0;
-    if (!supported_closure_values(ctx, n, depth)) return 0;
+    if (depth > 32 || !*budget) return 0;
+    --*budget;
+    if (!supported_closure_values(ctx, n, depth, budget)) return 0;
     const char *cat = n->category;
     /* Measured EDF needs IES evaluation; eval_edf's color fallback is not a
      * faithful volume emission result. */
@@ -1344,42 +1351,44 @@ static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
         const char *a = !strcmp(cat, "layer") ? "base" : "in1";
         const char *b = !strcmp(cat, "layer") ? "top" : "in2";
-        return supported_edf(ctx, input_node(ctx, n, a), depth + 1) &&
-               supported_edf(ctx, input_node(ctx, n, b), depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, a), depth + 1, budget) &&
+               supported_edf(ctx, input_node(ctx, n, b), depth + 1, budget);
     }
     if (!strcmp(cat, "mix"))
-        return supported_edf(ctx, input_node(ctx, n, "bg"), depth + 1) &&
-               supported_edf(ctx, input_node(ctx, n, "fg"), depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, "bg"), depth + 1, budget) &&
+               supported_edf(ctx, input_node(ctx, n, "fg"), depth + 1, budget);
     if (!strcmp(cat, "multiply")) {
-        return supported_edf(ctx, input_node(ctx, n, "in1"), depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, "in1"), depth + 1, budget);
     }
     if (!strcmp(cat, "light"))
-        return supported_edf(ctx, input_node(ctx, n, "edf"), depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, "edf"), depth + 1, budget);
     if (!strcmp(cat, "generalized_schlick_edf"))
-        return supported_edf(ctx, input_node(ctx, n, "base"), depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, "base"), depth + 1, budget);
     return 0;
 }
 
 /* Check the same VDF branches that eval_vdf traverses.  Unknown closures and
  * cycles must not silently turn into a transparent medium. */
-static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth) {
+static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth,
+                         size_t *budget) {
     if (!n) return 1;
-    if (depth > 32) return 0;
-    if (!supported_closure_values(ctx, n, depth)) return 0;
+    if (depth > 32 || !*budget) return 0;
+    --*budget;
+    if (!supported_closure_values(ctx, n, depth, budget)) return 0;
     const char *cat = n->category;
     if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf") ||
         !strcmp(cat, "subsurface_vdf")) return 1;
     if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
         const char *a = !strcmp(cat, "layer") ? "base" : "in1";
         const char *b = !strcmp(cat, "layer") ? "top" : "in2";
-        return supported_vdf(ctx, input_node(ctx, n, a), depth + 1) &&
-               supported_vdf(ctx, input_node(ctx, n, b), depth + 1);
+        return supported_vdf(ctx, input_node(ctx, n, a), depth + 1, budget) &&
+               supported_vdf(ctx, input_node(ctx, n, b), depth + 1, budget);
     }
     if (!strcmp(cat, "mix"))
-        return supported_vdf(ctx, input_node(ctx, n, "bg"), depth + 1) &&
-               supported_vdf(ctx, input_node(ctx, n, "fg"), depth + 1);
+        return supported_vdf(ctx, input_node(ctx, n, "bg"), depth + 1, budget) &&
+               supported_vdf(ctx, input_node(ctx, n, "fg"), depth + 1, budget);
     if (!strcmp(cat, "multiply")) {
-        return supported_vdf(ctx, input_node(ctx, n, "in1"), depth + 1);
+        return supported_vdf(ctx, input_node(ctx, n, "in1"), depth + 1, budget);
     }
     return 0;
 }
@@ -1571,16 +1580,19 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
 
 int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
                      MtlxVolumeParams *out) {
-    if (!ctx || !ctx->doc || !out || volume_node < 0 ||
+    if (!ctx || !ctx->doc || !ctx->memo || !ctx->memo_done || !out || volume_node < 0 ||
         volume_node >= ctx->doc->nnode) return 1;
     memset(out, 0, sizeof(*out));
     memset(ctx->memo_done, 0, (size_t)ctx->doc->nnode);
     const MtlxNode *volume = &ctx->doc->nodes[volume_node];
     if (strcmp(volume->category, "volume")) return 1;
-    if (!supported_closure_values(ctx, volume, 0)) return 1;
+    /* Bound traversal of shared DAGs before the recursive closure evaluator. */
+    size_t budget = 100000;
+    if (!supported_closure_values(ctx, volume, 0, &budget)) return 1;
     const MtlxNode *vdf = input_node(ctx, volume, "vdf");
     const MtlxNode *edf = input_node(ctx, volume, "edf");
-    if (!supported_vdf(ctx, vdf, 0) || !supported_edf(ctx, edf, 0)) return 1;
+    if (!supported_vdf(ctx, vdf, 0, &budget) ||
+        !supported_edf(ctx, edf, 0, &budget)) return 1;
     eval_vdf(ctx, vdf, v3_splat(1.0f), out, 0);
     out->emission = eval_edf(ctx, edf, 0);
     return 0;

@@ -7,8 +7,22 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>
 
+#ifdef LIGHTUSD_MTLX_STB_STATIC
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#endif
 #include "stb_image.h"
+#ifdef LIGHTUSD_MTLX_STB_STATIC
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+#endif
 
 typedef struct {
     int w, h;
@@ -29,12 +43,30 @@ struct TextureCache {
     Texture *tex;
     int      ntex, cap;
     int      frozen; /* when set, texcache_get never mutates (render-safe) */
+    MtlxTextureReadFn read_fn;
+    void *read_user;
+    size_t max_decoded_bytes, decoded_bytes;
+    int load_failed;
 };
 
 TextureCache *texcache_create(const char *base_dir) {
     TextureCache *tc = (TextureCache *)calloc(1, sizeof(TextureCache));
+    if (!tc) return NULL;
     tc->base_dir = strdup(base_dir ? base_dir : ".");
+    if (!tc->base_dir) { free(tc); return NULL; }
     return tc;
+}
+
+void texcache_set_reader(TextureCache *tc, MtlxTextureReadFn read_fn,
+                         void *user, size_t max_decoded_bytes) {
+    if (!tc) return;
+    tc->read_fn = read_fn;
+    tc->read_user = user;
+    tc->max_decoded_bytes = max_decoded_bytes;
+}
+
+int texcache_had_load_failure(const TextureCache *tc) {
+    return tc ? tc->load_failed : 1;
 }
 
 void texcache_free(TextureCache *tc) {
@@ -79,13 +111,21 @@ static unsigned char *load_searchpath(const char *base_dir, const char *rel,
 static int texcache_add(TextureCache *tc, const char *rel_path, int srgb,
                         unsigned char *px, int w, int h, int comp) {
     if (tc->ntex >= tc->cap) {
-        tc->cap = tc->cap ? tc->cap * 2 : 16;
-        tc->tex = (Texture *)realloc(tc->tex, sizeof(Texture) * tc->cap);
+        if (tc->cap > INT_MAX / 2) { stbi_image_free(px); tc->load_failed = 1; return -1; }
+        const int new_cap = tc->cap ? tc->cap * 2 : 16;
+        if ((size_t)new_cap > SIZE_MAX / sizeof(Texture)) {
+            stbi_image_free(px); tc->load_failed = 1; return -1;
+        }
+        Texture *new_tex = (Texture *)realloc(tc->tex, sizeof(Texture) * (size_t)new_cap);
+        if (!new_tex) { stbi_image_free(px); tc->load_failed = 1; return -1; }
+        tc->tex = new_tex;
+        tc->cap = new_cap;
     }
     Texture *t = &tc->tex[tc->ntex];
     char key[1100];
     snprintf(key, sizeof(key), "%s|%d", rel_path, srgb ? 1 : 0);
     t->key = strdup(key);
+    if (!t->key) { stbi_image_free(px); tc->load_failed = 1; return -1; }
     t->pixels = px;
     t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
     t->mips = NULL; t->nmips = 0;
@@ -102,8 +142,21 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     if (tc->frozen) return -1; /* render-time miss: never mutate the cache */
 
     int w, h, comp;
-    unsigned char *px = load_searchpath(tc->base_dir, rel_path, &w, &h, &comp);
-    if (!px) { fprintf(stderr, "texture: failed to load '%s' (searched from '%s')\n", rel_path, tc->base_dir); return -1; }
+    unsigned char *px = NULL;
+    if (tc->read_fn) {
+        const unsigned char *bytes = NULL;
+        size_t size = 0;
+        if (tc->read_fn(tc->read_user, rel_path, &bytes, &size) && bytes &&
+            size <= INT_MAX && stbi_info_from_memory(bytes, (int)size, &w, &h, &comp) &&
+            w > 0 && h > 0 && tc->decoded_bytes <= tc->max_decoded_bytes &&
+            (size_t)w <= (tc->max_decoded_bytes - tc->decoded_bytes) / 4 / (size_t)h) {
+            px = stbi_load_from_memory(bytes, (int)size, &w, &h, &comp, 0);
+            if (px) tc->decoded_bytes += (size_t)w * (size_t)h * 4;
+        }
+    } else {
+        px = load_searchpath(tc->base_dir, rel_path, &w, &h, &comp);
+    }
+    if (!px) { tc->load_failed = 1; fprintf(stderr, "texture: failed to load '%s' (searched from '%s')\n", rel_path, tc->base_dir); return -1; }
 
     return texcache_add(tc, rel_path, srgb, px, w, h, comp);
 }

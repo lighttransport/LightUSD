@@ -15,6 +15,7 @@
 #include <memory>
 
 namespace lightusd {
+class AssetResolver;
 namespace tydra {
 
 // ============================================================
@@ -177,6 +178,18 @@ struct MtlxConvertOptions {
   bool convert_to_preview_surface = true;  // Convert standard_surface to UsdPreviewSurface
   bool resolve_nodegraphs = true;          // Flatten nodegraph references
   std::string default_colorspace = "srgb_texture";
+  // Optional borrowed resolver for volume textures. Its configured path
+  // policy applies; includes still use the document parser's resolver.
+  const ::lightusd::AssetResolver* volume_texture_resolver = nullptr;
+  size_t volume_texture_max_decoded_bytes = size_t(256) * 1024 * 1024;
+};
+
+/// Volume closure coefficients sampled at one UV location.
+struct MtlxVolumeSample {
+  float absorption[3] = {0, 0, 0};
+  float scattering[3] = {0, 0, 0};
+  float emission[3] = {0, 0, 0};
+  float anisotropy = 0;
 };
 
 /// MaterialX to render data converter
@@ -202,6 +215,18 @@ public:
   bool ConvertFileToRenderMaterial(const std::string& filename,
                                     const std::string& material_name,
                                     RenderMaterial* out);
+
+  /// Evaluate a volume material at the supplied UV, with position (0,0,0)
+  /// and normal/view (0,0,1). `anchor_path` anchors includes and textures.
+  /// By default texture paths must be relative without parent segments. A
+  /// supplied volume texture resolver controls parent-path policy. Decoded
+  /// texture memory is bounded by the conversion options. Output is unchanged
+  /// on failure. Closure/value validation is limited to depth 32 and 100,000
+  /// node/input visits to bound work on shared graphs.
+  bool EvaluateVolumeMaterial(const std::string& mtlx_content,
+                              const std::string& material_name,
+                              const float uv[2], MtlxVolumeSample* out,
+                              const std::string& anchor_path = "");
 
   /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
   /// derived-first look order wins. Named per-face subsets use their mesh

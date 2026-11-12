@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "lightrt_mtlx_bridge.hh"
 #include "rt_scene_build.hh"
+#include "tydra/materialx.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -2906,6 +2907,19 @@ int main() {
       !Near(volumeMaterial.volumeEmissionScale, 1.0f)) {
     std::fprintf(stderr, "MaterialX volume transport evaluation failed: %s\n",
                  volumeError.c_str());
+    return 1;
+  }
+  lightusd::tydra::MtlxConverter volumeConverter;
+  lightusd::tydra::MtlxVolumeSample volumeSample;
+  const float volumeUv[2] = {0.5f, 0.5f};
+  if (!volumeConverter.EvaluateVolumeMaterial(volumeXml, "FogMat", volumeUv,
+                                               &volumeSample) ||
+      !Near(volumeSample.absorption[0], 0.1f) ||
+      !Near(volumeSample.scattering[2], 0.2f) ||
+      !Near(volumeSample.anisotropy, 0.35f) ||
+      !Near(volumeSample.emission[2], 0.8f)) {
+    std::fprintf(stderr, "Tydra MaterialX volume evaluation failed: %s\n",
+                 volumeConverter.GetError().c_str());
     return 1;
   }
 

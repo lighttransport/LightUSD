@@ -104,6 +104,10 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   graphs and unresolved authored input connections. This is a local change to
   preserve on the next LightRT sync. Volume `measured_edf` is rejected until
   its IES profile is evaluated; the surface fallback is unchanged.
+- 2026-11-13: Tydra embeds the evaluator for sampled volume coefficients,
+  with a private stb decoder and an asset-reader callback in the texture cache.
+  Tydra uses its asset resolver and a decoded-memory cap; volume graph traversal
+  has a 100,000-visit work limit. Preserve these local changes during sync.
 - 2026-11-13: VDF/EDF multiplication uses the declared closure input and
   supports connected color weights; VDF coefficients retain signed RGB
   weights under a coefficient-wise interpretation of the PBR specification's
