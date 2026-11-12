@@ -14,9 +14,8 @@
 // (every texture resident at full resolution before anything shrinks) is the
 // spike we are trying to avoid.
 //
-// Scope note: simple box/sRGB-aware resize only, via tydra::ResizeImage. Mip
-// chains, block compression, and content-aware filtering deliberately live
-// elsewhere.
+// Ordinary resizing uses tydra::ResizeImage. MaterialX callers can explicitly
+// request a linear-RGBA mip chain; block compression lives elsewhere.
 
 #pragma once
 
@@ -111,6 +110,22 @@ struct DecodedImage {
   }
 };
 
+/// MaterialX round-up mip pyramid. Each level is linear RGBA float data.
+struct MaterialXMipLevel {
+  uint32_t width = 0, height = 0;
+  std::vector<float> rgba;
+};
+
+struct MaterialXMipChain {
+  MaterialXMipChain() = default;
+  MaterialXMipChain(const MaterialXMipChain&) = delete;
+  MaterialXMipChain& operator=(const MaterialXMipChain&) = delete;
+  MaterialXMipChain(MaterialXMipChain&&) = default;
+  MaterialXMipChain& operator=(MaterialXMipChain&&) = default;
+  std::vector<MaterialXMipLevel> levels;
+  std::shared_ptr<::lightusd::TextureBudgetLease> budget_lease;
+};
+
 struct TextureDecodeOptions {
   /// Directory the source USD resolves relative asset paths against.
   std::string base_dir;
@@ -149,6 +164,17 @@ class TextureDecoder {
   /// (sRGB data is filtered in linear light). Returns false when the asset
   /// cannot be resolved or decoded; `out` is left untouched.
   bool Decode(const std::string& asset, bool srgb, DecodedImage* out);
+
+  /// Build a round-up box-filtered linear-RGBA chain, charging all mip pixel
+  /// storage to this decoder's resident budget. The output is unchanged on
+  /// failure. For HDR inputs, values are already linear and `srgb` is ignored.
+  bool BuildMaterialXMips(const DecodedImage& image, bool srgb,
+                          MaterialXMipChain* out);
+
+  /// Decode and build a MaterialX chain. The decoded base image and chain both
+  /// count against the budget while building; the base lease is then released.
+  bool DecodeMaterialXMips(const std::string& asset, bool srgb,
+                           MaterialXMipChain* out);
 
   // Decode one Ptex face/mip lazily to RGBA8. This never expands the complete
   // Ptex file; the caller controls the destination budget. Non-Ptex assets

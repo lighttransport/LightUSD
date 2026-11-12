@@ -479,6 +479,85 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
   return true;
 }
 
+bool TextureDecoder::BuildMaterialXMips(const DecodedImage& image, bool srgb,
+                                        MaterialXMipChain* out) {
+  if (!out || !image.width || !image.height || image.channels < 1 ||
+      image.channels > 4 || (image.hdr && image.channels != 3)) return false;
+  size_t source_pixels = 0, source_values = 0;
+  if (!safe::mul(size_t(image.width), size_t(image.height), &source_pixels) ||
+      !safe::mul(source_pixels, size_t(image.channels), &source_values) ||
+      (image.hdr ? image.float_pixels.size() < source_values
+                 : image.pixels.size() < source_values)) return false;
+  size_t bytes = 0;
+  uint32_t w = image.width, h = image.height;
+  for (;;) {
+    size_t pixels = 0, level_bytes = 0;
+    if (!safe::mul(size_t(w), size_t(h), &pixels) ||
+        !safe::mul(pixels, size_t(4 * sizeof(float)), &level_bytes) ||
+        level_bytes > (std::numeric_limits<size_t>::max)() - bytes) return false;
+    bytes += level_bytes;
+    if (w == 1 && h == 1) break;
+    w = w / 2 + w % 2;
+    h = h / 2 + h % 2;
+  }
+  if (!budget_state_->try_add(static_cast<uint64_t>(bytes))) return false;
+  MaterialXMipChain chain;
+  chain.budget_lease = std::make_shared<::lightusd::TextureBudgetLease>(
+      budget_state_, static_cast<uint64_t>(bytes));
+  chain.levels.emplace_back();
+  MaterialXMipLevel& base = chain.levels.back();
+  base.width = image.width;
+  base.height = image.height;
+  base.rgba.resize(source_pixels * 4);
+  const auto linearize = [srgb, &image](float x) {
+    if (!srgb || image.hdr) return x;
+    return x <= 0.04045f ? x / 12.92f : std::pow((x + 0.055f) / 1.055f, 2.4f);
+  };
+  for (size_t i = 0; i < source_pixels; ++i) {
+    const auto component = [&](size_t c) {
+      const size_t index = i * image.channels + c;
+      return image.hdr ? image.float_pixels[index] : float(image.pixels[index]) / 255.0f;
+    };
+    float* pixel = base.rgba.data() + i * 4;
+    pixel[0] = linearize(component(0));
+    pixel[1] = linearize(component(image.channels >= 3 ? 1 : 0));
+    pixel[2] = linearize(component(image.channels >= 3 ? 2 : 0));
+    pixel[3] = (image.channels == 2 || image.channels == 4)
+                   ? component(image.channels - 1) : 1.0f;
+  }
+  while (chain.levels.back().width > 1 || chain.levels.back().height > 1) {
+    const MaterialXMipLevel& src = chain.levels.back();
+    MaterialXMipLevel dst;
+    dst.width = src.width / 2 + src.width % 2;
+    dst.height = src.height / 2 + src.height % 2;
+    dst.rgba.resize(size_t(dst.width) * dst.height * 4);
+    for (uint32_t y = 0; y < dst.height; ++y) {
+      const uint32_t y0 = y * 2, y1 = (std::min)(y0 + 1, src.height - 1);
+      for (uint32_t x = 0; x < dst.width; ++x) {
+        const uint32_t x0 = x * 2, x1 = (std::min)(x0 + 1, src.width - 1);
+        const size_t a = (size_t(y0) * src.width + x0) * 4;
+        const size_t b = (size_t(y0) * src.width + x1) * 4;
+        const size_t c = (size_t(y1) * src.width + x0) * 4;
+        const size_t d = (size_t(y1) * src.width + x1) * 4;
+        const size_t target = (size_t(y) * dst.width + x) * 4;
+        for (size_t channel = 0; channel < 4; ++channel)
+          dst.rgba[target + channel] = (src.rgba[a + channel] + src.rgba[b + channel] +
+                                        src.rgba[c + channel] + src.rgba[d + channel]) * 0.25f;
+      }
+    }
+    chain.levels.push_back(std::move(dst));
+  }
+  *out = std::move(chain);
+  return true;
+}
+
+bool TextureDecoder::DecodeMaterialXMips(const std::string& asset, bool srgb,
+                                         MaterialXMipChain* out) {
+  if (!out) return false;
+  DecodedImage image;
+  return Decode(asset, srgb, &image) && BuildMaterialXMips(image, srgb, out);
+}
+
 bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
                                     uint32_t level, bool srgb, DecodedImage* out) {
   if (!out || !HasPtxExtension(asset)) return false;

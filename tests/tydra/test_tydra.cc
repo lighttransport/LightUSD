@@ -868,6 +868,66 @@ void TestTextureBudgetLease() {
     second.budget_lease.reset();
   }
   assert(state->resident.load(std::memory_order_relaxed) == 0);
+  DecodedImage input;
+  input.width = 3;
+  input.height = 1;
+  input.channels = 3;
+  input.pixels = {0, 0, 0, 255, 255, 255, 0, 0, 0};
+  TextureDecodeOptions mip_options;
+  mip_options.budget_bytes = 95;
+  TextureDecoder small_decoder(mip_options);
+  MaterialXMipChain mips;
+  assert(!small_decoder.BuildMaterialXMips(input, false, &mips));
+  assert(mips.levels.empty());
+  assert(small_decoder.decoded_bytes() == 0);
+  mip_options.budget_bytes = 96;
+  TextureDecoder decoder(mip_options);
+  assert(decoder.BuildMaterialXMips(input, false, &mips));
+  assert(decoder.decoded_bytes() == 96);
+  assert(mips.levels.size() == 3);
+  assert(mips.levels[1].width == 2 && mips.levels[2].width == 1);
+  assert(std::abs(mips.levels[1].rgba[0] - 0.5f) < 1e-6f);
+  assert(std::abs(mips.levels[2].rgba[0] - 0.25f) < 1e-6f);
+  assert(!small_decoder.BuildMaterialXMips(input, false, &mips));
+  assert(mips.levels.size() == 3 && decoder.decoded_bytes() == 96);
+  {
+    MaterialXMipChain copy = std::move(mips);
+    assert(decoder.decoded_bytes() == 96);
+  }
+  assert(decoder.decoded_bytes() == 0);
+  input.width = 1;
+  input.channels = 2;
+  input.pixels = {128, 64};
+  assert(decoder.BuildMaterialXMips(input, true, &mips));
+  assert(std::abs(mips.levels[0].rgba[0] - 0.21586f) < 2e-4f);
+  assert(std::abs(mips.levels[0].rgba[3] - 64.0f / 255.0f) < 1e-6f);
+  mips = MaterialXMipChain{};
+  input.hdr = true;
+  input.channels = 3;
+  input.float_pixels = {2.0f, 0.5f, 0.25f};
+  assert(decoder.BuildMaterialXMips(input, true, &mips));
+  assert(std::abs(mips.levels[0].rgba[0] - 2.0f) < 1e-6f);
+  assert(std::abs(mips.levels[0].rgba[1] - 0.5f) < 1e-6f);
+  mips = MaterialXMipChain{};
+  // Uncompressed 3x1, 24-bit TGA, black/white/black.
+  const char* image_path = "tydra_mip_decoder_test.tga";
+  {
+    const unsigned char tga[] = {0,0,2, 0,0,0,0,0, 0,0,0,0, 3,0,1,0,24,0x20,
+                                 0,0,0, 255,255,255, 0,0,0};
+    std::ofstream file(image_path, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(tga), sizeof(tga));
+    assert(file.good());
+  }
+  mip_options.budget_bytes = 107;
+  TextureDecoder tight_decoder(mip_options);
+  assert(!tight_decoder.DecodeMaterialXMips(image_path, false, &mips));
+  assert(tight_decoder.decoded_bytes() == 0);
+  mip_options.budget_bytes = 108;
+  TextureDecoder decode_chain(mip_options);
+  assert(decode_chain.DecodeMaterialXMips(image_path, false, &mips));
+  assert(decode_chain.decoded_bytes() == 96);
+  assert(std::abs(mips.levels.back().rgba[0] - 0.25f) < 1e-6f);
+  std::remove(image_path);
   std::cout << "  resident texture budget leases: PASSED\n";
 }
 

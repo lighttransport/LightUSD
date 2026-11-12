@@ -294,6 +294,11 @@ if(LIGHTUSD_TYDRA_BUILD_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/test_tydra.cc
         )
         target_link_libraries(test_tydra PRIVATE tydra lightusd_core)
+        if(TARGET lightusd_preview_images)
+            target_link_libraries(test_tydra PRIVATE lightusd_preview_images)
+        elseif(TARGET lightusd)
+            target_link_libraries(test_tydra PRIVATE lightusd)
+        endif()
     endif()
     add_executable(skinning_points_dump
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/skinning-points-dump.cc)
