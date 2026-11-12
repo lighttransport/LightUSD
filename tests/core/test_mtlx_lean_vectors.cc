@@ -392,6 +392,34 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
+  MtlxDocument invalid_look_document;
+  const bool invalid_looks_parsed = invalid_look_document.ParseFromXML(
+      R"(<materialx version="1.39">
+      <surfacematerial name="paint"/>
+      <look name="first" inherit="second">
+        <materialassign name="early" geom="/World" material="paint"/>
+      </look>
+      <look name="second" inherit="first"/>
+      <look name="missing" inherit="absent">
+        <materialassign name="early" geom="/World" material="paint"/>
+      </look>
+      </materialx>)");
+  const bool cycle_failed = invalid_looks_parsed &&
+      !invalid_look_document.GetMaterialAssignmentsForGeometry(
+          "first", "/World/Body", &resolved_assignments, &assignment_error) &&
+      assignment_error.find("Cycle") != std::string::npos &&
+      resolved_assignments.empty();
+  const bool missing_failed = invalid_looks_parsed &&
+      !invalid_look_document.GetMaterialAssignmentsForGeometry(
+          "missing", "/World/Body", &resolved_assignments, &assignment_error) &&
+      assignment_error.find("absent") != std::string::npos &&
+      resolved_assignments.empty();
+  if (!cycle_failed || !missing_failed) {
+    Fail("MTLX_LOOK_INHERITANCE_ERRORS", 0,
+         "invalid inheritance did not fail without returning partial assignments");
+  }
+
+  g_checks++;
   MtlxDocument collection_cycle_document;
   const bool cycle_parsed = collection_cycle_document.ParseFromXML(
       R"(<materialx version="1.39">

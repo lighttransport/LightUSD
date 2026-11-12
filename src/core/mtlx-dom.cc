@@ -2202,43 +2202,43 @@ bool MtlxDocument::GetMaterialAssignmentsForGeometry(
   std::vector<MtlxResolvedMaterialAssignment> resolved;
   std::set<std::string> visited_looks;
   while (look) {
-  if (!visited_looks.insert(look->GetName()).second) {
-    if (err) *err = "Cycle in MaterialX look inheritance at '" + look->GetName() + "'";
-    return false;
-  }
-  for (const MtlxMaterialAssignmentPtr &assignment :
-       look->GetMaterialAssignments()) {
-    if (!assignment) continue;
-    bool matches = MtlxGeomStringMatches(assignment->GetGeom(), geometry,
-                                         true);
-    if (!matches && !assignment->GetCollection().empty()) {
-      std::set<std::string> active;
-      std::string collection_error;
-      if (!MtlxCollectionMatchesGeometry(*this, assignment->GetCollection(),
-                                         geometry, &active, &matches,
-                                         &collection_error)) {
-        if (err) *err = collection_error;
-        return false;
-      }
-    }
-    if (!matches) continue;
-
-    MtlxMaterialPtr material = FindMaterial(assignment->GetMaterial());
-    if (!material) {
-      if (err)
-        *err = "MaterialX material not found for assignment '" +
-               assignment->GetName() + "': " + assignment->GetMaterial();
+    if (!visited_looks.insert(look->GetName()).second) {
+      if (err) *err = "Cycle in MaterialX look inheritance at '" + look->GetName() + "'";
       return false;
     }
-    resolved.push_back({assignment, std::move(material)});
-  }
-  const std::string inherited = look->GetExtraAttribute("inherit");
-  if (inherited.empty()) break;
-  look = FindLook(inherited);
-  if (!look) {
-    if (err) *err = "Inherited MaterialX look not found: " + inherited;
-    return false;
-  }
+    for (const MtlxMaterialAssignmentPtr &assignment :
+         look->GetMaterialAssignments()) {
+      if (!assignment) continue;
+      bool matches = MtlxGeomStringMatches(assignment->GetGeom(), geometry,
+                                           true);
+      if (!matches && !assignment->GetCollection().empty()) {
+        std::set<std::string> active;
+        std::string collection_error;
+        if (!MtlxCollectionMatchesGeometry(*this, assignment->GetCollection(),
+                                           geometry, &active, &matches,
+                                           &collection_error)) {
+          if (err) *err = collection_error;
+          return false;
+        }
+      }
+      if (!matches) continue;
+
+      MtlxMaterialPtr material = FindMaterial(assignment->GetMaterial());
+      if (!material) {
+        if (err)
+          *err = "MaterialX material not found for assignment '" +
+                 assignment->GetName() + "': " + assignment->GetMaterial();
+        return false;
+      }
+      resolved.push_back({assignment, std::move(material)});
+    }
+    const std::string inherited = look->GetExtraAttribute("inherit");
+    if (inherited.empty()) break;
+    look = FindLook(inherited);
+    if (!look) {
+      if (err) *err = "Inherited MaterialX look not found: " + inherited;
+      return false;
+    }
   }
   *assignments = std::move(resolved);
   return true;
