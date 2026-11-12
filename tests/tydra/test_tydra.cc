@@ -3101,9 +3101,15 @@ void TestMaterialXUtilities() {
   assigned_scene.meshes.resize(2);
   assigned_scene.meshes[0].prim_path = "/World/Body/Part";
   assigned_scene.meshes[1].prim_path = "/World/Other";
+  assigned_scene.points.resize(1);
+  assigned_scene.points[0].prim_path = "/World/Body/Points";
+  assigned_scene.curves.resize(1);
+  assigned_scene.curves[0].prim_path = "/World/Body/Curves";
   assert(converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
   assert(assigned_scene.meshes[0].material_id == 0);
   assert(assigned_scene.meshes[1].material_id == -1);
+  assert(assigned_scene.points[0].material_id == 0);
+  assert(assigned_scene.curves[0].material_id == 0);
   assert(assigned_scene.materials.size() == 1);
   assigned_scene.meshes[0].material_subsets.push_back({0, 1, 0, "subset"});
   assert(!converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));

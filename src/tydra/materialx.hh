@@ -203,7 +203,7 @@ public:
                                     const std::string& material_name,
                                     RenderMaterial* out);
 
-  /// Apply a look to meshes by prim_path. The first matching assignment in
+  /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
   /// derived-first look order wins. Meshes with material subsets are rejected
   /// because their per-face bindings require separate geometry selection.
   /// On failure the scene is unchanged.

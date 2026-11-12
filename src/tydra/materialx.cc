@@ -570,20 +570,20 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
 
   std::vector<RenderMaterial> new_materials;
   std::map<std::string, size_t> material_indices;
-  std::vector<std::pair<size_t, size_t>> bindings;
-  for (size_t i = 0; i < scene->meshes.size(); ++i) {
-    const RenderMesh& mesh = scene->meshes[i];
+  std::vector<std::pair<int32_t*, size_t>> bindings;
+  std::vector<std::pair<size_t, size_t>> mesh_bindings;
+  const auto collect = [&](const std::string& path, int32_t* material_id,
+                           bool has_subsets, size_t* selected) {
     std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
     std::string resolve_error;
-    if (!doc.GetMaterialAssignmentsForGeometry(look_name, mesh.prim_path,
-                                                &matches, &resolve_error)) {
+    if (!doc.GetMaterialAssignmentsForGeometry(look_name, path, &matches,
+                                                &resolve_error)) {
       error_ = resolve_error;
       return false;
     }
-    if (matches.empty()) continue;
-    if (!mesh.material_subsets.empty()) {
-      error_ = "MaterialX look cannot replace per-face material subsets on " +
-               mesh.prim_path;
+    if (matches.empty()) return true;
+    if (has_subsets) {
+      error_ = "MaterialX look cannot replace per-face material subsets on " + path;
       return false;
     }
     const std::string& name = matches.front().material->GetName();
@@ -596,8 +596,21 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
       new_materials.push_back(std::move(material));
       found = material_indices.emplace(name, index).first;
     }
-    bindings.emplace_back(i, found->second);
+    bindings.emplace_back(material_id, found->second);
+    if (selected) *selected = found->second;
+    return true;
+  };
+  for (size_t i = 0; i < scene->meshes.size(); ++i) {
+    RenderMesh& mesh = scene->meshes[i];
+    size_t selected = static_cast<size_t>(-1);
+    if (!collect(mesh.prim_path, &mesh.material_id,
+                 !mesh.material_subsets.empty(), &selected)) return false;
+    if (selected != static_cast<size_t>(-1)) mesh_bindings.emplace_back(i, selected);
   }
+  for (RenderPoints& points : scene->points)
+    if (!collect(points.prim_path, &points.material_id, false, nullptr)) return false;
+  for (RenderCurves& curves : scene->curves)
+    if (!collect(curves.prim_path, &curves.material_id, false, nullptr)) return false;
   const size_t base = scene->materials.size();
   if (base + new_materials.size() > static_cast<size_t>(INT32_MAX)) {
     error_ = "Too many render materials";
@@ -606,11 +619,10 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   for (RenderMaterial& material : new_materials)
     scene->materials.push_back(std::move(material));
   for (const auto& binding : bindings)
-    scene->meshes[binding.first].material_id =
-        static_cast<int32_t>(base + binding.second);
+    *binding.first = static_cast<int32_t>(base + binding.second);
   for (auto& draw : scene->point_instance_draws) {
     if (draw.mesh_id < 0) continue;
-    for (const auto& binding : bindings) {
+    for (const auto& binding : mesh_bindings) {
       if (static_cast<size_t>(draw.mesh_id) == binding.first) {
         draw.material_id = static_cast<int32_t>(base + binding.second);
         break;
