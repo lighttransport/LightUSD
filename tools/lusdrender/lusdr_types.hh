@@ -504,8 +504,10 @@ struct PreviewLight {
   // rather than collapsing it to its center. UsdLux puts a RectLight/DiskLight in
   // the local XY plane emitting along -Z (so `normal` is local +Z... times -1 of
   // `direction`), and runs a CylinderLight's axis along local +X.
-  Vec3 axis_u{1.0f, 0.0f, 0.0f};   // local +X in world space
-  Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
+  // Mesh lights use these as world-space triangle edges p1-p0 and p2-p0;
+  // position is their centroid. Other shapes use normalized local axes.
+  Vec3 axis_u{1.0f, 0.0f, 0.0f};
+  Vec3 axis_v{0.0f, 1.0f, 0.0f};
   float power{0.0f};
   float cdf{0.0f};
   bool shadow_enable{true};

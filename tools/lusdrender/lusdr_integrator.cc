@@ -538,6 +538,12 @@ bool SampleAreaLight(const PreviewLight &light, const Vec3 &p, float u1, float u
             Add(Mul(light.axis_u, rr * std::cos(phi)),
                 Mul(light.axis_v, rr * std::sin(phi))));
     nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Mesh) {
+    const float root = std::sqrt(std::max(0.0f, u1));
+    const Vec3 p0 = Sub(light.position, Mul(Add(light.axis_u, light.axis_v), 1.0f / 3.0f));
+    q = Add(p0, Add(Mul(light.axis_u, root * (1.0f - u2)),
+                    Mul(light.axis_v, root * u2)));
+    nl = light.normal;
   } else if (light.kind == PreviewLight::Kind::Cylinder) {
     Vec3 b1, b2;
     OrthonormalBasis(light.axis_u, &b1, &b2);
@@ -2399,7 +2405,8 @@ static Vec3 CompositeMixedVolumes(
             const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
             const bool shaped = light.kind == PreviewLight::Kind::Rect ||
                                 light.kind == PreviewLight::Kind::Disk ||
-                                light.kind == PreviewLight::Kind::Cylinder;
+                                light.kind == PreviewLight::Kind::Cylinder ||
+                                light.kind == PreviewLight::Kind::Mesh;
             if (shaped || (sphere && Length(Sub(light.position, world)) > light.radius + 1.0e-5f)) {
               // Stratified surface or solid-angle quadrature; invalid/back-facing
               // samples have zero contribution and retain their share of the PDF.
@@ -2429,12 +2436,7 @@ static Vec3 CompositeMixedVolumes(
               if (dist <= 1.0e-6f) return;
               l = Mul(delta, 1.0f / dist);
               max_t = std::max(0.0f, dist - 1.0e-3f);
-              if (light.kind == PreviewLight::Kind::Mesh) {
-                const float cosine = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
-                incoming = Mul(incoming, cosine * light.area);
-              } else if (sphere) {
-                incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
-              }
+              if (sphere) incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
               if (!light.constant_attenuation)
                 incoming = Mul(incoming, 1.0f / std::max(1.0e-4f, dist * dist));
             }

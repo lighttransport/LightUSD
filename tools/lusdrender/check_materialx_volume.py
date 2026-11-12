@@ -200,6 +200,33 @@ def Mesh "PanelBlocker" {{
         wide_sum, partial_sum, blocked_sum = (sum(p[0::4]) for p in (wide_area, partial_area, blocked_area))
         if not blocked_sum < partial_sum * 0.8 < wide_sum * 0.64:
             raise RuntimeError(f"area light did not produce a partial shadow: {blocked_sum}, {partial_sum}, {wide_sum}")
+        mesh_scene = tmp / "area-mesh.usda"
+        mesh_scene.write_text(scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + '''
+def Mesh "Panel" (prepend apiSchemas = ["MeshLightAPI"]) {
+  color3f inputs:color = (1, 0, 0)
+  float inputs:intensity = 2
+  point3f[] points = [(-50,-50,-120), (50,-50,-120), (50,50,-120), (-50,50,-120)]
+  int[] faceVertexCounts = [3,3]
+  int[] faceVertexIndices = [0,1,2,0,2,3]
+  uniform token subdivisionScheme = "none"
+  uniform bool doubleSided = true
+}
+''', encoding="utf-8")
+        mesh_blocked_scene = tmp / "area-mesh-blocked.usda"
+        mesh_partial_scene = tmp / "area-mesh-partial.usda"
+        mesh_blocked_scene.write_text(mesh_scene.read_text(encoding="utf-8") + blocker(200), encoding="utf-8")
+        mesh_partial_scene.write_text(mesh_scene.read_text(encoding="utf-8") + blocker(0), encoding="utf-8")
+        mesh_unshadowed = render(1, "mesh-unshadowed", source=mesh_scene, camera="/TestCam",
+                                 extra=("-noShadows",))
+        mesh_lit = render(1, "mesh-lit", source=mesh_scene, camera="/TestCam")
+        mesh_blocked = render(1, "mesh-blocked", source=mesh_blocked_scene, camera="/TestCam")
+        mesh_partial = render(1, "mesh-partial", source=mesh_partial_scene, camera="/TestCam")
+        if not (sum(mesh_unshadowed[0::4]) > 20 and sum(mesh_lit[0::4]) > 20 and
+                sum(mesh_blocked[0::4]) < sum(mesh_partial[0::4]) * 0.2 and
+                sum(mesh_partial[0::4]) < sum(mesh_lit[0::4]) * 0.85):
+            raise RuntimeError("mesh light did not produce full and partial volume shadows")
+        if mesh_lit != render(2, "mesh-lit-threaded", source=mesh_scene, camera="/TestCam"):
+            raise RuntimeError("mesh-light volume render differs between worker counts")
         dome_scene = tmp / "scattering-dome.usda"
         dome_scene.write_text(scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + '''
 def DomeLight "Environment" {

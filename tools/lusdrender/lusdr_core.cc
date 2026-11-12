@@ -6687,6 +6687,8 @@ void CollectMeshLightsCore(RenderContext &ctx) {
     PreviewLight ml;
     ml.kind = PreviewLight::Kind::Mesh;
     ml.position = Mul(Add(Add(ft.p0, ft.p1), ft.p2), 1.0f / 3.0f);
+    ml.axis_u = Sub(ft.p1, ft.p0);
+    ml.axis_v = Sub(ft.p2, ft.p0);
     ml.normal = ft.n;                  // the OUTWARD normal of the emitting face
     ml.direction = Mul(ft.n, -1.0f);
     ml.radiance = m.emission;
@@ -6724,6 +6726,8 @@ void CollectMeshLightsCore(RenderContext &ctx) {
       PreviewLight ml;
       ml.kind = PreviewLight::Kind::Mesh;
       ml.position = Mul(Add(Add(p0, p1), p2), 1.0f / 3.0f);
+      ml.axis_u = Sub(p1, p0);
+      ml.axis_v = Sub(p2, p0);
       ml.normal = n;
       ml.direction = Mul(n, -1.0f);
       ml.radiance = m.emission;
