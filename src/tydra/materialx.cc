@@ -628,7 +628,7 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
     const std::string& name = material->GetName();
     auto found = volume_materials.find(name);
     if (found == volume_materials.end()) {
-      if (material->GetVolumeShader().empty()) {
+      if (material->GetVolumeShader().empty() && material->GetVolumeNodeGraph().empty()) {
         error_ = "MaterialX volume assignment has no volume shader: " + volume.prim_path;
         return false;
       }

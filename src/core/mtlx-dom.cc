@@ -1992,6 +1992,8 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
         displacement_shader_ = shader_node;
       } else if (input_name == "volumeshader" || input_name == "vr") {
         volume_shader_ = shader_node;
+        volume_nodegraph_ = nodegraph;
+        volume_output_ = output.empty() ? "out" : output;
       }
     }
   }

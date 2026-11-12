@@ -52,6 +52,45 @@ static int check_borrowed_mips(void) {
   return correct;
 }
 
+static int check_graph_material(void) {
+  const char *xml = "<materialx version=\"1.39\">"
+      "<nodegraph name=\"G\"><absorption_vdf name=\"fog\" type=\"VDF\">"
+      "<input name=\"absorption\" type=\"vector3\" value=\"0.1,0.2,0.3\"/>"
+      "</absorption_vdf><volume name=\"v\" type=\"volumeshader\">"
+      "<input name=\"vdf\" type=\"VDF\" nodename=\"fog\"/></volume>"
+      "<output name=\"out\" type=\"volumeshader\" nodename=\"v\"/>"
+      "<open_pbr_surface name=\"s\" type=\"surfaceshader\"/>"
+      "<output name=\"surface\" type=\"surfaceshader\" nodename=\"s\"/></nodegraph>"
+      "<volumematerial name=\"Mat\"><input name=\"volumeshader\" "
+      "type=\"volumeshader\" nodegraph=\"G\"/></volumematerial>"
+      "<volumematerial name=\"Bad\"><input name=\"volumeshader\" "
+      "type=\"volumeshader\" nodegraph=\"G\" output=\"missing\"/></volumematerial>"
+      "<surfacematerial name=\"Surface\"><input name=\"surfaceshader\" "
+      "type=\"surfaceshader\" nodegraph=\"G\" output=\"surface\"/></surfacematerial>"
+      "<volume name=\"G:root\" type=\"volumeshader\"/>"
+      "<volumematerial name=\"Direct\"><input name=\"volumeshader\" "
+      "type=\"volumeshader\" nodename=\"G:root\"/></volumematerial>"
+      "</materialx>";
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) return 0;
+  const int mat = mtlx_find_material(doc, "Mat"), bad = mtlx_find_material(doc, "Bad");
+  const int surface = mtlx_find_material(doc, "Surface");
+  const int direct = mtlx_find_material(doc, "Direct");
+  ShadeContext ctx;
+  memset(&ctx, 0, sizeof(ctx));
+  ctx.doc = doc;
+  ctx.memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
+  ctx.memo_done = (char *)calloc((size_t)doc->nnode, 1);
+  MtlxVolumeParams result;
+  const int ok = mat >= 0 && bad >= 0 && surface >= 0 && direct >= 0 &&
+      doc->mats[direct].volume_node >= 0 && doc->mats[surface].surface_node >= 0 &&
+      doc->mats[bad].volume_node < 0 &&
+      ctx.memo && ctx.memo_done && !mtlx_eval_volume(&ctx, doc->mats[mat].volume_node, &result) &&
+      near(result.absorption.y, 0.2f, 1e-6f);
+  free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
+  return ok;
+}
+
 static int check_volume_work_limit(void) {
   char xml[8192];
   int used = snprintf(xml, sizeof(xml),
@@ -86,6 +125,7 @@ static int check_volume_work_limit(void) {
 
 int main(void) {
   if (!check_borrowed_mips()) return 1;
+  if (!check_graph_material()) return 1;
   if (!check_volume_work_limit()) return 1;
   TextureCache *bounded = texcache_create(".");
   if (!bounded) return 1;

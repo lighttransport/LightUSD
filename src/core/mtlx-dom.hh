@@ -289,6 +289,8 @@ public:
   void SetDisplacementShader(const std::string& shader) { displacement_shader_ = shader; }
 
   const std::string& GetVolumeShader() const { return volume_shader_; }
+  const std::string& GetVolumeNodeGraph() const { return volume_nodegraph_; }
+  const std::string& GetVolumeOutput() const { return volume_output_; }
   void SetVolumeShader(const std::string& shader) { volume_shader_ = shader; }
 
   bool ParseFromXML(XMLNodePtr xml_node) override;
@@ -300,6 +302,8 @@ private:
   std::string surface_output_;
   std::string displacement_shader_;
   std::string volume_shader_;
+  std::string volume_nodegraph_;
+  std::string volume_output_;
 };
 
 // Material assignment element inside a MaterialX look.

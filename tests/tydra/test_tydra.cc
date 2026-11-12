@@ -3404,6 +3404,22 @@ void TestMaterialXUtilities() {
   assert(!converter.ApplyLookToRenderScene(volume_look, "BadLook", &volume_scene));
   assert(volume_scene.volumes[0].materialx_binding == saved_binding);
   assert(!volume_scene.volumes[2].materialx_binding);
+  const char* graph_volume = R"(<materialx version="1.39">
+    <nodegraph name="G">
+      <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" value="0.2,0.3,0.4"/></absorption_vdf>
+      <volume name="v" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+      <output name="out" type="volumeshader" nodename="v"/>
+    </nodegraph>
+    <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodegraph="G"/></volumematerial>
+    <look name="Look"><materialassign name="a" geom="/Fog" material="Mat"/></look>
+  </materialx>)";
+  RenderScene graph_scene;
+  graph_scene.volumes.resize(1);
+  graph_scene.volumes[0].prim_path = "/Fog";
+  assert(converter.ApplyLookToRenderScene(graph_volume, "Look", &graph_scene));
+  auto graph_evaluator = converter.CreateVolumeEvaluator(graph_scene.volumes[0]);
+  assert(graph_evaluator && graph_evaluator->Evaluate(assigned_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[1] - 0.3f) < 1e-6f);
 
   const char* path = "tydra_materialx_test.mtlx";
   {
