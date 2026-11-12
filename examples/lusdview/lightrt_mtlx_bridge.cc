@@ -2,6 +2,8 @@
 #include "lightrt_mtlx_bridge.hh"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -10,6 +12,7 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 #include "image-loader.hh"
@@ -1095,6 +1098,118 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
 }
 
 }  // namespace
+
+class MaterialXSurfaceRuntime {
+ public:
+  MaterialXSurfaceRuntime(MtlxDoc* document, TextureCache* textureCache,
+                          int node, uint64_t runtimeId)
+      : doc(document), tex(textureCache), surfaceNode(node), id(runtimeId) {}
+  ~MaterialXSurfaceRuntime() {
+    texcache_free(tex);
+    mtlx_free(doc);
+  }
+
+  MtlxDoc* doc{nullptr};
+  TextureCache* tex{nullptr};
+  int surfaceNode{-1};
+  uint64_t id{0};
+};
+
+namespace {
+struct MtlxThreadScratch {
+  std::vector<MtlxValue> memo;
+  std::vector<char> memoDone;
+};
+
+std::atomic<uint64_t> gMtlxRuntimeId{1};
+thread_local std::unordered_map<uint64_t, MtlxThreadScratch> gMtlxScratch;
+}  // namespace
+
+std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
+    const char* xml, const char* materialName, const char* baseDir,
+    std::string* err) {
+  if (err) err->clear();
+  if (!xml || !xml[0]) {
+    if (err) *err = "MaterialX XML string is empty";
+    return {};
+  }
+  MtlxDoc* doc = mtlx_load_string(xml);
+  if (!doc) {
+    if (err) *err = "mtlx_load_string failed";
+    return {};
+  }
+  const int surfaceNode = FindSurfaceNode(doc, materialName, err);
+  if (surfaceNode < 0) {
+    mtlx_free(doc);
+    return {};
+  }
+  TextureCache* tex = texcache_create(baseDir);
+  if (!tex) {
+    if (err) *err = "texcache_create failed";
+    mtlx_free(doc);
+    return {};
+  }
+  texcache_preload(tex, doc);
+  return std::make_shared<MaterialXSurfaceRuntime>(
+      doc, tex, surfaceNode, gMtlxRuntimeId.fetch_add(1, std::memory_order_relaxed));
+}
+
+bool EvaluateMaterialXSurfaceRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    tydra::LightRtOpenPBRParams* out, std::string* err) {
+  if (err) err->clear();
+  if (!runtime || !runtime->doc || !runtime->tex || !out) {
+    if (err) *err = "MaterialX surface runtime is not initialized";
+    return false;
+  }
+  MtlxThreadScratch& scratch = gMtlxScratch[runtime->id];
+  const size_t nodeCount = static_cast<size_t>(runtime->doc->nnode);
+  if (scratch.memo.size() != nodeCount) {
+    scratch.memo.resize(nodeCount);
+    scratch.memoDone.resize(nodeCount);
+  }
+  ShadeContext ctx{};
+  ctx.doc = runtime->doc;
+  ctx.tex = runtime->tex;
+  ctx.uv[0] = context.uv[0];
+  ctx.uv[1] = context.uv[1];
+  ctx.uv_dx[0] = context.uv_dx[0];
+  ctx.uv_dx[1] = context.uv_dx[1];
+  ctx.uv_dy[0] = context.uv_dy[0];
+  ctx.uv_dy[1] = context.uv_dy[1];
+  ctx.has_uv_derivatives = context.has_uv_derivatives ? 1 : 0;
+  ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
+  ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
+                   context.shading_normal[2]);
+  ctx.Ng = v3_make(context.geometric_normal[0], context.geometric_normal[1],
+                   context.geometric_normal[2]);
+  ctx.V = v3_make(context.view_direction[0], context.view_direction[1],
+                  context.view_direction[2]);
+  ctx.dpdu = v3_make(context.dpdu[0], context.dpdu[1], context.dpdu[2]);
+  ctx.dpdv = v3_make(context.dpdv[0], context.dpdv[1], context.dpdv[2]);
+  if (context.has_uv_derivatives) {
+    ctx.dPdx = v3_add(v3_scale(ctx.dpdu, context.uv_dx[0]),
+                      v3_scale(ctx.dpdv, context.uv_dx[1]));
+    ctx.dPdy = v3_add(v3_scale(ctx.dpdu, context.uv_dy[0]),
+                      v3_scale(ctx.dpdv, context.uv_dy[1]));
+    ctx.has_position_derivatives = 1;
+  }
+  ctx.memo = scratch.memo.data();
+  ctx.memo_done = scratch.memoDone.data();
+  OpenPBRParams evaluated;
+  if (mtlx_eval_surface(&ctx, runtime->surfaceNode, &evaluated) != 0) {
+    if (err) *err = "mtlx_eval_surface failed";
+    return false;
+  }
+  CopyLightRtEval(evaluated, out);
+  out->hasTextureInputs = false;
+  out->hasNormalInput =
+      std::fabs(out->normal[0] - context.shading_normal[0]) > 1.0e-6f ||
+      std::fabs(out->normal[1] - context.shading_normal[1]) > 1.0e-6f ||
+      std::fabs(out->normal[2] - context.shading_normal[2]) > 1.0e-6f;
+  ClampLightRtParams(out);
+  return true;
+}
 
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,

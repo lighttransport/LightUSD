@@ -7,12 +7,14 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <thread>
 #include <vector>
 
 #include "image-writer.hh"
 #include "lusdr_context.hh"
+#include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
 extern "C" {
 #include "mtlxrender/bsdf.h"
@@ -871,13 +873,53 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
   return true;
 }
 
+bool MakeMaterialXHitContext(const Vec3 &ray_org, const Vec3 &ray_dir,
+                             const RayDiff &rd, const Vec3 &p0,
+                             const Vec3 &p1, const Vec3 &p2,
+                             const float *uv, float b1, float b2,
+                             MaterialXHitContext *out) {
+  if (!uv || !out) return false;
+  const float b0 = 1.0f - b1 - b2;
+  out->has_uv = true;
+  out->uv[0] = b0 * uv[0] + b1 * uv[2] + b2 * uv[4];
+  out->uv[1] = b0 * uv[1] + b1 * uv[3] + b2 * uv[5];
+
+  const Vec3 e1 = Sub(p1, p0);
+  const Vec3 e2 = Sub(p2, p0);
+  const float du1 = uv[2] - uv[0];
+  const float dv1 = uv[3] - uv[1];
+  const float du2 = uv[4] - uv[0];
+  const float dv2 = uv[5] - uv[1];
+  const float det = du1 * dv2 - du2 * dv1;
+  if (std::fabs(det) > 1.0e-12f) {
+    const float invdet = 1.0f / det;
+    out->dpdu = Mul(Sub(Mul(e1, dv2), Mul(e2, dv1)), invdet);
+    out->dpdv = Mul(Sub(Mul(e2, du1), Mul(e1, du2)), invdet);
+  }
+
+  const Vec3 geometric_normal = Normalize(Cross(e1, e2));
+  float dudx = 0.0f, dvdx = 0.0f, dudy = 0.0f, dvdy = 0.0f;
+  if (ComputeUVFootprint(ray_org, ray_dir, rd, p0, p1, p2,
+                         geometric_normal, uv[0], uv[1], uv[2], uv[3],
+                         uv[4], uv[5], &dudx, &dvdx, &dudy, &dvdy)) {
+    out->uv_dx[0] = dudx;
+    out->uv_dx[1] = dvdx;
+    out->uv_dy[0] = dudy;
+    out->uv_dy[1] = dvdy;
+    out->has_uv_derivatives = true;
+  }
+  return true;
+}
+
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
                     const lightusd::tydra::LightRtOpenPBRParams **out_openpbr,
-                    Vec3* geometric_normal, Vec3* shading_normal) {
+                    Vec3* geometric_normal, Vec3* shading_normal,
+                    MaterialXHitContext *materialx_hit) {
   if (out_openpbr) *out_openpbr = nullptr;
+  if (materialx_hit) *materialx_hit = MaterialXHitContext{};
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
   if (size_t(inst.blas_id) >= blas.size()) return false;
@@ -982,6 +1024,13 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     if (Length(wn) > 1.0e-12f) out->n = Normalize(wn);
   }
   if (shading_normal) *shading_normal = out->n;
+  if (materialx_hit && !b.tri_uvs.empty()) {
+    const size_t base = size_t(th.prim_id) * 6;
+    if (base + 5 < b.tri_uvs.size()) {
+      MakeMaterialXHitContext(ray_org, ray_dir, rd, wp0, wp1, wp2,
+                              &b.tri_uvs[base], th.u, th.v, materialx_hit);
+    }
+  }
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
@@ -1125,13 +1174,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
+  MaterialXHitContext materialx_hit;
   Vec3 hit_geometric_normal{0, 0, 0}, hit_shading_normal{0, 0, 0};
   const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
-                       &hit_tri, &hit_openpbr, &hit_geometric_normal, &hit_shading_normal)) {
+                       &hit_tri, &hit_openpbr, &hit_geometric_normal,
+                       &hit_shading_normal, &materialx_hit)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -1190,6 +1241,14 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         if (Length(sn) > 1.0e-12f) hit_tri.n = Normalize(sn);
       }
       hit_shading_normal = hit_tri.n;
+      if (tri_uvs) {
+        const size_t uv_base = size_t(hit.prim_id) * 6;
+        if (uv_base + 5 < tri_uvs->size()) {
+          MakeMaterialXHitContext(ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1,
+                                  hit_tri.p2, &(*tri_uvs)[uv_base], hit.u,
+                                  hit.v, &materialx_hit);
+        }
+      }
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
@@ -1402,6 +1461,68 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     return Vec3{id, id, id};
   }
   const Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
+  lightusd::tydra::LightRtOpenPBRParams dynamic_openpbr{};
+  if (opt.mtlx_runtime && tri_hit) {
+    lusdview::MaterialXSurfaceContext context;
+    if (materialx_hit.has_uv) {
+      context.uv[0] = materialx_hit.uv[0];
+      context.uv[1] = materialx_hit.uv[1];
+      context.uv_dx[0] = materialx_hit.uv_dx[0];
+      context.uv_dx[1] = materialx_hit.uv_dx[1];
+      context.uv_dy[0] = materialx_hit.uv_dy[0];
+      context.uv_dy[1] = materialx_hit.uv_dy[1];
+      context.has_uv_derivatives = materialx_hit.has_uv_derivatives;
+      context.dpdu[0] = materialx_hit.dpdu.x;
+      context.dpdu[1] = materialx_hit.dpdu.y;
+      context.dpdu[2] = materialx_hit.dpdu.z;
+      context.dpdv[0] = materialx_hit.dpdv.x;
+      context.dpdv[1] = materialx_hit.dpdv.y;
+      context.dpdv[2] = materialx_hit.dpdv.z;
+    }
+    context.position[0] = p.x;
+    context.position[1] = p.y;
+    context.position[2] = p.z;
+    const Vec3 runtime_normal = Normalize(tri.n);
+    context.shading_normal[0] = runtime_normal.x;
+    context.shading_normal[1] = runtime_normal.y;
+    context.shading_normal[2] = runtime_normal.z;
+    context.geometric_normal[0] = hit_geometric_normal.x;
+    context.geometric_normal[1] = hit_geometric_normal.y;
+    context.geometric_normal[2] = hit_geometric_normal.z;
+    const Vec3 runtime_view = Normalize(Mul(ray_dir, -1.0f));
+    context.view_direction[0] = runtime_view.x;
+    context.view_direction[1] = runtime_view.y;
+    context.view_direction[2] = runtime_view.z;
+    std::string eval_error;
+    if (lusdview::EvaluateMaterialXSurfaceRuntimeAt(
+            opt.mtlx_runtime.get(), context, &dynamic_openpbr, &eval_error)) {
+      tri_openpbr = &dynamic_openpbr;
+      tri.base_color = Vec3{dynamic_openpbr.baseColor[0],
+                            dynamic_openpbr.baseColor[1],
+                            dynamic_openpbr.baseColor[2]};
+      tri.roughness = dynamic_openpbr.diffuseRoughness;
+      tri.metallic = dynamic_openpbr.metalness;
+      tri.clearcoat = dynamic_openpbr.coatWeight;
+      tri.clearcoat_roughness = dynamic_openpbr.coatRoughness;
+      tri.ior = dynamic_openpbr.specularIor;
+      tri.emission = Vec3{dynamic_openpbr.emissionColor[0] * dynamic_openpbr.emission,
+                          dynamic_openpbr.emissionColor[1] * dynamic_openpbr.emission,
+                          dynamic_openpbr.emissionColor[2] * dynamic_openpbr.emission};
+      tri.opacity = dynamic_openpbr.opacity;
+      const Vec3 evaluated_normal{dynamic_openpbr.normal[0],
+                                  dynamic_openpbr.normal[1],
+                                  dynamic_openpbr.normal[2]};
+      if (Length(evaluated_normal) > 1.0e-12f) {
+        tri.n = Normalize(evaluated_normal);
+        hit_shading_normal = tri.n;
+      }
+    } else {
+      static std::atomic<bool> reported{false};
+      if (!reported.exchange(true, std::memory_order_relaxed)) {
+        std::cerr << "MaterialX hit evaluation failed: " << eval_error << "\n";
+      }
+    }
+  }
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray; bounded recursion). Opaque hits (default
   // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.

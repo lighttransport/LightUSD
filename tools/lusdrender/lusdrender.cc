@@ -102,7 +102,7 @@ struct GeneratedMtlxScene {
   }
 };
 
-bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
+bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
                               std::string *error) {
   if (!generated || opt.mtlx_file.empty()) return false;
   lightusd::mtlx::MtlxDocument resolved_document;
@@ -126,6 +126,16 @@ bool BuildMtlxValidationScene(const Options &opt, GeneratedMtlxScene *generated,
   const std::string base_dir = slash == std::string::npos
                                    ? "."
                                    : opt.mtlx_file.substr(0, slash);
+  std::string runtime_error;
+  opt.mtlx_runtime = lusdview::CreateMaterialXSurfaceRuntime(
+      xml_text.c_str(),
+      opt.mtlx_material.empty() ? nullptr : opt.mtlx_material.c_str(),
+      base_dir.c_str(), &runtime_error);
+  if (!opt.mtlx_runtime) {
+    if (error) *error = "LightRT MaterialX runtime creation failed: " +
+                        runtime_error;
+    return false;
+  }
   lightusd::tydra::LightRtOpenPBRParams pbr;
   std::string eval_error;
   if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(

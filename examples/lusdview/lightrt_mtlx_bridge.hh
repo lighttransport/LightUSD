@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "gpu_material_abi.h"
@@ -110,6 +111,31 @@ bool EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
 
 // UV-aware variant used by graph baking/runtime probes. `u` and `v` are
 // normalized texture coordinates; the legacy overload samples the center.
+// Persistent surface evaluator used by CPU validation rendering. The resolved
+// document and preloaded texture cache are shared across shading points; the
+// implementation keeps per-thread evaluation scratch.
+class MaterialXSurfaceRuntime;
+
+struct MaterialXSurfaceContext {
+  float uv[2]{0.0f, 0.0f};
+  float uv_dx[2]{0.0f, 0.0f};
+  float uv_dy[2]{0.0f, 0.0f};
+  float position[3]{0.0f, 0.0f, 0.0f};
+  float shading_normal[3]{0.0f, 0.0f, 1.0f};
+  float geometric_normal[3]{0.0f, 0.0f, 1.0f};
+  float view_direction[3]{0.0f, 0.0f, 1.0f};
+  float dpdu[3]{1.0f, 0.0f, 0.0f};
+  float dpdv[3]{0.0f, 1.0f, 0.0f};
+  bool has_uv_derivatives{false};
+};
+
+std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
+    const char* xml, const char* materialName, const char* baseDir,
+    std::string* err);
+bool EvaluateMaterialXSurfaceRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    tydra::LightRtOpenPBRParams* out, std::string* err);
+
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,
     float v, tydra::LightRtOpenPBRParams* out, std::string* err);
