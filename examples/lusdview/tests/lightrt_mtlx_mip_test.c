@@ -59,12 +59,15 @@ int main(void) {
       "<multiply name=\"weighted_glow\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"color3\" nodename=\"weight\"/></multiply>"
       "<multiply name=\"signed_fog\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"color3\" nodename=\"signed_weight\"/></multiply>"
       "<mystery_edf name=\"unknown_edf\" type=\"EDF\"/>"
+      "<measured_edf name=\"measured\" type=\"EDF\"><input name=\"file\" type=\"filename\" value=\"profile.ies\"/></measured_edf>"
       "<add name=\"nested_edf\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"EDF\" nodename=\"unknown_edf\"/></add>"
       "<add name=\"nested\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"VDF\" nodename=\"unknown\"/></add>"
       "<volume name=\"valid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"fog\"/><input name=\"edf\" type=\"EDF\" nodename=\"glow\"/></volume>"
       "<volume name=\"invalid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"unknown\"/></volume>"
       "<volume name=\"nested_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"nested\"/></volume>"
       "<volume name=\"bad_emission\" type=\"volumeshader\"><input name=\"edf\" type=\"EDF\" nodename=\"nested_edf\"/></volume>"
+      "<volume name=\"emission_only\" type=\"volumeshader\"><input name=\"edf\" type=\"EDF\" nodename=\"glow\"/></volume>"
+      "<volume name=\"measured_volume\" type=\"volumeshader\"><input name=\"edf\" type=\"EDF\" nodename=\"measured\"/></volume>"
       "<volume name=\"connected_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"connected_fog\"/></volume>"
       "<volume name=\"bad_value_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"bad_fog\"/></volume>"
       "<volume name=\"missing_value_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"missing_fog\"/></volume>"
@@ -110,6 +113,8 @@ int main(void) {
     const int invalid = mtlx_find_node(doc, -1, "invalid_volume");
     const int nested = mtlx_find_node(doc, -1, "nested_volume");
     const int bad_emission = mtlx_find_node(doc, -1, "bad_emission");
+    const int emission_only = mtlx_find_node(doc, -1, "emission_only");
+    const int measured = mtlx_find_node(doc, -1, "measured_volume");
     const int connected = mtlx_find_node(doc, -1, "connected_volume");
     const int bad_value = mtlx_find_node(doc, -1, "bad_value_volume");
     const int missing_value = mtlx_find_node(doc, -1, "missing_value_volume");
@@ -117,6 +122,7 @@ int main(void) {
     const int weighted = mtlx_find_node(doc, -1, "weighted_volume");
     const int signed_volume = mtlx_find_node(doc, -1, "signed_volume");
     ok = valid >= 0 && invalid >= 0 && nested >= 0 && bad_emission >= 0 &&
+         emission_only >= 0 && measured >= 0 &&
          connected >= 0 && bad_value >= 0 && missing_value >= 0 && missing_closure >= 0 && weighted >= 0 && signed_volume >= 0 &&
          mtlx_eval_volume(&ctx, valid, &volume) == 0 &&
          near(volume.absorption.x, 0.1f, 1.0e-5f) &&
@@ -125,6 +131,12 @@ int main(void) {
          mtlx_eval_volume(&ctx, invalid, &volume) != 0 &&
          mtlx_eval_volume(&ctx, nested, &volume) != 0 &&
          mtlx_eval_volume(&ctx, bad_emission, &volume) != 0 &&
+         mtlx_eval_volume(&ctx, measured, &volume) != 0 &&
+         mtlx_eval_volume(&ctx, emission_only, &volume) == 0 &&
+         near(volume.absorption.x, 0.0f, 1.0e-5f) &&
+         near(volume.emission.x, 0.2f, 1.0e-5f) &&
+         near(volume.emission.y, 0.4f, 1.0e-5f) &&
+         near(volume.emission.z, 0.8f, 1.0e-5f) &&
          mtlx_eval_volume(&ctx, connected, &volume) == 0 &&
          near(volume.absorption.y, 0.5f, 1.0e-5f) &&
          mtlx_eval_volume(&ctx, bad_value, &volume) != 0 &&

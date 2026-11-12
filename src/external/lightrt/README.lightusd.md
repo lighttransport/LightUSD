@@ -102,7 +102,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
 - 2026-11-13: LightUSD's `mtlx_eval_volume` rejects unsupported VDF and EDF
   closure categories, unknown connected value-node categories, and overly deep
   graphs and unresolved authored input connections. This is a local change to
-  preserve on the next LightRT sync.
+  preserve on the next LightRT sync. Volume `measured_edf` is rejected until
+  its IES profile is evaluated; the surface fallback is unchanged.
 - 2026-11-13: VDF/EDF multiplication uses the declared closure input and
   supports connected color weights; VDF coefficients retain signed RGB
   weights under a coefficient-wise interpretation of the PBR specification's

@@ -1337,8 +1337,10 @@ static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     if (depth > 32) return 0;
     if (!supported_closure_values(ctx, n, depth)) return 0;
     const char *cat = n->category;
-    if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf") ||
-        !strcmp(cat, "conical_edf")) return 1;
+    /* Measured EDF needs IES evaluation; eval_edf's color fallback is not a
+     * faithful volume emission result. */
+    if (!strcmp(cat, "measured_edf")) return 0;
+    if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "conical_edf")) return 1;
     if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
         const char *a = !strcmp(cat, "layer") ? "base" : "in1";
         const char *b = !strcmp(cat, "layer") ? "top" : "in2";
