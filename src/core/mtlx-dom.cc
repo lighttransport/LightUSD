@@ -368,6 +368,85 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
         elem->children.push_back(make_input("in", "vector3", subtract_name));
         generated.push_back(std::move(multiply));
         generated.push_back(std::move(subtract));
+      } else {
+        elem->children.erase(
+            std::remove_if(elem->children.begin(), elem->children.end(),
+                           [](const MtlxElem &child) {
+                             return child.tag == "input" &&
+                                    child.AttrOr("name") == "space";
+                           }),
+            elem->children.end());
+        auto has_binding = [](const MtlxElem &input) {
+          return input.Attr("nodename") || input.Attr("nodegraph") ||
+                 input.Attr("output") || input.Attr("interfacename");
+        };
+        auto remove_unbound = [&](const char *input_name) {
+          auto input = std::find_if(
+              elem->children.begin(), elem->children.end(),
+              [&](const MtlxElem &child) {
+                return child.tag == "input" &&
+                       child.AttrOr("name") == input_name;
+              });
+          if (input == elem->children.end()) return false;
+          if (has_binding(*input)) return true;
+          elem->children.erase(input);
+          return false;
+        };
+        const bool has_normal = remove_unbound("normal");
+        const bool has_tangent = remove_unbound("tangent");
+        const bool has_bitangent = remove_unbound("bitangent");
+        if ((has_normal || has_tangent) && !has_bitangent) {
+          const std::string cross_name = unique_name("normalmap_cross");
+          const std::string normalize_name =
+              unique_name("normalmap_cross_norm");
+          MtlxElem cross;
+          cross.tag = "crossproduct";
+          cross.SetAttr("name", cross_name);
+          cross.SetAttr("type", "vector3");
+          std::vector<MtlxElem> geom_nodes;
+          auto copy_or_geom = [&](const char *source_name,
+                                  const char *dest_name,
+                                  const char *geom_category) {
+            for (const MtlxElem &child : elem->children) {
+              if (child.tag != "input" ||
+                  child.AttrOr("name") != source_name) continue;
+              MtlxElem input = child;
+              input.SetAttr("name", dest_name);
+              cross.children.push_back(std::move(input));
+              return;
+            }
+            const std::string geom_name =
+                unique_name(std::string("normalmap_") + geom_category);
+            MtlxElem geom;
+            geom.tag = geom_category;
+            geom.SetAttr("name", geom_name);
+            geom.SetAttr("type", "vector3");
+            MtlxElem space;
+            space.tag = "input";
+            space.SetAttr("name", "space");
+            space.SetAttr("type", "string");
+            space.SetAttr("value", "world");
+            geom.children.push_back(std::move(space));
+            geom_nodes.push_back(std::move(geom));
+            cross.children.push_back(make_input(dest_name, "vector3", geom_name));
+          };
+          copy_or_geom("normal", "in1", "normal");
+          copy_or_geom("tangent", "in2", "tangent");
+          generated.push_back(std::move(cross));
+          for (MtlxElem &geom : geom_nodes)
+            generated.push_back(std::move(geom));
+
+          MtlxElem normalize;
+          normalize.tag = "normalize";
+          normalize.SetAttr("name", normalize_name);
+          normalize.SetAttr("type", "vector3");
+          normalize.children.push_back(make_input("in", "vector3", cross_name));
+          generated.push_back(std::move(normalize));
+          elem->children.push_back(
+              make_input("bitangent", "vector3", normalize_name));
+        }
+        if (elem->AttrOr("nodedef") == "ND_normalmap")
+          elem->SetAttr("nodedef", "ND_normalmap_float");
       }
     }
   }

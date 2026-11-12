@@ -844,6 +844,42 @@ static void CheckTypedMtlxGraphResolution() {
       }
     }
   }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <normalmap name="n" type="vector3" nodedef="ND_normalmap">
+        <input name="space" type="string" value="tangent"/>
+        <input name="normal" type="vector3" nodename="normal_src"/>
+      </normalmap>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_NORMALMAP_FRAME", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr normal = graph ? graph->GetNode("n") : nullptr;
+      const MtlxNodePtr cross = graph ? graph->GetNode("normalmap_cross") : nullptr;
+      const MtlxNodePtr tangent = graph ? graph->GetNode("normalmap_tangent") : nullptr;
+      const MtlxNodePtr normalize = graph ? graph->GetNode("normalmap_cross_norm") : nullptr;
+      const MtlxInputPtr in1 = cross ? cross->GetInput("in1") : nullptr;
+      const MtlxInputPtr in2 = cross ? cross->GetInput("in2") : nullptr;
+      const MtlxInputPtr space = tangent ? tangent->GetInput("space") : nullptr;
+      const MtlxInputPtr bitangent = normal ? normal->GetInput("bitangent") : nullptr;
+      std::string space_value;
+      if (!normal || normal->GetNodeDef() != "ND_normalmap_float" ||
+          normal->GetInput("space") || !cross ||
+          cross->GetCategory() != "crossproduct" || !in1 ||
+          in1->GetNodeName() != "normal_src" || !in2 ||
+          in2->GetNodeName() != "normalmap_tangent" || !tangent ||
+          tangent->GetCategory() != "tangent" || !space ||
+          !space->GetValueAsString(space_value) || space_value != "world" ||
+          !normalize || normalize->GetCategory() != "normalize" ||
+          !bitangent || bitangent->GetNodeName() != "normalmap_cross_norm") {
+        Fail("MTLX_VERSION_UPGRADE_NORMALMAP_FRAME", 0,
+             "tangent-space frame was not completed from the world tangent");
+      }
+    }
+  }
 
 }
 
