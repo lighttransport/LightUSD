@@ -69,17 +69,22 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test
   in LightRT and a CTest integration in `tools/lusdrender`.
+- 2026-11-12: `mtlxrender/bsdf.{c,h}` is synchronized with LightRT
+  `mtlx-conformance` commit `2839b5c`: `bsdf_lobe_weights()` exposes the four
+  importance-sampling probabilities for validation AOVs. LightRT's
+  `test-white-furnace` still passes after the API addition.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
 - `lightrt_c_cuda.{cu,h}` contains the upstream CUDA C entry point for the later
   lusdview CUDA RT material path.
 
-The first lusdview integration uses these files as the reference layout and
-bridges USD/Tydra material parameters into a LightRT/OpenPBR-compatible CPU
-block. The vendored C sources are not linked into lusdview yet; GL/Vulkan raster
-currently consume the existing preview material subset, and VK/CUDA RT can be
-extended to sample the full LightRT/OpenPBR block.
+The lusdview material bridge links the vendored MaterialX parser, evaluator,
+texture cache and BSDF, and adapts USD/Tydra material parameters into the
+LightRT/OpenPBR CPU block. `lusdrender --mtlx` also retains a graph runtime for
+per-hit CPU evaluation. GL/Vulkan raster still consume the existing preview
+material subset; VK/CUDA RT can be extended to sample the full LightRT/OpenPBR
+block.
 
 ## License
 
