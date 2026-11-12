@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026-Present Light Transport Entertainment Inc.
 //
-// lmtlxinfo [--lib FILE]... FILE
+// lmtlxinfo [--upgrade] [--lib FILE]... FILE
 //
 // Prints the canonical resolved-document dump of a MaterialX file: XIncludes
 // expanded relative to the file, node definitions resolved against the
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-#include "core/mtlx-resolve.hh"
+#include "core/mtlx-upgrade.hh"
 
 using namespace lightusd::mtlx;
 
@@ -60,20 +60,24 @@ static bool LoadExpanded(const std::string &path, MtlxElem *root) {
 int main(int argc, char **argv) {
   std::vector<std::string> libs;
   std::string file;
+  bool upgrade = false;
   for (int i = 1; i < argc; i++) {
     const std::string a = argv[i];
-    if (a == "--lib" && i + 1 < argc) {
+    if (a == "--upgrade") {
+      upgrade = true;
+    } else if (a == "--lib" && i + 1 < argc) {
       libs.push_back(argv[++i]);
     } else {
       file = a;
     }
   }
   if (file.empty()) {
-    std::fprintf(stderr, "usage: lmtlxinfo [--lib FILE]... FILE\n");
+    std::fprintf(stderr, "usage: lmtlxinfo [--upgrade] [--lib FILE]... FILE\n");
     return 2;
   }
   MtlxElem root;
   if (!LoadExpanded(file, &root)) return 1;
+  if (upgrade) UpgradeMtlxVersion(&root);
   // The document's own definitions first, then each library in order (the
   // order the reference `Document::importLibrary` produces).
   MtlxLibrary lib;

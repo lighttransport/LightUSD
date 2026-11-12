@@ -3,6 +3,7 @@
 #include "core/native-io.hh"
 #include "core/mtlx-dom.hh"
 #include "core/mtlx-resolve.hh"
+#include "core/mtlx-upgrade.hh"
 #include "core/security-policy.hh"
 #include "resolver/asset-resolver.hh"
 #include <fstream>
@@ -97,11 +98,25 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
       candidate = base_name + "_" + std::to_string(suffix);
     }
   };
+  auto unique_numbered_name = [&](const std::string &base_name) {
+    std::string candidate = base_name;
+    for (size_t suffix = 2;; ++suffix) {
+      const bool exists = parent &&
+          std::any_of(parent->children.begin(), parent->children.end(),
+                      [&](const MtlxElem &child) {
+                        return child.Name() == candidate;
+                      });
+      if (!exists) return candidate;
+      candidate = base_name + std::to_string(suffix);
+    }
+  };
 
   for (size_t i = 0; i < original_child_count; ++i)
     UpgradeMtlxElements(&elem->children[i], minor_version, elem);
 
   if (minor_version == 37 && IsMtlxNodeElem(*elem)) {
+    for (MtlxElem &child : elem->children)
+      if (child.tag == "parameter") child.tag = "input";
     static const std::pair<const char *, const char *> kNodeRenames[] = {
         {"diffuse_brdf", "oren_nayar_diffuse_bsdf"},
         {"burley_diffuse_brdf", "burley_diffuse_bsdf"},
@@ -376,29 +391,21 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
                                     child.AttrOr("name") == "space";
                            }),
             elem->children.end());
-        auto has_binding = [](const MtlxElem &input) {
-          return input.Attr("nodename") || input.Attr("nodegraph") ||
-                 input.Attr("output") || input.Attr("interfacename");
+        auto has_input = [&](const char *input_name) {
+          return std::any_of(elem->children.begin(), elem->children.end(),
+                             [&](const MtlxElem &child) {
+                               return child.tag == "input" &&
+                                      child.AttrOr("name") == input_name;
+                             });
         };
-        auto remove_unbound = [&](const char *input_name) {
-          auto input = std::find_if(
-              elem->children.begin(), elem->children.end(),
-              [&](const MtlxElem &child) {
-                return child.tag == "input" &&
-                       child.AttrOr("name") == input_name;
-              });
-          if (input == elem->children.end()) return false;
-          if (has_binding(*input)) return true;
-          elem->children.erase(input);
-          return false;
-        };
-        const bool has_normal = remove_unbound("normal");
-        const bool has_tangent = remove_unbound("tangent");
-        const bool has_bitangent = remove_unbound("bitangent");
+        const bool has_normal = has_input("normal");
+        const bool has_tangent = has_input("tangent");
+        const bool has_bitangent = has_input("bitangent");
         if ((has_normal || has_tangent) && !has_bitangent) {
-          const std::string cross_name = unique_name("normalmap_cross");
+          const std::string cross_name =
+              unique_numbered_name("normalmap_cross");
           const std::string normalize_name =
-              unique_name("normalmap_cross_norm");
+              unique_numbered_name("normalmap_cross_norm");
           MtlxElem cross;
           cross.tag = "crossproduct";
           cross.SetAttr("name", cross_name);
@@ -416,7 +423,7 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
               return;
             }
             const std::string geom_name =
-                unique_name(std::string("normalmap_") + geom_category);
+                unique_numbered_name(std::string("normalmap_") + geom_category);
             MtlxElem geom;
             geom.tag = geom_category;
             geom.SetAttr("name", geom_name);
@@ -470,6 +477,23 @@ std::string UniqueMtlxChildName(const MtlxElem &scope,
   for (size_t suffix = 0;; ++suffix) {
     const std::string candidate =
         suffix == 0 ? base : base + "_" + std::to_string(suffix);
+    const bool in_scope = std::any_of(
+        scope.children.begin(), scope.children.end(),
+        [&](const MtlxElem &child) { return child.Name() == candidate; });
+    const bool in_generated = std::any_of(
+        generated.begin(), generated.end(), [&](const MtlxElem &child) {
+          return child.Name() == candidate;
+        });
+    if (!in_scope && !in_generated) return candidate;
+  }
+}
+
+std::string UniqueMtlxNumberedChildName(
+    const MtlxElem &scope, const std::vector<MtlxElem> &generated,
+    const std::string &base) {
+  for (size_t suffix = 1;; ++suffix) {
+    const std::string candidate =
+        suffix == 1 ? base : base + std::to_string(suffix);
     const bool in_scope = std::any_of(
         scope.children.begin(), scope.children.end(),
         [&](const MtlxElem &child) { return child.Name() == candidate; });
@@ -791,22 +815,219 @@ void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
   RewireToGeneratedNode(port, combine_name);
 }
 
+void UpgradeMtlxSwizzleNode(MtlxElem *node, MtlxElem *scope,
+                            std::vector<MtlxElem> *generated) {
+  if (!node || !scope || !generated || node->tag != "swizzle") return;
+  MtlxElem *source = nullptr;
+  std::string channels;
+  for (MtlxElem &child : node->children) {
+    if (child.tag != "input") continue;
+    if (child.AttrOr("name") == "in") source = &child;
+    else if (child.AttrOr("name") == "channels")
+      channels = child.AttrOr("value");
+  }
+  if (!source || channels.empty()) return;
+
+  const std::string dest_type = node->AttrOr("type");
+  const size_t dest_count = MtlxChannelCount(dest_type);
+  if (dest_count == 0) return;
+  bool all_constants = true;
+  for (size_t i = 0; i < dest_count; ++i) {
+    const char channel = i < channels.size() ? channels[i] : '\0';
+    if (!MtlxChannelConstant(channel, nullptr)) {
+      all_constants = false;
+      break;
+    }
+  }
+  const bool has_connection = !source->AttrOr("nodename").empty() ||
+                              !source->AttrOr("nodegraph").empty() ||
+                              !source->AttrOr("interfacename").empty();
+  if (all_constants || !has_connection) {
+    MtlxElem value;
+    value.tag = "input";
+    value.SetAttr("name", "value");
+    value.SetAttr("type", dest_type);
+    value.SetAttr("value", SwizzledConstantValue(*source, channels, dest_count));
+    node->tag = "constant";
+    EraseMtlxAttr(node, "nodedef");
+    node->children.assign(1, std::move(value));
+    return;
+  }
+
+  std::string source_type = ConnectedNodeType(*scope, *source);
+  if (source_type.empty() || source_type == "multioutput")
+    source_type = source->AttrOr("type");
+  if (source_type.empty()) source_type = InferChannelSourceType(channels, dest_type);
+  const size_t source_count = MtlxChannelCount(source_type);
+  if (source_count == 0) return;
+
+  MtlxElem source_input = *source;
+  EraseMtlxAttr(&source_input, "channels");
+  if (dest_count == 1) {
+    const int index = MtlxChannelIndex(channels[0]);
+    if (index < 0 || source_count == 1) return;
+    node->tag = "extract";
+    EraseMtlxAttr(node, "nodedef");
+    source_input.SetAttr("name", "in");
+    source_input.SetAttr("type", source_type);
+    MtlxElem index_input;
+    index_input.tag = "input";
+    index_input.SetAttr("name", "index");
+    index_input.SetAttr("type", "integer");
+    index_input.SetAttr("value", std::to_string(index));
+    node->children.clear();
+    node->children.push_back(std::move(source_input));
+    node->children.push_back(std::move(index_input));
+    return;
+  }
+
+  std::string separate_name;
+  if (source_count > 1) {
+    separate_name =
+        UniqueMtlxNumberedChildName(*scope, *generated, "separate");
+    MtlxElem separate;
+    separate.tag = "separate" + std::to_string(source_count);
+    separate.SetAttr("name", separate_name);
+    separate.SetAttr("type", "multioutput");
+    source_input.SetAttr("name", "in");
+    source_input.SetAttr("type", source_type);
+    separate.children.push_back(std::move(source_input));
+    generated->push_back(std::move(separate));
+  }
+
+  std::vector<MtlxElem> inputs;
+  for (size_t i = 0; i < dest_count; ++i) {
+    const char channel = i < channels.size() ? channels[i] : channels[0];
+    MtlxElem input;
+    input.tag = "input";
+    input.SetAttr("name", "in" + std::to_string(i + 1));
+    input.SetAttr("type", "float");
+    const char *constant = nullptr;
+    if (MtlxChannelConstant(channel, &constant)) {
+      input.SetAttr("value", channel == '0' ? "0" : "1");
+    } else if (source_count == 1) {
+      input = *source;
+      EraseMtlxAttr(&input, "channels");
+      input.SetAttr("name", "in" + std::to_string(i + 1));
+      input.SetAttr("type", "float");
+    } else {
+      const int index = MtlxChannelIndex(channel);
+      const char *color_channels = "rgba";
+      const char *vector_channels = "xyzw";
+      const bool is_color = source_type == "color3" || source_type == "color4";
+      const char output_channel = index < 0
+          ? (is_color ? 'r' : 'x')
+          : (is_color ? color_channels[index] : vector_channels[index]);
+      input.SetAttr("nodename", separate_name);
+      input.SetAttr("output", std::string("out") + output_channel);
+    }
+    inputs.push_back(std::move(input));
+  }
+  node->tag = "combine" + std::to_string(dest_count);
+  EraseMtlxAttr(node, "nodedef");
+  node->children = std::move(inputs);
+}
+
 void UpgradeMtlxChannels(MtlxElem *scope) {
   if (!scope) return;
-  std::vector<MtlxElem> generated;
-  for (MtlxElem &child : scope->children) {
+  for (size_t child_index = 0; child_index < scope->children.size(); ++child_index) {
+    std::vector<MtlxElem> generated;
+    MtlxElem &child = scope->children[child_index];
     if (child.tag == "input" || child.tag == "output")
       UpgradeChannelPort(&child, scope, &generated);
     if (IsMtlxNodeElem(child)) {
+      if (child.tag == "swizzle")
+        UpgradeMtlxSwizzleNode(&child, scope, &generated);
       for (MtlxElem &port : child.children)
         if (port.tag == "input" || port.tag == "output")
           UpgradeChannelPort(&port, scope, &generated);
     }
+    for (size_t i = generated.size(); i > 0; --i)
+      scope->children.insert(scope->children.begin() +
+                                 static_cast<std::ptrdiff_t>(child_index),
+                             std::move(generated[i - 1]));
+    child_index += generated.size();
   }
-  for (MtlxElem &node : generated) scope->children.push_back(std::move(node));
   for (MtlxElem &child : scope->children)
     if (child.tag == "nodegraph" || child.tag == "material")
       UpgradeMtlxChannels(&child);
+}
+
+void UpgradeMtlxShaderRefs(MtlxElem *root) {
+  if (!root || root->tag != "materialx") return;
+  std::vector<MtlxElem> upgraded;
+  std::vector<MtlxElem> migrated_materials;
+  for (MtlxElem &child : root->children) {
+    if (child.tag != "material") {
+      upgraded.push_back(child);
+      continue;
+    }
+
+    std::vector<MtlxElem> shader_inputs;
+    std::vector<MtlxElem> shader_nodes;
+    for (const MtlxElem &shader_ref : child.children) {
+      if (shader_ref.tag != "shaderref") continue;
+      const std::string category = shader_ref.AttrOr("node");
+      const std::string shader_name = shader_ref.Name();
+      const MtlxElem *nodedef = nullptr;
+      for (const MtlxElem &candidate : root->children) {
+        if (candidate.tag == "nodedef" &&
+            candidate.AttrOr("node") == category) {
+          nodedef = &candidate;
+          break;
+        }
+      }
+
+      std::string shader_type = nodedef ? nodedef->AttrOr("type") : std::string();
+      if (shader_type.empty() && nodedef) {
+        for (const MtlxElem &output : nodedef->children) {
+          if (output.tag == "output") {
+            shader_type = output.AttrOr("type");
+            if (!shader_type.empty()) break;
+          }
+        }
+      }
+      if (shader_type.empty()) shader_type = "surfaceshader";
+
+      MtlxElem shader;
+      shader.tag = category;
+      for (const auto &attr : shader_ref.attrs)
+        if (attr.first != "node" && attr.first != "name" &&
+            attr.first != "type" && attr.first != "nodedef")
+          shader.SetAttr(attr.first, attr.second);
+      shader.SetAttr("name", shader_name);
+      shader.SetAttr("type", shader_type);
+      if (nodedef) shader.SetAttr("nodedef", nodedef->Name());
+      for (const MtlxElem &binding : shader_ref.children) {
+        if (binding.tag != "bindinput") continue;
+        MtlxElem input = binding;
+        input.tag = "input";
+        shader.children.push_back(std::move(input));
+      }
+      shader_nodes.push_back(std::move(shader));
+
+      MtlxElem input;
+      input.tag = "input";
+      input.SetAttr("name", shader_type);
+      input.SetAttr("type", shader_type);
+      input.SetAttr("nodename", shader_name);
+      shader_inputs.push_back(std::move(input));
+    }
+
+    if (shader_nodes.empty()) {
+      upgraded.push_back(child);
+      continue;
+    }
+    for (MtlxElem &node : shader_nodes)
+      migrated_materials.push_back(std::move(node));
+    child.tag = "surfacematerial";
+    child.SetAttr("type", "material");
+    child.children = std::move(shader_inputs);
+    migrated_materials.push_back(std::move(child));
+  }
+  for (MtlxElem &elem : migrated_materials)
+    upgraded.push_back(std::move(elem));
+  root->children = std::move(upgraded);
 }
 
 void UpgradeMtlxThinFilmLayers(MtlxElem *scope) {
@@ -914,7 +1135,7 @@ void UpgradeMtlxThinFilmLayers(MtlxElem *scope) {
 
 }  // namespace
 
-void UpgradeMtlxVersion(MtlxElem *root) {
+void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
   if (!ParseMtlxVersion(root->AttrOr("version"), &major, &minor) ||
@@ -924,10 +1145,12 @@ void UpgradeMtlxVersion(MtlxElem *root) {
   if (minor == 37) {
     UpgradeColor2ChannelAliases(root);
     UpgradeMtlxElements(root, 37);
+    UpgradeMtlxShaderRefs(root);
     minor = 38;
   }
   if (minor == 38) {
     UpgradeMtlxElements(root, 38);
+    UpgradeMtlxShaderRefs(root);
     UpgradeMtlxChannels(root);
     UpgradeMtlxThinFilmLayers(root);
     root->SetAttr("version", "1.39");
@@ -1053,6 +1276,10 @@ std::string MtlxIncludeAnchor(const std::string &root_path,
 }
 
 }  // namespace
+
+void UpgradeMtlxVersion(MtlxElem *root) {
+  UpgradeMtlxVersionImpl(root);
+}
 
 // Helper function to parse vector values
 static std::vector<float> ParseFloatVector(const std::string& str) {
