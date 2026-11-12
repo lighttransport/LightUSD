@@ -131,6 +131,75 @@ def Camera "TestCam" {
         if not any(forward[i] > forward[i + 1] > forward[i + 2]
                    for i in range(0, len(forward), 4)):
             raise RuntimeError("volume scattering does not preserve the light color")
+        def area_scene(width, rotation=180):
+            return scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + f'''
+def RectLight "Panel" {{
+  color3f inputs:color = (1, 0, 0)
+  float inputs:intensity = 30000
+  float inputs:width = {width}
+  float inputs:height = {width}
+  float xformOp:rotateY = {rotation}
+  double3 xformOp:translate = (0, 0, -120)
+  uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}}
+'''
+        area_small_scene, area_large_scene = tmp / "area-small.usda", tmp / "area-large.usda"
+        area_small_scene.write_text(area_scene(0.5), encoding="utf-8")
+        area_large_scene.write_text(area_scene(1.0), encoding="utf-8")
+        graph.write_text(scattering_graph(0), encoding="utf-8")
+        small_area = render(1, "area-small", source=area_small_scene, camera="/TestCam",
+                            extra=("-noShadows",))
+        large_area = render(1, "area-large", source=area_large_scene, camera="/TestCam",
+                            extra=("-noShadows",))
+        small_flux = sum(linear(x) for x in small_area[0::4])
+        large_flux = sum(linear(x) for x in large_area[0::4])
+        if small_flux < 0.01 or not 3.5 < large_flux / small_flux < 4.5:
+            raise RuntimeError(f"area light radiance does not scale with area: {small_flux}, {large_flux}")
+        back_scene = tmp / "area-back.usda"
+        back_scene.write_text(area_scene(1.0, 0), encoding="utf-8")
+        back_area = render(1, "area-back", source=back_scene, camera="/TestCam",
+                           extra=("-noShadows",))
+        if sum(back_area[0::4]) > sum(large_area[0::4]) * 0.01:
+            raise RuntimeError("back-facing area light illuminated the volume")
+        normalized_small, normalized_large = tmp / "normalized-small.usda", tmp / "normalized-large.usda"
+        normalized_small.write_text(area_scene(0.5).replace('float inputs:width', 'bool inputs:normalize = true\n  float inputs:width'), encoding="utf-8")
+        normalized_large.write_text(area_scene(1.0).replace('float inputs:width', 'bool inputs:normalize = true\n  float inputs:width'), encoding="utf-8")
+        normalized_a = render(1, "area-normalized-small", source=normalized_small,
+                              camera="/TestCam", extra=("-noShadows",))
+        normalized_b = render(1, "area-normalized-large", source=normalized_large,
+                              camera="/TestCam", extra=("-noShadows",))
+        if any(abs(a - b) > 2 for a, b in zip(normalized_a, normalized_b)):
+            raise RuntimeError("normalized area light changed power with its size")
+        for kind in ("DiskLight", "SphereLight", "CylinderLight"):
+            shape_scene = tmp / f"{kind}.usda"
+            shape_scene.write_text(area_scene(1).replace('RectLight', kind).replace(
+                'float inputs:width = 1', 'float inputs:radius = 3\n  float inputs:length = 5'),
+                encoding="utf-8")
+            shape = render(1, kind, source=shape_scene, camera="/TestCam", extra=("-noShadows",))
+            if sum(shape[0::4]) <= 20:
+                raise RuntimeError(f"{kind} did not illuminate the volume")
+        wide_area_scene = tmp / "area-wide.usda"
+        wide_area_scene.write_text(area_scene(100).replace("inputs:intensity = 30000",
+                                                         "inputs:intensity = 2"), encoding="utf-8")
+        def blocker(xmax):
+            return f'''
+def Mesh "PanelBlocker" {{
+  point3f[] points = [(-200,-200,-80), ({xmax},-200,-80), ({xmax},200,-80), (-200,200,-80)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,2,3]
+  uniform token subdivisionScheme = "none"
+  uniform bool doubleSided = true
+}}
+'''
+        partial_scene, blocked_scene = tmp / "area-partial.usda", tmp / "area-blocked.usda"
+        partial_scene.write_text(wide_area_scene.read_text(encoding="utf-8") + blocker(0), encoding="utf-8")
+        blocked_scene.write_text(wide_area_scene.read_text(encoding="utf-8") + blocker(200), encoding="utf-8")
+        wide_area = render(1, "area-wide", source=wide_area_scene, camera="/TestCam")
+        partial_area = render(1, "area-partial", source=partial_scene, camera="/TestCam")
+        blocked_area = render(1, "area-blocked", source=blocked_scene, camera="/TestCam")
+        wide_sum, partial_sum, blocked_sum = (sum(p[0::4]) for p in (wide_area, partial_area, blocked_area))
+        if not blocked_sum < partial_sum * 0.8 < wide_sum * 0.64:
+            raise RuntimeError(f"area light did not produce a partial shadow: {blocked_sum}, {partial_sum}, {wide_sum}")
         dome_scene = tmp / "scattering-dome.usda"
         dome_scene.write_text(scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + '''
 def DomeLight "Environment" {

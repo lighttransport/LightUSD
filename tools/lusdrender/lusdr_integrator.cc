@@ -2377,7 +2377,48 @@ static Vec3 CompositeMixedVolumes(
           }
           const float g = sample.anisotropy;
           auto add_scattered_light = [&](const PreviewLight& light) {
-            if (++work > 1000000) { material_error->store(true, std::memory_order_relaxed); return; }
+            auto accumulate = [&](const Vec3& l, Vec3 incoming, float max_t) {
+              if (++work > 1000000) { material_error->store(true, std::memory_order_relaxed); return; }
+              if (opt.shadows && light.shadow_enable &&
+                  (tlas ? OccludedTLAS(tlas, world, l, l, max_t)
+                        : Occluded(scene, tris, world, l, l, max_t, direct,
+                                   opt.purpose_mask, chunks))) return;
+              if (opt.shadows && light.shadow_enable) {
+                Vec3 transmittance;
+                if (!light_transmittance(world, l, max_t, &transmittance)) {
+                  material_error->store(true, std::memory_order_relaxed); return;
+                }
+                incoming = Vec3{incoming.x * transmittance.x, incoming.y * transmittance.y,
+                                incoming.z * transmittance.z};
+              }
+              const float cosine = std::clamp(Dot(l, Mul(wdir, 1.0f / world_speed)), -1.0f, 1.0f);
+              const float denom = 1.0f + g * g - 2.0f * g * cosine;
+              const float phase = (1.0f - g * g) / (4.0f * MTLX_PI * denom * std::sqrt(denom));
+              incident = Add(incident, Mul(incoming, phase));
+            };
+            const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
+            const bool shaped = light.kind == PreviewLight::Kind::Rect ||
+                                light.kind == PreviewLight::Kind::Disk ||
+                                light.kind == PreviewLight::Kind::Cylinder;
+            if (shaped || (sphere && Length(Sub(light.position, world)) > light.radius + 1.0e-5f)) {
+              // Stratified surface or solid-angle quadrature; invalid/back-facing
+              // samples have zero contribution and retain their share of the PDF.
+              constexpr int kAreaSamples = 16;
+              for (int i = 0; i < kAreaSamples; ++i) {
+                if (++work > 1000000) {
+                  material_error->store(true, std::memory_order_relaxed); return;
+                }
+                const float u = (float(i / 4) + 0.5f) * 0.25f;
+                const float v = (float(i % 4) + 0.5f) * 0.25f;
+                LightSample ls;
+                const bool valid = sphere ? SampleSphereLight(light, world, u, v, &ls)
+                                          : SampleAreaLight(light, world, u, v, &ls);
+                if (valid) accumulate(ls.wi, Mul(ls.radiance, 1.0f / (float(kAreaSamples) * ls.pdf)),
+                                      std::max(0.0f, ls.dist - 1.0e-3f));
+                if (material_error->load(std::memory_order_relaxed)) return;
+              }
+              return;
+            }
             Vec3 l, incoming = light.radiance;
             float max_t = 1.0e30f;
             if (light.kind == PreviewLight::Kind::Distant) {
@@ -2388,34 +2429,16 @@ static Vec3 CompositeMixedVolumes(
               if (dist <= 1.0e-6f) return;
               l = Mul(delta, 1.0f / dist);
               max_t = std::max(0.0f, dist - 1.0e-3f);
-              if (light.kind == PreviewLight::Kind::Mesh ||
-                  light.kind == PreviewLight::Kind::Rect ||
-                  light.kind == PreviewLight::Kind::Disk ||
-                  light.kind == PreviewLight::Kind::Cylinder) {
+              if (light.kind == PreviewLight::Kind::Mesh) {
                 const float cosine = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
-                incoming = Mul(incoming, cosine * std::max(1.0f, light.area));
-              } else if (light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f) {
+                incoming = Mul(incoming, cosine * light.area);
+              } else if (sphere) {
                 incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
               }
               if (!light.constant_attenuation)
                 incoming = Mul(incoming, 1.0f / std::max(1.0e-4f, dist * dist));
             }
-            if (opt.shadows && light.shadow_enable &&
-                (tlas ? OccludedTLAS(tlas, world, l, l, max_t)
-                      : Occluded(scene, tris, world, l, l, max_t, direct,
-                                 opt.purpose_mask, chunks))) return;
-            if (opt.shadows && light.shadow_enable) {
-              Vec3 transmittance;
-              if (!light_transmittance(world, l, max_t, &transmittance)) {
-                material_error->store(true, std::memory_order_relaxed); return;
-              }
-              incoming = Vec3{incoming.x * transmittance.x, incoming.y * transmittance.y,
-                              incoming.z * transmittance.z};
-            }
-            const float cosine = std::clamp(Dot(l, Mul(wdir, 1.0f / world_speed)), -1.0f, 1.0f);
-            const float denom = 1.0f + g * g - 2.0f * g * cosine;
-            const float phase = (1.0f - g * g) / (4.0f * MTLX_PI * denom * std::sqrt(denom));
-            incident = Add(incident, Mul(incoming, phase));
+            accumulate(l, incoming, max_t);
           };
           if (sample.scattering[0] > 0 || sample.scattering[1] > 0 || sample.scattering[2] > 0) {
             for (const PreviewLight& light : lights.finite) {
