@@ -33,6 +33,25 @@ static int read_memory_image(void *user, const char *path,
   return 1;
 }
 
+static int check_borrowed_mips(void) {
+  TextureCache *cache = texcache_create(".");
+  if (!cache) return 0;
+  texcache_set_reader(cache, read_memory_image, NULL, 4);
+  const int id = texcache_get(cache, "memory.ppm", 0);
+  const float rgba[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+  const MtlxTextureMipView bad = {2, 1, rgba};
+  const MtlxTextureMipView good = {1, 1, rgba};
+  float result[4] = {0, 0, 0, 0};
+  const int ok = id >= 0 && !texcache_attach_mips(cache, id, &bad, 1) &&
+                 texcache_attach_mips(cache, id, &good, 1);
+  if (ok) texcache_sample_trilinear(cache, id, 0.5f, 0.5f, 0.0f,
+                                    "periodic", "periodic", result);
+  const int correct = ok && near(result[0], 0.25f, 1e-6f) &&
+                      near(result[2], 0.75f, 1e-6f);
+  texcache_free(cache); /* borrowed stack data must not be freed */
+  return correct;
+}
+
 static int check_volume_work_limit(void) {
   char xml[8192];
   int used = snprintf(xml, sizeof(xml),
@@ -66,6 +85,7 @@ static int check_volume_work_limit(void) {
 }
 
 int main(void) {
+  if (!check_borrowed_mips()) return 1;
   if (!check_volume_work_limit()) return 1;
   TextureCache *bounded = texcache_create(".");
   if (!bounded) return 1;

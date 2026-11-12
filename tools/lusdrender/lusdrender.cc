@@ -127,10 +127,14 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
                                    ? "."
                                    : opt.mtlx_file.substr(0, slash);
   std::string runtime_error;
+  const uint64_t texture_budget = opt.texture_budget_mb > 0
+      ? uint64_t(opt.texture_budget_mb) * 1024u * 1024u : 0;
+  const size_t texture_budget_bytes = static_cast<size_t>((std::min)(
+      texture_budget, static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
   opt.mtlx_runtime = lusdview::CreateMaterialXSurfaceRuntime(
       xml_text.c_str(),
       opt.mtlx_material.empty() ? nullptr : opt.mtlx_material.c_str(),
-      base_dir.c_str(), &runtime_error, opt.mtlx_mipmaps);
+      base_dir.c_str(), &runtime_error, opt.mtlx_mipmaps, texture_budget_bytes);
   if (!opt.mtlx_runtime) {
     if (error) *error = "LightRT MaterialX runtime creation failed: " +
                         runtime_error;
@@ -148,10 +152,10 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
   }
   lightusd::tydra::LightRtOpenPBRParams pbr;
   std::string eval_error;
-  if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
-          xml_text.c_str(), opt.mtlx_material.empty()
-                                ? nullptr : opt.mtlx_material.c_str(),
-          base_dir.c_str(), &pbr, &eval_error)) {
+  lusdview::MaterialXSurfaceContext initial_context;
+  initial_context.uv[0] = initial_context.uv[1] = 0.5f;
+  if (!lusdview::EvaluateMaterialXSurfaceRuntimeAt(
+          opt.mtlx_runtime.get(), initial_context, &pbr, &eval_error)) {
     if (error) *error = "LightRT MaterialX graph evaluation failed: " + eval_error;
     return false;
   }

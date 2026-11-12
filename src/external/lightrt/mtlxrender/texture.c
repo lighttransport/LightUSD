@@ -36,6 +36,7 @@ typedef struct {
     int           srgb;
     TextureMip   *mips;
     int           nmips;
+    int           borrowed_mips;
 } Texture;
 
 struct TextureCache {
@@ -48,6 +49,8 @@ struct TextureCache {
     size_t max_decoded_bytes, decoded_bytes;
     int load_failed;
     int auto_mips;
+    int limit_native;
+    int limit_exceeded;
 };
 
 TextureCache *texcache_create(const char *base_dir) {
@@ -78,13 +81,53 @@ void texcache_set_auto_mips(TextureCache *tc, int enabled) {
     if (tc) tc->auto_mips = enabled != 0;
 }
 
+void texcache_set_decode_limit(TextureCache *tc, size_t max_bytes) {
+    if (tc && tc->ntex == 0) { tc->limit_native = 1; tc->max_decoded_bytes = max_bytes; }
+}
+
+size_t texcache_decoded_bytes(const TextureCache *tc) { return tc ? tc->decoded_bytes : 0; }
+int texcache_limit_exceeded(const TextureCache *tc) { return tc ? tc->limit_exceeded : 0; }
+int texcache_count(const TextureCache *tc) { return tc ? tc->ntex : 0; }
+int texcache_image_view(const TextureCache *tc, int id, const unsigned char **pixels,
+                        int *width, int *height, int *channels, int *srgb) {
+    if (!tc || id < 0 || id >= tc->ntex || !pixels || !width || !height || !channels || !srgb)
+        return 0;
+    const Texture *t = &tc->tex[id];
+    *pixels = t->pixels; *width = t->w; *height = t->h;
+    *channels = t->comp; *srgb = t->srgb;
+    return 1;
+}
+
+int texcache_attach_mips(TextureCache *tc, int id,
+                         const MtlxTextureMipView *levels, int count) {
+    if (!tc || id < 0 || id >= tc->ntex || !levels || count <= 0) return 0;
+    Texture *t = &tc->tex[id];
+    if (t->mips) return 0;
+    int w = t->w, h = t->h;
+    for (int i = 0; i < count; ++i) {
+        if (!levels[i].rgba || levels[i].width != w || levels[i].height != h) return 0;
+        if (w == 1 && h == 1 && i != count - 1) return 0;
+        w = w / 2 + w % 2; h = h / 2 + h % 2;
+    }
+    if (levels[count - 1].width != 1 || levels[count - 1].height != 1) return 0;
+    TextureMip *mips = (TextureMip *)calloc((size_t)count, sizeof(TextureMip));
+    if (!mips) return 0;
+    for (int i = 0; i < count; ++i) {
+        mips[i].w = levels[i].width; mips[i].h = levels[i].height;
+        mips[i].rgba = (float *)levels[i].rgba;
+    }
+    t->mips = mips; t->nmips = count; t->borrowed_mips = 1;
+    return 1;
+}
+
 void texcache_free(TextureCache *tc) {
     if (!tc) return;
     for (int i = 0; i < tc->ntex; i++) {
         free(tc->tex[i].key);
         stbi_image_free(tc->tex[i].pixels);
-        for (int level = 0; level < tc->tex[i].nmips; ++level)
-            free(tc->tex[i].mips[level].rgba);
+        if (!tc->tex[i].borrowed_mips)
+            for (int level = 0; level < tc->tex[i].nmips; ++level)
+                free(tc->tex[i].mips[level].rgba);
         free(tc->tex[i].mips);
     }
     free(tc->tex);
@@ -97,17 +140,30 @@ void texcache_free(TextureCache *tc) {
  * images by bare name (e.g. "brick_normal.jpg") that live in resources/Images/,
  * several levels above the .mtlx. Walk up from base_dir and try both <dir>/<rel>
  * and <dir>/Images/<rel> at each ancestor level. */
-static unsigned char *load_searchpath(const char *base_dir, const char *rel,
+static unsigned char *load_file_bounded(TextureCache *tc, const char *path,
+                                        int *w, int *h, int *comp) {
+    if (tc->limit_native) {
+        if (!stbi_info(path, w, h, comp) || *w <= 0 || *h <= 0) return NULL;
+        if (tc->decoded_bytes > tc->max_decoded_bytes ||
+            (size_t)*w > (tc->max_decoded_bytes - tc->decoded_bytes) / 4 / (size_t)*h) {
+            tc->limit_exceeded = 1;
+            return NULL;
+        }
+    }
+    return stbi_load(path, w, h, comp, 0);
+}
+
+static unsigned char *load_searchpath(TextureCache *tc, const char *base_dir, const char *rel,
                                       int *w, int *h, int *comp) {
     char dir[1024];
     snprintf(dir, sizeof(dir), "%s", (base_dir && base_dir[0]) ? base_dir : ".");
     for (int up = 0; up < 12; up++) {
         char path[1100];
         snprintf(path, sizeof(path), "%s/%s", dir, rel);
-        unsigned char *px = stbi_load(path, w, h, comp, 0);
+        unsigned char *px = load_file_bounded(tc, path, w, h, comp);
         if (px) return px;
         snprintf(path, sizeof(path), "%s/Images/%s", dir, rel);
-        px = stbi_load(path, w, h, comp, 0);
+        px = load_file_bounded(tc, path, w, h, comp);
         if (px) return px;
         char *slash = strrchr(dir, '/');
         if (!slash) break;
@@ -137,7 +193,7 @@ static int texcache_add(TextureCache *tc, const char *rel_path, int srgb,
     if (!t->key) { stbi_image_free(px); tc->load_failed = 1; return -1; }
     t->pixels = px;
     t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
-    t->mips = NULL; t->nmips = 0;
+    t->mips = NULL; t->nmips = 0; t->borrowed_mips = 0;
     return tc->ntex++;
 }
 
@@ -170,12 +226,13 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
             if (px) tc->decoded_bytes += (size_t)w * (size_t)h * 4;
         }
     } else {
-        px = load_searchpath(tc->base_dir, rel_path, &w, &h, &comp);
+        px = load_searchpath(tc, tc->base_dir, rel_path, &w, &h, &comp);
+        if (px && tc->limit_native) tc->decoded_bytes += (size_t)w * (size_t)h * 4;
     }
     if (!px) { tc->load_failed = 1; fprintf(stderr, "texture: failed to load '%s' (searched from '%s')\n", rel_path, tc->base_dir); return -1; }
 
     const int id = texcache_add(tc, rel_path, srgb, px, w, h, comp);
-    if (id < 0 && tc->read_fn)
+    if (id < 0 && (tc->read_fn || tc->limit_native))
         tc->decoded_bytes -= (size_t)w * (size_t)h * 4;
     if (id >= 0 && tc->auto_mips && !texcache_build_mips(tc, id)) {
         tc->load_failed = 1;
@@ -316,10 +373,13 @@ static int texcache_preload_impl(TextureCache *tc, const MtlxDoc *doc,
                 snprintf(path + prefix, sizeof(path) - prefix, "%d%s", tile,
                          token + 6);
                 int w, h, comp;
-                unsigned char *px = load_searchpath(tc->base_dir, path, &w, &h,
+                unsigned char *px = load_searchpath(tc, tc->base_dir, path, &w, &h,
                                                     &comp);
-                if (px) texcache_add(tc, path, in->colorspace_srgb, px, w, h,
-                                     comp);
+                if (px) {
+                    if (tc->limit_native) tc->decoded_bytes += (size_t)w * (size_t)h * 4;
+                    if (texcache_add(tc, path, in->colorspace_srgb, px, w, h, comp) < 0 && tc->limit_native)
+                        tc->decoded_bytes -= (size_t)w * (size_t)h * 4;
+                }
             }
         }
     }

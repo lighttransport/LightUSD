@@ -16,6 +16,7 @@
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 #include "image-loader.hh"
+#include "tydra/texture-cache.hh"
 
 extern "C" {
 #include "external/lightrt/mtlxrender/mtlx_doc.h"
@@ -1102,8 +1103,10 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
 class MaterialXSurfaceRuntime {
  public:
   MaterialXSurfaceRuntime(MtlxDoc* document, TextureCache* textureCache,
-                          int node, uint64_t runtimeId)
-      : doc(document), tex(textureCache), surfaceNode(node), id(runtimeId) {}
+                          int node, uint64_t runtimeId,
+                          std::vector<tydra::MaterialXMipChain> mipChains = {})
+      : doc(document), tex(textureCache), surfaceNode(node), id(runtimeId),
+        mipChains(std::move(mipChains)) {}
   ~MaterialXSurfaceRuntime() {
     texcache_free(tex);
     mtlx_free(doc);
@@ -1113,6 +1116,7 @@ class MaterialXSurfaceRuntime {
   TextureCache* tex{nullptr};
   int surfaceNode{-1};
   uint64_t id{0};
+  std::vector<tydra::MaterialXMipChain> mipChains;
 };
 
 namespace {
@@ -1127,7 +1131,7 @@ thread_local std::unordered_map<uint64_t, MtlxThreadScratch> gMtlxScratch;
 
 std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     const char* xml, const char* materialName, const char* baseDir,
-    std::string* err, bool buildMipmaps) {
+    std::string* err, bool buildMipmaps, size_t textureBudgetBytes) {
   if (err) err->clear();
   if (!xml || !xml[0]) {
     if (err) *err = "MaterialX XML string is empty";
@@ -1149,18 +1153,52 @@ std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     mtlx_free(doc);
     return {};
   }
+  std::vector<tydra::MaterialXMipChain> chains;
+  if (buildMipmaps)
+    texcache_set_decode_limit(tex, textureBudgetBytes ? textureBudgetBytes : SIZE_MAX);
+  texcache_preload(tex, doc);
   if (buildMipmaps) {
-    if (!texcache_preload_mips(tex, doc)) {
-      if (err) *err = "failed to build MaterialX texture mipmaps";
-      texcache_free(tex);
-      mtlx_free(doc);
-      return {};
+    const size_t baseBytes = texcache_decoded_bytes(tex);
+    if (texcache_limit_exceeded(tex) ||
+        (textureBudgetBytes && baseBytes >= textureBudgetBytes && texcache_count(tex))) {
+      if (err) *err = "MaterialX textures exceed the decoded texture budget";
+      texcache_free(tex); mtlx_free(doc); return {};
     }
-  } else {
-    texcache_preload(tex, doc);
+    tydra::TextureDecodeOptions options;
+    options.budget_bytes = textureBudgetBytes ? textureBudgetBytes - baseBytes : 0;
+    tydra::TextureDecoder decoder(options);
+    chains.reserve(static_cast<size_t>(texcache_count(tex)));
+    for (int i = 0; i < texcache_count(tex); ++i) {
+      const unsigned char* pixels = nullptr;
+      int width = 0, height = 0, channels = 0, srgb = 0;
+      if (!texcache_image_view(tex, i, &pixels, &width, &height, &channels, &srgb)) {
+        if (err) *err = "failed to access a MaterialX texture";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      tydra::DecodedImageView view;
+      view.width = static_cast<uint32_t>(width); view.height = static_cast<uint32_t>(height);
+      view.channels = static_cast<uint8_t>(channels); view.pixels = pixels;
+      view.value_count = static_cast<size_t>(width) * static_cast<size_t>(height) *
+                         static_cast<size_t>(channels);
+      tydra::MaterialXMipChain chain;
+      if (!decoder.BuildMaterialXMips(view, srgb != 0, &chain)) {
+        if (err) *err = "failed to build MaterialX texture mipmaps within budget";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      std::vector<MtlxTextureMipView> views;
+      for (const auto& level : chain.levels)
+        views.push_back({static_cast<int>(level.width), static_cast<int>(level.height),
+                         level.rgba.data()});
+      if (!texcache_attach_mips(tex, i, views.data(), static_cast<int>(views.size()))) {
+        if (err) *err = "failed to attach MaterialX texture mipmaps";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      chains.push_back(std::move(chain));
+    }
   }
   return std::make_shared<MaterialXSurfaceRuntime>(
-      doc, tex, surfaceNode, gMtlxRuntimeId.fetch_add(1, std::memory_order_relaxed));
+      doc, tex, surfaceNode, gMtlxRuntimeId.fetch_add(1, std::memory_order_relaxed),
+      std::move(chains));
 }
 
 bool EvaluateMaterialXSurfaceRuntimeAt(

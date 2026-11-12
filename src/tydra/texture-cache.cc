@@ -481,13 +481,23 @@ bool TextureDecoder::Decode(const std::string& asset, bool srgb,
 
 bool TextureDecoder::BuildMaterialXMips(const DecodedImage& image, bool srgb,
                                         MaterialXMipChain* out) {
+  DecodedImageView view;
+  view.width = image.width; view.height = image.height;
+  view.channels = image.channels; view.hdr = image.hdr;
+  view.pixels = image.pixels.data(); view.float_pixels = image.float_pixels.data();
+  view.value_count = image.hdr ? image.float_pixels.size() : image.pixels.size();
+  return BuildMaterialXMips(view, srgb, out);
+}
+
+bool TextureDecoder::BuildMaterialXMips(const DecodedImageView& image, bool srgb,
+                                        MaterialXMipChain* out) {
   if (!out || !image.width || !image.height || image.channels < 1 ||
       image.channels > 4 || (image.hdr && image.channels != 3)) return false;
   size_t source_pixels = 0, source_values = 0;
   if (!safe::mul(size_t(image.width), size_t(image.height), &source_pixels) ||
       !safe::mul(source_pixels, size_t(image.channels), &source_values) ||
-      (image.hdr ? image.float_pixels.size() < source_values
-                 : image.pixels.size() < source_values)) return false;
+      image.value_count < source_values ||
+      (image.hdr ? !image.float_pixels : !image.pixels)) return false;
   size_t bytes = 0;
   uint32_t w = image.width, h = image.height;
   for (;;) {

@@ -461,7 +461,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
-  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra)
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra lightusd_preview_images)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)

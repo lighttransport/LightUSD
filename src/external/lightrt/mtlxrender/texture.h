@@ -24,6 +24,18 @@ void texcache_clear_load_failure(TextureCache *tc);
 /* Build mip chains on first use; reader-backed caches include them in their
  * decoded byte limit. Failure is reported through the load-failure flag. */
 void texcache_set_auto_mips(TextureCache *tc, int enabled);
+/* Limit decoded base pixels for native file reads. Set before loading. */
+void texcache_set_decode_limit(TextureCache *tc, size_t max_bytes);
+size_t texcache_decoded_bytes(const TextureCache *tc);
+int texcache_limit_exceeded(const TextureCache *tc);
+int texcache_count(const TextureCache *tc);
+int texcache_image_view(const TextureCache *tc, int id, const unsigned char **pixels,
+                        int *width, int *height, int *channels, int *srgb);
+typedef struct { int width, height; const float *rgba; } MtlxTextureMipView;
+/* Borrow the level pixels until the cache is freed. Setup only, before any
+ * concurrent sampling; all levels must have round-up dimensions through 1x1. */
+int texcache_attach_mips(TextureCache *tc, int id,
+                         const MtlxTextureMipView *levels, int count);
 
 /* Preload every texture referenced by image and projection nodes, then freeze
  * the cache so subsequent texcache_get calls are read-only (thread-safe during

@@ -290,11 +290,11 @@ def main():
     )
 
     checker = bytearray()
-    for y in range(256):
-        for x in range(256):
+    for y in range(288):
+        for x in range(288):
             value = 255 if (x + y) % 2 else 0
             checker.extend((value, value, value, 255))
-    write_png_rgba(out_dir / "checker.png", 256, 256, checker)
+    write_png_rgba(out_dir / "checker.png", 288, 288, checker)
     checker_source = out_dir / "checker.mtlx"
     checker_source.write_text(
         texture_source.read_text(encoding="utf-8").replace("gradient.png", "checker.png"),
@@ -307,7 +307,7 @@ def main():
                    "--mtlx-material", "TextureMaterial", "--aov", "mtlxNode:Gradient",
                    "-w", "64", "-height", "64"]
         if enabled:
-            command.append("--mtlx-mipmaps")
+            command.extend(("--mtlx-mipmaps", "-texBudgetMb", "3"))
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True)
         if result.returncode:
@@ -319,6 +319,14 @@ def main():
         raise RuntimeError("MaterialX mip filtering did not converge to the checker mean")
     if max(abs(a - b) for a, b in zip(*rendered)) < 0.001:
         raise RuntimeError("MaterialX mip option did not affect minified texture sampling")
+    tight_budget = subprocess.run(
+        [exe, "--mtlx", str(checker_source), str(out_dir / "budget.pfm"),
+         "--mtlx-material", "TextureMaterial", "--mtlx-mipmaps",
+         "-texBudgetMb", "2", "-w", "64", "-height", "64"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if tight_budget.returncode == 0 or "within budget" not in tight_budget.stderr:
+        raise RuntimeError(f"MaterialX mip budget did not reject the chain:\n{tight_budget.stderr}")
 
     lobes_source = out_dir / "lobe-weights.mtlx"
     lobes_source.write_text(

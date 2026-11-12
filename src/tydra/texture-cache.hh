@@ -126,6 +126,17 @@ struct MaterialXMipChain {
   std::shared_ptr<::lightusd::TextureBudgetLease> budget_lease;
 };
 
+/// Borrowed decoded pixels for mip construction. The data must remain valid
+/// during the call; only the constructed levels are retained.
+struct DecodedImageView {
+  uint32_t width = 0, height = 0;
+  uint8_t channels = 0;
+  bool hdr = false;
+  const uint8_t* pixels = nullptr;
+  const float* float_pixels = nullptr;
+  size_t value_count = 0;
+};
+
 struct TextureDecodeOptions {
   /// Directory the source USD resolves relative asset paths against.
   std::string base_dir;
@@ -169,6 +180,8 @@ class TextureDecoder {
   /// storage to this decoder's resident budget. The output is unchanged on
   /// failure. For HDR inputs, values are already linear and `srgb` is ignored.
   bool BuildMaterialXMips(const DecodedImage& image, bool srgb,
+                          MaterialXMipChain* out);
+  bool BuildMaterialXMips(const DecodedImageView& image, bool srgb,
                           MaterialXMipChain* out);
 
   /// Decode and build a MaterialX chain. The decoded base image and chain both
