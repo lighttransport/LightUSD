@@ -54,8 +54,10 @@ int main(void) {
       "<absorption_vdf name=\"missing_fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" nodename=\"missing_value\"/></absorption_vdf>"
       "<uniform_edf name=\"glow\" type=\"EDF\"><input name=\"color\" type=\"color3\" value=\"0.2, 0.4, 0.8\"/></uniform_edf>"
       "<constant name=\"weight\" type=\"color3\"><input name=\"value\" type=\"color3\" value=\"0.2, 0.5, 0.8\"/></constant>"
+      "<constant name=\"signed_weight\" type=\"color3\"><input name=\"value\" type=\"color3\" value=\"-1, 2, 0\"/></constant>"
       "<multiply name=\"weighted_fog\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"color3\" nodename=\"weight\"/></multiply>"
       "<multiply name=\"weighted_glow\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"color3\" nodename=\"weight\"/></multiply>"
+      "<multiply name=\"signed_fog\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"color3\" nodename=\"signed_weight\"/></multiply>"
       "<mystery_edf name=\"unknown_edf\" type=\"EDF\"/>"
       "<add name=\"nested_edf\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"EDF\" nodename=\"unknown_edf\"/></add>"
       "<add name=\"nested\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"VDF\" nodename=\"unknown\"/></add>"
@@ -68,6 +70,7 @@ int main(void) {
       "<volume name=\"missing_value_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"missing_fog\"/></volume>"
       "<volume name=\"missing_closure_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"missing_vdf\"/></volume>"
       "<volume name=\"weighted_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"weighted_fog\"/><input name=\"edf\" type=\"EDF\" nodename=\"weighted_glow\"/></volume>"
+      "<volume name=\"signed_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"signed_fog\"/></volume>"
       "</materialx>";
   MtlxDoc *doc = mtlx_load_string(xml);
   TextureCache *cache = texcache_create(".");
@@ -112,8 +115,9 @@ int main(void) {
     const int missing_value = mtlx_find_node(doc, -1, "missing_value_volume");
     const int missing_closure = mtlx_find_node(doc, -1, "missing_closure_volume");
     const int weighted = mtlx_find_node(doc, -1, "weighted_volume");
+    const int signed_volume = mtlx_find_node(doc, -1, "signed_volume");
     ok = valid >= 0 && invalid >= 0 && nested >= 0 && bad_emission >= 0 &&
-         connected >= 0 && bad_value >= 0 && missing_value >= 0 && missing_closure >= 0 && weighted >= 0 &&
+         connected >= 0 && bad_value >= 0 && missing_value >= 0 && missing_closure >= 0 && weighted >= 0 && signed_volume >= 0 &&
          mtlx_eval_volume(&ctx, valid, &volume) == 0 &&
          near(volume.absorption.x, 0.1f, 1.0e-5f) &&
          near(volume.absorption.z, 0.3f, 1.0e-5f) &&
@@ -132,7 +136,11 @@ int main(void) {
          near(volume.absorption.z, 0.24f, 1.0e-5f) &&
          near(volume.emission.x, 0.04f, 1.0e-5f) &&
          near(volume.emission.y, 0.20f, 1.0e-5f) &&
-         near(volume.emission.z, 0.64f, 1.0e-5f);
+         near(volume.emission.z, 0.64f, 1.0e-5f) &&
+         mtlx_eval_volume(&ctx, signed_volume, &volume) == 0 &&
+         near(volume.absorption.x, -0.1f, 1.0e-5f) &&
+         near(volume.absorption.y, 0.4f, 1.0e-5f) &&
+         near(volume.absorption.z, 0.0f, 1.0e-5f);
   }
   if (!ok) fprintf(stderr, "MaterialX evaluator mip sampling failed\n");
 

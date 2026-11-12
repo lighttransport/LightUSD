@@ -1384,7 +1384,8 @@ static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth) {
 
 static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, v3 scale,
                      MtlxVolumeParams *out, int depth) {
-    if (!n || depth > 32 || v3_maxc(scale) <= 0.0f) return;
+    if (!n || depth > 32 ||
+        (scale.x == 0.0f && scale.y == 0.0f && scale.z == 0.0f)) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
         const char *a_name = !strcmp(cat, "layer") ? "base" : "in1";
@@ -1405,7 +1406,7 @@ static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, v3 scale,
     if (!strcmp(cat, "multiply")) {
         const MtlxInput *factor = find_input(n, "in2");
         const MtlxValue factor_value = factor ? eval_input(ctx, factor) : mv_float(1.0f);
-        const v3 weight = v3_max(mv_as_v3(&factor_value), v3_splat(0.0f));
+        const v3 weight = mv_as_v3(&factor_value);
         eval_vdf(ctx, input_node(ctx, n, "in1"), v3_mul(scale, weight), out, depth + 1);
         return;
     }
