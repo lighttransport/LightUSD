@@ -186,6 +186,18 @@ struct MtlxConvertOptions {
   bool volume_texture_mipmaps = false;
 };
 
+/// Numeric type requested by a MaterialX geometry-property node.
+enum class MtlxGeomPropType {
+  Float, Color3, Color4, Vector2, Vector3, Vector4, Matrix33, Matrix44,
+  Integer, Boolean
+};
+
+/// Return true and write the requested number of finite components, or return
+/// false to use the node's default. Matrices use column-major order. The
+/// callback and user data are borrowed only for the duration of Evaluate.
+using MtlxGeomPropFn = bool (*)(void* user, const char* name,
+                                MtlxGeomPropType type, float out[16]);
+
 /// Inputs to a volume graph at one sample point, in world space.
 struct MtlxVolumeContext {
   float uv[2] = {0, 0};
@@ -201,6 +213,8 @@ struct MtlxVolumeContext {
   float view_dx[3] = {0, 0, 0}, view_dy[3] = {0, 0, 0};
   bool has_view_derivatives = false;
   float time = 0, frame = 0;
+  MtlxGeomPropFn geomprop = nullptr;
+  void* geomprop_user = nullptr;
   /// Column-major affine matrices; callers must supply consistent inverses.
   /// When false, named-space transform nodes use identity transforms.
   bool has_space_transforms = false;

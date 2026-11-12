@@ -3420,6 +3420,36 @@ void TestMaterialXUtilities() {
   auto graph_evaluator = converter.CreateVolumeEvaluator(graph_scene.volumes[0]);
   assert(graph_evaluator && graph_evaluator->Evaluate(assigned_context, &spatial_sample));
   assert(std::abs(spatial_sample.absorption[1] - 0.3f) < 1e-6f);
+  const char* property_volume = R"(<materialx version="1.39">
+    <geompropvalue name="density" type="vector3">
+      <input name="geomprop" type="string" value="density"/>
+      <input name="default" type="vector3" value="0.1,0.2,0.3"/>
+    </geompropvalue>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="density"/></absorption_vdf>
+    <volume name="v" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodename="v"/></volumematerial>
+  </materialx>)";
+  auto property_evaluator = converter.CreateVolumeEvaluator(property_volume, "Mat");
+  assert(property_evaluator);
+  int property_mode = 0;
+  assigned_context.geomprop_user = &property_mode;
+  assigned_context.geomprop = [](void* user, const char* name, MtlxGeomPropType type,
+                                  float out[16]) {
+    assert(std::strcmp(name, "density") == 0 && type == MtlxGeomPropType::Vector3);
+    const int mode = *static_cast<int*>(user);
+    if (mode == 0) return false;
+    out[0] = mode == 2 ? std::numeric_limits<float>::infinity() : 0.6f;
+    out[1] = 0.7f; out[2] = 0.8f;
+    return true;
+  };
+  assert(property_evaluator->Evaluate(assigned_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.1f) < 1e-6f);
+  property_mode = 1;
+  assert(property_evaluator->Evaluate(assigned_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[1] - 0.7f) < 1e-6f);
+  property_mode = 2;
+  assert(!property_evaluator->Evaluate(assigned_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[1] - 0.7f) < 1e-6f);
 
   const char* path = "tydra_materialx_test.mtlx";
   {

@@ -48,6 +48,41 @@ int ReadMtlxVolumeTexture(void* user, const char* path,
   return 1;
 }
 
+struct VolumeGeomPropReader {
+  MtlxGeomPropFn callback = nullptr;
+  void* user = nullptr;
+  bool invalid = false;
+};
+
+int ReadVolumeGeomProp(void* user, const char* name, MtlxType type,
+                       ::MtlxValue* out) {
+  auto* reader = static_cast<VolumeGeomPropReader*>(user);
+  MtlxGeomPropType public_type;
+  size_t count = 0;
+  switch (type) {
+    case MV_FLOAT: public_type = MtlxGeomPropType::Float; count = 1; break;
+    case MV_COLOR3: public_type = MtlxGeomPropType::Color3; count = 3; break;
+    case MV_COLOR4: public_type = MtlxGeomPropType::Color4; count = 4; break;
+    case MV_VEC2: public_type = MtlxGeomPropType::Vector2; count = 2; break;
+    case MV_VEC3: public_type = MtlxGeomPropType::Vector3; count = 3; break;
+    case MV_VEC4: public_type = MtlxGeomPropType::Vector4; count = 4; break;
+    case MV_MATRIX33: public_type = MtlxGeomPropType::Matrix33; count = 9; break;
+    case MV_MATRIX44: public_type = MtlxGeomPropType::Matrix44; count = 16; break;
+    case MV_INT: public_type = MtlxGeomPropType::Integer; count = 1; break;
+    case MV_BOOL: public_type = MtlxGeomPropType::Boolean; count = 1; break;
+    default: return 0;
+  }
+  float values[16] = {};
+  if (!reader->callback(reader->user, name, public_type, values)) return 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (!std::isfinite(values[i])) { reader->invalid = true; return 0; }
+  }
+  *out = ::MtlxValue{};
+  out->type = type;
+  for (size_t i = 0; i < count; ++i) out->v[i] = values[i];
+  return 1;
+}
+
 }  // namespace
 
 bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
@@ -183,6 +218,11 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
     return false;
   }
   ShadeContext context{};
+  VolumeGeomPropReader geomprop{input.geomprop, input.geomprop_user, false};
+  if (input.geomprop) {
+    context.geomprop = &ReadVolumeGeomProp;
+    context.geomprop_user = &geomprop;
+  }
   context.doc = impl_->doc.get();
   context.tex = impl_->cache.get();
   for (size_t i = 0; i < 2; ++i) {
@@ -220,6 +260,10 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
   MtlxVolumeParams volume{};
   if (mtlx_eval_volume(&context, impl_->node, &volume)) {
     impl_->error = "Unsupported or invalid MaterialX volume graph";
+    return false;
+  }
+  if (geomprop.invalid) {
+    impl_->error = "MaterialX geometry property returned a non-finite value";
     return false;
   }
   if (texcache_had_load_failure(impl_->cache.get())) {
