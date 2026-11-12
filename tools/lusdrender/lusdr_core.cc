@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "core/minijson.hh"
+#include "core/mtlx-dom.hh"
 #include "image-loader.hh"
 #include "ptex_atlas.hh"   // lusdview::BuildPtexAtlas (Ptex face atlas)
 #include "ptx-loader.hh"
@@ -33,6 +34,7 @@
 #include "tydra/render-converter.hh"
 #include "tydra/render-extract.hh"
 #include "tydra/openpbr-params.hh"
+#include "tydra/materialx.hh"
 #include "tydra/texture-util.hh"
 #include "tydra/vol/volume-field.hh"
 #include "usdVol.hh"
@@ -3311,6 +3313,62 @@ class SparseFieldSampler final : public VolumeSparseSampler {
   lightusd::tydra::vol::ResolvedField field_;
 };
 
+static void RetainMaterialXFields(const lightusd::Stage& stage, const lightusd::UsdPrim& volume,
+                                  double time, const std::string& base_dir,
+                                  lightusd::tydra::vol::FieldCache& cache,
+                                  lightusd::tydra::RenderVolume* out) {
+  for (const std::string& rel : volume.GetRelationshipNames()) {
+    if (rel.rfind("field:", 0) != 0) continue;
+    const std::string binding = rel.substr(6);
+    if (out->Field(binding)) continue;
+    const auto fail = [&](const std::string& message) {
+      out->fields.push_back({binding, {}, message});
+    };
+    std::vector<lightusd::Path> targets;
+    volume.GetForwardedRelationshipTargets(rel, &targets);
+    if (targets.empty()) continue;
+    if (targets.size() != 1) { fail("field relationship has multiple targets"); continue; }
+    const lightusd::UsdPrim field = stage.GetPrimAtPath(targets[0]);
+    if (!field) { fail("field target is missing"); continue; }
+    lightusd::tydra::vol::FieldRequest request;
+    request.binding = binding;
+    request.field_prim = field.GetPath().str();
+    request.prim_type = field.GetTypeName();
+    const lightusd::Value* fp = field.GetValueAtTime("filePath", time);
+    const lightusd::StringView asset = fp ? fp->as_asset_path() : lightusd::StringView();
+    if (!asset) { fail("field has no file path"); continue; }
+    request.file_path = AnchorAssetCore(field, std::string(asset));
+    if (!lightusd::AssetResolver::IsAbsolutePath(request.file_path) && !base_dir.empty())
+      request.file_path = base_dir + "/" + request.file_path;
+    if (const lightusd::Value* v = field.GetValueAtTime("fieldName", time))
+      if (const auto name = v->as_token()) request.field_name = std::string(name);
+    if (request.field_name.empty()) {
+      request.field_name = binding;
+      request.field_name_defaulted = true;
+    }
+    if (const lightusd::Value* v = field.GetValueAtTime("fieldIndex", time))
+      if (const int32_t* index = v->as_int()) request.field_index = *index;
+    if (const lightusd::Value* v = field.GetValueAtTime("fieldDataType", time))
+      if (const auto value = v->as_token()) request.field_data_type = std::string(value);
+    if (const lightusd::Value* v = field.GetValueAtTime("fieldClass", time))
+      if (const auto value = v->as_token()) request.field_class = std::string(value);
+    double transform[16];
+    if (!lightusd::ComputeWorldTransform(stage, field, transform, time)) {
+      fail("field transform could not be resolved");
+      continue;
+    }
+    std::memcpy(request.field_to_world, transform, sizeof(transform));
+    lightusd::tydra::vol::ResolvedField resolved;
+    std::string error;
+    if (lightusd::tydra::vol::ResolveWithFirstGridFallback(cache, request, &resolved, &error))
+      out->fields.push_back({binding, std::move(resolved)});
+    else {
+      std::cerr << "WARN: MaterialX volume field '" << binding << "': " << error << "\n";
+      out->fields.push_back({binding, {}, error.empty() ? "field resolution failed" : error});
+    }
+  }
+}
+
 static void CollectVolumesCore(const lightusd::Stage &stage,
                         const lightusd::UsdPrim &prim,
                         const matrix4d &parent_world, double time,
@@ -3318,7 +3376,8 @@ static void CollectVolumesCore(const lightusd::Stage &stage,
                         std::vector<VolumeData> *out,
                         size_t max_density_bytes, size_t *density_bytes_used,
                         bool sparse_level_sets,
-                        const std::shared_ptr<lightusd::tydra::vol::FieldCache> &cache) {
+                        const std::shared_ptr<lightusd::tydra::vol::FieldCache> &cache,
+                        bool retain_materialx_fields) {
   if (!prim.IsActive()) return;
   double dmat[16];
   lightusd::tydra::ComputeLocalTransform(prim, dmat, time);
@@ -3437,6 +3496,21 @@ static void CollectVolumesCore(const lightusd::Stage &stage,
             continue;
           }
           VolumeData vd;
+          if (retain_materialx_fields) {
+            if (!lusdr::inverse(world, vd.materialx_inv_world, 1.0e-12)) {
+              std::cerr << "WARN: MaterialX volume has a singular transform\n";
+              continue;
+            }
+            vd.materialx_world = world;
+            vd.materialx_frame = std::isfinite(time) ? float(time) : 0.0f;
+            const double rate = stage.GetTimeCodesPerSecond();
+            vd.materialx_time = std::isfinite(time) && std::isfinite(rate) && rate > 0
+                ? float(time / rate) : 0.0f;
+            vd.materialx_volume.prim_path = prim.GetPath().str();
+            vd.materialx_volume.fields.push_back({request.binding, resolved});
+            vd.materialx_fields = cache;
+            RetainMaterialXFields(stage, prim, time, baseDir, *cache, &vd.materialx_volume);
+          }
           vd.sparse_density = std::move(sampler);
           for (int a = 0; a < 3; ++a) vd.dim[a] = dims[a];
           vd.bmin = Vec3{float(resolved.world_min[0]), float(resolved.world_min[1]),
@@ -3491,6 +3565,21 @@ static void CollectVolumesCore(const lightusd::Stage &stage,
       }
 
       VolumeData vd;
+      if (retain_materialx_fields) {
+        if (!lusdr::inverse(world, vd.materialx_inv_world, 1.0e-12)) {
+          std::cerr << "WARN: MaterialX volume has a singular transform\n";
+          continue;
+        }
+        vd.materialx_world = world;
+        vd.materialx_frame = std::isfinite(time) ? float(time) : 0.0f;
+        const double rate = stage.GetTimeCodesPerSecond();
+        vd.materialx_time = std::isfinite(time) && std::isfinite(rate) && rate > 0
+            ? float(time / rate) : 0.0f;
+        vd.materialx_volume.prim_path = prim.GetPath().str();
+        vd.materialx_volume.fields.push_back({request.binding, resolved});
+        vd.materialx_fields = cache;
+        RetainMaterialXFields(stage, prim, time, baseDir, *cache, &vd.materialx_volume);
+      }
       vd.dim[0] = grid.dim[0];
       vd.dim[1] = grid.dim[1];
       vd.dim[2] = grid.dim[2];
@@ -3580,7 +3669,8 @@ static void CollectVolumesCore(const lightusd::Stage &stage,
   }
   for (const lightusd::UsdPrim &child : prim.GetChildren()) {
     CollectVolumesCore(stage, child, world, time, baseDir, out,
-                       max_density_bytes, density_bytes_used, sparse_level_sets, cache);
+                       max_density_bytes, density_bytes_used, sparse_level_sets, cache,
+                       retain_materialx_fields);
   }
 }
 
@@ -7256,7 +7346,7 @@ bool ApplyUsdRenderOptions(const lightusd::Stage &stage,
   return true;
 }
 
-void RefreshVolumesCore(RenderContext &ctx, double time) {
+bool RefreshVolumesCore(RenderContext &ctx, double time) {
   // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Extend bounds with
   // each volume's world AABB BEFORE resolving the camera, so a volume-only scene
   // (or one whose volume sits away from the origin, e.g. an explosion sim) is
@@ -7273,7 +7363,7 @@ void RefreshVolumesCore(RenderContext &ctx, double time) {
                           !ctx.opt.hip && !ctx.opt.cuda &&
                           ctx.opt.volume_level_set == Options::VolumeLevelSet::Surface;
   size_t cache_budget = 0;
-  if (sparse_cpu && MemBudget::Get().Cap()) {
+  if ((sparse_cpu || !ctx.opt.volume_mtlx_file.empty()) && MemBudget::Get().Cap()) {
     const size_t cap = MemBudget::Get().Cap();
     const size_t rss = MemBudget::Get().ProcessRSS();
     const size_t available = cap - std::min(cap, rss);
@@ -7283,12 +7373,32 @@ void RefreshVolumesCore(RenderContext &ctx, double time) {
                                    ? available - volume_budget_bytes : 1;
     cache_budget = std::max<size_t>(1, std::min(cap / 2, after_dense));
   }
+  if (!ctx.opt.volume_mtlx_file.empty() && !cache_budget)
+    cache_budget = volume_budget_bytes;
   auto volume_cache = std::make_shared<lightusd::tydra::vol::FieldCache>(
       lightusd::tydra::vol::AssetReader{}, cache_budget);
   for (const lightusd::UsdPrim &root : ctx.stage.GetRootPrims())
     CollectVolumesCore(ctx.stage, root, matrix4d::identity(), time,
                        DirName(ctx.opt.input), &ctx.volumes, volume_budget_bytes,
-                       &volume_density_bytes, sparse_cpu, volume_cache);
+                       &volume_density_bytes, sparse_cpu, volume_cache,
+                       !ctx.opt.volume_mtlx_file.empty());
+  if (!ctx.opt.volume_mtlx_file.empty()) {
+    lightusd::mtlx::MtlxDocument document;
+    if (!document.ParseFromFile(ctx.opt.volume_mtlx_file)) {
+      std::cerr << "MaterialX volume document failed: " << document.GetError() << "\n";
+      return false;
+    }
+    lightusd::tydra::RenderScene scene;
+    for (const VolumeData& volume : ctx.volumes) scene.volumes.push_back(volume.materialx_volume);
+    lightusd::tydra::MtlxConverter converter;
+    if (!converter.ApplyLookToRenderScene(document.GetResolvedXML(), ctx.opt.volume_mtlx_look,
+                                          &scene, ctx.opt.volume_mtlx_file)) {
+      std::cerr << "MaterialX volume look failed: " << converter.GetError() << "\n";
+      return false;
+    }
+    for (size_t i = 0; i < ctx.volumes.size(); ++i)
+      ctx.volumes[i].materialx_volume = std::move(scene.volumes[i]);
+  }
   ExpandBoundsByVolume(ctx.volumes, &ctx.bounds);
   if (!ctx.volumes.empty()) {
     std::cerr << "rt volumes: " << ctx.volumes.size() << " (dense density "
@@ -7299,6 +7409,7 @@ void RefreshVolumesCore(RenderContext &ctx, double time) {
     std::cerr << " MiB)\n";
   }
 
+  return true;
 }
 
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
@@ -7348,7 +7459,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   if (!ExtractAndBuildBVH(ctx, init_time)) return false;
 
   ctx.geometry_bounds = ctx.bounds;
-  RefreshVolumesCore(ctx, init_time);
+  if (!RefreshVolumesCore(ctx, init_time)) return false;
 
   ResolveCameraCore(ctx);
   ResolveBackPlateCore(ctx);
@@ -7457,6 +7568,10 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats,
       ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
       ctx.backplates.empty() ? nullptr : &ctx.backplates);
+  if (img.width != ctx.width || img.height != ctx.height || img.data.empty()) {
+    std::cerr << "CPU render failed.\n";
+    return -1;
+  }
   const auto t1 = std::chrono::steady_clock::now();
   if (ctx.opt.aov != CaptureAov::Color) {
     if (path.size() < 4 || path.substr(path.size() - 4) != ".pfm") {
@@ -7819,7 +7934,7 @@ int RunRTPreviewCore(const Options &opt) {
       } else {
         ctx.frame_time = t;  // static geometry: keep BVH, animate camera only
       }
-      RefreshVolumesCore(ctx, t);
+      if (!RefreshVolumesCore(ctx, t)) return EXIT_FAILURE;
       ResolveCameraCore(ctx);
       ResolveBackPlateCore(ctx);
       const std::string out = SubstituteFrame(opt.output, std::lround(t));

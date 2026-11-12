@@ -307,7 +307,7 @@ bool LoadProgress(float progress, void *);
 // ---- core-loader / driver (defined in lusdrender.cc for now) ----
 bool BuildRenderContext(const Options &opt, RenderContext &ctx);
 bool ExtractAndBuildBVH(RenderContext &ctx, double time);
-void RefreshVolumesCore(RenderContext &ctx, double time);
+bool RefreshVolumesCore(RenderContext &ctx, double time);
 bool BuildCoreGaussianEllipses(const lightusd::Stage &stage,
                                RenderContext &ctx, double time,
                                bool defer_gpu_bvh = false);

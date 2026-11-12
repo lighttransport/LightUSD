@@ -530,6 +530,9 @@ texture reader's decoded-memory limit. Run them headless with
 `tool-lusdrender-materialx-validation` also renders a minified checker with
 `--mtlx-mipmaps`, checks the filtered node AOV against its linear mean, and
 checks that base pixels and mip levels share the configured texture budget.
+`tool-lusdrender-materialx-volume-cpu` exercises a field-driven volume look,
+RGB absorption, missing-field defaults and worker determinism. It skips unless
+`LIGHTUSD_OPENUSD_VDB_FIXTURES` or `OPENUSD_ROOT` identifies the OpenUSD fixtures.
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|

@@ -826,6 +826,8 @@ struct Options {
   // the existing Options fields used by other renderer translation units.
   std::string mtlx_file;
   std::string mtlx_material;
+  std::string volume_mtlx_file;
+  std::string volume_mtlx_look;
   bool mtlx_mipmaps{false};
   std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
   std::string mtlx_aov_node;
@@ -1078,6 +1080,11 @@ struct VolumeSparseSampler {
 };
 
 struct VolumeData {
+  lightusd::tydra::RenderVolume materialx_volume;
+  std::shared_ptr<lightusd::tydra::vol::FieldCache> materialx_fields;
+  matrix4d materialx_world{matrix4d::identity()};
+  matrix4d materialx_inv_world{matrix4d::identity()};
+  float materialx_time{0.0f}, materialx_frame{0.0f};
   std::vector<float> density;  // dense grid, x-contiguous
   std::shared_ptr<const VolumeSparseSampler> sparse_density;
   // Optional scalar fields on the same index-space lattice as `density`.

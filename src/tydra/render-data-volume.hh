@@ -6,6 +6,7 @@
 // voxel data.
 #include <string>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "tydra/vol/volume-field.hh"
@@ -13,8 +14,14 @@
 namespace lightusd { namespace tydra {
 
 struct RenderVolumeField {
+  RenderVolumeField() = default;
+  RenderVolumeField(std::string name, vol::ResolvedField resolved,
+                    std::string error = {})
+      : binding(std::move(name)), field(std::move(resolved)),
+        resolution_error(std::move(error)) {}
   std::string binding;                 // "density", "temperature", ...
   vol::ResolvedField field;            // grid, class, type, world placement
+  std::string resolution_error;        // nonempty if an authored field failed resolution
 };
 
 // A resolved MaterialX document and selected volume material. Multiple

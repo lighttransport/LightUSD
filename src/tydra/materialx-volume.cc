@@ -58,7 +58,7 @@ struct VolumeFieldReader {
   const RenderVolume* volume = nullptr;
   vol::FieldCache* cache = nullptr;
   const MtlxVolumeContext* context = nullptr;
-  std::vector<float> values;
+  std::vector<float>* values = nullptr;
   std::string error;
 };
 
@@ -69,6 +69,11 @@ bool ReadVolumeField(void* user, const char* name, MtlxGeomPropType type,
           reader->context->geomprop_user, name, type, out)) return true;
   const RenderVolumeField* field = reader->volume->Field(name);
   if (!field) return false;
+  if (!field->resolution_error.empty()) {
+    reader->error = "Cannot resolve MaterialX volume field " + std::string(name) +
+                    ": " + field->resolution_error;
+    return false;
+  }
   const int expected = type == MtlxGeomPropType::Float ? 1 :
       (type == MtlxGeomPropType::Vector3 || type == MtlxGeomPropType::Color3 ? 3 : 0);
   if (!expected) {
@@ -79,14 +84,14 @@ bool ReadVolumeField(void* user, const char* name, MtlxGeomPropType type,
                        reader->context->position[2]};
   int components = 0;
   std::string error;
-  if (!reader->cache->SampleWorld(field->field, p, 1, true, &reader->values,
+  if (!reader->cache->SampleWorld(field->field, p, 1, true, reader->values,
                                    &components, &error) ||
-      components != expected || reader->values.size() < static_cast<size_t>(expected)) {
+      components != expected || reader->values->size() < static_cast<size_t>(expected)) {
     reader->error = "Cannot sample MaterialX volume field " + std::string(name);
     if (!error.empty()) reader->error += ": " + error;
     return false;
   }
-  for (int i = 0; i < expected; ++i) out[i] = reader->values[static_cast<size_t>(i)];
+  for (int i = 0; i < expected; ++i) out[i] = (*reader->values)[static_cast<size_t>(i)];
   return true;
 }
 
@@ -143,6 +148,7 @@ struct MtlxVolumeEvaluator::Impl {
   MtlxVolumeAssetReader reader;
   std::vector<::MtlxValue> memo;
   std::vector<char> done;
+  std::vector<float> field_values;
   int node = -1;
   std::string error;
 };
@@ -340,6 +346,7 @@ bool MtlxVolumeEvaluator::EvaluateWithFields(const RenderVolume& volume,
   reader.volume = &volume;
   reader.cache = &cache;
   reader.context = &input;
+  reader.values = &impl_->field_values;
   MtlxVolumeContext context = input;
   context.geomprop = &ReadVolumeField;
   context.geomprop_user = &reader;

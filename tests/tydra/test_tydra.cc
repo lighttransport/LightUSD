@@ -9405,6 +9405,10 @@ static void TestLevelSetFieldMesh() {
   sampled_volume.fields[0].field.request.file_path = path.string() + ".missing";
   assert(!field_evaluator->EvaluateWithFields(sampled_volume, cache, field_context, &field_sample));
   assert(std::abs(field_sample.absorption[0] - 0.25f) < 1e-6f);
+  sampled_volume.fields[0].resolution_error = "authored field did not resolve";
+  assert(!field_evaluator->EvaluateWithFields(sampled_volume, cache, field_context, &field_sample));
+  assert(field_evaluator->GetError().find("authored field did not resolve") != std::string::npos);
+  assert(std::abs(field_sample.absorption[0] - 0.25f) < 1e-6f);
 
   std::vector<float> positions;
   std::vector<int32_t> tri;

@@ -256,6 +256,18 @@ nodes. Constant add/subtract/multiply/divide/min/max, clamp, and mix graphs are
 evaluated without baking. Texture, noise, and other spatial procedural volume
 graphs remain unsupported.
 
+For an explicit MaterialX look on CPU volume previews, pass
+`--volume-mtlx look.mtlx --volume-mtlx-look Look`. Assignments match volume prim
+paths, and geometry-property nodes sample authored VDB fields in world space.
+The marcher integrates RGB absorption, scattering and EDF emission per step;
+scattering assumes unit isotropic incident radiance rather than evaluating
+scene lights. This preview does not implement multiple scattering, shadowed
+lighting, or sorting overlapping volumes. Level sets remain surfaces unless
+`-volumeLevelSet fog` is selected. Negative coefficients fail the render.
+The resolved field cache and per-worker texture caches have bounded budgets;
+the latter share `-texBudgetMb` among bound volumes and workers, or 256 MiB
+when that option is unset. This path does not support GPU backends.
+
 For a strict GPU CI gate covering Vulkan ray query on both configured physical
 devices, CUDA on NVIDIA, and HIP on AMD, run:
 

@@ -99,6 +99,7 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
       << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
+      << "  --volume-mtlx FILE --volume-mtlx-look NAME  Apply a MaterialX look to CPU volumes.\n"
       << "  -h, -help              Show this help.\n"
       << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
       << "  --preview-kind gaussian|points|volume (default gaussian).\n"
@@ -417,6 +418,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "--mtlx-mipmaps") {
       opt->mtlx_mipmaps = true;
+    }
+    OPT_MATCH(a == "--volume-mtlx") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->volume_mtlx_file = v;
+    }
+    OPT_MATCH(a == "--volume-mtlx-look") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->volume_mtlx_look = v;
     }
     OPT_MATCH(a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
@@ -1209,6 +1220,21 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   }
   if (opt->mtlx_file.empty() && opt->mtlx_mipmaps) {
     std::cerr << "--mtlx-mipmaps requires --mtlx.\n";
+    return false;
+  }
+  if (opt->volume_mtlx_file.empty() != opt->volume_mtlx_look.empty()) {
+    std::cerr << "--volume-mtlx and --volume-mtlx-look must be used together.\n";
+    return false;
+  }
+  if (!opt->volume_mtlx_file.empty() &&
+      (opt->vulkan || opt->vulkan_rt || opt->vulkan_instanced ||
+       opt->use_d3d || opt->hip || opt->cuda)) {
+    std::cerr << "MaterialX volume looks currently require the CPU renderer.\n";
+    return false;
+  }
+  if (!opt->volume_mtlx_file.empty() &&
+      (!opt->mtlx_file.empty() || opt->diagnostic_emission || opt->aov != CaptureAov::Color)) {
+    std::cerr << "MaterialX volume looks require a USD color render.\n";
     return false;
   }
   if (!opt->mtlx_file.empty()) {

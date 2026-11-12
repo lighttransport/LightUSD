@@ -14,6 +14,7 @@
 
 #include "image-writer.hh"
 #include "lusdr_context.hh"
+#include "tydra/materialx.hh"
 #include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
 extern "C" {
@@ -2161,10 +2162,14 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg, const LightCache &lights,
                       float ambient, float scene_hit,
-                      Options::VolumeLevelSet level_set_shading) {
+                      const CameraFrame& camera,
+                      Options::VolumeLevelSet level_set_shading,
+                      const std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>>* evaluators,
+                      std::atomic<bool>* material_error) {
   Vec3 result = bg;
   float nearest_surface = scene_hit;
-  for (const VolumeData &vd : vols) {
+  for (size_t volume_index = 0; volume_index < vols.size(); ++volume_index) {
+    const VolumeData &vd = vols[volume_index];
     // World -> object space.
     Vec3 o = TransformPoint(vd.inv_world, worg);
     Vec3 d = TransformVector(vd.inv_world, wdir);
@@ -2201,6 +2206,101 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     float vmin = std::min(vsx, std::min(vsy, vsz));
     float step = (vmin > 0.0f) ? vmin * 0.5f : (t1 - t0) / 128.0f;
     if (step <= 0.0f) step = (t1 - t0) / 128.0f;
+    if (vd.materialx_volume.materialx_binding) {
+      if (!evaluators || volume_index >= evaluators->size() ||
+          !(*evaluators)[volume_index] || !vd.materialx_fields) {
+        material_error->store(true, std::memory_order_relaxed);
+        return bg;
+      }
+      t1 = std::min(t1, scene_hit);
+      if (t1 <= t0) continue;
+      const float object_speed = Length(d), world_speed = Length(wdir);
+      if (!(object_speed > 0.0f) || !(world_speed > 0.0f) ||
+          !std::isfinite(object_speed) || !std::isfinite(world_speed) ||
+          !std::isfinite(t0) || !std::isfinite(t1) || !std::isfinite(step)) {
+        material_error->store(true, std::memory_order_relaxed);
+        return bg;
+      }
+      step = std::max(step / object_speed, (t1 - t0) / 4096.0f);
+      Vec3 trans{1, 1, 1}, radiance{0, 0, 0};
+      for (int i = 0; i < 4096 && t0 < t1; ++i) {
+        const float dt = std::min(step, t1 - t0);
+        if (!(dt > 0.0f) || !(t0 + dt > t0)) {
+          material_error->store(true, std::memory_order_relaxed);
+          return bg;
+        }
+        const float midpoint = t0 + 0.5f * dt;
+        const Vec3 world_p = Add(worg, Mul(wdir, midpoint));
+        const Vec3 local_p = Add(o, Mul(d, midpoint));
+        lightusd::tydra::MtlxVolumeContext sample_context;
+        sample_context.position[0] = world_p.x; sample_context.position[1] = world_p.y;
+        sample_context.position[2] = world_p.z;
+        sample_context.uv[0] = ex > 0 ? (local_p.x - vd.bmin.x) / ex : 0;
+        sample_context.uv[1] = ey > 0 ? (local_p.y - vd.bmin.y) / ey : 0;
+        sample_context.view[0] = -wdir.x / world_speed;
+        sample_context.view[1] = -wdir.y / world_speed;
+        sample_context.view[2] = -wdir.z / world_speed;
+        sample_context.frame = vd.materialx_frame;
+        sample_context.time = vd.materialx_time;
+        sample_context.has_space_transforms = true;
+        for (size_t c = 0; c < 4; ++c) for (size_t r = 0; r < 4; ++r) {
+          sample_context.object_to_world[c * 4 + r] = float(vd.materialx_world.m[c][r]);
+          sample_context.world_to_object[c * 4 + r] = float(vd.materialx_inv_world.m[c][r]);
+        }
+        const Vec3 axes[3] = {camera.right, camera.up, Mul(camera.forward, -1.0f)};
+        for (size_t c = 0; c < 3; ++c) {
+          const float axis[3] = {axes[c].x, axes[c].y, axes[c].z};
+          for (size_t r = 0; r < 3; ++r) {
+            sample_context.view_to_world[c * 4 + r] = axis[r];
+            sample_context.world_to_view[r * 4 + c] = axis[r];
+          }
+          sample_context.world_to_view[12 + c] = -Dot(axes[c], camera.origin);
+        }
+        sample_context.view_to_world[12] = camera.origin.x;
+        sample_context.view_to_world[13] = camera.origin.y;
+        sample_context.view_to_world[14] = camera.origin.z;
+        lightusd::tydra::MtlxVolumeSample sample;
+        if (!(*evaluators)[volume_index]->EvaluateWithFields(
+                vd.materialx_volume, *vd.materialx_fields, sample_context, &sample)) {
+          if (!material_error->exchange(true, std::memory_order_relaxed))
+            std::cerr << "MaterialX volume evaluation: "
+                      << (*evaluators)[volume_index]->GetError() << "\n";
+          return bg;
+        }
+        float* tr[3] = {&trans.x, &trans.y, &trans.z};
+        float* light[3] = {&radiance.x, &radiance.y, &radiance.z};
+        const float distance = dt * world_speed;
+        for (int c = 0; c < 3; ++c) {
+          if (sample.absorption[c] < 0 || sample.scattering[c] < 0 || sample.emission[c] < 0) {
+            material_error->store(true, std::memory_order_relaxed);
+            return bg;
+          }
+          const float extinction = sample.absorption[c] + sample.scattering[c];
+          if (!std::isfinite(extinction)) {
+            material_error->store(true, std::memory_order_relaxed);
+            return bg;
+          }
+          const float attenuation = std::exp(-extinction * distance);
+          const float integral = extinction > 0 ? -std::expm1(-extinction * distance) / extinction : distance;
+          // Unit isotropic incident radiance: its phase integral is one.
+          const float source = sample.scattering[c] + sample.emission[c];
+          if (!std::isfinite(source)) {
+            material_error->store(true, std::memory_order_relaxed);
+            return bg;
+          }
+          *light[c] += *tr[c] * source * integral;
+          *tr[c] *= attenuation;
+          if (!std::isfinite(*light[c]) || !std::isfinite(*tr[c])) {
+            material_error->store(true, std::memory_order_relaxed);
+            return bg;
+          }
+        }
+        t0 += dt;
+      }
+      result = Vec3{radiance.x + trans.x * result.x, radiance.y + trans.y * result.y,
+                    radiance.z + trans.z * result.z};
+      continue;
+    }
     // Cap iterations to keep this bounded.
     int max_steps = 4096;
 
@@ -2324,10 +2424,38 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   // the same N samples evenly while staying fully deterministic in `s`.
   int spp = data_aov ? 1 : std::max(1, opt.samples);
   std::atomic<bool> diagnostic_exhausted{false};
+  std::atomic<bool> volume_material_error{false};
+  const unsigned nthreads = std::min<unsigned>(WorkerThreadCount(opt.threads),
+                                                img.height > 0 ? unsigned(img.height) : 1u);
+  size_t bound_volume_count = 0;
+  if (volumes) for (const VolumeData& volume : *volumes)
+    if (volume.materialx_volume.materialx_binding) ++bound_volume_count;
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
   auto render_rows = [&](int y_begin, int y_end) {
+    std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>> volume_evaluators;
+    if (volumes) {
+      volume_evaluators.resize(volumes->size());
+      lightusd::tydra::MtlxConverter converter;
+      lightusd::tydra::MtlxConvertOptions volume_options;
+      const uint64_t total_texture_budget = opt.texture_budget_mb > 0
+          ? uint64_t(opt.texture_budget_mb) * 1024u * 1024u : uint64_t(256) * 1024u * 1024u;
+      const uint64_t cache_count = uint64_t(std::max(1u, nthreads)) *
+                                   std::max<size_t>(1, bound_volume_count);
+      volume_options.volume_texture_max_decoded_bytes = static_cast<size_t>(
+          std::max<uint64_t>(1, total_texture_budget / cache_count));
+      converter.SetOptions(volume_options);
+      for (size_t i = 0; i < volumes->size(); ++i) {
+        if (!(*volumes)[i].materialx_volume.materialx_binding) continue;
+        volume_evaluators[i] = converter.CreateVolumeEvaluator((*volumes)[i].materialx_volume);
+        if (!volume_evaluators[i]) {
+          if (!volume_material_error.exchange(true, std::memory_order_relaxed))
+            std::cerr << "MaterialX volume setup: " << converter.GetError() << "\n";
+          return;
+        }
+      }
+    }
     for (int y = y_begin; y < y_end; y++) {
       for (int x = 0; x < img.width; x++) {
         Vec3 color{0.0f, 0.0f, 0.0f};
@@ -2380,8 +2508,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           }
           if (!data_aov && !opt.diagnostic_emission && volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf, lights,
-                                    opt.ambient, primary_hit_t,
-                                    opt.volume_level_set);
+                                    opt.ambient, primary_hit_t, ray_camera,
+                                    opt.volume_level_set, &volume_evaluators,
+                                    &volume_material_error);
           }
           color = Add(color, surf);
         }
@@ -2405,9 +2534,6 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
       }
     }
   };
-  unsigned nthreads =
-      std::min<unsigned>(WorkerThreadCount(opt.threads),
-                         img.height > 0 ? unsigned(img.height) : 1u);
   if (nthreads <= 1) {
     render_rows(0, img.height);
   } else {
@@ -2424,6 +2550,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   }
   if (diagnostic_exhausted.load(std::memory_order_relaxed)) {
     std::cerr << "CPU material diagnostic exceeds the maximum 16 transparency layers.\n";
+    return {};
+  }
+  if (volume_material_error.load(std::memory_order_relaxed)) {
+    std::cerr << "MaterialX volume evaluation failed or produced negative coefficients.\n";
     return {};
   }
   return img;

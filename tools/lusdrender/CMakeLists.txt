@@ -503,6 +503,13 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
                          TIMEOUT 180 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;volume")
+    add_test(NAME tool-lusdrender-materialx-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_volume.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume;materialx")
     add_test(
       NAME tool-lusdrender-smoke
       COMMAND ${LUSDR_PYTHON}

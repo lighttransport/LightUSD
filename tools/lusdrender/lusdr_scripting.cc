@@ -247,7 +247,8 @@ JSValue js_setTime(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv,
     return JS_ThrowInternalError(ctx, "failed to rebuild geometry at time");
   }
   g_render_ctx->geometry_bounds = g_render_ctx->bounds;
-  RefreshVolumesCore(*g_render_ctx, t);
+  if (!RefreshVolumesCore(*g_render_ctx, t))
+    return JS_ThrowInternalError(ctx, "failed to refresh volume materials");
   ResolveCameraCore(*g_render_ctx);
   JSValue o = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, o, "time", std::isnan(t) ? JS_NULL : JS_NewFloat64(ctx, t));

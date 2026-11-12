@@ -1620,6 +1620,10 @@ int main(int argc, char **argv) {
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
   }
+  if (scenePreview.enabled && !opt.volume_mtlx_file.empty()) {
+    std::cerr << "MaterialX volume looks cannot be combined with scene-preview conversion.\n";
+    return EXIT_FAILURE;
+  }
   GeneratedMtlxScene generated_mtlx_scene;
   if (!opt.mtlx_file.empty()) {
     if (scenePreview.enabled) {
