@@ -78,6 +78,12 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   cell parity to `color1`. Four appended Lean vectors exposed the previous phase
   inversion and offset-sign mismatch; LightRT commit `622d6ee` carries the same
   fix and the canonical vector rows.
+- 2026-11-12: the procedural grid evaluator uses MaterialX floor-based modulo
+  (`x - y*floor(x/y)`) instead of C `fmod`, matching `NG_grid_color3` for
+  negative UVs. The appended grid vectors cover negative coordinates,
+  subtractive offsets, staggered rows and the strict thickness threshold.
+  LightRT commit `348082f` carries the same implementation and vectors; its
+  1,284-vector replay and 67 independent node-truth checks pass.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

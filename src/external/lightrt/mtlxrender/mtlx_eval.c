@@ -225,8 +225,10 @@ static MtlxValue worley_value(v3 p,int d3,float jitter,int style,MtlxType type){
     else for(int i=0;i<nc;i++)r.v[i]=sqrtf(best[i]);
     return r;
 }
+/* MaterialX modulo is x-y*floor(x/y), unlike C fmod for negative UVs. */
+static float pattern_mod(float x,float y){return x-y*floorf(x/y);}
 static float pattern_shape(float x,float y,float radius,int kind){if(kind==2)return x*x+y*y<=radius*radius?1:0;if(kind==3){float sx=2*x,sy=2*y,dx[4]={sx+radius,sx-radius,sx,sx},dy[4]={sy,sy,sy-radius,sy+radius};for(int i=0;i<4;i++)if(dx[i]*dx[i]+dy[i]*dy[i]<=radius*radius)return 1;return 0;}float px=fabsf(y),py=fabsf(x),kx=-.866025f,ky=.5f,kz=.57735f,projection=fminf(kx*px+ky*py,0);px-=2*projection*kx;py-=2*projection*ky;px-=clampf(px,-kz*radius,kz*radius);py-=radius;return sqrtf(px*px+py*py)*(py<0?-1:1)<=0?1:0;}
-static float pattern_value(float x,float y,float parameter,int staggered,int kind){if(kind<=1){if(staggered&&fmodf(y,2)>1)x+=.5f;float nx=2*fmodf(x,1)-1,ny=2*fmodf(y,1)-1;if(kind==0)return fabsf(nx)>1-parameter||fabsf(ny)>1-parameter?1:0;return fabsf(nx-ny)*.70710678f<=parameter||fabsf(nx+ny)*.70710678f<=parameter?1:0;}if(!staggered)return pattern_shape(2*fmodf(x,1)-1,2*fmodf(y,1)-1,parameter,kind);float half=kind==3?.5f:.866025f,shift=fmodf(y,2*half)>half?.5f:0,mx=fmodf(x+shift,1),my=fmodf(y,half),radius=parameter*.5f;return fmaxf(pattern_shape(mx,my,radius,kind),fmaxf(pattern_shape(1-mx,my,radius,kind),pattern_shape(mx-.5f,half-my,radius,kind)));}
+static float pattern_value(float x,float y,float parameter,int staggered,int kind){if(kind<=1){if(staggered&&pattern_mod(y,2)>1)x+=.5f;float nx=2*pattern_mod(x,1)-1,ny=2*pattern_mod(y,1)-1;if(kind==0)return fabsf(nx)>1-parameter||fabsf(ny)>1-parameter?1:0;return fabsf(nx-ny)*.70710678f<=parameter||fabsf(nx+ny)*.70710678f<=parameter?1:0;}if(!staggered)return pattern_shape(2*pattern_mod(x,1)-1,2*pattern_mod(y,1)-1,parameter,kind);float half=kind==3?.5f:.866025f,shift=pattern_mod(y,2*half)>half?.5f:0,mx=pattern_mod(x+shift,1),my=pattern_mod(y,half),radius=parameter*.5f;return fmaxf(pattern_shape(mx,my,radius,kind),fmaxf(pattern_shape(1-mx,my,radius,kind),pattern_shape(mx-.5f,half-my,radius,kind)));}
 static float randomfloat_value(float input, int seed, float lo, float hi) {
     uint32_t h = mx_hash_int2((int)floorf(input * 4096.0f), seed);
     float q = (float)h / (float)0xffffffffu;

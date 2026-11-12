@@ -891,6 +891,66 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_grid_")) {
+    MtlxConstantValue texcoord, tiling, offset, thickness, staggered;
+    if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
+        !input("uvoffset", &offset) || !input("thickness", &thickness) ||
+        !input("staggered", &staggered) || texcoord.components < 2 ||
+        tiling.components < 2 || offset.components < 2) {
+      return false;
+    }
+    const float x = texcoord.component(0) * tiling.component(0) -
+                    offset.component(0);
+    const float y = texcoord.component(1) * tiling.component(1) -
+                    offset.component(1);
+    const float row = y - 2.0f * std::floor(y / 2.0f);
+    const float shift = staggered.component(0) != 0.0f && row > 1.0f
+                            ? 0.5f
+                            : 0.0f;
+    const float shifted_x = x + shift;
+    const float mx = shifted_x - std::floor(shifted_x);
+    const float my = y - std::floor(y);
+    const float threshold = 1.0f - thickness.component(0);
+    const bool on_grid = std::fabs(2.0f * mx - 1.0f) > threshold ||
+                         std::fabs(2.0f * my - 1.0f) > threshold;
+    out->components = 3;
+    out->value[0] = out->value[1] = out->value[2] = on_grid ? 1.0f : 0.0f;
+    out->color_managed = texcoord.color_managed || tiling.color_managed ||
+                         offset.color_managed || thickness.color_managed ||
+                         staggered.color_managed;
+    return true;
+  }
+
+  if (starts("ND_grid_")) {
+    MtlxConstantValue texcoord, tiling, offset, thickness, staggered;
+    if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
+        !input("uvoffset", &offset) || !input("thickness", &thickness) ||
+        !input("staggered", &staggered) || texcoord.components < 2 ||
+        tiling.components < 2 || offset.components < 2) {
+      return false;
+    }
+    const float x = texcoord.component(0) * tiling.component(0) -
+                    offset.component(0);
+    const float y = texcoord.component(1) * tiling.component(1) -
+                    offset.component(1);
+    const float row = y - 2.0f * std::floor(y / 2.0f);
+    const float shift = staggered.component(0) != 0.0f && row > 1.0f
+                            ? 0.5f
+                            : 0.0f;
+    const float shifted_x = x + shift;
+    const float mx = shifted_x - std::floor(shifted_x);
+    const float my = y - std::floor(y);
+    const float threshold = 1.0f - thickness.component(0);
+    const bool on_grid = std::fabs(2.0f * mx - 1.0f) > threshold ||
+                         std::fabs(2.0f * my - 1.0f) > threshold;
+    out->components = 3;
+    out->value[0] = out->value[1] = out->value[2] = on_grid ? 1.0f : 0.0f;
+    out->color_managed = texcoord.color_managed || tiling.color_managed ||
+                         offset.color_managed || thickness.color_managed ||
+                         staggered.color_managed;
+    return true;
+  }
+
   if (starts("ND_circle_")) {
     MtlxConstantValue texcoord, center, radius;
     if (!input("texcoord", &texcoord) || !input("center", &center) ||
