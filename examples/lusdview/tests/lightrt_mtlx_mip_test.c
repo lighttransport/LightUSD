@@ -45,6 +45,12 @@ int main(void) {
       "<image name=\"srgb\" type=\"color3\"><input name=\"file\" "
       "type=\"filename\" value=\"lightusd_mtlx_mip_srgb.ppm\" "
       "colorspace=\"srgb_texture\"/></image>"
+      "<absorption_vdf name=\"fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" value=\"0.1, 0.2, 0.3\"/></absorption_vdf>"
+      "<mystery_vdf name=\"unknown\" type=\"VDF\"/>"
+      "<add name=\"nested\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"VDF\" nodename=\"unknown\"/></add>"
+      "<volume name=\"valid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"fog\"/></volume>"
+      "<volume name=\"invalid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"unknown\"/></volume>"
+      "<volume name=\"nested_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"nested\"/></volume>"
       "</materialx>";
   MtlxDoc *doc = mtlx_load_string(xml);
   TextureCache *cache = texcache_create(".");
@@ -77,6 +83,18 @@ int main(void) {
          near(srgb.v[0], 0.21586f, 2.0e-4f) &&
          near(srgb.v[1], 0.21586f, 2.0e-4f) &&
          near(srgb.v[2], 0.21586f, 2.0e-4f);
+  }
+  if (ok) {
+    MtlxVolumeParams volume;
+    const int valid = mtlx_find_node(doc, -1, "valid_volume");
+    const int invalid = mtlx_find_node(doc, -1, "invalid_volume");
+    const int nested = mtlx_find_node(doc, -1, "nested_volume");
+    ok = valid >= 0 && invalid >= 0 && nested >= 0 &&
+         mtlx_eval_volume(&ctx, valid, &volume) == 0 &&
+         near(volume.absorption.x, 0.1f, 1.0e-5f) &&
+         near(volume.absorption.z, 0.3f, 1.0e-5f) &&
+         mtlx_eval_volume(&ctx, invalid, &volume) != 0 &&
+         mtlx_eval_volume(&ctx, nested, &volume) != 0;
   }
   if (!ok) fprintf(stderr, "MaterialX evaluator mip sampling failed\n");
 

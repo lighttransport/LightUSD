@@ -101,7 +101,7 @@ void openpbr_defaults(OpenPBRParams *p);
 /* Evaluate a surface shader node into params. Returns 0 on success. */
 int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out);
 
-/* Evaluate a MaterialX volume constructor and its connected VDF/EDF graph. */
+/* Evaluate a volume constructor; returns nonzero for unsupported VDF nodes. */
 int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
                      MtlxVolumeParams *out);
 
