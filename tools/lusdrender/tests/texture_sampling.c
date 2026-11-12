@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
     return fail("sRGB decode", sample);
   }
 
-  char xml[2048];
+  char xml[4096];
   snprintf(xml, sizeof(xml),
       "<materialx version=\"1.39\">"
       "<image name=\"sample\" type=\"color3\">"
@@ -157,7 +157,21 @@ int main(int argc, char **argv) {
       "<input name=\"uaddressmode\" type=\"string\" value=\"constant\"/>"
       "<input name=\"vaddressmode\" type=\"string\" value=\"clamp\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"cubic\"/>"
-      "</image></materialx>", filename);
+      "</image>"
+      "<tiledimage name=\"tiled\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"%s\"/>"
+      "<input name=\"default\" type=\"color3\" value=\"0.1, 0.2, 0.3\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" value=\"2, 2\"/>"
+      "<input name=\"uvoffset\" type=\"vector2\" value=\"0.5, 0\"/>"
+      "<input name=\"realworldimagesize\" type=\"vector2\" value=\"2, 2\"/>"
+      "<input name=\"realworldtilesize\" type=\"vector2\" value=\"1, 1\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</tiledimage>"
+      "<tiledimage name=\"tiled_zero\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"%s\"/>"
+      "<input name=\"default\" type=\"color3\" value=\"0.1, 0.2, 0.3\"/>"
+      "<input name=\"realworldimagesize\" type=\"vector2\" value=\"0, 2\"/>"
+      "</tiledimage></materialx>", filename, filename, filename);
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) {
     texcache_free(cache);
@@ -166,9 +180,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   const int node = mtlx_find_node(doc, -1, "sample");
+  const int tiled_node = mtlx_find_node(doc, -1, "tiled");
+  const int tiled_zero_node = mtlx_find_node(doc, -1, "tiled_zero");
   MtlxValue *memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
   char *memo_done = (char *)calloc((size_t)doc->nnode, sizeof(char));
-  if (node < 0 || !memo || !memo_done) {
+  if (node < 0 || tiled_node < 0 || tiled_zero_node < 0 || !memo || !memo_done) {
     free(memo);
     free(memo_done);
     mtlx_free(doc);
@@ -198,13 +214,27 @@ int main(int argc, char **argv) {
       near(cubic_image.v[0], 0.39998f, 2e-4f) &&
       near(cubic_image.v[1], 0.60313f, 2e-4f) &&
       near(cubic_image.v[2], 0.39998f, 2e-4f);
+  context.uv[0] = 0.5f;
+  context.uv[1] = 0.75f;
+  memset(memo_done, 0, (size_t)doc->nnode * sizeof(char));
+  const MtlxValue tiled_sample = mtlx_eval_node_test(&context, tiled_node);
+  const int tiled_sample_ok = tiled_sample.type == MV_COLOR3 &&
+      near(tiled_sample.v[0], 128.0f / 255.0f, 1e-6f) &&
+      near(tiled_sample.v[1], 128.0f / 255.0f, 1e-6f) &&
+      near(tiled_sample.v[2], 128.0f / 255.0f, 1e-6f);
+  memset(memo_done, 0, (size_t)doc->nnode * sizeof(char));
+  const MtlxValue tiled_zero = mtlx_eval_node_test(&context, tiled_zero_node);
+  const int tiled_zero_ok = tiled_zero.type == MV_COLOR3 &&
+      near(tiled_zero.v[0], 0.1f, 1e-6f) &&
+      near(tiled_zero.v[1], 0.2f, 1e-6f) &&
+      near(tiled_zero.v[2], 0.3f, 1e-6f);
   free(memo);
   free(memo_done);
   mtlx_free(doc);
-  if (!fallback_ok || !cubic_image_ok) {
+  if (!fallback_ok || !cubic_image_ok || !tiled_sample_ok || !tiled_zero_ok) {
     texcache_free(cache);
     remove(argv[1]);
-    fprintf(stderr, "FAIL: MaterialX cubic filter or constant default behavior\n");
+    fprintf(stderr, "FAIL: MaterialX texture filter, tiledimage transform, or constant default behavior\n");
     return 1;
   }
 

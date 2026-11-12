@@ -569,6 +569,20 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     float u = ctx->uv[0], v = ctx->uv[1];
     const MtlxInput *tc = find_input(n, "texcoord");
     if (tc && tc->src_node >= 0) { MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1]; }
+    float dudx = ctx->uv_dx[0], dvdx = ctx->uv_dx[1];
+    float dudy = ctx->uv_dy[0], dvdy = ctx->uv_dy[1];
+    if (!strcmp(n->category, "tiledimage")) {
+        MtlxValue tiling = in_or(ctx, n, "uvtiling", mv_vec2(1, 1));
+        MtlxValue offset = in_or(ctx, n, "uvoffset", mv_vec2(0, 0));
+        MtlxValue image_size = in_or(ctx, n, "realworldimagesize", mv_vec2(1, 1));
+        MtlxValue tile_size = in_or(ctx, n, "realworldtilesize", mv_vec2(1, 1));
+        const float scale_u = tiling.v[0] / image_size.v[0] * tile_size.v[0];
+        const float scale_v = tiling.v[1] / image_size.v[1] * tile_size.v[1];
+        u = (u * tiling.v[0] - offset.v[0]) / image_size.v[0] * tile_size.v[0];
+        v = (v * tiling.v[1] - offset.v[1]) / image_size.v[1] * tile_size.v[1];
+        dudx *= scale_u; dudy *= scale_u;
+        dvdx *= scale_v; dvdy *= scale_v;
+    }
     float s[4];
     const MtlxInput *us = find_input(n, "uaddressmode");
     const MtlxInput *vs = find_input(n, "vaddressmode");
@@ -583,6 +597,7 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
      * not a renderer-wide border color. Coordinates on the domain boundary
      * remain sampleable. */
     const int outside_constant =
+        (!isfinite(u) || !isfinite(v)) ||
         ((!strcmp(u_mode, "constant")) && (u < 0.0f || u > 1.0f)) ||
         ((!strcmp(v_mode, "constant")) && (v < 0.0f || v > 1.0f));
     int sampled = 0;
@@ -591,7 +606,7 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
         if (id >= 0) {
             if (ctx->has_uv_derivatives) {
                 texcache_sample_address_grad_filter(ctx->tex, id, u, v,
-                    ctx->uv_dx[0], ctx->uv_dx[1], ctx->uv_dy[0], ctx->uv_dy[1],
+                    dudx, dvdx, dudy, dvdy,
                     u_mode, v_mode, filtertype, s);
             } else {
                 texcache_sample_address_filter(ctx->tex, id, u, v,
