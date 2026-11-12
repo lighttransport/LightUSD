@@ -3060,6 +3060,9 @@ void TestMaterialXUtilities() {
   <surfacematerial name="Mat" type="material">
     <input name="surfaceshader" type="surfaceshader" nodename="MatSurface" />
   </surfacematerial>
+  <surfacematerial name="MatSubset" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="MatSurface" />
+  </surfacematerial>
   <nodegraph name="NG">
     <output name="out" type="color3" nodename="Scale" />
     <node name="Color" category="constant" type="color3">
@@ -3077,7 +3080,10 @@ void TestMaterialXUtilities() {
     <input name="specular_roughness" type="float" value="0.35" />
     <input name="opacity" type="color3" value="0.5, 0.5, 0.5" />
   </node>
-  <look name="Look"><materialassign name="bind" geom="/World/Body" material="Mat"/></look>
+  <look name="Look">
+    <materialassign name="subset" geom="/World/Body/Part/subset" material="MatSubset"/>
+    <materialassign name="bind" geom="/World/Body" material="Mat"/>
+  </look>
 </materialx>
 )";
 
@@ -3101,6 +3107,8 @@ void TestMaterialXUtilities() {
   assigned_scene.meshes.resize(2);
   assigned_scene.meshes[0].prim_path = "/World/Body/Part";
   assigned_scene.meshes[1].prim_path = "/World/Other";
+  assigned_scene.meshes[0].material_subsets.push_back({0, 1, -1, "subset"});
+  assigned_scene.meshes[0].material_subsets.push_back({2, 1, -1, "subset"});
   assigned_scene.points.resize(1);
   assigned_scene.points[0].prim_path = "/World/Body/Points";
   assigned_scene.curves.resize(1);
@@ -3110,10 +3118,11 @@ void TestMaterialXUtilities() {
   assert(assigned_scene.meshes[1].material_id == -1);
   assert(assigned_scene.points[0].material_id == 0);
   assert(assigned_scene.curves[0].material_id == 0);
-  assert(assigned_scene.materials.size() == 1);
-  assigned_scene.meshes[0].material_subsets.push_back({0, 1, 0, "subset"});
-  assert(!converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
-  assert(assigned_scene.materials.size() == 1);
+  assert(assigned_scene.materials.size() == 2);
+  assert(assigned_scene.meshes[0].material_subsets[0].material_id == 1);
+  assert(assigned_scene.meshes[0].material_subsets[1].material_id == 1);
+  assert(!converter.ApplyLookToRenderScene(mtlx, "Missing", &assigned_scene));
+  assert(assigned_scene.materials.size() == 2);
   assert(assigned_scene.meshes[0].material_id == 0);
 
   const char* path = "tydra_materialx_test.mtlx";

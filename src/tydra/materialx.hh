@@ -204,8 +204,8 @@ public:
                                     RenderMaterial* out);
 
   /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
-  /// derived-first look order wins. Meshes with material subsets are rejected
-  /// because their per-face bindings require separate geometry selection.
+  /// derived-first look order wins. Named per-face subsets use their mesh
+  /// path followed by the subset name as their geometry path.
   /// On failure the scene is unchanged.
   bool ApplyLookToRenderScene(const std::string& mtlx_content,
                               const std::string& look_name,

@@ -573,7 +573,7 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   std::vector<std::pair<int32_t*, size_t>> bindings;
   std::vector<std::pair<size_t, size_t>> mesh_bindings;
   const auto collect = [&](const std::string& path, int32_t* material_id,
-                           bool has_subsets, size_t* selected) {
+                           size_t* selected) {
     std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
     std::string resolve_error;
     if (!doc.GetMaterialAssignmentsForGeometry(look_name, path, &matches,
@@ -582,10 +582,6 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
       return false;
     }
     if (matches.empty()) return true;
-    if (has_subsets) {
-      error_ = "MaterialX look cannot replace per-face material subsets on " + path;
-      return false;
-    }
     const std::string& name = matches.front().material->GetName();
     auto found = material_indices.find(name);
     if (found == material_indices.end()) {
@@ -603,14 +599,18 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   for (size_t i = 0; i < scene->meshes.size(); ++i) {
     RenderMesh& mesh = scene->meshes[i];
     size_t selected = static_cast<size_t>(-1);
-    if (!collect(mesh.prim_path, &mesh.material_id,
-                 !mesh.material_subsets.empty(), &selected)) return false;
+    if (!collect(mesh.prim_path, &mesh.material_id, &selected)) return false;
     if (selected != static_cast<size_t>(-1)) mesh_bindings.emplace_back(i, selected);
+    for (auto& subset : mesh.material_subsets) {
+      const std::string path = subset.name.empty() ? mesh.prim_path :
+          mesh.prim_path + "/" + subset.name;
+      if (!collect(path, &subset.material_id, nullptr)) return false;
+    }
   }
   for (RenderPoints& points : scene->points)
-    if (!collect(points.prim_path, &points.material_id, false, nullptr)) return false;
+    if (!collect(points.prim_path, &points.material_id, nullptr)) return false;
   for (RenderCurves& curves : scene->curves)
-    if (!collect(curves.prim_path, &curves.material_id, false, nullptr)) return false;
+    if (!collect(curves.prim_path, &curves.material_id, nullptr)) return false;
   const size_t base = scene->materials.size();
   if (base + new_materials.size() > static_cast<size_t>(INT32_MAX)) {
     error_ = "Too many render materials";
