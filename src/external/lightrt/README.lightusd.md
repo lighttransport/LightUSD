@@ -83,7 +83,12 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   negative UVs. The appended grid vectors cover negative coordinates,
   subtractive offsets, staggered rows and the strict thickness threshold.
   LightRT commit `348082f` carries the same implementation and vectors; its
-  1,284-vector replay and 67 independent node-truth checks pass.
+  1,296-vector replay and 67 independent node-truth checks pass.
+- 2026-11-12: the Tydra MaterialX constant folder evaluates
+  `NG_crosshatch_color3` as the union of its two rounded diagonal line tests.
+  The rational vectors cover diagonal hits, the gap between diagonals, negative
+  UVs, subtractive offset and stagger selection; LightRT's existing evaluator
+  replays the same cases with the floor-modulo correction from `348082f`.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
