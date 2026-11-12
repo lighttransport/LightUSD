@@ -89,6 +89,11 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   The rational vectors cover diagonal hits, the gap between diagonals, negative
   UVs, subtractive offset and stagger selection; LightRT's existing evaluator
   replays the same cases with the floor-modulo correction from `348082f`.
+- 2026-11-12: `ND_hexagon_float` is evaluated from its post-clamp residual sign,
+  matching the selected LightRT signed-distance samples. Lean issue `LEAN-208`
+  records that the reference graph sends negative values to `sqrt` and relies
+  on NaN comparison behavior to select its inside branch. Four exact and four
+  approximate vectors cover center, radius vertex, outside and translated center.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

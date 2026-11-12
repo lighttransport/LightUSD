@@ -985,6 +985,38 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_hexagon_")) {
+    MtlxConstantValue texcoord, center, radius;
+    if (!input("texcoord", &texcoord) || !input("center", &center) ||
+        !input("radius", &radius) || texcoord.components < 2 ||
+        center.components < 2) {
+      return false;
+    }
+    constexpr float kx = -0.866025f;
+    constexpr float ky = 0.5f;
+    constexpr float kz = 0.57735f;
+    const float px = std::fabs(texcoord.component(1) - center.component(1));
+    const float py = std::fabs(texcoord.component(0) - center.component(0));
+    const float projection =
+        std::min(kx * px + ky * py, 0.0f);
+    const float p1x = px - 2.0f * projection * kx;
+    const float p1y = py - 2.0f * projection * ky;
+    const float reflected_x = -kx;
+    const float reflected_projection =
+        std::min(reflected_x * p1x + ky * p1y, 0.0f);
+    const float p2x = p1x - 2.0f * reflected_projection * reflected_x;
+    const float p2y = p1y - 2.0f * reflected_projection * ky;
+    const float high = kz * radius.component(0);
+    const float clamped_x = std::max(-high, std::min(p2x, high));
+    const float p3x = p2x - clamped_x;
+    const float p3y = p2y - radius.component(0);
+    out->components = 1;
+    out->value[0] = p3x + p3y <= 0.0f ? 1.0f : 0.0f;
+    out->color_managed = texcoord.color_managed || center.color_managed ||
+                         radius.color_managed;
+    return true;
+  }
+
   if (starts("ND_circle_")) {
     MtlxConstantValue texcoord, center, radius;
     if (!input("texcoord", &texcoord) || !input("center", &center) ||
