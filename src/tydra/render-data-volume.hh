@@ -5,6 +5,7 @@
 // (dense with a budget, or the sparse grid), so extraction does not decode
 // voxel data.
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "tydra/vol/volume-field.hh"
@@ -14,6 +15,14 @@ namespace lightusd { namespace tydra {
 struct RenderVolumeField {
   std::string binding;                 // "density", "temperature", ...
   vol::ResolvedField field;            // grid, class, type, world placement
+};
+
+// A resolved MaterialX document and selected volume material. Multiple
+// volumes may share one immutable binding; texture paths use anchor_path.
+struct RenderMaterialXVolumeBinding {
+  std::shared_ptr<const std::string> resolved_xml;
+  std::string material_name;
+  std::string anchor_path;
 };
 
 struct RenderVolume {
@@ -27,6 +36,7 @@ struct RenderVolume {
   std::vector<RenderVolumeField> fields;
   std::string material_path;           // bound Material ("" when unbound)
   int material_id = -1;                // index into RenderScene::materials
+  std::shared_ptr<const RenderMaterialXVolumeBinding> materialx_binding;
   // Constants of a ND_standard_volume / UsdPreviewSurface-style volume
   // shader (legacy ApplyVolumeShaderConstants semantics).
   float density_scale = 1.0f;

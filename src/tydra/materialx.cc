@@ -572,6 +572,10 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   std::map<std::string, size_t> material_indices;
   std::vector<std::pair<int32_t*, size_t>> bindings;
   std::vector<std::pair<size_t, size_t>> mesh_bindings;
+  std::map<std::string, std::shared_ptr<const RenderMaterialXVolumeBinding>> volume_materials;
+  std::vector<std::pair<RenderVolume*, std::shared_ptr<const RenderMaterialXVolumeBinding>>>
+      volume_bindings;
+  std::shared_ptr<const std::string> resolved_volume_xml;
   const auto collect = [&](const std::string& path, int32_t* material_id,
                            size_t* selected) {
     std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
@@ -611,7 +615,7 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
     if (!collect(points.prim_path, &points.material_id, nullptr)) return false;
   for (RenderCurves& curves : scene->curves)
     if (!collect(curves.prim_path, &curves.material_id, nullptr)) return false;
-  for (const RenderVolume& volume : scene->volumes) {
+  for (RenderVolume& volume : scene->volumes) {
     std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
     std::string resolve_error;
     if (!doc.GetMaterialAssignmentsForGeometry(look_name, volume.prim_path,
@@ -619,11 +623,28 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
       error_ = resolve_error;
       return false;
     }
-    if (!matches.empty()) {
-      error_ = "MaterialX look application to volumes is not supported: " +
-               volume.prim_path;
-      return false;
+    if (matches.empty()) continue;
+    const auto& material = matches.front().material;
+    const std::string& name = material->GetName();
+    auto found = volume_materials.find(name);
+    if (found == volume_materials.end()) {
+      if (material->GetVolumeShader().empty()) {
+        error_ = "MaterialX volume assignment has no volume shader: " + volume.prim_path;
+        return false;
+      }
+      if (!resolved_volume_xml)
+        resolved_volume_xml = std::make_shared<const std::string>(doc.GetResolvedXML());
+      if (!CreateVolumeEvaluator(*resolved_volume_xml, name, anchor_path)) {
+        error_ = "Invalid MaterialX volume assignment for " + volume.prim_path + ": " + error_;
+        return false;
+      }
+      auto binding = std::make_shared<RenderMaterialXVolumeBinding>();
+      binding->resolved_xml = resolved_volume_xml;
+      binding->material_name = name;
+      binding->anchor_path = anchor_path;
+      found = volume_materials.emplace(name, std::move(binding)).first;
     }
+    volume_bindings.emplace_back(&volume, found->second);
   }
   const size_t base = scene->materials.size();
   if (base + new_materials.size() > static_cast<size_t>(INT32_MAX)) {
@@ -634,6 +655,16 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
     scene->materials.push_back(std::move(material));
   for (const auto& binding : bindings)
     *binding.first = static_cast<int32_t>(base + binding.second);
+  for (const auto& binding : volume_bindings) {
+    RenderVolume& volume = *binding.first;
+    volume.materialx_binding = binding.second;
+    volume.material_path.clear();
+    volume.material_id = -1;
+    const std::string warning =
+        "MaterialX volume graph requires renderer evaluation; legacy constants are unchanged";
+    if (std::find(volume.warnings.begin(), volume.warnings.end(), warning) == volume.warnings.end())
+      volume.warnings.push_back(warning);
+  }
   for (auto& draw : scene->point_instance_draws) {
     if (draw.mesh_id < 0) continue;
     for (const auto& binding : mesh_bindings) {

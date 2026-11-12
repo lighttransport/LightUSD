@@ -6,6 +6,7 @@
 #include "resolver/asset-resolver.hh"
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -81,6 +82,17 @@ MtlxVolumeEvaluator::~MtlxVolumeEvaluator() = default;
 const std::string& MtlxVolumeEvaluator::GetError() const { return impl_->error; }
 
 std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
+    const RenderVolume& volume) {
+  if (!volume.materialx_binding || !volume.materialx_binding->resolved_xml) {
+    error_ = "Render volume has no MaterialX volume binding";
+    return nullptr;
+  }
+  const auto& binding = *volume.materialx_binding;
+  return CreateVolumeEvaluator(*binding.resolved_xml, binding.material_name,
+                               binding.anchor_path);
+}
+
+std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
     const std::string& mtlx_content, const std::string& material_name,
     const std::string& anchor_path) {
   error_.clear();
@@ -101,7 +113,9 @@ std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
   const int material = material_name.empty()
       ? (doc->nmat == 1 ? 0 : -1)
       : mtlx_find_material(doc.get(), material_name.c_str());
-  if (material < 0 || doc->mats[material].volume_node < 0) {
+  if (material < 0 || doc->mats[material].volume_node < 0 ||
+      doc->mats[material].volume_node >= doc->nnode ||
+      std::strcmp(doc->nodes[doc->mats[material].volume_node].category, "volume") != 0) {
     error_ = "MaterialX volume material or shader not found: " + material_name;
     return nullptr;
   }

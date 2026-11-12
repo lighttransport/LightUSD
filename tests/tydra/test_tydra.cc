@@ -3313,6 +3313,17 @@ void TestMaterialXUtilities() {
   assert(converter.EvaluateVolumeMaterial(mip_volume, "Fog", mip_context,
                                           &volume_sample, "nested/volume_scene.mtlx"));
   assert(std::abs(volume_sample.absorption[0] - 0.5f) < 1e-5f);
+  std::string anchored_look = textured_volume;
+  anchored_look.insert(anchored_look.rfind("</materialx>"),
+      "<look name=\"Anchored\"><materialassign name=\"a\" geom=\"/Fog\" material=\"Fog\"/></look>");
+  RenderScene anchored_scene;
+  anchored_scene.volumes.resize(1);
+  anchored_scene.volumes[0].prim_path = "/Fog";
+  assert(converter.ApplyLookToRenderScene(anchored_look, "Anchored", &anchored_scene,
+                                          "nested/volume_scene.mtlx"));
+  auto anchored_evaluator = converter.CreateVolumeEvaluator(anchored_scene.volumes[0]);
+  assert(anchored_evaluator && anchored_evaluator->Evaluate(mip_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
   converter.SetOptions(MtlxConvertOptions{});
   RenderMaterial from_string;
   if (!converter.ConvertToRenderMaterial(mtlx, "Mat", &from_string)) {
@@ -3353,10 +3364,46 @@ void TestMaterialXUtilities() {
   assigned_scene.volumes.resize(1);
   assigned_scene.volumes[0].prim_path = "/World/Body/Volume";
   assert(!converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
-  assert(converter.GetError().find("volumes") != std::string::npos);
+  assert(converter.GetError().find("volume") != std::string::npos);
   assert(assigned_scene.materials.size() == 2);
   assert(assigned_scene.meshes[0].material_id == 0);
   assert(assigned_scene.volumes[0].material_id == -1);
+
+  std::string volume_look = spatial_volume;
+  const size_t volume_end = volume_look.rfind("</materialx>");
+  assert(volume_end != std::string::npos);
+  volume_look.insert(volume_end, R"(
+    <standard_surface name="surface" type="surfaceshader"/>
+    <surfacematerial name="Surface"><input name="surfaceshader" type="surfaceshader" nodename="surface"/></surfacematerial>
+    <look name="VolumeLook"><materialassign name="fog" geom="/World/Fog" material="Fog"/></look>
+    <look name="BadLook">
+      <materialassign name="fog" geom="/World/Fog" material="Fog"/>
+      <materialassign name="bad" geom="/World/Other" material="Surface"/>
+    </look>
+  )");
+  RenderScene volume_scene;
+  volume_scene.volumes.resize(3);
+  volume_scene.volumes[0].prim_path = "/World/Fog";
+  volume_scene.volumes[1].prim_path = "/World/Fog/Child";
+  volume_scene.volumes[2].prim_path = "/World/Other";
+  volume_scene.volumes[0].material_id = 17;
+  volume_scene.volumes[0].material_path = "/OldMaterial";
+  assert(converter.ApplyLookToRenderScene(volume_look, "VolumeLook", &volume_scene));
+  const auto saved_binding = volume_scene.volumes[0].materialx_binding;
+  assert(saved_binding && saved_binding == volume_scene.volumes[1].materialx_binding);
+  assert(!volume_scene.volumes[2].materialx_binding);
+  assert(volume_scene.volumes[0].material_id == -1 && volume_scene.volumes[0].material_path.empty());
+  assert(!volume_scene.volumes[0].warnings.empty());
+  auto assigned_evaluator = converter.CreateVolumeEvaluator(volume_scene.volumes[0]);
+  assert(assigned_evaluator);
+  MtlxVolumeContext assigned_context;
+  assigned_context.position[0] = 0.7f;
+  assert(assigned_evaluator->Evaluate(assigned_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.7f) < 1e-6f);
+  assert(!converter.CreateVolumeEvaluator(volume_scene.volumes[2]));
+  assert(!converter.ApplyLookToRenderScene(volume_look, "BadLook", &volume_scene));
+  assert(volume_scene.volumes[0].materialx_binding == saved_binding);
+  assert(!volume_scene.volumes[2].materialx_binding);
 
   const char* path = "tydra_materialx_test.mtlx";
   {

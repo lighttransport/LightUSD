@@ -266,6 +266,11 @@ public:
       const std::string& mtlx_content, const std::string& material_name,
       const std::string& anchor_path = "");
 
+  /// Create an evaluator for a graph retained on a render volume by look
+  /// application. The volume and evaluator do not need to share a lifetime.
+  std::unique_ptr<MtlxVolumeEvaluator> CreateVolumeEvaluator(
+      const RenderVolume& volume);
+
   /// Evaluate a volume material at the supplied UV, with position (0,0,0)
   /// and normal/view (0,0,1). `anchor_path` anchors includes and textures.
   /// By default texture paths must be relative without parent segments. A
@@ -287,10 +292,11 @@ public:
                               MtlxVolumeSample* out,
                               const std::string& anchor_path = "");
 
-  /// Apply a look to meshes, points and curves by prim_path. The first matching assignment in
+  /// Apply a look to meshes, points, curves and volumes by prim_path. The first matching assignment in
   /// derived-first look order wins. Named per-face subsets use their mesh
-  /// path followed by the subset name as their geometry path. Matching volume
-  /// assignments return an error until volume conversion is supported.
+  /// path followed by the subset name as their geometry path. Volume graphs
+  /// are retained on RenderVolume for a consumer to evaluate; renderers that
+  /// use only legacy volume constants do not automatically render them.
   /// On failure the scene is unchanged.
   bool ApplyLookToRenderScene(const std::string& mtlx_content,
                               const std::string& look_name,

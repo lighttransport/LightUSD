@@ -517,7 +517,8 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 `core_test_tydra` also checks sampled MaterialX volume coefficients, spatial
 sample contexts and named-space transforms, reusable evaluator and texture-cache
 behavior, invalid-context rejection, resolver-backed textures, missing assets,
-traversal rejection, and mip filtering under a decoded-memory cap. The
+traversal rejection, volume look binding and transactional failure, and mip
+filtering under a decoded-memory cap. The
 shared texture decoder's MaterialX mip test covers odd dimensions, linear-light
 conversion, HDR values, decoded-image integration and resident-budget leases.
 The CPU-only `mtlx_mip_evaluator_test` checks the volume closure work limit and the
