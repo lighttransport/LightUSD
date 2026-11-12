@@ -30,8 +30,14 @@ path for a single graph sample; it does not yet evaluate spatially varying graph
 outputs per pixel or produce per-lobe/node-output AOVs. The CPU BSDF also has a
 deterministic white-furnace CTest that integrates diffuse and specular response
 for diffuse, dielectric, metal, subsurface, coat, sheen, and colored materials
-at normal and grazing views. It does not replace the remaining MaterialXView/OSL
-reference-image comparisons or full lobe-vector coverage.
+at normal and grazing views, plus an analytic Lambert check against its base
+color. It does not replace the remaining MaterialXView/OSL reference-image
+comparisons or full lobe-vector coverage.
+
+Use `--displayTransform srgb` to compare linear render values against analytic
+MaterialX results without the default filmic curve. The CPU renderer honors
+this transform in its PNG output; `--displayTransform filmic` selects the
+default tone-mapped output.
 
 ### Build and link time
 

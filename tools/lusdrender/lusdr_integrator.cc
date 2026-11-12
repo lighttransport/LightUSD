@@ -1648,7 +1648,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     return out;
   };
-  if (lights.finite.empty() && lights.mesh.empty()) {
+  if (lights.finite.empty() && lights.mesh.empty() && !lights.has_dome &&
+      (!ibl || !ibl->valid)) {
     Vec3 l = Normalize(Sub(camera.origin, p));
     if (Dot(n, l) > 0.0f &&
         (!opt.shadows ||
@@ -1772,9 +1773,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   return apply_opacity(c);
 }
 
-uint8_t ToSRGB8(float linear) {
+uint8_t ToSRGB8(float linear, bool srgb_display_transform) {
   linear = std::max(0.0f, linear);
-  float mapped = linear / (1.0f + linear);
+  const float mapped = srgb_display_transform ? linear : linear / (1.0f + linear);
   float srgb = (mapped <= 0.0031308f)
                    ? (12.92f * mapped)
                    : (1.055f * std::pow(mapped, 1.0f / 2.4f) - 0.055f);
@@ -2214,9 +2215,15 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
           continue;
         }
-        img.data[ofs + 0] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.x):ToSRGB8(color.x);
-        img.data[ofs + 1] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.y):ToSRGB8(color.y);
-        img.data[ofs + 2] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.z):ToSRGB8(color.z);
+        img.data[ofs + 0] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.x)
+                                : ToSRGB8(color.x, opt.srgb_display_transform);
+        img.data[ofs + 1] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.y)
+                                : ToSRGB8(color.y, opt.srgb_display_transform);
+        img.data[ofs + 2] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.z)
+                                : ToSRGB8(color.z, opt.srgb_display_transform);
         img.data[ofs + 3] = 255;
       }
     }

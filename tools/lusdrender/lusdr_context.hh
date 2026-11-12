@@ -273,7 +273,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            float *primary_hit_t = nullptr,
            std::atomic<bool>* diagnostic_exhausted = nullptr);
 
-uint8_t ToSRGB8(float linear);
+uint8_t ToSRGB8(float linear, bool srgb_display_transform);
 
 void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
              Vec3 *org, Vec3 *dir);

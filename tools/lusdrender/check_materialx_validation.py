@@ -105,6 +105,61 @@ def main():
         actual = tuple(emission_rgba[center : center + 3])
         raise RuntimeError(f"connected emission disagrees with analytic sRGB result: {actual}")
 
+    lambert_source = out_dir / "lambert.mtlx"
+    lambert_source.write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39">
+  <open_pbr_surface name="Lambert" type="surfaceshader">
+    <input name="base_weight" type="float" value="1" />
+    <input name="base_color" type="color3" value="0.2, 0.4, 0.6" />
+    <input name="base_roughness" type="float" value="1" />
+    <input name="metalness" type="float" value="0" />
+    <input name="specular_weight" type="float" value="0" />
+    <input name="transmission_weight" type="float" value="0" />
+    <input name="subsurface_weight" type="float" value="0" />
+    <input name="coat_weight" type="float" value="0" />
+    <input name="sheen_weight" type="float" value="0" />
+  </open_pbr_surface>
+  <surfacematerial name="LambertMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Lambert" />
+  </surfacematerial>
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    lambert_image = out_dir / "lambert.png"
+    lambert = subprocess.run(
+        [
+            exe,
+            "--mtlx",
+            str(lambert_source),
+            str(lambert_image),
+            "--mtlx-material",
+            "LambertMaterial",
+            "-w",
+            "64",
+            "-height",
+            "64",
+            "--displayTransform",
+            "srgb",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if lambert.returncode:
+        raise RuntimeError(f"Lambert validation render failed:\n{lambert.stderr}")
+    lw, lh, lambert_rgba = read_png_rgba(lambert_image)
+    center = (lh // 2 * lw + lw // 2) * 4
+    actual = tuple(lambert_rgba[center : center + 3])
+    expected = (124, 170, 203)
+    if (lw, lh) != (64, 64) or any(
+        abs(actual[channel] - expected[channel]) > 3 for channel in range(3)
+    ):
+        raise RuntimeError(
+            f"uniform-environment Lambert disagrees with analytic sRGB result: {actual}"
+        )
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
         stdout=subprocess.PIPE,
@@ -114,7 +169,7 @@ def main():
     if rejected.returncode == 0 or "CPU renderer only" not in rejected.stderr:
         raise RuntimeError("MaterialX validation accepted an unsupported GPU path")
 
-    print("PASS: MaterialX graph render and connected-emission analytic check")
+    print("PASS: MaterialX graph, emission, and uniform-environment Lambert checks")
     return 0
 
 
