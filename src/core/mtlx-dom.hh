@@ -149,6 +149,11 @@ public:
     return it == extra_attributes_.end() ? std::string() : it->second;
   }
 
+  std::string GetExtraAttribute(const std::string& name) const {
+    auto it = extra_attributes_.find(name);
+    return it == extra_attributes_.end() ? std::string() : it->second;
+  }
+
   // Parse from XML node
   virtual bool ParseFromXML(XMLNodePtr xml_node);
 
@@ -183,6 +188,9 @@ public:
 
   const std::string& GetChannels() const { return channels_; }
   void SetChannels(const std::string& channels) { channels_ = channels; }
+
+  std::string GetUnit() const { return GetExtraAttribute("unit"); }
+  std::string GetUnitType() const { return GetExtraAttribute("unittype"); }
 
   bool ParseFromXML(XMLNodePtr xml_node) override;
   std::string GetElementType() const override { return "input"; }

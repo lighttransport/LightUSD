@@ -324,6 +324,22 @@ static void CheckTypedMtlxGraphResolution() {
          "look material assignments did not retain geometry and collection selectors");
   }
 
+  g_checks++;
+  MtlxDocument unit_document;
+  const bool unit_parsed = unit_document.ParseFromXML(
+      R"(<materialx version="1.39"><constant name="distance" type="float">
+      <input name="value" type="float" value="2.5" unit="centimeter" unittype="distance"/>
+      </constant></materialx>)");
+  const MtlxNodePtr distance_node = unit_document.FindNode("distance");
+  const MtlxInputPtr distance_input =
+      distance_node ? distance_node->GetInput("value") : nullptr;
+  if (!unit_parsed || !distance_input ||
+      distance_input->GetUnit() != "centimeter" ||
+      distance_input->GetUnitType() != "distance") {
+    Fail("MTLX_UNIT_METADATA", 0,
+         "authored unit and unit-type metadata were not retained");
+  }
+
   MtlxLibrary library;
   MtlxElem constant_def = elem("nodedef", "ND_test_constant");
   constant_def.SetAttr("node", "testconstant");
