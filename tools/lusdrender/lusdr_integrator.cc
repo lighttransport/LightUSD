@@ -1607,9 +1607,28 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // metallic, so its diffuse weight isn't dimmed by it.
     Vec3 f0;
     float kd_metal;
+    float specular_roughness = tri.roughness;
     if (tri.use_specular_workflow) {
       f0 = tri.specular_color;
       kd_metal = 0.0f;
+    } else if (opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+               tri_openpbr) {
+      // The LightRT BSDF path carries the complete MaterialX/OpenPBR parameters.
+      // Keep the split-sum environment specular consistent with that material:
+      // the legacy TriInfo values do not include specular_weight, and its
+      // roughness is diffuse roughness for MaterialX surfaces.
+      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      float dielectric_f0 = (p.specular_ior - 1.0f) /
+                            (p.specular_ior + 1.0f);
+      dielectric_f0 = dielectric_f0 * dielectric_f0 * p.specular_weight;
+      const Vec3 dielectric_f0_color{
+          dielectric_f0 * p.specular_color.x,
+          dielectric_f0 * p.specular_color.y,
+          dielectric_f0 * p.specular_color.z};
+      const Vec3 base = Mul(FromMtlxV3(p.base_color), p.base_weight);
+      f0 = Lerp(dielectric_f0_color, base, p.metalness);
+      kd_metal = 0.0f;
+      specular_roughness = p.specular_roughness;
     } else {
       // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
       // bit-for-bit; only an authored non-default IOR takes the derived path.
@@ -1623,10 +1642,11 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     Vec3 refl = Reflect(Mul(view, -1.0f), n);
     Vec3 env_refl = EnvDir(*ibl, refl);  // reflection in the dome's frame
-    Vec3 spec_env = SampleIblMip(ibl->prefiltered, env_refl, tri.roughness);
+    Vec3 spec_env = SampleIblMip(ibl->prefiltered, env_refl,
+                                 specular_roughness);
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
-    SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
+    SampleBrdfLut(*ibl, ndotv, specular_roughness, &brdf_a, &brdf_b);
     // Both modes use the bounded split-sum for environment specular (see
     // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
     // bsdf mode, so this stays material-correct.

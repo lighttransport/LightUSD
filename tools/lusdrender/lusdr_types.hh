@@ -805,8 +805,8 @@ struct Options {
   // MaterialX validation entry point. Kept at the end to preserve offsets of
   // the existing Options fields used by other renderer translation units.
   std::string mtlx_file;
-  std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
   std::string mtlx_material;
+  std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
 };
 
 struct DirectShape {

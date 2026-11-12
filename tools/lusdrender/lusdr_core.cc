@@ -349,6 +349,7 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
                           const Vec3 &specular_color, int32_t specular_tex_id,
                           float ior, uint8_t use_specular_workflow,
                           const UvXform &uv_xform, bool want_uvs,
+                          bool force_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
                           const std::string &preferred_uv = std::string(),
@@ -627,7 +628,7 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
   MeshFloatAttribute st;
   bool have_st = false;
   if ((want_uvs || displacement_tex_id >= 0) &&
-      (tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
+      (force_uvs || tex_id >= 0 || normal_tex_id >= 0 || rough_tex.id >= 0 ||
        metal_tex.id >= 0 || emission_tex_id >= 0 || occ_tex.id >= 0 ||
        opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
        clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
@@ -5344,7 +5345,7 @@ inline size_t EstimateTrisForJob(const lightusd::UsdPrim &prim,
 template <class FVec, class TVec>
 bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
                     const lightusd::Stage *stage, double time,
-                    bool want_uvs, bool purpose_cull, int threads,
+                    bool want_uvs, bool force_uvs, bool purpose_cull, int threads,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
@@ -5454,7 +5455,8 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
                 job.clearcoat_rough_tex, job.specular_color,
                 job.specular_tex_id, job.ior, job.use_specular_workflow,
                 job.uv_xform,
-                want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, job.uv_primvar,
+                want_uvs, force_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s,
+                job.uv_primvar,
                 job.subset_faces.empty() ? nullptr : &job.subset_faces,
                 purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
@@ -5722,12 +5724,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       }
     }
     UpdateTextureStats(ctx.textures, &ctx.stats);
-    const bool want_uvs = !ctx.textures.empty();
+    const bool want_uvs = opt.mtlx_runtime || !ctx.textures.empty();
     bool want_colors = false;
     for (const MeshJobCore &j : base_jobs)
       if (j.vertex_color) { want_colors = true; break; }
     const float disp_scale = opt.displace ? opt.displace_scale : 0.0f;
     if (!StreamMeshJobs(base_jobs, opt.purpose_mask, &ctx.stage, time, want_uvs,
+                        opt.mtlx_runtime != nullptr,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
                         &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
                         /*out_mat_table=*/&ctx.flat_mats,
@@ -5863,7 +5866,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     }
   }
   UpdateTextureStats(ctx.textures, &ctx.stats);
-  const bool want_uvs = !ctx.textures.empty();
+  const bool want_uvs = opt.mtlx_runtime || !ctx.textures.empty();
   // displayColor/Opacity is stored per-corner (48 B/tri) only for BLAS that
   // actually carry a *varying* (per-vertex/faceVarying/uniform) primvar. A BLAS
   // whose meshes are all constant-color needs no per-tri storage: the shader
@@ -5933,6 +5936,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
         gjobs.push_back(std::move(base_jobs[ji]));
       if (!StreamMeshJobs(
               gjobs, opt.purpose_mask, &ctx.stage, time, want_uvs,
+              opt.mtlx_runtime != nullptr,
               /*purpose_cull=*/true,
               /*threads=*/1, &ctx.blas[b].vertices, &ctx.blas[b].tris,
               &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
@@ -5968,7 +5972,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     const uint32_t b = protos[i].blas_id;
     RTPreviewStats discard;
     stream_ok = StreamMeshJobs(proto_jobs[i], opt.purpose_mask, &ctx.stage,
-                               time, want_uvs, /*purpose_cull=*/true, opt.threads,
+                               time, want_uvs, opt.mtlx_runtime != nullptr,
+                               /*purpose_cull=*/true, opt.threads,
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
                                &ctx.blas[b].mat_table,
