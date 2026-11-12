@@ -541,6 +541,82 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
+  MtlxDocument legacy_opgraph_document;
+  const std::string legacy_opgraph_xml = R"(<materialx version="1.22">
+  <opgraph name="legacy_graph">
+    <constant name="base" type="float">
+      <parameter name="color" type="float" value="0.75"/>
+    </constant>
+    <output name="out" type="float">
+      <parameter name="in" type="opgraphnode" value="base"/>
+    </output>
+  </opgraph>
+  <shader name="legacy_shader" shadertype="surface" shadername="surface_node">
+    <input name="base" type="float" graphname="legacy_graph" graphoutput="out"/>
+  </shader>
+  <material name="legacy_material">
+    <shaderref name="legacy_shader" shadertype="surface"/>
+  </material>
+</materialx>)";
+  const bool legacy_opgraph_parsed =
+      legacy_opgraph_document.ParseFromXML(legacy_opgraph_xml);
+  const MtlxNodeGraphPtr legacy_opgraph =
+      legacy_opgraph_document.FindNodeGraph("legacy_graph");
+  const MtlxNodePtr legacy_opgraph_constant =
+      legacy_opgraph ? legacy_opgraph->GetNode("base") : nullptr;
+  const MtlxInputPtr legacy_opgraph_value =
+      legacy_opgraph_constant ? legacy_opgraph_constant->GetInput("value")
+                              : nullptr;
+  const MtlxNodePtr legacy_shader =
+      legacy_opgraph_document.FindNode("legacy_shader");
+  const MtlxMaterialPtr legacy_material =
+      legacy_opgraph_document.FindMaterial("legacy_material");
+  float legacy_constant_value = 0.0f;
+  if (!legacy_opgraph_parsed ||
+      legacy_opgraph_document.GetVersion() != "1.39" || !legacy_opgraph ||
+      !legacy_opgraph_constant || !legacy_opgraph_value ||
+      !legacy_opgraph_value->GetValueAsFloat(legacy_constant_value) ||
+      legacy_constant_value != 0.75f ||
+      legacy_opgraph->GetOutputs().size() != 1 ||
+      legacy_opgraph->GetOutputs()[0]->GetNodeName() != "base" ||
+      !legacy_shader || legacy_shader->GetCategory() != "surface_node" ||
+      !legacy_shader->GetInput("base") ||
+      legacy_shader->GetInput("base")->GetNodeGraph() != "legacy_graph" ||
+      legacy_shader->GetInput("base")->GetOutput() != "out" ||
+      !legacy_material || legacy_material->GetSurfaceShader() != "legacy_shader") {
+    Fail("MTLX_VERSION_UPGRADE_122", 0,
+         "legacy opgraph, shader bindings or material were not upgraded");
+  }
+
+  g_checks++;
+  MtlxDocument legacy_override_document;
+  const std::string legacy_override_xml = R"(<materialx version="1.25">
+  <shader name="standard_surface" shadertype="surface" shaderprogram="standard_surface">
+    <input name="base" type="float" value="1.0" publicname="base_public"/>
+  </shader>
+  <material name="legacy_paint">
+    <shaderref name="standard_surface" shadertype="surface"/>
+    <override name="base_public" type="float" value="0.5"/>
+  </material>
+</materialx>)";
+  if (!legacy_override_document.ParseFromXML(legacy_override_xml) ||
+      legacy_override_document.GetVersion() != "1.39" ||
+      !legacy_override_document.FindNode("standard_surface") ||
+      legacy_override_document.FindNode("standard_surface")->GetCategory() !=
+          "standard_surface" ||
+      !legacy_override_document.FindNode("standard_surface")->GetInput("base") ||
+      !legacy_override_document.FindNode("standard_surface")
+           ->GetInput("base")
+           ->GetValueAsFloat(legacy_constant_value) ||
+      legacy_constant_value != 0.5f ||
+      !legacy_override_document.FindMaterial("legacy_paint") ||
+      legacy_override_document.FindMaterial("legacy_paint")->GetSurfaceShader() !=
+          "standard_surface") {
+    Fail("MTLX_VERSION_UPGRADE_125", 0,
+         "legacy shader override was not applied to the upgraded node");
+  }
+
+  g_checks++;
   MtlxDocument legacy_bsdf_document;
   const std::string legacy_bsdf_xml = R"(<materialx version="1.37">
   <nodegraph name="legacy_bsdf">
