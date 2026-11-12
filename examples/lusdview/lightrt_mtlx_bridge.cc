@@ -1127,7 +1127,7 @@ thread_local std::unordered_map<uint64_t, MtlxThreadScratch> gMtlxScratch;
 
 std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     const char* xml, const char* materialName, const char* baseDir,
-    std::string* err) {
+    std::string* err, bool buildMipmaps) {
   if (err) err->clear();
   if (!xml || !xml[0]) {
     if (err) *err = "MaterialX XML string is empty";
@@ -1149,7 +1149,16 @@ std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     mtlx_free(doc);
     return {};
   }
-  texcache_preload(tex, doc);
+  if (buildMipmaps) {
+    if (!texcache_preload_mips(tex, doc)) {
+      if (err) *err = "failed to build MaterialX texture mipmaps";
+      texcache_free(tex);
+      mtlx_free(doc);
+      return {};
+    }
+  } else {
+    texcache_preload(tex, doc);
+  }
   return std::make_shared<MaterialXSurfaceRuntime>(
       doc, tex, surfaceNode, gMtlxRuntimeId.fetch_add(1, std::memory_order_relaxed));
 }

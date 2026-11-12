@@ -94,6 +94,11 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   records that the reference graph sends negative values to `sqrt` and relies
   on NaN comparison behavior to select its inside branch. Four exact and four
   approximate vectors cover center, radius vertex, outside and translated center.
+- 2026-11-13: `mtlxrender/texture.{c,h}` adds LightRT's optional round-up mip
+  chain API (`5d28320`) to the vendored evaluator. LightUSD adds
+  `texcache_preload_mips()` and a `buildMipmaps` option on
+  `CreateMaterialXSurfaceRuntime`; derivative-aware image nodes use trilinear
+  LOD when the cache has mip chains. The ordinary preload path is unchanged.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

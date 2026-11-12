@@ -4,16 +4,24 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
 #include "stb_image.h"
 
 typedef struct {
+    int w, h;
+    float *rgba; /* linear, interleaved RGBA */
+} TextureMip;
+
+typedef struct {
     char         *key;     /* rel_path + srgb flag */
     unsigned char *pixels; /* 8-bit, comp channels */
     int           w, h, comp;
     int           srgb;
+    TextureMip   *mips;
+    int           nmips;
 } Texture;
 
 struct TextureCache {
@@ -34,6 +42,9 @@ void texcache_free(TextureCache *tc) {
     for (int i = 0; i < tc->ntex; i++) {
         free(tc->tex[i].key);
         stbi_image_free(tc->tex[i].pixels);
+        for (int level = 0; level < tc->tex[i].nmips; ++level)
+            free(tc->tex[i].mips[level].rgba);
+        free(tc->tex[i].mips);
     }
     free(tc->tex);
     free(tc->base_dir);
@@ -77,6 +88,7 @@ static int texcache_add(TextureCache *tc, const char *rel_path, int srgb,
     t->key = strdup(key);
     t->pixels = px;
     t->w = w; t->h = h; t->comp = comp; t->srgb = srgb;
+    t->mips = NULL; t->nmips = 0;
     return tc->ntex++;
 }
 
@@ -184,7 +196,9 @@ int texcache_sample_file_grad_filter(TextureCache *tc, const char *path,
     return 1;
 }
 
-void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
+static int texcache_preload_impl(TextureCache *tc, const MtlxDoc *doc,
+                                int build_mips) {
+    if (!tc || !doc) return 0;
     for (int i = 0; i < doc->nnode; i++) {
         const MtlxNode *n = &doc->nodes[i];
         /* match every image variant the evaluator treats as OP_IMAGE, else its
@@ -233,8 +247,27 @@ void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
             }
         }
     }
+    int ok = 1;
+    if (build_mips) {
+        for (int i = 0; i < tc->ntex; ++i) {
+            if (!texcache_build_mips(tc, i)) {
+                fprintf(stderr, "texture: failed to build mip chain for '%s'\n",
+                        tc->tex[i].key ? tc->tex[i].key : "<unknown>");
+                ok = 0;
+            }
+        }
+    }
     tc->frozen = 1;
     fprintf(stderr, "texture: preloaded %d textures\n", tc->ntex);
+    return ok;
+}
+
+void texcache_preload(TextureCache *tc, const MtlxDoc *doc) {
+    (void)texcache_preload_impl(tc, doc, 0);
+}
+
+int texcache_preload_mips(TextureCache *tc, const MtlxDoc *doc) {
+    return texcache_preload_impl(tc, doc, 1);
 }
 
 static int wrap(int x, int n) {
@@ -271,6 +304,143 @@ static void fetch_texel(const Texture *t, int x, int y, float out[4]) {
     else { r = g = b = p[0] / 255.0f; if (t->comp == 2) a = p[1] / 255.0f; }
     if (t->srgb) { r = srgb_to_linear_f(r); g = srgb_to_linear_f(g); b = srgb_to_linear_f(b); }
     out[0] = r; out[1] = g; out[2] = b; out[3] = a;
+}
+
+static float *alloc_mip_pixels(int w, int h) {
+    if (w <= 0 || h <= 0 || (size_t)w > SIZE_MAX / (size_t)h) return NULL;
+    const size_t texels = (size_t)w * (size_t)h;
+    if (texels > SIZE_MAX / (4 * sizeof(float))) return NULL;
+    return (float *)calloc(texels * 4, sizeof(float));
+}
+
+int texcache_build_mips(TextureCache *tc, int id) {
+    if (!tc || tc->frozen || id < 0 || id >= tc->ntex) return 0;
+    Texture *t = &tc->tex[id];
+    if (t->mips && t->nmips > 0) return 1;
+    if (t->w <= 0 || t->h <= 0) return 0;
+
+    int count = 1, w = t->w, h = t->h;
+    while (w > 1 || h > 1) {
+        w = w / 2 + w % 2;
+        h = h / 2 + h % 2;
+        if (count == INT32_MAX) return 0;
+        ++count;
+    }
+    TextureMip *mips = (TextureMip *)calloc((size_t)count, sizeof(TextureMip));
+    if (!mips) return 0;
+    mips[0].w = t->w;
+    mips[0].h = t->h;
+    mips[0].rgba = alloc_mip_pixels(t->w, t->h);
+    if (!mips[0].rgba) { free(mips); return 0; }
+    for (int y = 0; y < t->h; ++y) for (int x = 0; x < t->w; ++x) {
+        float color[4];
+        fetch_texel(t, x, y, color);
+        const size_t offset = ((size_t)y * (size_t)t->w + (size_t)x) * 4;
+        for (int c = 0; c < 4; ++c) mips[0].rgba[offset + (size_t)c] = color[c];
+    }
+
+    for (int level = 1; level < count; ++level) {
+        const TextureMip *src = &mips[level - 1];
+        TextureMip *dst = &mips[level];
+        dst->w = src->w / 2 + src->w % 2;
+        dst->h = src->h / 2 + src->h % 2;
+        dst->rgba = alloc_mip_pixels(dst->w, dst->h);
+        if (!dst->rgba) {
+            for (int free_level = 0; free_level < level; ++free_level)
+                free(mips[free_level].rgba);
+            free(mips);
+            return 0;
+        }
+        for (int y = 0; y < dst->h; ++y) for (int x = 0; x < dst->w; ++x) {
+            const int x0 = (int)((size_t)x * 2);
+            const int y0 = (int)((size_t)y * 2);
+            const int x1 = x0 + 1 < src->w ? x0 + 1 : src->w - 1;
+            const int y1 = y0 + 1 < src->h ? y0 + 1 : src->h - 1;
+            const size_t dst_offset = ((size_t)y * (size_t)dst->w + (size_t)x) * 4;
+            const size_t offsets[4] = {
+                ((size_t)y0 * (size_t)src->w + (size_t)x0) * 4,
+                ((size_t)y0 * (size_t)src->w + (size_t)x1) * 4,
+                ((size_t)y1 * (size_t)src->w + (size_t)x0) * 4,
+                ((size_t)y1 * (size_t)src->w + (size_t)x1) * 4,
+            };
+            for (int c = 0; c < 4; ++c) {
+                dst->rgba[dst_offset + (size_t)c] =
+                    (src->rgba[offsets[0] + (size_t)c] +
+                     src->rgba[offsets[1] + (size_t)c] +
+                     src->rgba[offsets[2] + (size_t)c] +
+                     src->rgba[offsets[3] + (size_t)c]) * 0.25f;
+            }
+        }
+    }
+    t->mips = mips;
+    t->nmips = count;
+    return 1;
+}
+
+static void sample_mip_level(const TextureMip *mip, float u, float v,
+                             const char *wrap_s, const char *wrap_t,
+                             float out[4]) {
+    const float fu = u * mip->w - 0.5f;
+    const float fv = (1.0f - v) * mip->h - 0.5f;
+    const int x0 = (int)floorf(fu), y0 = (int)floorf(fv);
+    const float dx = fu - (float)x0, dy = fv - (float)y0;
+    int ox0, ox1, oy0, oy1;
+    const int xx0 = address_index(x0, mip->w, wrap_s, &ox0);
+    const int xx1 = address_index(x0 + 1, mip->w, wrap_s, &ox1);
+    const int yy0 = address_index(y0, mip->h, wrap_t, &oy0);
+    const int yy1 = address_index(y0 + 1, mip->h, wrap_t, &oy1);
+    if (ox0 || ox1 || oy0 || oy1) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f;
+        return;
+    }
+    const size_t offsets[4] = {
+        ((size_t)yy0 * (size_t)mip->w + (size_t)xx0) * 4,
+        ((size_t)yy0 * (size_t)mip->w + (size_t)xx1) * 4,
+        ((size_t)yy1 * (size_t)mip->w + (size_t)xx0) * 4,
+        ((size_t)yy1 * (size_t)mip->w + (size_t)xx1) * 4,
+    };
+    for (int c = 0; c < 4; ++c) {
+        const float a = mip->rgba[offsets[0] + (size_t)c] * (1 - dx) +
+                        mip->rgba[offsets[1] + (size_t)c] * dx;
+        const float b = mip->rgba[offsets[2] + (size_t)c] * (1 - dx) +
+                        mip->rgba[offsets[3] + (size_t)c] * dx;
+        out[c] = a * (1 - dy) + b * dy;
+    }
+}
+
+void texcache_sample_trilinear(TextureCache *tc, int id, float u, float v,
+                               float lod, const char *wrap_s,
+                               const char *wrap_t, float out[4]) {
+    if (!tc || id < 0 || id >= tc->ntex) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f;
+        return;
+    }
+    const Texture *t = &tc->tex[id];
+    if (!t->mips || t->nmips <= 0) {
+        texcache_sample_address(tc, id, u, v, wrap_s, wrap_t, out);
+        return;
+    }
+    if (!isfinite(lod)) lod = 0.0f;
+    lod = fmaxf(0.0f, fminf(lod, (float)(t->nmips - 1)));
+    const int low = (int)floorf(lod);
+    const int high = low + 1 < t->nmips ? low + 1 : low;
+    const float blend = lod - (float)low;
+    float a[4], b[4];
+    sample_mip_level(&t->mips[low], u, v, wrap_s, wrap_t, a);
+    sample_mip_level(&t->mips[high], u, v, wrap_s, wrap_t, b);
+    for (int c = 0; c < 4; ++c) out[c] = a[c] * (1 - blend) + b[c] * blend;
+}
+
+float texcache_lod_from_grad(TextureCache *tc, int id, float dudx, float dvdx,
+                             float dudy, float dvdy) {
+    if (!tc || id < 0 || id >= tc->ntex) return 0.0f;
+    const Texture *t = &tc->tex[id];
+    const float dux = dudx * (float)t->w, dvx = dvdx * (float)t->h;
+    const float duy = dudy * (float)t->w, dvy = dvdy * (float)t->h;
+    const float rho_x = sqrtf(dux * dux + dvx * dvx);
+    const float rho_y = sqrtf(duy * duy + dvy * dvy);
+    const float rho = fmaxf(rho_x, rho_y);
+    return rho > 1.0f ? log2f(rho) : 0.0f;
 }
 
 void texcache_sample_address(TextureCache *tc, int id, float u, float v,
@@ -368,16 +538,27 @@ void texcache_sample_address_grad_filter(TextureCache *tc, int id, float u, floa
                                          float dudy, float dvdy,
                                          const char *wrap_s, const char *wrap_t,
                                          const char *filtertype, float out[4]) {
+    if (!out) return;
+    if (!tc || id < 0 || id >= tc->ntex) {
+        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f;
+        return;
+    }
+    const Texture *t = &tc->tex[id];
     float span_u = fmaxf(fabsf(dudx), fabsf(dudy));
     float span_v = fmaxf(fabsf(dvdx), fabsf(dvdy));
-    if (span_u * (id >= 0 && id < tc->ntex ? tc->tex[id].w : 0) <= 1.0f &&
-        span_v * (id >= 0 && id < tc->ntex ? tc->tex[id].h : 0) <= 1.0f) {
+    if (span_u * t->w <= 1.0f && span_v * t->h <= 1.0f) {
         texcache_sample_address_filter(tc, id, u, v, wrap_s, wrap_t,
                                        filtertype, out);
         return;
     }
-    if (id < 0 || id >= tc->ntex) {
-        out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return;
+    /* The opt-in mip path uses trilinear bilinear sampling for minification.
+     * Point filtering stays on the requested base-level filter. */
+    if (t->mips && t->nmips > 0 &&
+        (!filtertype || strcmp(filtertype, "closest") != 0)) {
+        const float lod = texcache_lod_from_grad(tc, id, dudx, dvdx,
+                                                 dudy, dvdy);
+        texcache_sample_trilinear(tc, id, u, v, lod, wrap_s, wrap_t, out);
+        return;
     }
     /* Integrate the parallelogram footprint with a fixed, bounded grid. */
     float sum[4] = {0, 0, 0, 0};

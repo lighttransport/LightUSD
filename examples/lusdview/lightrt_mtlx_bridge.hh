@@ -135,7 +135,7 @@ struct MaterialXNodeValue {
 
 std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
     const char* xml, const char* materialName, const char* baseDir,
-    std::string* err);
+    std::string* err, bool buildMipmaps = false);
 bool EvaluateMaterialXSurfaceRuntimeAt(
     MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
     tydra::LightRtOpenPBRParams* out, std::string* err);

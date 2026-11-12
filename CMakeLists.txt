@@ -132,6 +132,30 @@ if(COMMAND add_sanitizers)
   add_sanitizers(lightusd_core)
 endif()
 add_library(lightusd::core ALIAS lightusd_core)
+
+# The MaterialX mip evaluator regression is CPU-only and must remain available
+# in headless builds that do not configure the GUI viewer.
+if(LIGHTUSD_BUILD_TESTS)
+  set(LIGHTUSD_MTLX_RENDER_DIR
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+  add_executable(mtlx_mip_evaluator_test
+    examples/lusdview/tests/lightrt_mtlx_mip_test.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/color.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/mtlx_doc.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/mtlx_eval.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/mtlx_xml.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/texture.c
+    ${LIGHTUSD_MTLX_RENDER_DIR}/third_party_impl.c)
+  target_compile_features(mtlx_mip_evaluator_test PRIVATE c_std_11)
+  target_include_directories(mtlx_mip_evaluator_test PRIVATE
+    ${LIGHTUSD_MTLX_RENDER_DIR} ${PROJECT_SOURCE_DIR}/src/external)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(mtlx_mip_evaluator_test PRIVATE m)
+  endif()
+  add_test(NAME mtlx_mip_evaluator_test COMMAND mtlx_mip_evaluator_test)
+  set_tests_properties(mtlx_mip_evaluator_test PROPERTIES LABELS "core;materialx")
+endif()
+
 # Default external USD asset corpus for regression tests.  The repository-local
 # symlink is intentionally the default so a checkout with `usd-assets` present
 # exercises the asset gates without machine-specific paths; callers can point
