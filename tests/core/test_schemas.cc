@@ -599,6 +599,44 @@ void test_color_transform_numeric() {
     }
   }
 
+  struct GammaMatrixReference {
+    const char* token;
+    float matrix[9];
+    float sample[3];
+  };
+  const GammaMatrixReference gamma_references[] = {
+      {"g22_ap1",
+       {1.70505099f, -0.62179212f, -0.08325887f,
+        -0.13025642f, 1.14080474f, -0.01054832f,
+        -0.02400336f, -0.12896898f, 1.15297233f},
+       {-0.09877824f, 0.23651063f, 0.58307961f}},
+      {"g563_adobergb",
+       {1.39835574f, -0.39835574f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, -0.04292899f, 1.04292899f},
+       {-0.02043767f, 0.21775553f, 0.54462310f}},
+  };
+  for (const GammaMatrixReference& reference : gamma_references) {
+    ColorSpaceDesc source;
+    ColorTransform transform;
+    if (!GetBuiltinColorSpace(reference.token, &source) ||
+        !BuildColorTransform(source, linear, &transform)) {
+      FAIL("cmlib gamma color-space transform"); return;
+    }
+    for (int i = 0; i < 9; ++i) {
+      if (std::abs(transform.matrix[i] - reference.matrix[i]) > 3.0e-5f) {
+        FAIL("cmlib gamma matrix coefficient parity"); return;
+      }
+    }
+    float rgb[3] = {0.25f, 0.5f, 0.75f};
+    lightusd::color::TransformRGB(transform, rgb);
+    for (int i = 0; i < 3; ++i) {
+      if (std::abs(rgb[i] - reference.sample[i]) > 3.0e-5f) {
+        FAIL("cmlib gamma transformed RGB parity"); return;
+      }
+    }
+  }
+
   ColorTransform bypass;
   if (!BuildColorTransform(raw, linear, &bypass) || !bypass.bypass) {
     FAIL("raw bypass transform"); return;

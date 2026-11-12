@@ -69,6 +69,11 @@ const ChromaDef kBuiltins[] = {
     {"g22_adobergb_scene", {0.640f, 0.330f}, {0.210f, 0.710f},
      {0.150f, 0.060f}, {kD65[0], kD65[1]}, 2.2f, 0.0f,
      ColorSpaceKind::Color},
+    // MaterialX cmlib uses the Adobe RGB (1998) exponent 563/256. Keep the
+    // existing g22_adobergb_scene token intact for OpenUSD compatibility.
+    {"g563_adobergb_scene", {0.640f, 0.330f}, {0.210f, 0.710f},
+     {0.150f, 0.060f}, {kD65[0], kD65[1]}, 563.0f / 256.0f, 0.0f,
+     ColorSpaceKind::Color},
 };
 
 bool Invert3x3(const float m[9], float out[9]) {
@@ -156,6 +161,7 @@ std::string CanonicalizeToken(const std::string &token) {
       {"srgb_texture", "srgb_rec709_scene"}, {"sRGB", "srgb_rec709_scene"},
       {"srgb", "srgb_rec709_scene"}, {"g22_rec709", "g22_rec709_scene"},
       {"g18_rec709", "g18_rec709_scene"}, {"g22_ap1", "g22_ap1_scene"},
+      {"g563_adobergb", "g563_adobergb_scene"},
       {"lin_displayp3", "lin_p3d65_scene"},
       {"srgb_displayp3", "srgb_p3d65_scene"},
       {"lin_rec2020", "lin_rec2020_scene"},
