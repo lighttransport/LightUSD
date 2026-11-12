@@ -126,6 +126,7 @@ static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix
     const char *nodegraph = xml_attr(x, "nodegraph");
     const char *output = xml_attr(x, "output");
     const char *interfacename = xml_attr(x, "interfacename");
+    in->has_connection = nodename || nodegraph || interfacename;
     if (nodename) {
         const char *o = output ? output : "";
         size_t L = strlen(nodename) + strlen(o) + 4;

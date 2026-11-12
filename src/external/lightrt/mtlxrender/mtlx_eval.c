@@ -1323,6 +1323,7 @@ static int supported_volume_value(ShadeContext *ctx, const MtlxNode *n,
         return 0;
     for (int i = 0; i < n->ninput; ++i) {
         const int src = n->inputs[i].src_node;
+        if (n->inputs[i].has_connection && src < 0) return 0;
         if (src >= ctx->doc->nnode) return 0;
         if (src >= 0 && !supported_volume_value(ctx, &ctx->doc->nodes[src],
                                                  depth + 1)) return 0;
@@ -1334,6 +1335,7 @@ static int supported_closure_values(ShadeContext *ctx, const MtlxNode *n,
                                     int depth) {
     for (int i = 0; i < n->ninput; ++i) {
         const MtlxInput *in = &n->inputs[i];
+        if (in->has_connection && in->src_node < 0) return 0;
         if (in->type == MV_NONE || in->src_node < 0) continue;
         if (in->src_node >= ctx->doc->nnode ||
             !supported_volume_value(ctx, &ctx->doc->nodes[in->src_node],
@@ -1593,6 +1595,7 @@ int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
     memset(ctx->memo_done, 0, (size_t)ctx->doc->nnode);
     const MtlxNode *volume = &ctx->doc->nodes[volume_node];
     if (strcmp(volume->category, "volume")) return 1;
+    if (!supported_closure_values(ctx, volume, 0)) return 1;
     const MtlxNode *vdf = input_node(ctx, volume, "vdf");
     const MtlxNode *edf = input_node(ctx, volume, "edf");
     if (!supported_vdf(ctx, vdf, 0) || !supported_edf(ctx, edf, 0)) return 1;

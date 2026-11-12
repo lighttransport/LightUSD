@@ -102,7 +102,7 @@ void openpbr_defaults(OpenPBRParams *p);
 int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out);
 
 /* Evaluate a volume constructor; returns nonzero for unsupported closure or
- * connected value nodes. */
+ * connected value nodes and unresolved authored input connections. */
 int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
                      MtlxVolumeParams *out);
 

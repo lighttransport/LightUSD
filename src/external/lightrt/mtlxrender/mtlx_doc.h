@@ -27,6 +27,7 @@ typedef struct {
     int      has_value;   /* 1 if a literal value was given */
     MtlxValue value;
     int      src_node;    /* connected upstream node id, or -1 */
+    int      has_connection; /* an authored connection, including unresolved ones */
     char    *src_output;  /* sub-output name on a multi-output node, or NULL */
     char    *channels;    /* MaterialX input channels selector, e.g. "g" */
     int      colorspace_srgb; /* 1 if colorspace="srgb_texture" */
