@@ -103,6 +103,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   closure categories, unknown connected value-node categories, and overly deep
   graphs and unresolved authored input connections. This is a local change to
   preserve on the next LightRT sync.
+- 2026-11-13: VDF/EDF multiplication uses the declared closure input and
+  supports connected color weights; VDF coefficients retain RGB weights.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

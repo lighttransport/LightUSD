@@ -1227,23 +1227,10 @@ static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         return v3_lerp(bg, fg, amount);
     }
     if (!strcmp(cat, "multiply")) {
-        const MtlxNode *a = input_node(ctx, n, "in1");
-        const MtlxNode *b = input_node(ctx, n, "in2");
-        const MtlxInput *a_input = find_input(n, "in1");
-        const MtlxInput *b_input = find_input(n, "in2");
-        if (a && b && a_input && b_input && a_input->src_node >= 0 &&
-            b_input->src_node >= 0) {
-            return v3_mul(eval_edf(ctx, a, depth + 1),
-                          eval_edf(ctx, b, depth + 1));
-        }
-        const MtlxInput *scalar = a ? b_input : a_input;
-        if (scalar) {
-            MtlxValue value = eval_input(ctx, scalar);
-            return v3_mul(eval_edf(ctx, a ? a : b, depth + 1),
-                          mv_as_v3(&value));
-        }
-        return v3_mul(eval_edf(ctx, a, depth + 1),
-                      eval_edf(ctx, b, depth + 1));
+        const MtlxInput *weight = find_input(n, "in2");
+        const MtlxValue value = weight ? eval_input(ctx, weight) : mv_float(1.0f);
+        return v3_mul(eval_edf(ctx, input_node(ctx, n, "in1"), depth + 1),
+                      mv_as_v3(&value));
     }
     if (!strcmp(cat, "light")) {
         const v3 edf = eval_edf(ctx, input_node(ctx, n, "edf"), depth + 1);
@@ -1362,10 +1349,7 @@ static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         return supported_edf(ctx, input_node(ctx, n, "bg"), depth + 1) &&
                supported_edf(ctx, input_node(ctx, n, "fg"), depth + 1);
     if (!strcmp(cat, "multiply")) {
-        const MtlxNode *a = input_node(ctx, n, "in1");
-        const MtlxNode *b = input_node(ctx, n, "in2");
-        return supported_edf(ctx, a, depth + 1) &&
-               supported_edf(ctx, b, depth + 1);
+        return supported_edf(ctx, input_node(ctx, n, "in1"), depth + 1);
     }
     if (!strcmp(cat, "light"))
         return supported_edf(ctx, input_node(ctx, n, "edf"), depth + 1);
@@ -1393,16 +1377,14 @@ static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         return supported_vdf(ctx, input_node(ctx, n, "bg"), depth + 1) &&
                supported_vdf(ctx, input_node(ctx, n, "fg"), depth + 1);
     if (!strcmp(cat, "multiply")) {
-        const MtlxNode *a = input_node(ctx, n, "in1");
-        const MtlxNode *b = input_node(ctx, n, "in2");
-        return supported_vdf(ctx, a ? a : b, depth + 1);
+        return supported_vdf(ctx, input_node(ctx, n, "in1"), depth + 1);
     }
     return 0;
 }
 
-static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, float scale,
+static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, v3 scale,
                      MtlxVolumeParams *out, int depth) {
-    if (!n || depth > 32 || scale <= 0.0f) return;
+    if (!n || depth > 32 || v3_maxc(scale) <= 0.0f) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
         const char *a_name = !strcmp(cat, "layer") ? "base" : "in1";
@@ -1414,29 +1396,26 @@ static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, float scale,
     if (!strcmp(cat, "mix")) {
         const float amount = fmaxf(0.0f, fminf(1.0f,
             in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
-        eval_vdf(ctx, input_node(ctx, n, "bg"), scale * (1.0f - amount),
+        eval_vdf(ctx, input_node(ctx, n, "bg"), v3_scale(scale, 1.0f - amount),
                  out, depth + 1);
-        eval_vdf(ctx, input_node(ctx, n, "fg"), scale * amount, out,
+        eval_vdf(ctx, input_node(ctx, n, "fg"), v3_scale(scale, amount), out,
                  depth + 1);
         return;
     }
     if (!strcmp(cat, "multiply")) {
-        const MtlxNode *a = input_node(ctx, n, "in1");
-        const MtlxNode *b = input_node(ctx, n, "in2");
-        const MtlxInput *factor = find_input(n, a ? "in2" : "in1");
-        MtlxValue factor_value;
-        const float f = factor ? (factor_value = eval_input(ctx, factor),
-                                  fmaxf(0.0f, mv_as_float(&factor_value))) : 1.0f;
-        eval_vdf(ctx, a ? a : b, scale * f, out, depth + 1);
+        const MtlxInput *factor = find_input(n, "in2");
+        const MtlxValue factor_value = factor ? eval_input(ctx, factor) : mv_float(1.0f);
+        const v3 weight = v3_max(mv_as_v3(&factor_value), v3_splat(0.0f));
+        eval_vdf(ctx, input_node(ctx, n, "in1"), v3_mul(scale, weight), out, depth + 1);
         return;
     }
     if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf") ||
         !strcmp(cat, "subsurface_vdf")) {
         out->absorption = v3_add(out->absorption,
-            v3_scale(in_color(ctx, n, "absorption", v3_splat(0.0f)), scale));
+            v3_mul(in_color(ctx, n, "absorption", v3_splat(0.0f)), scale));
         if (!strcmp(cat, "anisotropic_vdf") || !strcmp(cat, "subsurface_vdf")) {
             out->scattering = v3_add(out->scattering,
-                v3_scale(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale));
+                v3_mul(in_color(ctx, n, "scattering", v3_splat(0.0f)), scale));
             out->anisotropy = in_float(ctx, n, "anisotropy", out->anisotropy);
         }
     }
@@ -1599,7 +1578,7 @@ int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
     const MtlxNode *vdf = input_node(ctx, volume, "vdf");
     const MtlxNode *edf = input_node(ctx, volume, "edf");
     if (!supported_vdf(ctx, vdf, 0) || !supported_edf(ctx, edf, 0)) return 1;
-    eval_vdf(ctx, vdf, 1.0f, out, 0);
+    eval_vdf(ctx, vdf, v3_splat(1.0f), out, 0);
     out->emission = eval_edf(ctx, edf, 0);
     return 0;
 }
