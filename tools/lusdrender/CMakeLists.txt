@@ -439,6 +439,9 @@ if(LIGHTUSD_BUILD_TESTS)
     tests/texture_sampling.c
     ${LUSDR_MTLX_BSDF_DIR}/texture.c
     ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
     ${LUSDR_MTLX_BSDF_DIR}/third_party_impl.c)
   target_include_directories(lusdrender-texture-sampling PRIVATE
     ${LUSDR_MTLX_BSDF_DIR}

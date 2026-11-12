@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "mtlx_eval.h"
+#include "mtlx_doc.h"
 #include "texture.h"
 
 static int near(float actual, float expected, float tolerance) {
@@ -128,8 +130,58 @@ int main(int argc, char **argv) {
     return fail("sRGB decode", sample);
   }
 
+  const char *xml =
+      "<materialx version=\"1.39\">"
+      "<image name=\"sample\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"texture.ppm\"/>"
+      "<input name=\"default\" type=\"color3\" value=\"0.1, 0.2, 0.3\"/>"
+      "<input name=\"uaddressmode\" type=\"string\" value=\"constant\"/>"
+      "<input name=\"vaddressmode\" type=\"string\" value=\"clamp\"/>"
+      "</image></materialx>";
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) {
+    texcache_free(cache);
+    remove(argv[1]);
+    fprintf(stderr, "FAIL: could not load constant-address MaterialX fixture\n");
+    return 1;
+  }
+  const int node = mtlx_find_node(doc, -1, "sample");
+  MtlxValue *memo = (MtlxValue *)calloc((size_t)doc->nnode, sizeof(MtlxValue));
+  char *memo_done = (char *)calloc((size_t)doc->nnode, sizeof(char));
+  if (node < 0 || !memo || !memo_done) {
+    free(memo);
+    free(memo_done);
+    mtlx_free(doc);
+    texcache_free(cache);
+    remove(argv[1]);
+    fprintf(stderr, "FAIL: invalid constant-address MaterialX fixture state\n");
+    return 1;
+  }
+  ShadeContext context;
+  memset(&context, 0, sizeof(context));
+  context.doc = doc;
+  context.tex = cache;
+  context.uv[0] = -0.25f;
+  context.uv[1] = 0.75f;
+  context.memo = memo;
+  context.memo_done = memo_done;
+  const MtlxValue fallback = mtlx_eval_node_test(&context, node);
+  const int fallback_ok = fallback.type == MV_COLOR3 &&
+      near(fallback.v[0], 0.1f, 1e-6f) &&
+      near(fallback.v[1], 0.2f, 1e-6f) &&
+      near(fallback.v[2], 0.3f, 1e-6f);
+  free(memo);
+  free(memo_done);
+  mtlx_free(doc);
+  if (!fallback_ok) {
+    texcache_free(cache);
+    remove(argv[1]);
+    fprintf(stderr, "FAIL: constant address mode did not return node default\n");
+    return 1;
+  }
+
   texcache_free(cache);
   remove(argv[1]);
-  puts("PASS: nearest, bilinear, constant/periodic/clamp/mirror, and sRGB sampling");
+  puts("PASS: nearest, bilinear, all address modes, and sRGB sampling");
   return 0;
 }
