@@ -182,6 +182,8 @@ struct MtlxConvertOptions {
   // policy applies; includes still use the document parser's resolver.
   const ::lightusd::AssetResolver* volume_texture_resolver = nullptr;
   size_t volume_texture_max_decoded_bytes = size_t(256) * 1024 * 1024;
+  /// Build linear RGBA mip chains lazily, within the decoded-memory limit.
+  bool volume_texture_mipmaps = false;
 };
 
 /// Inputs to a volume graph at one sample point, in world space.

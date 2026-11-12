@@ -3232,6 +3232,27 @@ void TestMaterialXUtilities() {
   assert(!converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
                                            &volume_sample, "nested/volume_scene.mtlx"));
   assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  memory_resolver.RegisterMemoryAsset("nested/mip.ppm",
+      {'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n',
+       0, 0, 0, 255, 255, 255});
+  std::string mip_volume = textured_volume;
+  mip_volume.replace(mip_volume.find("tydra_volume_sample.ppm"),
+                     std::strlen("tydra_volume_sample.ppm"), "mip.ppm");
+  volume_options.volume_texture_mipmaps = true;
+  volume_options.volume_texture_max_decoded_bytes = 55;
+  converter.SetOptions(volume_options);
+  MtlxVolumeContext mip_context;
+  mip_context.uv[0] = 0.25f;
+  mip_context.has_uv_derivatives = true;
+  mip_context.uv_dx[0] = 1.0f;
+  assert(!converter.EvaluateVolumeMaterial(mip_volume, "Fog", mip_context,
+                                           &volume_sample, "nested/volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  volume_options.volume_texture_max_decoded_bytes = 56;
+  converter.SetOptions(volume_options);
+  assert(converter.EvaluateVolumeMaterial(mip_volume, "Fog", mip_context,
+                                          &volume_sample, "nested/volume_scene.mtlx"));
+  assert(std::abs(volume_sample.absorption[0] - 0.5f) < 1e-5f);
   converter.SetOptions(MtlxConvertOptions{});
   RenderMaterial from_string;
   if (!converter.ConvertToRenderMaterial(mtlx, "Mat", &from_string)) {

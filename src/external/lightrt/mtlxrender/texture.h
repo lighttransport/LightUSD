@@ -21,6 +21,9 @@ void texcache_set_reader(TextureCache *tc, MtlxTextureReadFn read_fn,
 int texcache_had_load_failure(const TextureCache *tc);
 /* Reset the per-evaluation failure flag without discarding cached textures. */
 void texcache_clear_load_failure(TextureCache *tc);
+/* Build mip chains on first use; reader-backed caches include them in their
+ * decoded byte limit. Failure is reported through the load-failure flag. */
+void texcache_set_auto_mips(TextureCache *tc, int enabled);
 
 /* Preload every texture referenced by image and projection nodes, then freeze
  * the cache so subsequent texcache_get calls are read-only (thread-safe during

@@ -122,6 +122,7 @@ std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
       options_.volume_texture_resolver->GetConfig().allow_parent_paths;
   texcache_set_reader(cache.get(), &ReadMtlxVolumeTexture, &reader,
                       options_.volume_texture_max_decoded_bytes);
+  texcache_set_auto_mips(cache.get(), options_.volume_texture_mipmaps);
   impl->node = doc->mats[material].volume_node;
   impl->memo.resize(static_cast<size_t>(doc->nnode));
   impl->done.resize(static_cast<size_t>(doc->nnode));

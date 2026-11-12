@@ -47,6 +47,7 @@ struct TextureCache {
     void *read_user;
     size_t max_decoded_bytes, decoded_bytes;
     int load_failed;
+    int auto_mips;
 };
 
 TextureCache *texcache_create(const char *base_dir) {
@@ -71,6 +72,10 @@ int texcache_had_load_failure(const TextureCache *tc) {
 
 void texcache_clear_load_failure(TextureCache *tc) {
     if (tc) tc->load_failed = 0;
+}
+
+void texcache_set_auto_mips(TextureCache *tc, int enabled) {
+    if (tc) tc->auto_mips = enabled != 0;
 }
 
 void texcache_free(TextureCache *tc) {
@@ -140,8 +145,15 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     if (!rel_path || !rel_path[0]) return -1;
     char key[1100];
     snprintf(key, sizeof(key), "%s|%d", rel_path, srgb ? 1 : 0);
-    for (int i = 0; i < tc->ntex; i++)
-        if (strcmp(tc->tex[i].key, key) == 0) return i;
+    for (int i = 0; i < tc->ntex; i++) {
+        if (strcmp(tc->tex[i].key, key) == 0) {
+            if (tc->auto_mips && !texcache_build_mips(tc, i)) {
+                tc->load_failed = 1;
+                return -1;
+            }
+            return i;
+        }
+    }
 
     if (tc->frozen) return -1; /* render-time miss: never mutate the cache */
 
@@ -162,7 +174,14 @@ int texcache_get(TextureCache *tc, const char *rel_path, int srgb) {
     }
     if (!px) { tc->load_failed = 1; fprintf(stderr, "texture: failed to load '%s' (searched from '%s')\n", rel_path, tc->base_dir); return -1; }
 
-    return texcache_add(tc, rel_path, srgb, px, w, h, comp);
+    const int id = texcache_add(tc, rel_path, srgb, px, w, h, comp);
+    if (id < 0 && tc->read_fn)
+        tc->decoded_bytes -= (size_t)w * (size_t)h * 4;
+    if (id >= 0 && tc->auto_mips && !texcache_build_mips(tc, id)) {
+        tc->load_failed = 1;
+        return -1;
+    }
+    return id;
 }
 
 static int udim_path(const char *pattern, float u, float v, char *path,
@@ -371,12 +390,26 @@ static float *alloc_mip_pixels(int w, int h) {
 }
 
 int texcache_build_mips(TextureCache *tc, int id) {
-    if (!tc || tc->frozen || id < 0 || id >= tc->ntex) return 0;
+    if (!tc || id < 0 || id >= tc->ntex) return 0;
     Texture *t = &tc->tex[id];
     if (t->mips && t->nmips > 0) return 1;
+    if (tc->frozen) return 0;
     if (t->w <= 0 || t->h <= 0) return 0;
 
     int count = 1, w = t->w, h = t->h;
+    size_t mip_bytes = 0;
+    for (;;) {
+        if ((size_t)w > SIZE_MAX / (size_t)h / (4 * sizeof(float))) return 0;
+        const size_t level_bytes = (size_t)w * (size_t)h * 4 * sizeof(float);
+        if (level_bytes > SIZE_MAX - mip_bytes) return 0;
+        mip_bytes += level_bytes;
+        if (w == 1 && h == 1) break;
+        w = w / 2 + w % 2;
+        h = h / 2 + h % 2;
+    }
+    if (tc->read_fn && (tc->decoded_bytes > tc->max_decoded_bytes ||
+        mip_bytes > tc->max_decoded_bytes - tc->decoded_bytes)) return 0;
+    w = t->w; h = t->h;
     while (w > 1 || h > 1) {
         w = w / 2 + w % 2;
         h = h / 2 + h % 2;
@@ -431,6 +464,7 @@ int texcache_build_mips(TextureCache *tc, int id) {
     }
     t->mips = mips;
     t->nmips = count;
+    if (tc->read_fn) tc->decoded_bytes += mip_bytes;
     return 1;
 }
 
