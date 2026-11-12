@@ -551,6 +551,54 @@ void test_color_transform_numeric() {
     }
   }
 
+  struct MatrixReference {
+    const char* token;
+    float matrix[9];  // Row-major RGB to linear Rec.709, from cmlib.
+    float sample[3];
+  };
+  const MatrixReference matrix_references[] = {
+      {"lin_displayp3",
+       {1.22494018f, -0.22494018f, 0.0f,
+        -0.04205695f, 1.04205695f, 0.0f,
+        -0.01963755f, -0.07863605f, 1.09827360f},
+       {0.19376496f, 0.51051424f, 0.77947779f}},
+      {"lin_rec2020",
+       {1.66049100f, -0.58764114f, -0.07284986f,
+        -0.12455047f, 1.13289990f, -0.00834942f,
+        -0.01815076f, -0.10057890f, 1.11872966f},
+       {0.06666478f, 0.52905026f, 0.78422011f}},
+      {"lin_adobergb",
+       {1.39835574f, -0.39835574f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, -0.04292899f, 1.04292899f},
+       {0.15041106f, 0.5f, 0.76073225f}},
+      {"lin_ciexyzd65_scene",
+       {3.24096994f, -1.53738318f, -0.49861076f,
+        -0.96924364f, 1.87596750f, 0.04155506f,
+        0.05563008f, -0.20397696f, 1.05697151f},
+       {-0.33240717f, 0.72683913f, 0.70464768f}},
+  };
+  for (const MatrixReference& reference : matrix_references) {
+    ColorSpaceDesc source;
+    ColorTransform transform;
+    if (!GetBuiltinColorSpace(reference.token, &source) ||
+        !BuildColorTransform(source, linear, &transform)) {
+      FAIL("cmlib builtin color-space transform"); return;
+    }
+    for (int i = 0; i < 9; ++i) {
+      if (std::abs(transform.matrix[i] - reference.matrix[i]) > 3.0e-5f) {
+        FAIL("cmlib matrix coefficient parity"); return;
+      }
+    }
+    float rgb[3] = {0.25f, 0.5f, 0.75f};
+    lightusd::color::TransformRGB(transform, rgb);
+    for (int i = 0; i < 3; ++i) {
+      if (std::abs(rgb[i] - reference.sample[i]) > 3.0e-5f) {
+        FAIL("cmlib transformed RGB parity"); return;
+      }
+    }
+  }
+
   ColorTransform bypass;
   if (!BuildColorTransform(raw, linear, &bypass) || !bypass.bypass) {
     FAIL("raw bypass transform"); return;
