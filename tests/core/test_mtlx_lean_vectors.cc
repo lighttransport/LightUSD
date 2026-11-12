@@ -680,7 +680,7 @@ static void CheckTypedMtlxGraphResolution() {
     MtlxDocument document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="c" type="float"><input name="value" type="float" value="0.25"/></constant>
-      <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="xxx"/></convert>
+      <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="x0x"/></convert>
     </nodegraph></materialx>)";
     if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_SCALAR_BROADCAST")) {
       const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
@@ -689,14 +689,44 @@ static void CheckTypedMtlxGraphResolution() {
       const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
       bool valid = combine && combine->GetCategory() == "combine3" &&
           convert_in && convert_in->GetNodeName() == "swizzle";
-      for (int i = 1; i <= 3 && valid; ++i) {
-        const MtlxInputPtr input = combine->GetInput("in" + std::to_string(i));
-        valid = input && input->GetType() == "float" &&
-            input->GetNodeName() == "c" && input->GetChannels().empty();
-      }
+      const MtlxInputPtr x1 = combine ? combine->GetInput("in1") : nullptr;
+      const MtlxInputPtr zero = combine ? combine->GetInput("in2") : nullptr;
+      const MtlxInputPtr x2 = combine ? combine->GetInput("in3") : nullptr;
+      float zero_value = -1.0f;
+      valid = valid && x1 && x1->GetType() == "float" &&
+          x1->GetNodeName() == "c" && x1->GetChannels().empty() && zero &&
+          zero->GetValueAsFloat(zero_value) && zero_value == 0.0f && x2 &&
+          x2->GetType() == "float" && x2->GetNodeName() == "c" &&
+          x2->GetChannels().empty();
       if (!valid) {
         Fail("MTLX_VERSION_UPGRADE_SCALAR_BROADCAST", 0,
              "scalar channel broadcast was not lowered to combine3");
+      }
+    }
+  }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <constant name="c" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
+      <convert name="v" type="color3"><input name="in" type="color3" nodename="c" channels="rgb"/></convert>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_CHANNEL_CONVERT", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr swizzle = graph ? graph->GetNode("swizzle") : nullptr;
+      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
+      const MtlxInputPtr source = swizzle ? swizzle->GetInput("in") : nullptr;
+      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      if (!swizzle || swizzle->GetCategory() != "convert" ||
+          swizzle->GetType() != "color3" || !source ||
+          source->GetType() != "vector3" || source->GetNodeName() != "c" ||
+          !source->GetChannels().empty() || !convert_in ||
+          convert_in->GetNodeName() != "swizzle" ||
+          !convert_in->GetChannels().empty()) {
+        Fail("MTLX_VERSION_UPGRADE_CHANNEL_CONVERT", 0,
+             "canonical rgb selectors were not lowered to convert");
       }
     }
   }

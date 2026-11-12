@@ -688,6 +688,32 @@ void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
     return;
   }
 
+  static const std::pair<const char *, size_t> kConvertPatterns[] = {
+      {"rgb", 3}, {"rgb", 4}, {"rgba", 4}, {"xyz", 3},
+      {"xyz", 4}, {"xyzw", 4}, {"rr", 1}, {"rrr", 1},
+      {"xx", 1}, {"xxx", 1}};
+  bool direct_convert = false;
+  for (const auto &pattern : kConvertPatterns)
+    if (channels == pattern.first && source_count == pattern.second)
+      direct_convert = true;
+  if (direct_convert) {
+    const std::string convert_name =
+        UniqueMtlxChildName(*scope, *generated, "swizzle");
+    MtlxElem convert;
+    convert.tag = "convert";
+    convert.SetAttr("name", convert_name);
+    convert.SetAttr("type", dest_type);
+    MtlxElem convert_input = *port;
+    convert_input.tag = "input";
+    convert_input.SetAttr("name", "in");
+    convert_input.SetAttr("type", source_type);
+    EraseMtlxAttr(&convert_input, "channels");
+    convert.children.push_back(std::move(convert_input));
+    generated->push_back(std::move(convert));
+    RewireToGeneratedNode(port, convert_name);
+    return;
+  }
+
   if (dest_count == 1) {
     const int index = MtlxChannelIndex(channels[0]);
     if (index < 0) return;
