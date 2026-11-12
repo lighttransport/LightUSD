@@ -880,6 +880,44 @@ static void CheckTypedMtlxGraphResolution() {
       }
     }
   }
+  g_checks++;
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <thin_film_bsdf name="film" type="BSDF">
+        <input name="thickness" type="float" value="400"/>
+        <input name="ior" type="float" value="1.4"/>
+      </thin_film_bsdf>
+      <dielectric_bsdf name="coat" type="BSDF"><input name="scatter_mode" type="string" value="F"/></dielectric_bsdf>
+      <dielectric_bsdf name="transmission" type="BSDF"><input name="scatter_mode" type="string" value="T"/></dielectric_bsdf>
+      <layer name="coated" type="BSDF"><input name="top" type="BSDF" nodename="film"/><input name="base" type="BSDF" nodename="coat"/></layer>
+      <layer name="transmission_layer" type="BSDF"><input name="top" type="BSDF" nodename="film"/><input name="base" type="BSDF" nodename="transmission"/></layer>
+      <output name="out" type="BSDF" nodename="coated"/>
+      <output name="transmission_out" type="BSDF" nodename="transmission_layer"/>
+    </nodegraph></materialx>)";
+    if (!document.ParseFromXML(xml)) {
+      Fail("MTLX_VERSION_UPGRADE_THIN_FILM_LAYER", 0, document.GetError());
+    } else {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr coat = graph ? graph->GetNode("coat") : nullptr;
+      const MtlxNodePtr transmission = graph ? graph->GetNode("transmission") : nullptr;
+      const MtlxInputPtr thickness = coat ? coat->GetInput("thinfilm_thickness") : nullptr;
+      const MtlxInputPtr ior = coat ? coat->GetInput("thinfilm_ior") : nullptr;
+      float thickness_value = 0.0f, ior_value = 0.0f;
+      const auto &outputs = graph ? graph->GetOutputs() : std::vector<MtlxOutputPtr>();
+      if (!graph || graph->GetNode("film") || graph->GetNode("coated") ||
+          graph->GetNode("transmission_layer") || !coat || !thickness ||
+          !thickness->GetValueAsFloat(thickness_value) ||
+          thickness_value != 400.0f || !ior || !ior->GetValueAsFloat(ior_value) ||
+          std::fabs(ior_value - 1.4f) > 1.0e-6f || !transmission ||
+          transmission->GetInput("thinfilm_thickness") || outputs.size() != 2 ||
+          outputs[0]->GetNodeName() != "coat" ||
+          outputs[1]->GetNodeName() != "transmission") {
+        Fail("MTLX_VERSION_UPGRADE_THIN_FILM_LAYER", 0,
+             "thin-film layering was not folded into eligible BSDFs");
+      }
+    }
+  }
 
 }
 

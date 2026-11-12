@@ -783,6 +783,109 @@ void UpgradeMtlxChannels(MtlxElem *scope) {
       UpgradeMtlxChannels(&child);
 }
 
+void UpgradeMtlxThinFilmLayers(MtlxElem *scope) {
+  if (!scope) return;
+  std::vector<std::string> removed_nodes;
+  std::vector<std::string> layer_names;
+  for (const MtlxElem &child : scope->children)
+    if (child.tag == "layer") layer_names.push_back(child.Name());
+
+  static const char *const kThinFilmBsdfs[] = {
+      "dielectric_bsdf", "conductor_bsdf", "generalized_schlick_bsdf"};
+  auto find_node = [&](const std::string &name) -> MtlxElem * {
+    for (MtlxElem &child : scope->children)
+      if (IsMtlxNodeElem(child) && child.Name() == name) return &child;
+    return nullptr;
+  };
+  auto find_input = [](MtlxElem *node, const char *name) -> MtlxElem * {
+    if (!node) return nullptr;
+    for (MtlxElem &child : node->children)
+      if (child.tag == "input" && child.AttrOr("name") == name) return &child;
+    return nullptr;
+  };
+
+  for (const std::string &layer_name : layer_names) {
+    MtlxElem *layer = find_node(layer_name);
+    MtlxElem *top_input = find_input(layer, "top");
+    MtlxElem *base_input = find_input(layer, "base");
+    if (!top_input || !base_input) continue;
+    const std::string top_name = top_input->AttrOr("nodename");
+    const std::string base_name = base_input->AttrOr("nodename");
+    MtlxElem *top = find_node(top_name);
+    if (!top || top->tag != "thin_film_bsdf" || base_name.empty()) continue;
+    const MtlxElem top_copy = *top;
+
+    std::vector<std::string> pending{base_name};
+    std::vector<std::string> visited;
+    while (!pending.empty()) {
+      const std::string name = pending.back();
+      pending.pop_back();
+      if (std::find(visited.begin(), visited.end(), name) != visited.end())
+        continue;
+      visited.push_back(name);
+      MtlxElem *node = find_node(name);
+      if (!node) continue;
+
+      bool supported_bsdf = false;
+      for (const char *category : kThinFilmBsdfs)
+        if (node->tag == category) supported_bsdf = true;
+      MtlxElem *scatter_mode = find_input(node, "scatter_mode");
+      if (supported_bsdf &&
+          (!scatter_mode || scatter_mode->AttrOr("value") != "T")) {
+        for (const auto &binding :
+             {std::pair<const char *, const char *>{"thickness", "thinfilm_thickness"},
+              {"ior", "thinfilm_ior"}}) {
+          const MtlxElem *source = nullptr;
+          for (const MtlxElem &child : top_copy.children)
+            if (child.tag == "input" &&
+                child.AttrOr("name") == binding.first) {
+              source = &child;
+              break;
+            }
+          if (!source) continue;
+          MtlxElem replacement = *source;
+          replacement.SetAttr("name", binding.second);
+          if (MtlxElem *destination = find_input(node, binding.second))
+            *destination = std::move(replacement);
+          else
+            node->children.push_back(std::move(replacement));
+        }
+      }
+      for (const MtlxElem &child : node->children) {
+        if ((child.tag == "input" || child.tag == "output") &&
+            !child.AttrOr("nodename").empty())
+          pending.push_back(child.AttrOr("nodename"));
+      }
+    }
+
+    for (MtlxElem &child : scope->children) {
+      if (IsMtlxNodeElem(child)) {
+        for (MtlxElem &port : child.children)
+          if ((port.tag == "input" || port.tag == "output") &&
+              port.AttrOr("nodename") == layer_name)
+            port.SetAttr("nodename", base_name);
+      } else if (child.tag == "output" &&
+                 child.AttrOr("nodename") == layer_name) {
+        child.SetAttr("nodename", base_name);
+      }
+    }
+    removed_nodes.push_back(layer_name);
+    removed_nodes.push_back(top_name);
+  }
+
+  scope->children.erase(
+      std::remove_if(scope->children.begin(), scope->children.end(),
+                     [&](const MtlxElem &child) {
+                       return std::find(removed_nodes.begin(),
+                                        removed_nodes.end(), child.Name()) !=
+                              removed_nodes.end();
+                     }),
+      scope->children.end());
+  for (MtlxElem &child : scope->children)
+    if (child.tag == "nodegraph" || child.tag == "material")
+      UpgradeMtlxThinFilmLayers(&child);
+}
+
 }  // namespace
 
 void UpgradeMtlxVersion(MtlxElem *root) {
@@ -800,6 +903,7 @@ void UpgradeMtlxVersion(MtlxElem *root) {
   if (minor == 38) {
     UpgradeMtlxElements(root, 38);
     UpgradeMtlxChannels(root);
+    UpgradeMtlxThinFilmLayers(root);
     root->SetAttr("version", "1.39");
   }
 }
