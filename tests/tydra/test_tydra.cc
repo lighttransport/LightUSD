@@ -3136,6 +3136,29 @@ void TestMaterialXUtilities() {
   sample_context.position[0] = 0.25f;
   assert(reusable_volume->Evaluate(sample_context, &spatial_sample));
   assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
+  const char* transformed_volume = R"(<materialx version="1.39">
+    <position name="pos" type="vector3"/>
+    <transformpoint name="local" type="vector3">
+      <input name="in" type="vector3" nodename="pos"/>
+      <input name="fromspace" type="string" value="world"/>
+      <input name="tospace" type="string" value="object"/>
+    </transformpoint>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="local"/></absorption_vdf>
+    <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  auto transformed = converter.CreateVolumeEvaluator(transformed_volume, "Fog");
+  assert(transformed);
+  sample_context.position[0] = 2.25f;
+  sample_context.has_space_transforms = true;
+  sample_context.object_to_world[12] = 2.0f;
+  sample_context.world_to_object[12] = -2.0f;
+  assert(transformed->Evaluate(sample_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
+  sample_context.world_to_object[12] = std::numeric_limits<float>::infinity();
+  assert(!transformed->Evaluate(sample_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
+  sample_context = MtlxVolumeContext{};
   assert(!converter.EvaluateVolumeMaterial(volume_mtlx, "Missing", volume_uv,
                                            &volume_sample));
   assert(std::abs(volume_sample.emission[2] - 0.8f) < 1e-6f);

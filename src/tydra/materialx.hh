@@ -199,6 +199,13 @@ struct MtlxVolumeContext {
   float view_dx[3] = {0, 0, 0}, view_dy[3] = {0, 0, 0};
   bool has_view_derivatives = false;
   float time = 0, frame = 0;
+  /// Column-major affine matrices; callers must supply consistent inverses.
+  /// When false, named-space transform nodes use identity transforms.
+  bool has_space_transforms = false;
+  float object_to_world[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+  float world_to_object[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+  float world_to_view[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+  float view_to_world[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
 };
 
 /// Volume closure coefficients sampled at one location.

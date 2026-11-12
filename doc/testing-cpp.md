@@ -515,7 +515,7 @@ ctest --print-labels
 The lusdview viewer example registers GPU-dependent tests under the `lusdview` ctest label:
 
 `core_test_tydra` also checks sampled MaterialX volume coefficients, spatial
-sample contexts, reusable evaluator and texture-cache behavior, invalid-context
+sample contexts and named-space transforms, reusable evaluator and texture-cache behavior, invalid-context
 rejection, resolver-backed
 textures, missing assets, traversal rejection, and the decoded-memory cap. The
 CPU-only `mtlx_mip_evaluator_test` checks the volume closure work limit and the

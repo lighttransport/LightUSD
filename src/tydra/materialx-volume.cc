@@ -160,7 +160,10 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
       !std::isfinite(input.frame) ||
       (input.has_uv_derivatives && (!finite(input.uv_dx, 2) || !finite(input.uv_dy, 2))) ||
       (input.has_position_derivatives && (!finite(input.position_dx, 3) || !finite(input.position_dy, 3))) ||
-      (input.has_view_derivatives && (!finite(input.view_dx, 3) || !finite(input.view_dy, 3)))) {
+      (input.has_view_derivatives && (!finite(input.view_dx, 3) || !finite(input.view_dy, 3))) ||
+      (input.has_space_transforms &&
+       (!finite(input.object_to_world, 16) || !finite(input.world_to_object, 16) ||
+        !finite(input.world_to_view, 16) || !finite(input.view_to_world, 16)))) {
     impl_->error = "Volume output and finite sample context must be provided";
     return false;
   }
@@ -188,6 +191,15 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
   context.has_view_derivatives = input.has_view_derivatives;
   context.time = input.time;
   context.frame = input.frame;
+  context.has_space_transforms = input.has_space_transforms;
+  if (input.has_space_transforms) {
+    for (size_t i = 0; i < 16; ++i) {
+      context.object_to_world[i] = input.object_to_world[i];
+      context.world_to_object[i] = input.world_to_object[i];
+      context.world_to_view[i] = input.world_to_view[i];
+      context.view_to_world[i] = input.view_to_world[i];
+    }
+  }
   context.memo = impl_->memo.data();
   context.memo_done = impl_->done.data();
   MtlxVolumeParams volume{};
