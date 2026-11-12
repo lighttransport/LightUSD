@@ -1158,7 +1158,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_NOT: { a=in_or(ctx,n,"in",mv_float(0));r=mv_float(mv_as_float(&a)==0?1:0);break; }
         case OP_INSIDE: case OP_OUTSIDE: { a=in_or(ctx,n,"in",mv_zero(n->type));b=in_or(ctx,n,"mask",mv_float(0));float q=classify(n->category)==OP_INSIDE?b.v[0]:1-b.v[0];r=a;for(int i=0;i<ncomp_of(&r);i++)r.v[i]*=q;break; }
         case OP_TRIANGLEWAVE: { a=in_or(ctx,n,"in",mv_float(0));float q=fmodf(fabsf(a.v[0]),1.0f);r=mv_float(0.5f-fabsf(q-0.5f));break; }
-        case OP_CHECKERBOARD: { MtlxValue c1=in_or(ctx,n,"color1",mv_color3(v3_splat(1))),c2=in_or(ctx,n,"color2",mv_color3(v3_splat(0))),tile=in_or(ctx,n,"uvtiling",mv_vec2(8,8)),off=in_or(ctx,n,"uvoffset",mv_vec2(0,0)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));int q=((int)floorf(tc.v[0]*tile.v[0]+off.v[0])+(int)floorf(tc.v[1]*tile.v[1]+off.v[1]))&1;r=q?c2:c1;break; }
+        case OP_CHECKERBOARD: { MtlxValue c1=in_or(ctx,n,"color1",mv_color3(v3_splat(1))),c2=in_or(ctx,n,"color2",mv_color3(v3_splat(0))),tile=in_or(ctx,n,"uvtiling",mv_vec2(8,8)),off=in_or(ctx,n,"uvoffset",mv_vec2(0,0)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1]));float ix=floorf(tc.v[0]*tile.v[0]-off.v[0]),iy=floorf(tc.v[1]*tile.v[1]-off.v[1]),sum=ix+iy,q=sum-2.0f*floorf(sum/2.0f);r=q!=0.0f?c1:c2;break; }
         case OP_UNKNOWN:
         default:
             if (n->ninput > 0) r = eval_input(ctx, &n->inputs[0]);

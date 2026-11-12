@@ -865,6 +865,32 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_checkerboard_")) {
+    MtlxConstantValue color1, color2, texcoord, tiling, offset;
+    if (!input("color1", &color1) || !input("color2", &color2) ||
+        !input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
+        !input("uvoffset", &offset) || color1.components < 3 ||
+        color2.components < 3 || texcoord.components < 2 ||
+        tiling.components < 2 || offset.components < 2) {
+      return false;
+    }
+    const float ix = std::floor(texcoord.component(0) * tiling.component(0) -
+                                offset.component(0));
+    const float iy = std::floor(texcoord.component(1) * tiling.component(1) -
+                                offset.component(1));
+    const float total = ix + iy;
+    const float mix = total - 2.0f * std::floor(total / 2.0f);
+    out->components = 3;
+    for (int i = 0; i < out->components; ++i) {
+      out->value[i] = color1.component(i) * mix +
+                      color2.component(i) * (1.0f - mix);
+    }
+    out->color_managed = color1.color_managed || color2.color_managed ||
+                         texcoord.color_managed || tiling.color_managed ||
+                         offset.color_managed;
+    return true;
+  }
+
   if (starts("ND_circle_")) {
     MtlxConstantValue texcoord, center, radius;
     if (!input("texcoord", &texcoord) || !input("center", &center) ||

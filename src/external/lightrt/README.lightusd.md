@@ -73,6 +73,11 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   `mtlx-conformance` commit `2839b5c`: `bsdf_lobe_weights()` exposes the four
   importance-sampling probabilities for validation AOVs. LightRT's
   `test-white-furnace` still passes after the API addition.
+- 2026-11-12: `mtlxrender/mtlx_eval.c`'s checkerboard evaluator matches
+  `NG_checkerboard_color3`: it subtracts `uvoffset` before flooring and maps odd
+  cell parity to `color1`. Four appended Lean vectors exposed the previous phase
+  inversion and offset-sign mismatch; LightRT commit `622d6ee` carries the same
+  fix and the canonical vector rows.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
