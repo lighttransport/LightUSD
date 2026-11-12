@@ -240,6 +240,12 @@ public:
   MtlxVolumeEvaluator(const MtlxVolumeEvaluator&) = delete;
   MtlxVolumeEvaluator& operator=(const MtlxVolumeEvaluator&) = delete;
   bool Evaluate(const MtlxVolumeContext& context, MtlxVolumeSample* out);
+  /// Evaluate using this volume's resolved fields at context.position. A
+  /// supplied context callback takes precedence; absent fields use node
+  /// defaults. Present fields must be scalar float or three-component vector
+  /// or color values and sampling failures leave output unchanged.
+  bool EvaluateWithFields(const RenderVolume& volume, vol::FieldCache& cache,
+                          const MtlxVolumeContext& context, MtlxVolumeSample* out);
   const std::string& GetError() const;
 
 private:

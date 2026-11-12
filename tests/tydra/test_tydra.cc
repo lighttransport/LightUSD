@@ -9377,6 +9377,35 @@ static void TestLevelSetFieldMesh() {
   assert(resolved);
   assert(field.level_set);
 
+  const char* field_graph = R"(<materialx version="1.39">
+    <geompropvalue name="d" type="float"><input name="geomprop" type="string" value="sdf"/>
+      <input name="default" type="float" value="0.25"/></geompropvalue>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="vector3" nodename="d"/></absorption_vdf>
+    <volume name="v" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodename="v"/></volumematerial>
+  </materialx>)";
+  MtlxConverter field_converter;
+  auto field_evaluator = field_converter.CreateVolumeEvaluator(field_graph, "Mat");
+  assert(field_evaluator);
+  RenderVolume sampled_volume;
+  sampled_volume.fields.push_back({"sdf", field});
+  MtlxVolumeContext field_context;
+  MtlxVolumeSample field_sample;
+  std::vector<float> expected_field;
+  int components = 0;
+  const double origin[3] = {0, 0, 0};
+  assert(cache.SampleWorld(field, origin, 1, true, &expected_field, &components, &err));
+  assert(components == 1 && expected_field.size() == 1);
+  assert(field_evaluator->EvaluateWithFields(sampled_volume, cache, field_context, &field_sample));
+  assert(std::abs(field_sample.absorption[0] - expected_field[0]) < 1e-6f);
+  sampled_volume.fields[0].binding = "other";
+  assert(field_evaluator->EvaluateWithFields(sampled_volume, cache, field_context, &field_sample));
+  assert(std::abs(field_sample.absorption[0] - 0.25f) < 1e-6f);
+  sampled_volume.fields[0].binding = "sdf";
+  sampled_volume.fields[0].field.request.file_path = path.string() + ".missing";
+  assert(!field_evaluator->EvaluateWithFields(sampled_volume, cache, field_context, &field_sample));
+  assert(std::abs(field_sample.absorption[0] - 0.25f) < 1e-6f);
+
   std::vector<float> positions;
   std::vector<int32_t> tri;
   const bool meshed = cache.MeshLevelSet(field, 0, &positions, &tri, &err);

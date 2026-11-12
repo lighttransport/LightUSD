@@ -54,6 +54,42 @@ struct VolumeGeomPropReader {
   bool invalid = false;
 };
 
+struct VolumeFieldReader {
+  const RenderVolume* volume = nullptr;
+  vol::FieldCache* cache = nullptr;
+  const MtlxVolumeContext* context = nullptr;
+  std::vector<float> values;
+  std::string error;
+};
+
+bool ReadVolumeField(void* user, const char* name, MtlxGeomPropType type,
+                     float out[16]) {
+  auto* reader = static_cast<VolumeFieldReader*>(user);
+  if (reader->context->geomprop && reader->context->geomprop(
+          reader->context->geomprop_user, name, type, out)) return true;
+  const RenderVolumeField* field = reader->volume->Field(name);
+  if (!field) return false;
+  const int expected = type == MtlxGeomPropType::Float ? 1 :
+      (type == MtlxGeomPropType::Vector3 || type == MtlxGeomPropType::Color3 ? 3 : 0);
+  if (!expected) {
+    reader->error = "Unsupported type for MaterialX volume field: " + std::string(name);
+    return false;
+  }
+  const double p[3] = {reader->context->position[0], reader->context->position[1],
+                       reader->context->position[2]};
+  int components = 0;
+  std::string error;
+  if (!reader->cache->SampleWorld(field->field, p, 1, true, &reader->values,
+                                   &components, &error) ||
+      components != expected || reader->values.size() < static_cast<size_t>(expected)) {
+    reader->error = "Cannot sample MaterialX volume field " + std::string(name);
+    if (!error.empty()) reader->error += ": " + error;
+    return false;
+  }
+  for (int i = 0; i < expected; ++i) out[i] = reader->values[static_cast<size_t>(i)];
+  return true;
+}
+
 int ReadVolumeGeomProp(void* user, const char* name, MtlxType type,
                        ::MtlxValue* out) {
   auto* reader = static_cast<VolumeGeomPropReader*>(user);
@@ -291,6 +327,26 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
   sample.emission[1] = volume.emission.y;
   sample.emission[2] = volume.emission.z;
   sample.anisotropy = volume.anisotropy;
+  *out = sample;
+  return true;
+}
+
+bool MtlxVolumeEvaluator::EvaluateWithFields(const RenderVolume& volume,
+                                              vol::FieldCache& cache,
+                                              const MtlxVolumeContext& input,
+                                              MtlxVolumeSample* out) {
+  if (!out) { impl_->error = "Volume output must be provided"; return false; }
+  VolumeFieldReader reader;
+  reader.volume = &volume;
+  reader.cache = &cache;
+  reader.context = &input;
+  MtlxVolumeContext context = input;
+  context.geomprop = &ReadVolumeField;
+  context.geomprop_user = &reader;
+  MtlxVolumeSample sample;
+  const bool evaluated = Evaluate(context, &sample);
+  if (!reader.error.empty()) { impl_->error = reader.error; return false; }
+  if (!evaluated) return false;
   *out = sample;
   return true;
 }

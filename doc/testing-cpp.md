@@ -519,7 +519,9 @@ sample contexts, named-space transforms and geometry-property callbacks, reusabl
 behavior, invalid-context rejection, resolver-backed textures, missing assets,
 traversal rejection, volume look binding and transactional failure, and mip
 filtering under a decoded-memory cap. Volume bindings also cover shader
-connections through a nodegraph output. The
+connections through a nodegraph output. The level-set field test samples an
+actual VDB through a volume graph and checks missing-field defaults and read
+failure handling. The
 shared texture decoder's MaterialX mip test covers odd dimensions, linear-light
 conversion, HDR values, decoded-image integration and resident-budget leases.
 The CPU-only `mtlx_mip_evaluator_test` checks the volume closure work limit and the
