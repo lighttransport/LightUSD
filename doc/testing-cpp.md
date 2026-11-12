@@ -533,6 +533,8 @@ checks that base pixels and mip levels share the configured texture budget.
 `tool-lusdrender-materialx-volume-cpu` exercises a field-driven volume look,
 RGB absorption, missing-field defaults and worker determinism. It skips unless
 `LIGHTUSD_OPENUSD_VDB_FIXTURES` or `OPENUSD_ROOT` identifies the OpenUSD fixtures.
+It also checks that overlapping MaterialX and mixed legacy/MaterialX volumes
+produce the same result when their scene order is reversed.
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|

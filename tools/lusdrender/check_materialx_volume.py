@@ -117,6 +117,57 @@ def Camera "TestCam" {
             raise RuntimeError("camera-transform fixture did not render a volume")
         if any(abs(a - b) > 1 for a, b in zip(from_view, to_view)):
             raise RuntimeError("MaterialX volume view transforms are inconsistent")
+        second_volume = '''
+def Volume "Volume2" {
+    rel field:density = </Volume/Density>
+}
+'''
+        before_scene, after_scene = tmp / "before.usda", tmp / "after.usda"
+        before_scene.write_text(scene_text.replace('def Volume "Volume" (',
+                                second_volume + '\ndef Volume "Volume" (', 1), encoding="utf-8")
+        after_scene.write_text(scene_text + second_volume, encoding="utf-8")
+        two_media = '''<materialx version="1.39">
+  <absorption_vdf name="a" type="VDF"><input name="absorption" type="vector3" value="0.2,0.2,0.2"/></absorption_vdf>
+  <uniform_edf name="red" type="EDF"><input name="color" type="color3" value="0.2,0,0"/></uniform_edf>
+  <uniform_edf name="blue" type="EDF"><input name="color" type="color3" value="0,0,0.2"/></uniform_edf>
+  <volume name="r" type="volumeshader"><input name="vdf" type="VDF" nodename="a"/><input name="edf" type="EDF" nodename="red"/></volume>
+  <volume name="b" type="volumeshader"><input name="vdf" type="VDF" nodename="a"/><input name="edf" type="EDF" nodename="blue"/></volume>
+  <volumematerial name="Red"><input name="volumeshader" type="volumeshader" nodename="r"/></volumematerial>
+  <volumematerial name="Blue"><input name="volumeshader" type="volumeshader" nodename="b"/></volumematerial>
+  <look name="Look"><materialassign name="r" geom="/Volume" material="Red"/><materialassign name="b" geom="/Volume2" material="Blue"/></look>
+</materialx>'''
+        graph.write_text(two_media, encoding="utf-8")
+        first = render(1, "red-first", source=before_scene)
+        second = render(1, "blue-first", source=after_scene)
+        if any(abs(a - b) > 1 for a, b in zip(first, second)):
+            raise RuntimeError("overlapping MaterialX volumes depend on scene order")
+        if not any(first[i] > 10 and abs(first[i] - first[i + 2]) <= 1
+                   for i in range(0, len(first), 4)):
+            raise RuntimeError("overlapping red and blue media did not integrate together")
+        graph.write_text(two_media.replace('<materialassign name="b" geom="/Volume2" material="Blue"/>', ""),
+                         encoding="utf-8")
+        mixed_first = render(1, "mixed-first", source=before_scene)
+        mixed_second = render(1, "mixed-second", source=after_scene)
+        if any(abs(a - b) > 1 for a, b in zip(mixed_first, mixed_second)):
+            raise RuntimeError("mixed MaterialX and legacy volumes depend on scene order")
+        occluded_scene = tmp / "occluded.usda"
+        occluded_scene.write_text(simple_scene.read_text(encoding="utf-8") + second_volume + '''
+def Mesh "Occluder" {
+    point3f[] points = [(-500,-500,125), (500,-500,125), (500,500,125), (-500,500,125)]
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0,1,2,3]
+    uniform token subdivisionScheme = "none"
+    uniform bool doubleSided = true
+}
+''', encoding="utf-8")
+        graph.write_text(two_media, encoding="utf-8")
+        behind_red = render(1, "occluded-red", source=occluded_scene, camera="/TestCam")
+        graph.write_text(two_media.replace('value="0.2,0,0"', 'value="0,0.2,0"'), encoding="utf-8")
+        behind_green = render(1, "occluded-green", source=occluded_scene, camera="/TestCam")
+        if not any(behind_red[i] > 2 for i in range(0, len(behind_red), 4)):
+            raise RuntimeError("opaque-geometry fixture did not render")
+        if behind_red != behind_green:
+            raise RuntimeError("volume behind opaque geometry affected the image")
         graph.write_text(original.replace('value="density"', 'value="missing"'), encoding="utf-8")
         missing = render(1, "missing")
         if any(missing[i] > 1 for i in range(0, len(missing), 4)):

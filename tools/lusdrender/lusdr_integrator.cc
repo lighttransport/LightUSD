@@ -2159,6 +2159,201 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
 // Composite all volumes along the world-space primary ray over `bg`.
 // `scene_hit` is the world-space distance to the primary geometry hit (or the
 // far plane); a level-set surface behind it does not replace the geometry.
+struct MixedVolumeInterval {
+  size_t index;
+  Vec3 origin, direction;
+  float begin, end, step;
+};
+
+static Vec3 CompositeMixedVolumes(
+    const std::vector<VolumeData>& vols, const Vec3& worg, const Vec3& wdir,
+    Vec3 background, const LightCache& lights, float ambient, float scene_hit,
+    const CameraFrame& camera, Options::VolumeLevelSet level_set_shading,
+    const std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>>* evaluators,
+    std::atomic<bool>* material_error) {
+  float far = scene_hit;
+  Vec3 result = background;
+  // Surfaces first: fog in front is integrated over the nearest surface.
+  for (const VolumeData& vd : vols) {
+    if (!vd.level_set || level_set_shading != Options::VolumeLevelSet::Surface) continue;
+    const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
+    float a, b, hit;
+    if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b) ||
+        b <= std::max(a, 0.0f) ||
+        !TraceLevelSetSurface(vd, o, d, std::max(a, 0.0f), b, &hit) || hit >= far) continue;
+    const Vec3 p = Add(o, Mul(d, hit)), gradient = LevelSetObjectGradient(vd, p);
+    Vec3 normal = Length(gradient) > 1.0e-8f ? TransformNormal(vd.inv_world, gradient)
+                                               : Normalize(Mul(wdir, -1.0f));
+    if (Dot(normal, wdir) > 0.0f) normal = Mul(normal, -1.0f);
+    result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p), normal, lights, ambient);
+    far = hit;
+  }
+  std::vector<MixedVolumeInterval> intervals;
+  std::vector<float> boundaries;
+  for (size_t i = 0; i < vols.size(); ++i) {
+    const VolumeData& vd = vols[i];
+    if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) continue;
+    const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
+    float a, b;
+    if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b)) continue;
+    a = std::max(a, 0.0f); b = std::min(b, far);
+    if (b <= a) continue;
+    const float speed = Length(d);
+    const Vec3 extent = Sub(vd.bmax, vd.bmin);
+    const float sx = vd.dim[0] > 0 ? extent.x / float(vd.dim[0]) : extent.x;
+    const float sy = vd.dim[1] > 0 ? extent.y / float(vd.dim[1]) : extent.y;
+    const float sz = vd.dim[2] > 0 ? extent.z / float(vd.dim[2]) : extent.z;
+    const float voxel = std::min(sx, std::min(sy, sz));
+    const float step = voxel > 0 ? voxel * 0.5f / speed : (b - a) / 128.0f;
+    if (!(speed > 0) || !std::isfinite(speed) || !std::isfinite(a) ||
+        !std::isfinite(b) || !(step > 0) || !std::isfinite(step)) {
+      material_error->store(true, std::memory_order_relaxed); return background;
+    }
+    intervals.push_back({i, o, d, a, b, step});
+    boundaries.push_back(a); boundaries.push_back(b);
+    if (intervals.size() > 1024) {
+      material_error->store(true, std::memory_order_relaxed); return background;
+    }
+  }
+  if (intervals.empty()) return result;
+  std::sort(boundaries.begin(), boundaries.end());
+  boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+  const float world_speed = Length(wdir);
+  if (!(world_speed > 0) || !std::isfinite(world_speed)) {
+    material_error->store(true, std::memory_order_relaxed); return background;
+  }
+  Vec3 trans{1, 1, 1}, radiance{0, 0, 0};
+  size_t work = 0;
+  for (size_t interval = 0; interval + 1 < boundaries.size(); ++interval) {
+    float t = boundaries[interval];
+    const float end = boundaries[interval + 1];
+    float step = end - t;
+    for (const auto& active : intervals) {
+      if (++work > 1000000) {
+        material_error->store(true, std::memory_order_relaxed); return background;
+      }
+      if (active.begin <= t && active.end >= end) step = std::min(step, active.step);
+    }
+    step = std::max(step, (end - t) / 4096.0f);
+    while (t < end) {
+      const float dt = std::min(step, end - t);
+      if (!(dt > 0) || !(t + dt > t)) {
+        material_error->store(true, std::memory_order_relaxed); return background;
+      }
+      const float midpoint = t + 0.5f * dt;
+      float extinction[3] = {}, source[3] = {};
+      for (const auto& active : intervals) {
+        if (++work > 1000000) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+        if (active.begin > t || active.end < end) continue;
+        const VolumeData& vd = vols[active.index];
+        const Vec3 local = Add(active.origin, Mul(active.direction, midpoint));
+        if (vd.materialx_volume.materialx_binding) {
+          if (!evaluators || active.index >= evaluators->size() ||
+              !(*evaluators)[active.index] || !vd.materialx_fields) {
+            material_error->store(true, std::memory_order_relaxed); return background;
+          }
+          const Vec3 world = Add(worg, Mul(wdir, midpoint));
+          const Vec3 extent = Sub(vd.bmax, vd.bmin);
+          lightusd::tydra::MtlxVolumeContext context;
+          context.position[0] = world.x; context.position[1] = world.y; context.position[2] = world.z;
+          context.uv[0] = extent.x > 0 ? (local.x - vd.bmin.x) / extent.x : 0;
+          context.uv[1] = extent.y > 0 ? (local.y - vd.bmin.y) / extent.y : 0;
+          context.view[0] = -wdir.x / world_speed; context.view[1] = -wdir.y / world_speed;
+          context.view[2] = -wdir.z / world_speed;
+          context.frame = vd.materialx_frame; context.time = vd.materialx_time;
+          context.has_space_transforms = true;
+          for (size_t c = 0; c < 4; ++c) for (size_t r = 0; r < 4; ++r) {
+            context.object_to_world[c * 4 + r] = float(vd.materialx_world.m[c][r]);
+            context.world_to_object[c * 4 + r] = float(vd.materialx_inv_world.m[c][r]);
+          }
+          const Vec3 axes[3] = {camera.right, camera.up, Mul(camera.forward, -1.0f)};
+          for (size_t c = 0; c < 3; ++c) {
+            const float axis[3] = {axes[c].x, axes[c].y, axes[c].z};
+            for (size_t r = 0; r < 3; ++r) {
+              context.view_to_world[c * 4 + r] = axis[r];
+              context.world_to_view[r * 4 + c] = axis[r];
+            }
+            context.world_to_view[12 + c] = -Dot(axes[c], camera.origin);
+          }
+          context.view_to_world[12] = camera.origin.x; context.view_to_world[13] = camera.origin.y;
+          context.view_to_world[14] = camera.origin.z;
+          lightusd::tydra::MtlxVolumeSample sample;
+          if (!(*evaluators)[active.index]->EvaluateWithFields(vd.materialx_volume,
+                  *vd.materialx_fields, context, &sample)) {
+            if (!material_error->exchange(true, std::memory_order_relaxed))
+              std::cerr << "MaterialX volume evaluation: " << (*evaluators)[active.index]->GetError() << "\n";
+            return background;
+          }
+          for (int c = 0; c < 3; ++c) {
+            if (sample.absorption[c] < 0 || sample.scattering[c] < 0 || sample.emission[c] < 0) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            extinction[c] += sample.absorption[c] + sample.scattering[c];
+            source[c] += sample.scattering[c] + sample.emission[c];
+          }
+        } else {
+          const float raw = SampleVolumeDensity(vd, local);
+          if (!std::isfinite(raw) || !std::isfinite(vd.background) ||
+              !std::isfinite(vd.density_scale)) {
+            material_error->store(true, std::memory_order_relaxed); return background;
+          }
+          const float density = vd.level_set ? std::max(0.0f, -raw) * vd.density_scale
+                                              : std::max(0.0f, raw - vd.background) * vd.density_scale;
+          Vec3 emit = vd.emission;
+          float weight = density;
+          if (!vd.emission_field.data.empty()) {
+            const float value = SampleVolumeField(vd.emission_field.data, vd.emission_field.dim,
+                vd.emission_field.bmin, vd.emission_field.bmax, local) - vd.emission_field.background;
+            if (!std::isfinite(value)) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            weight = std::max(0.0f, value);
+          }
+          if (!vd.temperature_field.data.empty()) {
+            const float value = SampleVolumeField(vd.temperature_field.data,
+                vd.temperature_field.dim, vd.temperature_field.bmin, vd.temperature_field.bmax,
+                local) - vd.temperature_field.background;
+            if (!std::isfinite(value)) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            const float temperature = std::max(0.0f, value);
+            const Vec3 tint = VolumeTemperatureColor(temperature);
+            emit = (emit.x + emit.y + emit.z) > 0 ? Vec3{emit.x * tint.x, emit.y * tint.y, emit.z * tint.z} : tint;
+            weight = std::max(weight, temperature);
+          }
+          const float albedo[3] = {vd.albedo.x, vd.albedo.y, vd.albedo.z};
+          const float emission[3] = {emit.x, emit.y, emit.z};
+          for (int c = 0; c < 3; ++c) {
+            extinction[c] += density;
+            source[c] += density * albedo[c] + emission[c] * weight * vd.emission_scale;
+          }
+        }
+      }
+      float* tr[3] = {&trans.x, &trans.y, &trans.z};
+      float* light[3] = {&radiance.x, &radiance.y, &radiance.z};
+      const float distance = dt * world_speed;
+      for (int c = 0; c < 3; ++c) {
+        if (!std::isfinite(extinction[c]) || !std::isfinite(source[c]) ||
+            extinction[c] < 0 || source[c] < 0) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+        const float attenuation = std::exp(-extinction[c] * distance);
+        const float integral = extinction[c] > 0 ? -std::expm1(-extinction[c] * distance) / extinction[c] : distance;
+        *light[c] += *tr[c] * source[c] * integral;
+        *tr[c] *= attenuation;
+        if (!std::isfinite(*light[c]) || !std::isfinite(*tr[c])) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+      }
+      t += dt;
+    }
+  }
+  return Vec3{radiance.x + trans.x * result.x, radiance.y + trans.y * result.y,
+              radiance.z + trans.z * result.z};
+}
+
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg, const LightCache &lights,
                       float ambient, float scene_hit,
@@ -2166,6 +2361,10 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       Options::VolumeLevelSet level_set_shading,
                       const std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>>* evaluators,
                       std::atomic<bool>* material_error) {
+  for (const VolumeData& volume : vols)
+    if (volume.materialx_volume.materialx_binding)
+      return CompositeMixedVolumes(vols, worg, wdir, bg, lights, ambient, scene_hit,
+                                   camera, level_set_shading, evaluators, material_error);
   Vec3 result = bg;
   float nearest_surface = scene_hit;
   for (size_t volume_index = 0; volume_index < vols.size(); ++volume_index) {
@@ -2206,101 +2405,6 @@ Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
     float vmin = std::min(vsx, std::min(vsy, vsz));
     float step = (vmin > 0.0f) ? vmin * 0.5f : (t1 - t0) / 128.0f;
     if (step <= 0.0f) step = (t1 - t0) / 128.0f;
-    if (vd.materialx_volume.materialx_binding) {
-      if (!evaluators || volume_index >= evaluators->size() ||
-          !(*evaluators)[volume_index] || !vd.materialx_fields) {
-        material_error->store(true, std::memory_order_relaxed);
-        return bg;
-      }
-      t1 = std::min(t1, scene_hit);
-      if (t1 <= t0) continue;
-      const float object_speed = Length(d), world_speed = Length(wdir);
-      if (!(object_speed > 0.0f) || !(world_speed > 0.0f) ||
-          !std::isfinite(object_speed) || !std::isfinite(world_speed) ||
-          !std::isfinite(t0) || !std::isfinite(t1) || !std::isfinite(step)) {
-        material_error->store(true, std::memory_order_relaxed);
-        return bg;
-      }
-      step = std::max(step / object_speed, (t1 - t0) / 4096.0f);
-      Vec3 trans{1, 1, 1}, radiance{0, 0, 0};
-      for (int i = 0; i < 4096 && t0 < t1; ++i) {
-        const float dt = std::min(step, t1 - t0);
-        if (!(dt > 0.0f) || !(t0 + dt > t0)) {
-          material_error->store(true, std::memory_order_relaxed);
-          return bg;
-        }
-        const float midpoint = t0 + 0.5f * dt;
-        const Vec3 world_p = Add(worg, Mul(wdir, midpoint));
-        const Vec3 local_p = Add(o, Mul(d, midpoint));
-        lightusd::tydra::MtlxVolumeContext sample_context;
-        sample_context.position[0] = world_p.x; sample_context.position[1] = world_p.y;
-        sample_context.position[2] = world_p.z;
-        sample_context.uv[0] = ex > 0 ? (local_p.x - vd.bmin.x) / ex : 0;
-        sample_context.uv[1] = ey > 0 ? (local_p.y - vd.bmin.y) / ey : 0;
-        sample_context.view[0] = -wdir.x / world_speed;
-        sample_context.view[1] = -wdir.y / world_speed;
-        sample_context.view[2] = -wdir.z / world_speed;
-        sample_context.frame = vd.materialx_frame;
-        sample_context.time = vd.materialx_time;
-        sample_context.has_space_transforms = true;
-        for (size_t c = 0; c < 4; ++c) for (size_t r = 0; r < 4; ++r) {
-          sample_context.object_to_world[c * 4 + r] = float(vd.materialx_world.m[c][r]);
-          sample_context.world_to_object[c * 4 + r] = float(vd.materialx_inv_world.m[c][r]);
-        }
-        const Vec3 axes[3] = {camera.right, camera.up, Mul(camera.forward, -1.0f)};
-        for (size_t c = 0; c < 3; ++c) {
-          const float axis[3] = {axes[c].x, axes[c].y, axes[c].z};
-          for (size_t r = 0; r < 3; ++r) {
-            sample_context.view_to_world[c * 4 + r] = axis[r];
-            sample_context.world_to_view[r * 4 + c] = axis[r];
-          }
-          sample_context.world_to_view[12 + c] = -Dot(axes[c], camera.origin);
-        }
-        sample_context.view_to_world[12] = camera.origin.x;
-        sample_context.view_to_world[13] = camera.origin.y;
-        sample_context.view_to_world[14] = camera.origin.z;
-        lightusd::tydra::MtlxVolumeSample sample;
-        if (!(*evaluators)[volume_index]->EvaluateWithFields(
-                vd.materialx_volume, *vd.materialx_fields, sample_context, &sample)) {
-          if (!material_error->exchange(true, std::memory_order_relaxed))
-            std::cerr << "MaterialX volume evaluation: "
-                      << (*evaluators)[volume_index]->GetError() << "\n";
-          return bg;
-        }
-        float* tr[3] = {&trans.x, &trans.y, &trans.z};
-        float* light[3] = {&radiance.x, &radiance.y, &radiance.z};
-        const float distance = dt * world_speed;
-        for (int c = 0; c < 3; ++c) {
-          if (sample.absorption[c] < 0 || sample.scattering[c] < 0 || sample.emission[c] < 0) {
-            material_error->store(true, std::memory_order_relaxed);
-            return bg;
-          }
-          const float extinction = sample.absorption[c] + sample.scattering[c];
-          if (!std::isfinite(extinction)) {
-            material_error->store(true, std::memory_order_relaxed);
-            return bg;
-          }
-          const float attenuation = std::exp(-extinction * distance);
-          const float integral = extinction > 0 ? -std::expm1(-extinction * distance) / extinction : distance;
-          // Unit isotropic incident radiance: its phase integral is one.
-          const float source = sample.scattering[c] + sample.emission[c];
-          if (!std::isfinite(source)) {
-            material_error->store(true, std::memory_order_relaxed);
-            return bg;
-          }
-          *light[c] += *tr[c] * source * integral;
-          *tr[c] *= attenuation;
-          if (!std::isfinite(*light[c]) || !std::isfinite(*tr[c])) {
-            material_error->store(true, std::memory_order_relaxed);
-            return bg;
-          }
-        }
-        t0 += dt;
-      }
-      result = Vec3{radiance.x + trans.x * result.x, radiance.y + trans.y * result.y,
-                    radiance.z + trans.z * result.z};
-      continue;
-    }
     // Cap iterations to keep this bounded.
     int max_steps = 4096;
 
@@ -2553,7 +2657,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
     return {};
   }
   if (volume_material_error.load(std::memory_order_relaxed)) {
-    std::cerr << "MaterialX volume evaluation failed or produced negative coefficients.\n";
+    std::cerr << "MaterialX volume evaluation failed, exceeded limits, or produced negative coefficients.\n";
     return {};
   }
   return img;

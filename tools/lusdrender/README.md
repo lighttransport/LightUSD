@@ -261,8 +261,12 @@ For an explicit MaterialX look on CPU volume previews, pass
 paths, and geometry-property nodes sample authored VDB fields in world space.
 The marcher integrates RGB absorption, scattering and EDF emission per step;
 scattering assumes unit isotropic incident radiance rather than evaluating
-scene lights. This preview does not implement multiple scattering, shadowed
-lighting, or sorting overlapping volumes. Level sets remain surfaces unless
+scene lights. Overlapping fog volumes combine their coefficients at each step;
+the stepwise integration remains an approximation for spatially varying media.
+This preview does not implement multiple scattering or shadowed lighting.
+It caps each ray at 1,024 intersected fog volumes and one million interval
+checks, and limits each interval to approximately 4,096 steps.
+Level sets remain surfaces unless
 `-volumeLevelSet fog` is selected. Negative coefficients fail the render.
 The resolved field cache and per-worker texture caches have bounded budgets;
 the latter share `-texBudgetMb` among bound volumes and workers, or 256 MiB
