@@ -69,7 +69,8 @@ MtlxElem XMLNodeToMtlxElem(XMLNodePtr node) {
 void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
                          MtlxElem *parent = nullptr) {
   if (!elem) return;
-  if (elem->AttrOr("type") == "color2") elem->SetAttr("type", "vector2");
+  if (minor_version == 37 && elem->AttrOr("type") == "color2")
+    elem->SetAttr("type", "vector2");
 
   const size_t original_child_count = elem->children.size();
   std::vector<MtlxElem> generated;
@@ -100,7 +101,7 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
   for (size_t i = 0; i < original_child_count; ++i)
     UpgradeMtlxElements(&elem->children[i], minor_version, elem);
 
-  if (minor_version == 38 && IsMtlxNodeElem(*elem)) {
+  if (minor_version == 37 && IsMtlxNodeElem(*elem)) {
     static const std::pair<const char *, const char *> kNodeRenames[] = {
         {"diffuse_brdf", "oren_nayar_diffuse_bsdf"},
         {"burley_diffuse_brdf", "burley_diffuse_bsdf"},
@@ -216,7 +217,29 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
         }
       }
     }
-    if (elem->tag == "atan2") {
+  }
+
+  if (IsMtlxNodeElem(*elem) && elem->tag == "atan2") {
+    if (minor_version == 37) {
+      // 1.37 -> 1.38 swaps the old positional inputs; 1.38 -> 1.39 then
+      // names those positions `iny` and `inx`.
+      MtlxElem *in1 = nullptr;
+      MtlxElem *in2 = nullptr;
+      for (MtlxElem &child : elem->children) {
+        if (child.tag != "input") continue;
+        if (child.AttrOr("name") == "in1") in1 = &child;
+        else if (child.AttrOr("name") == "in2") in2 = &child;
+      }
+      if (in1 && in2) {
+        in1->SetAttr("name", "");
+        in2->SetAttr("name", "in1");
+        in1->SetAttr("name", "in2");
+      } else if (in1) {
+        in1->SetAttr("name", "in2");
+      } else if (in2) {
+        in2->SetAttr("name", "in1");
+      }
+    } else if (minor_version == 38) {
       for (MtlxElem &child : elem->children) {
         if (child.tag != "input") continue;
         const std::string name = child.AttrOr("name");
@@ -224,6 +247,12 @@ void UpgradeMtlxElements(MtlxElem *elem, uint64_t minor_version,
         else if (name == "in2") child.SetAttr("name", "inx");
       }
     }
+  }
+
+  // MaterialX 1.39 disallows authored values on connected node inputs. This
+  // cleanup belongs to the 1.38 -> 1.39 stage; applying it to 1.37 before
+  // that stage would erase data before the intervening upgrade can interpret it.
+  if (minor_version == 38 && IsMtlxNodeElem(*elem)) {
     for (MtlxElem &child : elem->children) {
       if (child.tag == "input" && child.Attr("value") &&
           (child.Attr("nodename") || child.Attr("nodegraph") ||
@@ -248,8 +277,14 @@ void UpgradeMtlxVersion(MtlxElem *root) {
       major != 1 || (minor != 37 && minor != 38)) {
     return;
   }
-  UpgradeMtlxElements(root, 38);
-  root->SetAttr("version", "1.39");
+  if (minor == 37) {
+    UpgradeMtlxElements(root, 37);
+    minor = 38;
+  }
+  if (minor == 38) {
+    UpgradeMtlxElements(root, 38);
+    root->SetAttr("version", "1.39");
+  }
 }
 
 void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,

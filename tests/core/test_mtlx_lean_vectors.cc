@@ -571,6 +571,35 @@ static void CheckTypedMtlxGraphResolution() {
          "legacy BSDF layering or conductor inputs were not upgraded");
   }
 
+  // Expected port names and preserved values were checked with MaterialX
+  // 1.39.5 Document::upgradeVersion for each source document version.
+  auto check_atan2_upgrade = [](const char *version, float expected_inx,
+                                float expected_iny, const char *case_name) {
+    MtlxDocument document;
+    const std::string xml = std::string("<materialx version=\"") + version +
+        "\"><nodegraph name=\"g\"><atan2 name=\"n\" type=\"float\">"
+        "<input name=\"in1\" type=\"float\" value=\"1\"/>"
+        "<input name=\"in2\" type=\"float\" value=\"2\"/>"
+        "</atan2></nodegraph></materialx>";
+    if (!document.ParseFromXML(xml)) {
+      Fail(case_name, 0, document.GetError());
+      return;
+    }
+    const MtlxNodeGraphPtr graph = document.FindNodeGraph("g");
+    const MtlxNodePtr node = graph ? graph->GetNode("n") : nullptr;
+    float inx = 0.0f, iny = 0.0f;
+    const MtlxInputPtr inx_input = node ? node->GetInput("inx") : nullptr;
+    const MtlxInputPtr iny_input = node ? node->GetInput("iny") : nullptr;
+    if (!inx_input || !iny_input || node->GetInput("in1") ||
+        node->GetInput("in2") || !inx_input->GetValueAsFloat(inx) ||
+        !iny_input->GetValueAsFloat(iny) || inx != expected_inx ||
+        iny != expected_iny) {
+      Fail(case_name, 0, "atan2 port names/values differ from the reference upgrade");
+    }
+  };
+  check_atan2_upgrade("1.37", 1.0f, 2.0f, "MTLX_VERSION_UPGRADE_ATAN2_137");
+  check_atan2_upgrade("1.38", 2.0f, 1.0f, "MTLX_VERSION_UPGRADE_ATAN2_138");
+
 }
 
 static void CheckMtlxDocumentXInclude() {
