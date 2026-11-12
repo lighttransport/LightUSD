@@ -1663,6 +1663,88 @@ bool ConvertMtlxNodeInputs(MtlxElem *elem, const std::string &unit_type,
   return true;
 }
 
+std::vector<std::string> SplitMtlxList(const std::string &text) {
+  std::string normalized = text;
+  std::replace(normalized.begin(), normalized.end(), ',', ' ');
+  std::istringstream input(normalized);
+  std::vector<std::string> result;
+  std::string token;
+  while (input >> token) result.push_back(std::move(token));
+  return result;
+}
+
+std::vector<std::string> MtlxGeomPathParts(const std::string &path) {
+  std::vector<std::string> parts;
+  std::istringstream input(path);
+  std::string part;
+  while (std::getline(input, part, '/'))
+    if (!part.empty()) parts.push_back(std::move(part));
+  return parts;
+}
+
+bool MtlxGeomPathMatches(const std::string &selector,
+                         const std::string &geometry, bool contains) {
+  if (selector.empty() || geometry.empty()) return false;
+  const std::vector<std::string> selector_parts = MtlxGeomPathParts(selector);
+  const std::vector<std::string> geometry_parts =
+      MtlxGeomPathParts(geometry);
+  if (contains && selector_parts.size() > geometry_parts.size()) return false;
+  const size_t common = std::min(selector_parts.size(), geometry_parts.size());
+  for (size_t i = 0; i < common; ++i)
+    if (selector_parts[i] != geometry_parts[i]) return false;
+  return true;
+}
+
+bool MtlxGeomStringMatches(const std::string &selectors,
+                           const std::string &geometry, bool contains) {
+  for (const std::string &selector : SplitMtlxList(selectors))
+    if (MtlxGeomPathMatches(selector, geometry, contains)) return true;
+  return false;
+}
+
+bool MtlxCollectionMatchesGeometry(const MtlxDocument &document,
+                                   const std::string &collection_name,
+                                   const std::string &geometry,
+                                   std::set<std::string> *active,
+                                   bool *matches, std::string *error) {
+  const MtlxCollectionPtr collection = document.FindCollection(collection_name);
+  if (!collection) {
+    *error = "Unknown MaterialX collection '" + collection_name + "'";
+    return false;
+  }
+  if (!active->insert(collection_name).second) {
+    *error = "Cycle in MaterialX collection includes at '" + collection_name +
+             "'";
+    return false;
+  }
+
+  *matches = false;
+  if (MtlxGeomStringMatches(collection->GetExcludeGeom(), geometry, true)) {
+    active->erase(collection_name);
+    return true;
+  }
+  if (MtlxGeomStringMatches(collection->GetIncludeGeom(), geometry, false)) {
+    *matches = true;
+    active->erase(collection_name);
+    return true;
+  }
+  for (const std::string &included : collection->GetIncludedCollections()) {
+    bool included_match = false;
+    if (!MtlxCollectionMatchesGeometry(document, included, geometry, active,
+                                       &included_match, error)) {
+      active->erase(collection_name);
+      return false;
+    }
+    if (included_match) {
+      *matches = true;
+      active->erase(collection_name);
+      return true;
+    }
+  }
+  active->erase(collection_name);
+  return true;
+}
+
 }  // namespace
 
 void UpgradeMtlxVersion(MtlxElem *root) {
@@ -1944,6 +2026,14 @@ bool MtlxLook::ParseFromXML(XMLNodePtr xml_node) {
   return true;
 }
 
+bool MtlxCollection::ParseFromXML(XMLNodePtr xml_node) {
+  if (!MtlxElement::ParseFromXML(xml_node)) return false;
+  include_geom_ = GetExtraAttribute("includegeom");
+  exclude_geom_ = GetExtraAttribute("excludegeom");
+  included_collections_ = SplitMtlxList(GetExtraAttribute("includecollection"));
+  return true;
+}
+
 // MtlxDocument implementation
 
 bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
@@ -2013,6 +2103,7 @@ bool MtlxDocument::ParseRoot(XMLNodePtr root) {
   nodegraphs_.clear();
   materials_.clear();
   looks_.clear();
+  collections_.clear();
 
   // Parse document attributes
   version_ = root->GetAttribute("version");
@@ -2092,6 +2183,53 @@ bool MtlxDocument::ConvertToUnit(const std::string &unit_type,
   return true;
 }
 
+bool MtlxDocument::GetMaterialAssignmentsForGeometry(
+    const std::string &look_name, const std::string &geometry,
+    std::vector<MtlxResolvedMaterialAssignment> *assignments,
+    std::string *err) const {
+  if (err) err->clear();
+  if (!assignments) {
+    if (err) *err = "Material assignment output is null";
+    return false;
+  }
+  assignments->clear();
+  const MtlxLookPtr look = FindLook(look_name);
+  if (!look) {
+    if (err) *err = "MaterialX look not found: " + look_name;
+    return false;
+  }
+
+  std::vector<MtlxResolvedMaterialAssignment> resolved;
+  for (const MtlxMaterialAssignmentPtr &assignment :
+       look->GetMaterialAssignments()) {
+    if (!assignment) continue;
+    bool matches = MtlxGeomStringMatches(assignment->GetGeom(), geometry,
+                                         true);
+    if (!matches && !assignment->GetCollection().empty()) {
+      std::set<std::string> active;
+      std::string collection_error;
+      if (!MtlxCollectionMatchesGeometry(*this, assignment->GetCollection(),
+                                         geometry, &active, &matches,
+                                         &collection_error)) {
+        if (err) *err = collection_error;
+        return false;
+      }
+    }
+    if (!matches) continue;
+
+    MtlxMaterialPtr material = FindMaterial(assignment->GetMaterial());
+    if (!material) {
+      if (err)
+        *err = "MaterialX material not found for assignment '" +
+               assignment->GetName() + "': " + assignment->GetMaterial();
+      return false;
+    }
+    resolved.push_back({assignment, std::move(material)});
+  }
+  *assignments = std::move(resolved);
+  return true;
+}
+
 bool MtlxDocument::ParseFromFile(const std::string& filename) {
   if (!::lightusd::NativeIOAvailable(&error_)) return false;
 
@@ -2128,6 +2266,9 @@ bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
   } else if (element_name == "look") {
     auto look = std::make_shared<MtlxLook>();
     if (look->ParseFromXML(xml_node)) looks_.push_back(look);
+  } else if (element_name == "collection") {
+    auto collection = std::make_shared<MtlxCollection>();
+    if (collection->ParseFromXML(xml_node)) collections_.push_back(collection);
   } else if (element_name == "surfacematerial" || element_name == "volumematerial") {
     auto material = std::make_shared<MtlxMaterial>();
     if (material->ParseFromXML(xml_node)) {
@@ -2212,6 +2353,12 @@ MtlxMaterialPtr MtlxDocument::FindMaterial(const std::string& name) const {
 MtlxLookPtr MtlxDocument::FindLook(const std::string& name) const {
   for (const MtlxLookPtr& look : looks_)
     if (look && look->GetName() == name) return look;
+  return nullptr;
+}
+
+MtlxCollectionPtr MtlxDocument::FindCollection(const std::string &name) const {
+  for (const MtlxCollectionPtr &collection : collections_)
+    if (collection && collection->GetName() == name) return collection;
   return nullptr;
 }
 

@@ -341,6 +341,67 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
+  MtlxDocument assignment_document;
+  const bool assignments_parsed = assignment_document.ParseFromXML(
+      R"(<materialx version="1.39">
+      <surfacematerial name="world_material"/>
+      <surfacematerial name="hero_material"/>
+      <collection name="hero_collection" includegeom="/World/Hero"
+                  excludegeom="/World/Hero/Hidden"/>
+      <collection name="visible_heroes" includecollection="hero_collection"/>
+      <look name="main">
+        <materialassign name="world" geom="/World" material="world_material"/>
+        <materialassign name="hero" collection="visible_heroes" material="hero_material"/>
+      </look>
+      </materialx>)");
+  std::vector<MtlxResolvedMaterialAssignment> resolved_assignments;
+  std::string assignment_error;
+  const bool hero_assignments_ok = assignments_parsed &&
+      assignment_document.GetMaterialAssignmentsForGeometry(
+          "main", "/World/Hero/Body", &resolved_assignments,
+          &assignment_error);
+  const bool hero_ordered = resolved_assignments.size() == 2 &&
+      resolved_assignments[0].assignment && resolved_assignments[0].material &&
+      resolved_assignments[0].assignment->GetName() == "world" &&
+      resolved_assignments[0].material->GetName() == "world_material" &&
+      resolved_assignments[1].assignment && resolved_assignments[1].material &&
+      resolved_assignments[1].assignment->GetName() == "hero" &&
+      resolved_assignments[1].material->GetName() == "hero_material";
+  const bool excluded_hero_ok = assignment_document
+      .GetMaterialAssignmentsForGeometry("main", "/World/Hero/Hidden/Body",
+                                          &resolved_assignments,
+                                          &assignment_error) &&
+      resolved_assignments.size() == 1 &&
+      resolved_assignments[0].assignment->GetName() == "world";
+  if (!hero_assignments_ok || !hero_ordered || !excluded_hero_ok ||
+      !assignment_error.empty()) {
+    Fail("MTLX_LOOK_ASSIGNMENT_RESOLVE", 0,
+         "geometry and nested collection assignments did not resolve in source order with exclusions");
+  }
+
+  g_checks++;
+  MtlxDocument collection_cycle_document;
+  const bool cycle_parsed = collection_cycle_document.ParseFromXML(
+      R"(<materialx version="1.39">
+      <surfacematerial name="paint"/>
+      <collection name="first" includecollection="second"/>
+      <collection name="second" includecollection="first"/>
+      <look name="cycle_look">
+        <materialassign name="cycle" collection="first" material="paint"/>
+      </look>
+      </materialx>)");
+  const bool cycle_rejected = cycle_parsed &&
+      !collection_cycle_document.GetMaterialAssignmentsForGeometry(
+          "cycle_look", "/World/Body", &resolved_assignments,
+          &assignment_error) &&
+      assignment_error.find("Cycle") != std::string::npos &&
+      resolved_assignments.empty();
+  if (!cycle_rejected) {
+    Fail("MTLX_LOOK_COLLECTION_CYCLE", 0,
+         "cyclic collection assignments were not rejected atomically");
+  }
+
+  g_checks++;
   MtlxDocument conversion_document;
   const bool conversion_parsed = conversion_document.ParseFromXML(
       R"(<materialx version="1.39">

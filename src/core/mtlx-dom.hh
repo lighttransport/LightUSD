@@ -22,6 +22,7 @@ class MtlxNodeGraph;
 class MtlxMaterial;
 class MtlxMaterialAssignment;
 class MtlxLook;
+class MtlxCollection;
 class MtlxDocument;
 class MtlxLibrary;
 
@@ -33,6 +34,7 @@ using MtlxNodeGraphPtr = std::shared_ptr<MtlxNodeGraph>;
 using MtlxMaterialPtr = std::shared_ptr<MtlxMaterial>;
 using MtlxMaterialAssignmentPtr = std::shared_ptr<MtlxMaterialAssignment>;
 using MtlxLookPtr = std::shared_ptr<MtlxLook>;
+using MtlxCollectionPtr = std::shared_ptr<MtlxCollection>;
 using MtlxDocumentPtr = std::shared_ptr<MtlxDocument>;
 
 // MaterialX value types - using tagged union for C++14 compatibility
@@ -339,6 +341,32 @@ private:
   std::vector<MtlxMaterialAssignmentPtr> material_assignments_;
 };
 
+// Geometry collection used by look material assignments.
+class MtlxCollection : public MtlxElement {
+public:
+  MtlxCollection() = default;
+
+  const std::string& GetIncludeGeom() const { return include_geom_; }
+  const std::string& GetExcludeGeom() const { return exclude_geom_; }
+  const std::vector<std::string>& GetIncludedCollections() const {
+    return included_collections_;
+  }
+
+  bool ParseFromXML(XMLNodePtr xml_node) override;
+  std::string GetElementType() const override { return "collection"; }
+
+private:
+  std::string include_geom_;
+  std::string exclude_geom_;
+  std::vector<std::string> included_collections_;
+};
+
+// A material assignment whose selector matched a geometry path.
+struct MtlxResolvedMaterialAssignment {
+  MtlxMaterialAssignmentPtr assignment;
+  MtlxMaterialPtr material;
+};
+
 // MaterialX Document
 class MtlxDocument {
 public:
@@ -378,6 +406,16 @@ public:
   bool ConvertToUnit(const std::string& unit_type,
                      const std::string& target_unit);
 
+  // Resolve direct assignments in `look_name` whose literal geometry path or
+  // named collection matches `geometry`. Results retain look order; callers
+  // decide how overlapping assignments are applied. Collection includes and
+  // exclusions use MaterialX path-prefix matching. Missing collection or
+  // material references are reported in `err` and fail the query.
+  bool GetMaterialAssignmentsForGeometry(
+      const std::string& look_name, const std::string& geometry,
+      std::vector<MtlxResolvedMaterialAssignment>* assignments,
+      std::string* err) const;
+
   // Document properties
   const std::string& GetVersion() const { return version_; }
   const std::string& GetColorSpace() const { return colorspace_; }
@@ -388,12 +426,16 @@ public:
   const std::vector<MtlxNodeGraphPtr>& GetNodeGraphs() const { return nodegraphs_; }
   const std::vector<MtlxMaterialPtr>& GetMaterials() const { return materials_; }
   const std::vector<MtlxLookPtr>& GetLooks() const { return looks_; }
+  const std::vector<MtlxCollectionPtr>& GetCollections() const {
+    return collections_;
+  }
 
   // Find elements by name
   MtlxNodePtr FindNode(const std::string& name) const;
   MtlxNodeGraphPtr FindNodeGraph(const std::string& name) const;
   MtlxMaterialPtr FindMaterial(const std::string& name) const;
   MtlxLookPtr FindLook(const std::string& name) const;
+  MtlxCollectionPtr FindCollection(const std::string& name) const;
 
   // Get errors
   const std::string& GetError() const { return error_; }
@@ -414,6 +456,7 @@ private:
   std::vector<MtlxNodeGraphPtr> nodegraphs_;
   std::vector<MtlxMaterialPtr> materials_;
   std::vector<MtlxLookPtr> looks_;
+  std::vector<MtlxCollectionPtr> collections_;
 
   std::string error_;
   std::string warning_;
