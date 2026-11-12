@@ -203,6 +203,15 @@ public:
                                     const std::string& material_name,
                                     RenderMaterial* out);
 
+  /// Apply a look to meshes by prim_path. The first matching assignment in
+  /// derived-first look order wins. Meshes with material subsets are rejected
+  /// because their per-face bindings require separate geometry selection.
+  /// On failure the scene is unchanged.
+  bool ApplyLookToRenderScene(const std::string& mtlx_content,
+                              const std::string& look_name,
+                              RenderScene* scene,
+                              const std::string& anchor_path = "");
+
   /// Convert UsdShade material with MaterialX binding
   /// @param stage USD stage
   /// @param material_prim Material prim with MaterialX shader binding

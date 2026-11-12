@@ -548,6 +548,78 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
   return true;
 }
 
+bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
+                                            const std::string& look_name,
+                                            RenderScene* scene,
+                                            const std::string& anchor_path) {
+  error_.clear();
+  if (!scene) {
+    error_ = "Output scene is null";
+    return false;
+  }
+  mtlx::MtlxDocument doc;
+  if (!(anchor_path.empty() ? doc.ParseFromXML(mtlx_content)
+                            : doc.ParseFromXML(mtlx_content, anchor_path))) {
+    error_ = "Failed to parse MaterialX: " + doc.GetError();
+    return false;
+  }
+  if (!doc.FindLook(look_name)) {
+    error_ = "MaterialX look not found: " + look_name;
+    return false;
+  }
+
+  std::vector<RenderMaterial> new_materials;
+  std::map<std::string, size_t> material_indices;
+  std::vector<std::pair<size_t, size_t>> bindings;
+  for (size_t i = 0; i < scene->meshes.size(); ++i) {
+    const RenderMesh& mesh = scene->meshes[i];
+    std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
+    std::string resolve_error;
+    if (!doc.GetMaterialAssignmentsForGeometry(look_name, mesh.prim_path,
+                                                &matches, &resolve_error)) {
+      error_ = resolve_error;
+      return false;
+    }
+    if (matches.empty()) continue;
+    if (!mesh.material_subsets.empty()) {
+      error_ = "MaterialX look cannot replace per-face material subsets on " +
+               mesh.prim_path;
+      return false;
+    }
+    const std::string& name = matches.front().material->GetName();
+    auto found = material_indices.find(name);
+    if (found == material_indices.end()) {
+      RenderMaterial material;
+      if (!ConvertToRenderMaterial(mtlx_content, name, &material, anchor_path))
+        return false;
+      const size_t index = new_materials.size();
+      new_materials.push_back(std::move(material));
+      found = material_indices.emplace(name, index).first;
+    }
+    bindings.emplace_back(i, found->second);
+  }
+  const size_t base = scene->materials.size();
+  if (base + new_materials.size() > static_cast<size_t>(INT32_MAX)) {
+    error_ = "Too many render materials";
+    return false;
+  }
+  for (RenderMaterial& material : new_materials)
+    scene->materials.push_back(std::move(material));
+  for (const auto& binding : bindings)
+    scene->meshes[binding.first].material_id =
+        static_cast<int32_t>(base + binding.second);
+  for (auto& draw : scene->point_instance_draws) {
+    if (draw.mesh_id < 0) continue;
+    for (const auto& binding : bindings) {
+      if (static_cast<size_t>(draw.mesh_id) == binding.first) {
+        draw.material_id = static_cast<int32_t>(base + binding.second);
+        break;
+      }
+    }
+  }
+  return true;
+}
+
 bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
                                                  const std::string& material_name,
                                                  RenderMaterial* out) {

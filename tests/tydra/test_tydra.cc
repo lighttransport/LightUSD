@@ -3077,6 +3077,7 @@ void TestMaterialXUtilities() {
     <input name="specular_roughness" type="float" value="0.35" />
     <input name="opacity" type="color3" value="0.5, 0.5, 0.5" />
   </node>
+  <look name="Look"><materialassign name="bind" geom="/World/Body" material="Mat"/></look>
 </materialx>
 )";
 
@@ -3095,6 +3096,19 @@ void TestMaterialXUtilities() {
   assert(std::abs(from_string.preview_surface->metallic.value.x - 0.25f) < 0.001f);
   assert(std::abs(from_string.preview_surface->roughness.value.x - 0.35f) < 0.001f);
   assert(std::abs(from_string.preview_surface->opacity.value.x - 0.5f) < 0.001f);
+
+  RenderScene assigned_scene;
+  assigned_scene.meshes.resize(2);
+  assigned_scene.meshes[0].prim_path = "/World/Body/Part";
+  assigned_scene.meshes[1].prim_path = "/World/Other";
+  assert(converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
+  assert(assigned_scene.meshes[0].material_id == 0);
+  assert(assigned_scene.meshes[1].material_id == -1);
+  assert(assigned_scene.materials.size() == 1);
+  assigned_scene.meshes[0].material_subsets.push_back({0, 1, 0, "subset"});
+  assert(!converter.ApplyLookToRenderScene(mtlx, "Look", &assigned_scene));
+  assert(assigned_scene.materials.size() == 1);
+  assert(assigned_scene.meshes[0].material_id == 0);
 
   const char* path = "tydra_materialx_test.mtlx";
   {
