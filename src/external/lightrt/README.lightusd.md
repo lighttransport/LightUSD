@@ -105,9 +105,11 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   preserve on the next LightRT sync.
 - 2026-11-13: VDF/EDF multiplication uses the declared closure input and
   supports connected color weights; VDF coefficients retain signed RGB
-  weights, following the PBR specification's multiply equation. The MDL
-  implementation instead uses `1 - weight * (1 - absorption)` for its
-  absorption coefficient; cross-target parity is not claimed.
+  weights under a coefficient-wise interpretation of the PBR specification's
+  distribution multiply equation. The MDL implementation instead uses
+  `1 - weight * (1 - absorption)` for its absorption coefficient. The spec
+  describes a normalized phase function and separate coefficients, so this
+  interpretation and cross-target parity remain to be established.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.
