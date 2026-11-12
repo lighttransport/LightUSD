@@ -406,8 +406,9 @@ public:
   bool ConvertToUnit(const std::string& unit_type,
                      const std::string& target_unit);
 
-  // Resolve direct assignments in `look_name` whose literal geometry path or
-  // named collection matches `geometry`. Results retain look order; callers
+  // Resolve assignments in `look_name` and its inherited looks whose literal
+  // geometry path or named collection matches `geometry`. Derived look
+  // assignments precede inherited ones; callers
   // decide how overlapping assignments are applied. Collection includes and
   // exclusions use MaterialX path-prefix matching. Missing collection or
   // material references are reported in `err` and fail the query.

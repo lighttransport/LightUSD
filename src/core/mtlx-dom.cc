@@ -2193,13 +2193,19 @@ bool MtlxDocument::GetMaterialAssignmentsForGeometry(
     return false;
   }
   assignments->clear();
-  const MtlxLookPtr look = FindLook(look_name);
+  MtlxLookPtr look = FindLook(look_name);
   if (!look) {
     if (err) *err = "MaterialX look not found: " + look_name;
     return false;
   }
 
   std::vector<MtlxResolvedMaterialAssignment> resolved;
+  std::set<std::string> visited_looks;
+  while (look) {
+  if (!visited_looks.insert(look->GetName()).second) {
+    if (err) *err = "Cycle in MaterialX look inheritance at '" + look->GetName() + "'";
+    return false;
+  }
   for (const MtlxMaterialAssignmentPtr &assignment :
        look->GetMaterialAssignments()) {
     if (!assignment) continue;
@@ -2225,6 +2231,14 @@ bool MtlxDocument::GetMaterialAssignmentsForGeometry(
       return false;
     }
     resolved.push_back({assignment, std::move(material)});
+  }
+  const std::string inherited = look->GetExtraAttribute("inherit");
+  if (inherited.empty()) break;
+  look = FindLook(inherited);
+  if (!look) {
+    if (err) *err = "Inherited MaterialX look not found: " + inherited;
+    return false;
+  }
   }
   *assignments = std::move(resolved);
   return true;

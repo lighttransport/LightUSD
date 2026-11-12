@@ -353,6 +353,9 @@ static void CheckTypedMtlxGraphResolution() {
         <materialassign name="world" geom="/World" material="world_material"/>
         <materialassign name="hero" collection="visible_heroes" material="hero_material"/>
       </look>
+      <look name="derived" inherit="main">
+        <materialassign name="derived_assignment" geom="/World/Hero" material="hero_material"/>
+      </look>
       </materialx>)");
   std::vector<MtlxResolvedMaterialAssignment> resolved_assignments;
   std::string assignment_error;
@@ -377,6 +380,15 @@ static void CheckTypedMtlxGraphResolution() {
       !assignment_error.empty()) {
     Fail("MTLX_LOOK_ASSIGNMENT_RESOLVE", 0,
          "geometry and nested collection assignments did not resolve in source order with exclusions");
+  }
+  g_checks++;
+  if (!assignment_document.GetMaterialAssignmentsForGeometry(
+          "derived", "/World/Hero/Body", &resolved_assignments,
+          &assignment_error) || resolved_assignments.size() != 3 ||
+      resolved_assignments[0].assignment->GetName() != "derived_assignment" ||
+      resolved_assignments[1].assignment->GetName() != "world" ||
+      resolved_assignments[2].assignment->GetName() != "hero") {
+    Fail("MTLX_LOOK_INHERITANCE", 0, "inherited assignments were not returned in derived-first order");
   }
 
   g_checks++;
