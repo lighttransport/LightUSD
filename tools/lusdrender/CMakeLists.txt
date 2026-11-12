@@ -435,6 +435,24 @@ endif()
 if(LIGHTUSD_BUILD_TESTS)
   set(LUSDR_MTLX_BSDF_DIR
       ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+  add_executable(lusdrender-texture-sampling
+    tests/texture_sampling.c
+    ${LUSDR_MTLX_BSDF_DIR}/texture.c
+    ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/third_party_impl.c)
+  target_include_directories(lusdrender-texture-sampling PRIVATE
+    ${LUSDR_MTLX_BSDF_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external)
+  target_compile_features(lusdrender-texture-sampling PRIVATE c_std_11)
+  if(UNIX)
+    target_link_libraries(lusdrender-texture-sampling PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-texture-sampling
+    COMMAND $<TARGET_FILE:lusdrender-texture-sampling>
+            ${CMAKE_CURRENT_BINARY_DIR}/texture-sampling.ppm)
+  set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
+
   add_executable(lusdrender-bsdf-white-furnace
     tests/bsdf_white_furnace.c
     ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
