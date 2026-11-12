@@ -119,6 +119,50 @@ int main(void) {
     }
   }
 
+  // Sweep the principal base/specular controls so the furnace bound also
+  // covers combinations between the named material fixtures above.
+  const v3 sweep_colors[] = {
+      {0.95f, 0.75f, 0.55f},
+      {0.35f, 0.70f, 0.90f},
+  };
+  const float sweep_metals[] = {0.0f, 0.5f, 1.0f};
+  const float sweep_specular[] = {0.0f, 0.5f, 1.0f};
+  const float sweep_roughness[] = {0.05f, 0.35f, 1.0f};
+  size_t sweep_count = 0;
+  for (size_t ci = 0; ci < sizeof(sweep_colors) / sizeof(sweep_colors[0]); ++ci) {
+    for (size_t mi = 0; mi < sizeof(sweep_metals) / sizeof(sweep_metals[0]); ++mi) {
+      for (size_t si = 0; si < sizeof(sweep_specular) / sizeof(sweep_specular[0]); ++si) {
+        for (size_t ri = 0; ri < sizeof(sweep_roughness) / sizeof(sweep_roughness[0]); ++ri) {
+          OpenPBRParams p;
+          set_defaults(&p, &cases[0]);
+          p.base_color = sweep_colors[ci];
+          p.metalness = sweep_metals[mi];
+          p.specular_weight = sweep_specular[si];
+          p.specular_roughness = sweep_roughness[ri];
+          for (size_t vi = 0; vi < sizeof(views) / sizeof(views[0]); ++vi) {
+            const v3 total = integrate(&p, views[vi], 0);
+            const float energy[] = {total.x, total.y, total.z};
+            for (size_t channel = 0; channel < 3; ++channel) {
+              if (!isfinite(energy[channel]) || energy[channel] < -tolerance ||
+                  energy[channel] > 1.0f + tolerance) {
+                fprintf(stderr,
+                        "FAIL: parameter sweep color=%zu metal=%.2f "
+                        "specular=%.2f roughness=%.2f view_cos=%.2f "
+                        "channel=%zu energy=%.6f\n",
+                        ci, sweep_metals[mi], sweep_specular[si],
+                        sweep_roughness[ri], views[vi], channel,
+                        energy[channel]);
+                return 1;
+              }
+            }
+            ++sweep_count;
+          }
+        }
+      }
+    }
+  }
+  printf("PASS: parameter sweep %zu material/view combinations\n", sweep_count);
+
   // A zero-specular, zero-subsurface, zero-metal OpenPBR base is Lambert:
   // integrating f_r * cos(theta) over a uniform white hemisphere must return
   // its base color at every view angle. This gives the validation renderer an
