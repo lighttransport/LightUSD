@@ -195,7 +195,7 @@ int main(void) {
       "<materialx>"
       "<latlongimage name=\"latf\" type=\"color3\"><input name=\"file\" "
       "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</latlongimage>"
       "<latlongimage name=\"latg\" type=\"color3\"><input name=\"file\" "
       "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
@@ -204,7 +204,7 @@ int main(void) {
       "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filez\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</triplanarprojection>"
       "<triplanarprojection name=\"trig\" type=\"color3\">"
       "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
@@ -270,7 +270,7 @@ int main(void) {
   mtlx_free(projection_filter_doc);
   remove(projection_filter_file);
   if (!projection_filter_ok) {
-    fprintf(stderr, "projection nearest filtering failed\n");
+    fprintf(stderr, "projection closest or gradient filtering failed\n");
     return 1;
   }
 
@@ -316,10 +316,10 @@ int main(void) {
   MtlxDoc *nearest_doc = mtlx_load_string(
       "<materialx><image name=\"nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</image><hextiledimage name=\"hex_nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "<input name=\"rotationrange\" type=\"vector2\" value=\"0,0\"/>"
       "<input name=\"scalerange\" type=\"vector2\" value=\"1,1\"/>"
       "<input name=\"offsetrange\" type=\"vector2\" value=\"0,0\"/>"
@@ -803,6 +803,9 @@ int main(void) {
        nearf(volume.scattering.y, 0.375f) &&
        nearf(volume.scattering.z, 0.45f) &&
        nearf(volume.anisotropy, 0.35f) &&
+       volume.lobe_count == 1 &&
+       nearf(volume.lobes[0].anisotropy, 0.35f) &&
+       nearf(volume.lobes[0].scattering.y, 0.375f) &&
        nearf(volume.emission.x, 1.5625f) &&
        nearf(volume.emission.y, 0.875f) &&
        nearf(volume.emission.z, 0.5625f);
@@ -811,9 +814,25 @@ int main(void) {
     return 1;
   }
 
-  /* Measured profiles require a renderer-specific spectral/table backend.
-   * The standalone evaluator's documented fallback preserves an authored
-   * color while ignoring the unavailable profile filename. */
+  /* Multiple VDF closures retain their individual phase functions. */
+  const char *two_lobes_xml =
+      "<materialx version=\"1.39\">"
+      "<anisotropic_vdf name=\"a\" type=\"VDF\"><input name=\"scattering\" type=\"vector3\" value=\"1,0,0\"/><input name=\"anisotropy\" type=\"float\" value=\"0.6\"/></anisotropic_vdf>"
+      "<anisotropic_vdf name=\"b\" type=\"VDF\"><input name=\"scattering\" type=\"vector3\" value=\"0,0,2\"/><input name=\"anisotropy\" type=\"float\" value=\"-0.6\"/></anisotropic_vdf>"
+      "<add name=\"sum\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"a\"/><input name=\"in2\" type=\"VDF\" nodename=\"b\"/></add>"
+      "<volume name=\"V\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"sum\"/></volume>"
+      "<volumematerial name=\"M\"><input name=\"volumeshader\" type=\"volumeshader\" nodename=\"V\"/></volumematerial></materialx>";
+  if (!eval_volume_xml(two_lobes_xml, &volume) || volume.lobe_count != 2 ||
+      !nearf(volume.lobes[0].anisotropy, 0.6f) ||
+      !nearf(volume.lobes[1].anisotropy, -0.6f) ||
+      !nearf(volume.lobes[0].scattering.x, 1.0f) ||
+      !nearf(volume.lobes[1].scattering.z, 2.0f)) {
+    fprintf(stderr, "MaterialX volume phase lobes were not preserved\n");
+    return 1;
+  }
+
+  /* Measured profiles require IES evaluation. The volume evaluator must
+   * reject an unsupported profile rather than silently ignore the file. */
   const char *measured_volume_xml =
       "<materialx version=\"1.39\">"
       " <measured_edf name=\"MeasuredGlow\" type=\"EDF\">"
@@ -826,11 +845,8 @@ int main(void) {
       " <volumematerial name=\"MeasuredMat\" type=\"material\">"
       "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"MeasuredVolume\"/>"
       " </volumematerial></materialx>";
-  if (!eval_volume_xml(measured_volume_xml, &volume) ||
-      !nearf(volume.emission.x, 0.15f) ||
-      !nearf(volume.emission.y, 0.35f) ||
-      !nearf(volume.emission.z, 0.65f)) {
-    fprintf(stderr, "MaterialX measured EDF color fallback was not evaluated\n");
+  if (eval_volume_xml(measured_volume_xml, &volume)) {
+    fprintf(stderr, "MaterialX measured EDF was accepted without IES evaluation\n");
     return 1;
   }
 
