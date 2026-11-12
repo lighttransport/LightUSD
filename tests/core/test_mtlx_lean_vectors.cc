@@ -299,6 +299,31 @@ static void CheckTypedMtlxGraphResolution() {
     port.SetAttr("type", type);
     parent->children.push_back(std::move(port));
   };
+  g_checks++;
+  MtlxDocument look_document;
+  const std::string look_xml = R"(<materialx version="1.39">
+  <look name="preview_look">
+    <materialassign name="body" geom="/World/Body" material="paint"/>
+    <materialassign name="set" collection="hero_collection" material="metal"/>
+  </look>
+</materialx>)";
+  const bool look_parsed = look_document.ParseFromXML(look_xml);
+  const MtlxLookPtr look = look_document.FindLook("preview_look");
+  const MtlxMaterialAssignmentPtr geometry_assignment =
+      look ? look->GetMaterialAssignment("body") : nullptr;
+  const MtlxMaterialAssignmentPtr collection_assignment =
+      look ? look->GetMaterialAssignment("set") : nullptr;
+  if (!look_parsed || look_document.GetLooks().size() != 1 || !look ||
+      look->GetMaterialAssignments().size() != 2 || !geometry_assignment ||
+      geometry_assignment->GetGeom() != "/World/Body" ||
+      geometry_assignment->GetMaterial() != "paint" ||
+      !collection_assignment || !collection_assignment->GetGeom().empty() ||
+      collection_assignment->GetCollection() != "hero_collection" ||
+      collection_assignment->GetMaterial() != "metal") {
+    Fail("MTLX_LOOK_MATERIAL_ASSIGN", 0,
+         "look material assignments did not retain geometry and collection selectors");
+  }
+
   MtlxLibrary library;
   MtlxElem constant_def = elem("nodedef", "ND_test_constant");
   constant_def.SetAttr("node", "testconstant");

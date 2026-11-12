@@ -1752,6 +1752,33 @@ bool MtlxMaterial::ParseFromXML(XMLNodePtr xml_node) {
   return true;
 }
 
+bool MtlxMaterialAssignment::ParseFromXML(XMLNodePtr xml_node) {
+  if (!MtlxElement::ParseFromXML(xml_node)) return false;
+  material_ = xml_node->GetAttribute("material");
+  geom_ = xml_node->GetAttribute("geom");
+  collection_ = xml_node->GetAttribute("collection");
+  return true;
+}
+
+MtlxMaterialAssignmentPtr MtlxLook::GetMaterialAssignment(
+    const std::string& name) const {
+  for (const MtlxMaterialAssignmentPtr& assignment : material_assignments_)
+    if (assignment && assignment->GetName() == name) return assignment;
+  return nullptr;
+}
+
+bool MtlxLook::ParseFromXML(XMLNodePtr xml_node) {
+  if (!MtlxElement::ParseFromXML(xml_node)) return false;
+  material_assignments_.clear();
+  for (const XMLNodePtr& child : xml_node->GetChildren()) {
+    if (!child || child->GetName() != "materialassign") continue;
+    auto assignment = std::make_shared<MtlxMaterialAssignment>();
+    if (!assignment->ParseFromXML(child)) return false;
+    material_assignments_.push_back(std::move(assignment));
+  }
+  return true;
+}
+
 // MtlxDocument implementation
 
 bool MtlxDocument::ParseFromXML(const std::string& xml_string) {
@@ -1820,6 +1847,7 @@ bool MtlxDocument::ParseRoot(XMLNodePtr root) {
   nodes_.clear();
   nodegraphs_.clear();
   materials_.clear();
+  looks_.clear();
 
   // Parse document attributes
   version_ = root->GetAttribute("version");
@@ -1891,6 +1919,9 @@ bool MtlxDocument::ParseElement(XMLNodePtr xml_node) {
     if (nodegraph->ParseFromXML(xml_node)) {
       nodegraphs_.push_back(nodegraph);
     }
+  } else if (element_name == "look") {
+    auto look = std::make_shared<MtlxLook>();
+    if (look->ParseFromXML(xml_node)) looks_.push_back(look);
   } else if (element_name == "surfacematerial" || element_name == "volumematerial") {
     auto material = std::make_shared<MtlxMaterial>();
     if (material->ParseFromXML(xml_node)) {
@@ -1969,6 +2000,12 @@ MtlxMaterialPtr MtlxDocument::FindMaterial(const std::string& name) const {
       return material;
     }
   }
+  return nullptr;
+}
+
+MtlxLookPtr MtlxDocument::FindLook(const std::string& name) const {
+  for (const MtlxLookPtr& look : looks_)
+    if (look && look->GetName() == name) return look;
   return nullptr;
 }
 

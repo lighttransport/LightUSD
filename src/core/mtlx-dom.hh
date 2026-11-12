@@ -4,6 +4,9 @@
 #pragma once
 
 #include "mtlx-xml-parser.hh"
+#include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 #include <map>
 
@@ -17,6 +20,8 @@ class MtlxInput;
 class MtlxOutput;
 class MtlxNodeGraph;
 class MtlxMaterial;
+class MtlxMaterialAssignment;
+class MtlxLook;
 class MtlxDocument;
 class MtlxLibrary;
 
@@ -26,6 +31,8 @@ using MtlxInputPtr = std::shared_ptr<MtlxInput>;
 using MtlxOutputPtr = std::shared_ptr<MtlxOutput>;
 using MtlxNodeGraphPtr = std::shared_ptr<MtlxNodeGraph>;
 using MtlxMaterialPtr = std::shared_ptr<MtlxMaterial>;
+using MtlxMaterialAssignmentPtr = std::shared_ptr<MtlxMaterialAssignment>;
+using MtlxLookPtr = std::shared_ptr<MtlxLook>;
 using MtlxDocumentPtr = std::shared_ptr<MtlxDocument>;
 
 // MaterialX value types - using tagged union for C++14 compatibility
@@ -285,6 +292,45 @@ private:
   std::string volume_shader_;
 };
 
+// Material assignment element inside a MaterialX look.
+class MtlxMaterialAssignment : public MtlxElement {
+public:
+  MtlxMaterialAssignment() = default;
+
+  const std::string& GetMaterial() const { return material_; }
+  const std::string& GetGeom() const { return geom_; }
+  const std::string& GetCollection() const { return collection_; }
+
+  bool ParseFromXML(XMLNodePtr xml_node) override;
+  std::string GetElementType() const override { return "materialassign"; }
+
+private:
+  std::string material_;
+  std::string geom_;
+  std::string collection_;
+};
+
+// Look element containing ordered material assignments.
+class MtlxLook : public MtlxElement {
+public:
+  MtlxLook() = default;
+
+  void AddMaterialAssignment(MtlxMaterialAssignmentPtr assignment) {
+    material_assignments_.push_back(std::move(assignment));
+  }
+  const std::vector<MtlxMaterialAssignmentPtr>& GetMaterialAssignments() const {
+    return material_assignments_;
+  }
+  MtlxMaterialAssignmentPtr GetMaterialAssignment(
+      const std::string& name) const;
+
+  bool ParseFromXML(XMLNodePtr xml_node) override;
+  std::string GetElementType() const override { return "look"; }
+
+private:
+  std::vector<MtlxMaterialAssignmentPtr> material_assignments_;
+};
+
 // MaterialX Document
 class MtlxDocument {
 public:
@@ -323,11 +369,13 @@ public:
   const std::vector<MtlxNodePtr>& GetNodes() const { return nodes_; }
   const std::vector<MtlxNodeGraphPtr>& GetNodeGraphs() const { return nodegraphs_; }
   const std::vector<MtlxMaterialPtr>& GetMaterials() const { return materials_; }
+  const std::vector<MtlxLookPtr>& GetLooks() const { return looks_; }
 
   // Find elements by name
   MtlxNodePtr FindNode(const std::string& name) const;
   MtlxNodeGraphPtr FindNodeGraph(const std::string& name) const;
   MtlxMaterialPtr FindMaterial(const std::string& name) const;
+  MtlxLookPtr FindLook(const std::string& name) const;
 
   // Get errors
   const std::string& GetError() const { return error_; }
@@ -347,6 +395,7 @@ private:
   std::vector<MtlxNodePtr> nodes_;
   std::vector<MtlxNodeGraphPtr> nodegraphs_;
   std::vector<MtlxMaterialPtr> materials_;
+  std::vector<MtlxLookPtr> looks_;
 
   std::string error_;
   std::string warning_;
