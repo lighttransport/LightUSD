@@ -377,6 +377,82 @@ std::string InferChannelSourceType(const std::string &channels,
   return dest_type == "color3" ? "color4" : "color3";
 }
 
+std::vector<std::string> SplitChannelValue(const std::string &value) {
+  std::vector<std::string> tokens;
+  std::string token;
+  for (char c : value) {
+    if (c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\r' ||
+        c == '\n') {
+      if (!token.empty()) {
+        tokens.push_back(std::move(token));
+        token.clear();
+      }
+    } else {
+      token.push_back(c);
+    }
+  }
+  if (!token.empty()) tokens.push_back(std::move(token));
+  return tokens;
+}
+
+int MtlxChannelIndex(char channel) {
+  switch (channel) {
+    case 'r': case 'x': return 0;
+    case 'g': case 'y': return 1;
+    case 'b': case 'z': return 2;
+    case 'a': case 'w': return 3;
+    default: return -1;
+  }
+}
+
+bool MtlxChannelConstant(char channel, const char **value) {
+  if (channel == '0') {
+    if (value) *value = "0.000000";
+    return true;
+  }
+  if (channel == '1') {
+    if (value) *value = "1.000000";
+    return true;
+  }
+  return false;
+}
+
+std::string SwizzledConstantValue(const MtlxElem &port,
+                                  const std::string &channels,
+                                  size_t dest_count) {
+  const std::vector<std::string> source =
+      SplitChannelValue(port.AttrOr("value", "0"));
+  std::string result;
+  for (size_t i = 0; i < dest_count; ++i) {
+    if (i) result += ", ";
+    const char channel = i < channels.size() ? channels[i] : '\0';
+    const char *constant = nullptr;
+    if (MtlxChannelConstant(channel, &constant)) {
+      result += constant;
+      continue;
+    }
+    const int index = MtlxChannelIndex(channel);
+    if (index >= 0 && static_cast<size_t>(index) < source.size()) {
+      result += source[static_cast<size_t>(index)];
+    } else if (!source.empty()) {
+      result += source[0];
+    } else {
+      result += "0";
+    }
+  }
+  return result;
+}
+
+void RewireToGeneratedNode(MtlxElem *port, const std::string &node_name) {
+  EraseMtlxAttr(port, "nodename");
+  EraseMtlxAttr(port, "nodegraph");
+  EraseMtlxAttr(port, "output");
+  EraseMtlxAttr(port, "interfacename");
+  EraseMtlxAttr(port, "channels");
+  EraseMtlxAttr(port, "value");
+  port->SetAttr("nodename", node_name);
+}
+
 void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
                         std::vector<MtlxElem> *generated) {
   if (!port || !scope || !generated) return;
@@ -393,23 +469,64 @@ void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
     EraseMtlxAttr(port, "channels");
     return;
   }
-  // The supported 1.38 channel conversion path lowers vector/color swizzles to
-  // separateN + combineN nodes. Scalar extraction and constant-only swizzles
-  // are handled by MaterialX's full upgrader and remain outside this port.
-  if (source_count == 1 || dest_count == 1) return;
 
-  const std::string separate_name =
-      UniqueMtlxChildName(*scope, *generated, "separate");
-  MtlxElem separate;
-  separate.tag = "separate" + std::to_string(source_count);
-  separate.SetAttr("name", separate_name);
-  separate.SetAttr("type", "multioutput");
-  MtlxElem separate_input = *port;
-  separate_input.tag = "input";
-  separate_input.SetAttr("name", "in");
-  separate_input.SetAttr("type", source_type);
-  EraseMtlxAttr(&separate_input, "channels");
-  separate.children.push_back(std::move(separate_input));
+  // A literal input, an unbound input, or an all-constant selector becomes a
+  // constant node in the reference upgrader. A connected input is discarded
+  // for the all-constant case, since none of its channels are used.
+  bool all_constants = true;
+  for (size_t i = 0; i < dest_count; ++i) {
+    const char channel = i < channels.size() ? channels[i] : '\0';
+    if (!MtlxChannelConstant(channel, nullptr)) {
+      all_constants = false;
+      break;
+    }
+  }
+  const bool has_connection =
+      !port->AttrOr("nodename").empty() || !port->AttrOr("nodegraph").empty() ||
+      !port->AttrOr("interfacename").empty();
+  if (all_constants || !has_connection) {
+    const std::string constant_name =
+        UniqueMtlxChildName(*scope, *generated, "swizzle");
+    MtlxElem constant;
+    constant.tag = "constant";
+    constant.SetAttr("name", constant_name);
+    constant.SetAttr("type", dest_type);
+    MtlxElem value;
+    value.tag = "input";
+    value.SetAttr("name", "value");
+    value.SetAttr("type", dest_type);
+    value.SetAttr("value", SwizzledConstantValue(*port, channels, dest_count));
+    constant.children.push_back(std::move(value));
+    generated->push_back(std::move(constant));
+    RewireToGeneratedNode(port, constant_name);
+    return;
+  }
+
+  if (dest_count == 1) {
+    const int index = MtlxChannelIndex(channels[0]);
+    if (index < 0) return;
+    const std::string extract_name =
+        UniqueMtlxChildName(*scope, *generated, "swizzle");
+    MtlxElem extract;
+    extract.tag = "extract";
+    extract.SetAttr("name", extract_name);
+    extract.SetAttr("type", dest_type);
+    MtlxElem extract_input = *port;
+    extract_input.tag = "input";
+    extract_input.SetAttr("name", "in");
+    extract_input.SetAttr("type", source_type);
+    EraseMtlxAttr(&extract_input, "channels");
+    extract.children.push_back(std::move(extract_input));
+    MtlxElem index_input;
+    index_input.tag = "input";
+    index_input.SetAttr("name", "index");
+    index_input.SetAttr("type", "integer");
+    index_input.SetAttr("value", std::to_string(index));
+    extract.children.push_back(std::move(index_input));
+    generated->push_back(std::move(extract));
+    RewireToGeneratedNode(port, extract_name);
+    return;
+  }
 
   const std::string combine_name =
       UniqueMtlxChildName(*scope, *generated, "swizzle");
@@ -417,27 +534,49 @@ void UpgradeChannelPort(MtlxElem *port, MtlxElem *scope,
   combine.tag = "combine" + std::to_string(dest_count);
   combine.SetAttr("name", combine_name);
   combine.SetAttr("type", dest_type);
+  std::string separate_name;
+  if (source_count > 1) {
+    separate_name = UniqueMtlxChildName(*scope, *generated, "separate");
+    MtlxElem separate;
+    separate.tag = "separate" + std::to_string(source_count);
+    separate.SetAttr("name", separate_name);
+    separate.SetAttr("type", "multioutput");
+    MtlxElem separate_input = *port;
+    separate_input.tag = "input";
+    separate_input.SetAttr("name", "in");
+    separate_input.SetAttr("type", source_type);
+    EraseMtlxAttr(&separate_input, "channels");
+    separate.children.push_back(std::move(separate_input));
+    generated->push_back(std::move(separate));
+  }
   for (size_t i = 0; i < dest_count; ++i) {
     const char channel = i < channels.size() ? channels[i] : channels[0];
     MtlxElem input;
     input.tag = "input";
     input.SetAttr("name", "in" + std::to_string(i + 1));
     input.SetAttr("type", "float");
-    const std::string channel_name = std::string("out") + channel;
-    input.SetAttr("nodename", separate_name);
-    input.SetAttr("output", channel_name);
+    const char *constant = nullptr;
+    if (MtlxChannelConstant(channel, &constant)) {
+      input.SetAttr("value", constant);
+    } else if (source_count == 1) {
+      MtlxElem scalar_input = *port;
+      scalar_input.tag = "input";
+      scalar_input.SetAttr("name", input.Name());
+      scalar_input.SetAttr("type", "float");
+      EraseMtlxAttr(&scalar_input, "channels");
+      input = std::move(scalar_input);
+    } else {
+      const int channel_index = MtlxChannelIndex(channel);
+      const char output_channel = channel_index < 0
+          ? (source_type == "color3" || source_type == "color4" ? 'r' : 'x')
+          : channel;
+      input.SetAttr("nodename", separate_name);
+      input.SetAttr("output", std::string("out") + output_channel);
+    }
     combine.children.push_back(std::move(input));
   }
-  generated->push_back(std::move(separate));
   generated->push_back(std::move(combine));
-
-  EraseMtlxAttr(port, "nodename");
-  EraseMtlxAttr(port, "nodegraph");
-  EraseMtlxAttr(port, "output");
-  EraseMtlxAttr(port, "interfacename");
-  EraseMtlxAttr(port, "channels");
-  EraseMtlxAttr(port, "value");
-  port->SetAttr("nodename", combine_name);
+  RewireToGeneratedNode(port, combine_name);
 }
 
 void UpgradeMtlxChannels(MtlxElem *scope) {

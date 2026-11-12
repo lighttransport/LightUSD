@@ -644,6 +644,110 @@ static void CheckTypedMtlxGraphResolution() {
   check_color2_swizzle("1.38", "vector2", "xy",
                        "MTLX_VERSION_UPGRADE_CHANNELS_138");
 
+  auto parse_channel_case = [](const char *xml, MtlxDocument *document,
+                               const char *case_name) {
+    if (document->ParseFromXML(xml)) return true;
+    Fail(case_name, 0, document->GetError());
+    return false;
+  };
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <constant name="c" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
+      <convert name="v" type="float"><input name="in" type="float" nodename="c" channels="y"/></convert>
+    </nodegraph></materialx>)";
+    if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_EXTRACT")) {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr extract = graph ? graph->GetNode("swizzle") : nullptr;
+      const MtlxInputPtr extract_in = extract ? extract->GetInput("in") : nullptr;
+      const MtlxInputPtr index = extract ? extract->GetInput("index") : nullptr;
+      int index_value = -1;
+      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
+      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      if (!extract || extract->GetCategory() != "extract" ||
+          extract->GetType() != "float" || !extract_in ||
+          extract_in->GetType() != "vector3" ||
+          extract_in->GetNodeName() != "c" || !index ||
+          !index->GetValueAsInt(index_value) || index_value != 1 ||
+          !convert_in || convert_in->GetNodeName() != "swizzle" ||
+          !convert_in->GetChannels().empty()) {
+        Fail("MTLX_VERSION_UPGRADE_EXTRACT", 0,
+             "scalar channel selection was not lowered to extract");
+      }
+    }
+  }
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <constant name="c" type="float"><input name="value" type="float" value="0.25"/></constant>
+      <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="xxx"/></convert>
+    </nodegraph></materialx>)";
+    if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_SCALAR_BROADCAST")) {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
+      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
+      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      bool valid = combine && combine->GetCategory() == "combine3" &&
+          convert_in && convert_in->GetNodeName() == "swizzle";
+      for (int i = 1; i <= 3 && valid; ++i) {
+        const MtlxInputPtr input = combine->GetInput("in" + std::to_string(i));
+        valid = input && input->GetType() == "float" &&
+            input->GetNodeName() == "c" && input->GetChannels().empty();
+      }
+      if (!valid) {
+        Fail("MTLX_VERSION_UPGRADE_SCALAR_BROADCAST", 0,
+             "scalar channel broadcast was not lowered to combine3");
+      }
+    }
+  }
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <constant name="c" type="vector2"><input name="value" type="vector2" value="0.25, 0.75"/></constant>
+      <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="x01"/></convert>
+    </nodegraph></materialx>)";
+    if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_CHANNEL_CONSTANTS")) {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr separate = graph ? graph->GetNode("separate") : nullptr;
+      const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
+      const MtlxInputPtr x = combine ? combine->GetInput("in1") : nullptr;
+      const MtlxInputPtr zero = combine ? combine->GetInput("in2") : nullptr;
+      const MtlxInputPtr one = combine ? combine->GetInput("in3") : nullptr;
+      float zero_value = -1.0f, one_value = -1.0f;
+      if (!separate || separate->GetCategory() != "separate2" || !combine ||
+          combine->GetCategory() != "combine3" || !x ||
+          x->GetNodeName() != "separate" || x->GetOutput() != "outx" ||
+          !zero || !zero->GetValueAsFloat(zero_value) || zero_value != 0.0f ||
+          !one || !one->GetValueAsFloat(one_value) || one_value != 1.0f) {
+        Fail("MTLX_VERSION_UPGRADE_CHANNEL_CONSTANTS", 0,
+             "constant selectors were not preserved in the combine node");
+      }
+    }
+  }
+  {
+    MtlxDocument document;
+    const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
+      <convert name="v" type="vector2"><input name="in" type="vector2" value="0.2, 0.4" channels="01"/></convert>
+    </nodegraph></materialx>)";
+    if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_CONSTANT_SWIZZLE")) {
+      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
+      const MtlxNodePtr constant = graph ? graph->GetNode("swizzle") : nullptr;
+      const MtlxInputPtr value = constant ? constant->GetInput("value") : nullptr;
+      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
+      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      std::vector<float> value_vec;
+      if (!constant || constant->GetCategory() != "constant" ||
+          constant->GetType() != "vector2" || !value ||
+          !value->GetValueAsFloatVector(value_vec) || value_vec.size() != 2 ||
+          value_vec[0] != 0.0f || value_vec[1] != 1.0f || !convert_in ||
+          convert_in->GetNodeName() != "swizzle" ||
+          !convert_in->GetChannels().empty()) {
+        Fail("MTLX_VERSION_UPGRADE_CONSTANT_SWIZZLE", 0,
+             "constant-only selectors were not lowered to a constant node");
+      }
+    }
+  }
+
 }
 
 static void CheckMtlxDocumentXInclude() {
