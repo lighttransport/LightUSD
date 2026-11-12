@@ -76,6 +76,14 @@ int main(int argc, char **argv) {
     remove(argv[1]);
     return fail("nearest texel-center sample", sample);
   }
+  texcache_sample_nearest_address(cache, linear_id, 0.25f, 0.25f,
+                                  "clamp", "clamp", sample);
+  if (!near(sample[0], 0.0f, 1e-6f) || !near(sample[1], 0.0f, 1e-6f) ||
+      !near(sample[2], 1.0f, 1e-6f)) {
+    texcache_free(cache);
+    remove(argv[1]);
+    return fail("lower-left UV row orientation", sample);
+  }
 
   texcache_sample_address(cache, linear_id, 0.5f, 0.5f,
                           "clamp", "clamp", sample);
@@ -202,6 +210,6 @@ int main(int argc, char **argv) {
 
   texcache_free(cache);
   remove(argv[1]);
-  puts("PASS: nearest, bilinear, Catmull-Rom cubic, all address modes, and sRGB sampling");
+  puts("PASS: nearest, bilinear, Catmull-Rom cubic, UV row orientation, all address modes, and sRGB sampling");
   return 0;
 }
