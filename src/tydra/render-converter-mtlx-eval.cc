@@ -884,6 +884,39 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_line_")) {
+    MtlxConstantValue texcoord, center, radius, point1, point2;
+    if (!input("texcoord", &texcoord) || !input("center", &center) ||
+        !input("radius", &radius) || !input("point1", &point1) ||
+        !input("point2", &point2) || texcoord.components < 2 ||
+        center.components < 2 || point1.components < 2 ||
+        point2.components < 2) {
+      return false;
+    }
+    const float px = texcoord.component(0) - center.component(0) -
+                     point1.component(0);
+    const float py = texcoord.component(1) - center.component(1) -
+                     point1.component(1);
+    const float bx = point2.component(0) - point1.component(0);
+    const float by = point2.component(1) - point1.component(1);
+    const float length_squared = bx * bx + by * by;
+    float projection = 0.0f;
+    if (length_squared > 1.0e-12f) {
+      projection = (px * bx + py * by) / length_squared;
+      projection = std::max(0.0f, std::min(1.0f, projection));
+    }
+    const float dx = px - bx * projection;
+    const float dy = py - by * projection;
+    out->components = 1;
+    out->value[0] = std::sqrt(dx * dx + dy * dy) > radius.component(0)
+                        ? 0.0f
+                        : 1.0f;
+    out->color_managed = texcoord.color_managed || center.color_managed ||
+                         radius.color_managed || point1.color_managed ||
+                         point2.color_managed;
+    return true;
+  }
+
   if (starts("ND_trianglewave_")) {
     MtlxConstantValue value;
     if (!input("in", &value)) return false;
