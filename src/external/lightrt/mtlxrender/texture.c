@@ -69,6 +69,10 @@ int texcache_had_load_failure(const TextureCache *tc) {
     return tc ? tc->load_failed : 1;
 }
 
+void texcache_clear_load_failure(TextureCache *tc) {
+    if (tc) tc->load_failed = 0;
+}
+
 void texcache_free(TextureCache *tc) {
     if (!tc) return;
     for (int i = 0; i < tc->ntex; i++) {

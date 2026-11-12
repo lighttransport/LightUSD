@@ -65,12 +65,89 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
                                 anchor_path);
 }
 
+struct MtlxVolumeEvaluator::Impl {
+  std::unique_ptr<MtlxDoc, decltype(&mtlx_free)> doc{nullptr, &mtlx_free};
+  std::unique_ptr<TextureCache, decltype(&texcache_free)> cache{nullptr, &texcache_free};
+  MtlxVolumeAssetReader reader;
+  std::vector<::MtlxValue> memo;
+  std::vector<char> done;
+  int node = -1;
+  std::string error;
+};
+
+MtlxVolumeEvaluator::MtlxVolumeEvaluator(std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
+MtlxVolumeEvaluator::~MtlxVolumeEvaluator() = default;
+const std::string& MtlxVolumeEvaluator::GetError() const { return impl_->error; }
+
+std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
+    const std::string& mtlx_content, const std::string& material_name,
+    const std::string& anchor_path) {
+  error_.clear();
+  mtlx::MtlxDocument parsed;
+  if (!(anchor_path.empty() ? parsed.ParseFromXML(mtlx_content)
+                            : parsed.ParseFromXML(mtlx_content, anchor_path))) {
+    error_ = "Failed to parse MaterialX: " + parsed.GetError();
+    return nullptr;
+  }
+  const std::string resolved = parsed.GetResolvedXML();
+  auto impl = std::unique_ptr<MtlxVolumeEvaluator::Impl>(new MtlxVolumeEvaluator::Impl);
+  impl->doc.reset(mtlx_load_string(resolved.c_str()));
+  auto& doc = impl->doc;
+  if (!doc) {
+    error_ = "Failed to load MaterialX volume graph";
+    return nullptr;
+  }
+  const int material = material_name.empty()
+      ? (doc->nmat == 1 ? 0 : -1)
+      : mtlx_find_material(doc.get(), material_name.c_str());
+  if (material < 0 || doc->mats[material].volume_node < 0) {
+    error_ = "MaterialX volume material or shader not found: " + material_name;
+    return nullptr;
+  }
+  const size_t slash = anchor_path.find_last_of("/\\");
+  const std::string directory = slash == std::string::npos ? "." :
+      (slash == 0 ? anchor_path.substr(0, 1) : anchor_path.substr(0, slash));
+  impl->cache.reset(texcache_create(directory.c_str()));
+  auto& cache = impl->cache;
+  if (!cache) {
+    error_ = "Failed to create MaterialX texture cache";
+    return nullptr;
+  }
+  auto& reader = impl->reader;
+  reader.anchor = anchor_path;
+  reader.resolver = options_.volume_texture_resolver
+      ? options_.volume_texture_resolver : &reader.default_resolver;
+  reader.allow_parent_paths = options_.volume_texture_resolver &&
+      options_.volume_texture_resolver->GetConfig().allow_parent_paths;
+  texcache_set_reader(cache.get(), &ReadMtlxVolumeTexture, &reader,
+                      options_.volume_texture_max_decoded_bytes);
+  impl->node = doc->mats[material].volume_node;
+  impl->memo.resize(static_cast<size_t>(doc->nnode));
+  impl->done.resize(static_cast<size_t>(doc->nnode));
+  return std::unique_ptr<MtlxVolumeEvaluator>(new MtlxVolumeEvaluator(std::move(impl)));
+}
+
+
 bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
                                            const std::string& material_name,
                                            const MtlxVolumeContext& input,
                                            MtlxVolumeSample* out,
                                            const std::string& anchor_path) {
-  error_.clear();
+  auto evaluator = CreateVolumeEvaluator(mtlx_content, material_name, anchor_path);
+  if (!evaluator) return false;
+  if (!evaluator->Evaluate(input, out)) {
+    error_ = evaluator->GetError();
+    return false;
+  }
+  return true;
+}
+
+bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
+                                   MtlxVolumeSample* out) {
+  impl_->error.clear();
+  impl_->reader.error.clear();
+  texcache_clear_load_failure(impl_->cache.get());
   const auto finite = [](const float* values, size_t count) {
     for (size_t i = 0; i < count; ++i)
       if (!std::isfinite(values[i])) return false;
@@ -84,51 +161,12 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
       (input.has_uv_derivatives && (!finite(input.uv_dx, 2) || !finite(input.uv_dy, 2))) ||
       (input.has_position_derivatives && (!finite(input.position_dx, 3) || !finite(input.position_dy, 3))) ||
       (input.has_view_derivatives && (!finite(input.view_dx, 3) || !finite(input.view_dy, 3)))) {
-    error_ = "Volume output and finite sample context must be provided";
+    impl_->error = "Volume output and finite sample context must be provided";
     return false;
   }
-  mtlx::MtlxDocument parsed;
-  if (!(anchor_path.empty() ? parsed.ParseFromXML(mtlx_content)
-                            : parsed.ParseFromXML(mtlx_content, anchor_path))) {
-    error_ = "Failed to parse MaterialX: " + parsed.GetError();
-    return false;
-  }
-  const std::string resolved = parsed.GetResolvedXML();
-  std::unique_ptr<MtlxDoc, decltype(&mtlx_free)> doc(
-      mtlx_load_string(resolved.c_str()), &mtlx_free);
-  if (!doc) {
-    error_ = "Failed to load MaterialX volume graph";
-    return false;
-  }
-  const int material = material_name.empty()
-      ? (doc->nmat == 1 ? 0 : -1)
-      : mtlx_find_material(doc.get(), material_name.c_str());
-  if (material < 0 || doc->mats[material].volume_node < 0) {
-    error_ = "MaterialX volume material or shader not found: " + material_name;
-    return false;
-  }
-  const size_t slash = anchor_path.find_last_of("/\\");
-  const std::string directory = slash == std::string::npos ? "." :
-      (slash == 0 ? anchor_path.substr(0, 1) : anchor_path.substr(0, slash));
-  std::unique_ptr<TextureCache, decltype(&texcache_free)> cache(
-      texcache_create(directory.c_str()), &texcache_free);
-  if (!cache) {
-    error_ = "Failed to create MaterialX texture cache";
-    return false;
-  }
-  MtlxVolumeAssetReader reader;
-  reader.anchor = anchor_path;
-  reader.resolver = options_.volume_texture_resolver
-      ? options_.volume_texture_resolver : &reader.default_resolver;
-  reader.allow_parent_paths = options_.volume_texture_resolver &&
-      options_.volume_texture_resolver->GetConfig().allow_parent_paths;
-  texcache_set_reader(cache.get(), &ReadMtlxVolumeTexture, &reader,
-                      options_.volume_texture_max_decoded_bytes);
-  std::vector<::MtlxValue> memo(static_cast<size_t>(doc->nnode));
-  std::vector<char> done(static_cast<size_t>(doc->nnode), 0);
   ShadeContext context{};
-  context.doc = doc.get();
-  context.tex = cache.get();
+  context.doc = impl_->doc.get();
+  context.tex = impl_->cache.get();
   for (size_t i = 0; i < 2; ++i) {
     context.uv[i] = input.uv[i];
     context.uv_dx[i] = input.uv_dx[i];
@@ -150,15 +188,15 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
   context.has_view_derivatives = input.has_view_derivatives;
   context.time = input.time;
   context.frame = input.frame;
-  context.memo = memo.data();
-  context.memo_done = done.data();
+  context.memo = impl_->memo.data();
+  context.memo_done = impl_->done.data();
   MtlxVolumeParams volume{};
-  if (mtlx_eval_volume(&context, doc->mats[material].volume_node, &volume)) {
-    error_ = "Unsupported or invalid MaterialX volume graph";
+  if (mtlx_eval_volume(&context, impl_->node, &volume)) {
+    impl_->error = "Unsupported or invalid MaterialX volume graph";
     return false;
   }
-  if (texcache_had_load_failure(cache.get())) {
-    error_ = reader.error.empty() ? "Failed to decode MaterialX volume texture" : reader.error;
+  if (texcache_had_load_failure(impl_->cache.get())) {
+    impl_->error = impl_->reader.error.empty() ? "Failed to decode MaterialX volume texture" : impl_->reader.error;
     return false;
   }
   const float values[] = {volume.absorption.x, volume.absorption.y,
@@ -167,7 +205,7 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
       volume.emission.z, volume.anisotropy};
   for (float value : values) {
     if (!std::isfinite(value)) {
-      error_ = "MaterialX volume graph produced a non-finite value";
+      impl_->error = "MaterialX volume graph produced a non-finite value";
       return false;
     }
   }

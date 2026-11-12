@@ -209,6 +209,23 @@ struct MtlxVolumeSample {
   float anisotropy = 0;
 };
 
+/// A parsed volume graph and its texture cache, reusable across sample points.
+/// Instances are not thread-safe; create one per concurrently sampling worker.
+class MtlxVolumeEvaluator {
+public:
+  ~MtlxVolumeEvaluator();
+  MtlxVolumeEvaluator(const MtlxVolumeEvaluator&) = delete;
+  MtlxVolumeEvaluator& operator=(const MtlxVolumeEvaluator&) = delete;
+  bool Evaluate(const MtlxVolumeContext& context, MtlxVolumeSample* out);
+  const std::string& GetError() const;
+
+private:
+  friend class MtlxConverter;
+  struct Impl;
+  explicit MtlxVolumeEvaluator(std::unique_ptr<Impl> impl);
+  std::unique_ptr<Impl> impl_;
+};
+
 /// MaterialX to render data converter
 class MtlxConverter {
 public:
@@ -232,6 +249,13 @@ public:
   bool ConvertFileToRenderMaterial(const std::string& filename,
                                     const std::string& material_name,
                                     RenderMaterial* out);
+
+  /// Parse a volume graph once for repeated sampling. A configured borrowed
+  /// texture resolver must outlive the evaluator. Returns null on failure;
+  /// see GetError(). Unsupported graphs can also fail at evaluation time.
+  std::unique_ptr<MtlxVolumeEvaluator> CreateVolumeEvaluator(
+      const std::string& mtlx_content, const std::string& material_name,
+      const std::string& anchor_path = "");
 
   /// Evaluate a volume material at the supplied UV, with position (0,0,0)
   /// and normal/view (0,0,1). `anchor_path` anchors includes and textures.

@@ -107,7 +107,9 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
 - 2026-11-13: Tydra embeds the evaluator for sampled volume coefficients,
   with a private stb decoder and an asset-reader callback in the texture cache.
   Tydra uses its asset resolver and a decoded-memory cap; volume graph traversal
-  has a 100,000-visit work limit. Preserve these local changes during sync.
+  has a 100,000-visit work limit. The cache failure flag can be cleared between
+  evaluations so a reusable evaluator can retry a failed texture read.
+  Preserve these local changes during sync.
 - 2026-11-13: VDF/EDF multiplication uses the declared closure input and
   supports connected color weights; VDF coefficients retain signed RGB
   weights under a coefficient-wise interpretation of the PBR specification's

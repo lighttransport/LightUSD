@@ -19,6 +19,8 @@ typedef int (*MtlxTextureReadFn)(void *user, const char *path,
 void texcache_set_reader(TextureCache *tc, MtlxTextureReadFn read_fn,
                          void *user, size_t max_decoded_bytes);
 int texcache_had_load_failure(const TextureCache *tc);
+/* Reset the per-evaluation failure flag without discarding cached textures. */
+void texcache_clear_load_failure(TextureCache *tc);
 
 /* Preload every texture referenced by image and projection nodes, then freeze
  * the cache so subsequent texcache_get calls are read-only (thread-safe during

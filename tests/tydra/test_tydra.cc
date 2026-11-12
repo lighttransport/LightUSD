@@ -3124,9 +3124,17 @@ void TestMaterialXUtilities() {
                                           &spatial_sample));
   assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
   assert(std::abs(spatial_sample.absorption[2] - 0.75f) < 1e-6f);
+  auto reusable_volume = converter.CreateVolumeEvaluator(spatial_volume, "Fog");
+  assert(reusable_volume);
+  assert(reusable_volume->Evaluate(sample_context, &spatial_sample));
+  sample_context.position[0] = 0.9f;
+  assert(reusable_volume->Evaluate(sample_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.9f) < 1e-6f);
   sample_context.position[0] = std::numeric_limits<float>::infinity();
-  assert(!converter.EvaluateVolumeMaterial(spatial_volume, "Fog", sample_context,
-                                           &spatial_sample));
+  assert(!reusable_volume->Evaluate(sample_context, &spatial_sample));
+  assert(std::abs(spatial_sample.absorption[0] - 0.9f) < 1e-6f);
+  sample_context.position[0] = 0.25f;
+  assert(reusable_volume->Evaluate(sample_context, &spatial_sample));
   assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
   assert(!converter.EvaluateVolumeMaterial(volume_mtlx, "Missing", volume_uv,
                                            &volume_sample));
@@ -3155,6 +3163,24 @@ void TestMaterialXUtilities() {
                                           &volume_sample, "volume_scene.mtlx"));
   assert(std::abs(volume_sample.absorption[0] - 64.0f / 255.0f) < 1e-5f);
   assert(std::abs(volume_sample.absorption[2] - 192.0f / 255.0f) < 1e-5f);
+  auto cached_volume = converter.CreateVolumeEvaluator(textured_volume, "Fog",
+                                                        "volume_scene.mtlx");
+  assert(cached_volume);
+  assert(cached_volume->Evaluate(sample_context, &spatial_sample));
+  std::remove(volume_texture_path);
+  assert(cached_volume->Evaluate(sample_context, &spatial_sample));
+  auto retry_volume = converter.CreateVolumeEvaluator(textured_volume, "Fog",
+                                                       "volume_scene.mtlx");
+  assert(retry_volume);
+  assert(!retry_volume->Evaluate(sample_context, &spatial_sample));
+  {
+    std::ofstream texture(volume_texture_path, std::ios::binary);
+    texture << "P6\n1 1\n255\n";
+    const unsigned char pixel[3] = {64, 128, 192};
+    texture.write(reinterpret_cast<const char*>(pixel), sizeof(pixel));
+    assert(texture.good());
+  }
+  assert(retry_volume->Evaluate(sample_context, &spatial_sample));
   std::remove(volume_texture_path);
   assert(!converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
                                            &volume_sample, "volume_scene.mtlx"));
