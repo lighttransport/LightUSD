@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """CPU MaterialX volume look regression using the public OpenUSD VDB fixture."""
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
-from check_lusdrender_smoke import read_png_rgba
+from check_lusdrender_smoke import read_png_rgba, write_png_rgba
 
 
 def main():
@@ -98,6 +99,145 @@ def Camera "TestCam" {
   uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 ''', encoding="utf-8")
+        scattering_scene = tmp / "scattering.usda"
+        scattering_scene.write_text(scene_text.split('def Xform "Lights"')[0] + '''
+ def Camera "TestCam" {
+  float2 clippingRange = (0.1, 200)
+  double3 xformOp:translate = (0, 0, 150)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+ }
+ def DistantLight "TestLight" {
+  color3f inputs:color = (1, 0.25, 0)
+  float inputs:intensity = 4
+  float xformOp:rotateY = 180
+  uniform token[] xformOpOrder = ["xformOp:rotateY"]
+ }
+''', encoding="utf-8")
+        def scattering_graph(g):
+            return f'''<materialx version="1.39">
+  <anisotropic_vdf name="fog" type="VDF"><input name="scattering" type="vector3" value="0.03,0.03,0.03"/><input name="anisotropy" type="float" value="{g}"/></anisotropic_vdf>
+  <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+  <volumematerial name="Mat"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  <look name="Look"><materialassign name="binding" geom="/Volume" material="Mat"/></look>
+</materialx>'''
+        graph.write_text(scattering_graph(0.6), encoding="utf-8")
+        forward = render(1, "forward-scattering", source=scattering_scene, camera="/TestCam")
+        if forward != render(2, "forward-scattering", source=scattering_scene, camera="/TestCam"):
+            raise RuntimeError("scene-lit volume differs between worker counts")
+        graph.write_text(scattering_graph(-0.6), encoding="utf-8")
+        backward = render(1, "backward-scattering", source=scattering_scene, camera="/TestCam")
+        if sum(forward[0::4]) <= sum(backward[0::4]) * 2:
+            raise RuntimeError("scene light does not follow the anisotropic phase function")
+        if not any(forward[i] > forward[i + 1] > forward[i + 2]
+                   for i in range(0, len(forward), 4)):
+            raise RuntimeError("volume scattering does not preserve the light color")
+        dome_scene = tmp / "scattering-dome.usda"
+        dome_scene.write_text(scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + '''
+def DomeLight "Environment" {
+  color3f inputs:color = (0.7, 0.2, 0.05)
+  float inputs:intensity = 0.5
+}
+''', encoding="utf-8")
+        graph.write_text(scattering_graph(0).replace("0.03,0.03,0.03", "0,0,0"), encoding="utf-8")
+        dome_baseline = render(1, "dome-baseline", source=dome_scene, camera="/TestCam",
+                               extra=("-noShadows",))
+        graph.write_text(scattering_graph(0.8), encoding="utf-8")
+        dome_unshadowed = render(1, "dome-scattering", source=dome_scene, camera="/TestCam",
+                                 extra=("-noShadows",))
+        if any(abs(a - b) > 2 for a, b in zip(dome_baseline, dome_unshadowed)):
+            raise RuntimeError("uniform environment does not conserve scattering radiance")
+        dome_shadowed = render(1, "dome-shadowed", source=dome_scene, camera="/TestCam")
+        if sum(dome_shadowed[0::4]) >= sum(dome_unshadowed[0::4]) - 10:
+            raise RuntimeError("fog does not attenuate the incident environment light")
+        environment = tmp / "directional-env.png"
+        env_pixels = bytearray()
+        for _y in range(8):
+            for x in range(16):
+                env_pixels.extend((255, 0, 0, 255) if x < 8 else (0, 0, 255, 255))
+        write_png_rgba(environment, 16, 8, env_pixels)
+        directional_scene = tmp / "directional-dome.usda"
+        directional_scene.write_text(dome_scene.read_text(encoding="utf-8").replace(
+            'color3f inputs:color = (0.7, 0.2, 0.05)',
+            f'asset inputs:texture:file = @{environment}@'), encoding="utf-8")
+        graph.write_text(scattering_graph(-0.8), encoding="utf-8")
+        directional = render(1, "directional-dome", source=directional_scene, camera="/TestCam",
+                             extra=("-noShadows",))
+        graph.write_text(scattering_graph(0).replace("0.03,0.03,0.03", "0,0,0"), encoding="utf-8")
+        directional_baseline = render(1, "directional-baseline", source=directional_scene,
+                                      camera="/TestCam", extra=("-noShadows",))
+        if not any(abs(directional[i] - directional_baseline[i]) > 5 and
+                   abs(directional[i + 2] - directional_baseline[i + 2]) > 5
+                   for i in range(0, len(directional), 4)):
+            raise RuntimeError("directional dome does not affect anisotropic scattering")
+        absorbing_scene = tmp / "scattering-absorber.usda"
+        absorbing_scene.write_text(scattering_scene.read_text(encoding="utf-8") + '''
+def Volume "Absorber" {
+  rel field:density = </Volume/Density>
+  float xformOp:rotateX = -90
+  double3 xformOp:translate = (0, -3, -130)
+  uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+''', encoding="utf-8")
+        absorber_graph = scattering_graph(0.6).replace(
+            '</materialx>', '''<absorption_vdf name="absorb" type="VDF"><input name="absorption" type="vector3" value="0.08,0,0"/></absorption_vdf>
+  <volume name="absorbing" type="volumeshader"><input name="vdf" type="VDF" nodename="absorb"/></volume>
+  <volumematerial name="Absorbing"><input name="volumeshader" type="volumeshader" nodename="absorbing"/></volumematerial>
+</materialx>''').replace('</look>', '<materialassign name="absorber" geom="/Absorber" material="Absorbing"/></look>')
+        graph.write_text(absorber_graph, encoding="utf-8")
+        absorbed = render(1, "absorbing-scattering", source=absorbing_scene, camera="/TestCam")
+        red_before, green_before = sum(forward[0::4]), sum(forward[1::4])
+        red_after, green_after = sum(absorbed[0::4]), sum(absorbed[1::4])
+        if not (red_after < red_before * 0.75 and abs(green_after - green_before) < green_before * 0.05):
+            raise RuntimeError(f"colored medium did not attenuate the light: "
+                               f"before {(red_before, green_before)}, after {(red_after, green_after)}")
+        no_shadow_absorbed = render(1, "absorber-no-shadows", source=absorbing_scene,
+                                    camera="/TestCam", extra=("-noShadows",))
+        graph.write_text(scattering_graph(0.6), encoding="utf-8")
+        no_shadow_forward = render(1, "forward-no-shadows", source=scattering_scene,
+                                   camera="/TestCam", extra=("-noShadows",))
+        if any(abs(a - b) > 1 for a, b in zip(no_shadow_absorbed, no_shadow_forward)):
+            raise RuntimeError("-noShadows did not disable volume attenuation along light rays")
+        vdb_tool = shutil.which("vdb_tool")
+        if vdb_tool:
+            sphere = tmp / "shadow-sphere.vdb"
+            subprocess.run([vdb_tool, "-sphere", "radius=40", "dim=64", "name=sphere",
+                            "-write", str(sphere)], check=True, capture_output=True, timeout=60)
+            level_set_scene = tmp / "scattering-level-set.usda"
+            level_set_scene.write_text(scattering_scene.read_text(encoding="utf-8") + f'''
+def Volume "LevelSetBlocker" {{
+  rel field:sdf = </LevelSetBlocker/Sdf>
+  double3 xformOp:translate = (0, 0, -130)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+  def OpenVDBAsset "Sdf" {{
+    asset filePath = @{sphere}@
+    token fieldName = "sphere"
+    token fieldClass = "levelSet"
+  }}
+}}
+''', encoding="utf-8")
+            level_shadow = render(1, "level-set-shadow", source=level_set_scene, camera="/TestCam")
+            level_unshadowed = render(1, "level-set-no-shadow", source=level_set_scene,
+                                      camera="/TestCam", extra=("-noShadows",))
+            if sum(level_shadow[0::4]) >= sum(forward[0::4]) * 0.95:
+                raise RuntimeError("level-set surface does not shadow volume lighting")
+            if any(abs(a - b) > 1 for a, b in zip(level_unshadowed, no_shadow_forward)):
+                raise RuntimeError("-noShadows did not disable level-set shadows")
+        else:
+            print("SKIP: vdb_tool unavailable for level-set light shadow check")
+        shadow_scene = tmp / "scattering-shadow.usda"
+        shadow_scene.write_text(scattering_scene.read_text(encoding="utf-8") + '''
+ def Mesh "LightBlocker" {
+  point3f[] points = [(-500,-500,-120), (500,-500,-120), (500,500,-120), (-500,500,-120)]
+  int[] faceVertexCounts = [4]
+  int[] faceVertexIndices = [0,1,2,3]
+  uniform token subdivisionScheme = "none"
+  uniform bool doubleSided = true
+ }
+''', encoding="utf-8")
+        graph.write_text(scattering_graph(0.6), encoding="utf-8")
+        shadow = render(1, "shadow-scattering", source=shadow_scene, camera="/TestCam")
+        if sum(shadow[0::4]) >= sum(forward[0::4]) // 4:
+            raise RuntimeError("geometry does not shadow the volume's direct light")
         def view_graph(from_space, to_space, position, factor):
             return f'''<materialx version="1.39">
   <transformpoint name="p" type="vector3"><input name="in" type="vector3" value="{position}"/><input name="fromspace" type="string" value="{from_space}"/><input name="tospace" type="string" value="{to_space}"/></transformpoint>

@@ -259,13 +259,19 @@ graphs remain unsupported.
 For an explicit MaterialX look on CPU volume previews, pass
 `--volume-mtlx look.mtlx --volume-mtlx-look Look`. Assignments match volume prim
 paths, and geometry-property nodes sample authored VDB fields in world space.
-The marcher integrates RGB absorption, scattering and EDF emission per step;
-scattering assumes unit isotropic incident radiance rather than evaluating
-scene lights. Overlapping fog volumes combine their coefficients at each step;
-the stepwise integration remains an approximation for spatially varying media.
-This preview does not implement multiple scattering or shadowed lighting.
-It caps each ray at 1,024 intersected fog volumes and one million interval
-checks, and limits each interval to approximately 4,096 steps.
+The marcher integrates RGB absorption, scattering and EDF emission per step.
+MaterialX scattering uses the scene's finite, distant, and dome lights, a
+Henyey–Greenstein phase function, and geometry, level-set surface, and fog shadows
+when shadows are enabled. Dome lighting uses 16 deterministic phase-function
+samples per step, so small or bright environment features can be undersampled. Fog shadows accumulate RGB extinction through intersected media,
+using approximately 128 steps per medium at most on each light ray. Level-set
+surfaces cast shadows into fog but do not receive shadows. Area lights are
+approximated at their centers; multiple scattering is not implemented. Legacy fog mixed with a
+MaterialX volume still uses unit isotropic illumination. Overlapping fog volumes
+combine their coefficients at each step; stepwise integration approximates
+spatially varying media. The preview caps each ray at 1,024 intersected fog
+volumes and one million interval, light, and shadow sample checks, and limits each interval to
+approximately 4,096 steps.
 Level sets remain surfaces unless
 `-volumeLevelSet fog` is selected. Negative coefficients fail the render.
 The resolved field cache and per-worker texture caches have bounded budgets;
