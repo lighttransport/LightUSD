@@ -47,6 +47,10 @@ int main(void) {
       "colorspace=\"srgb_texture\"/></image>"
       "<absorption_vdf name=\"fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" value=\"0.1, 0.2, 0.3\"/></absorption_vdf>"
       "<mystery_vdf name=\"unknown\" type=\"VDF\"/>"
+      "<constant name=\"density_value\" type=\"vector3\"><input name=\"value\" type=\"vector3\" value=\"0.5, 0.5, 0.5\"/></constant>"
+      "<mystery_value name=\"unknown_value\" type=\"vector3\"/>"
+      "<absorption_vdf name=\"connected_fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" nodename=\"density_value\"/></absorption_vdf>"
+      "<absorption_vdf name=\"bad_fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" nodename=\"unknown_value\"/></absorption_vdf>"
       "<uniform_edf name=\"glow\" type=\"EDF\"><input name=\"color\" type=\"color3\" value=\"0.2, 0.4, 0.8\"/></uniform_edf>"
       "<mystery_edf name=\"unknown_edf\" type=\"EDF\"/>"
       "<add name=\"nested_edf\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"EDF\" nodename=\"unknown_edf\"/></add>"
@@ -55,6 +59,8 @@ int main(void) {
       "<volume name=\"invalid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"unknown\"/></volume>"
       "<volume name=\"nested_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"nested\"/></volume>"
       "<volume name=\"bad_emission\" type=\"volumeshader\"><input name=\"edf\" type=\"EDF\" nodename=\"nested_edf\"/></volume>"
+      "<volume name=\"connected_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"connected_fog\"/></volume>"
+      "<volume name=\"bad_value_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"bad_fog\"/></volume>"
       "</materialx>";
   MtlxDoc *doc = mtlx_load_string(xml);
   TextureCache *cache = texcache_create(".");
@@ -94,14 +100,20 @@ int main(void) {
     const int invalid = mtlx_find_node(doc, -1, "invalid_volume");
     const int nested = mtlx_find_node(doc, -1, "nested_volume");
     const int bad_emission = mtlx_find_node(doc, -1, "bad_emission");
+    const int connected = mtlx_find_node(doc, -1, "connected_volume");
+    const int bad_value = mtlx_find_node(doc, -1, "bad_value_volume");
     ok = valid >= 0 && invalid >= 0 && nested >= 0 && bad_emission >= 0 &&
+         connected >= 0 && bad_value >= 0 &&
          mtlx_eval_volume(&ctx, valid, &volume) == 0 &&
          near(volume.absorption.x, 0.1f, 1.0e-5f) &&
          near(volume.absorption.z, 0.3f, 1.0e-5f) &&
          near(volume.emission.y, 0.4f, 1.0e-5f) &&
          mtlx_eval_volume(&ctx, invalid, &volume) != 0 &&
          mtlx_eval_volume(&ctx, nested, &volume) != 0 &&
-         mtlx_eval_volume(&ctx, bad_emission, &volume) != 0;
+         mtlx_eval_volume(&ctx, bad_emission, &volume) != 0 &&
+         mtlx_eval_volume(&ctx, connected, &volume) == 0 &&
+         near(volume.absorption.y, 0.5f, 1.0e-5f) &&
+         mtlx_eval_volume(&ctx, bad_value, &volume) != 0;
   }
   if (!ok) fprintf(stderr, "MaterialX evaluator mip sampling failed\n");
 

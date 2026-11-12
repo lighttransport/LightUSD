@@ -1314,10 +1314,39 @@ static float in_component0(ShadeContext *ctx, const MtlxNode *n,
 static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n,
                                const char *name, OpenPBRParams *out);
 
+/* Volume closure parameters must not use the unknown-node fallback. */
+static int supported_volume_value(ShadeContext *ctx, const MtlxNode *n,
+                                  int depth) {
+    if (!n) return 1;
+    if (depth > 32) return 0;
+    if (strcmp(n->category, "input") && classify(n->category) == OP_UNKNOWN)
+        return 0;
+    for (int i = 0; i < n->ninput; ++i) {
+        const int src = n->inputs[i].src_node;
+        if (src >= ctx->doc->nnode) return 0;
+        if (src >= 0 && !supported_volume_value(ctx, &ctx->doc->nodes[src],
+                                                 depth + 1)) return 0;
+    }
+    return 1;
+}
+
+static int supported_closure_values(ShadeContext *ctx, const MtlxNode *n,
+                                    int depth) {
+    for (int i = 0; i < n->ninput; ++i) {
+        const MtlxInput *in = &n->inputs[i];
+        if (in->type == MV_NONE || in->src_node < 0) continue;
+        if (in->src_node >= ctx->doc->nnode ||
+            !supported_volume_value(ctx, &ctx->doc->nodes[in->src_node],
+                                    depth + 1)) return 0;
+    }
+    return 1;
+}
+
 /* Validate the closure branches consumed by eval_edf for volume emission. */
 static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     if (!n) return 1;
     if (depth > 32) return 0;
+    if (!supported_closure_values(ctx, n, depth)) return 0;
     const char *cat = n->category;
     if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf") ||
         !strcmp(cat, "conical_edf")) return 1;
@@ -1348,6 +1377,7 @@ static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
 static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     if (!n) return 1;
     if (depth > 32) return 0;
+    if (!supported_closure_values(ctx, n, depth)) return 0;
     const char *cat = n->category;
     if (!strcmp(cat, "absorption_vdf") || !strcmp(cat, "anisotropic_vdf") ||
         !strcmp(cat, "subsurface_vdf")) return 1;
