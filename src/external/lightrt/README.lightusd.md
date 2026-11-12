@@ -99,10 +99,10 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   `texcache_preload_mips()` and a `buildMipmaps` option on
   `CreateMaterialXSurfaceRuntime`; derivative-aware image nodes use trilinear
   LOD when the cache has mip chains. The ordinary preload path is unchanged.
-- 2026-11-13: LightUSD's `mtlx_eval_volume` rejects unsupported VDF closure
-  categories and overly deep VDF graphs. This is a local change to preserve
-  on the next LightRT sync; EDF and value-node support are not validated by
-  this check.
+- 2026-11-13: LightUSD's `mtlx_eval_volume` rejects unsupported VDF and EDF
+  closure categories and overly deep closure graphs. This is a local change
+  to preserve on the next LightRT sync; value-node support is not validated
+  by this check.
 - `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
   texture cache, environment light helpers, and OpenPBR BSDF support from
   `examples/mtlxrender`.

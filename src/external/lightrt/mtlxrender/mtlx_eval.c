@@ -1314,6 +1314,35 @@ static float in_component0(ShadeContext *ctx, const MtlxNode *n,
 static void apply_normal_input(ShadeContext *ctx, const MtlxNode *n,
                                const char *name, OpenPBRParams *out);
 
+/* Validate the closure branches consumed by eval_edf for volume emission. */
+static int supported_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
+    if (!n) return 1;
+    if (depth > 32) return 0;
+    const char *cat = n->category;
+    if (!strcmp(cat, "uniform_edf") || !strcmp(cat, "measured_edf") ||
+        !strcmp(cat, "conical_edf")) return 1;
+    if (!strcmp(cat, "add") || !strcmp(cat, "layer")) {
+        const char *a = !strcmp(cat, "layer") ? "base" : "in1";
+        const char *b = !strcmp(cat, "layer") ? "top" : "in2";
+        return supported_edf(ctx, input_node(ctx, n, a), depth + 1) &&
+               supported_edf(ctx, input_node(ctx, n, b), depth + 1);
+    }
+    if (!strcmp(cat, "mix"))
+        return supported_edf(ctx, input_node(ctx, n, "bg"), depth + 1) &&
+               supported_edf(ctx, input_node(ctx, n, "fg"), depth + 1);
+    if (!strcmp(cat, "multiply")) {
+        const MtlxNode *a = input_node(ctx, n, "in1");
+        const MtlxNode *b = input_node(ctx, n, "in2");
+        return supported_edf(ctx, a, depth + 1) &&
+               supported_edf(ctx, b, depth + 1);
+    }
+    if (!strcmp(cat, "light"))
+        return supported_edf(ctx, input_node(ctx, n, "edf"), depth + 1);
+    if (!strcmp(cat, "generalized_schlick_edf"))
+        return supported_edf(ctx, input_node(ctx, n, "base"), depth + 1);
+    return 0;
+}
+
 /* Check the same VDF branches that eval_vdf traverses.  Unknown closures and
  * cycles must not silently turn into a transparent medium. */
 static int supported_vdf(ShadeContext *ctx, const MtlxNode *n, int depth) {
@@ -1535,9 +1564,10 @@ int mtlx_eval_volume(ShadeContext *ctx, int volume_node,
     const MtlxNode *volume = &ctx->doc->nodes[volume_node];
     if (strcmp(volume->category, "volume")) return 1;
     const MtlxNode *vdf = input_node(ctx, volume, "vdf");
-    if (!supported_vdf(ctx, vdf, 0)) return 1;
+    const MtlxNode *edf = input_node(ctx, volume, "edf");
+    if (!supported_vdf(ctx, vdf, 0) || !supported_edf(ctx, edf, 0)) return 1;
     eval_vdf(ctx, vdf, 1.0f, out, 0);
-    out->emission = eval_edf(ctx, input_node(ctx, volume, "edf"), 0);
+    out->emission = eval_edf(ctx, edf, 0);
     return 0;
 }
 

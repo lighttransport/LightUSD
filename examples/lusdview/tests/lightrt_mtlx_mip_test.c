@@ -47,10 +47,14 @@ int main(void) {
       "colorspace=\"srgb_texture\"/></image>"
       "<absorption_vdf name=\"fog\" type=\"VDF\"><input name=\"absorption\" type=\"vector3\" value=\"0.1, 0.2, 0.3\"/></absorption_vdf>"
       "<mystery_vdf name=\"unknown\" type=\"VDF\"/>"
+      "<uniform_edf name=\"glow\" type=\"EDF\"><input name=\"color\" type=\"color3\" value=\"0.2, 0.4, 0.8\"/></uniform_edf>"
+      "<mystery_edf name=\"unknown_edf\" type=\"EDF\"/>"
+      "<add name=\"nested_edf\" type=\"EDF\"><input name=\"in1\" type=\"EDF\" nodename=\"glow\"/><input name=\"in2\" type=\"EDF\" nodename=\"unknown_edf\"/></add>"
       "<add name=\"nested\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"fog\"/><input name=\"in2\" type=\"VDF\" nodename=\"unknown\"/></add>"
-      "<volume name=\"valid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"fog\"/></volume>"
+      "<volume name=\"valid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"fog\"/><input name=\"edf\" type=\"EDF\" nodename=\"glow\"/></volume>"
       "<volume name=\"invalid_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"unknown\"/></volume>"
       "<volume name=\"nested_volume\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"nested\"/></volume>"
+      "<volume name=\"bad_emission\" type=\"volumeshader\"><input name=\"edf\" type=\"EDF\" nodename=\"nested_edf\"/></volume>"
       "</materialx>";
   MtlxDoc *doc = mtlx_load_string(xml);
   TextureCache *cache = texcache_create(".");
@@ -89,12 +93,15 @@ int main(void) {
     const int valid = mtlx_find_node(doc, -1, "valid_volume");
     const int invalid = mtlx_find_node(doc, -1, "invalid_volume");
     const int nested = mtlx_find_node(doc, -1, "nested_volume");
-    ok = valid >= 0 && invalid >= 0 && nested >= 0 &&
+    const int bad_emission = mtlx_find_node(doc, -1, "bad_emission");
+    ok = valid >= 0 && invalid >= 0 && nested >= 0 && bad_emission >= 0 &&
          mtlx_eval_volume(&ctx, valid, &volume) == 0 &&
          near(volume.absorption.x, 0.1f, 1.0e-5f) &&
          near(volume.absorption.z, 0.3f, 1.0e-5f) &&
+         near(volume.emission.y, 0.4f, 1.0e-5f) &&
          mtlx_eval_volume(&ctx, invalid, &volume) != 0 &&
-         mtlx_eval_volume(&ctx, nested, &volume) != 0;
+         mtlx_eval_volume(&ctx, nested, &volume) != 0 &&
+         mtlx_eval_volume(&ctx, bad_emission, &volume) != 0;
   }
   if (!ok) fprintf(stderr, "MaterialX evaluator mip sampling failed\n");
 
