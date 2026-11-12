@@ -10,6 +10,12 @@
 #include <sstream>
 #include <algorithm>
 #include <charconv>
+#include <cmath>
+#include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <set>
 
 namespace lightusd {
 namespace mtlx {
@@ -1498,6 +1504,165 @@ std::string MtlxIncludeAnchor(const std::string &root_path,
   return root_path.substr(0, slash + 1) + including_href;
 }
 
+using MtlxUnitScales = std::map<std::string, float>;
+
+bool ParseFiniteFloat(const std::string &text, float *value) {
+  if (!value || text.empty()) return false;
+  char *end = nullptr;
+  const float parsed = std::strtof(text.c_str(), &end);
+  if (end != text.c_str() + text.size() || !std::isfinite(parsed))
+    return false;
+  *value = parsed;
+  return true;
+}
+
+void CollectMtlxUnitMetadata(const MtlxElem &elem,
+                            const std::string &requested_type,
+                            std::set<std::string> *unit_types,
+                            std::map<std::string, MtlxUnitScales> *scales,
+                            std::string *error) {
+  if (elem.tag == "unittypedef") {
+    const std::string name = elem.Name();
+    if (!name.empty()) unit_types->insert(name);
+  } else if (elem.tag == "unitdef") {
+    const std::string type = elem.AttrOr("unittype");
+    if (type == requested_type) {
+      MtlxUnitScales &type_scales = (*scales)[type];
+      for (const MtlxElem &unit : elem.children) {
+        if (unit.tag != "unit") continue;
+        const std::string name = unit.Name();
+        if (name.empty()) continue;
+        float scale = 1.0f;
+        if (const std::string *authored_scale = unit.Attr("scale")) {
+          if (!ParseFiniteFloat(*authored_scale, &scale)) {
+            *error = "Invalid scale for MaterialX unit '" + name + "'";
+            return;
+          }
+        }
+        type_scales[name] = scale;
+      }
+    }
+  }
+  for (const MtlxElem &child : elem.children) {
+    if (!error->empty()) return;
+    CollectMtlxUnitMetadata(child, requested_type, unit_types, scales, error);
+  }
+}
+
+bool IsMtlxStructuralElement(const std::string &tag) {
+  static const char *const structural[] = {
+      "materialx", "nodegraph", "nodedef", "typedef", "unittypedef",
+      "unitdef", "targetdef", "attributedef", "geompropdef",
+      "implementation", "look", "collection", "geominfo", "materialassign",
+      "input", "output", "unit", "include"};
+  for (const char *candidate : structural)
+    if (tag == candidate) return true;
+  return false;
+}
+
+std::string FormatMtlxFloat(float value) {
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::setprecision(std::numeric_limits<float>::max_digits10) << value;
+  return out.str();
+}
+
+bool ConvertMtlxInput(MtlxElem *input, const std::string &unit_type,
+                      const std::string &target_unit,
+                      const MtlxUnitScales &scales, bool *converted,
+                      std::string *error) {
+  const std::string *authored_type = input->Attr("unittype");
+  const std::string *authored_unit = input->Attr("unit");
+  const std::string *value_text = input->Attr("value");
+  const std::string type = input->AttrOr("type");
+  if (!authored_type || *authored_type != unit_type || !authored_unit ||
+      !value_text || (type != "float" && type != "vector2" &&
+                      type != "vector3" && type != "vector4"))
+    return true;
+
+  MtlxTypedValue parsed;
+  if (!ParseMtlxValue(type, *value_text, &parsed)) {
+    *error = "Invalid value on MaterialX input '" + input->Name() + "'";
+    return false;
+  }
+
+  float ratio = 1.0f;
+  if (*authored_unit != target_unit) {
+    const auto from = scales.find(*authored_unit);
+    const auto to = scales.find(target_unit);
+    if (from == scales.end()) {
+      *error = "Unknown source MaterialX unit '" + *authored_unit + "'";
+      return false;
+    }
+    if (to == scales.end()) {
+      *error = "Unknown target MaterialX unit '" + target_unit + "'";
+      return false;
+    }
+    if (to->second == 0.0f) {
+      *error = "Target MaterialX unit has a zero scale: '" + target_unit + "'";
+      return false;
+    }
+    ratio = from->second / to->second;
+    if (!std::isfinite(ratio)) {
+      *error = "Invalid conversion ratio for MaterialX units '" +
+               *authored_unit + "' and '" + target_unit + "'";
+      return false;
+    }
+  }
+
+  std::vector<float> values;
+  if (type == "float") {
+    values.push_back(static_cast<float>(parsed.num));
+  } else {
+    values.reserve(parsed.nums.size());
+    for (double value : parsed.nums) values.push_back(static_cast<float>(value));
+  }
+  for (float &value : values) {
+    value *= ratio;
+    if (!std::isfinite(value)) {
+      *error = "Non-finite result converting MaterialX input '" + input->Name() +
+               "'";
+      return false;
+    }
+  }
+
+  std::string converted_text;
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i) converted_text += ", ";
+    converted_text += FormatMtlxFloat(values[i]);
+  }
+  input->SetAttr("value", converted_text);
+  input->attrs.erase(
+      std::remove_if(input->attrs.begin(), input->attrs.end(),
+                     [](const std::pair<std::string, std::string> &attr) {
+                       return attr.first == "unit" || attr.first == "unittype";
+                     }),
+      input->attrs.end());
+  *converted = true;
+  return true;
+}
+
+bool ConvertMtlxNodeInputs(MtlxElem *elem, const std::string &unit_type,
+                           const std::string &target_unit,
+                           const MtlxUnitScales &scales, bool *converted,
+                           std::string *error) {
+  if (!IsMtlxStructuralElement(elem->tag)) {
+    for (MtlxElem &child : elem->children) {
+      if (child.tag == "input" &&
+          !ConvertMtlxInput(&child, unit_type, target_unit, scales, converted,
+                            error))
+        return false;
+    }
+  }
+  for (MtlxElem &child : elem->children) {
+    if (child.tag == "input") continue;
+    if (!ConvertMtlxNodeInputs(&child, unit_type, target_unit, scales,
+                               converted, error))
+      return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 void UpgradeMtlxVersion(MtlxElem *root) {
@@ -1884,6 +2049,47 @@ bool MtlxDocument::ResolveNodeGraphs(
   for (const MtlxElem &def : StandardMtlxNodeDefs())
     library.AddNodeDef(def, {});
   return ResolveMtlxGraphs(root, library, graph_order, err);
+}
+
+bool MtlxDocument::ConvertToUnit(const std::string &unit_type,
+                                const std::string &target_unit) {
+  error_.clear();
+  if (!parsed_root_) {
+    error_ = "MaterialX document has not been parsed";
+    return false;
+  }
+
+  MtlxElem candidate = XMLNodeToMtlxElem(parsed_root_);
+  std::set<std::string> unit_types;
+  std::map<std::string, MtlxUnitScales> all_scales;
+  CollectMtlxUnitMetadata(candidate, unit_type, &unit_types, &all_scales,
+                          &error_);
+  if (!error_.empty()) return false;
+
+  const auto type_scales = all_scales.find(unit_type);
+  if (unit_types.find(unit_type) == unit_types.end() ||
+      type_scales == all_scales.end() || type_scales->second.empty()) {
+    error_ = "No MaterialX unit converter is defined for type '" + unit_type +
+             "'";
+    return false;
+  }
+
+  bool converted = false;
+  for (MtlxElem &child : candidate.children) {
+    if (!ConvertMtlxNodeInputs(&child, unit_type, target_unit,
+                               type_scales->second, &converted, &error_))
+      return false;
+  }
+  if (!converted) return false;
+
+  MtlxDocument updated;
+  if (!updated.ParseRoot(MtlxElemToXMLNode(candidate))) {
+    error_ = "Failed to rebuild MaterialX document after unit conversion";
+    return false;
+  }
+  updated.warning_ = warning_;
+  *this = std::move(updated);
+  return true;
 }
 
 bool MtlxDocument::ParseFromFile(const std::string& filename) {

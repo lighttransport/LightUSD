@@ -368,6 +368,16 @@ public:
                          std::vector<std::string>* graph_order,
                          std::string* err) const;
 
+  // Convert authored float and vector2/3/4 node inputs of `unit_type` into
+  // `target_unit` using this document's unit definitions. Converted inputs
+  // have their unit and unittype annotations removed, matching MaterialX's
+  // UnitConverterRegistry::convertToUnit behavior. Returns true if any input
+  // was converted, or false if no eligible input was found. Invalid unit
+  // definitions, units, or values also return false, set GetError(), and
+  // leave the document unchanged.
+  bool ConvertToUnit(const std::string& unit_type,
+                     const std::string& target_unit);
+
   // Document properties
   const std::string& GetVersion() const { return version_; }
   const std::string& GetColorSpace() const { return colorspace_; }

@@ -340,6 +340,93 @@ static void CheckTypedMtlxGraphResolution() {
          "authored unit and unit-type metadata were not retained");
   }
 
+  g_checks++;
+  MtlxDocument conversion_document;
+  const bool conversion_parsed = conversion_document.ParseFromXML(
+      R"(<materialx version="1.39">
+      <unittypedef name="distance"/>
+      <unitdef name="UD_test_distance" unittype="distance">
+        <unit name="meter" scale="1.0"/>
+        <unit name="centimeter" scale="0.01"/>
+      </unitdef>
+      <constant name="length" type="float">
+        <input name="value" type="float" value="250" unit="centimeter" unittype="distance"/>
+      </constant>
+      <nodegraph name="graph">
+        <input name="interface_length" type="float" value="250" unit="centimeter" unittype="distance"/>
+        <constant name="position" type="vector3">
+          <input name="value" type="vector3" value="100, 200, 300" unit="centimeter" unittype="distance"/>
+        </constant>
+      </nodegraph>
+      <nodedef name="ND_test_length" node="testlength" type="float">
+        <input name="value" type="float" value="250" unit="centimeter" unittype="distance"/>
+      </nodedef>
+      </materialx>)");
+  const bool conversion_ok =
+      conversion_parsed && conversion_document.ConvertToUnit("distance", "meter");
+  const MtlxInputPtr converted_length = conversion_document.FindNode("length")
+      ? conversion_document.FindNode("length")->GetInput("value")
+      : nullptr;
+  const MtlxNodeGraphPtr conversion_graph =
+      conversion_document.FindNodeGraph("graph");
+  const MtlxNodePtr converted_position =
+      conversion_graph ? conversion_graph->GetNode("position") : nullptr;
+  const MtlxInputPtr converted_position_value =
+      converted_position ? converted_position->GetInput("value") : nullptr;
+  const MtlxInputPtr graph_interface = conversion_graph &&
+          !conversion_graph->GetInputs().empty()
+      ? conversion_graph->GetInputs().front()
+      : nullptr;
+  float converted_length_value = 0.0f;
+  std::vector<float> converted_position_values;
+  const std::string converted_xml = conversion_document.GetResolvedXML();
+  const size_t nodedef_start = converted_xml.find("<nodedef");
+  const size_t nodedef_end = converted_xml.find("</nodedef>", nodedef_start);
+  const bool nodedef_units_retained =
+      nodedef_start != std::string::npos && nodedef_end != std::string::npos &&
+      converted_xml.substr(nodedef_start, nodedef_end - nodedef_start)
+              .find("unittype=\"distance\"") != std::string::npos;
+  if (!conversion_ok || !converted_length || !converted_position_value ||
+      !converted_length->GetValueAsFloat(converted_length_value) ||
+      std::fabs(converted_length_value - 2.5f) > 1e-6f ||
+      !converted_length->GetUnit().empty() ||
+      !converted_length->GetUnitType().empty() ||
+      !converted_position_value->GetValueAsFloatVector(
+          converted_position_values) ||
+      converted_position_values.size() != 3 ||
+      std::fabs(converted_position_values[0] - 1.0f) > 1e-6f ||
+      std::fabs(converted_position_values[1] - 2.0f) > 1e-6f ||
+      std::fabs(converted_position_values[2] - 3.0f) > 1e-6f ||
+      !graph_interface || graph_interface->GetUnit() != "centimeter" ||
+      !nodedef_units_retained) {
+    Fail("MTLX_UNIT_CONVERSION", 0,
+         "unit conversion values, metadata cleanup, or nodegraph interface handling differed");
+  }
+
+  g_checks++;
+  MtlxDocument invalid_conversion_document;
+  const bool invalid_conversion_parsed =
+      invalid_conversion_document.ParseFromXML(
+          R"(<materialx version="1.39">
+          <unittypedef name="distance"/>
+          <unitdef name="UD_test_distance" unittype="distance">
+            <unit name="meter" scale="1.0"/>
+            <unit name="centimeter" scale="0.01"/>
+          </unitdef>
+          <constant name="length" type="float">
+            <input name="value" type="float" value="250" unit="centimeter" unittype="distance"/>
+          </constant>
+          </materialx>)");
+  const std::string unconverted_xml =
+      invalid_conversion_document.GetResolvedXML();
+  if (!invalid_conversion_parsed ||
+      invalid_conversion_document.ConvertToUnit("distance", "unknown") ||
+      invalid_conversion_document.GetError().empty() ||
+      invalid_conversion_document.GetResolvedXML() != unconverted_xml) {
+    Fail("MTLX_UNIT_CONVERSION_ATOMIC", 0,
+         "an unknown target unit changed the document or failed without an error");
+  }
+
   MtlxLibrary library;
   MtlxElem constant_def = elem("nodedef", "ND_test_constant");
   constant_def.SetAttr("node", "testconstant");
