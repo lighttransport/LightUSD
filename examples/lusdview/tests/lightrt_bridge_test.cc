@@ -64,6 +64,41 @@ std::string MaterialTextureDir() {
 }  // namespace
 
 int main() {
+  {
+    const char* xml = R"mtlx(<materialx version="1.39">
+      <oren_nayar_diffuse_bsdf name="a" type="BSDF">
+        <input name="color" type="color3" value="0.2, 0.4, 0.6"/>
+        <input name="roughness" type="float" value="0.8"/>
+      </oren_nayar_diffuse_bsdf>
+      <burley_diffuse_bsdf name="b" type="BSDF">
+        <input name="color" type="color3" value="0.7, 0.5, 0.3"/>
+        <input name="roughness" type="float" value="0.3"/>
+      </burley_diffuse_bsdf>
+      <mix name="mix" type="BSDF">
+        <input name="bg" type="BSDF" nodename="a"/>
+        <input name="fg" type="BSDF" nodename="b"/>
+        <input name="mix" type="float" value="0.25"/>
+      </mix>
+      <surface name="s" type="surfaceshader">
+        <input name="bsdf" type="BSDF" nodename="mix"/>
+      </surface>
+      <surfacematerial name="m" type="material">
+        <input name="surfaceshader" type="surfaceshader" nodename="s"/>
+      </surfacematerial>
+    </materialx>)mtlx";
+    lightusd::tydra::LightRtOpenPBRParams params;
+    std::string err;
+    if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBR(xml, "m", &params, &err) ||
+        params.diffuseLobeCount != 2 ||
+        params.diffuseLobes[0].model != 2 || params.diffuseLobes[1].model != 3 ||
+        !Near(params.diffuseLobes[0].weight, 0.75f) ||
+        !Near(params.diffuseLobes[1].weight, 0.25f) ||
+        !Near(params.diffuseLobes[0].roughness, 0.8f) ||
+        !Near(params.diffuseLobes[1].roughness, 0.3f)) {
+      std::fprintf(stderr, "MaterialX diffuse mixture bridge failed: %s\n", err.c_str());
+      return 1;
+    }
+  }
   lusdview::DrawScene scene;
 
   lusdview::DrawMaterialCPU mat;

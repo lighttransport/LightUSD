@@ -12,6 +12,14 @@ namespace tydra {
 constexpr int kLightRtOpenPBRVec4s = 20;
 constexpr int kLightRtOpenPBRFloats = kLightRtOpenPBRVec4s * 4;
 
+constexpr int kMaxRealtimeDiffuseLobes = 32;
+struct RealtimeDiffuseLobe {
+  float color[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float roughness{0.0f};
+  int model{0};
+};
+
 struct RealtimePbrMaterial {
   float baseWeight{1.0f};
   float baseColor[3]{0.8f, 0.8f, 0.8f};
@@ -19,6 +27,8 @@ struct RealtimePbrMaterial {
   // CPU model: 0 Lambert, 1 compensated Oren–Nayar, 2 Oren–Nayar, 3 Burley.
   // Values match the vendored MTLX_DIFFUSE_* constants.
   int diffuseModel{0};
+  int diffuseLobeCount{0};
+  RealtimeDiffuseLobe diffuseLobes[kMaxRealtimeDiffuseLobes]{};
   float metalness{0.0f};
   float specularWeight{1.0f};
   float specularColor[3]{1.0f, 1.0f, 1.0f};

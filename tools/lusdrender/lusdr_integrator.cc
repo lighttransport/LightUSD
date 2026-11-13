@@ -240,6 +240,16 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
   p.diffuse_roughness = src.diffuseRoughness;
   p.diffuse_model = src.diffuseModel;
+  static_assert(lightusd::tydra::kMaxRealtimeDiffuseLobes == MTLX_MAX_DIFFUSE_LOBES,
+                "Diffuse lobe limits must match");
+  p.diffuse_lobe_count = std::clamp(src.diffuseLobeCount, 0, MTLX_MAX_DIFFUSE_LOBES);
+  for (int i = 0; i < p.diffuse_lobe_count; ++i) {
+    const auto &lobe = src.diffuseLobes[i];
+    p.diffuse_lobes[i].color = v3_make(lobe.color[0], lobe.color[1], lobe.color[2]);
+    p.diffuse_lobes[i].weight = lobe.weight;
+    p.diffuse_lobes[i].roughness = lobe.roughness;
+    p.diffuse_lobes[i].model = lobe.model;
+  }
   p.metalness = src.metalness;
   p.specular_weight = src.specularWeight;
   p.specular_color =

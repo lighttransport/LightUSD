@@ -19,12 +19,24 @@ enum {
     MTLX_DIFFUSE_BURLEY = 3
 };
 
+#define MTLX_MAX_DIFFUSE_LOBES 32
+
+typedef struct {
+    v3 color;
+    float weight;
+    float roughness;
+    int model; /* MTLX_DIFFUSE_* */
+} MtlxDiffuseLobe;
+
 typedef struct {
     /* base / diffuse */
     float base_weight;
     v3    base_color;
     float diffuse_roughness;
     int   diffuse_model; /* MTLX_DIFFUSE_* */
+    int   diffuse_lobe_count;
+    int   diffuse_lobe_overflow;
+    MtlxDiffuseLobe diffuse_lobes[MTLX_MAX_DIFFUSE_LOBES];
     float metalness;
     /* specular (GGX dielectric) */
     float specular_weight;

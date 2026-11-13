@@ -1467,7 +1467,7 @@ static float blend_scalar(float old_weight, float old_value, float value,
 
 static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
                        OpenPBRParams *out, int depth) {
-    if (!n || depth > 32 || scale <= 0.0f) return;
+    if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add")) {
         apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, out, depth + 1);
@@ -1513,11 +1513,22 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
             out->diffuse_model = MTLX_DIFFUSE_BURLEY;
         else
             out->diffuse_model = MTLX_DIFFUSE_LAMBERT;
-        blend_lobe(&out->base_weight, &out->base_color,
-                   in_color(ctx, n, "color", v3_splat(0.18f)), weight);
+        const v3 color = in_color(ctx, n, "color", v3_splat(0.18f));
+        const float roughness = in_float(ctx, n, "roughness", 0.0f);
+        if (weight > 0.0f) {
+            if (out->diffuse_lobe_count >= MTLX_MAX_DIFFUSE_LOBES) {
+                out->diffuse_lobe_overflow = 1;
+                return;
+            }
+            MtlxDiffuseLobe *lobe = &out->diffuse_lobes[out->diffuse_lobe_count++];
+            lobe->color = color;
+            lobe->weight = weight;
+            lobe->roughness = roughness;
+            lobe->model = out->diffuse_model;
+        }
+        blend_lobe(&out->base_weight, &out->base_color, color, weight);
         out->diffuse_roughness = (out->diffuse_roughness * old +
-            in_float(ctx, n, "roughness", 0.0f) * weight) /
-            fmaxf(out->base_weight, 1.0e-6f);
+            roughness * weight) / fmaxf(out->base_weight, 1.0e-6f);
     } else if (!strcmp(cat, "translucent_bsdf")) {
         blend_lobe(&out->transmission, &out->transmission_color,
                    in_color(ctx, n, "color", v3_splat(1.0f)), weight);
@@ -1646,6 +1657,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->subsurface = 0.0f;
         out->sheen_weight = 0.0f;
         apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, out, 0);
+        if (out->diffuse_lobe_overflow) return 1;
         out->emission_color = eval_edf(ctx, input_node(ctx, n, "edf"), 0);
         out->emission = v3_maxc(out->emission_color) > 0.0f ? 1.0f : 0.0f;
         out->opacity = in_float(ctx, n, "opacity", 1.0f);

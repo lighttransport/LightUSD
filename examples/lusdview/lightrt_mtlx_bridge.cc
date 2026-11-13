@@ -341,6 +341,15 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   CopyV3(src.base_color, dst->baseColor);
   dst->diffuseRoughness = src.diffuse_roughness;
   dst->diffuseModel = src.diffuse_model;
+  static_assert(tydra::kMaxRealtimeDiffuseLobes == MTLX_MAX_DIFFUSE_LOBES,
+                "Diffuse lobe limits must match");
+  dst->diffuseLobeCount = std::clamp(src.diffuse_lobe_count, 0, MTLX_MAX_DIFFUSE_LOBES);
+  for (int i = 0; i < dst->diffuseLobeCount; ++i) {
+    CopyV3(src.diffuse_lobes[i].color, dst->diffuseLobes[i].color);
+    dst->diffuseLobes[i].weight = src.diffuse_lobes[i].weight;
+    dst->diffuseLobes[i].roughness = src.diffuse_lobes[i].roughness;
+    dst->diffuseLobes[i].model = src.diffuse_lobes[i].model;
+  }
   dst->metalness = src.metalness;
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);
@@ -405,6 +414,12 @@ void MergeGraphParamsPreservingTextureDeps(
     dst3[2] = src[2];
   };
 
+  if (safe("base_weight") && safe("base_color") && safe("base_diffuse_roughness")) {
+    dst->diffuseLobeCount = graph.diffuseLobeCount;
+    std::copy(std::begin(graph.diffuseLobes), std::end(graph.diffuseLobes),
+              std::begin(dst->diffuseLobes));
+    dst->diffuseModel = graph.diffuseModel;
+  }
   if (safe("base_weight")) dst->baseWeight = graph.baseWeight;
   if (safe("base_color")) copy3(graph.baseColor, dst->baseColor);
   if (safe("base_metalness")) dst->metalness = graph.metalness;

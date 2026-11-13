@@ -230,6 +230,9 @@ typedef struct {
     float diffuse_base_scale, diffuse_subsurface_scale;
     float diffuse_roughness;
     int   diffuse_model;
+    int   diffuse_lobe_count;
+    const MtlxDiffuseLobe *diffuse_lobes;
+    float diffuse_mix_scale;
     float subsurface_w; /* normalized-diffusion strength */
     v3    F0;          /* specular reflectance at normal incidence */
     float F90;         /* specular-weighted grazing reflectance */
@@ -257,6 +260,10 @@ static Layers extract(const OpenPBRParams *p) {
     L.diffuse_subsurface_scale = (1.0f - metal) * (1.0f - trans) * p->subsurface;
     L.diffuse_roughness = p->diffuse_roughness;
     L.diffuse_model = p->diffuse_model;
+    L.diffuse_lobe_count = p->diffuse_lobe_count < 0 ? 0 :
+        (p->diffuse_lobe_count > MTLX_MAX_DIFFUSE_LOBES ? MTLX_MAX_DIFFUSE_LOBES : p->diffuse_lobe_count);
+    L.diffuse_lobes = p->diffuse_lobes;
+    L.diffuse_mix_scale = (1.0f - metal) * (1.0f - trans) * (1.0f - p->subsurface);
     {
         float mean_radius = (p->subsurface_radius.x + p->subsurface_radius.y +
                              p->subsurface_radius.z) * (1.0f / 3.0f);
@@ -380,7 +387,8 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
                               MTLX_INV_PI * diffuse_shape));
 
-    if (L->diffuse_model == MTLX_DIFFUSE_EON && L->diffuse_roughness > 0.0f) {
+    if (L->diffuse_lobe_count == 0 && L->diffuse_model == MTLX_DIFFUSE_EON &&
+        L->diffuse_roughness > 0.0f) {
         float lv = v3_dot(wi, wo);
         v3 rough_diffuse = v3_splat(0.0f);
         if (L->diffuse_base_scale != 0.0f) {
@@ -397,11 +405,32 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                       v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation), diffuse_shape));
     }
 
-    if (L->diffuse_model == MTLX_DIFFUSE_OREN_NAYAR ||
-        L->diffuse_model == MTLX_DIFFUSE_BURLEY) {
+    if (L->diffuse_lobe_count == 0 &&
+        (L->diffuse_model == MTLX_DIFFUSE_OREN_NAYAR ||
+         L->diffuse_model == MTLX_DIFFUSE_BURLEY)) {
         float factor = rough_diffuse_factor(L->diffuse_model, L->diffuse_roughness,
                                             NdotV, NdotL, v3_dot(wi, wo), v3_dot(wi, H));
         diff = v3_scale(diff, factor);
+    }
+
+    if (L->diffuse_lobe_count > 0) {
+        v3 mixed = v3_splat(0.0f);
+        float lv = v3_dot(wi, wo), lh = v3_dot(wi, H);
+        for (int i = 0; i < L->diffuse_lobe_count; ++i) {
+            const MtlxDiffuseLobe *lobe = &L->diffuse_lobes[i];
+            v3 color = v3_mul(lobe->color, diffuse_darken);
+            v3 response;
+            if (lobe->model == MTLX_DIFFUSE_EON)
+                response = eon_diffuse(color, lobe->roughness, NdotV, NdotL, lv);
+            else
+                response = v3_scale(color, MTLX_INV_PI *
+                    rough_diffuse_factor(lobe->model, lobe->roughness, NdotV, NdotL, lv, lh));
+            mixed = v3_add(mixed, v3_scale(response, lobe->weight));
+        }
+        v3 sub = v3_scale(v3_mul(L->diffuse_subsurface_color, diffuse_darken),
+                          L->diffuse_subsurface_scale * MTLX_INV_PI);
+        diff = v3_mul(v3_add(v3_scale(mixed, L->diffuse_mix_scale), sub),
+                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation), diffuse_shape));
     }
 
     float D = ggx_D(NdotH, L->alpha), G = ggx_G(NdotV, NdotL, L->alpha);

@@ -508,6 +508,66 @@ def main():
            for i in range(0, len(standard_images[0]), 4)) < 2:
         raise RuntimeError("standard-surface diffuse roughness did not affect the render")
 
+    # A graph-level mix of different diffuse closures must survive the
+    # MaterialX runtime bridge. Compare linearized colors with separately
+    # rendered closures; all renders use identical geometry and lighting.
+    closure_parts = '''<oren_nayar_diffuse_bsdf name="a" type="BSDF">
+      <input name="color" type="color3" value="0.2, 0.5, 0.8"/>
+      <input name="roughness" type="float" value="0.9"/>
+    </oren_nayar_diffuse_bsdf>
+    <burley_diffuse_bsdf name="b" type="BSDF">
+      <input name="color" type="color3" value="0.8, 0.3, 0.1"/>
+      <input name="roughness" type="float" value="0.4"/>
+    </burley_diffuse_bsdf>
+    <mix name="mix" type="BSDF">
+      <input name="bg" type="BSDF" nodename="a"/>
+      <input name="fg" type="BSDF" nodename="b"/>
+      <input name="mix" type="float" value="0.25"/>
+    </mix>'''
+    closure_images = []
+    for root_name in ("a", "b", "mix"):
+        closure_source = out_dir / f"closure-{root_name}.mtlx"
+        closure_source.write_text(
+            f'''<materialx version="1.39">{closure_parts}
+              <surface name="s" type="surfaceshader">
+                <input name="bsdf" type="BSDF" nodename="{root_name}"/>
+              </surface>
+              <surfacematerial name="m" type="material">
+                <input name="surfaceshader" type="surfaceshader" nodename="s"/>
+              </surfacematerial>
+            </materialx>''', encoding="utf-8")
+        closure_image = out_dir / f"closure-{root_name}.png"
+        closure = subprocess.run(
+            [exe, "--mtlx", str(closure_source), str(closure_image),
+             "--mtlx-material", "m", "-w", "64", "-height", "64",
+             "--displayTransform", "srgb"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if closure.returncode:
+            raise RuntimeError(f"diffuse closure {root_name} render failed:\n{closure.stderr}")
+        cw, ch, pixels = read_png_rgba(closure_image)
+        if (cw, ch) != (64, 64):
+            raise RuntimeError("diffuse closure render dimensions changed")
+        closure_images.append(pixels)
+
+    def linear_srgb(byte):
+        value = byte / 255.0
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    center_offset = (32 * 64 + 32) * 4
+    if max(abs(closure_images[0][center_offset + c] - closure_images[1][center_offset + c])
+           for c in range(3)) < 20:
+        raise RuntimeError("diffuse closure component renders are not distinguishable")
+    for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
+        offset = (y * 64 + x) * 4
+        for channel in range(3):
+            a, b, mixed = (linear_srgb(p[offset + channel]) for p in closure_images)
+            if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
+                raise RuntimeError(
+                    f"diffuse mixture did not preserve weighted response at {(x, y, channel)}: "
+                    f"{mixed} vs {0.75 * a + 0.25 * b}"
+                )
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
         stdout=subprocess.PIPE,
