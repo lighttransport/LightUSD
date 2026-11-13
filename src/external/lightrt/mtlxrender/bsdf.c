@@ -1127,7 +1127,8 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         v3 wi; int refracted;
         /* Explicit and OpenPBR base reflection closures already account for
          * reflection. Use the glass proposal only for transmission there. */
-        int transmission_only = L.specular_lobe_count > 0 || L.openpbr_base;
+        int transmission_only = L.specular_lobe_count > 0 || L.openpbr_base ||
+                                (p->transmission > 0.0f && p->specular_weight > 0.0f);
         if (!transmission_only && pcg32_f(rng) < Fr) {
             wi = v3_sub(v3_scale(m, 2.0f * v3_dot(m, wo)), wo);
             if (v3_dot(wi, N) <= 0.0f) return 0; /* reflected below surface: reject */

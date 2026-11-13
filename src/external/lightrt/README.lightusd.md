@@ -81,10 +81,20 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   Preview workflow fix: `specularColor` is applied only in specular workflow;
   metalness workflow retains dielectric Fresnel. Both workflow branches have
   evaluator regressions, and the official USD Preview default image passes.
+- 2026-11-14: `mtlxrender/bsdf.c` includes LightRT `6222caa`'s fix for
+  duplicate dielectric Fresnel reflection across Standard Surface specular and
+  transmission samplers. The 50k-sample regression failed before this change;
+  the Standard Surface glass MaterialXView RMSE improved from 0.046249 to
+  0.009449. Standard, glTF and chess glass goldens were refreshed.
 - 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `6b7db50`'s USD
   Preview workflow fix: `specularColor` is applied only in specular workflow;
   metalness workflow retains dielectric Fresnel. Both workflow branches have
   evaluator regressions, and the official USD Preview default image passes.
+- 2026-11-14: `mtlxrender/bsdf.c` includes LightRT `6222caa`'s fix for
+  duplicate dielectric Fresnel reflection across Standard Surface specular and
+  transmission samplers. The 50k-sample regression failed before this change;
+  the Standard Surface glass MaterialXView RMSE improved from 0.046249 to
+  0.009449. Standard, glTF and chess glass goldens were refreshed.
 - 2026-11-12: `mtlxrender/bsdf.c` is synchronized with LightRT
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test
