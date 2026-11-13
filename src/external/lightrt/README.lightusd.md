@@ -77,6 +77,14 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
 - 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `f912eb5`'s
   finite-difference footprints for connected coordinate graphs and varying
   tiled-image controls.
+- 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `6b7db50`'s USD
+  Preview workflow fix: `specularColor` is applied only in specular workflow;
+  metalness workflow retains dielectric Fresnel. Both workflow branches have
+  evaluator regressions, and the official USD Preview default image passes.
+- 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `6b7db50`'s USD
+  Preview workflow fix: `specularColor` is applied only in specular workflow;
+  metalness workflow retains dielectric Fresnel. Both workflow branches have
+  evaluator regressions, and the official USD Preview default image passes.
 - 2026-11-12: `mtlxrender/bsdf.c` is synchronized with LightRT
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test

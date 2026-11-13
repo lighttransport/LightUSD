@@ -2149,7 +2149,13 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->base_color = in_color(ctx, n, "diffuseColor", out->base_color);
         out->metalness = in_float(ctx, n, "metallic", 0.0f);
         out->specular_roughness = in_float(ctx, n, "roughness", 0.5f);
-        out->specular_color = in_color(ctx, n, "specularColor", out->specular_color);
+        /* MaterialX's USD Preview implementation uses specularColor only when
+         * useSpecularWorkflow is enabled. In the default metalness workflow
+         * the nodedef default (black) must not erase dielectric Fresnel. */
+        if (in_float(ctx, n, "useSpecularWorkflow", 0.0f) != 0.0f)
+            out->specular_color = in_color(ctx, n, "specularColor", out->specular_color);
+        else
+            out->specular_color = v3_splat(1.0f);
         out->specular_ior = in_float(ctx, n, "ior", 1.5f);
         out->coat_weight = in_float(ctx, n, "clearcoat", 0.0f);
         out->coat_roughness = in_float(ctx, n, "clearcoatRoughness", 0.01f);
