@@ -2204,15 +2204,20 @@ bool MtlxDocument::FlattenNodeGraph(const std::string &graph_name,
     return false;
   }
   MtlxElem lookup_document = root;
-  for (const MtlxElem &def : StandardMtlxGeomPropDefs()) {
-    bool overridden = false;
-    for (const MtlxElem &child : root.children) {
-      if (child.tag == "geompropdef" && child.Name() == def.Name()) {
-        overridden = true;
-        break;
-      }
+  std::set<std::string> document_geometry_names;
+  for (const MtlxElem &child : root.children) {
+    if (child.tag == "geompropdef") document_geometry_names.insert(child.Name());
+  }
+  std::set<std::string> available_geometry_names = document_geometry_names;
+  for (const MtlxElem &def : external_library.GeomPropDefs()) {
+    if (!document_geometry_names.count(def.Name())) {
+      lookup_document.children.push_back(def);
+      available_geometry_names.insert(def.Name());
     }
-    if (!overridden) lookup_document.children.push_back(def);
+  }
+  for (const MtlxElem &def : StandardMtlxGeomPropDefs()) {
+    if (!available_geometry_names.count(def.Name()))
+      lookup_document.children.push_back(def);
   }
   MtlxElem flattened;
   if (!FlattenMtlxGraph(lookup_document, root.children[index], library, {&root},

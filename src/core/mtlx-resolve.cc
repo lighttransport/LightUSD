@@ -900,11 +900,14 @@ void MtlxLibrary::AddFrom(const MtlxElem &root) {
   const MtlxScope outer = {&root};
   for (const MtlxElem &e : root.children) {
     if (e.tag == "nodedef") AddNodeDef(e, outer);
+    else if (e.tag == "geompropdef") geomprop_defs_.push_back(e);
   }
 }
 
 void MtlxLibrary::AddLibrary(const MtlxLibrary &library) {
   defs_.insert(defs_.end(), library.defs_.begin(), library.defs_.end());
+  geomprop_defs_.insert(geomprop_defs_.end(), library.geomprop_defs_.begin(),
+                        library.geomprop_defs_.end());
 }
 
 const MtlxNodeDefInfo *MtlxLibrary::Find(const std::string &name) const {
@@ -1789,6 +1792,13 @@ bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
           if (child.tag != "geompropdef" || child.Name() != p.default_geomprop) continue;
           if (geomdef) { *err = "ambiguous default geometry property"; return false; }
           geomdef = &child;
+        }
+        if (!geomdef) {
+          for (const MtlxElem &candidate : library.GeomPropDefs()) {
+            if (candidate.Name() != p.default_geomprop) continue;
+            if (geomdef) { *err = "ambiguous default geometry property"; return false; }
+            geomdef = &candidate;
+          }
         }
         if (!geomdef) { *err = "missing default geometry property '" + p.default_geomprop + "'"; return false; }
         if (geomdef->AttrOr("type") != p.type || geomdef->AttrOr("geomprop").empty()) {

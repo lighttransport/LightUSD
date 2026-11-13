@@ -162,7 +162,7 @@ struct MtlxNodeDefInfo {
 
 class MtlxLibrary {
  public:
-  // Append every <nodedef> child of `root`.
+  // Append every <nodedef> and <geompropdef> child of `root`.
   void AddFrom(const MtlxElem &root);
   // Append definitions from another library, preserving its document order.
   void AddLibrary(const MtlxLibrary &library);
@@ -170,6 +170,7 @@ class MtlxLibrary {
   void AddNodeDef(const MtlxElem &e, const MtlxScope &outer);
 
   const std::vector<MtlxNodeDefInfo> &Defs() const { return defs_; }
+  const std::vector<MtlxElem> &GeomPropDefs() const { return geomprop_defs_; }
   const MtlxNodeDefInfo *Find(const std::string &name) const;
 
   // Inputs including inherited ones, own declarations first.
@@ -209,6 +210,7 @@ class MtlxLibrary {
   std::vector<MtlxPort> ActivePorts(const MtlxNodeDefInfo &def,
                                     bool inputs) const;
   std::vector<MtlxNodeDefInfo> defs_;
+  std::vector<MtlxElem> geomprop_defs_;
 };
 
 // Validation result for one nodegraph. Nodes are listed in dependency order,
@@ -229,8 +231,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
 // Inline one graph-implemented node into a copy of `graph`. This initial
 // implementation supports untargeted, unambiguous direct or linked nodegraphs
 // and direct node/literal/interface connections. Geometry defaults require a
-// matching document geompropdef. Unsupported forms return false without
-// modifying `flattened`.
+// matching document or library geompropdef. Unsupported forms return false
+// without modifying `flattened`.
 bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
                           const MtlxLibrary &library, const MtlxScope &outer,
                           const std::string &call_name, MtlxElem *flattened,

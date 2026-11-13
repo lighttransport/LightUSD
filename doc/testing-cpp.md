@@ -4650,4 +4650,8 @@ defaults are not replaced with literal defaults during document parsing. The
 generated standard-nodedef table retains this metadata. Document flattening
 uses generated standard geometry definitions as a fallback, without inserting
 them into the document; regressions cover implicit UV and world-position nodes,
-an authored geometry-definition override and an explicitly authored UV.
+an authored geometry-definition override and an explicitly authored UV. Geometry
+definitions supplied through merged external libraries are also checked, with
+document, external and standard precedence, duplicate external definitions,
+and atomic failure. MaterialX 1.39.5 confirms the tested external and document
+precedence cases.

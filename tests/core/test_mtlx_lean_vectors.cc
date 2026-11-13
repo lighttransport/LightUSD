@@ -664,6 +664,18 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_GEOMPROP", 0, inline_error.empty() ?
          "geometry node was not generated and shared" : inline_error);
   }
+  MtlxElem external_geomdefs = elem("materialx", "");
+  external_geomdefs.children.push_back(geomdef);
+  MtlxLibrary direct_external_geomprop = geomprop_library;
+  direct_external_geomprop.AddFrom(external_geomdefs);
+  g_checks++;
+  if (!FlattenMtlxGraphCall(inline_doc, default_caller, direct_external_geomprop, {},
+                            "call", &flattened, &inline_error) ||
+      flattened.children.size() != 4 || flattened.children[3].tag != "testconstant" ||
+      flattened.children[1].children[0].AttrOr("nodename") != flattened.children[3].Name()) {
+    Fail("MTLX_GRAPH_INLINE_EXTERNAL_GEOMPROP", 0, inline_error.empty() ?
+         "geometry definition supplied by the library was not used" : inline_error);
+  }
   MtlxElem geometry_node_def = elem("nodedef", "ND_test_geometry");
   geometry_node_def.SetAttr("node", "testgeometry");
   geometry_node_def.SetAttr("type", "float");
@@ -1544,6 +1556,108 @@ static void CheckTypedMtlxGraphResolution() {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 1,
            "the document UV0 override did not supply texcoord index three");
     }
+  }
+  MtlxElem external_uv_root = elem("materialx", "");
+  MtlxElem external_uv = elem("geompropdef", "UV0");
+  external_uv.SetAttr("type", "vector2");
+  external_uv.SetAttr("geomprop", "texcoord");
+  external_uv.SetAttr("index", "7");
+  external_uv_root.children.push_back(external_uv);
+  MtlxLibrary source_geometry_library;
+  source_geometry_library.AddFrom(external_uv_root);
+  MtlxLibrary merged_geometry_library;
+  merged_geometry_library.AddLibrary(source_geometry_library);
+  MtlxDocument external_uv_document;
+  g_checks++;
+  if (!external_uv_document.ParseFromXML(standard_geomprop_xml) ||
+      !external_uv_document.FlattenNodeGraph("image_caller", merged_geometry_library, 1, &error)) {
+    Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP", 0,
+         error.empty() ? external_uv_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat = external_uv_document.FindNodeGraph("image_caller");
+    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+    if (!geom || geom->GetCategory() != "texcoord" || !index ||
+        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 7 ||
+        external_uv_document.GetResolvedXML().find("<geompropdef") != std::string::npos) {
+      Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP", 1,
+           "external UV0 did not override the standard definition");
+    }
+  }
+  MtlxElem external_image_def = elem("nodedef", "ND_external_image");
+  external_image_def.SetAttr("node", "externalimage");
+  external_image_def.SetAttr("type", "float");
+  add_port(&external_image_def, "input", "texcoord", "vector2");
+  external_image_def.children[0].SetAttr("defaultgeomprop", "UV0");
+  add_port(&external_image_def, "output", "out", "float");
+  MtlxLibrary combined_external_library = merged_geometry_library;
+  combined_external_library.AddNodeDef(external_image_def, {});
+  const std::string external_image_xml = R"(<materialx version="1.39">
+  <nodedef name="ND_test_uv" node="testuv" type="float">
+    <input name="uv" type="vector2"/><output name="out" type="float"/>
+  </nodedef>
+  <nodegraph name="impl" nodedef="ND_external_image">
+    <testuv name="body" type="float" nodedef="ND_test_uv">
+      <input name="uv" type="vector2" interfacename="texcoord"/>
+    </testuv><output name="out" type="float" nodename="body"/>
+  </nodegraph>
+  <nodegraph name="caller">
+    <externalimage name="call" type="float" nodedef="ND_external_image"/>
+    <output name="out" type="float" nodename="call"/>
+  </nodegraph>
+</materialx>)";
+  MtlxDocument combined_external_document;
+  g_checks++;
+  if (!combined_external_document.ParseFromXML(external_image_xml) ||
+      !combined_external_document.FlattenNodeGraph("caller", combined_external_library, 1, &error)) {
+    Fail("MTLX_DOCUMENT_EXTERNAL_NODEDEF_GEOMPROP", 0,
+         error.empty() ? combined_external_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat = combined_external_document.FindNodeGraph("caller");
+    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+    if (!index || index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 7)
+      Fail("MTLX_DOCUMENT_EXTERNAL_NODEDEF_GEOMPROP", 1,
+           "external nodedef did not bind the external geometry definition");
+  }
+  MtlxDocument document_override_external;
+  g_checks++;
+  if (!document_override_external.ParseFromXML(resolved_geomprop_xml) ||
+      !document_override_external.FlattenNodeGraph("image_caller", merged_geometry_library, 1, &error)) {
+    Fail("MTLX_DOCUMENT_GEOMPROP_PRECEDENCE", 0,
+         error.empty() ? document_override_external.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat = document_override_external.FindNodeGraph("image_caller");
+    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+    if (!index || index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 3) {
+      Fail("MTLX_DOCUMENT_GEOMPROP_PRECEDENCE", 1,
+           "document UV0 did not override the external definition");
+    }
+  }
+  MtlxLibrary ambiguous_geometry_library = merged_geometry_library;
+  ambiguous_geometry_library.AddLibrary(source_geometry_library);
+  MtlxDocument ambiguous_external_document;
+  g_checks++;
+  if (!ambiguous_external_document.ParseFromXML(standard_geomprop_xml)) {
+    Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP_AMBIGUOUS", 0, ambiguous_external_document.GetError());
+  } else {
+    const std::string before = ambiguous_external_document.GetResolvedXML();
+    if (ambiguous_external_document.FlattenNodeGraph("image_caller", ambiguous_geometry_library,
+                                                     1, &error) ||
+        error.find("ambiguous") == std::string::npos ||
+        ambiguous_external_document.GetResolvedXML() != before) {
+      Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP_AMBIGUOUS", 1,
+           "duplicate external definitions were accepted or changed the document");
+    }
+  }
+  MtlxDocument overriding_ambiguous_external;
+  g_checks++;
+  if (!overriding_ambiguous_external.ParseFromXML(resolved_geomprop_xml) ||
+      !overriding_ambiguous_external.FlattenNodeGraph("image_caller", ambiguous_geometry_library,
+                                                    1, &error)) {
+    Fail("MTLX_DOCUMENT_GEOMPROP_OVERRIDE_AMBIGUOUS_EXTERNAL", 0,
+         error.empty() ? overriding_ambiguous_external.GetError() : error);
   }
   std::string explicit_uv_xml = standard_geomprop_xml;
   const std::string image_call = "<image name=\"call\" type=\"float\" nodedef=\"ND_image_float\"/>";
