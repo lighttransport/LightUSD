@@ -483,6 +483,22 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
          TransformMtlxColorInput(node, property, evaluation_space, out);
 }
 
+static bool MtlxHexagon(float u, float v, float radius) {
+  constexpr float kx = -0.866025f, ky = 0.5f, kz = 0.57735f;
+  const float px = std::fabs(v), py = std::fabs(u);
+  const float projection = std::min(kx * px + ky * py, 0.0f);
+  const float p1x = px - 2.0f * projection * kx;
+  const float p1y = py - 2.0f * projection * ky;
+  const float reflected_x = -kx;
+  const float reflected_projection = std::min(reflected_x * p1x + ky * p1y, 0.0f);
+  const float p2x = p1x - 2.0f * reflected_projection * reflected_x;
+  const float p2y = p1y - 2.0f * reflected_projection * ky;
+  const float high = kz * radius;
+  const float clamped_x = std::max(-high, std::min(p2x, high));
+  const float p3x = p2x - clamped_x, p3y = p2y - radius;
+  return p3x + p3y <= 0.0f;
+}
+
 static bool MtlxCloverleaf(float x, float y, float radius) {
   const float sx = 2.0f * x, sy = 2.0f * y;
   const float r2 = radius * radius;
@@ -959,8 +975,10 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
-  if (starts("ND_tiledcircles_") || starts("ND_tiledcloverleafs_")) {
+  if (starts("ND_tiledcircles_") || starts("ND_tiledcloverleafs_") ||
+      starts("ND_tiledhexagons_")) {
     const bool cloverleaf = starts("ND_tiledcloverleafs_");
+    const bool hexagon = starts("ND_tiledhexagons_");
     MtlxConstantValue texcoord, tiling, offset, size, staggered;
     if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
         !input("uvoffset", &offset) || !input("size", &size) ||
@@ -969,9 +987,10 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     const float x = texcoord.component(0) * tiling.component(0) - offset.component(0);
     const float y = texcoord.component(1) * tiling.component(1) - offset.component(1);
     auto mod = [](float a, float b) { return a - b * std::floor(a / b); };
-    auto inside = [cloverleaf](float a, float b, float radius) {
-      return cloverleaf ? MtlxCloverleaf(a, b, radius)
-                        : a * a + b * b <= radius * radius;
+    auto inside = [cloverleaf, hexagon](float a, float b, float radius) {
+      if (cloverleaf) return MtlxCloverleaf(a, b, radius);
+      if (hexagon) return MtlxHexagon(a, b, radius);
+      return a * a + b * b <= radius * radius;
     };
     bool hit;
     if (staggered.component(0) == 0.0f) {
@@ -1034,26 +1053,10 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         center.components < 2) {
       return false;
     }
-    constexpr float kx = -0.866025f;
-    constexpr float ky = 0.5f;
-    constexpr float kz = 0.57735f;
-    const float px = std::fabs(texcoord.component(1) - center.component(1));
-    const float py = std::fabs(texcoord.component(0) - center.component(0));
-    const float projection =
-        std::min(kx * px + ky * py, 0.0f);
-    const float p1x = px - 2.0f * projection * kx;
-    const float p1y = py - 2.0f * projection * ky;
-    const float reflected_x = -kx;
-    const float reflected_projection =
-        std::min(reflected_x * p1x + ky * p1y, 0.0f);
-    const float p2x = p1x - 2.0f * reflected_projection * reflected_x;
-    const float p2y = p1y - 2.0f * reflected_projection * ky;
-    const float high = kz * radius.component(0);
-    const float clamped_x = std::max(-high, std::min(p2x, high));
-    const float p3x = p2x - clamped_x;
-    const float p3y = p2y - radius.component(0);
     out->components = 1;
-    out->value[0] = p3x + p3y <= 0.0f ? 1.0f : 0.0f;
+    out->value[0] = MtlxHexagon(texcoord.component(0) - center.component(0),
+                                texcoord.component(1) - center.component(1),
+                                radius.component(0)) ? 1.0f : 0.0f;
     out->color_managed = texcoord.color_managed || center.color_managed ||
                          radius.color_managed;
     return true;

@@ -4570,3 +4570,5 @@ The same replay covers regular and staggered MaterialX tiled circles, negative
 UV coordinates and signed size.
 The Tydra replay also covers cloverleaf and tiled-cloverleaf nodes with
 regular and staggered layouts, negative coordinates and signed size.
+Tiled-hexagon vector replay covers regular and staggered layouts, negative UVs,
+and signed size, alongside the direct hexagon cases.
