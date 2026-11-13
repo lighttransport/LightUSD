@@ -253,3 +253,6 @@ upstream provenance intact.
   MaterialX place2d reference rotation, offset and operation order.
 - 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `bda215a` for
   MaterialX colorcorrect luma, gamma and input defaults.
+- 2026-11-14: `mtlxrender/{mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `21d7c2d` for model-space point, direction and normal transforms, including
+  normal normalization for identity/same-space transforms.

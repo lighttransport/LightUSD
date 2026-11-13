@@ -167,6 +167,7 @@ typedef struct {
     float frame;   /* authored/render frame number */
     /* Column-major affine transforms.  When has_space_transforms is zero,
      * named-space transform nodes use the identity transform. */
+    float model_to_world[16], world_to_model[16];
     float object_to_world[16], world_to_object[16];
     float world_to_view[16], view_to_world[16];
     int has_space_transforms;

@@ -985,16 +985,22 @@ static v3 transform_covector(const float inverse[16],v3 n){
 
 static v3 transform_space(ShadeContext *ctx,v3 value,const char *from,
                           const char *to,int kind){
-    if(!ctx->has_space_transforms||!strcmp(from,to))return value;
+    if(!ctx->has_space_transforms||!strcmp(from,to))return kind==2?v3_normalize(value):value;
     v3 world=value;
-    if(!strcmp(from,"object"))world=kind==2?
+    if(!strcmp(from,"model"))world=kind==2?
+        transform_covector(ctx->world_to_model,value):
+        transform_affine(ctx->model_to_world,value,kind==0?1.0f:0.0f);
+    else if(!strcmp(from,"object"))world=kind==2?
         transform_covector(ctx->world_to_object,value):
         transform_affine(ctx->object_to_world,value,kind==0?1.0f:0.0f);
     else if(!strcmp(from,"view"))world=kind==2?
         transform_covector(ctx->world_to_view,value):
         transform_affine(ctx->view_to_world,value,kind==0?1.0f:0.0f);
     v3 result=world;
-    if(!strcmp(to,"object"))result=kind==2?
+    if(!strcmp(to,"model"))result=kind==2?
+        transform_covector(ctx->model_to_world,world):
+        transform_affine(ctx->world_to_model,world,kind==0?1.0f:0.0f);
+    else if(!strcmp(to,"object"))result=kind==2?
         transform_covector(ctx->object_to_world,world):
         transform_affine(ctx->world_to_object,world,kind==0?1.0f:0.0f);
     else if(!strcmp(to,"view"))result=kind==2?
