@@ -71,6 +71,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   in LightRT and a CTest integration in `tools/lusdrender`.
 - 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h,mtlx_eval.c,mtlx_eval.h}` matches
   LightRT `ae93885` for bounded sheen mixtures and the Zeltner mode.
+- 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `398db9a`, including
+  the zero default for BSDF, EDF and VDF mix weights.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `4271ac7` for channel-preserving diffuse closure multiplication.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT

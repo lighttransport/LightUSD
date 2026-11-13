@@ -10,6 +10,13 @@
 static int evaluate(const char *xml, OpenPBRParams *out) {
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) return 0;
+  /* Model an in-memory graph whose nodedef defaults have not been inserted. */
+  for (int i = 0; i < doc->nnode; ++i) {
+      MtlxNode *n = &doc->nodes[i];
+      if (strcmp(n->name, "defaultmix") && strcmp(n->name, "vm") && strcmp(n->name, "em")) continue;
+      for (int j = 0; j < n->ninput; ++j)
+          if (!strcmp(n->inputs[j].name, "mix")) n->inputs[j].name[0] = '_';
+  }
   ShadeContext ctx; memset(&ctx, 0, sizeof(ctx));
   ctx.doc = doc; ctx.Ns = v3_make(0,0,1); ctx.Ng = ctx.Ns;
   ctx.dpdu = v3_make(1,0,0); ctx.dpdv = v3_make(0,1,0);
@@ -57,6 +64,7 @@ int main(void) {
     "<sheen_bsdf name=\"b\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.9,0.3,0.1\"/><input name=\"roughness\" type=\"float\" value=\"0.4\"/></sheen_bsdf>"
     "<sheen_bsdf name=\"c\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.4,0.7,0.3\"/><input name=\"roughness\" type=\"float\" value=\"0.6\"/></sheen_bsdf>"
     "<sheen_bsdf name=\"z\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.7,0.4,0.2\"/><input name=\"roughness\" type=\"float\" value=\"0.5\"/><input name=\"mode\" type=\"string\" value=\"zeltner\"/></sheen_bsdf>"
+    "<mix name=\"defaultmix\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/></mix>"
     "<mix name=\"mixab\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.25\"/></mix>"
     "<add name=\"sum\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mixab\"/><input name=\"in2\" type=\"BSDF\" nodename=\"c\"/></add>"
     "<multiply name=\"scaled\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"float\" value=\"0.4\"/></multiply>"
@@ -64,9 +72,9 @@ int main(void) {
     "<multiply name=\"tint\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" nodename=\"factor\"/></multiply>"
     "<multiply name=\"tint_reverse\" type=\"BSDF\"><input name=\"in1\" type=\"color3\" nodename=\"factor\"/><input name=\"in2\" type=\"BSDF\" nodename=\"sum\"/></multiply>"
     "<multiply name=\"tint_literal\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" value=\"0.2,0.5,0.9\"/></multiply>";
-  const char *roots[] = {"scaled", "a", "b", "c", "sum", "tint", "tint_reverse", "tint_literal", "z"};
-  OpenPBRParams params[9]; char xml[8192];
-  for (int i=0;i<9;i++) {
+  const char *roots[] = {"scaled", "a", "b", "c", "sum", "tint", "tint_reverse", "tint_literal", "z", "defaultmix"};
+  OpenPBRParams params[10]; char xml[8192];
+  for (int i=0;i<10;i++) {
     snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",parts,roots[i]);
     if (!evaluate(xml,&params[i])) { fprintf(stderr,"FAIL closure parse/evaluation %d\n",i); return 1; }
   }
@@ -83,8 +91,12 @@ int main(void) {
   const v3 normal={0,0,1}, views[]={{0,0,1},{0.8f,0,0.6f},{0.99995f,0,0.009999875f}},
            lights[]={{0.6f,0,0.8f},{-0.6f,0,0.8f},{0,0.8f,0.6f},{0.99995f,0,0.009999875f}};
   for (int v=0;v<3;v++) for (int l=0;l<4;l++) {
-    v3 d[9], diffuse; float pdf;
-    for (int j=0;j<9;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&diffuse,&d[j],&pdf);
+    v3 d[10], diffuse; float pdf;
+    for (int j=0;j<10;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&diffuse,&d[j],&pdf);
+    if (fabsf(d[9].x-d[1].x)>1e-6f || fabsf(d[9].y-d[1].y)>1e-6f ||
+        fabsf(d[9].z-d[1].z)>1e-6f) {
+      fprintf(stderr,"FAIL unauthored BSDF mix should select bg\n"); return 1;
+    }
     /* Independent Conty-Kulla BRDF: D / (4 * (Nv + Nl - Nv*Nl)). */
     const float roughness[] = {0.02f, 0.4f, 0.6f};
     const v3 color[] = {{0.2f,0.5f,0.8f}, {0.9f,0.3f,0.1f}, {0.4f,0.7f,0.3f}};

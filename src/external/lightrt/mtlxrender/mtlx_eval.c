@@ -1221,7 +1221,7 @@ static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
     }
     if (!strcmp(cat, "mix")) {
         const float amount = fmaxf(0.0f, fminf(1.0f,
-            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.0f))));
         const v3 bg = eval_edf(ctx, input_node(ctx, n, "bg"), depth + 1);
         const v3 fg = eval_edf(ctx, input_node(ctx, n, "fg"), depth + 1);
         return v3_lerp(bg, fg, amount);
@@ -1407,7 +1407,7 @@ static void eval_vdf(ShadeContext *ctx, const MtlxNode *n, v3 scale,
     }
     if (!strcmp(cat, "mix")) {
         const float amount = fmaxf(0.0f, fminf(1.0f,
-            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.0f))));
         eval_vdf(ctx, input_node(ctx, n, "bg"), v3_scale(scale, 1.0f - amount),
                  out, depth + 1);
         eval_vdf(ctx, input_node(ctx, n, "fg"), v3_scale(scale, amount), out,
@@ -1476,7 +1476,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
     }
     if (!strcmp(cat, "mix")) {
         const float mix = fmaxf(0.0f, fminf(1.0f,
-            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
+            in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.0f))));
         apply_bsdf(ctx, input_node(ctx, n, "bg"), scale * (1.0f - mix),
                    color_scale, out, depth + 1);
         apply_bsdf(ctx, input_node(ctx, n, "fg"), scale * mix,

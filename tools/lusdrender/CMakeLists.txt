@@ -456,6 +456,20 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  add_executable(lusdrender-mtlx-volume-lobes
+    tests/mtlx_volume_lobes.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c)
+  target_include_directories(lusdrender-mtlx-volume-lobes PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-volume-lobes PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-volume-lobes PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-volume-lobes
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-volume-lobes>)
+  set_tests_properties(tool-lusdrender-mtlx-volume-lobes PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;materialx;volume")
+
   add_executable(lusdrender-mtlx-sheen-mixture
     tests/mtlx_sheen_mixture.c tests/mtlx_texture_stub.c
     ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
