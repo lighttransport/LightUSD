@@ -781,6 +781,69 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_VALUE", 0, "invalid document output value was accepted");
   }
 
+  MtlxElem indirect_dependency = document_output_root;
+  MtlxElem global_add = add_node("global_source");
+  MtlxElem global_graph_input = elem("input", "in1");
+  global_graph_input.SetAttr("type", "float");
+  global_graph_input.SetAttr("nodegraph", "helper");
+  global_graph_input.SetAttr("output", "value");
+  global_add.children.push_back(global_graph_input);
+  MtlxElem global_value = elem("input", "in2");
+  global_value.SetAttr("type", "float");
+  global_value.SetAttr("value", "1");
+  global_add.children.push_back(global_value);
+  indirect_dependency.children[2] = global_add;
+  std::swap(indirect_dependency.children[0], indirect_dependency.children[1]);
+  g_checks++;
+  if (!ResolveMtlxGraphs(indirect_dependency, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_DOCUMENT_OUTPUT_DEPENDENCY", 0,
+         error.empty() ? "indirect document-output dependency was not ordered" : error);
+  }
+  MtlxElem multi_hop_dependency = indirect_dependency;
+  MtlxElem bridge = add_node("bridge");
+  MtlxElem bridge_input = elem("input", "in1");
+  bridge_input.SetAttr("type", "float");
+  bridge_input.SetAttr("nodename", "global_source");
+  bridge.children.push_back(bridge_input);
+  bridge.children.push_back(global_value);
+  multi_hop_dependency.children.push_back(bridge);
+  multi_hop_dependency.children[3].SetAttr("nodename", "bridge");
+  g_checks++;
+  if (!ResolveMtlxGraphs(multi_hop_dependency, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_DOCUMENT_OUTPUT_MULTI_HOP", 0,
+         error.empty() ? "multi-hop document dependency was not ordered" : error);
+  }
+  MtlxElem shared_root_dependency = multi_hop_dependency;
+  MtlxElem bridge_second = bridge_input;
+  bridge_second.SetAttr("name", "in2");
+  shared_root_dependency.children.back().children[1] = bridge_second;
+  g_checks++;
+  if (!ResolveMtlxGraphs(shared_root_dependency, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_DOCUMENT_ROOT_SHARED_DEPENDENCY", 0,
+         error.empty() ? "shared root dependency was treated as a cycle" : error);
+  }
+  MtlxElem root_node_cycle = multi_hop_dependency;
+  MtlxElem root_cycle_input = elem("input", "in1");
+  root_cycle_input.SetAttr("type", "float");
+  root_cycle_input.SetAttr("nodename", "bridge");
+  root_node_cycle.children[2].children[0] = root_cycle_input;
+  g_checks++;
+  if (ResolveMtlxGraphs(root_node_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_DOCUMENT_ROOT_NODE_CYCLE", 0,
+         "cycle between document nodes was accepted");
+  }
+  MtlxElem indirect_cycle = indirect_dependency;
+  indirect_cycle.children[2].children[0].SetAttr("nodegraph", "main");
+  indirect_cycle.children[2].children[0].SetAttr("output", "out");
+  g_checks++;
+  if (ResolveMtlxGraphs(indirect_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_DOCUMENT_OUTPUT_CYCLE", 0,
+         "cycle through document output and root node was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

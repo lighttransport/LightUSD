@@ -4607,3 +4607,7 @@ The graph-resolution regression also covers an `output`-only node input
 referencing a document-level output, including missing output or source,
 incompatible type, and invalid output value cases. The valid reference and
 missing-reference cases were checked with MaterialX 1.39.5.
+The MaterialX graph-order regression covers dependencies reached through a
+document-level output and root nodes, including multiple hops, shared upstream
+nodes, and cycles returning to a graph or confined to reachable root nodes. The
+cycle returning to a graph was checked against MaterialX 1.39.5.
