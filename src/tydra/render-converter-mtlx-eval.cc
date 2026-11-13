@@ -813,7 +813,7 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         !input("texcoord", &texcoord) || texcoord.components < 2) {
       return false;
     }
-    const float u = texcoord.component(0);
+    const float u = std::clamp(texcoord.component(0), 0.0f, 1.0f);
     *out = MtlxBinary(left, right, [u](float a, float b) {
       return a + (b - a) * u;
     });
@@ -828,7 +828,7 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         !input("texcoord", &texcoord) || texcoord.components < 2) {
       return false;
     }
-    const float v = texcoord.component(1);
+    const float v = std::clamp(texcoord.component(1), 0.0f, 1.0f);
     *out = MtlxBinary(bottom, top, [v](float b, float t) {
       return b + (t - b) * v;
     });
@@ -846,8 +846,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
         texcoord.components < 2) {
       return false;
     }
-    const float u = texcoord.component(0);
-    const float v = texcoord.component(1);
+    const float u = std::clamp(texcoord.component(0), 0.0f, 1.0f);
+    const float v = std::clamp(texcoord.component(1), 0.0f, 1.0f);
     const MtlxConstantValue bottom = MtlxBinary(
         bottom_left, bottom_right,
         [u](float a, float b) { return a + (b - a) * u; });

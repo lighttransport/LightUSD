@@ -4572,3 +4572,5 @@ The Tydra replay also covers cloverleaf and tiled-cloverleaf nodes with
 regular and staggered layouts, negative coordinates and signed size.
 Tiled-hexagon vector replay covers regular and staggered layouts, negative UVs,
 and signed size, alongside the direct hexagon cases.
+The same vector replay checks that `ramplr`, `ramptb`, and `ramp4` clamp
+out-of-range UV coordinates, including scalar and color-valued outputs.
