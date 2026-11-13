@@ -253,7 +253,9 @@ int main(void) {
        nearf_eps(eval_named(&ctx, "xor").v[0], 1.0f) &&
        check3("inside", eval_named(&ctx, "inside"), 0.05f, 0.1f, 0.2f) && ok;
   ok = nearf_eps(eval_named(&ctx, "tri_wave").v[0], 0.25f) && ok;
-  ok = check3("checkerboard", eval_named(&ctx, "checker"), 0.0f, 0.0f, 1.0f) && ok;
+  /* floor((0.6,0.1) * (2,2)) sums to odd parity: the MaterialX
+   * checkerboard graph selects color1 (red) for this cell. */
+  ok = check3("checkerboard", eval_named(&ctx, "checker"), 1.0f, 0.0f, 0.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "circle").v[0], 1.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "line").v[0], 1.0f) && ok;
   ok = check3("view-direction",eval_named(&ctx,"view_direction"),0,0,1) &&
