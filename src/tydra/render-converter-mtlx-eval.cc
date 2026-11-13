@@ -974,8 +974,9 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                                  thickness.component(0);
     const float diag1 = sx - sy;
     const float diag2 = sx + sy;
-    const bool on_diagonal = diag1 * diag1 <= radius_squared ||
-                             diag2 * diag2 <= radius_squared;
+    const bool on_diagonal = thickness.component(0) >= 0.0f &&
+                             (diag1 * diag1 <= radius_squared ||
+                              diag2 * diag2 <= radius_squared);
     out->components = 3;
     out->value[0] = out->value[1] = out->value[2] =
         on_diagonal ? 1.0f : 0.0f;

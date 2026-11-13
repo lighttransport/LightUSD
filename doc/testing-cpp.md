@@ -4564,3 +4564,5 @@ boolean and float comparison inputs, including adjacent binary32 values for
 exact equality. These nodes return the comparison result directly.
 The same suite checks MaterialX line classification at the inclusive radius
 boundary and for a negative radius on a degenerate segment.
+The Tydra Lean-vector replay includes crosshatch cases with negative thickness,
+which must produce black even on a diagonal.
