@@ -196,3 +196,5 @@ upstream provenance intact.
   `dc45d46` for view-direction substrate attenuation and OpenPBR coat darkening.
 - 2026-11-13: the same files match LightRT `f80fa52` for OpenPBR-specific
   coat-relative IOR and base-roughness remapping.
+- 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h}` matches LightRT `2c78177` for
+  compensated OpenPBR dielectric base and coat responses.

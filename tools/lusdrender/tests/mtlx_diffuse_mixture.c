@@ -157,6 +157,80 @@ static const float specular_response_reference[4][2][3] = {
  {{.0590012755f,.2172329386f,.4642646361f},{.0028684316f,.0106457343f,.0230269579f}},
  {{.0000000000f,.1216358210f,.2777817198f},{.0000000000f,.0064307468f,.0131264403f}}
 };
+/* The OpenPBR dielectric base and coat should route to the independently
+ * tested MaterialX dielectric closure with matching IOR, tint and GGX alpha. */
+static int openpbr_dielectric_response_checks(void) {
+  const char *base = "<materialx><open_pbr_surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"base_weight\" type=\"float\" value=\"0\"/>"
+    "<input name=\"specular_ior\" type=\"float\" value=\"1.6\"/>"
+    "<input name=\"specular_roughness\" type=\"float\" value=\"0.5\"/>"
+    "<input name=\"specular_color\" type=\"color3\" value=\"0.5,0.8,1\"/>"
+    "</open_pbr_surface></materialx>";
+  const char *coat = "<materialx><open_pbr_surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"base_weight\" type=\"float\" value=\"0\"/>"
+    "<input name=\"specular_weight\" type=\"float\" value=\"0\"/>"
+    "<input name=\"coat_weight\" type=\"float\" value=\"1\"/>"
+    "<input name=\"coat_ior\" type=\"float\" value=\"1.6\"/>"
+    "<input name=\"coat_roughness\" type=\"float\" value=\"0.5\"/>"
+    "</open_pbr_surface></materialx>";
+  const char *reference_tint = "<materialx><dielectric_bsdf name=\"d\" type=\"BSDF\">"
+    "<input name=\"ior\" type=\"float\" value=\"1.6\"/>"
+    "<input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/>"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.25,0.25\"/>"
+    "</dielectric_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"d\"/></surface></materialx>";
+  const char *reference_white = "<materialx><dielectric_bsdf name=\"d\" type=\"BSDF\">"
+    "<input name=\"ior\" type=\"float\" value=\"1.6\"/>"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.25,0.25\"/>"
+    "</dielectric_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"d\"/></surface></materialx>";
+  OpenPBRParams p[4];
+  if (!evaluate(base, &p[0]) || !evaluate(reference_tint, &p[1]) ||
+      !evaluate(coat, &p[2]) || !evaluate(reference_white, &p[3])) return 0;
+  const v3 n = {0,0,1}, views[] = {{0,0,1},{0.8f,0,0.6f}};
+  const v3 wi = {0.6f,0,0.8f};
+  float old_difference = 0.0f;
+  for (int v = 0; v < 2; ++v) {
+    float pdf; v3 values[4];
+    for (int i = 0; i < 4; ++i) values[i] = bsdf_eval(&p[i], n, views[v], wi, &pdf);
+    for (int i = 0; i < 4; i += 2) {
+      if (fabsf(values[i].x-values[i+1].x)>2e-6f ||
+          fabsf(values[i].y-values[i+1].y)>2e-6f ||
+          fabsf(values[i].z-values[i+1].z)>2e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR dielectric response case=%d view=%d\n",i,v); return 0;
+      }
+    }
+    OpenPBRParams legacy = p[0]; legacy.openpbr_coat_remap = 0;
+    v3 old = bsdf_eval(&legacy, n, views[v], wi, &pdf);
+    old_difference = fmaxf(old_difference, fabsf(old.z-values[1].z));
+  }
+  if (old_difference < 1e-4f) {
+    fprintf(stderr,"FAIL: dielectric response regression did not distinguish legacy model\n"); return 0;
+  }
+  /* The graph scales F0 by specular weight and preserves the IOR branch. */
+  const float ior[][2] = {{1.6f, 1.260869565f}, {0.8f, 0.894736842f}};
+  for (int i = 0; i < 2; ++i) {
+    OpenPBRParams actual = p[0], expected = p[1];
+    actual.specular_ior = ior[i][0]; actual.specular_weight = 0.25f;
+    expected.specular_lobes[0].frame.ior = v3_splat(ior[i][1]);
+    for (int v = 0; v < 2; ++v) {
+      float pdf; v3 a = bsdf_eval(&actual, n, views[v], wi, &pdf);
+      v3 b = bsdf_eval(&expected, n, views[v], wi, &pdf);
+      if (fabsf(a.x-b.x)>3e-6f || fabsf(a.y-b.y)>3e-6f || fabsf(a.z-b.z)>3e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR weighted IOR response case=%d view=%d\n",i,v); return 0;
+      }
+    }
+  }
+  {
+    OpenPBRParams disabled = p[0]; disabled.specular_weight = 0.0f;
+    float pdf; v3 a = bsdf_eval(&disabled, n, views[1], wi, &pdf);
+    if (fabsf(a.x)>1e-6f || fabsf(a.y)>1e-6f || fabsf(a.z)>1e-6f) {
+      fprintf(stderr,"FAIL: zero-weight OpenPBR specular response\n"); return 0;
+    }
+  }
+  return 1;
+}
+
 static int specular_response_checks(void) {
   const char *parts=
     "<dielectric_bsdf name=\"d\" type=\"BSDF\"><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></dielectric_bsdf>"
@@ -359,7 +433,7 @@ int main(void) {
       }
     }
   }
-  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() ||
+  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||

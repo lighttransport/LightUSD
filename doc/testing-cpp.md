@@ -1736,6 +1736,10 @@ input affects path-traced color. The white-furnace test checks the per-channel
 OpenPBR coat-darkening formula, authored interpolation and energy bounds.
 It also checks three coat-relative IOR and base-roughness remap cases, including
 the inverted IOR ratio, saturation, and a non-finite coat-roughness fallback.
+The diffuse-mixture regression compares OpenPBR base and coat responses with
+reference-checked dielectric closures, including weighted IORs. The furnace
+test covers compensated OpenPBR materials and compares sampled energy with
+numerical quadrature.
 
 After changing the WASM shading snapshot binding, rebuild both web modules and
 run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node

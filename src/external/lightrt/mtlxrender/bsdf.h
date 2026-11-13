@@ -29,6 +29,11 @@ typedef struct {
     float transmission;
 } BsdfLobeWeights;
 
+/* OpenPBR coat-relative IOR and coat-affected base roughness remapping. */
+void bsdf_openpbr_coat_remap(float specular_ior, float coat_ior, float coat_weight,
+                             float specular_roughness, float coat_roughness,
+                             float *out_ior, float *out_roughness);
+
 /* MaterialX Zeltner directional-albedo fit (cosine and roughness in [0,1]). */
 float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
 

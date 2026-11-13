@@ -44,7 +44,7 @@ static double materialx_conductor_fresnel(double cosine, double n, double k) {
     return 0.5*(rp+rs);
 }
 
-static double materialx_ggx_directional_albedo(double x, double y) {
+static double materialx_ggx_directional_terms(double x, double y, double *a_out, double *b_out) {
     double x2=x*x, y2=y*y;
     double r0=.1003-.6303*x+9.748*y-2.038*x*y+29.34*x2-8.245*y2
               -26.44*x2*y+19.99*x*y2-5.448*x2*y2;
@@ -54,7 +54,14 @@ static double materialx_ggx_directional_albedo(double x, double y) {
               -36.11*x2*y+15.86*x*y2+33.37*x2*y2;
     double r3=1.0+.2281*x+15.94*y-55.83*x*y+13.08*x2+41.26*y2
               +54.9*x2*y+300.2*x*y2-285.1*x2*y2;
-    return fmin(1.0,fmax(0.0,r0/r2))+fmin(1.0,fmax(0.0,r1/r3));
+    double a = fmin(1.0,fmax(0.0,r0/r2));
+    double b = fmin(1.0,fmax(0.0,r1/r3));
+    if (a_out) *a_out=a;
+    if (b_out) *b_out=b;
+    return a+b;
+}
+static double materialx_ggx_directional_albedo(double x, double y) {
+    return materialx_ggx_directional_terms(x, y, NULL, NULL);
 }
 
 static v3 conductor_airy(float cosine, v3 eta, v3 extinction, float thickness, float film_ior);
@@ -509,6 +516,32 @@ static v3 specular_closure_response(const MtlxSpecularLobe *lobe, float nv, floa
     return v3_make(result[0],result[1],result[2]);
 }
 
+/* OpenPBR Surface graph coat-relative IOR and effective roughness. */
+void bsdf_openpbr_coat_remap(float specular_ior, float coat_ior, float coat_weight,
+                             float specular_roughness, float coat_roughness,
+                             float *out_ior, float *out_roughness) {
+    float ior = specular_ior;
+    float roughness = isfinite(specular_roughness) ? specular_roughness : 1.0f;
+    float cr = isfinite(coat_roughness) ? coat_roughness : 1.0f;
+    float cw = isfinite(coat_weight) ? clampf(coat_weight, 0.0f, 1.0f) : 0.0f;
+    if (cw > 0.0f && isfinite(coat_ior) && coat_ior > 0.0f &&
+        isfinite(ior) && ior > 0.0f) {
+        float ratio = ior / coat_ior;
+        if (isfinite(ratio) && ratio > 0.0f) {
+            float relative = maxf(ratio, 1.0f / ratio);
+            if (isfinite(relative)) ior = (1.0f - cw) * ior + cw * relative;
+        }
+    }
+    if (cw > 0.0f) {
+        cr = clampf(cr, 0.0f, 1.0f);
+        float sr = clampf(roughness, 0.0f, 1.0f);
+        float affected = powf(minf(1.0f, 2.0f * cr * cr * cr * cr + sr * sr * sr * sr), 0.25f);
+        roughness = (1.0f - cw) * roughness + cw * affected;
+    }
+    if (out_ior) *out_ior = ior;
+    if (out_roughness) *out_roughness = roughness;
+}
+
 /* ---- layered material ------------------------------------------------- */
 typedef struct {
     v3    diff_color;  /* effective diffuse albedo (incl. subsurface tint) */
@@ -530,7 +563,10 @@ typedef struct {
     const MtlxConductorLobe *conductor_lobes;
     int specular_lobe_count;
     const MtlxSpecularLobe *specular_lobes;
-    v3    coat_color, coat_base_albedo; float coat_alpha, coat_w, coat_f0, coat_Ri, coat_darkening;
+    v3    coat_color, coat_base_albedo; float coat_alpha, coat_w, coat_f0, coat_Ri, coat_darkening, coat_ior;
+    int openpbr, openpbr_dielectric;
+    float base_ior;
+    v3 base_tint;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
     /* normalized lobe selection probabilities (glass is delta) */
@@ -574,35 +610,29 @@ static Layers extract(const OpenPBRParams *p) {
         L.subsurface_w = clampf(p->subsurface * radius_response, 0.0f, 1.0f);
     }
 
-    /* OpenPBR mixes in the coat-relative, TIR-safe IOR and roughens the
-     * base reflection as coat coverage increases. Other shader models do not
-     * share this parameter remapping. */
-    float specular_ior = p->specular_ior;
+    /* OpenPBR's coat remaps are specific to that material model. */
+    float specular_ior = isfinite(p->specular_ior) && p->specular_ior > 0.0f
+                             ? p->specular_ior : 1.5f;
+    float coat_ior = isfinite(p->coat_ior) && p->coat_ior > 0.0f ? p->coat_ior : 1.5f;
     float coat_roughness = isfinite(p->coat_roughness) ? p->coat_roughness : 1.0f;
-    float cw = p->openpbr_coat_remap && isfinite(p->coat_weight)
-                   ? clampf(p->coat_weight, 0.0f, 1.0f) : 0.0f;
-    if (cw > 0.0f && isfinite(p->coat_ior) && p->coat_ior > 0.0f &&
-        isfinite(specular_ior) && specular_ior > 0.0f) {
-        float r = specular_ior / p->coat_ior;
-        if (isfinite(r) && r > 0.0f) {
-            float adjusted = maxf(r, 1.0f / r);
-            if (isfinite(adjusted))
-                specular_ior = (1.0f - cw) * specular_ior + cw * adjusted;
-        }
-    }
+    float specular_roughness = isfinite(p->specular_roughness) ? p->specular_roughness : 1.0f;
+    if (p->openpbr_coat_remap)
+        bsdf_openpbr_coat_remap(specular_ior, coat_ior, p->coat_weight,
+                                specular_roughness, coat_roughness,
+                                &specular_ior, &specular_roughness);
     float f0d = (specular_ior - 1.0f) / (specular_ior + 1.0f);
     f0d = f0d * f0d * p->specular_weight;
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
     L.ior = specular_ior;
-    float specular_roughness = isfinite(p->specular_roughness) ? p->specular_roughness : 1.0f;
-    if (cw > 0.0f) {
-        float cr = clampf(coat_roughness, 0.0f, 1.0f);
-        float sr = clampf(specular_roughness, 0.0f, 1.0f);
-        float affected = powf(minf(1.0f, 2.0f * cr * cr * cr * cr + sr * sr * sr * sr), 0.25f);
-        specular_roughness = (1.0f - cw) * specular_roughness + cw * affected;
-    }
+    L.openpbr_dielectric = p->openpbr_coat_remap && metal == 0.0f &&
+        !explicit_specular && !explicit_conductor && p->thin_film_weight <= 0.0f;
+    float f0_weighted = clampf(f0d, 0.0f, 0.99999f);
+    float f0_root = sqrtf(f0_weighted);
+    L.base_ior = specular_ior < 1.0f ? (1.0f - f0_root) / (1.0f + f0_root)
+                                      : (1.0f + f0_root) / (1.0f - f0_root);
+    L.base_tint = p->specular_color;
     L.alpha = clampf(specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
 
     L.sheen_w = p->sheen_weight;
@@ -618,14 +648,16 @@ static Layers extract(const OpenPBRParams *p) {
         (p->specular_lobe_count > MTLX_MAX_SPECULAR_LOBES ? MTLX_MAX_SPECULAR_LOBES : p->specular_lobe_count);
     L.specular_lobes = p->specular_lobes;
 
+    L.openpbr = p->openpbr_coat_remap;
+    L.coat_ior = coat_ior;
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
     L.coat_darkening = clampf(p->coat_darkening, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
     L.coat_alpha = clampf(coat_roughness, 0.02f, 1.0f); L.coat_alpha *= L.coat_alpha;
-    float c = (p->coat_ior - 1.0f) / (p->coat_ior + 1.0f);
+    float c = (coat_ior - 1.0f) / (coat_ior + 1.0f);
     L.coat_f0 = c * c;
     /* OpenPBR's Kcoat and Ebase drive the bounded coat-darkening ratio. */
-    { float n = maxf(p->coat_ior, 1.0f);
+    { float n = maxf(coat_ior, 1.0f);
       L.coat_Ri = clampf(1.0f - (1.0f - L.coat_f0) / (n * n), 0.0f, 0.9999f);
       v3 dielectric = v3_lerp(p->base_color, p->subsurface_color, clampf(p->subsurface, 0.0f, 1.0f));
       v3 metal_albedo = v3_scale(p->base_color, clampf(p->specular_weight, 0.0f, 1.0f));
@@ -748,7 +780,16 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * filter on everything below; the tint scales with the coat weight). This
      * colored attenuation is what gives e.g. standard_surface copper its orange
      * cast -- the copper color lives in coat_color, not base_color. */
+    float coat_comp = 1.0f;
     float coat_fr = L->coat_w * fresnel_schlick_s(NdotV, L->coat_f0);
+    if (L->openpbr && L->coat_w > 0.0f) {
+        double a,b,ess=materialx_ggx_directional_terms(NdotV,L->coat_alpha,&a,&b);
+        if (ess>0.0 && isfinite(ess)) {
+            double favg=L->coat_f0+(1.0-L->coat_f0)/21.0;
+            coat_comp=(float)(1.0+favg*(1.0-ess)/ess);
+            coat_fr=(float)(L->coat_w*(a*L->coat_f0+b)*coat_comp);
+        }
+    }
     v3 base_atten = v3_scale(v3_lerp(v3_splat(1.0f), L->coat_color, L->coat_w),
                              1.0f - coat_fr);
 
@@ -785,7 +826,16 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * reference layer applies this once to its underlying response. */
     const v3 one = v3_splat(1.0f);
     const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->F0, L->F90);
-    const v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
+    v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
+    if (L->openpbr_dielectric) {
+        double a,b,ess=materialx_ggx_directional_terms(NdotV,L->alpha,&a,&b);
+        double q=(L->base_ior-1.0)/(L->base_ior+1.0), f0=q*q;
+        if (ess>0.0 && isfinite(ess)) {
+            double favg=f0+(1.0-f0)/21.0;
+            double comp=1.0+favg*(1.0-ess)/ess;
+            diffuse_fresnel_attenuation=v3_splat((float)(1.0-(a*f0+b)*comp));
+        }
+    }
     v3 diff = v3_mul(diff_alb,
                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
                               MTLX_INV_PI * diffuse_shape));
@@ -843,6 +893,16 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f)
         F = v3_lerp(F, fresnel_airy(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);
+    if (L->openpbr_dielectric) {
+        MtlxSpecularLobe lobe = {0};
+        lobe.model = MTLX_SPECULAR_DIELECTRIC;
+        lobe.frame.ior = v3_splat(L->base_ior);
+        lobe.frame.roughness = lobe.frame.roughness_y = L->alpha;
+        lobe.frame.thinfilm_ior = 1.5f;
+        lobe.tint = L->base_tint;
+        float hx = sqrtf(maxf(0.0f,1.0f-NdotH*NdotH));
+        spec = v3_mul(base_atten, specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH));
+    }
 
     for (int i = 0; i < L->conductor_lobe_count; ++i) {
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
@@ -898,7 +958,9 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     if (L->coat_w > 0.0f) {
         float Dc = ggx_D(NdotH, L->coat_alpha), Gc = ggx_G(NdotV, NdotL, L->coat_alpha);
         float Fc = L->coat_w * fresnel_schlick_s(VdotH, L->coat_f0);
-        coat = v3_splat(Fc * Dc * Gc / (4.0f * NdotV * NdotL));
+        if (L->openpbr && isfinite(L->coat_ior) && L->coat_ior>0.0f)
+            Fc = (float)(L->coat_w * materialx_conductor_fresnel(VdotH,L->coat_ior,0.0));
+        coat = v3_splat(Fc * Dc * Gc * coat_comp / (4.0f * NdotV * NdotL));
     }
 
     float pdf_diff = NdotL * MTLX_INV_PI;

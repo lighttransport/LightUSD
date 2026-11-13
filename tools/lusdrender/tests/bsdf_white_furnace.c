@@ -164,22 +164,11 @@ int main(void) {
                               {1.8f, 1.2f, 0.4f, 0.7f, 0.4f, 1.68f},
                               {1.5f, 1.5f, 1.0f, 0.2f, 0.9f, 1.0f}};
     const float roughness[] = {0.320831235f, 0.713863138f, 1.0f};
-    const v3 n = v3_make(0, 0, 1), view = v3_make(0.6f, 0, 0.8f);
-    const v3 light = v3_make(0, 0.6f, 0.8f);
     for (size_t i = 0; i < sizeof(roughness)/sizeof(roughness[0]); ++i) {
-      FurnaceCase c = {"coat-remap", 0.6f, 0.0f, 0.0f, cases[i][2], 0.0f, 1.0f, 0};
-      OpenPBRParams actual; set_defaults(&actual, &c);
-      actual.openpbr_coat_remap = 1;
-      actual.specular_ior = cases[i][0]; actual.coat_ior = cases[i][1];
-      actual.specular_roughness = cases[i][3]; actual.coat_roughness = cases[i][4];
-      OpenPBRParams expected = actual;
-      expected.openpbr_coat_remap = 0;
-      expected.specular_ior = cases[i][5]; expected.specular_roughness = roughness[i];
-      float actual_pdf, expected_pdf;
-      const v3 a = bsdf_eval(&actual, n, view, light, &actual_pdf);
-      const v3 b = bsdf_eval(&expected, n, view, light, &expected_pdf);
-      if (fabsf(a.x-b.x) > 1.0e-5f || fabsf(a.y-b.y) > 1.0e-5f ||
-          fabsf(a.z-b.z) > 1.0e-5f || fabsf(actual_pdf-expected_pdf) > 1.0e-5f) {
+      float ior, rough;
+      bsdf_openpbr_coat_remap(cases[i][0], cases[i][1], cases[i][2],
+                              cases[i][3], cases[i][4], &ior, &rough);
+      if (fabsf(ior-cases[i][5]) > 1.0e-6f || fabsf(rough-roughness[i]) > 1.0e-6f) {
         fprintf(stderr, "FAIL: OpenPBR coat IOR/roughness remap case=%zu\n", i);
         return 1;
       }
@@ -204,7 +193,73 @@ int main(void) {
         return 1;
       }
     }
+    p.coat_roughness = 0.4f;
+    for (int i = 0; i < 2; ++i) {
+      p.coat_ior = i ? -1.0f : NAN;
+      float pdf;
+      v3 result = bsdf_eval(&p, n, view, n, &pdf);
+      if (!v3_is_finite(result) || !isfinite(pdf)) {
+        fprintf(stderr, "FAIL: invalid coat IOR fallback case=%d\n", i);
+        return 1;
+      }
+    }
+    p.coat_ior = 1.5f;
+    for (int i = 0; i < 2; ++i) {
+      p.specular_ior = i ? -1.0f : NAN;
+      float pdf;
+      v3 result = bsdf_eval(&p, n, view, n, &pdf);
+      if (!v3_is_finite(result) || !isfinite(pdf)) {
+        fprintf(stderr, "FAIL: invalid specular IOR fallback case=%d\n", i);
+        return 1;
+      }
+    }
+    printf("PASS: invalid specular IOR fallback\n");
+    printf("PASS: invalid coat IOR fallback\n");
     printf("PASS: nonfinite coat roughness fallback\n");
+  }
+
+  // Exercise the OpenPBR-specific compensated dielectric and coat paths,
+  // independently of the legacy-material furnace cases above.
+  for (size_t ci = 0; ci < sizeof(cases) / sizeof(cases[0]); ++ci) {
+    OpenPBRParams p; set_defaults(&p, &cases[ci]); p.openpbr_coat_remap = 1;
+    for (size_t vi = 0; vi < sizeof(views) / sizeof(views[0]); ++vi) {
+      const v3 energy = integrate(&p, views[vi], 0);
+      if (!v3_is_finite(energy) || energy.x < -tolerance || energy.y < -tolerance ||
+          energy.z < -tolerance || energy.x > 1.0f + tolerance ||
+          energy.y > 1.0f + tolerance || energy.z > 1.0f + tolerance) {
+        fprintf(stderr, "FAIL: OpenPBR furnace %s view=%.2f energy=(%g,%g,%g)\n",
+                cases[ci].name, views[vi], energy.x, energy.y, energy.z);
+        return 1;
+      }
+    }
+  }
+  printf("PASS: OpenPBR dielectric and coat furnace cases\n");
+  {
+    FurnaceCase c = {"coat-sampling", 0.6f, 0.0f, 0.0f, 0.6f, 0.0f, 1.0f, 0};
+    OpenPBRParams p; set_defaults(&p, &c); p.openpbr_coat_remap = 1;
+    p.specular_roughness = 0.5f; p.coat_roughness = 0.4f;
+    const v3 n = v3_make(0, 0, 1), wo = v3_make(0.6f, 0, 0.8f);
+    const v3 expected = integrate(&p, 0.8f, 0);
+    pcg32 rng; pcg32_seed(&rng, 4321, 9876);
+    const int count = 180000; double sum[3] = {0.0, 0.0, 0.0};
+    for (int i = 0; i < count; ++i) {
+      BsdfSample sample;
+      if (bsdf_sample(&p, n, wo, &rng, &sample)) {
+        if (!v3_is_finite(sample.throughput) || !isfinite(sample.pdf)) {
+          fprintf(stderr, "FAIL: OpenPBR sample is nonfinite\n"); return 1;
+        }
+        sum[0] += sample.throughput.x; sum[1] += sample.throughput.y;
+        sum[2] += sample.throughput.z;
+      }
+    }
+    const float target[] = {expected.x, expected.y, expected.z};
+    for (int ch = 0; ch < 3; ++ch) {
+      if (fabs(sum[ch] / count - target[ch]) > 0.02) {
+        fprintf(stderr, "FAIL: OpenPBR sampled energy channel=%d got=%g expected=%g\n",
+                ch, sum[ch] / count, target[ch]); return 1;
+      }
+    }
+    printf("PASS: OpenPBR sample estimate matches quadrature\n");
   }
 
   // Sweep the principal base/specular controls so the furnace bound also
