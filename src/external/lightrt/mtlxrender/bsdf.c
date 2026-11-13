@@ -812,6 +812,10 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     float coat_comp;
     v3 sheen_atten;
     v3 base_atten = coat_substrate_attenuation(L, NdotV, &coat_comp, &sheen_atten);
+    float fuzz_throughput = 1.0f;
+    if (L->openpbr_base && L->sheen_lobe_count == 0 && L->sheen_w > 0.0f)
+        fuzz_throughput = 1.0f - L->sheen_w * bsdf_zeltner_sheen_albedo(NdotV,L->sheen_alpha);
+    base_atten = v3_scale(base_atten, fuzz_throughput);
     v3 diffuse_darken = v3_splat(1.0f);
     v3 diff_alb = L->diff_color;
     /* Disney/Burley normalized-diffusion approximation. Unlike a plain tint,
@@ -991,7 +995,12 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         }
         sheen = v3_mul(sheen, sheen_atten);
     } else if (L->sheen_w > 0.0f) {
-        sheen = v3_mul(v3_scale(L->sheen_color, L->sheen_w * charlie_D(NdotH, L->sheen_alpha) * sheen_V(NdotV, NdotL)), sheen_atten);
+        if (L->openpbr_base) {
+            sheen = v3_scale(L->sheen_color, L->sheen_w *
+                             zeltner_sheen_brdf(wo,wi,NdotV,NdotL,L->sheen_alpha));
+        } else {
+            sheen = v3_mul(v3_scale(L->sheen_color, L->sheen_w * charlie_D(NdotH, L->sheen_alpha) * sheen_V(NdotV, NdotL)), sheen_atten);
+        }
     }
 
     v3 coat = v3_splat(0.0f);
@@ -1000,7 +1009,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         float Fc = L->coat_w * fresnel_schlick_s(VdotH, L->coat_f0);
         if (L->openpbr && isfinite(L->coat_ior) && L->coat_ior>0.0f)
             Fc = (float)(L->coat_w * materialx_conductor_fresnel(VdotH,L->coat_ior,0.0));
-        coat = v3_splat(Fc * Dc * Gc * coat_comp / (4.0f * NdotV * NdotL));
+        coat = v3_splat(fuzz_throughput * Fc * Dc * Gc * coat_comp / (4.0f * NdotV * NdotL));
     }
 
     float pdf_diff = NdotL * MTLX_INV_PI;
@@ -1112,9 +1121,14 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         }
         out->throughput = v3_scale(out->throughput,
             masking * L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
-        if (L.openpbr_base)
+        if (L.openpbr_base) {
+            float nv = v3_dot(N,wo);
             out->throughput = v3_mul(out->throughput,
-                coat_substrate_attenuation(&L, v3_dot(N,wo), NULL, NULL));
+                coat_substrate_attenuation(&L, nv, NULL, NULL));
+            if (L.sheen_lobe_count == 0 && L.sheen_w > 0.0f)
+                out->throughput = v3_scale(out->throughput,
+                    1.0f - L.sheen_w * bsdf_zeltner_sheen_albedo(nv,L.sheen_alpha));
+        }
         out->wi = wi; out->pdf = 1.0f;
         out->specular = 1; out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;

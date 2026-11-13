@@ -208,3 +208,5 @@ upstream provenance intact.
   visible-normal GGX sampling and masking of rough OpenPBR transmission.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `397cf47` for
   OpenPBR coat tint, darkening and throughput on transmission.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `c317a90` for
+  OpenPBR Zeltner fuzz response and underlying-layer throughput.

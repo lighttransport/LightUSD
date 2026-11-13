@@ -696,6 +696,61 @@ static int openpbr_transmission_ior_checks(void) {
   return 1;
 }
 
+/* OpenPBR fuzz is a Zeltner sheen above coat and substrate. */
+static int openpbr_fuzz_checks(void) {
+  const float views[]={.3f,.75f,1.0f};
+  const v3 n={0,0,1}, wi={.3f,0,.953939201f};
+  for (int i=0;i<3;++i) {
+    double x=views[i], y=.5, nl=wi.z;
+    double sig=y*(.0206607+1.58491*y)/(.0379424+y*(1.32227+y));
+    double mu=y*(-.193854+y*(-1.14885+y*(1.7932-.95943*y*y)))/(.046391+y);
+    double off=y*(.000654023+(-.0207818+.119681*y)*y)/(1.26264+y*(-1.92021+y));
+    double albedo=exp(-.5*pow((x-mu)/sig,2))/(sig*sqrt(2*3.14159265358979323846))+off;
+    double attenuation=1-.6*albedo;
+    v3 wo=v3_make(sqrtf(1-views[i]*views[i]),0,views[i]);
+    OpenPBRParams base, black, colored; openpbr_defaults(&base);
+    base.openpbr_coat_remap=1; base.base_color=v3_make(.3f,.5f,.7f);
+    base.base_weight=.7f; base.coat_weight=.6f; base.coat_roughness=.35f;
+    base.sheen_weight=0; base.sheen_roughness=.5f;
+    black=base; black.sheen_weight=.6f; black.sheen_color=v3_splat(0);
+    colored=black; colored.sheen_color=v3_make(.7f,.4f,.2f);
+    float pdf; v3 f0=bsdf_eval(&base,n,wo,wi,&pdf);
+    v3 fb=bsdf_eval(&black,n,wo,wi,&pdf), fc=bsdf_eval(&colored,n,wo,wi,&pdf);
+    if(fabs(fb.x-f0.x*attenuation)>3e-5 || fabs(fb.y-f0.y*attenuation)>3e-5 ||
+       fabs(fb.z-f0.z*attenuation)>3e-5) {
+      fprintf(stderr,"FAIL: OpenPBR fuzz layer throughput view=%g\n",x);return 0;
+    }
+    double a=(2.58126*x+.813703*y)*y/(1+.310327*x*x+2.60994*x*y);
+    double b=sqrt(1-x)*(y-1)*y*y*y/(.0000254053+1.71228*x-1.71506*x*y+1.34174*y*y);
+    double tangent=sqrt(fmax(0,1-x*x));
+    double wx=tangent>1e-6 ? (v3_dot(wo,wi)-x*nl)/tangent : 0;
+    double wy2=fmax(0,1-nl*nl-wx*wx), tx=a*wx+b*nl;
+    double len2=tx*tx+a*a*wy2+nl*nl;
+    double refl=.6*albedo/3.14159265358979323846*pow(a/len2,2);
+    if(fabs(fc.x-fb.x-.7*refl)>4e-5 || fabs(fc.y-fb.y-.4*refl)>4e-5 ||
+       fabs(fc.z-fb.z-.2*refl)>4e-5) {
+      fprintf(stderr,"FAIL: OpenPBR Zeltner fuzz view=%g\n",x);return 0;
+    }
+    /* Black fuzz changes only the layer throughput, including transmission. */
+    base.base_weight=0; base.transmission=1; base.transmission_color=v3_splat(1);
+    base.specular_ior=1.0f; base.specular_roughness=.02f;
+    black=base; black.sheen_weight=.6f; black.sheen_color=v3_splat(0);
+    pcg32 r0,r1;pcg32_seed(&r0,421,73+i);pcg32_seed(&r1,421,73+i);int checked=0;
+    for(int j=0;j<300 && checked<40;++j) {
+      BsdfSample a0,a1;int ok0=bsdf_sample(&base,n,wo,&r0,&a0);
+      int ok1=bsdf_sample(&black,n,wo,&r1,&a1);
+      if(ok0!=ok1) { fprintf(stderr,"FAIL: fuzz paired sample mismatch\n");return 0; }
+      if(!ok0 || !a0.transmission || !a0.crossed) continue;
+      if(fabs(a1.throughput.x-a0.throughput.x*attenuation)>3e-5) {
+        fprintf(stderr,"FAIL: fuzz transmission throughput view=%g\n",x);return 0;
+      }
+      ++checked;
+    }
+    if(checked<10) { fprintf(stderr,"FAIL: too few fuzz transmission samples\n");return 0; }
+  }
+  return 1;
+}
+
 int main(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.9\"/></oren_nayar_diffuse_bsdf>"
@@ -740,7 +795,7 @@ int main(void) {
       }
     }
   }
-  if (!openpbr_transmission_ior_checks() || !layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
+  if (!openpbr_fuzz_checks() || !openpbr_transmission_ior_checks() || !layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||
