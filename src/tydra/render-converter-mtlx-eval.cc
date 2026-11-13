@@ -483,6 +483,14 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
          TransformMtlxColorInput(node, property, evaluation_space, out);
 }
 
+static bool MtlxCloverleaf(float x, float y, float radius) {
+  const float sx = 2.0f * x, sy = 2.0f * y;
+  const float r2 = radius * radius;
+  const auto inside = [r2](float a, float b) { return a * a + b * b <= r2; };
+  return inside(sx + radius, sy) || inside(sx - radius, sy) ||
+         inside(sx, sy - radius) || inside(sx, sy + radius);
+}
+
 bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                           double time_code,
                           const std::string& evaluation_space,
@@ -951,7 +959,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
-  if (starts("ND_tiledcircles_")) {
+  if (starts("ND_tiledcircles_") || starts("ND_tiledcloverleafs_")) {
+    const bool cloverleaf = starts("ND_tiledcloverleafs_");
     MtlxConstantValue texcoord, tiling, offset, size, staggered;
     if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
         !input("uvoffset", &offset) || !input("size", &size) ||
@@ -960,15 +969,16 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     const float x = texcoord.component(0) * tiling.component(0) - offset.component(0);
     const float y = texcoord.component(1) * tiling.component(1) - offset.component(1);
     auto mod = [](float a, float b) { return a - b * std::floor(a / b); };
-    auto inside = [](float a, float b, float radius) {
-      return a * a + b * b <= radius * radius;
+    auto inside = [cloverleaf](float a, float b, float radius) {
+      return cloverleaf ? MtlxCloverleaf(a, b, radius)
+                        : a * a + b * b <= radius * radius;
     };
     bool hit;
     if (staggered.component(0) == 0.0f) {
       hit = inside(2.0f * mod(x, 1.0f) - 1.0f,
                    2.0f * mod(y, 1.0f) - 1.0f, size.component(0));
     } else {
-      constexpr float half = 0.866025f;
+      const float half = cloverleaf ? 0.5f : 0.866025f;
       const float shift = mod(y, 2.0f * half) > half ? 0.5f : 0.0f;
       const float mx = mod(x + shift, 1.0f), my = mod(y, half);
       const float radius = size.component(0) * 0.5f;
@@ -1046,6 +1056,18 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     out->value[0] = p3x + p3y <= 0.0f ? 1.0f : 0.0f;
     out->color_managed = texcoord.color_managed || center.color_managed ||
                          radius.color_managed;
+    return true;
+  }
+
+  if (starts("ND_cloverleaf_")) {
+    MtlxConstantValue texcoord, center, radius;
+    if (!input("texcoord", &texcoord) || !input("center", &center) ||
+        !input("radius", &radius) || texcoord.components < 2 || center.components < 2) return false;
+    out->components = 1;
+    out->value[0] = MtlxCloverleaf(texcoord.component(0) - center.component(0),
+                                   texcoord.component(1) - center.component(1),
+                                   radius.component(0)) ? 1.0f : 0.0f;
+    out->color_managed = texcoord.color_managed || center.color_managed || radius.color_managed;
     return true;
   }
 

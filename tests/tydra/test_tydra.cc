@@ -219,6 +219,7 @@ bool MtlxEvalApproxSupportedTag(const std::string& tag) {
       "unifiednoise2d", "unifiednoise3d",
       "ramplr", "ramptb", "ramp4", "splitlr",
       "splittb", "checkerboard", "circle", "line", "grid", "crosshatch", "tiledcircles",
+      "cloverleaf", "tiledcloverleafs",
       "hexagon"};
   return supported.count(tag) != 0;
 }

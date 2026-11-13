@@ -4568,3 +4568,5 @@ The Tydra Lean-vector replay includes crosshatch cases with negative thickness,
 which must produce black even on a diagonal.
 The same replay covers regular and staggered MaterialX tiled circles, negative
 UV coordinates and signed size.
+The Tydra replay also covers cloverleaf and tiled-cloverleaf nodes with
+regular and staggered layouts, negative coordinates and signed size.
