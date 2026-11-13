@@ -10,6 +10,15 @@
 
 static int nearf(float a, float b) { return fabsf(a - b) <= 1.0e-6f; }
 
+static int sample_texcoord(void *user, int index, float out_uv[2]) {
+  (void)user;
+  if (index != 1) return 0;
+  out_uv[0] = 0.375f;
+  out_uv[1] = 0.625f;
+  return 1;
+}
+
+
 static int eval_xml(const char *xml, OpenPBRParams *p) {
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) {
@@ -77,6 +86,36 @@ static int eval_volume_xml(const char *xml, MtlxVolumeParams *p) {
 }
 
 int main(void) {
+  /* A document geompropdef can redirect the standard UV0 alias to UV set 1.
+   * Verify the generated texcoord node carries that index to the renderer. */
+  MtlxDoc *uv_doc = mtlx_load_string(
+      "<materialx version=\"1.39\"><geompropdef name=\"UV0\" "
+      "geomprop=\"texcoord\" type=\"vector2\" index=\"1\"/>"
+      "<image name=\"img\" type=\"color3\"><input name=\"file\" "
+      "type=\"filename\" value=\"unused.png\"/></image></materialx>");
+  int uv_node = -1;
+  if (uv_doc) for (int i = 0; i < uv_doc->nnode; ++i)
+    if (!strcmp(uv_doc->nodes[i].category, "texcoord")) { uv_node = i; break; }
+  ShadeContext uv_ctx = {0};
+  uv_ctx.doc = uv_doc;
+  uv_ctx.uv[0] = 0.1f; uv_ctx.uv[1] = 0.2f;
+  uv_ctx.texcoord = sample_texcoord;
+  if (uv_doc && uv_doc->nnode > 0) {
+    const size_t uv_node_count = (size_t)uv_doc->nnode;
+    uv_ctx.memo = (MtlxValue *)calloc(uv_node_count, sizeof(MtlxValue));
+    uv_ctx.memo_done = (char *)calloc(uv_node_count, 1);
+  }
+  int uv_ok = uv_doc && uv_node >= 0 && uv_ctx.memo && uv_ctx.memo_done;
+  if (uv_ok) {
+    const MtlxValue uv = mtlx_eval_node_test(&uv_ctx, uv_node);
+    uv_ok = uv.type == MV_VEC2 && nearf(uv.v[0], 0.375f) && nearf(uv.v[1], 0.625f);
+  }
+  free(uv_ctx.memo); free(uv_ctx.memo_done); mtlx_free(uv_doc);
+  if (!uv_ok) {
+    fprintf(stderr, "indexed geomprop texcoord callback failed\n");
+    return 1;
+  }
+
   /* Exercise the shared UDIM resolver directly. Keep the fixture local to the
    * test working directory so the texture cache's relative search semantics
    * are identical to a real MaterialX document. */
