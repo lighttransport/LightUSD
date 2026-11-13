@@ -556,7 +556,7 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                   coordinate.component(1) * frequency.component(1) + offset.component(1),
                   is_3d ? coordinate.component(2) * frequency.component(2) + offset.component(2) : 0.0f};
     const float angle_degrees = (jitter_value - 1.0f) * 90000.0f;
-    const float radians = angle_degrees * 0.01745329251994329577f;
+    const float radians = angle_degrees * 3.14159265358979323846f / 180.0f;
     const float cosine = std::cos(radians);
     const float sine = std::sin(radians);
     float rotated[3] = {p[0], p[1], p[2]};

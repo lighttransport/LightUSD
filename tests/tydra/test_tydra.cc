@@ -3382,7 +3382,7 @@ void TestMaterialXUtilities() {
   assert(reusable_volume->Evaluate(sample_context, &spatial_sample));
   assert(std::abs(spatial_sample.absorption[0] - 0.25f) < 1e-6f);
   const char* transformed_volume = R"(<materialx version="1.39">
-    <position name="pos" type="vector3"/>
+    <position name="pos" type="vector3"><input name="space" type="string" value="world"/></position>
     <transformpoint name="local" type="vector3">
       <input name="in" type="vector3" nodename="pos"/>
       <input name="fromspace" type="string" value="world"/>
