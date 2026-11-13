@@ -163,6 +163,31 @@ int main() {
       return 1;
     }
   }
+  {
+    const char* xml = R"mtlx(<materialx version="1.39">
+      <diffuse_bsdf name="base" type="BSDF"/>
+      <dielectric_bsdf name="coat" type="BSDF">
+        <input name="weight" type="float" value="0.7"/>
+        <input name="ior" type="float" value="1.6"/>
+        <input name="roughness" type="vector2" value="0.2,0.7"/>
+        <input name="thinfilm_thickness" type="float" value="450"/>
+        <input name="thinfilm_ior" type="float" value="1.3"/>
+      </dielectric_bsdf>
+      <layer name="stack" type="BSDF">
+        <input name="top" type="BSDF" nodename="coat"/>
+        <input name="base" type="BSDF" nodename="base"/>
+      </layer>
+      <surface name="s" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="stack"/></surface>
+      <surfacematerial name="m" type="material"><input name="surfaceshader" type="surfaceshader" nodename="s"/></surfacematerial>
+    </materialx>)mtlx";
+    lightusd::tydra::LightRtOpenPBRParams params;
+    std::string err;
+    if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBR(xml, "m", &params, &err) ||
+        params.diffuseLobeCount != 1 || !Near(params.diffuseLobes[0].weight, .968501665f, 2e-6f)) {
+      std::fprintf(stderr, "MaterialX dielectric layer bridge failed: %s\n", err.c_str());
+      return 1;
+    }
+  }
   lusdview::DrawScene scene;
 
   lusdview::DrawMaterialCPU mat;

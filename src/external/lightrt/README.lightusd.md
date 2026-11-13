@@ -184,3 +184,6 @@ upstream provenance intact.
 
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `123cb89` for per-conductor retroreflection and its sampling PDF.
+
+- 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `d0c46a3` for
+  dielectric and generalized Schlick reflection-layer throughput.

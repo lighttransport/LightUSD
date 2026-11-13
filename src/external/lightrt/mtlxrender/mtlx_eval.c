@@ -1465,8 +1465,130 @@ static float blend_scalar(float old_weight, float old_value, float value,
                       : value;
 }
 
-/* Evaluate vertical throughput for diffuse, conductor and sheen closure graphs at the
- * shading point. Unknown top closures retain the legacy approximation.
+/* The genglsl directional-albedo fit is linear in F0 and F90. */
+static void layer_ggx_albedo_terms(double x, double y, double *a, double *b) {
+    double x2=x*x, y2=y*y;
+    double r0=.1003-.6303*x+9.748*y-2.038*x*y+29.34*x2-8.245*y2
+              -26.44*x2*y+19.99*x*y2-5.448*x2*y2;
+    double r1=.9345-2.323*x+2.229*y-3.748*x*y+1.424*x2-.7684*y2
+              +1.436*x2*y+.2913*x*y2+.6286*x2*y2;
+    double r2=1.0-1.765*x+8.263*y+11.53*x*y+28.96*x2-7.507*y2
+              -36.11*x2*y+15.86*x*y2+33.37*x2*y2;
+    double r3=1.0+.2281*x+15.94*y-55.83*x*y+13.08*x2+41.26*y2
+              +54.9*x2*y+300.2*x*y2-285.1*x2*y2;
+    *a=fmin(1.0,fmax(0.0,r0/r2)); *b=fmin(1.0,fmax(0.0,r1/r3));
+}
+
+/* XYZ sensitivity at normal incidence, following mx_eval_sensitivity. */
+static double layer_film_sensitivity(double opd, double shift, int channel) {
+    const double pi=3.14159265358979323846;
+    const double val[]={5.4856e-13,4.4201e-13,5.2481e-13};
+    const double pos[]={1.6810e6,1.7953e6,2.2084e6};
+    const double var[]={4.3278e9,9.3046e9,6.6121e9};
+    double phase=2.0*pi*opd, p2=phase*phase;
+    double result=val[channel]*sqrt(2.0*pi*var[channel])*
+        cos(pos[channel]*phase+shift)*exp(-var[channel]*p2);
+    if (!channel) result+=9.7470e-14*sqrt(2.0*pi*4.5282e9)*
+        cos(2.2399e6*phase+shift)*exp(-4.5282e9*p2);
+    return result/1.0685e-7;
+}
+
+/* Normal-incidence Airy F0 needed by the multiple-scattering fit. The
+ * Schlick model uses the reference's half-F0 second-interface approximation. */
+static int layer_film_f0(v3 f0, double ior, int schlick, double thickness,
+                         double film_ior, double result[3]) {
+    const double pi=3.14159265358979323846;
+    const double f[3]={f0.x,f0.y,f0.z};
+    double e=fmax(film_ior,1.0), r=(e-1.0)/(e+1.0), r12=r*r;
+    double trans=1.0-r12, opd=2.0*e*thickness*1.0e-9, xyz[3];
+    for(int j=0;j<3;j++) {
+        double eta3=ior, r23;
+        if(schlick) {
+            double root=sqrt(fmin(.99,fmax(.01,f[j])));
+            eta3=(1.0+root)/(1.0-root);
+            r23=.5*f[j];
+        } else {
+            double sum=eta3+e;
+            if (!(sum > 0.0)) return 0;
+            double q=(eta3-e)/sum; r23=q*q;
+        }
+        if (!(r23>=0.0 && r23<=1.0)) return 0;
+        double den=1.0-r12*r23;
+        if (!(den>0.0)) return 0;
+        double dc=trans*trans*r23/den, cm=dc-trans;
+        double phase=pi+(eta3<e ? pi : 0.0), amp=sqrt(r12*r23);
+        xyz[j]=r12+dc;
+        for(int m=1;m<=2;m++) {
+            cm*=amp;
+            xyz[j]+=2.0*cm*layer_film_sensitivity(m*opd,m*phase,j);
+        }
+    }
+    static const double matrix[3][3]={{2.3706743,-.9000405,-.4706338},
+        {-.5138850,1.4253036,.0885814},{.0052982,-.0146949,1.0093968}};
+    for(int j=0;j<3;j++) {
+        double value=0.0;
+        for(int k=0;k<3;k++) value+=matrix[j][k]*xyz[k];
+        if (!isfinite(value)) return 0;
+        result[j]=fmin(1.0,fmax(0.0,value));
+    }
+    return 1;
+}
+
+/* Reflection/indirect vertical throughput for dielectric and generalized
+ * Schlick closures. Transmission-only tops leave the reflection base intact. */
+static int layer_specular_throughput(ShadeContext *ctx, const MtlxNode *n,
+                                     int schlick, float *throughput) {
+    double weight=in_float(ctx,n,"weight",1.0f);
+    if (!(weight>=0.0 && weight<=1.0)) return 0;
+    if (!weight || !scatter_mode_has(in_string(n,"scatter_mode","R"),'R')) {
+        *throughput=1.0f; return 1;
+    }
+    v3 normal=ctx->Ns;
+    const MtlxInput *normal_input=find_input(n,"normal");
+    if(normal_input && (normal_input->has_value || normal_input->src_node>=0))
+        normal=in_color(ctx,n,"normal",normal);
+    float nl=v3_len(normal), vl=v3_len(ctx->V);
+    if(!v3_is_finite(normal) || !v3_is_finite(ctx->V) || !isfinite(nl) ||
+       !isfinite(vl) || nl<1.0e-6f || vl<1.0e-6f) return 0;
+    double nv=fmin(1.0,fmax(1.0e-8,fabs(v3_dot(normal,ctx->V)/(nl*vl))));
+    const MtlxInput *rough=find_input(n,"roughness");
+    MtlxValue rv=rough ? eval_input(ctx,rough) : mv_vec2(.05f,.05f);
+    double ax=rv.v[0], ay=ncomp_of(&rv)>=2 ? rv.v[1] : rv.v[0];
+    if(!isfinite(ax) || !isfinite(ay)) return 0;
+    ax=fmin(1.0,fmax(1.0e-8,ax)); ay=fmin(1.0,fmax(1.0e-8,ay));
+    double alpha=sqrt(ax*ay), a,b; layer_ggx_albedo_terms(nv,alpha,&a,&b);
+    double ess=a+b; if (!(ess>0.0) || !isfinite(ess)) return 0;
+    double ior=in_float(ctx,n,"ior",1.5f);
+    v3 c0=schlick ? in_color(ctx,n,"color0",v3_splat(1.0f)) : v3_splat(0.0f);
+    v3 c90=schlick ? in_color(ctx,n,"color90",v3_splat(1.0f)) : v3_splat(1.0f);
+    if(schlick) {
+        if(!v3_is_finite(c0) || !v3_is_finite(c90)) return 0;
+        c0=v3_make(fmaxf(0,c0.x),fmaxf(0,c0.y),fmaxf(0,c0.z));
+        c90=v3_make(fmaxf(0,c90.x),fmaxf(0,c90.y),fmaxf(0,c90.z));
+    } else {
+        if(!isfinite(ior) || !(ior>0.0)) return 0;
+        double q=(ior-1.0)/(ior+1.0); c0=v3_splat((float)(q*q));
+    }
+    double thickness=in_float(ctx,n,"thinfilm_thickness",0.0f);
+    double film_ior=in_float(ctx,n,"thinfilm_ior",1.5f);
+    if(!isfinite(thickness) || !isfinite(film_ior)) return 0;
+    double film0[3]={c0.x,c0.y,c0.z};
+    if(thickness>0.0 && !layer_film_f0(c0,ior,schlick,thickness,film_ior,film0)) return 0;
+    const double c0c[3]={c0.x,c0.y,c0.z}, c90c[3]={c90.x,c90.y,c90.z};
+    double sum=0.0;
+    for(int j=0;j<3;j++) {
+        double f90=(schlick && !(thickness>0.0)) ? c90c[j] : 1.0;
+        double favg=film0[j]+(f90-film0[j])/21.0;
+        double compensation=1.0+favg*(1.0-ess)/ess;
+        sum+=(a*c0c[j]+b*c90c[j])*compensation;
+    }
+    double result=1.0-weight*sum/3.0;
+    if(!isfinite(result)) return 0;
+    *throughput=(float)result; return 1;
+}
+
+/* Evaluate reflection/indirect vertical throughput for supported closure graphs
+ * at the shading point. Unknown top closures retain the legacy approximation.
  * Multiplication scales response, not throughput, in MaterialX genglsl. */
 static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
                                   int depth, size_t *budget, float *throughput) {
@@ -1481,6 +1603,8 @@ static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
         *throughput = 1.0f - weight;
         return 1;
     }
+    if (!strcmp(cat, "dielectric_bsdf") || !strcmp(cat, "generalized_schlick_bsdf"))
+        return layer_specular_throughput(ctx,n,!strcmp(cat,"generalized_schlick_bsdf"),throughput);
     if (!strcmp(cat, "sheen_bsdf")) {
         const float weight = in_float(ctx, n, "weight", 1.0f);
         const MtlxInput *normal_input = find_input(n, "normal");

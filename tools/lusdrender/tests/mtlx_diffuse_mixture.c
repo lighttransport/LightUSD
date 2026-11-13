@@ -7,11 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int evaluate(const char *xml, OpenPBRParams *out) {
+static int evaluate_view(const char *xml, OpenPBRParams *out, v3 view) {
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) return 0;
   ShadeContext ctx; memset(&ctx, 0, sizeof(ctx));
-  ctx.doc = doc; ctx.Ns = v3_make(0,0,1); ctx.Ng = ctx.Ns;
+  ctx.doc = doc; ctx.Ns = v3_make(0,0,1); ctx.Ng = ctx.Ns; ctx.V = view;
   ctx.dpdu = v3_make(1,0,0); ctx.dpdv = v3_make(0,1,0);
   ctx.memo = calloc((size_t)(doc->nnode ? doc->nnode : 1), sizeof(MtlxValue));
   ctx.memo_done = calloc((size_t)(doc->nnode ? doc->nnode : 1), 1);
@@ -19,6 +19,10 @@ static int evaluate(const char *xml, OpenPBRParams *out) {
   int ok = ctx.memo && ctx.memo_done && !mtlx_eval_surface(&ctx, id, out);
   free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
   return ok;
+}
+
+static int evaluate(const char *xml, OpenPBRParams *out) {
+  return evaluate_view(xml, out, v3_make(0,0,1));
 }
 
 static int overflow_check(int count, int expected) {
@@ -83,6 +87,42 @@ static int layer_checks(void) {
   return 1;
 }
 
+/* MaterialX genglsl directional albedo and normal-incidence Airy F0;
+ * expected values are checked by an independent reference script. */
+static const float layer_specular_reference[4][2] = {
+  {0.968380698f,0.964583354f}, {0.968501665f,0.964747628f},
+  {0.754071581f,0.755918826f}, {0.763761936f,0.767310678f}
+};
+static int specular_layer_checks(void) {
+  const char *parts=
+    "<diffuse_bsdf name=\"base\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.4,0.5,0.6\"/></diffuse_bsdf>"
+    "<dielectric_bsdf name=\"d\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.7\"/><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></dielectric_bsdf>"
+    "<dielectric_bsdf name=\"df\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.7\"/><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"450\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.3\"/></dielectric_bsdf>"
+    "<generalized_schlick_bsdf name=\"sc\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.7\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"color0\" type=\"color3\" value=\"0.1,0.35,0.7\"/><input name=\"color90\" type=\"color3\" value=\"0.9,0.8,0.6\"/></generalized_schlick_bsdf>"
+    "<generalized_schlick_bsdf name=\"sf\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.7\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"color0\" type=\"color3\" value=\"0.1,0.35,0.7\"/><input name=\"color90\" type=\"color3\" value=\"0.9,0.8,0.6\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"500\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.4\"/></generalized_schlick_bsdf>"
+    "<dielectric_bsdf name=\"t\" type=\"BSDF\"><input name=\"scatter_mode\" type=\"string\" value=\"T\"/></dielectric_bsdf>"
+    "<mix name=\"mixed\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"df\"/><input name=\"fg\" type=\"BSDF\" nodename=\"sf\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
+    "<layer name=\"nested\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"df\"/><input name=\"base\" type=\"BSDF\" nodename=\"sf\"/></layer>"
+    "<multiply name=\"scaledtop\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"df\"/><input name=\"in2\" type=\"float\" value=\"0.2\"/></multiply>";
+  const char *tops[]={"d","df","sc","sf","t","mixed","nested","scaledtop"};
+  const v3 views[]={{0,0,1},{.8f,0,.6f}};
+  char xml[8192];
+  for(int v=0;v<2;v++) for(int i=0;i<8;i++) {
+    OpenPBRParams p;
+    snprintf(xml,sizeof(xml),"<materialx>%s<layer name=\"stack\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"%s\"/><input name=\"base\" type=\"BSDF\" nodename=\"base\"/></layer><surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"stack\"/></surface></materialx>",parts,tops[i]);
+    if(!evaluate_view(xml,&p,views[v]) || p.diffuse_lobe_count!=1) {
+      fprintf(stderr,"specular layer graph failed %d\n",i); return 0;
+    }
+    float expected=i<4 ? layer_specular_reference[i][v] :
+      i==4 ? 1.0f : i==5 ? .7f*layer_specular_reference[1][v]+.3f*layer_specular_reference[3][v] :
+      i==6 ? layer_specular_reference[1][v]*layer_specular_reference[3][v] : layer_specular_reference[1][v];
+    if(fabsf(p.diffuse_lobes[0].weight-expected)>2e-6f) {
+      fprintf(stderr,"specular layer %d view %d got %.9g expected %.9g\n",i,v,p.diffuse_lobes[0].weight,expected);return 0;
+    }
+  }
+  return 1;
+}
+
 int main(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.9\"/></oren_nayar_diffuse_bsdf>"
@@ -127,7 +167,7 @@ int main(void) {
       }
     }
   }
-  if (!layer_checks()) return 1;
+  if (!layer_checks() || !specular_layer_checks()) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||
       !overflow_check(MTLX_MAX_DIFFUSE_LOBES+1, 0)) return 1;
   puts("PASS: mixed diffuse closure responses and bounded overflow");
