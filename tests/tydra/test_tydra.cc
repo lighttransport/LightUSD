@@ -142,6 +142,15 @@ def Scope "M" {
     float2 inputs:offset = (0.5, -0.25)
     float inputs:rotate = 0
   }
+  def Shader "PlaceUnresolved" {
+    uniform token info:id = "ND_place2d_vector2"
+    float2 inputs:texcoord = (0.25, 0.75)
+    float2 inputs:pivot = (0, 0)
+    float2 inputs:scale = (1, 1)
+    float2 inputs:offset = (0, 0)
+    float inputs:rotate = 0
+    int inputs:operationorder.connect = </M/Missing.outputs:out>
+  }
   def Shader "Reflect" {
     uniform token info:id = "ND_reflect_vector3"
     vector3f inputs:in = (1, -1, 0)
@@ -176,7 +185,7 @@ def Scope "M" {
       {"/M/Acos", {1.0471975512f}, 1},
       {"/M/Range", {-0.5f}, 1},
       {"/M/Triangle", {0.25f}, 1},
-      {"/M/Place", {0.75f, 0.5f}, 2},
+      {"/M/Place", {-0.25f, 1.0f}, 2},
       {"/M/Reflect", {1.0f, 1.0f, 0.0f}, 3},
       {"/M/Refract", {0.0f, 0.0f, -1.0f}, 3},
   };
@@ -206,6 +215,9 @@ def Scope "M" {
   MtlxConstantValue unresolved_value;
   std::set<std::string> unresolved_visiting;
   assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/RangeUnresolved"),
+                               0.0, "", &unresolved_value, &unresolved_visiting, 0));
+  unresolved_visiting.clear();
+  assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/PlaceUnresolved"),
                                0.0, "", &unresolved_value, &unresolved_visiting, 0));
 }
 namespace {

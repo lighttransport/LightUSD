@@ -1007,12 +1007,23 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
             MtlxValue scl = in_or(ctx, n, "scale", mv_vec2(1, 1));
             MtlxValue off = in_or(ctx, n, "offset", mv_vec2(0, 0));
             MtlxValue rot = in_or(ctx, n, "rotate", mv_float(0));
+            MtlxValue order = in_or(ctx, n, "operationorder", mv_float(0));
             float x = tc.v[0] - piv.v[0], y = tc.v[1] - piv.v[1];
             float ang = rot.v[0] * (MTLX_PI / 180.0f), cs = cosf(ang), sn = sinf(ang);
-            float rx = x * cs - y * sn, ry = x * sn + y * cs;
-            rx = rx / (scl.v[0] != 0 ? scl.v[0] : 1) + piv.v[0] + off.v[0];
-            ry = ry / (scl.v[1] != 0 ? scl.v[1] : 1) + piv.v[1] + off.v[1];
-            r = mv_vec2(rx, ry); break;
+            float sx = scl.v[0] != 0.0f ? scl.v[0] : 1.0f;
+            float sy = scl.v[1] != 0.0f ? scl.v[1] : 1.0f;
+            if (order.v[0] < 1.0f) {
+                x /= sx; y /= sy;
+                r = mv_vec2(x * cs + y * sn - off.v[0] + piv.v[0],
+                            -x * sn + y * cs - off.v[1] + piv.v[1]);
+            } else if (order.v[0] < 2.0f) {
+                x -= off.v[0]; y -= off.v[1];
+                r = mv_vec2((x * cs + y * sn) / sx + piv.v[0],
+                            (-x * sn + y * cs) / sy + piv.v[1]);
+            } else {
+                r = mv_vec2(0, 0);
+            }
+            break;
         }
         case OP_ADD: a = in_or(ctx,n,"in1",mv_zero(n->type)); b = in_or(ctx,n,"in2",mv_float(0)); r = binop(a,b,f_add); break;
         case OP_SUBTRACT: a = in_or(ctx,n,"in1",mv_zero(n->type)); b = in_or(ctx,n,"in2",mv_float(0)); r = binop(a,b,f_sub); break;

@@ -1145,22 +1145,38 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
   }
 
   if (starts("ND_place2d_")) {
-    MtlxConstantValue texcoord, pivot, scale, offset, rotation;
+    MtlxConstantValue texcoord, pivot, scale, offset, rotation, order;
     if (!input("texcoord", &texcoord) || !input("pivot", &pivot) ||
         !input("scale", &scale) || !input("offset", &offset) ||
         !input("rotate", &rotation) || texcoord.components < 2) return false;
-    const float x = texcoord.component(0) - pivot.component(0);
-    const float y = texcoord.component(1) - pivot.component(1);
+    if (!input("operationorder", &order)) {
+      const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+      if (spec && (spec->property("inputs:operationorder") ||
+                   spec->connection("inputs:operationorder"))) return false;
+      // The MaterialX default operation order is SRT (0).
+    }
+    float x = texcoord.component(0) - pivot.component(0);
+    float y = texcoord.component(1) - pivot.component(1);
     const float radians = rotation.component(0) * (3.14159265358979323846f / 180.0f);
-    const float rx = x * std::cos(radians) - y * std::sin(radians);
-    const float ry = x * std::sin(radians) + y * std::cos(radians);
+    const float cs = std::cos(radians), sn = std::sin(radians);
+    const float sx = scale.component(0) != 0.0f ? scale.component(0) : 1.0f;
+    const float sy = scale.component(1) != 0.0f ? scale.component(1) : 1.0f;
     out->components = 2;
-    out->value[0] = rx / (scale.component(0) != 0.0f ? scale.component(0) : 1.0f) +
-                    pivot.component(0) + offset.component(0);
-    out->value[1] = ry / (scale.component(1) != 0.0f ? scale.component(1) : 1.0f) +
-                    pivot.component(1) + offset.component(1);
+    if (order.component(0) < 1.0f) {
+      x /= sx; y /= sy;
+      out->value[0] = x * cs + y * sn - offset.component(0) + pivot.component(0);
+      out->value[1] = -x * sn + y * cs - offset.component(1) + pivot.component(1);
+    } else if (order.component(0) < 2.0f) {
+      x -= offset.component(0); y -= offset.component(1);
+      out->value[0] = (x * cs + y * sn) / sx + pivot.component(0);
+      out->value[1] = (-x * sn + y * cs) / sy + pivot.component(1);
+    } else {
+      out->value[0] = 0.0f;
+      out->value[1] = 0.0f;
+    }
     out->color_managed = texcoord.color_managed || pivot.color_managed ||
-                         scale.color_managed || offset.color_managed;
+                         scale.color_managed || offset.color_managed ||
+                         rotation.color_managed || order.color_managed;
     return true;
   }
 

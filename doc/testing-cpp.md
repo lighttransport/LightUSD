@@ -4579,3 +4579,6 @@ inputs, optional output clamping with reversed bounds, and per-channel values.
 An unresolved authored `doclamp` connection must not be treated as the default.
 Trianglewave and reflection vector replay includes negative and periodic inputs
 and non-unit normals; the reference graph applies the supplied normal directly.
+MaterialX place2d vectors check SRT and TRS ordering, reference rotation,
+nonuniform scales, offset subtraction, and out-of-range order selectors. An
+unresolved authored `operationorder` connection must not use the default.
