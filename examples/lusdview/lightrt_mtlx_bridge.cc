@@ -363,6 +363,8 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
     dst->conductorLobes[i].roughness = src.conductor_lobes[i].roughness;
     dst->conductorLobes[i].roughnessY = src.conductor_lobes[i].roughness_y;
     CopyV3(src.conductor_lobes[i].tangent, dst->conductorLobes[i].tangent);
+    dst->conductorLobes[i].thinfilmThickness = src.conductor_lobes[i].thinfilm_thickness;
+    dst->conductorLobes[i].thinfilmIor = src.conductor_lobes[i].thinfilm_ior;
   }
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);

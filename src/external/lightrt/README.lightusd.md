@@ -175,3 +175,6 @@ upstream provenance intact.
 
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `862e1f6` for
   anisotropic conductor visible-normal proposals.
+
+- 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h,mtlx_eval.c,mtlx_eval.h}`
+  matches LightRT `786c4ad` for independent conductor thin films.

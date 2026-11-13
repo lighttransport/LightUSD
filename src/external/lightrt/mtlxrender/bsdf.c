@@ -57,8 +57,11 @@ static double materialx_ggx_directional_albedo(double x, double y) {
     return fmin(1.0,fmax(0.0,r0/r2))+fmin(1.0,fmax(0.0,r1/r3));
 }
 
-v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
-    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth) {
+static v3 conductor_airy(float cosine, v3 eta, v3 extinction, float thickness, float film_ior);
+
+static v3 conductor_response(v3 eta, v3 extinction, float alpha_x,
+    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth,
+    float thickness, float film_ior) {
     if (!(ndotv > 0.0f && ndotl > 0.0f) || !v3_is_finite(eta) ||
         !v3_is_finite(extinction) || !isfinite(alpha_x) || !isfinite(alpha_y) ||
         !isfinite(ndotv) || !isfinite(ndotl) || !isfinite(hx) || !isfinite(hy) ||
@@ -76,14 +79,28 @@ v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
     if (!(ess > 0.0)) return v3_splat(0.0f);
     double n[3]={eta.x,eta.y,eta.z}, k[3]={extinction.x,extinction.y,extinction.z};
     float result[3];
+    v3 film0 = v3_splat(0.0f), film = v3_splat(0.0f);
+    if (thickness > 0.0f && isfinite(thickness) && isfinite(film_ior)) {
+        film0 = conductor_airy(1.0f, eta, extinction, thickness, film_ior);
+        film = conductor_airy(vdoth, eta, extinction, thickness, film_ior);
+    }
+    const float film0c[3] = {film0.x, film0.y, film0.z};
+    const float filmc[3] = {film.x, film.y, film.z};
+    int use_film = thickness > 0.0f && isfinite(thickness) && isfinite(film_ior);
     for (int i=0;i<3;i++) {
-        double f0=materialx_conductor_fresnel(1.0,n[i],k[i]);
-        double f=materialx_conductor_fresnel(vdoth,n[i],k[i]);
+        double f0=use_film ? film0c[i] : materialx_conductor_fresnel(1.0,n[i],k[i]);
+        double f=use_film ? filmc[i] : materialx_conductor_fresnel(vdoth,n[i],k[i]);
         double favg=f0+(1.0-f0)/21.0;
         double compensation=1.0+favg*(1.0-ess)/ess;
         result[i]=(float)(D*G*f*compensation/(4.0*v*l));
     }
     return v3_make(result[0],result[1],result[2]);
+}
+
+v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
+    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth) {
+    return conductor_response(eta, extinction, alpha_x, alpha_y, ndotv, ndotl,
+                              hx, hy, hz, vdoth, 0.0f, 1.0f);
 }
 
 v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
@@ -315,6 +332,67 @@ static v3 fresnel_airy(float cosTheta, float ior_substrate, float tf_thickness_n
     I = v3_scale(I, 0.5f);
     v3 rgb = xyz_to_rgb_airy(I);
     return v3_make(clampf(rgb.x, 0.0f, 1.0f), clampf(rgb.y, 0.0f, 1.0f), clampf(rgb.z, 0.0f, 1.0f));
+}
+
+/* MaterialX conductor Airy model: each XYZ channel carries the phase and
+ * reflectance of the corresponding complex substrate index before conversion
+ * to RGB, matching the reference's spectral sensitivity approximation. */
+static v3 conductor_airy(float cosine, v3 eta, v3 extinction, float thickness, float film_ior) {
+    float c = clampf(cosine, 1.0e-8f, 1.0f);
+    float e2 = maxf(film_ior, 1.0f);
+    float ct = sqrtf(maxf(0.0f, 1.0f - (1.0f-c*c)/(e2*e2)));
+    float r12p, r12s;
+    fresnel_dielectric_pol(c, e2, &r12p, &r12s);
+    if (ct <= 0.0f) { r12p = 1.0f; r12s = 1.0f; }
+    float phi1p = c < cosf(atanf(e2)) ? 0.0f : MTLX_PI;
+    float opd = 2.0f * e2 * ct * thickness * 1.0e-9f;
+    const float ns[3] = {eta.x,eta.y,eta.z}, ks[3] = {extinction.x,extinction.y,extinction.z};
+    float xyz[3];
+    for (int j = 0; j < 3; ++j) {
+        double n = ns[j], k = ks[j], reln = n/e2, relk = k/e2;
+        double sin2 = 1.0-(double)ct*ct, c2 = (double)ct*ct;
+        double t0 = reln*reln-relk*relk-sin2;
+        double ab = sqrt(t0*t0+4.0*reln*reln*relk*relk);
+        double a = sqrt(fmax(0.0,(ab+t0)*0.5));
+        double t1 = ab+c2, t2 = 2.0*a*ct;
+        double rs = t1+t2 > 0.0 ? (t1-t2)/(t1+t2) : 1.0;
+        double t3 = c2*ab+sin2*sin2, t4 = t2*sin2;
+        double rp = t3+t4 > 0.0 ? rs*(t3-t4)/(t3+t4) : 1.0;
+        /* Algebraic form avoids division by eta when eta is zero. */
+        double A = n*n-k*k-e2*e2*sin2;
+        double B = sqrt(A*A+4.0*n*n*k*k);
+        double U = sqrt(fmax(0.0,(A+B)*0.5));
+        double V = sqrt(fmax(0.0,(B-A)*0.5));
+        double phiS = atan2(2.0*e2*V*ct, U*U+V*V-e2*e2*c2);
+        double phiP = atan2(2.0*e2*ct*(2.0*n*k*U-(n*n-k*k)*V),
+                            (n*n+k*k)*(n*n+k*k)*c2-e2*e2*(U*U+V*V));
+        const double r12[2] = {r12p,r12s}, r23[2] = {rp,rs};
+        const double phase[2] = {phiP+phi1p,phiS+MTLX_PI};
+        double sum = 0.0;
+        for (int pol=0; pol<2; ++pol) {
+            double trans=1.0-r12[pol], den=1.0-r12[pol]*r23[pol];
+            double dc=den > 1e-15 ? trans*trans*r23[pol]/den : 0.0;
+            sum += r12[pol]+dc;
+            double cm=dc-trans, r=sqrt(fmax(0.0,r12[pol]*r23[pol]));
+            for (int m=1; m<=2; ++m) {
+                cm *= r;
+                v3 sensitivity=eval_sensitivity((float)m*opd,(float)(m*phase[pol]));
+                float component = j==0 ? sensitivity.x : (j==1 ? sensitivity.y : sensitivity.z);
+                sum += 2.0*cm*component;
+            }
+        }
+        xyz[j]=(float)(0.5*sum);
+    }
+    v3 rgb=xyz_to_rgb_airy(v3_make(xyz[0],xyz[1],xyz[2]));
+    return v3_make(clampf(rgb.x,0.0f,1.0f),clampf(rgb.y,0.0f,1.0f),clampf(rgb.z,0.0f,1.0f));
+}
+
+v3 bsdf_materialx_conductor_film_fresnel(float cosine, v3 eta, v3 extinction,
+                                           float thickness, float film_ior) {
+    if (!isfinite(cosine) || !v3_is_finite(eta) || !v3_is_finite(extinction) ||
+        !isfinite(thickness) || !isfinite(film_ior) || thickness <= 0.0f)
+        return v3_splat(0.0f);
+    return conductor_airy(cosine, eta, extinction, thickness, film_ior);
 }
 
 /* ---- layered material ------------------------------------------------- */
@@ -615,9 +693,10 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
         v3 tangent, bitangent;
         conductor_frame(N, lobe->tangent, &tangent, &bitangent);
-        v3 response = bsdf_materialx_conductor_anisotropic(lobe->ior, lobe->extinction,
+        v3 response = conductor_response(lobe->ior, lobe->extinction,
             lobe->roughness, lobe->roughness_y, NdotV, NdotL,
-            v3_dot(H,tangent), v3_dot(H,bitangent), NdotH, VdotH);
+            v3_dot(H,tangent), v3_dot(H,bitangent), NdotH, VdotH,
+            lobe->thinfilm_thickness, lobe->thinfilm_ior);
         spec = v3_add(spec, v3_mul(base_atten,
             v3_scale(v3_mul(response, lobe->weight_color), lobe->weight)));
     }

@@ -1659,6 +1659,8 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
             lobe->extinction = k;
             lobe->weight = weight;
             lobe->weight_color = color_scale;
+            lobe->thinfilm_thickness = in_float(ctx, n, "thinfilm_thickness", 0.0f);
+            lobe->thinfilm_ior = in_float(ctx, n, "thinfilm_ior", 1.5f);
             const MtlxInput *rough = find_input(n, "roughness");
             MtlxValue rv = rough ? eval_input(ctx, rough) : mv_vec2(0.05f, 0.05f);
             lobe->roughness = rv.v[0];

@@ -1695,12 +1695,13 @@ include a grazing case, and its white-furnace test checks a material/view sweep.
 MaterialX conductor responses against independent reference vectors.
 `tool-lusdrender-mtlx-conductor-mixture` checks independent conductor lobes,
 RGB weights, diffuse mixtures, opaque layers, anisotropic visible-normal
-sampling and its PDF, grazing-angle distribution histograms, Monte Carlo versus
-quadrature, smooth-GGX PDF stability, furnace bounds and
+sampling and its PDF, grazing-angle distribution histograms, conductor thin-film
+responses and mixed films, Monte Carlo versus quadrature, smooth-GGX PDF stability, furnace bounds and
 the 32/33-lobe boundary. The environment preview uses an approximate split-sum
-response with geometric-mean roughness; thin-film and retroreflective
-conductor responses remain incomplete. The LightRT `make test` suite also
-renders anisotropic conductor tangents with both CPU integrators.
+response with geometric-mean roughness and a film-aware split-sum approximation;
+retroreflective conductor responses remain incomplete. The LightRT `make test`
+suite also renders anisotropic conductor tangents and thin films with both CPU
+integrators.
 `tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
 responses, RGB-weighted mixtures, the lobe limit, the default BSDF mix weight,
 and view-dependent sheen-layer throughput.

@@ -264,6 +264,8 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.conductor_lobes[i].roughness = lobe.roughness;
     p.conductor_lobes[i].roughness_y = lobe.roughnessY;
     p.conductor_lobes[i].tangent = v3_make(lobe.tangent[0], lobe.tangent[1], lobe.tangent[2]);
+    p.conductor_lobes[i].thinfilm_thickness = lobe.thinfilmThickness;
+    p.conductor_lobes[i].thinfilm_ior = lobe.thinfilmIor;
   }
   p.specular_weight = src.specularWeight;
   p.specular_color =
@@ -1792,7 +1794,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const v3 one = v3_splat(1.0f), em = v3_sub(lobe.ior, one), ep = v3_add(lobe.ior, one);
         const v3 k2 = v3_mul(lobe.extinction, lobe.extinction);
         const v3 num = v3_add(v3_mul(em, em), k2), den = v3_add(v3_mul(ep, ep), k2);
-        const Vec3 cf0{num.x / std::max(den.x, 1.0e-6f), num.y / std::max(den.y, 1.0e-6f),
+        Vec3 cf0{num.x / std::max(den.x, 1.0e-6f), num.y / std::max(den.y, 1.0e-6f),
                        num.z / std::max(den.z, 1.0e-6f)};
         // Split-sum preview uses Schlick F0 and filtered environment; it is an
         // approximation to the full conductor Fresnel and compensation model.
@@ -1802,8 +1804,21 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const Vec3 env = SampleIblMip(ibl->prefiltered, env_refl, rough);
         float a = 1.0f, b = 0.0f;
         SampleBrdfLut(*ibl, ndotv, rough, &a, &b);
+        Vec3 response = EvalIblSpecularSplitSum(env, cf0, a, b);
+        if (lobe.thinfilm_thickness > 0.0f && std::isfinite(lobe.thinfilm_thickness) &&
+            std::isfinite(lobe.thinfilm_ior)) {
+          const v3 f0film = bsdf_materialx_conductor_film_fresnel(
+              1.0f, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
+          const v3 fview = bsdf_materialx_conductor_film_fresnel(
+              ndotv, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
+          // Like the reference's Airy directional-albedo approximation, blend
+          // mirror Fresnel with a rough response; the environment LUT and mip
+          // remain a rotationally averaged split-sum approximation.
+          response = Lerp(Mul(env, FromMtlxV3(fview)),
+                          EvalIblSpecularSplitSum(env, FromMtlxV3(f0film), a, b), rough);
+        }
         const Vec3 tint{lobe.weight_color.x, lobe.weight_color.y, lobe.weight_color.z};
-        spec = Add(spec, Mul(Mul(EvalIblSpecularSplitSum(env, cf0, a, b), tint), lobe.weight));
+        spec = Add(spec, Mul(Mul(response, tint), lobe.weight));
       }
     }
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},

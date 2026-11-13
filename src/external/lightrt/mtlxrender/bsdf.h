@@ -32,6 +32,10 @@ typedef struct {
 /* MaterialX Zeltner directional-albedo fit (cosine and roughness in [0,1]). */
 float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
 
+/* Airy Fresnel for a positive-thickness conductor film (thickness in nm). */
+v3 bsdf_materialx_conductor_film_fresnel(float cosine, v3 eta, v3 extinction,
+                                         float thickness, float film_ior);
+
 /* MaterialX genglsl isotropic conductor BRDF (unit weight, no thin film).
  * alpha is the authored microfacet roughness, not its square. Directions are
  * represented by positive cosine inputs; a nonpositive NdotV/L returns zero. */

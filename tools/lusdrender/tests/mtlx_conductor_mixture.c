@@ -82,6 +82,57 @@ int main(void) {
     snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",nodes,roots[i]);
     if (!evaluate(xml,&p[i])) {fprintf(stderr,"graph evaluation failed %s\n",roots[i]);return 1;}
   }
+  /* Expected RGB responses independently computed with complex Fresnel
+   * amplitudes and the reference's spectral sensitivity / GGX equations. */
+  const char *film_graph = "<materialx>"
+    "<conductor_bsdf name=\"film\" type=\"BSDF\">"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.3,0.3\"/>"
+    "<input name=\"thinfilm_thickness\" type=\"float\" value=\"400\"/>"
+    "<input name=\"thinfilm_ior\" type=\"float\" value=\"1.5\"/>"
+    "</conductor_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"film\"/>"
+    "</surface></materialx>";
+  OpenPBRParams film;
+  if (!evaluate(film_graph, &film) || film.conductor_lobe_count != 1 ||
+      film.conductor_lobes[0].thinfilm_thickness != 400.0f ||
+      film.conductor_lobes[0].thinfilm_ior != 1.5f) {
+    fprintf(stderr, "conductor film parameters lost\n"); return 1;
+  }
+  const v3 film_views[]={{0,0,1},{.8f,0,.6f}}, film_light={0,.6f,.8f};
+  const v3 film_reference[]={{.30699481f,.16552106f,.08735680f},
+                             {.10751124f,.06037760f,.02345290f}};
+  for (int i=0;i<2;i++) {
+    v3 diffuse,specular; float density;
+    bsdf_eval_lobes(&film,v3_make(0,0,1),film_views[i],film_light,&diffuse,&specular,&density);
+    if (!near3(specular,film_reference[i])) {
+      fprintf(stderr,"conductor film reference %d: %g %g %g\n",i,specular.x,specular.y,specular.z); return 1;
+    }
+  }
+  /* Separate films must survive a closure mix; compare with isolated lobes. */
+  const char *film_mix_graph = "<materialx>"
+    "<conductor_bsdf name=\"a\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.3\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"400\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.5\"/></conductor_bsdf>"
+    "<conductor_bsdf name=\"b\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.3\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"800\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.25\"/></conductor_bsdf>"
+    "<mix name=\"m\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
+    "<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"m\"/></surface></materialx>";
+  OpenPBRParams mixed;
+  if (!evaluate(film_mix_graph,&mixed) || mixed.conductor_lobe_count!=2 ||
+      mixed.conductor_lobes[0].thinfilm_thickness!=400.0f ||
+      mixed.conductor_lobes[1].thinfilm_thickness!=800.0f ||
+      mixed.conductor_lobes[1].thinfilm_ior!=1.25f) {
+    fprintf(stderr,"mixed conductor film parameters lost\n"); return 1;
+  }
+  OpenPBRParams second=film;
+  second.conductor_lobes[0].thinfilm_thickness=800.0f;
+  second.conductor_lobes[0].thinfilm_ior=1.25f;
+  for (int i=0;i<2;i++) {
+    v3 d,a,b,m; float pdf;
+    bsdf_eval_lobes(&film,v3_make(0,0,1),film_views[i],film_light,&d,&a,&pdf);
+    bsdf_eval_lobes(&second,v3_make(0,0,1),film_views[i],film_light,&d,&b,&pdf);
+    bsdf_eval_lobes(&mixed,v3_make(0,0,1),film_views[i],film_light,&d,&m,&pdf);
+    if (!near3(m,v3_add(v3_scale(a,.7f),v3_scale(b,.3f))) || near3(a,b)) {
+      fprintf(stderr,"mixed conductor films failed %d\n",i); return 1;
+    }
+  }
   if(p[3].conductor_lobe_count!=1 || p[3].diffuse_lobe_count!=1 || p[5].conductor_lobe_count!=2 ||
      fabsf(p[4].diffuse_lobes[0].weight-.6f)>1e-6f) {
     fprintf(stderr,"conductor lobe or layer data lost\n");return 1;
