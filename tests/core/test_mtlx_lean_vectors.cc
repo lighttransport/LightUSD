@@ -947,6 +947,44 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_ROOT_TYPE", 0, "incompatible graph input node was accepted");
   }
 
+  MtlxElem output_connected_compound = root_connected_compound;
+  output_connected_compound.children.push_back(document_output);
+  MtlxElem output_connected_input = elem("input", "gain");
+  output_connected_input.SetAttr("type", "float");
+  output_connected_input.SetAttr("output", "global_output");
+  output_connected_compound.children[0].children[0] = output_connected_input;
+  g_checks++;
+  if (!ResolveMtlxGraphs(output_connected_compound, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_INTERFACE_DOCUMENT_OUTPUT", 0,
+         error.empty() ? "document output dependency was not ordered" : error);
+  }
+  MtlxElem output_connected_missing = output_connected_compound;
+  output_connected_missing.children[0].children[0].SetAttr("output", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(output_connected_missing, output_connected_missing.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_DOCUMENT_OUTPUT_MISSING", 0,
+         "missing document output was accepted");
+  }
+  MtlxElem output_connected_wrong_type = output_connected_compound;
+  output_connected_wrong_type.children[0].children[0].SetAttr("type", "integer");
+  output_connected_wrong_type.children[0].children[2].children[1] = independent_in2;
+  g_checks++;
+  if (ResolveMtlxGraph(output_connected_wrong_type, output_connected_wrong_type.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_DOCUMENT_OUTPUT_TYPE", 0,
+         "incompatible document output type was accepted");
+  }
+  MtlxElem output_connected_cycle = output_connected_compound;
+  output_connected_cycle.children[2].children[0].SetAttr("nodegraph", "main");
+  output_connected_cycle.children[2].children[0].SetAttr("output", "out");
+  g_checks++;
+  if (ResolveMtlxGraphs(output_connected_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_INTERFACE_DOCUMENT_OUTPUT_CYCLE", 0,
+         "cycle through graph input and document output was accepted");
+  }
+
   MtlxElem compound_cycle = compound_root;
   MtlxElem helper_input = elem("input", "cycle");
   helper_input.SetAttr("type", "float");

@@ -4626,3 +4626,7 @@ Graph-input regressions also cover root-node sources: valid and missing nodes,
 type mismatches, indirect ordering and a cycle through a graph input. MaterialX
 1.39.5 accepts the tested valid root-node input and rejects missing or
 mismatched sources.
+The graph-input regression additionally covers `output`-only bindings to a
+document output, including missing and mismatched outputs, indirect dependency
+ordering and a cycle through the graph input. MaterialX 1.39.5 accepts the
+tested valid output binding and rejects the missing and mismatched cases.
