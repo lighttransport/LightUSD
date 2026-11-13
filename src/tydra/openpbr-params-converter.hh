@@ -97,7 +97,7 @@ inline bool BuildRealtimePbrMaterial(
     CopyShaderParam3ToOpenPBR(sheen_color, p.sheenColor);
     p.sheenRoughness = sheen_roughness.value.x;
     p.thinFilmWeight = s.thin_film_weight.value.x;
-    p.thinFilmThicknessNm = s.thin_film_thickness.value.x;
+    p.thinFilmThicknessNm = s.thin_film_thickness.value.x * 1000.0f;
     p.thinFilmIor = s.thin_film_ior.value.x;
     p.emission = s.emission_luminance.value.x;
     CopyShaderParam3ToOpenPBR(s.emission_color, p.emissionColor);

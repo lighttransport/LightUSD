@@ -219,7 +219,7 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
       << "            color3f inputs:sheen_color = " << color(pbr.sheenColor) << "\n"
       << "            float inputs:sheen_roughness = " << scalar(pbr.sheenRoughness) << "\n"
       << "            float inputs:thin_film_weight = " << scalar(pbr.thinFilmWeight) << "\n"
-      << "            float inputs:thin_film_thickness = " << scalar(pbr.thinFilmThicknessNm) << "\n"
+      << "            float inputs:thin_film_thickness = " << scalar(pbr.thinFilmThicknessNm * 0.001f) << "\n"
       << "            float inputs:thin_film_ior = " << scalar(pbr.thinFilmIor) << "\n"
       << "            float inputs:emission_luminance = " << scalar(pbr.emission) << "\n"
       << "            color3f inputs:emission_color = " << color(pbr.emissionColor) << "\n"

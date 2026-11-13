@@ -9796,6 +9796,7 @@ int main() {
     mat.openpbr->specular_roughness.value.x = 0.3f;
     mat.openpbr->specular_weight.value.x = 1.5f;
     mat.openpbr->specular_ior.value.x = 0.8f;
+    mat.openpbr->thin_film_thickness.value.x = 0.45f;
     RealtimePbrMaterial p;
     assert(BuildRealtimePbrMaterial(mat, &p));
     assert(p.diffuseModel == 1);
@@ -9803,6 +9804,7 @@ int main() {
     assert(p.coatDarkening == 1.0f);
     assert(std::abs(p.specularWeight - 1.5f) < 1.0e-6f);
     assert(std::abs(p.specularIor - 0.8f) < 1.0e-6f);
+    assert(std::abs(p.thinFilmThicknessNm - 450.0f) < 1.0e-4f);
     assert(std::abs(p.diffuseRoughness - 0.7f) < 1.0e-6f);
     assert(std::abs(p.specularRoughness - 0.3f) < 1.0e-6f);
     RealtimePbrMaterial preview;

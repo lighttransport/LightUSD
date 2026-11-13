@@ -221,7 +221,7 @@ int main() {
   mat.params.push_back(
       Vec3Param("subsurface_radius_scale", 0.7f, 0.5f, 0.3f));
   mat.params.push_back(FloatParam("thin_film_weight", 1.0f));
-  mat.params.push_back(FloatParam("thin_film_thickness", 450.0f));
+  mat.params.push_back(FloatParam("thin_film_thickness", 0.45f));
   mat.params.push_back(FloatParam("thin_film_ior", 1.4f));
   mat.params.push_back(FloatParam("opacity", 0.65f));
   lusdview::BakeRealtimePbrMaterial(&mat);

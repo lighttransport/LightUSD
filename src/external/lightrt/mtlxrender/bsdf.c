@@ -626,8 +626,7 @@ static Layers extract(const OpenPBRParams *p) {
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
     L.ior = specular_ior;
-    L.openpbr_base = p->openpbr_coat_remap && !explicit_specular && !explicit_conductor &&
-        !(p->thin_film_weight > 0.0f && p->thin_film_thickness > 0.0f);
+    L.openpbr_base = p->openpbr_coat_remap && !explicit_specular && !explicit_conductor;
     L.base_metalness = clampf(metal, 0.0f, 1.0f);
     L.base_metal_color = base;
     L.base_specular_weight = isfinite(p->specular_weight) ? maxf(p->specular_weight, 0.0f) : 0.0f;
@@ -837,7 +836,14 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         if (ess>0.0 && isfinite(ess)) {
             double favg=f0+(1.0-f0)/21.0;
             double comp=1.0+favg*(1.0-ess)/ess;
-            diffuse_fresnel_attenuation=v3_splat((float)(1.0-(a*f0+b)*comp));
+            v3 albedo=v3_splat((float)((a*f0+b)*comp));
+            if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f) {
+                v3 film0=fresnel_airy(1.0f,L->base_ior,L->tf_thickness,L->tf_ior);
+                v3 favg_film=v3_add(film0,v3_scale(v3_sub(one,film0),1.0f/21.0f));
+                v3 film_comp=v3_add(one,v3_scale(favg_film,(float)((1.0-ess)/ess)));
+                albedo=v3_lerp(albedo,v3_scale(film_comp,(float)(a*f0+b)),L->tf_weight);
+            }
+            diffuse_fresnel_attenuation=v3_sub(one,albedo);
         }
     }
     v3 diff = v3_mul(diff_alb,
@@ -906,16 +912,28 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         lobe.tint = L->base_tint;
         float hx = sqrtf(maxf(0.0f,1.0f-NdotH*NdotH));
         v3 dielectric = v3_splat(0.0f), metal = v3_splat(0.0f);
-        if (L->base_metalness < 1.0f)
+        if (L->base_metalness < 1.0f) {
             dielectric = specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH);
+            if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f) {
+                lobe.frame.thinfilm_thickness = L->tf_thickness;
+                lobe.frame.thinfilm_ior = L->tf_ior;
+                dielectric = v3_lerp(dielectric, specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH), L->tf_weight);
+                lobe.frame.thinfilm_thickness = 0.0f;
+            }
+        }
         if (L->base_metalness > 0.0f) {
             lobe.model = MTLX_SPECULAR_SCHLICK;
             lobe.color0 = L->base_metal_color;
             lobe.color82 = L->base_tint;
             lobe.color90 = v3_splat(1.0f);
             lobe.exponent = 5.0f;
-            metal = v3_scale(specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH),
-                             L->base_specular_weight);
+            metal = specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH);
+            if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f) {
+                lobe.frame.thinfilm_thickness = L->tf_thickness;
+                lobe.frame.thinfilm_ior = L->tf_ior;
+                metal = v3_lerp(metal, specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH), L->tf_weight);
+            }
+            metal = v3_scale(metal,L->base_specular_weight);
         }
         spec = v3_mul(base_atten, v3_lerp(dielectric, metal, L->base_metalness));
     }

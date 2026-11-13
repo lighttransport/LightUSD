@@ -306,9 +306,8 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_weight"}, &p->thinFilmWeight);
   if (FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_thickness"},
                  &p->thinFilmThicknessNm)) {
-    // OpenPBR and the LightRT evaluator both use nanometers for film
-    // thickness. Keep the canonical value unchanged; multiplying here would
-    // turn the documented 450 nm test film into a 450,000 nm layer.
+    // MaterialX OpenPBR inputs are micrometers; the renderer stores nm.
+    p->thinFilmThicknessNm *= 1000.0f;
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_ior"}, &p->thinFilmIor);
   FloatParam(mat, {"OpenPBRSurface"}, {"emission_luminance"}, &p->emission);
@@ -1959,7 +1958,7 @@ void ApplyOpenPBRMaterialConstants(
   color({"sheen_color", "fuzz_color"}, p.sheenColor);
   scalar({"sheen_roughness", "fuzz_roughness"}, p.sheenRoughness);
   scalar({"thin_film_weight"}, p.thinFilmWeight);
-  scalar({"thin_film_thickness"}, p.thinFilmThicknessNm);
+  scalar({"thin_film_thickness"}, p.thinFilmThicknessNm * 0.001f);
   scalar({"thin_film_ior"}, p.thinFilmIor);
   scalar({"emission_luminance"}, p.emission);
   color({"emission_color"}, p.emissionColor);
