@@ -474,6 +474,40 @@ def main():
     if max(differences) < 2:
         raise RuntimeError("OpenPBR diffuse roughness did not affect the render")
 
+    # Standard Surface uses qualitative Oren–Nayar instead of OpenPBR's EON.
+    standard_images = []
+    for roughness in (0, 1):
+        standard_source = out_dir / f"standard-diffuse-{roughness}.mtlx"
+        standard_source.write_text(f'''<?xml version="1.0"?>
+<materialx version="1.39">
+  <standard_surface name="s" type="surfaceshader">
+    <input name="base" type="float" value="1" />
+    <input name="base_color" type="color3" value="0.2, 0.4, 0.6" />
+    <input name="diffuse_roughness" type="float" value="{roughness}" />
+    <input name="specular" type="float" value="0" />
+  </standard_surface>
+  <surfacematerial name="m" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="s" />
+  </surfacematerial>
+</materialx>
+''', encoding="utf-8")
+        standard_image = out_dir / f"standard-diffuse-{roughness}.png"
+        standard = subprocess.run(
+            [exe, "--mtlx", str(standard_source), str(standard_image),
+             "--mtlx-material", "m", "-w", "64", "-height", "64",
+             "--displayTransform", "srgb"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if standard.returncode:
+            raise RuntimeError(f"standard rough diffuse render failed:\n{standard.stderr}")
+        sw, sh, pixels = read_png_rgba(standard_image)
+        if (sw, sh) != (lw, lh):
+            raise RuntimeError("standard diffuse render dimensions changed")
+        standard_images.append(pixels)
+    if max(abs(standard_images[0][i] - standard_images[1][i])
+           for i in range(0, len(standard_images[0]), 4)) < 2:
+        raise RuntimeError("standard-surface diffuse roughness did not affect the render")
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
         stdout=subprocess.PIPE,

@@ -40,7 +40,7 @@ int main(void) {
   OpenPBRParams p; memset(&p, 0, sizeof(p));
   p.base_color = v3_make(0.2f, 0.6f, 0.9f); p.specular_ior = 1.5f;
   p.specular_roughness = 0.3f; p.coat_ior = 1.5f; p.normal = n;
-  p.diffuse_energy_compensation = 1;
+  p.diffuse_model = MTLX_DIFFUSE_EON;
   for (size_t a=0;a<sizeof(sigmas)/sizeof(sigmas[0]);a++)
     for (size_t b=0;b<sizeof(weights)/sizeof(weights[0]);b++)
       for (size_t c=0;c<sizeof(views)/sizeof(views[0]);c++)

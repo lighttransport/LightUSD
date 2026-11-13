@@ -12,12 +12,19 @@
 #include "texture.h"
 #include "vecmath.h"
 
+enum {
+    MTLX_DIFFUSE_LAMBERT = 0,
+    MTLX_DIFFUSE_EON = 1,
+    MTLX_DIFFUSE_OREN_NAYAR = 2,
+    MTLX_DIFFUSE_BURLEY = 3
+};
+
 typedef struct {
     /* base / diffuse */
     float base_weight;
     v3    base_color;
     float diffuse_roughness;
-    int   diffuse_energy_compensation; /* OpenPBR EON, rather than Lambert */
+    int   diffuse_model; /* MTLX_DIFFUSE_* */
     float metalness;
     /* specular (GGX dielectric) */
     float specular_weight;

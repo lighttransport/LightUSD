@@ -456,6 +456,18 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  add_executable(lusdrender-bsdf-rough-diffuse
+    tests/bsdf_rough_diffuse.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-rough-diffuse PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-rough-diffuse PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-bsdf-rough-diffuse PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-rough-diffuse
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-rough-diffuse>)
+  set_tests_properties(tool-lusdrender-bsdf-rough-diffuse PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
   add_executable(lusdrender-bsdf-eon-response
     tests/bsdf_eon_response.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
   target_include_directories(lusdrender-bsdf-eon-response PRIVATE ${LUSDR_MTLX_BSDF_DIR})

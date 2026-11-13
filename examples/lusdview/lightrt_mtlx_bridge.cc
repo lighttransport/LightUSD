@@ -202,7 +202,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
-  p->diffuseEnergyCompensation = true;
+  p->diffuseModel = MTLX_DIFFUSE_EON;
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -340,7 +340,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   dst->baseWeight = src.base_weight;
   CopyV3(src.base_color, dst->baseColor);
   dst->diffuseRoughness = src.diffuse_roughness;
-  dst->diffuseEnergyCompensation = src.diffuse_energy_compensation != 0;
+  dst->diffuseModel = src.diffuse_model;
   dst->metalness = src.metalness;
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);

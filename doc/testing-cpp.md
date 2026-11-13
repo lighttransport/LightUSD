@@ -1691,6 +1691,8 @@ The shared CPU MaterialX BSDF uses height-correlated Smith visibility for its
 isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
+The CPU path also evaluates qualitative Oren–Nayar and Burley diffuse; use
+`tool-lusdrender-bsdf-rough-diffuse` for their point-response checks.
 The CPU OpenPBR path also evaluates energy-compensated Oren–Nayar diffuse
 roughness. `tool-lusdrender-bsdf-eon-response` checks point responses, and
 `tool-lusdrender-materialx-validation` checks that authored roughness changes a

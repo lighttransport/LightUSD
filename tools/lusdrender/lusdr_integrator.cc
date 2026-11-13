@@ -239,7 +239,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.base_weight = src.baseWeight;
   p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
   p.diffuse_roughness = src.diffuseRoughness;
-  p.diffuse_energy_compensation = src.diffuseEnergyCompensation ? 1 : 0;
+  p.diffuse_model = src.diffuseModel;
   p.metalness = src.metalness;
   p.specular_weight = src.specularWeight;
   p.specular_color =

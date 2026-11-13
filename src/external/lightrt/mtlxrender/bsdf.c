@@ -69,6 +69,28 @@ static v3 eon_diffuse(v3 rho, float roughness, float nv, float nl, float lv) {
                    (float)((b * single + b * b * avg / (1.0 - b * fmax(0.0, 1.0 - avg)) * multi) / pi));
 }
 
+/* Reference qualitative Oren-Nayar and Burley diffuse factors. */
+static float rough_diffuse_factor(int model, float roughness, float nv,
+                                  float nl, float lv, float lh) {
+    float r = clampf(roughness, 0.0f, 1.0f);
+    if (model == MTLX_DIFFUSE_OREN_NAYAR) {
+        float s = lv - nl * nv;
+        float st = s > 0.0f ? s / maxf(nl, nv) : 0.0f;
+        float r2 = r * r;
+        float a = 1.0f - 0.5f * r2 / (r2 + 0.33f);
+        float b = 0.45f * r2 / (r2 + 0.09f);
+        return a + b * st;
+    }
+    if (model == MTLX_DIFFUSE_BURLEY) {
+        float f90 = 0.5f + 2.0f * r * lh * lh;
+        float ml = 1.0f - nl, mv = 1.0f - nv;
+        float ml2 = ml * ml, mv2 = mv * mv;
+        return (1.0f + (f90 - 1.0f) * ml2 * ml2 * ml) *
+               (1.0f + (f90 - 1.0f) * mv2 * mv2 * mv);
+    }
+    return 1.0f;
+}
+
 /* "Charlie" sheen NDF (Estevez & Kulla 2017) + Neubelt visibility. */
 static float charlie_D(float NdotH, float r) {
     r = clampf(r, 0.05f, 1.0f);
@@ -207,7 +229,7 @@ typedef struct {
     v3    diffuse_base_color, diffuse_subsurface_color;
     float diffuse_base_scale, diffuse_subsurface_scale;
     float diffuse_roughness;
-    int   diffuse_energy_compensation;
+    int   diffuse_model;
     float subsurface_w; /* normalized-diffusion strength */
     v3    F0;          /* specular reflectance at normal incidence */
     float F90;         /* specular-weighted grazing reflectance */
@@ -234,7 +256,7 @@ static Layers extract(const OpenPBRParams *p) {
     L.diffuse_base_scale = p->base_weight * (1.0f - metal) * (1.0f - trans) * (1.0f - p->subsurface);
     L.diffuse_subsurface_scale = (1.0f - metal) * (1.0f - trans) * p->subsurface;
     L.diffuse_roughness = p->diffuse_roughness;
-    L.diffuse_energy_compensation = p->diffuse_energy_compensation;
+    L.diffuse_model = p->diffuse_model;
     {
         float mean_radius = (p->subsurface_radius.x + p->subsurface_radius.y +
                              p->subsurface_radius.z) * (1.0f / 3.0f);
@@ -358,7 +380,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
                               MTLX_INV_PI * diffuse_shape));
 
-    if (L->diffuse_energy_compensation && L->diffuse_roughness > 0.0f) {
+    if (L->diffuse_model == MTLX_DIFFUSE_EON && L->diffuse_roughness > 0.0f) {
         float lv = v3_dot(wi, wo);
         v3 rough_diffuse = v3_splat(0.0f);
         if (L->diffuse_base_scale != 0.0f) {
@@ -373,6 +395,13 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         }
         diff = v3_mul(rough_diffuse,
                       v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation), diffuse_shape));
+    }
+
+    if (L->diffuse_model == MTLX_DIFFUSE_OREN_NAYAR ||
+        L->diffuse_model == MTLX_DIFFUSE_BURLEY) {
+        float factor = rough_diffuse_factor(L->diffuse_model, L->diffuse_roughness,
+                                            NdotV, NdotL, v3_dot(wi, wo), v3_dot(wi, H));
+        diff = v3_scale(diff, factor);
     }
 
     float D = ggx_D(NdotH, L->alpha), G = ggx_G(NdotV, NdotL, L->alpha);
