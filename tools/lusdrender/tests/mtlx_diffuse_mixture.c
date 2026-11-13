@@ -283,6 +283,43 @@ static int openpbr_metal_response_checks(void) {
       }
     }
   }
+  /* Compare film-coated OpenPBR endpoints to the retained MaterialX lobes,
+   * and verify that the film weight mixes complete responses. */
+  {
+    OpenPBRParams film = p, df = d, mf = m;
+    film.thin_film_thickness = 450.0f; film.thin_film_ior = 1.3f;
+    df.specular_lobes[0].frame.thinfilm_thickness = 450.0f;
+    df.specular_lobes[0].frame.thinfilm_ior = 1.3f;
+    mf.specular_lobes[0].frame.thinfilm_thickness = 450.0f;
+    mf.specular_lobes[0].frame.thinfilm_ior = 1.3f;
+    for (int v=0; v<2; ++v) for (int i=0; i<4; ++i) {
+      float pdf; v3 diffuse, actual;
+      film.metalness=amounts[i]; film.thin_film_weight=1.0f;
+      bsdf_eval_lobes(&film,n,views[v],lights[0],&diffuse,&actual,&pdf);
+      v3 dr=bsdf_eval(&df,n,views[v],lights[0],&pdf);
+      v3 mr=bsdf_eval(&mf,n,views[v],lights[0],&pdf);
+      v3 expected=v3_lerp(dr,mr,amounts[i]);
+      if (fabsf(actual.x-expected.x)>3e-6f || fabsf(actual.y-expected.y)>3e-6f || fabsf(actual.z-expected.z)>3e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR film closure mixture\n"); return 0;
+      }
+      v3 full=bsdf_eval(&film,n,views[v],lights[0],&pdf);
+      film.thin_film_weight=0.0f;
+      v3 plain=bsdf_eval(&film,n,views[v],lights[0],&pdf);
+      film.thin_film_weight=0.5f;
+      v3 half=bsdf_eval(&film,n,views[v],lights[0],&pdf);
+      expected=v3_lerp(plain,full,0.5f);
+      if (fabsf(half.x-expected.x)>3e-6f || fabsf(half.y-expected.y)>3e-6f || fabsf(half.z-expected.z)>3e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR film weight mixture\n"); return 0;
+      }
+    }
+  }
+  {
+    const char *film_doc = "<materialx><open_pbr_surface name=\"s\" type=\"surfaceshader\"><input name=\"thin_film_thickness\" type=\"float\" value=\"0.45\"/></open_pbr_surface></materialx>";
+    OpenPBRParams units;
+    if (!evaluate(film_doc,&units) || fabsf(units.thin_film_thickness-450.0f)>1e-4f) {
+      fprintf(stderr,"FAIL: OpenPBR film thickness units\n"); return 0;
+    }
+  }
   /* A zero-thickness film must not change either component of the mix. */
   {
     OpenPBRParams nofilm = p, zero = p;
@@ -468,6 +505,58 @@ static int specular_response_checks(void) {
   return 1;
 }
 
+/* OpenPBR routes its modulated eta to the transmission closure. Compare the
+ * smooth-interface refracted direction to Snell's law on both sides. */
+static int openpbr_transmission_ior_checks(void) {
+  const struct { float ior, weight, effective; int openpbr; } cases[] = {
+    {1.6f, 0.0f, 1.0f, 1}, {1.6f, 0.25f, 1.260869565f, 1},
+    {1.6f, 1.0f, 1.6f, 1}, {0.8f, 0.25f, 0.894736842f, 1},
+    {1.6f, 0.25f, 1.6f, 0}
+  };
+  const v3 n = {0,0,1};
+  for (size_t i=0; i<sizeof(cases)/sizeof(cases[0]); ++i) {
+    OpenPBRParams p; openpbr_defaults(&p);
+    p.base_weight=0; p.transmission=1; p.specular_ior=cases[i].ior;
+    p.specular_weight=cases[i].weight; p.specular_roughness=0.02f;
+    p.openpbr_coat_remap=cases[i].openpbr; p.transmission_color=v3_splat(1);
+    for (int side=0; side<2; ++side) {
+      const float x=side ? 0.3f : 0.6f;
+      v3 wo=v3_make(x,0,(side ? -1.0f : 1.0f)*sqrtf(1-x*x));
+      const float eta=side ? cases[i].effective : 1.0f/cases[i].effective;
+      pcg32 rng; pcg32_seed(&rng, 425+i, 987+side);
+      int found=0;
+      for (int j=0;j<2000 && !found;++j) {
+        BsdfSample sample;
+        if (!bsdf_sample(&p,n,wo,&rng,&sample) || !sample.transmission || !sample.crossed) continue;
+        if (fabsf(sample.wi.x + eta*x)>2e-5f || !v3_is_finite(sample.wi)) {
+          fprintf(stderr,"FAIL: OpenPBR transmission IOR case=%zu side=%d got=%g expected=%g\n",i,side,sample.wi.x,-eta*x); return 0;
+        }
+        found=1;
+      }
+      if (!found) { fprintf(stderr,"FAIL: no transmission IOR sample case=%zu side=%d\n",i,side); return 0; }
+    }
+  }
+  /* At an exiting angle beyond the critical angle, full-weight glass must
+   * reflect, while zero specular weight gives IOR 1 and must cross. */
+  for (int weighted=0;weighted<2;++weighted) {
+    OpenPBRParams p; openpbr_defaults(&p); p.base_weight=0; p.transmission=1;
+    p.specular_ior=1.5f; p.specular_weight=weighted ? 1.0f : 0.0f;
+    p.specular_roughness=0.02f; p.openpbr_coat_remap=1;
+    v3 wo=v3_make(0.9f,0,-sqrtf(0.19f)); pcg32 rng;pcg32_seed(&rng,71,weighted+9);
+    int found=0;
+    for(int j=0;j<2000 && !found;++j) {
+      BsdfSample sample;
+      if(!bsdf_sample(&p,n,wo,&rng,&sample) || !sample.transmission) continue;
+      if(sample.crossed == weighted) {
+        fprintf(stderr,"FAIL: weighted OpenPBR critical-angle routing\n");return 0;
+      }
+      found=1;
+    }
+    if(!found) { fprintf(stderr,"FAIL: no critical-angle glass sample\n");return 0; }
+  }
+  return 1;
+}
+
 int main(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.9\"/></oren_nayar_diffuse_bsdf>"
@@ -512,7 +601,7 @@ int main(void) {
       }
     }
   }
-  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
+  if (!openpbr_transmission_ior_checks() || !layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||

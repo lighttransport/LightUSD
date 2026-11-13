@@ -1056,7 +1056,11 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
          * (the latter enables total internal reflection past the critical angle,
          * which the hardcoded 1/ior path silently dropped -- turning the lens
          * into a washed-out blur). */
-        float eta = entering ? (1.0f / L.ior) : L.ior;
+        /* OpenPBR's transmission closure uses the same specular-weighted,
+         * coat-relative IOR as its dielectric reflection closure. Other
+         * material models retain their existing interface IOR. */
+        float glass_ior = L.openpbr_base ? L.base_ior : L.ior;
+        float eta = entering ? (1.0f / glass_ior) : glass_ior;
         float cosi = clampf(v3_dot(m, wo), 0.0f, 1.0f);
         float Fr = fresnel_dielectric(cosi, eta);
         v3 wi; int refracted;

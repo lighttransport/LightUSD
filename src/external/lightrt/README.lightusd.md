@@ -200,3 +200,5 @@ upstream provenance intact.
   compensated OpenPBR dielectric base and coat responses.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `fee41a9` for the
   no-film OpenPBR dielectric/metal closure mixture.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `75d0165` for the
+  specular-weighted OpenPBR transmission IOR and refraction tests.
