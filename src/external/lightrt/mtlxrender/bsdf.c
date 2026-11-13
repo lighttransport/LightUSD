@@ -1055,6 +1055,39 @@ static v3 eval_reflection(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf) {
     return eval_reflection_split(L, N, wo, wi, pdf, (v3 *)0, (v3 *)0);
 }
 
+/* OpenPBR rough transmission, using the visible-normal density and the
+ * refraction half-vector Jacobian. eta is incident/transmitted IOR. */
+static v3 eval_rough_transmission(const OpenPBRParams *p, const Layers *L,
+                                 v3 N, v3 wo, v3 wi, float eta, float *pdf) {
+    *pdf = 0.0f;
+    float nv = v3_dot(N, wo), nl = -v3_dot(N, wi);
+    if (!(L->openpbr_base && L->glass_w > 0.0f && L->alpha > 1e-3f &&
+          fabsf(eta - 1.0f) > 1e-4f && nv > 0.0f && nl > 0.0f)) return v3_splat(0.0f);
+    v3 hraw = v3_add(wo, v3_scale(wi, 1.0f / eta));
+    float h2 = v3_dot(hraw, hraw);
+    if (!(h2 > 1e-12f)) return v3_splat(0.0f);
+    v3 h = v3_scale(hraw, 1.0f / sqrtf(h2));
+    if (v3_dot(h, N) < 0.0f) h = v3_neg(h);
+    float nh = v3_dot(N, h), oh = v3_dot(wo, h), ih = v3_dot(wi, h);
+    if (!(nh > 0.0f && oh > 0.0f && ih < 0.0f)) return v3_splat(0.0f);
+    float fresnel = fresnel_dielectric(oh, eta);
+    if (fresnel >= 1.0f) return v3_splat(0.0f);
+    float a2 = L->alpha * L->alpha;
+    float root = sqrtf(a2 + (1.0f-a2)*nv*nv);
+    float g1 = 2.0f*nv/(nv+root);
+    float density = ggx_D(nh, L->alpha)*g1*oh/nv;
+    float jacobian = -ih / (eta*eta*h2);
+    *pdf = L->pg * density * jacobian;
+    if (!(*pdf > 0.0f) || !isfinite(*pdf)) { *pdf = 0.0f; return v3_splat(0.0f); }
+    float mask = ggx_G(nv, nl, L->alpha)/g1;
+    float factor = mask * L->glass_w * (1.0f-fresnel) * density * jacobian / nl;
+    v3 tint = p->transmission_depth > 0.0f ? v3_splat(1.0f) : p->transmission_color;
+    tint = v3_mul(tint, coat_substrate_attenuation(L, nv, NULL, NULL));
+    if (L->sheen_lobe_count == 0 && L->sheen_w > 0.0f)
+        tint = v3_scale(tint, 1.0f-L->sheen_w*bsdf_zeltner_sheen_albedo(nv,L->sheen_alpha));
+    return v3_scale(tint, factor);
+}
+
 int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *out) {
     v3 Nn = v3_normalize(Ns);
     /* Sign of the raw (outward) normal vs the view direction tells us which side
@@ -1136,7 +1169,15 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
                     1.0f - L.sheen_w * bsdf_zeltner_sheen_albedo(nv,L.sheen_alpha));
         }
         out->wi = wi; out->pdf = 1.0f;
-        out->specular = 1; out->transmission = 1; out->crossed = refracted;
+        out->specular = 1;
+        if (visible_normals && refracted && fabsf(eta - 1.0f) > 1e-4f) {
+            float pdf;
+            (void)eval_rough_transmission(p, &L, N, wo, wi, eta, &pdf);
+            if (!(pdf > 0.0f)) return 0;
+            out->pdf = pdf;
+            out->specular = 0;
+        }
+        out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;
         return 1;
     }
@@ -1230,7 +1271,12 @@ v3 bsdf_eval(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, float *pdf_out) {
     v3 outward = v3_normalize(Ns);
     v3 N = face_forward(outward, wo);
     Layers L = extract(p);
-    if (v3_dot(outward, wo) < 0.0f && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
+    int entering = v3_dot(outward, wo) > 0.0f;
+    if (v3_dot(N, wi) < 0.0f) {
+        float eta = entering ? 1.0f / L.base_ior : L.base_ior;
+        return eval_rough_transmission(p, &L, N, wo, wi, eta, pdf_out);
+    }
+    if (!entering && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
     return eval_reflection(&L, N, wo, wi, pdf_out);
 }
 
@@ -1239,7 +1285,15 @@ v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
     v3 outward = v3_normalize(Ns);
     v3 N = face_forward(outward, wo);
     Layers L = extract(p);
-    if (v3_dot(outward, wo) < 0.0f && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
+    int entering = v3_dot(outward, wo) > 0.0f;
+    if (v3_dot(N, wi) < 0.0f) {
+        float eta = entering ? 1.0f / L.base_ior : L.base_ior;
+        v3 transmitted = eval_rough_transmission(p, &L, N, wo, wi, eta, pdf_out);
+        if (out_diffuse) *out_diffuse = v3_splat(0.0f);
+        if (out_specular) *out_specular = transmitted;
+        return transmitted;
+    }
+    if (!entering && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
     return eval_reflection_split(&L, N, wo, wi, pdf_out, out_diffuse, out_specular);
 }
 

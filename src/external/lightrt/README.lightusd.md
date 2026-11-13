@@ -213,3 +213,5 @@ upstream provenance intact.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `fe231e6` for OpenPBR
   visible-normal base-reflection sampling and its matching PDF. The upstream
   glass furnace test covers both interface sides and a grazing-weight regression.
+- 2026-11-13: `mtlxrender/bsdf.{c,h}` matches LightRT `3fcc2c0` for
+  evaluable rough OpenPBR transmission and its visible-normal MIS density.
