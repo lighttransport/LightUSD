@@ -1050,8 +1050,15 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
     if (u < L.pg) {
         /* sample a microfacet normal m (= N for smooth glass) and reflect/
          * refract about it, giving frosted glass for rough surfaces. */
-        v3 m = (L.alpha > 1e-3f) ? v3_normalize(to_world(sample_ggx_h(L.alpha, u1, u2), T, B, N)) : N;
-        if (v3_dot(m, wo) < 0.0f) m = v3_neg(m);
+        int visible_normals = L.openpbr_base && L.alpha > 1e-3f;
+        v3 m;
+        if (visible_normals) {
+            v3 view = v3_make(v3_dot(wo,T), v3_dot(wo,B), v3_dot(wo,N));
+            m = v3_normalize(to_world(sample_conductor_vndf(view,L.alpha,L.alpha,u1,u2),T,B,N));
+        } else {
+            m = (L.alpha > 1e-3f) ? v3_normalize(to_world(sample_ggx_h(L.alpha, u1, u2), T, B, N)) : N;
+            if (v3_dot(m, wo) < 0.0f) m = v3_neg(m);
+        }
         /* relative IOR n_i/n_t: 1/ior entering air->glass, ior exiting glass->air
          * (the latter enables total internal reflection past the critical angle,
          * which the hardcoded 1/ior path silently dropped -- turning the lens
@@ -1076,6 +1083,7 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
             if (sint2 >= 1.0f) return 0;
             float cost = sqrtf(maxf(0.0f, 1.0f - sint2));
             wi = v3_normalize(v3_sub(v3_scale(m, eta * cosi - cost), v3_scale(wo, eta)));
+            if (visible_normals && v3_dot(wi, N) >= 0.0f) return 0;
             refracted = 1;
         }
         /* When transmission_depth > 0 the tint lives in the volume (applied as
@@ -1088,8 +1096,16 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         /* Compensate selection of the glass branch in the full mixture. The
          * transmission-only case samples transmission unconditionally, so
          * it also retains the physical transmission Fresnel factor. */
+        float masking = 1.0f;
+        if (visible_normals) {
+            float nv = v3_dot(N,wo), nl = fabsf(v3_dot(N,wi));
+            float a2 = L.alpha * L.alpha;
+            float root = sqrtf(a2 + (1.0f-a2)*nv*nv);
+            float g1 = 2.0f*nv/(nv+root);
+            masking = g1 > 0.0f ? ggx_G(nv,nl,L.alpha)/g1 : 0.0f;
+        }
         out->throughput = v3_scale(out->throughput,
-            L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
+            masking * L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
         out->wi = wi; out->pdf = 1.0f;
         out->specular = 1; out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;

@@ -204,3 +204,5 @@ upstream provenance intact.
   specular-weighted OpenPBR transmission IOR and refraction tests.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `7216cae` for
   OpenPBR glass reflection and interior IOR handling.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `23d21ed` for
+  visible-normal GGX sampling and masking of rough OpenPBR transmission.

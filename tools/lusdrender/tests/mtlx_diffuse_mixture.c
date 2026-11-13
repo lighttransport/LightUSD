@@ -536,6 +536,39 @@ static int openpbr_transmission_ior_checks(void) {
       if (!found) { fprintf(stderr,"FAIL: no transmission IOR sample case=%zu side=%d\n",i,side); return 0; }
     }
   }
+  /* Each rough transmission sample has the GGX visible-normal G2/G1
+   * weight. Recover the microfacet from Snell's law independently. */
+  for (int side=0;side<2;++side) {
+    OpenPBRParams p; openpbr_defaults(&p); p.base_weight=0; p.transmission=1;
+    p.openpbr_coat_remap=1; p.specular_ior=1.5f; p.specular_weight=1;
+    p.specular_roughness=.7f; p.transmission_color=v3_splat(1);
+    float eta=side ? 1.5f : (1.0f/1.5f), sign=side ? -1.0f : 1.0f;
+    v3 wo=v3_make(.7f,0,sign*sqrtf(1-.7f*.7f));
+    float nv=fabsf(wo.z), alpha=.49f, a2=alpha*alpha;
+    float pg=bsdf_lobe_weights(&p).transmission;
+    pcg32 rng; pcg32_seed(&rng,131,17+side); int checked=0;
+    for(int i=0;i<3000;++i) {
+      BsdfSample sample;
+      if(!bsdf_sample(&p,n,wo,&rng,&sample) || !sample.transmission || !sample.crossed) continue;
+      if (sign*sample.wi.z >= 0) { fprintf(stderr,"FAIL: rough transmission hemisphere\n"); return 0; }
+      v3 h=v3_normalize(v3_add(wo,v3_scale(sample.wi,1.0f/eta)));
+      if(sign*h.z<0) h=v3_neg(h);
+      float c=v3_dot(h,wo), sint2=eta*eta*(1-c*c);
+      if (!(c>0 && sint2<1)) { fprintf(stderr,"FAIL: rough transmission half-vector\n"); return 0; }
+      float cost=sqrtf(1-sint2);
+      float rs=(eta*c-cost)/(eta*c+cost), rp=(c-eta*cost)/(c+eta*cost);
+      float fresnel=.5f*(rs*rs+rp*rp);
+      float nl=fabsf(sample.wi.z), lv=sqrtf(a2+(1-a2)*nv*nv);
+      float ll=sqrtf(a2+(1-a2)*nl*nl);
+      float g2=2*nv*nl/(nv*ll+nl*lv), g1=2*nv/(nv+lv);
+      float expected=(1-fresnel)*g2/(g1*pg);
+      if(!isfinite(sample.throughput.x) || fabsf(sample.throughput.x-expected)>2e-4f) {
+        fprintf(stderr,"FAIL: rough transmission weight side=%d got=%g expected=%g\n",side,sample.throughput.x,expected); return 0;
+      }
+      ++checked;
+    }
+    if(checked<100) { fprintf(stderr,"FAIL: too few rough transmission samples\n");return 0; }
+  }
   /* The transmission substrate must not add a second reflected lobe.
    * Compare Monte Carlo reflected energies with the substrate off/on. */
   {
