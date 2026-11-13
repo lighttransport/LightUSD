@@ -701,6 +701,41 @@ static void CheckTypedMtlxGraphResolution() {
          "connection to graph output with interface binding was accepted");
   }
 
+  MtlxElem node_and_value = root;
+  node_and_value.children[1].children[2].children[0] = elem("input", "in1");
+  node_and_value.children[1].children[2].children[0].SetAttr("type", "float");
+  node_and_value.children[1].children[2].children[0].SetAttr("nodename", "seed");
+  node_and_value.children[1].children[2].children[0].SetAttr("value", "0.5");
+  g_checks++;
+  if (ResolveMtlxGraph(node_and_value, node_and_value.children[1], library, {},
+                       &resolved, &error)) {
+    Fail("MTLX_GRAPH_INPUT_NODE_AND_VALUE", 0, "node input with two bindings was accepted");
+  }
+  MtlxElem graph_and_value = root;
+  graph_and_value.children[1].children[2].children[0].SetAttr("value", "0.5");
+  g_checks++;
+  if (ResolveMtlxGraph(graph_and_value, graph_and_value.children[1], library, {},
+                       &resolved, &error)) {
+    Fail("MTLX_GRAPH_INPUT_GRAPH_AND_VALUE", 0, "graph input with two bindings was accepted");
+  }
+  MtlxElem interface_and_value = root;
+  interface_and_value.children[1].children[2].children[1].SetAttr("value", "0.5");
+  g_checks++;
+  if (ResolveMtlxGraph(interface_and_value, interface_and_value.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INPUT_INTERFACE_AND_VALUE", 0,
+         "interface input with two bindings was accepted");
+  }
+
+  MtlxElem empty_node_input = root;
+  empty_node_input.children[1].children[2].children[0] = elem("input", "in1");
+  empty_node_input.children[1].children[2].children[0].SetAttr("type", "float");
+  g_checks++;
+  if (ResolveMtlxGraph(empty_node_input, empty_node_input.children[1], library, {},
+                       &resolved, &error)) {
+    Fail("MTLX_GRAPH_INPUT_NO_BINDING", 0, "authored input without a binding was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

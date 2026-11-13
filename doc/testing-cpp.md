@@ -4599,3 +4599,7 @@ The same regression checks that a connected graph output's authored value is
 still validated and that graph outputs cannot use `interfacename`, both for
 the graph itself and when another graph references it. The valid connected
 output with a fallback value remains accepted.
+The graph-resolution regression also rejects node inputs that combine an
+authored value with a node, nodegraph, or interface connection, and rejects an
+explicit input with no binding. Omitted inputs remain eligible for nodedef
+defaults. These cases match the MaterialX 1.39.5 input validator.

@@ -1324,8 +1324,15 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
       const std::string *node_name = input.Attr("nodename");
       const std::string *graph_name = input.Attr("nodegraph");
       const std::string *interface_name = input.Attr("interfacename");
+      const std::string *value = input.Attr("value");
       const int binding_count = (node_name != nullptr) + (graph_name != nullptr) +
-                                (interface_name != nullptr);
+                                (interface_name != nullptr) + (value != nullptr) +
+                                ((input.Attr("output") != nullptr) &&
+                                 !node_name && !graph_name);
+      if (binding_count == 0) {
+        if (err) *err = "input '" + input_name + "' has no authored binding";
+        return false;
+      }
       if (binding_count > 1) {
         if (err) *err = "input '" + input_name + "' has multiple connection bindings";
         return false;
@@ -1469,7 +1476,7 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                           interface_type + ", expected " + input_type;
           return false;
         }
-      } else if (const std::string *value = input.Attr("value")) {
+      } else if (value) {
         MtlxTypedValue parsed;
         if (IsBuiltinMtlxType(input_type) &&
             !ParseMtlxAuthoredValue(input_type, *value, &parsed)) {
