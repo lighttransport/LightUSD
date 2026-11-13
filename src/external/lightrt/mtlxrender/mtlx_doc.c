@@ -1,6 +1,7 @@
 #include "mtlx_doc.h"
 #include "mtlx_xml.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -210,7 +211,7 @@ static void apply_stdlib_defaults(MtlxNode *n) {
         const StdInput *p = &g_std_inputs[d->first + k];
         MtlxType t = parse_type(p->type);
         /* Shader-typed and file inputs have no usable literal default. */
-        if (!p->has_default || t == MV_NONE || t == MV_FILENAME) continue;
+        if (!p->has_default || p->default_geomprop[0] || t == MV_NONE || t == MV_FILENAME) continue;
         /* The library default of `lumacoeffs` is the ACEScg triple; the
          * evaluator substitutes its working-space coefficients instead. */
         if (!strcmp(p->name, "lumacoeffs")) continue;
@@ -292,6 +293,121 @@ static const char *is_shader_category(const char *tag) {
     return NULL;
 }
 
+/* Resolve the standard defaultgeomprop declarations into real graph edges.
+ * A document geompropdef overrides the generated standard definition. */
+typedef struct {
+    const char *name, *type, *category;
+    int has_space; const char *space;
+    int has_index; const char *index;
+} StdGeomProp;
+static const StdGeomProp g_std_geomprops[] = {
+#define MTLX_STD_GEOMPROPDEF(name, type, category, has_space, space, has_index, index) \
+    { name, type, category, has_space, space, has_index, index },
+#include "mtlx_stdlib_geomprops.inc"
+#undef MTLX_STD_GEOMPROPDEF
+};
+
+typedef struct { int graph_id; const char *name; int node_id; } DefaultGeometry;
+
+static void node_add_geometry_literal(MtlxNode *node, const char *name,
+                                      MtlxType type, const char *value) {
+    node->inputs = realloc(node->inputs, sizeof(MtlxInput) * (node->ninput + 1));
+    MtlxInput *in = &node->inputs[node->ninput++];
+    memset(in, 0, sizeof(*in));
+    in->name = strdup(name);
+    in->type = type;
+    in->src_node = -1;
+    in->has_value = 1;
+    parse_value(value, type, &in->value);
+}
+
+static int geometry_index_is_zero(const char *index) {
+    if (!index) return 1;
+    char *end = NULL;
+    long value = strtol(index, &end, 10);
+    if (end == index) return 0;
+    while (isspace((unsigned char)*end)) end++;
+    return value == 0 && *end == '\0';
+}
+
+static int apply_stdlib_geometry_defaults(Builder *b, const XmlNode *document) {
+    DefaultGeometry *cache = NULL;
+    int ncache = 0;
+    const int original_count = b->d.nnode;
+    for (int i = 0; i < original_count; i++) {
+        const StdNodeDef *def = find_std_nodedef(&b->d.nodes[i]);
+        if (!def || !strcmp(b->d.nodes[i].category, "input")) continue;
+        for (int j = 0; j < def->count; j++) {
+            const StdInput *port = &g_std_inputs[def->first + j];
+            if (!port->default_geomprop[0]) continue;
+            int present = 0;
+            for (int k = 0; k < b->d.nodes[i].ninput; k++)
+                if (!strcmp(b->d.nodes[i].inputs[k].name, port->name)) present = 1;
+            if (present) continue;
+            const int gid = b->d.nodes[i].graph_id;
+            int source = -1;
+            for (int k = 0; k < ncache; k++)
+                if (cache[k].graph_id == gid && !strcmp(cache[k].name, port->default_geomprop))
+                    source = cache[k].node_id;
+            if (source < 0) {
+                const char *category = NULL, *type = NULL, *space = NULL, *index = NULL;
+                int found = 0;
+                for (int k = 0; k < document->nchild; k++) {
+                    const XmlNode *elem = &document->children[k];
+                    const char *name = xml_attr(elem, "name");
+                    if (strcmp(elem->tag, "geompropdef") || !name || strcmp(name, port->default_geomprop)) continue;
+                    if (found++) { category = NULL; break; }
+                    category = xml_attr(elem, "geomprop");
+                    type = xml_attr(elem, "type");
+                    space = xml_attr(elem, "space");
+                    index = xml_attr(elem, "index");
+                }
+                if (!found) {
+                    size_t count = sizeof(g_std_geomprops) / sizeof(g_std_geomprops[0]);
+                    for (size_t k = 0; k < count; k++) {
+                        const StdGeomProp *g = &g_std_geomprops[k];
+                        if (strcmp(g->name, port->default_geomprop)) continue;
+                        category = g->category; type = g->type;
+                        space = g->has_space ? g->space : NULL;
+                        index = g->has_index ? g->index : NULL;
+                        break;
+                    }
+                }
+                if (!category || !type || strcmp(type, port->type) ||
+                    (strcmp(category, "texcoord") && strcmp(category, "position") &&
+                     strcmp(category, "normal") && strcmp(category, "tangent") &&
+                     strcmp(category, "bitangent")) ||
+                    (space && strcmp(space, "object") && strcmp(space, "world")) ||
+                    !geometry_index_is_zero(index)) {
+                    free(cache);
+                    return 0;
+                }
+                char generated_name[64];
+                int suffix = b->d.nnode;
+                do { snprintf(generated_name, sizeof(generated_name), "__mtlx_geom_%d", suffix++); }
+                while (mtlx_find_node(&b->d, gid, generated_name) >= 0);
+                source = add_node(b, category, generated_name, parse_type(type), gid);
+                if (space) node_add_geometry_literal(&b->d.nodes[source], "space", MV_STRING, space);
+                if (index) node_add_geometry_literal(&b->d.nodes[source], "index", MV_INT, index);
+                cache = realloc(cache, sizeof(*cache) * (ncache + 1));
+                cache[ncache++] = (DefaultGeometry){gid, port->default_geomprop, source};
+            }
+            MtlxNode *node = &b->d.nodes[i];
+            node->inputs = realloc(node->inputs, sizeof(MtlxInput) * (node->ninput + 1));
+            MtlxInput *in = &node->inputs[node->ninput++];
+            memset(in, 0, sizeof(*in));
+            in->name = strdup(port->name);
+            in->type = parse_type(port->type);
+            in->src_node = source;
+            in->has_connection = 1;
+        }
+    }
+    free(cache);
+    return 1;
+}
+
+static void mtlx_free_contents(MtlxDoc *d);
+
 static MtlxDoc *mtlx_build(XmlNode *root) {
     if (!root) return NULL;
     const XmlNode *mx = xml_child(root, "materialx");
@@ -340,6 +456,8 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
                             node_add_input(&b.d.nodes[nid], &c->children[k], npre);
                 }
             }
+        } else if (!strcmp(tag, "geompropdef")) {
+            /* Consumed by geometry-default resolution below. */
         } else if (is_shader_category(tag)) {
             int nid = add_node(&b, tag, xml_attr(el, "name"), parse_type(xml_attr(el, "type")), -1);
             node_set_nodedef(&b.d.nodes[nid], el);
@@ -395,6 +513,19 @@ static MtlxDoc *mtlx_build(XmlNode *root) {
     /* Bind every input a standard-library definition declares but the
      * instance omits to the definition's default value. */
     for (int i = 0; i < b.d.nnode; i++) apply_stdlib_defaults(&b.d.nodes[i]);
+    if (!apply_stdlib_geometry_defaults(&b, mx)) {
+        for (int i = 0; i < b.nout; i++) {
+            free(b.outs[i].name); free(b.outs[i].nodename); free(b.outs[i].sub);
+        }
+        free(b.outs);
+        for (int i = 0; i < b.d.nmat; i++) {
+            free(b.mat_shadernames[i]); free(b.mat_volumenames[i]);
+        }
+        free(b.mat_shadernames); free(b.mat_volumenames);
+        mtlx_free_contents(&b.d);
+        xml_free(root);
+        return NULL;
+    }
 
     /* ---- pass B: resolve input connections ---- */
     for (int i = 0; i < b.d.nnode; i++) {
@@ -465,8 +596,7 @@ MtlxDoc *mtlx_load_string(const char *xml) {
     return mtlx_build(xml_parse_memory(xml, strlen(xml)));
 }
 
-void mtlx_free(MtlxDoc *d) {
-    if (!d) return;
+static void mtlx_free_contents(MtlxDoc *d) {
     for (int i = 0; i < d->nnode; i++) {
         MtlxNode *n = &d->nodes[i];
         for (int j = 0; j < n->ninput; j++) {
@@ -487,5 +617,10 @@ void mtlx_free(MtlxDoc *d) {
     free(d->assigns);
     for (int i = 0; i < d->ngraph; i++) free(d->graph_names[i]);
     free(d->graph_names);
+}
+
+void mtlx_free(MtlxDoc *d) {
+    if (!d) return;
+    mtlx_free_contents(d);
     free(d);
 }

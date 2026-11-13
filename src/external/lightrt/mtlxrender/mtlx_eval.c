@@ -995,10 +995,14 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
         case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;
-        case OP_POSITION: r = mv_vec3(ctx->P); break;
-        case OP_NORMAL: r = mv_vec3(ctx->Ns); break;
-        case OP_TANGENT: r = mv_vec3(v3_normalize(ctx->dpdu)); break;
-        case OP_BITANGENT: r = mv_vec3(v3_normalize(ctx->dpdv)); break;
+        case OP_POSITION:
+            r = mv_vec3(transform_space(ctx, ctx->P, "world", string_input(n, "space", "object"), 0)); break;
+        case OP_NORMAL:
+            r = mv_vec3(v3_normalize(transform_space(ctx, ctx->Ns, "world", string_input(n, "space", "object"), 2))); break;
+        case OP_TANGENT:
+            r = mv_vec3(v3_normalize(transform_space(ctx, ctx->dpdu, "world", string_input(n, "space", "object"), 1))); break;
+        case OP_BITANGENT:
+            r = mv_vec3(v3_normalize(transform_space(ctx, ctx->dpdv, "world", string_input(n, "space", "object"), 1))); break;
         case OP_GEOMCOLOR: r = mv_color3(v3_splat(1.0f)); break;
         case OP_CONSTANT: r = in_or(ctx, n, "value", mv_zero(n->type)); break;
         case OP_PLACE2D: {

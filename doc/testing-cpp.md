@@ -4655,3 +4655,8 @@ definitions supplied through merged external libraries are also checked, with
 document, external and standard precedence, duplicate external definitions,
 and atomic failure. MaterialX 1.39.5 confirms the tested external and document
 precedence cases.
+`lusdview_lightrt_mtlx_graph_evaluation_test` also checks implicit UV0 and
+object-space position defaults, object/world geometry transforms under
+nonuniform scale, authored geometry overrides, shared generated nodes and
+rejection of unsupported indices. The LightRT evaluator currently supports a
+single UV/tangent set and object/world default geometry spaces.
