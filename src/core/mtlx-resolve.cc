@@ -1340,7 +1340,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
   };
 
   for (const MtlxElem &input : graph.children) {
-    if (input.tag != "input" || !input.Attr("nodegraph")) continue;
+    if (input.tag != "input" ||
+        (!input.Attr("nodegraph") && !input.Attr("nodename"))) continue;
     std::string input_type = input.AttrOr("type");
     if (input_type.empty()) {
       for (const MtlxPort &port : graph_inputs) {
@@ -1361,7 +1362,26 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
     }
     MtlxScope input_scope{&input};
     input_scope.insert(input_scope.end(), graph_scope.begin(), graph_scope.end());
-    if (!validate_graph_connection(input, input_type, input_scope)) return false;
+    if (input.Attr("nodegraph")) {
+      if (!validate_graph_connection(input, input_type, input_scope)) return false;
+    } else {
+      const std::string source_name = input.AttrOr("nodename");
+      const MtlxElem *source = FindMtlxNode(document, source_name);
+      if (!source) {
+        *err = "graph input '" + input.Name() + "' references missing document node '" +
+               source_name + "'";
+        return false;
+      }
+      std::string source_type;
+      if (!MtlxNodeOutputType(library, *source, MtlxScope{&document},
+                              input.AttrOr("output"), &source_type, err))
+        return false;
+      if (source_type != input_type &&
+          !MtlxChannelConversionMatches(input, source_type, input_type)) {
+        *err = "graph input '" + input.Name() + "' has incompatible source type";
+        return false;
+      }
+    }
   }
 
   std::vector<const MtlxElem *> nodes;
@@ -1689,12 +1709,52 @@ bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
       ++indegree[consumer];
       return true;
     };
+    auto trace_root_dependencies = [&](const MtlxElem *source) -> bool {
+      std::vector<std::pair<const MtlxElem *, bool>> pending{{source, false}};
+      std::unordered_set<const MtlxElem *> active;
+      std::unordered_set<const MtlxElem *> visited;
+      while (!pending.empty()) {
+        const MtlxElem *current = pending.back().first;
+        const bool exiting = pending.back().second;
+        pending.pop_back();
+        if (exiting) {
+          active.erase(current);
+          visited.insert(current);
+          continue;
+        }
+        if (visited.count(current)) continue;
+        if (!active.insert(current).second) {
+          *err = "document nodes contain a dependency cycle";
+          return false;
+        }
+        pending.emplace_back(current, true);
+        for (const MtlxElem &upstream : current->children) {
+          if (upstream.tag != "input") continue;
+          MtlxScope upstream_scope{&upstream, current, &document};
+          if (const std::string *name = upstream.Attr("nodegraph")) {
+            if (!add_dependency(*name, upstream, upstream_scope)) return false;
+          } else if (const std::string *name = upstream.Attr("nodename")) {
+            if (const MtlxElem *next = FindMtlxNode(document, *name))
+              pending.emplace_back(next, false);
+          } else if (const std::string *name = upstream.Attr("output")) {
+            const MtlxElem *next_output = FindMtlxChild(document, "output", *name);
+            const MtlxElem *next = next_output
+                ? FindMtlxNode(document, next_output->AttrOr("nodename")) : nullptr;
+            if (next) pending.emplace_back(next, false);
+          }
+        }
+      }
+      return true;
+    };
     // Compound graph inputs can themselves connect to other nodegraphs.
     for (const MtlxElem &input : graphs[consumer]->children) {
       if (input.tag != "input") continue;
       if (const std::string *name = input.Attr("nodegraph")) {
         MtlxScope input_scope{&input, graphs[consumer], &document};
         if (!add_dependency(*name, input, input_scope)) return false;
+      } else if (const std::string *name = input.Attr("nodename")) {
+        const MtlxElem *source = FindMtlxNode(document, *name);
+        if (source && !trace_root_dependencies(source)) return false;
       }
     }
     for (const MtlxElem &node : graphs[consumer]->children) {
@@ -1714,40 +1774,7 @@ bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
         const MtlxElem *output = FindMtlxChild(document, "output", *output_name);
         const MtlxElem *source = output ? FindMtlxNode(document, output->AttrOr("nodename")) : nullptr;
         if (!source) continue;  // ResolveMtlxGraph already reports this.
-        std::vector<std::pair<const MtlxElem *, bool>> pending{{source, false}};
-        std::unordered_set<const MtlxElem *> active;
-        std::unordered_set<const MtlxElem *> visited;
-        while (!pending.empty()) {
-          const MtlxElem *current = pending.back().first;
-          const bool exiting = pending.back().second;
-          pending.pop_back();
-          if (exiting) {
-            active.erase(current);
-            visited.insert(current);
-            continue;
-          }
-          if (visited.count(current)) continue;
-          if (!active.insert(current).second) {
-            *err = "document nodes contain a dependency cycle";
-            return false;
-          }
-          pending.emplace_back(current, true);
-          for (const MtlxElem &upstream : current->children) {
-            if (upstream.tag != "input") continue;
-            MtlxScope upstream_scope{&upstream, current, &document};
-            if (const std::string *name = upstream.Attr("nodegraph")) {
-              if (!add_dependency(*name, upstream, upstream_scope)) return false;
-            } else if (const std::string *name = upstream.Attr("nodename")) {
-              if (const MtlxElem *next = FindMtlxNode(document, *name))
-                pending.emplace_back(next, false);
-            } else if (const std::string *name = upstream.Attr("output")) {
-              const MtlxElem *next_output = FindMtlxChild(document, "output", *name);
-              const MtlxElem *next = next_output
-                  ? FindMtlxNode(document, next_output->AttrOr("nodename")) : nullptr;
-              if (next) pending.emplace_back(next, false);
-            }
-          }
-        }
+        if (!trace_root_dependencies(source)) return false;
       }
     }
   }

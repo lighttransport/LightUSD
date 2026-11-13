@@ -911,6 +911,42 @@ static void CheckTypedMtlxGraphResolution() {
          "compound graph input with invalid authored value was accepted");
   }
 
+  MtlxElem root_connected_compound = compound_root;
+  MtlxElem root_connected_input = elem("input", "gain");
+  root_connected_input.SetAttr("type", "float");
+  root_connected_input.SetAttr("nodename", "global_source");
+  root_connected_compound.children[0].children[0] = root_connected_input;
+  root_connected_compound.children.push_back(global_add);
+  g_checks++;
+  if (!ResolveMtlxGraphs(root_connected_compound, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_INTERFACE_ROOT_DEPENDENCY", 0,
+         error.empty() ? "root-node graph input dependency was not ordered" : error);
+  }
+  MtlxElem root_connected_cycle = root_connected_compound;
+  root_connected_cycle.children.back().children[0].SetAttr("nodegraph", "main");
+  root_connected_cycle.children.back().children[0].SetAttr("output", "out");
+  g_checks++;
+  if (ResolveMtlxGraphs(root_connected_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_INTERFACE_ROOT_CYCLE", 0,
+         "cycle through graph input and root node was accepted");
+  }
+  MtlxElem missing_graph_input_node = root_connected_compound;
+  missing_graph_input_node.children[0].children[0].SetAttr("nodename", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(missing_graph_input_node, missing_graph_input_node.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_ROOT_MISSING", 0, "missing graph input node was accepted");
+  }
+  MtlxElem wrong_graph_input_node_type = root_connected_compound;
+  wrong_graph_input_node_type.children[0].children[0].SetAttr("type", "integer");
+  wrong_graph_input_node_type.children[0].children[2].children[1] = independent_in2;
+  g_checks++;
+  if (ResolveMtlxGraph(wrong_graph_input_node_type, wrong_graph_input_node_type.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_ROOT_TYPE", 0, "incompatible graph input node was accepted");
+  }
+
   MtlxElem compound_cycle = compound_root;
   MtlxElem helper_input = elem("input", "cycle");
   helper_input.SetAttr("type", "float");
