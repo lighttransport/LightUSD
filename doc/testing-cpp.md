@@ -4630,3 +4630,11 @@ The graph-input regression additionally covers `output`-only bindings to a
 document output, including missing and mismatched outputs, indirect dependency
 ordering and a cycle through the graph input. MaterialX 1.39.5 accepts the
 tested valid output binding and rejects the missing and mismatched cases.
+The same regression exercises native graph-call inlining for direct and linked
+implementations, upstream and downstream connections, literal outputs,
+nodedef defaults and authored input metadata. It also checks nested expansion,
+source-code-only implementations, recursive graph rejection, the expansion
+limit and atomic failure. MaterialX 1.39.5 was used to check the connected,
+nested and nodedef-default cases. The inliner currently rejects unsupported
+implementation selection, scope and geometry-property default cases; these
+tests do not establish general corpus or renderer parity.

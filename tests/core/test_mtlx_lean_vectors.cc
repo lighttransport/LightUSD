@@ -561,6 +561,213 @@ static void CheckTypedMtlxGraphResolution() {
     return node;
   };
 
+  // Inline a graph call whose interface is fed by an upstream node.
+  MtlxElem inline_doc = elem("materialx", "");
+  MtlxElem body = elem("nodegraph", "test_impl");
+  body.SetAttr("nodedef", "ND_test_graph");
+  MtlxElem body_node = add_node("body_sum");
+  MtlxElem body_input = elem("input", "in1");
+  body_input.SetAttr("type", "float");
+  body_input.SetAttr("interfacename", "gain");
+  body_node.children.push_back(body_input);
+  body.children.push_back(body_node);
+  MtlxElem body_output = elem("output", "out");
+  body_output.SetAttr("type", "float");
+  body_output.SetAttr("nodename", "body_sum");
+  body.children.push_back(body_output);
+  inline_doc.children.push_back(body);
+  MtlxElem caller = elem("nodegraph", "caller");
+  caller.children.push_back(constant_node("seed"));
+  MtlxElem call = elem("testgraph", "call");
+  call.SetAttr("type", "float");
+  call.SetAttr("nodedef", "ND_test_graph");
+  MtlxElem call_input = elem("input", "gain");
+  call_input.SetAttr("type", "float");
+  call_input.SetAttr("nodename", "seed");
+  call.children.push_back(call_input);
+  caller.children.push_back(call);
+  MtlxElem caller_output = elem("output", "out");
+  caller_output.SetAttr("type", "float");
+  caller_output.SetAttr("nodename", "call");
+  caller.children.push_back(caller_output);
+  inline_doc.children.push_back(caller);
+  MtlxElem flattened;
+  std::string inline_error;
+  g_checks++;
+  if (!FlattenMtlxGraphCall(inline_doc, caller, library, {}, "call",
+                            &flattened, &inline_error) ||
+      flattened.children.size() != 3 ||
+      flattened.children[1].tag != "testadd" ||
+      flattened.children[1].children[0].AttrOr("nodename") != "seed" ||
+      flattened.children[2].AttrOr("nodename") != flattened.children[1].Name()) {
+    Fail("MTLX_GRAPH_INLINE", 0, inline_error.empty() ?
+         "flattened graph connections differed" : inline_error);
+  }
+  MtlxElem metadata_caller = caller;
+  metadata_caller.children[1].children[0].SetAttr("unit", "meter");
+  metadata_caller.children[1].children[0].SetAttr("unittype", "distance");
+  g_checks++;
+  if (!FlattenMtlxGraphCall(inline_doc, metadata_caller, library, {}, "call",
+                            &flattened, &inline_error) ||
+      flattened.children[1].children[0].AttrOr("unit") != "meter" ||
+      flattened.children[1].children[0].AttrOr("unittype") != "distance") {
+    Fail("MTLX_GRAPH_INLINE_INPUT_METADATA", 0, inline_error.empty() ?
+         "authored call input metadata was not transferred" : inline_error);
+  }
+  MtlxLibrary default_library;
+  default_library.AddNodeDef(constant_def, {});
+  default_library.AddNodeDef(add_def, {});
+  MtlxElem default_graph_def = graph_def;
+  default_graph_def.children[0].SetAttr("value", "0.75");
+  default_library.AddNodeDef(default_graph_def, {});
+  MtlxElem default_caller = caller;
+  default_caller.children[1].children.clear();
+  g_checks++;
+  if (!FlattenMtlxGraphCall(inline_doc, default_caller, default_library, {},
+                            "call", &flattened, &inline_error) ||
+      flattened.children[1].children[0].AttrOr("value") != "0.75" ||
+      flattened.children[1].children[0].Attr("interfacename")) {
+    Fail("MTLX_GRAPH_INLINE_DEFAULT", 0, inline_error.empty() ?
+         "nodedef input default was not transferred" : inline_error);
+  }
+  MtlxLibrary geomprop_library;
+  geomprop_library.AddNodeDef(constant_def, {});
+  geomprop_library.AddNodeDef(add_def, {});
+  default_graph_def.children[0].SetAttr("defaultgeomprop", "Pworld");
+  geomprop_library.AddNodeDef(default_graph_def, {});
+  MtlxElem geomprop_result = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraphCall(inline_doc, default_caller, geomprop_library, {},
+                           "call", &geomprop_result, &inline_error) ||
+      geomprop_result.Name() != "unchanged" ||
+      inline_error.find("geometry") == std::string::npos) {
+    Fail("MTLX_GRAPH_INLINE_DEFAULT_GEOMPROP", 0,
+         "geometry-property default was silently replaced by a literal");
+  }
+  MtlxElem downstream = caller;
+  MtlxElem consumer = add_node("consumer");
+  MtlxElem consumer_input = elem("input", "in1");
+  consumer_input.SetAttr("type", "float");
+  consumer_input.SetAttr("nodename", "call");
+  consumer.children.push_back(consumer_input);
+  downstream.children.insert(downstream.children.end() - 1, consumer);
+  downstream.children.back().SetAttr("nodename", "consumer");
+  g_checks++;
+  if (!FlattenMtlxGraphCall(inline_doc, downstream, library, {}, "call",
+                            &flattened, &inline_error) ||
+      flattened.children.size() != 4 ||
+      flattened.children[2].children[0].AttrOr("nodename") !=
+          flattened.children[1].Name() ||
+      flattened.children[3].AttrOr("nodename") != "consumer") {
+    Fail("MTLX_GRAPH_INLINE_CONSUMER", 0, inline_error.empty() ?
+         "downstream node was not rewired" : inline_error);
+  }
+  MtlxElem literal_doc = inline_doc;
+  literal_doc.children[0].children.erase(literal_doc.children[0].children.begin());
+  MtlxElem &inline_literal_output = literal_doc.children[0].children[0];
+  for (auto it = inline_literal_output.attrs.begin(); it != inline_literal_output.attrs.end(); ++it) {
+    if (it->first == "nodename") { inline_literal_output.attrs.erase(it); break; }
+  }
+  inline_literal_output.SetAttr("value", "0.25");
+  g_checks++;
+  if (!FlattenMtlxGraphCall(literal_doc, downstream, library, {}, "call",
+                            &flattened, &inline_error) ||
+      flattened.children.size() != 3 ||
+      flattened.children[1].children[0].AttrOr("value") != "0.25" ||
+      flattened.children[1].children[0].Attr("nodename")) {
+    Fail("MTLX_GRAPH_INLINE_LITERAL", 0, inline_error.empty() ?
+         "literal implementation output was not propagated" : inline_error);
+  }
+  MtlxElem linked_doc = elem("materialx", "");
+  MtlxElem linked_body = body;
+  for (auto it = linked_body.attrs.begin(); it != linked_body.attrs.end(); ++it) {
+    if (it->first == "nodedef") { linked_body.attrs.erase(it); break; }
+  }
+  linked_doc.children.push_back(linked_body);
+  MtlxElem link = elem("implementation", "test_link");
+  link.SetAttr("nodedef", "ND_test_graph");
+  link.SetAttr("nodegraph", "test_impl");
+  linked_doc.children.push_back(link);
+  linked_doc.children.push_back(caller);
+  g_checks++;
+  if (!FlattenMtlxGraphCall(linked_doc, caller, library, {}, "call",
+                            &flattened, &inline_error) ||
+      flattened.children.size() != 3 ||
+      flattened.children[2].AttrOr("nodename") != flattened.children[1].Name()) {
+    Fail("MTLX_GRAPH_INLINE_LINKED", 0, inline_error.empty() ?
+         "linked graph was not flattened" : inline_error);
+  }
+  MtlxElem outer_def = elem("nodedef", "ND_test_outer");
+  outer_def.SetAttr("node", "testouter");
+  outer_def.SetAttr("type", "float");
+  add_port(&outer_def, "input", "gain", "float");
+  add_port(&outer_def, "output", "out", "float");
+  library.AddNodeDef(outer_def, {});
+  MtlxElem outer_body = elem("nodegraph", "outer_impl");
+  outer_body.SetAttr("nodedef", "ND_test_outer");
+  MtlxElem inner_call = call;
+  inner_call.SetAttr("name", "inner");
+  inner_call.children[0] = body_input;
+  inner_call.children[0].SetAttr("name", "gain");
+  outer_body.children.push_back(inner_call);
+  MtlxElem outer_output = body_output;
+  outer_output.SetAttr("nodename", "inner");
+  outer_body.children.push_back(outer_output);
+  MtlxElem nested_doc = inline_doc;
+  nested_doc.children.push_back(outer_body);
+  MtlxElem shader_impl = elem("implementation", "test_add_glsl");
+  shader_impl.SetAttr("nodedef", "ND_test_add");
+  shader_impl.SetAttr("target", "genglsl");
+  shader_impl.SetAttr("file", "test.glsl");
+  nested_doc.children.push_back(shader_impl);
+  shader_impl.SetAttr("name", "test_add_mdl");
+  shader_impl.SetAttr("target", "genmdl");
+  nested_doc.children.push_back(shader_impl);
+  MtlxElem nested_caller = caller;
+  nested_caller.children[1].tag = "testouter";
+  nested_caller.children[1].SetAttr("nodedef", "ND_test_outer");
+  g_checks++;
+  if (!FlattenMtlxGraph(nested_doc, nested_caller, library, {}, 2,
+                        &flattened, &inline_error) ||
+      flattened.children.size() != 3 ||
+      flattened.children[1].tag != "testadd" ||
+      flattened.children[1].children[0].AttrOr("nodename") != "seed" ||
+      flattened.children[2].AttrOr("nodename") != flattened.children[1].Name()) {
+    Fail("MTLX_GRAPH_INLINE_NESTED", 0, inline_error.empty() ?
+         "nested graph was not flattened" : inline_error);
+  }
+  MtlxElem limited = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraph(nested_doc, nested_caller, library, {}, 1,
+                       &limited, &inline_error) ||
+      limited.Name() != "unchanged" || inline_error.find("limit") == std::string::npos) {
+    Fail("MTLX_GRAPH_INLINE_LIMIT", 0, "expansion limit did not fail atomically");
+  }
+  MtlxElem recursive_doc = inline_doc;
+  recursive_doc.children[0].children[0] = inner_call;
+  recursive_doc.children[0].children[1].SetAttr("nodename", "inner");
+  MtlxElem recursive_result = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraph(recursive_doc, caller, library, {}, 10,
+                       &recursive_result, &inline_error) ||
+      recursive_result.Name() != "unchanged" ||
+      inline_error.find("recursive") == std::string::npos) {
+    Fail("MTLX_GRAPH_INLINE_RECURSIVE", 0,
+         inline_error.empty() ? "recursive implementation was accepted" : inline_error);
+  }
+  MtlxElem targeted = body;
+  targeted.SetAttr("name", "targeted_impl");
+  targeted.SetAttr("target", "genglsl");
+  inline_doc.children.push_back(targeted);
+  MtlxElem sentinel = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraphCall(inline_doc, caller, library, {}, "call",
+                           &sentinel, &inline_error) ||
+      sentinel.Name() != "unchanged") {
+    Fail("MTLX_GRAPH_INLINE_AMBIGUOUS", 0,
+         "ambiguous implementation was accepted or output was modified");
+  }
+
   MtlxElem root = elem("materialx", "");
   MtlxElem helper = elem("nodegraph", "helper");
   helper.children.push_back(constant_node("source"));

@@ -886,6 +886,7 @@ void MtlxLibrary::AddNodeDef(const MtlxElem &e, const MtlxScope &outer) {
     MtlxPort p;
     p.name = c.Name();
     p.type = c.AttrOr("type");
+    p.default_geomprop = c.AttrOr("defaultgeomprop");
     if (const std::string *v = c.Attr("value")) {
       p.has_value = true;
       p.value = *v;
@@ -1657,6 +1658,265 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
     if (err) *err = "nodegraph contains a cycle";
     return false;
   }
+  return true;
+}
+
+bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
+                          const MtlxLibrary &library, const MtlxScope &outer,
+                          const std::string &call_name, MtlxElem *flattened,
+                          std::string *err) {
+  std::string ignored_error;
+  if (!err) err = &ignored_error;
+  err->clear();
+  if (!flattened) { *err = "missing flattened graph output"; return false; }
+  MtlxResolvedGraph checked;
+  if (!ResolveMtlxGraph(document, graph, library, outer, &checked, err)) return false;
+  const MtlxElem *call = FindMtlxNode(graph, call_name);
+  if (!call) { *err = "missing graph call '" + call_name + "'"; return false; }
+  MtlxScope call_scope{call, &graph};
+  call_scope.insert(call_scope.end(), outer.begin(), outer.end());
+  const MtlxNodeDefInfo *def = library.ResolveReference(*call, call_scope);
+  if (!def) { *err = "cannot resolve graph call nodedef"; return false; }
+
+  const MtlxElem *implementation = nullptr;
+  for (const MtlxElem &child : document.children) {
+    if ((child.tag != "nodegraph" && child.tag != "implementation") ||
+        child.AttrOr("nodedef") != def->name) continue;
+    if (implementation) { *err = "ambiguous graph implementation"; return false; }
+    implementation = &child;
+  }
+  if (!implementation) { *err = "missing graph implementation"; return false; }
+  if (!implementation->AttrOr("target").empty()) {
+    *err = "unsupported targeted implementation"; return false;
+  }
+  const MtlxElem *body = implementation;
+  if (implementation->tag == "implementation") {
+    const std::string body_name = implementation->AttrOr("nodegraph");
+    body = nullptr;
+    for (const MtlxElem &child : document.children) {
+      if (child.tag != "nodegraph" || child.Name() != body_name) continue;
+      if (body) { *err = "ambiguous implementation graph"; return false; }
+      body = &child;
+    }
+    if (!body || !body->AttrOr("target").empty()) {
+      *err = "missing untargeted implementation graph"; return false;
+    }
+  }
+  if (body->Attr("colorspace") || body->Attr("fileprefix") ||
+      body->Attr("namespace") || graph.Attr("colorspace") ||
+      graph.Attr("fileprefix") || graph.Attr("namespace") ||
+      call->Attr("colorspace") || call->Attr("fileprefix") ||
+      call->Attr("namespace")) {
+    *err = "unsupported implementation graph scope"; return false;
+  }
+  if (!ResolveMtlxGraph(document, *body, library, outer, &checked, err)) return false;
+
+  std::vector<const MtlxElem *> body_nodes;
+  for (const MtlxElem &child : body->children) {
+    if (IsMtlxNodeElem(child)) body_nodes.push_back(&child);
+  }
+  // A prefix longer than every existing child name makes the copied names
+  // distinct from all caller children, including graph ports.
+  size_t longest = 0;
+  for (const MtlxElem &child : graph.children) {
+    if (child.Name().size() > longest) longest = child.Name().size();
+  }
+  const std::string prefix(longest + 1, '_');
+  auto renamed = [&](const std::string &name) { return prefix + name; };
+  auto erase_sources = [](MtlxElem *port) {
+    for (auto it = port->attrs.begin(); it != port->attrs.end();) {
+      if (it->first == "nodename" || it->first == "nodegraph" ||
+          it->first == "interfacename" || it->first == "output" || it->first == "value")
+        it = port->attrs.erase(it);
+      else ++it;
+    }
+  };
+  auto bind_interface = [&](MtlxElem *port, const std::string &name) -> bool {
+    const MtlxElem *call_input = FindMtlxChild(*call, "input", name);
+    if (call_input) {
+      if (!call_input->children.empty()) {
+        *err = "unsupported call input children"; return false;
+      }
+      const std::string port_name = port->Name();
+      port->attrs.clear();
+      port->SetAttr("name", port_name);
+      for (const auto &attr : call_input->attrs) {
+        if (attr.first != "name")
+          port->SetAttr(attr.first, attr.second);
+      }
+      return true;
+    }
+    erase_sources(port);
+    for (const MtlxPort &p : library.ActiveInputs(*def)) {
+      if (p.name != name) continue;
+      if (!p.default_geomprop.empty()) {
+        *err = "unsupported default geometry property"; return false;
+      }
+      if (p.has_value) { port->SetAttr("value", p.value); return true; }
+    }
+    *err = "missing graph call input '" + name + "'";
+    return false;
+  };
+  auto rewrite_body_port = [&](MtlxElem *port) -> bool {
+    if (port->Attr("channels") || port->Attr("nodegraph")) {
+      *err = "unsupported implementation connection"; return false;
+    }
+    if (const std::string *iface = port->Attr("interfacename")) {
+      const std::string name = *iface;
+      return bind_interface(port, name);
+    }
+    if (const std::string *source = port->Attr("nodename")) {
+      const std::string name = *source;
+      if (!FindMtlxNode(*body, name)) { *err = "missing implementation node"; return false; }
+      port->SetAttr("nodename", renamed(name));
+    } else if (port->Attr("output")) {
+      *err = "unsupported implementation output reference"; return false;
+    }
+    return true;
+  };
+
+  MtlxElem result = graph;
+  result.children.clear();
+  for (const MtlxElem &child : graph.children) {
+    if (IsMtlxNodeElem(child) && child.Name() == call_name) {
+      for (const MtlxElem *body_node : body_nodes) {
+        MtlxElem copy = *body_node;
+        copy.SetAttr("name", renamed(body_node->Name()));
+        for (MtlxElem &input : copy.children) {
+          if (input.tag != "input") {
+            *err = "unsupported implementation node child"; return false;
+          }
+          if (!rewrite_body_port(&input)) return false;
+        }
+        result.children.push_back(std::move(copy));
+      }
+    } else {
+      result.children.push_back(child);
+    }
+  }
+  const std::vector<MtlxPort> call_outputs = library.ActiveOutputs(*def);
+  auto rewrite_call_port = [&](MtlxElem *port) -> bool {
+    const std::string *source = port->Attr("nodename");
+    if (!source || *source != call_name) return true;
+    if (port->Attr("channels")) { *err = "unsupported call output channels"; return false; }
+    std::string output_name = port->AttrOr("output");
+    if (output_name.empty()) output_name = call_outputs.size() == 1 ? call_outputs[0].name : "out";
+    const MtlxElem *body_output = FindMtlxChild(*body, "output", output_name);
+    if (!body_output) { *err = "missing implementation output '" + output_name + "'"; return false; }
+    bool matching_output = false;
+    for (const MtlxPort &output : call_outputs) {
+      if (output.name == output_name && output.type == body_output->AttrOr("type"))
+        matching_output = true;
+    }
+    if (!matching_output) { *err = "implementation output type mismatch"; return false; }
+    if (body_output->Attr("channels") || body_output->Attr("nodegraph")) {
+      *err = "unsupported implementation output"; return false;
+    }
+    MtlxElem route = *body_output;
+    if (!rewrite_body_port(&route)) return false;
+    if (port->Attr("value") || (route.Attr("value") && route.Attr("nodename"))) {
+      *err = "unsupported connected output fallback"; return false;
+    }
+    erase_sources(port);
+    bool bound = false;
+    for (const auto &attr : route.attrs) {
+      if (attr.first == "nodename" || attr.first == "nodegraph" ||
+          attr.first == "interfacename" || attr.first == "output" || attr.first == "value") {
+        port->SetAttr(attr.first, attr.second);
+        bound = true;
+      }
+    }
+    if (!bound) { *err = "implementation output has no source"; return false; }
+    return true;
+  };
+  for (MtlxElem &child : result.children) {
+    if (child.tag == "output") {
+      if (!rewrite_call_port(&child)) return false;
+    } else if (IsMtlxNodeElem(child)) {
+      for (MtlxElem &input : child.children) {
+        if (input.tag == "input" && !rewrite_call_port(&input)) return false;
+      }
+    }
+  }
+  if (!ResolveMtlxGraph(document, result, library, outer, &checked, err)) return false;
+  *flattened = std::move(result);
+  return true;
+}
+
+bool FlattenMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
+                      const MtlxLibrary &library, const MtlxScope &outer,
+                      size_t max_expansions, MtlxElem *flattened,
+                      std::string *err) {
+  std::string ignored_error;
+  if (!err) err = &ignored_error;
+  err->clear();
+  if (!flattened) { *err = "missing flattened graph output"; return false; }
+  MtlxResolvedGraph checked;
+  if (!ResolveMtlxGraph(document, graph, library, outer, &checked, err)) return false;
+
+  struct PendingNode {
+    std::string name;
+    std::vector<std::string> ancestors;
+  };
+  MtlxElem result = graph;
+  std::vector<PendingNode> queue;
+  for (const MtlxElem &child : result.children) {
+    if (IsMtlxNodeElem(child)) queue.push_back({child.Name(), {}});
+  }
+  size_t expansions = 0;
+  for (size_t i = 0; i < queue.size(); ++i) {
+    const PendingNode pending = queue[i];
+    const MtlxElem *node = FindMtlxNode(result, pending.name);
+    if (!node) { *err = "missing pending graph node"; return false; }
+    MtlxScope scope{node, &result};
+    scope.insert(scope.end(), outer.begin(), outer.end());
+    const MtlxNodeDefInfo *def = library.ResolveReference(*node, scope);
+    if (!def) { *err = "cannot resolve graph node nodedef"; return false; }
+    const MtlxElem *implementation = nullptr;
+    size_t implementation_count = 0;
+    bool has_graph_implementation = false;
+    for (const MtlxElem &child : document.children) {
+      if ((child.tag != "nodegraph" && child.tag != "implementation") ||
+          child.AttrOr("nodedef") != def->name) continue;
+      ++implementation_count;
+      if (child.tag == "nodegraph" || !child.AttrOr("nodegraph").empty())
+        has_graph_implementation = true;
+      implementation = &child;
+    }
+    if (!has_graph_implementation) continue;
+    if (implementation_count != 1) {
+      *err = "ambiguous graph implementation"; return false;
+    }
+    if (!implementation->AttrOr("target").empty()) {
+      *err = "unsupported targeted implementation"; return false;
+    }
+    for (const std::string &ancestor : pending.ancestors) {
+      if (ancestor == def->name) {
+        *err = "recursive graph implementation '" + def->name + "'";
+        return false;
+      }
+    }
+    if (expansions >= max_expansions) {
+      *err = "graph expansion limit exceeded"; return false;
+    }
+    std::unordered_set<std::string> old_nodes;
+    for (const MtlxElem &child : result.children) {
+      if (IsMtlxNodeElem(child)) old_nodes.insert(child.Name());
+    }
+    const std::string def_name = def->name;
+    MtlxElem next;
+    if (!FlattenMtlxGraphCall(document, result, library, outer, pending.name,
+                              &next, err)) return false;
+    std::vector<std::string> ancestors = pending.ancestors;
+    ancestors.push_back(def_name);
+    for (const MtlxElem &child : next.children) {
+      if (IsMtlxNodeElem(child) && old_nodes.count(child.Name()) == 0)
+        queue.push_back({child.Name(), ancestors});
+    }
+    result = std::move(next);
+    ++expansions;
+  }
+  *flattened = std::move(result);
   return true;
 }
 

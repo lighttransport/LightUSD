@@ -143,6 +143,7 @@ struct MtlxPort {
   std::string type;
   bool has_value = false;
   std::string value;
+  std::string default_geomprop;
 };
 
 struct MtlxNodeDefInfo {
@@ -224,6 +225,23 @@ struct MtlxResolvedGraph {
 bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                       const MtlxLibrary &library, const MtlxScope &outer,
                       MtlxResolvedGraph *resolved, std::string *err);
+
+// Inline one graph-implemented node into a copy of `graph`. This initial
+// implementation supports untargeted, unambiguous direct or linked nodegraphs
+// and direct node/literal/interface connections. Unsupported forms return false
+// without modifying `flattened`.
+bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
+                          const MtlxLibrary &library, const MtlxScope &outer,
+                          const std::string &call_name, MtlxElem *flattened,
+                          std::string *err);
+
+// Expand graph implementations recursively. Primitive and source-code
+// implementations remain nodes. `max_expansions` bounds graph growth; failure
+// (including recursive implementations) leaves `flattened` unchanged.
+bool FlattenMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
+                      const MtlxLibrary &library, const MtlxScope &outer,
+                      size_t max_expansions, MtlxElem *flattened,
+                      std::string *err);
 
 // Validate every top-level nodegraph and reject cycles between nodegraph
 // implementations. `graph_order` is dependency-first.
