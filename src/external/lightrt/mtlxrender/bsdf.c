@@ -1015,6 +1015,12 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     float pdf_diff = NdotL * MTLX_INV_PI;
     float inv_jacobian = VdotH > 0.0f ? 0.25f / VdotH : 0.0f;
     float pdf_spec = ggx_D(NdotH, L->alpha) * NdotH * inv_jacobian;
+    if (L->openpbr_base && NdotH > 0.0f && VdotH > 0.0f) {
+        float a2 = L->alpha * L->alpha;
+        float root = sqrtf(a2 + (1.0f - a2) * NdotV * NdotV);
+        /* Isotropic GGX visible-normal reflection PDF: D * G1 / (4 NdotV). */
+        pdf_spec = ggx_D(NdotH, L->alpha) / (2.0f * (NdotV + root));
+    }
     float pdf_coat = ggx_D(NdotH, L->coat_alpha) * NdotH * inv_jacobian;
     float pdf_conductor = 0.0f;
     if (L->conductor_weight_sum > 0.0f) {
@@ -1144,7 +1150,14 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         v3 H = v3_normalize(to_world(sample_ggx_h(L.coat_alpha, u1, u2), T, B, N));
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else if (u < L.pg + L.pc + L.ps) { /* base spec GGX */
-        v3 H = v3_normalize(to_world(sample_ggx_h(L.alpha, u1, u2), T, B, N));
+        v3 h;
+        if (L.openpbr_base) {
+            v3 view = v3_make(v3_dot(wo,T), v3_dot(wo,B), v3_dot(wo,N));
+            h = sample_conductor_vndf(view, L.alpha, L.alpha, u1, u2);
+        } else {
+            h = sample_ggx_h(L.alpha, u1, u2);
+        }
+        v3 H = v3_normalize(to_world(h, T, B, N));
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else if (u < L.pg + L.pc + L.ps + L.pm && L.conductor_weight_sum > 0.0f) {
         float target = ((u - L.pg - L.pc - L.ps) / L.pm) * L.conductor_weight_sum;

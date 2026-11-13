@@ -210,3 +210,6 @@ upstream provenance intact.
   OpenPBR coat tint, darkening and throughput on transmission.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `c317a90` for
   OpenPBR Zeltner fuzz response and underlying-layer throughput.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `fe231e6` for OpenPBR
+  visible-normal base-reflection sampling and its matching PDF. The upstream
+  glass furnace test covers both interface sides and a grazing-weight regression.
