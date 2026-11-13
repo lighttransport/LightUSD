@@ -38,6 +38,12 @@ float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
 v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
                            float ndotv, float ndotl, float ndoth, float vdoth);
 
+/* Anisotropic version: H components are expressed in the orthonormal
+ * tangent, bitangent, normal frame. Masking follows the reference's geometric
+ * mean alpha approximation. */
+v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
+    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth);
+
 /* Importance-sample the BSDF. Returns 0 if no valid sample. */
 int bsdf_sample(const OpenPBRParams *p, v3 N, v3 wo, pcg32 *rng, BsdfSample *out);
 

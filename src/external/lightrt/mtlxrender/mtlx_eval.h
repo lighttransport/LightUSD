@@ -35,7 +35,9 @@ typedef struct {
     v3 ior, extinction;
     float weight;
     v3 weight_color;
-    float roughness; /* MaterialX GGX alpha */
+    float roughness; /* MaterialX GGX alpha along tangent */
+    float roughness_y; /* GGX alpha along bitangent */
+    v3 tangent; /* world-space tangent at graph evaluation */
 } MtlxConductorLobe;
 
 #define MTLX_MAX_SHEEN_LOBES 32

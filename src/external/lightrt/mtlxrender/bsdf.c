@@ -56,15 +56,19 @@ static double materialx_ggx_directional_albedo(double x, double y) {
     return fmin(1.0,fmax(0.0,r0/r2))+fmin(1.0,fmax(0.0,r1/r3));
 }
 
-v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
-                           float ndotv, float ndotl, float ndoth, float vdoth) {
+v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
+    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth) {
     if (!(ndotv > 0.0f && ndotl > 0.0f) || !v3_is_finite(eta) ||
-        !v3_is_finite(extinction) || !isfinite(alpha) ||
-        !isfinite(ndotv) || !isfinite(ndotl) || !isfinite(ndoth) || !isfinite(vdoth)) return v3_splat(0.0f);
-    double v=fmin(1.0,ndotv), l=fmin(1.0,ndotl), h=fmin(1.0,fmax(0.0,ndoth));
-    double a=fmin(1.0,fmax(1.0e-8,(double)alpha)), a2=a*a;
-    double d=a2*h*h+(1.0-h*h);
-    double D=a2/(3.14159265358979323846*d*d);
+        !v3_is_finite(extinction) || !isfinite(alpha_x) || !isfinite(alpha_y) ||
+        !isfinite(ndotv) || !isfinite(ndotl) || !isfinite(hx) || !isfinite(hy) ||
+        !isfinite(hz) || !isfinite(vdoth)) return v3_splat(0.0f);
+    double v=fmin(1.0,ndotv), l=fmin(1.0,ndotl), h=fmin(1.0,fmax(0.0,hz));
+    double ax=fmin(1.0,fmax(1.0e-8,(double)alpha_x));
+    double ay=fmin(1.0,fmax(1.0e-8,(double)alpha_y));
+    double a=sqrt(ax*ay), a2=a*a;
+    double d=((double)hx/ax)*((double)hx/ax)+((double)hy/ay)*((double)hy/ay)+h*h;
+    if (!(d > 0.0)) return v3_splat(0.0f);
+    double D=1.0/(3.14159265358979323846*ax*ay*d*d);
     double lv=sqrt(a2+(1.0-a2)*v*v), ll=sqrt(a2+(1.0-a2)*l*l);
     double G=2.0*v*l/(v*ll+l*lv);
     double ess=materialx_ggx_directional_albedo(v,a);
@@ -79,6 +83,14 @@ v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
         result[i]=(float)(D*G*f*compensation/(4.0*v*l));
     }
     return v3_make(result[0],result[1],result[2]);
+}
+
+v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
+                           float ndotv, float ndotl, float ndoth, float vdoth) {
+    if (!isfinite(ndoth)) return v3_splat(0.0f);
+    float h=clampf(ndoth, 0.0f, 1.0f);
+    return bsdf_materialx_conductor_anisotropic(eta, extinction, alpha, alpha,
+        ndotv, ndotl, sqrtf(fmaxf(0.0f,1.0f-h*h)), 0.0f, h, vdoth);
 }
 
 /* ---- microfacet helpers ----------------------------------------------- */
@@ -542,8 +554,17 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
 
     for (int i = 0; i < L->conductor_lobe_count; ++i) {
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
-        v3 response = bsdf_materialx_conductor(lobe->ior, lobe->extinction,
-            lobe->roughness, NdotV, NdotL, NdotH, VdotH);
+        v3 tangent = v3_sub(lobe->tangent, v3_scale(N, v3_dot(lobe->tangent, N)));
+        v3 bitangent;
+        if (!v3_is_finite(tangent) || v3_len(tangent) < 1.0e-6f)
+            onb(N, &tangent, &bitangent);
+        else {
+            tangent = v3_normalize(tangent);
+            bitangent = v3_cross(N, tangent);
+        }
+        v3 response = bsdf_materialx_conductor_anisotropic(lobe->ior, lobe->extinction,
+            lobe->roughness, lobe->roughness_y, NdotV, NdotL,
+            v3_dot(H,tangent), v3_dot(H,bitangent), NdotH, VdotH);
         spec = v3_add(spec, v3_mul(base_atten,
             v3_scale(v3_mul(response, lobe->weight_color), lobe->weight)));
     }

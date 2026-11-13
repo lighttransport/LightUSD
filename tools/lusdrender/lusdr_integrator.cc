@@ -262,6 +262,8 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.conductor_lobes[i].weight = lobe.weight;
     p.conductor_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
     p.conductor_lobes[i].roughness = lobe.roughness;
+    p.conductor_lobes[i].roughness_y = lobe.roughnessY;
+    p.conductor_lobes[i].tangent = v3_make(lobe.tangent[0], lobe.tangent[1], lobe.tangent[2]);
   }
   p.specular_weight = src.specularWeight;
   p.specular_color =
@@ -1794,7 +1796,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                        num.z / std::max(den.z, 1.0e-6f)};
         // Split-sum preview uses Schlick F0 and filtered environment; it is an
         // approximation to the full conductor Fresnel and compensation model.
-        const float rough = std::sqrt(std::clamp(lobe.roughness, 0.0f, 1.0f));
+        const float ax = std::clamp(lobe.roughness, 0.0f, 1.0f);
+        const float ay = std::clamp(lobe.roughness_y, 0.0f, 1.0f);
+        const float rough = std::sqrt(std::sqrt(ax * ay));
         const Vec3 env = SampleIblMip(ibl->prefiltered, env_refl, rough);
         float a = 1.0f, b = 0.0f;
         SampleBrdfLut(*ibl, ndotv, rough, &a, &b);

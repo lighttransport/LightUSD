@@ -28,6 +28,8 @@ struct RealtimeConductorLobe {
   float weight{0.0f};
   float weightColor[3]{1.0f, 1.0f, 1.0f};
   float roughness{0.0f};
+  float roughnessY{0.0f};
+  float tangent[3]{0.0f, 0.0f, 0.0f};
 };
 
 constexpr int kMaxRealtimeSheenLobes = 32;

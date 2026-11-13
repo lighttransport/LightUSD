@@ -1691,12 +1691,14 @@ The shared CPU MaterialX BSDF uses height-correlated Smith visibility for its
 isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
-`tool-lusdrender-mtlx-conductor-response` checks the isolated isotropic
-MaterialX conductor response against independent reference vectors.
+`tool-lusdrender-mtlx-conductor-response` checks isotropic and anisotropic
+MaterialX conductor responses against independent reference vectors.
 `tool-lusdrender-mtlx-conductor-mixture` checks independent conductor lobes,
 RGB weights, diffuse mixtures, opaque layers, sampling, furnace bounds and
 the 32/33-lobe boundary. The environment preview uses an approximate split-sum
-response; anisotropic and thin-film conductor responses remain incomplete.
+response with geometric-mean roughness; thin-film and retroreflective
+conductor responses remain incomplete. The LightRT `make test` suite also
+renders anisotropic conductor tangents with both CPU integrators.
 `tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
 responses, RGB-weighted mixtures, the lobe limit, the default BSDF mix weight,
 and view-dependent sheen-layer throughput.

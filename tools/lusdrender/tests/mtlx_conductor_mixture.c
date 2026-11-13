@@ -55,15 +55,17 @@ int main(void) {
     "<oren_nayar_diffuse_bsdf name=\"d\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/></oren_nayar_diffuse_bsdf>"
     "<conductor_bsdf name=\"a\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.4\"/><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.3\"/></conductor_bsdf>"
     "<conductor_bsdf name=\"b\" type=\"BSDF\"><input name=\"ior\" type=\"color3\" value=\"1.1,1.2,1.3\"/><input name=\"extinction\" type=\"color3\" value=\"2,1,3\"/><input name=\"roughness\" type=\"vector2\" value=\"0.7,0.7\"/></conductor_bsdf>"
+    "<conductor_bsdf name=\"ax\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.1,0.6\"/><input name=\"tangent\" type=\"vector3\" value=\"1,0,0\"/></conductor_bsdf>"
+    "<conductor_bsdf name=\"ay\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.1,0.6\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/></conductor_bsdf>"
     "<conductor_bsdf name=\"zero\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0\"/></conductor_bsdf>"
     "<layer name=\"zero_layer\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"zero\"/><input name=\"base\" type=\"BSDF\" nodename=\"d\"/></layer>"
     "<mix name=\"mix\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"d\"/><input name=\"fg\" type=\"BSDF\" nodename=\"a\"/><input name=\"mix\" type=\"float\" value=\"0.25\"/></mix>"
     "<layer name=\"layer\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"a\"/><input name=\"base\" type=\"BSDF\" nodename=\"d\"/></layer>"
     "<mix name=\"two\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
     "<multiply name=\"tint\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mix\"/><input name=\"in2\" type=\"color3\" value=\"0.2,0.5,0.9\"/></multiply>";
-  const char *roots[]={"d","a","b","mix","layer","two","tint","zero_layer"};
-  OpenPBRParams p[8]; char xml[8192];
-  for (int i=0;i<8;i++) {
+  const char *roots[]={"d","a","b","mix","layer","two","tint","zero_layer","ax","ay"};
+  OpenPBRParams p[10]; char xml[8192];
+  for (int i=0;i<10;i++) {
     snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",nodes,roots[i]);
     if (!evaluate(xml,&p[i])) {fprintf(stderr,"graph evaluation failed %s\n",roots[i]);return 1;}
   }
@@ -73,10 +75,17 @@ int main(void) {
   }
   const v3 n={0,0,1}, views[]={{0,0,1},{.8f,0,.6f}}, light={0,.6f,.8f};
   for(int i=0;i<2;i++) {
-    v3 d[8],s[8];float pdf;
-    for(int j=0;j<8;j++) bsdf_eval_lobes(&p[j],n,views[i],light,&d[j],&s[j],&pdf);
+    v3 d[10],s[10];float pdf;
+    for(int j=0;j<10;j++) bsdf_eval_lobes(&p[j],n,views[i],light,&d[j],&s[j],&pdf);
     v3 h=v3_normalize(v3_add(views[i],light));
     v3 ref=bsdf_materialx_conductor(v3_make(.183f,.421f,1.373f),v3_make(3.424f,2.346f,1.770f),.3f,views[i].z,light.z,h.z,v3_dot(views[i],h));
+    v3 eta=v3_make(.183f,.421f,1.373f), extinction=v3_make(3.424f,2.346f,1.770f);
+    v3 rx=bsdf_materialx_conductor_anisotropic(eta,extinction,.1f,.6f,views[i].z,light.z,h.x,h.y,h.z,v3_dot(views[i],h));
+    v3 ry=bsdf_materialx_conductor_anisotropic(eta,extinction,.1f,.6f,views[i].z,light.z,h.y,-h.x,h.z,v3_dot(views[i],h));
+    if (!near3(s[8],rx) || !near3(s[9],ry) || fabsf(s[8].x-s[9].x)<1e-4f ||
+        fabsf(p[8].conductor_lobes[0].roughness_y-.6f)>1e-6f) {
+      fprintf(stderr,"anisotropic conductor/tangent failed view=%d\n",i); return 1;
+    }
     if(!near3(s[1],v3_scale(ref,.4f)) || !near3(d[3],v3_scale(d[0],.75f)) ||
        !near3(s[3],v3_scale(s[1],.25f)) || !near3(d[4],v3_scale(d[0],.6f)) ||
        !near3(s[4],s[1]) || !near3(s[5],v3_add(v3_scale(s[1],.7f),v3_scale(s[2],.3f))) ||
