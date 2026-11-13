@@ -282,6 +282,16 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.sheen_color =
       v3_make(src.sheenColor[0], src.sheenColor[1], src.sheenColor[2]);
   p.sheen_roughness = src.sheenRoughness;
+  static_assert(lightusd::tydra::kMaxRealtimeSheenLobes == MTLX_MAX_SHEEN_LOBES,
+                "Sheen lobe limits must match");
+  p.sheen_lobe_count = std::clamp(src.sheenLobeCount, 0, MTLX_MAX_SHEEN_LOBES);
+  for (int i = 0; i < p.sheen_lobe_count; ++i) {
+    const auto &lobe = src.sheenLobes[i];
+    p.sheen_lobes[i].color = v3_make(lobe.color[0], lobe.color[1], lobe.color[2]);
+    p.sheen_lobes[i].weight = lobe.weight;
+    p.sheen_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
+    p.sheen_lobes[i].roughness = lobe.roughness;
+  }
   p.thin_film_weight = src.thinFilmWeight;
   p.thin_film_thickness = src.thinFilmThicknessNm;
   p.thin_film_ior = src.thinFilmIor;
@@ -623,6 +633,54 @@ Vec3 EvalMaterialIblDiffuse(
   return Vec3{brdf.x * diffuse_irradiance.x * scale,
               brdf.y * diffuse_irradiance.y * scale,
               brdf.z * diffuse_irradiance.z * scale};
+}
+
+// MaterialX's Conty–Kulla directional-albedo fit, used for environment
+// illumination. The diffuse irradiance map stores the cosine-weighted
+// environment average, so this yields the reference white-environment limit.
+float MaterialXSheenDirectionalAlbedo(float cos_view, float roughness) {
+  const float n = std::clamp(cos_view, 0.0f, 1.0f);
+  const float r = std::clamp(roughness, 0.0f, 1.0f);
+  const float numerator = 13.67300f - 68.78018f * n + 799.08825f * r -
+      905.00061f * n * r + 60.28956f * n * n + 1086.96473f * r * r;
+  const float denominator = 1.0f + 61.57746f * n + 442.78211f * r +
+      2597.49308f * n * r + 121.81241f * n * n + 3045.55075f * r * r;
+  return std::clamp(numerator / denominator, 0.0f, 1.0f);
+}
+
+Vec3 EvalMaterialIblSheen(const TriInfo &tri, const Vec3 &normal,
+                          const Vec3 &wo, const Vec3 &irradiance,
+                          const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
+  if (!openpbr) return Vec3{0.0f, 0.0f, 0.0f};
+  const OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
+  if (p.sheen_lobe_count == 0 && p.sheen_weight <= 0.0f)
+    return Vec3{0.0f, 0.0f, 0.0f};
+  const float ndotv = std::clamp(Dot(normal, wo), 0.0f, 1.0f);
+  Vec3 response{0.0f, 0.0f, 0.0f};
+  if (p.sheen_lobe_count > 0) {
+    for (int i = 0; i < p.sheen_lobe_count; ++i) {
+      const MtlxSheenLobe &lobe = p.sheen_lobes[i];
+      const float weight = lobe.weight * MaterialXSheenDirectionalAlbedo(ndotv, lobe.roughness);
+      response.x += lobe.color.x * lobe.weight_color.x * weight;
+      response.y += lobe.color.y * lobe.weight_color.y * weight;
+      response.z += lobe.color.z * lobe.weight_color.z * weight;
+    }
+  } else if (p.sheen_weight > 0.0f) {
+    const float weight = p.sheen_weight * MaterialXSheenDirectionalAlbedo(ndotv, p.sheen_roughness);
+    response = Vec3{p.sheen_color.x * weight, p.sheen_color.y * weight, p.sheen_color.z * weight};
+  }
+  const float coat_weight = std::clamp(p.coat_weight, 0.0f, 1.0f);
+  const float coat_ior = p.coat_ior;
+  const float f = (coat_ior - 1.0f) / (coat_ior + 1.0f);
+  const float m = 1.0f - ndotv;
+  const float reflectance = f * f + (1.0f - f * f) * m * m * m * m * m;
+  const float coat_transmission = 1.0f - coat_weight * reflectance;
+  response.x *= (1.0f - coat_weight + coat_weight * p.coat_color.x) * coat_transmission;
+  response.y *= (1.0f - coat_weight + coat_weight * p.coat_color.y) * coat_transmission;
+  response.z *= (1.0f - coat_weight + coat_weight * p.coat_color.z) * coat_transmission;
+  return Vec3{response.x * irradiance.x * tri.occlusion,
+              response.y * irradiance.y * tri.occlusion,
+              response.z * irradiance.z * tri.occlusion};
 }
 
 // Environment specular for a prefiltered radiance, via the bounded split-sum
@@ -1662,6 +1720,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // metallic, so its diffuse weight isn't dimmed by it.
     Vec3 f0;
     float kd_metal;
+    float specular_f90 = 1.0f;
     float specular_roughness = tri.roughness;
     if (tri.use_specular_workflow) {
       f0 = tri.specular_color;
@@ -1683,6 +1742,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       const Vec3 base = Mul(FromMtlxV3(p.base_color), p.base_weight);
       f0 = Lerp(dielectric_f0_color, base, p.metalness);
       kd_metal = 0.0f;
+      specular_f90 = std::clamp(p.specular_weight, 0.0f, 1.0f);
       specular_roughness = p.specular_roughness;
     } else {
       // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
@@ -1705,7 +1765,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // Both modes use the bounded split-sum for environment specular (see
     // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
     // bsdf mode, so this stays material-correct.
-    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b);
+    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b * specular_f90);
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
     Vec3 diff =
@@ -1714,6 +1774,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
             : Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
     c_diffuse = Add(c_diffuse, diff);
     c = Add(c, Add(diff, spec));
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf)
+      c = Add(c, EvalMaterialIblSheen(tri, n, view, diffuse, tri_openpbr));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
     // its own (usually low) roughness, layered on top and weighted by the coat
     // amount. Skipped entirely when clearcoat==0 (byte-identical default).

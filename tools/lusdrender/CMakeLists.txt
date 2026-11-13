@@ -456,6 +456,21 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  add_executable(lusdrender-mtlx-sheen-mixture
+    tests/mtlx_sheen_mixture.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-sheen-mixture PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-sheen-mixture PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-sheen-mixture PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-sheen-mixture
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-sheen-mixture>)
+  set_tests_properties(tool-lusdrender-mtlx-sheen-mixture PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
   add_executable(lusdrender-mtlx-diffuse-mixture
     tests/mtlx_diffuse_mixture.c
     tests/mtlx_texture_stub.c

@@ -21,6 +21,14 @@ struct RealtimeDiffuseLobe {
   int model{0};
 };
 
+constexpr int kMaxRealtimeSheenLobes = 32;
+struct RealtimeSheenLobe {
+  float color[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float weightColor[3]{1.0f, 1.0f, 1.0f};
+  float roughness{0.0f};
+};
+
 struct RealtimePbrMaterial {
   float baseWeight{1.0f};
   float baseColor[3]{0.8f, 0.8f, 0.8f};
@@ -51,6 +59,8 @@ struct RealtimePbrMaterial {
   float sheenWeight{0.0f};
   float sheenColor[3]{1.0f, 1.0f, 1.0f};
   float sheenRoughness{0.3f};
+  int sheenLobeCount{0};
+  RealtimeSheenLobe sheenLobes[kMaxRealtimeSheenLobes]{};
   float thinFilmWeight{0.0f};
   float thinFilmThicknessNm{0.0f};
   float thinFilmIor{1.5f};

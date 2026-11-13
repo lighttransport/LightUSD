@@ -79,11 +79,28 @@ int main() {
         <input name="fg" type="BSDF" nodename="b"/>
         <input name="mix" type="float" value="0.25"/>
       </mix>
+      <sheen_bsdf name="sa" type="BSDF">
+        <input name="color" type="color3" value="0.4, 0.3, 0.2"/>
+        <input name="roughness" type="float" value="0.1"/>
+      </sheen_bsdf>
+      <sheen_bsdf name="sb" type="BSDF">
+        <input name="color" type="color3" value="0.1, 0.3, 0.7"/>
+        <input name="roughness" type="float" value="0.7"/>
+      </sheen_bsdf>
+      <mix name="sheenmix" type="BSDF">
+        <input name="bg" type="BSDF" nodename="sa"/>
+        <input name="fg" type="BSDF" nodename="sb"/>
+        <input name="mix" type="float" value="0.4"/>
+      </mix>
+      <add name="combined" type="BSDF">
+        <input name="in1" type="BSDF" nodename="mix"/>
+        <input name="in2" type="BSDF" nodename="sheenmix"/>
+      </add>
       <constant name="factor" type="color3">
         <input name="value" type="color3" value="0.2, 0.5, 0.9"/>
       </constant>
       <multiply name="tint" type="BSDF">
-        <input name="in1" type="BSDF" nodename="mix"/>
+        <input name="in1" type="BSDF" nodename="combined"/>
         <input name="in2" type="color3" nodename="factor"/>
       </multiply>
       <surface name="s" type="surfaceshader">
@@ -103,9 +120,16 @@ int main() {
         !Near(params.diffuseLobes[0].weightColor[0], 0.2f) ||
         !Near(params.diffuseLobes[0].weightColor[1], 0.5f) ||
         !Near(params.diffuseLobes[1].weightColor[2], 0.9f) ||
+        params.sheenLobeCount != 2 ||
+        !Near(params.sheenLobes[0].weight, 0.6f) ||
+        !Near(params.sheenLobes[1].weight, 0.4f) ||
+        !Near(params.sheenLobes[0].weightColor[0], 0.2f) ||
+        !Near(params.sheenLobes[1].weightColor[2], 0.9f) ||
+        !Near(params.sheenLobes[0].roughness, 0.1f) ||
+        !Near(params.sheenLobes[1].roughness, 0.7f) ||
         !Near(params.diffuseLobes[0].roughness, 0.8f) ||
         !Near(params.diffuseLobes[1].roughness, 0.3f)) {
-      std::fprintf(stderr, "MaterialX diffuse mixture bridge failed: %s\n", err.c_str());
+      std::fprintf(stderr, "MaterialX diffuse/sheen mixture bridge failed: %s\n", err.c_str());
       return 1;
     }
   }

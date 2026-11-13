@@ -29,6 +29,15 @@ typedef struct {
     int model; /* MTLX_DIFFUSE_* */
 } MtlxDiffuseLobe;
 
+#define MTLX_MAX_SHEEN_LOBES 32
+
+typedef struct {
+    v3 color;
+    float weight;
+    v3 weight_color;
+    float roughness;
+} MtlxSheenLobe;
+
 typedef struct {
     /* base / diffuse */
     float base_weight;
@@ -65,6 +74,9 @@ typedef struct {
     float sheen_weight;
     v3    sheen_color;
     float sheen_roughness;
+    int   sheen_lobe_count;
+    int   sheen_lobe_overflow;
+    MtlxSheenLobe sheen_lobes[MTLX_MAX_SHEEN_LOBES];
     /* thin-film iridescence (Belcour-Barla airy reflectance over the specular) */
     float thin_film_weight;    /* blend of iridescent vs plain Fresnel [0,1] */
     float thin_film_thickness; /* film thickness in nanometers (0 = off) */

@@ -373,6 +373,15 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   dst->sheenWeight = src.sheen_weight;
   CopyV3(src.sheen_color, dst->sheenColor);
   dst->sheenRoughness = src.sheen_roughness;
+  static_assert(tydra::kMaxRealtimeSheenLobes == MTLX_MAX_SHEEN_LOBES,
+                "Sheen lobe limits must match");
+  dst->sheenLobeCount = std::clamp(src.sheen_lobe_count, 0, MTLX_MAX_SHEEN_LOBES);
+  for (int i = 0; i < dst->sheenLobeCount; ++i) {
+    CopyV3(src.sheen_lobes[i].color, dst->sheenLobes[i].color);
+    dst->sheenLobes[i].weight = src.sheen_lobes[i].weight;
+    CopyV3(src.sheen_lobes[i].weight_color, dst->sheenLobes[i].weightColor);
+    dst->sheenLobes[i].roughness = src.sheen_lobes[i].roughness;
+  }
   dst->thinFilmWeight = src.thin_film_weight;
   dst->thinFilmThicknessNm = src.thin_film_thickness;
   dst->thinFilmIor = src.thin_film_ior;
@@ -465,6 +474,11 @@ void MergeGraphParamsPreservingTextureDeps(
   if (safe("coat_color")) copy3(graph.coatColor, dst->coatColor);
   if (safe("coat_roughness")) dst->coatRoughness = graph.coatRoughness;
   if (safe("coat_ior")) dst->coatIor = graph.coatIor;
+  if (safe("fuzz_weight") && safe("fuzz_color") && safe("fuzz_roughness")) {
+    dst->sheenLobeCount = graph.sheenLobeCount;
+    std::copy(std::begin(graph.sheenLobes), std::end(graph.sheenLobes),
+              std::begin(dst->sheenLobes));
+  }
   if (safe("fuzz_weight")) dst->sheenWeight = graph.sheenWeight;
   if (safe("fuzz_color")) copy3(graph.sheenColor, dst->sheenColor);
   if (safe("fuzz_roughness")) dst->sheenRoughness = graph.sheenRoughness;

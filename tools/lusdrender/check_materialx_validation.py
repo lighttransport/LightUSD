@@ -446,6 +446,27 @@ def main():
             f"uniform-environment Lambert disagrees with analytic sRGB result: {actual}"
         )
 
+    dark_source = out_dir / "no-scattering.mtlx"
+    dark_source.write_text(
+        lambert_source.read_text(encoding="utf-8").replace(
+            '<input name="base_weight" type="float" value="1" />',
+            '<input name="base_weight" type="float" value="0" />',
+        ), encoding="utf-8",
+    )
+    dark_image = out_dir / "no-scattering.png"
+    dark = subprocess.run(
+        [exe, "--mtlx", str(dark_source), str(dark_image), "--mtlx-material",
+         "LambertMaterial", "-w", "64", "-height", "64", "--displayTransform", "srgb"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if dark.returncode:
+        raise RuntimeError(f"disabled-scattering render failed:\n{dark.stderr}")
+    _, _, dark_rgba = read_png_rgba(dark_image)
+    for x, y in ((32, 32), (36, 32), (32, 36)):
+        offset = (y * 64 + x) * 4
+        if max(dark_rgba[offset : offset + 3]) > 2:
+            raise RuntimeError("disabled specular produced environment reflection")
+
     rough_source = out_dir / "rough-diffuse.mtlx"
     rough_source.write_text(
         lambert_source.read_text(encoding="utf-8").replace(
@@ -530,9 +551,26 @@ def main():
     <multiply name="tint" type="BSDF">
       <input name="in1" type="BSDF" nodename="mix"/>
       <input name="in2" type="color3" nodename="factor"/>
+    </multiply>
+    <sheen_bsdf name="sheen_a" type="BSDF">
+      <input name="color" type="color3" value="0.2, 0.5, 0.8"/>
+      <input name="roughness" type="float" value="0.2"/>
+    </sheen_bsdf>
+    <sheen_bsdf name="sheen_b" type="BSDF">
+      <input name="color" type="color3" value="0.8, 0.3, 0.1"/>
+      <input name="roughness" type="float" value="0.8"/>
+    </sheen_bsdf>
+    <mix name="sheen_mix" type="BSDF">
+      <input name="bg" type="BSDF" nodename="sheen_a"/>
+      <input name="fg" type="BSDF" nodename="sheen_b"/>
+      <input name="mix" type="float" value="0.4"/>
+    </mix>
+    <multiply name="sheen_tint" type="BSDF">
+      <input name="in1" type="BSDF" nodename="sheen_mix"/>
+      <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -568,7 +606,7 @@ def main():
     for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
         offset = (y * 64 + x) * 4
         for channel in range(3):
-            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images)
+            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images[:4])
             if abs(tinted - mixed * (0.2, 0.5, 0.9)[channel]) > 0.025:
                 raise RuntimeError(
                     f"diffuse color scaling failed at {(x, y, channel)}: {tinted}"
@@ -578,6 +616,17 @@ def main():
                     f"diffuse mixture did not preserve weighted response at {(x, y, channel)}: "
                     f"{mixed} vs {0.75 * a + 0.25 * b}"
                 )
+
+    if max(abs(closure_images[4][center_offset + c] - closure_images[5][center_offset + c])
+           for c in range(3)) < 2:
+        raise RuntimeError("sheen component renders are not distinguishable")
+    for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
+        offset = (y * 64 + x) * 4
+        for channel in range(3):
+            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images[4:])
+            if abs(mixed - (0.6 * a + 0.4 * b)) > 0.025 or \
+               abs(tinted - mixed * (0.2, 0.5, 0.9)[channel]) > 0.025:
+                raise RuntimeError(f"sheen mixture or RGB scaling failed at {(x, y, channel)}")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],

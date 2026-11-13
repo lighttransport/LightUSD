@@ -93,13 +93,13 @@ static float rough_diffuse_factor(int model, float roughness, float nv,
 
 /* "Charlie" sheen NDF (Estevez & Kulla 2017) + Neubelt visibility. */
 static float charlie_D(float NdotH, float r) {
-    r = clampf(r, 0.05f, 1.0f);
+    r = clampf(r, 0.005f, 1.0f);
     float inv = 1.0f / r;
     float sin2 = maxf(0.0f, 1.0f - NdotH * NdotH);
     return (2.0f + inv) * powf(sin2, inv * 0.5f) * (1.0f / (2.0f * MTLX_PI));
 }
 static float sheen_V(float NdotV, float NdotL) {
-    return 1.0f / (4.0f * (NdotL + NdotV - NdotL * NdotV) + 1e-4f);
+    return 1.0f / (4.0f * (NdotL + NdotV - NdotL * NdotV));
 }
 
 /* ---- thin-film iridescence (Belcour & Barla 2017) --------------------- */
@@ -238,6 +238,8 @@ typedef struct {
     float F90;         /* specular-weighted grazing reflectance */
     float alpha;       /* GGX roughness^2 */
     v3    sheen_color; float sheen_alpha, sheen_w;
+    int   sheen_lobe_count;
+    const MtlxSheenLobe *sheen_lobes;
     v3    coat_color; float coat_alpha, coat_w, coat_f0, coat_Ri;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
@@ -281,7 +283,10 @@ static Layers extract(const OpenPBRParams *p) {
 
     L.sheen_w = p->sheen_weight;
     L.sheen_color = p->sheen_color;
-    L.sheen_alpha = clampf(p->sheen_roughness, 0.05f, 1.0f);
+    L.sheen_alpha = clampf(p->sheen_roughness, 0.005f, 1.0f);
+    L.sheen_lobe_count = p->sheen_lobe_count < 0 ? 0 :
+        (p->sheen_lobe_count > MTLX_MAX_SHEEN_LOBES ? MTLX_MAX_SHEEN_LOBES : p->sheen_lobe_count);
+    L.sheen_lobes = p->sheen_lobes;
 
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
@@ -442,8 +447,17 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);
 
     v3 sheen = v3_splat(0.0f);
-    if (L->sheen_w > 0.0f)
+    if (L->sheen_lobe_count > 0) {
+        for (int i = 0; i < L->sheen_lobe_count; ++i) {
+            const MtlxSheenLobe *lobe = &L->sheen_lobes[i];
+            v3 color = v3_mul(lobe->color, lobe->weight_color);
+            float response = lobe->weight * charlie_D(NdotH, lobe->roughness) * sheen_V(NdotV, NdotL);
+            sheen = v3_add(sheen, v3_scale(color, response));
+        }
+        sheen = v3_mul(sheen, base_atten);
+    } else if (L->sheen_w > 0.0f) {
         sheen = v3_mul(v3_scale(L->sheen_color, L->sheen_w * charlie_D(NdotH, L->sheen_alpha) * sheen_V(NdotV, NdotL)), base_atten);
+    }
 
     v3 coat = v3_splat(0.0f);
     if (L->coat_w > 0.0f) {
