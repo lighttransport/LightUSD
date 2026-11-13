@@ -425,7 +425,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
             else
                 response = v3_scale(color, MTLX_INV_PI *
                     rough_diffuse_factor(lobe->model, lobe->roughness, NdotV, NdotL, lv, lh));
-            mixed = v3_add(mixed, v3_scale(response, lobe->weight));
+            mixed = v3_add(mixed, v3_scale(v3_mul(response, lobe->weight_color), lobe->weight));
         }
         v3 sub = v3_scale(v3_mul(L->diffuse_subsurface_color, diffuse_darken),
                           L->diffuse_subsurface_scale * MTLX_INV_PI);

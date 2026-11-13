@@ -1465,43 +1465,57 @@ static float blend_scalar(float old_weight, float old_value, float value,
                       : value;
 }
 
-static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
+static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 color_scale,
                        OpenPBRParams *out, int depth) {
     if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add")) {
-        apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, out, depth + 1);
-        apply_bsdf(ctx, input_node(ctx, n, "in2"), scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, color_scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "in2"), scale, color_scale, out, depth + 1);
         return;
     }
     if (!strcmp(cat, "mix")) {
         const float mix = fmaxf(0.0f, fminf(1.0f,
             in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.5f))));
         apply_bsdf(ctx, input_node(ctx, n, "bg"), scale * (1.0f - mix),
-                   out, depth + 1);
+                   color_scale, out, depth + 1);
         apply_bsdf(ctx, input_node(ctx, n, "fg"), scale * mix,
-                   out, depth + 1);
+                   color_scale, out, depth + 1);
         return;
     }
     if (!strcmp(cat, "multiply")) {
+        const MtlxInput *in1 = find_input(n, "in1");
+        const MtlxInput *in2 = find_input(n, "in2");
         const MtlxNode *a = input_node(ctx, n, "in1");
         const MtlxNode *b = input_node(ctx, n, "in2");
-        const MtlxInput *scalar = find_input(n, a ? "in2" : "in1");
-        MtlxValue scalar_value;
-        memset(&scalar_value, 0, sizeof(scalar_value));
-        if (scalar) scalar_value = eval_input(ctx, scalar);
-        float factor = scalar ? mv_as_float(&scalar_value) : 1.0f;
-        apply_bsdf(ctx, a ? a : b, scale * fmaxf(0.0f, factor), out,
-                   depth + 1);
+        /* A closure input has no numeric MtlxType; either numeric input may
+         * itself be connected, so the first connection alone is not enough. */
+        const int first_is_closure = a && (!in1 || in1->type == MV_NONE || !b);
+        const MtlxNode *closure = first_is_closure ? a : b;
+        const MtlxInput *factor_input = first_is_closure ? in2 : in1;
+        MtlxValue factor;
+        memset(&factor, 0, sizeof(factor));
+        if (factor_input) factor = eval_input(ctx, factor_input);
+        if (factor_input && ncomp_of(&factor) >= 3) {
+            color_scale = v3_mul(color_scale, mv_as_v3(&factor));
+        } else {
+            float factor_scalar = factor_input ? mv_as_float(&factor) : 1.0f;
+            scale *= fmaxf(0.0f, factor_scalar);
+        }
+        apply_bsdf(ctx, closure, scale, color_scale, out, depth + 1);
         return;
     }
     if (!strcmp(cat, "layer")) {
-        apply_bsdf(ctx, input_node(ctx, n, "base"), scale, out, depth + 1);
-        apply_bsdf(ctx, input_node(ctx, n, "top"), scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "base"), scale, color_scale, out, depth + 1);
+        apply_bsdf(ctx, input_node(ctx, n, "top"), scale, color_scale, out, depth + 1);
         return;
     }
 
-    const float weight = scale * fmaxf(0.0f, in_float(ctx, n, "weight", 1.0f));
+    float weight = scale * fmaxf(0.0f, in_float(ctx, n, "weight", 1.0f));
+    const int is_diffuse = !strcmp(cat, "diffuse_bsdf") ||
+        !strcmp(cat, "oren_nayar_diffuse_bsdf") || !strcmp(cat, "burley_diffuse_bsdf");
+    /* Other closure types still use the legacy scalar approximation. */
+    if (!is_diffuse) weight *= fmaxf(0.0f, (color_scale.x + color_scale.y + color_scale.z) / 3.0f);
     if (!strcmp(cat, "diffuse_bsdf") ||
         !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
         !strcmp(cat, "burley_diffuse_bsdf")) {
@@ -1523,10 +1537,11 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
             MtlxDiffuseLobe *lobe = &out->diffuse_lobes[out->diffuse_lobe_count++];
             lobe->color = color;
             lobe->weight = weight;
+            lobe->weight_color = color_scale;
             lobe->roughness = roughness;
             lobe->model = out->diffuse_model;
         }
-        blend_lobe(&out->base_weight, &out->base_color, color, weight);
+        blend_lobe(&out->base_weight, &out->base_color, v3_mul(color, color_scale), weight);
         out->diffuse_roughness = (out->diffuse_roughness * old +
             roughness * weight) / fmaxf(out->base_weight, 1.0e-6f);
     } else if (!strcmp(cat, "translucent_bsdf")) {
@@ -1656,7 +1671,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->transmission = 0.0f;
         out->subsurface = 0.0f;
         out->sheen_weight = 0.0f;
-        apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, out, 0);
+        apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, v3_splat(1.0f), out, 0);
         if (out->diffuse_lobe_overflow) return 1;
         out->emission_color = eval_edf(ctx, input_node(ctx, n, "edf"), 0);
         out->emission = v3_maxc(out->emission_color) > 0.0f ? 1.0f : 0.0f;

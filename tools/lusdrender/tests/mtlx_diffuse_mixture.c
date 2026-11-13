@@ -58,10 +58,14 @@ int main(void) {
     "<oren_nayar_diffuse_bsdf name=\"c\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.4,0.7,0.3\"/><input name=\"roughness\" type=\"float\" value=\"0.6\"/><input name=\"energy_compensation\" type=\"boolean\" value=\"true\"/></oren_nayar_diffuse_bsdf>"
     "<mix name=\"mixab\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.25\"/></mix>"
     "<add name=\"sum\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mixab\"/><input name=\"in2\" type=\"BSDF\" nodename=\"c\"/></add>"
-    "<multiply name=\"scaled\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"float\" value=\"0.4\"/></multiply>";
-  const char *roots[] = {"scaled", "a", "b", "c"};
-  OpenPBRParams params[4]; char xml[8192];
-  for (int i=0;i<4;i++) {
+    "<multiply name=\"scaled\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"float\" value=\"0.4\"/></multiply>"
+    "<constant name=\"factor\" type=\"color3\"><input name=\"value\" type=\"color3\" value=\"0.2,0.5,0.9\"/></constant>"
+    "<multiply name=\"tint\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" nodename=\"factor\"/></multiply>"
+    "<multiply name=\"tint_reverse\" type=\"BSDF\"><input name=\"in1\" type=\"color3\" nodename=\"factor\"/><input name=\"in2\" type=\"BSDF\" nodename=\"sum\"/></multiply>"
+    "<multiply name=\"tint_literal\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" value=\"0.2,0.5,0.9\"/></multiply>";
+  const char *roots[] = {"scaled", "a", "b", "c", "sum", "tint", "tint_reverse", "tint_literal"};
+  OpenPBRParams params[8]; char xml[8192];
+  for (int i=0;i<8;i++) {
     snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",parts,roots[i]);
     if (!evaluate(xml,&params[i])) { fprintf(stderr,"FAIL closure parse/evaluation %d\n",i); return 1; }
   }
@@ -77,11 +81,18 @@ int main(void) {
   const v3 normal={0,0,1}, views[]={{0,0,1},{0.8f,0,0.6f}},
            lights[]={{0.6f,0,0.8f},{-0.6f,0,0.8f},{0,0.8f,0.6f}};
   for (int v=0;v<2;v++) for (int l=0;l<3;l++) {
-    v3 d[4], spec; float pdf;
-    for (int j=0;j<4;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&d[j],&spec,&pdf);
+    v3 d[8], spec; float pdf;
+    for (int j=0;j<8;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&d[j],&spec,&pdf);
     v3 expected=v3_add(v3_add(v3_scale(d[1],0.3f),v3_scale(d[2],0.1f)),v3_scale(d[3],0.4f));
     if (fabsf(d[0].x-expected.x)>1e-5f || fabsf(d[0].y-expected.y)>1e-5f || fabsf(d[0].z-expected.z)>1e-5f) {
       fprintf(stderr,"FAIL mixture response view=%d light=%d\n",v,l); return 1;
+    }
+    v3 tinted = v3_mul(d[4], v3_make(0.2f, 0.5f, 0.9f));
+    for (int j=5;j<8;j++) {
+      if (fabsf(d[j].x-tinted.x)>1e-5f || fabsf(d[j].y-tinted.y)>1e-5f ||
+          fabsf(d[j].z-tinted.z)>1e-5f) {
+        fprintf(stderr,"FAIL RGB closure multiply order=%d view=%d light=%d\n",j,v,l); return 1;
+      }
     }
   }
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||

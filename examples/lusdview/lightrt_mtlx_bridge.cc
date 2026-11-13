@@ -347,6 +347,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   for (int i = 0; i < dst->diffuseLobeCount; ++i) {
     CopyV3(src.diffuse_lobes[i].color, dst->diffuseLobes[i].color);
     dst->diffuseLobes[i].weight = src.diffuse_lobes[i].weight;
+    CopyV3(src.diffuse_lobes[i].weight_color, dst->diffuseLobes[i].weightColor);
     dst->diffuseLobes[i].roughness = src.diffuse_lobes[i].roughness;
     dst->diffuseLobes[i].model = src.diffuse_lobes[i].model;
   }

@@ -79,8 +79,15 @@ int main() {
         <input name="fg" type="BSDF" nodename="b"/>
         <input name="mix" type="float" value="0.25"/>
       </mix>
+      <constant name="factor" type="color3">
+        <input name="value" type="color3" value="0.2, 0.5, 0.9"/>
+      </constant>
+      <multiply name="tint" type="BSDF">
+        <input name="in1" type="BSDF" nodename="mix"/>
+        <input name="in2" type="color3" nodename="factor"/>
+      </multiply>
       <surface name="s" type="surfaceshader">
-        <input name="bsdf" type="BSDF" nodename="mix"/>
+        <input name="bsdf" type="BSDF" nodename="tint"/>
       </surface>
       <surfacematerial name="m" type="material">
         <input name="surfaceshader" type="surfaceshader" nodename="s"/>
@@ -93,6 +100,9 @@ int main() {
         params.diffuseLobes[0].model != 2 || params.diffuseLobes[1].model != 3 ||
         !Near(params.diffuseLobes[0].weight, 0.75f) ||
         !Near(params.diffuseLobes[1].weight, 0.25f) ||
+        !Near(params.diffuseLobes[0].weightColor[0], 0.2f) ||
+        !Near(params.diffuseLobes[0].weightColor[1], 0.5f) ||
+        !Near(params.diffuseLobes[1].weightColor[2], 0.9f) ||
         !Near(params.diffuseLobes[0].roughness, 0.8f) ||
         !Near(params.diffuseLobes[1].roughness, 0.3f)) {
       std::fprintf(stderr, "MaterialX diffuse mixture bridge failed: %s\n", err.c_str());

@@ -70,6 +70,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   attenuates diffuse/subsurface energy, with a standalone white-furnace test
   in LightRT and a CTest integration in `tools/lusdrender`.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `4271ac7` for channel-preserving diffuse closure multiplication.
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `a46887c` for preserving bounded diffuse closure mixtures.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `853120a` for qualitative Oren–Nayar and Burley diffuse selection/response.

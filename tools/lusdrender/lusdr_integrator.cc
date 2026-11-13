@@ -247,6 +247,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     const auto &lobe = src.diffuseLobes[i];
     p.diffuse_lobes[i].color = v3_make(lobe.color[0], lobe.color[1], lobe.color[2]);
     p.diffuse_lobes[i].weight = lobe.weight;
+    p.diffuse_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
     p.diffuse_lobes[i].roughness = lobe.roughness;
     p.diffuse_lobes[i].model = lobe.model;
   }

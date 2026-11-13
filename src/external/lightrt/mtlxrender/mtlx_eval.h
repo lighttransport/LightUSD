@@ -24,6 +24,7 @@ enum {
 typedef struct {
     v3 color;
     float weight;
+    v3 weight_color; /* channel scaling applied after the lobe response */
     float roughness;
     int model; /* MTLX_DIFFUSE_* */
 } MtlxDiffuseLobe;

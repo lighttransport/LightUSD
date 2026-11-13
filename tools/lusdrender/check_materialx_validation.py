@@ -523,9 +523,16 @@ def main():
       <input name="bg" type="BSDF" nodename="a"/>
       <input name="fg" type="BSDF" nodename="b"/>
       <input name="mix" type="float" value="0.25"/>
-    </mix>'''
+    </mix>
+    <constant name="factor" type="color3">
+      <input name="value" type="color3" value="0.2, 0.5, 0.9"/>
+    </constant>
+    <multiply name="tint" type="BSDF">
+      <input name="in1" type="BSDF" nodename="mix"/>
+      <input name="in2" type="color3" nodename="factor"/>
+    </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix"):
+    for root_name in ("a", "b", "mix", "tint"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -561,7 +568,11 @@ def main():
     for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
         offset = (y * 64 + x) * 4
         for channel in range(3):
-            a, b, mixed = (linear_srgb(p[offset + channel]) for p in closure_images)
+            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images)
+            if abs(tinted - mixed * (0.2, 0.5, 0.9)[channel]) > 0.025:
+                raise RuntimeError(
+                    f"diffuse color scaling failed at {(x, y, channel)}: {tinted}"
+                )
             if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
                 raise RuntimeError(
                     f"diffuse mixture did not preserve weighted response at {(x, y, channel)}: "

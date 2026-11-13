@@ -1692,7 +1692,8 @@ isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
 `tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses
-and the lobe limit; `tool-lusdrender-materialx-validation` checks the mixture
+and the lobe limit, including literal and connected RGB weights;
+`tool-lusdrender-materialx-validation` checks the mixture
 through the rendered CPU path.
 The CPU path also evaluates qualitative Oren–Nayar and Burley diffuse; use
 `tool-lusdrender-bsdf-rough-diffuse` for their point-response checks.
