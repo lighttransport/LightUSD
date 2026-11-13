@@ -181,3 +181,6 @@ upstream provenance intact.
 
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `c3339f4` for per-conductor normals and matching sampling.
+
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `123cb89` for per-conductor retroreflection and its sampling PDF.

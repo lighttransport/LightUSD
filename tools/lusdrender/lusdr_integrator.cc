@@ -265,6 +265,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.conductor_lobes[i].roughness_y = lobe.roughnessY;
     p.conductor_lobes[i].tangent = v3_make(lobe.tangent[0], lobe.tangent[1], lobe.tangent[2]);
     p.conductor_lobes[i].normal = v3_make(lobe.normal[0], lobe.normal[1], lobe.normal[2]);
+    p.conductor_lobes[i].retroreflective = lobe.retroreflective;
     p.conductor_lobes[i].thinfilm_thickness = lobe.thinfilmThickness;
     p.conductor_lobes[i].thinfilm_ior = lobe.thinfilmIor;
   }
@@ -1810,7 +1811,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         else lobe_n = Mul(lobe_n, 1.0f / lobe_normal_length);
         if (Dot(lobe_n, view) < 0.0f) lobe_n = Mul(lobe_n, -1.0f);
         const float lobe_ndotv = std::max(0.0f, Dot(lobe_n, view));
-        const Vec3 lobe_refl = EnvDir(*ibl, Reflect(Mul(view, -1.0f), lobe_n));
+        // Reflecting the view before the microfacet reflection sends the
+        // mirror direction back towards the original view for retroreflection.
+        const Vec3 lobe_refl = EnvDir(*ibl, lobe.retroreflective
+            ? view : Reflect(Mul(view, -1.0f), lobe_n));
         const Vec3 env = SampleIblMip(ibl->prefiltered, lobe_refl, rough);
         float a = 1.0f, b = 0.0f;
         SampleBrdfLut(*ibl, lobe_ndotv, rough, &a, &b);

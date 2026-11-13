@@ -39,6 +39,7 @@ typedef struct {
     float roughness_y; /* GGX alpha along bitangent */
     v3 tangent; /* world-space tangent at graph evaluation */
     v3 normal; /* world-space normal at graph evaluation */
+    int retroreflective; /* MaterialX reflected-view mode */
     float thinfilm_thickness; /* nanometers; zero disables the film */
     float thinfilm_ior;
 } MtlxConductorLobe;

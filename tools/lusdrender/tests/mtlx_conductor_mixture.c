@@ -136,25 +136,28 @@ int main(void) {
   /* Two closure normals must retain separate responses and proposals. */
   const char *normal_graph = "<materialx>"
     "<conductor_bsdf name=\"a\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.6\"/><input name=\"normal\" type=\"vector3\" value=\"0.6,0,0.8\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/></conductor_bsdf>"
-    "<conductor_bsdf name=\"b\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.6\"/><input name=\"normal\" type=\"vector3\" value=\"-0.6,0,0.8\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/></conductor_bsdf>"
+    "<conductor_bsdf name=\"b\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.6\"/><input name=\"normal\" type=\"vector3\" value=\"-0.6,0,0.8\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/><input name=\"retroreflective\" type=\"boolean\" value=\"true\"/></conductor_bsdf>"
     "<mix name=\"m\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
     "<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"m\"/></surface></materialx>";
   OpenPBRParams oriented;
   if (!evaluate(normal_graph,&oriented) || oriented.conductor_lobe_count!=2 ||
       fabsf(oriented.conductor_lobes[0].normal.x-.6f)>1e-6f ||
-      fabsf(oriented.conductor_lobes[1].normal.x+.6f)>1e-6f) {
+      fabsf(oriented.conductor_lobes[1].normal.x+.6f)>1e-6f ||
+      oriented.conductor_lobes[0].retroreflective || !oriented.conductor_lobes[1].retroreflective) {
     fprintf(stderr,"conductor normals lost\n");return 1;
   }
   {
     v3 view=v3_make(.6f,0,.8f), wi=v3_make(0,.6f,.8f);
-    v3 h=v3_normalize(v3_add(view,wi)), expected=v3_splat(0.0f);
+    v3 expected=v3_splat(0.0f);
     const v3 eta=v3_make(.183f,.421f,1.373f), ext=v3_make(3.424f,2.346f,1.770f);
     for(int i=0;i<2;i++) {
       const MtlxConductorLobe *l=&oriented.conductor_lobes[i];
       v3 ln=l->normal,t=v3_make(0,1,0),b=v3_cross(ln,t);
-      float nv=v3_dot(ln,view), nl=v3_dot(ln,wi);
+      v3 transformed=l->retroreflective ? v3_sub(v3_scale(ln,2.0f*v3_dot(ln,view)),view) : view;
+      v3 h=v3_normalize(v3_add(transformed,wi));
+      float nv=v3_dot(ln,transformed), nl=v3_dot(ln,wi);
       v3 response=bsdf_materialx_conductor_anisotropic(eta,ext,.3f,.6f,nv,nl,
-          v3_dot(h,t),v3_dot(h,b),v3_dot(h,ln),v3_dot(view,h));
+          v3_dot(h,t),v3_dot(h,b),v3_dot(h,ln),v3_dot(transformed,h));
       expected=v3_add(expected,v3_scale(response,l->weight*nl/wi.z));
     }
     v3 d,actual;float pdf;
@@ -162,7 +165,7 @@ int main(void) {
     if(!near3(actual,expected)) {
       fprintf(stderr,"per-normal conductor response %g vs %g\n",actual.x,expected.x);return 1;
     }
-    /* Samples and reported PDF agree when the two frames are different. */
+    /* Samples and reported PDF agree for distinct frames and view modes. */
     oriented.specular_roughness=1.0f;
     double expected_bins[4]={0}, energy=0; int observed_bins[4]={0};
     const int nm=192,np=384,count=120000;
@@ -181,10 +184,10 @@ int main(void) {
       observed_bins[bin]++;estimate+=sample.throughput.x;
     }
     for(int i=0;i<4;i++) if(fabs((double)observed_bins[i]/count-expected_bins[i])>.01) {
-      fprintf(stderr,"normal proposal histogram %d: %g vs %g\n",i,(double)observed_bins[i]/count,expected_bins[i]);return 1;
+      fprintf(stderr,"normal/retro proposal histogram %d: %g vs %g\n",i,(double)observed_bins[i]/count,expected_bins[i]);return 1;
     }
     if(fabs(estimate/count-energy)>.025) {
-      fprintf(stderr,"normal sampling integral: %g vs %g\n",estimate/count,energy);return 1;
+      fprintf(stderr,"normal/retro sampling integral: %g vs %g\n",estimate/count,energy);return 1;
     }
   }
   if(p[3].conductor_lobe_count!=1 || p[3].diffuse_lobe_count!=1 || p[5].conductor_lobe_count!=2 ||

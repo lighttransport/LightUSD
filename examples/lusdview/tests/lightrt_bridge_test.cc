@@ -104,6 +104,7 @@ int main() {
         <input name="roughness" type="vector2" value="0.3, 0.6"/>
         <input name="tangent" type="vector3" value="0, 1, 0"/>
         <input name="normal" type="vector3" value="0.6, 0, 0.8"/>
+        <input name="retroreflective" type="boolean" value="true"/>
         <input name="thinfilm_thickness" type="float" value="450"/>
         <input name="thinfilm_ior" type="float" value="1.7"/>
       </conductor_bsdf>
@@ -144,6 +145,7 @@ int main() {
         !Near(params.conductorLobes[0].tangent[1], 1.0f) ||
         !Near(params.conductorLobes[0].normal[0], 0.6f) ||
         !Near(params.conductorLobes[0].normal[2], 0.8f) ||
+        !params.conductorLobes[0].retroreflective ||
         !Near(params.conductorLobes[0].thinfilmThickness, 450.0f) ||
         !Near(params.conductorLobes[0].thinfilmIor, 1.7f) ||
         !Near(params.conductorLobes[0].weightColor[1], 0.5f) ||

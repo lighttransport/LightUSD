@@ -519,6 +519,12 @@ static v3 conductor_normal(const MtlxConductorLobe *lobe, v3 fallback, v3 wo) {
     return face_forward(n, wo);
 }
 
+/* MaterialX retroreflection evaluates an ordinary microfacet lobe at a view
+ * reflected about the closure normal; the same view must drive its proposal. */
+static v3 conductor_view(const MtlxConductorLobe *lobe, v3 n, v3 wo) {
+    return lobe->retroreflective ? v3_sub(v3_scale(n, 2.0f * v3_dot(n, wo)), wo) : wo;
+}
+
 /* Keep evaluation, proposal and PDF in the same tangent frame. */
 static void conductor_frame(v3 N, v3 input, v3 *tangent, v3 *bitangent) {
     *tangent = v3_sub(input, v3_scale(N, v3_dot(input, N)));
@@ -703,12 +709,15 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     for (int i = 0; i < L->conductor_lobe_count; ++i) {
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
         v3 ln = conductor_normal(lobe, N, wo), tangent, bitangent;
-        float lv = v3_dot(ln, wo), ll = v3_dot(ln, wi);
+        v3 view = conductor_view(lobe, ln, wo);
+        float lv = v3_dot(ln, view), ll = v3_dot(ln, wi);
         if (!(lv > 0.0f && ll > 0.0f)) continue;
+        v3 half = lobe->retroreflective ? v3_normalize(v3_add(view, wi)) : H;
+        float vhalf = lobe->retroreflective ? v3_dot(view, half) : VdotH;
         conductor_frame(ln, lobe->tangent, &tangent, &bitangent);
         v3 response = conductor_response(lobe->ior, lobe->extinction,
             lobe->roughness, lobe->roughness_y, lv, ll,
-            v3_dot(H,tangent), v3_dot(H,bitangent), v3_dot(H,ln), VdotH,
+            v3_dot(half,tangent), v3_dot(half,bitangent), v3_dot(half,ln), vhalf,
             lobe->thinfilm_thickness, lobe->thinfilm_ior);
         /* The integrator multiplies by the surface cosine. Correct for the
          * closure's cosine so different lobe normals compose independently. */
@@ -747,8 +756,11 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         for (int i = 0; i < L->conductor_lobe_count; ++i) {
             const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
             v3 ln = conductor_normal(lobe, N, wo);
+            v3 view = conductor_view(lobe, ln, wo);
+            v3 half = lobe->retroreflective ? v3_normalize(v3_add(view, wi)) : H;
+            float vhalf = lobe->retroreflective ? v3_dot(view, half) : VdotH;
             pdf_conductor += (conductor_sampling_weight(lobe) / L->conductor_weight_sum) *
-                conductor_reflection_pdf(lobe, ln, wo, H, v3_dot(ln,H), VdotH);
+                conductor_reflection_pdf(lobe, ln, view, half, v3_dot(ln,half), vhalf);
         }
     }
     *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat + L->pm * pdf_conductor;
@@ -831,14 +843,15 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         }
         if (!chosen) return 0;
         v3 ln = conductor_normal(chosen, N, wo), tangent, bitangent;
-        if (!(v3_dot(wo, ln) > 0.0f)) return 0;
+        v3 view = conductor_view(chosen, ln, wo);
+        if (!(v3_dot(view, ln) > 0.0f)) return 0;
         conductor_frame(ln, chosen->tangent, &tangent, &bitangent);
         float ax = conductor_proposal_alpha(chosen->roughness);
         float ay = conductor_proposal_alpha(chosen->roughness_y);
-        v3 local_view = v3_make(v3_dot(wo,tangent),v3_dot(wo,bitangent),v3_dot(wo,ln));
+        v3 local_view = v3_make(v3_dot(view,tangent),v3_dot(view,bitangent),v3_dot(view,ln));
         v3 h = sample_conductor_vndf(local_view, ax, ay, u1, u2);
         v3 H = v3_normalize(to_world(h, tangent, bitangent, ln));
-        wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
+        wi = v3_sub(v3_scale(H, 2.0f * v3_dot(view, H)), view);
     } else {                             /* diffuse / sheen (cosine) */
         wi = to_world(sample_cosine_hemisphere(u1, u2), T, B, N);
     }
