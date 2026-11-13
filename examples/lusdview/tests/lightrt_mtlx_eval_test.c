@@ -444,7 +444,7 @@ int main(void) {
       "    <input name=\"subsurface_radius\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
       "    <input name=\"subsurface_radius_scale\" type=\"color3\" value=\"2,3,4\"/>"
       "    <input name=\"subsurface_scale\" type=\"float\" value=\"1.5\"/>"
-      "    <input name=\"thin_film_thickness\" type=\"float\" value=\"450\"/>"
+      "    <input name=\"thin_film_thickness\" type=\"float\" value=\"0.45\"/>"
       "    <input name=\"specular_weight\" type=\"float\" value=\"0.25\"/>"
       "    <input name=\"base_roughness\" type=\"float\" value=\"0.35\"/>"
       "    <input name=\"specular_ior\" type=\"float\" value=\"1.6\"/>"
