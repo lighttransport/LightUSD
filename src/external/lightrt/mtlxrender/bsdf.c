@@ -1,6 +1,7 @@
 #include "bsdf.h"
 
 #include <math.h>
+#include <stddef.h>
 
 /* MaterialX genglsl Zeltner LTC fit. The LTC density contains NdotL;
  * divide that factor out here because bsdf_eval returns a BRDF. */
@@ -116,7 +117,9 @@ static float fresnel_dielectric(float cosi, float eta) {
 static float ggx_D(float NdotH, float a) {
     if (NdotH <= 0.0f) return 0.0f;
     float a2 = a * a;
-    float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    float h2 = clampf(NdotH * NdotH, 0.0f, 1.0f);
+    /* Avoid cancellation at NdotH=1 for small alpha. */
+    float d = (1.0f - h2) + a2 * h2;
     return a2 / (MTLX_PI * d * d);
 }
 /* Height-correlated Smith G2 for unit directions and isotropic GGX. */
@@ -337,7 +340,8 @@ typedef struct {
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
     /* normalized lobe selection probabilities (glass is delta) */
-    float pd, ps, pc, pg;
+    float pd, ps, pc, pg, pm;
+    float conductor_weight_sum;
 } Layers;
 
 static Layers extract(const OpenPBRParams *p) {
@@ -411,17 +415,54 @@ static Layers extract(const OpenPBRParams *p) {
 
     L.glass_w = (1.0f - metal) * trans;
 
-    float lumD = luminance(L.diff_color) + 0.5f * L.sheen_w * luminance(L.sheen_color);
-    float lumS = luminance(L.F0) + 0.04f;
+    float lumD = fmaxf(0.0f, luminance(L.diff_color) + 0.5f * L.sheen_w * luminance(L.sheen_color));
+    float lumS = fmaxf(0.0f, luminance(L.F0)) + 0.04f;
+    L.conductor_weight_sum = 0.0f;
     for (int i = 0; i < L.conductor_lobe_count; ++i)
-        lumS += L.conductor_lobes[i].weight * fmaxf(0.0f, luminance(L.conductor_lobes[i].weight_color));
+        L.conductor_weight_sum += fmaxf(0.0f, L.conductor_lobes[i].weight) *
+            fmaxf(0.0f, luminance(L.conductor_lobes[i].weight_color));
     float wc = L.coat_w * 0.5f;
-    float tot = lumD + lumS + wc + L.glass_w + 1e-4f;
+    float tot = lumD + lumS + wc + L.glass_w + L.conductor_weight_sum;
     L.pd = lumD / tot; L.ps = lumS / tot; L.pc = wc / tot; L.pg = L.glass_w / tot;
+    L.pm = L.conductor_weight_sum / tot;
     return L;
 }
 
 static v3 face_forward(v3 N, v3 wo) { return v3_dot(N, wo) < 0.0f ? v3_neg(N) : N; }
+
+/* Keep evaluation, proposal and PDF in the same tangent frame. */
+static void conductor_frame(v3 N, v3 input, v3 *tangent, v3 *bitangent) {
+    *tangent = v3_sub(input, v3_scale(N, v3_dot(input, N)));
+    if (!v3_is_finite(*tangent) || v3_len(*tangent) < 1.0e-6f)
+        onb(N, tangent, bitangent);
+    else {
+        *tangent = v3_normalize(*tangent);
+        *bitangent = v3_cross(N, *tangent);
+    }
+}
+
+static float conductor_sampling_weight(const MtlxConductorLobe *lobe) {
+    return fmaxf(0.0f, lobe->weight) * fmaxf(0.0f, luminance(lobe->weight_color));
+}
+
+static float conductor_proposal_alpha(float alpha) {
+    return isfinite(alpha) ? clampf(alpha, 1.0e-4f, 1.0f) : 1.0f;
+}
+
+/* The 1e-4 proposal floor avoids float underflow for near-delta lobes. The
+ * BRDF itself retains MaterialX's 1e-8 floor; this proposal remains positive. */
+static float conductor_reflection_pdf(const MtlxConductorLobe *lobe, v3 N,
+                                      v3 H, float ndoth, float vdoth) {
+    if (!(ndoth > 0.0f && vdoth > 0.0f)) return 0.0f;
+    v3 t, b; conductor_frame(N, lobe->tangent, &t, &b);
+    double ax=conductor_proposal_alpha(lobe->roughness);
+    double ay=conductor_proposal_alpha(lobe->roughness_y);
+    double x=v3_dot(H,t)/ax, y=v3_dot(H,b)/ay, z=ndoth;
+    double d=x*x+y*y+z*z;
+    if (!(d > 0.0) || !isfinite(d)) return 0.0f;
+    return (float)(ndoth/(4.0*(double)vdoth*3.14159265358979323846*ax*ay*d*d));
+}
+
 
 /* Unified reflection-lobe evaluation (diffuse + spec + sheen + coat). Fills the
  * mixture pdf for the sampled wi. Returns f (rgb). Excludes the glass lobe. */
@@ -554,14 +595,8 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
 
     for (int i = 0; i < L->conductor_lobe_count; ++i) {
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
-        v3 tangent = v3_sub(lobe->tangent, v3_scale(N, v3_dot(lobe->tangent, N)));
-        v3 bitangent;
-        if (!v3_is_finite(tangent) || v3_len(tangent) < 1.0e-6f)
-            onb(N, &tangent, &bitangent);
-        else {
-            tangent = v3_normalize(tangent);
-            bitangent = v3_cross(N, tangent);
-        }
+        v3 tangent, bitangent;
+        conductor_frame(N, lobe->tangent, &tangent, &bitangent);
         v3 response = bsdf_materialx_conductor_anisotropic(lobe->ior, lobe->extinction,
             lobe->roughness, lobe->roughness_y, NdotV, NdotL,
             v3_dot(H,tangent), v3_dot(H,bitangent), NdotH, VdotH);
@@ -592,9 +627,18 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     }
 
     float pdf_diff = NdotL * MTLX_INV_PI;
-    float pdf_spec = ggx_D(NdotH, L->alpha) * NdotH / (4.0f * VdotH + 1e-6f);
-    float pdf_coat = ggx_D(NdotH, L->coat_alpha) * NdotH / (4.0f * VdotH + 1e-6f);
-    *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat;
+    float inv_jacobian = VdotH > 0.0f ? 0.25f / VdotH : 0.0f;
+    float pdf_spec = ggx_D(NdotH, L->alpha) * NdotH * inv_jacobian;
+    float pdf_coat = ggx_D(NdotH, L->coat_alpha) * NdotH * inv_jacobian;
+    float pdf_conductor = 0.0f;
+    if (L->conductor_weight_sum > 0.0f) {
+        for (int i = 0; i < L->conductor_lobe_count; ++i) {
+            const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
+            pdf_conductor += (conductor_sampling_weight(lobe) / L->conductor_weight_sum) *
+                conductor_reflection_pdf(lobe, N, H, NdotH, VdotH);
+        }
+    }
+    *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat + L->pm * pdf_conductor;
 
     if (out_diff) *out_diff = diff;
     if (out_spec) *out_spec = v3_add(spec, v3_add(sheen, coat));
@@ -662,6 +706,24 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
     } else if (u < L.pg + L.pc + L.ps) { /* base spec GGX */
         v3 H = v3_normalize(to_world(sample_ggx_h(L.alpha, u1, u2), T, B, N));
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
+    } else if (u < L.pg + L.pc + L.ps + L.pm && L.conductor_weight_sum > 0.0f) {
+        float target = ((u - L.pg - L.pc - L.ps) / L.pm) * L.conductor_weight_sum;
+        const MtlxConductorLobe *chosen = NULL;
+        for (int i = 0; i < L.conductor_lobe_count; ++i) {
+            float weight = conductor_sampling_weight(&L.conductor_lobes[i]);
+            if (weight <= 0.0f) continue;
+            chosen = &L.conductor_lobes[i];
+            if (target < weight) break;
+            target -= weight;
+        }
+        if (!chosen) return 0;
+        v3 tangent, bitangent; conductor_frame(N, chosen->tangent, &tangent, &bitangent);
+        v3 h = sample_ggx_h(1.0f, u1, u2);
+        float ax = conductor_proposal_alpha(chosen->roughness);
+        float ay = conductor_proposal_alpha(chosen->roughness_y);
+        h = v3_normalize(v3_make(ax*h.x, ay*h.y, h.z));
+        v3 H = v3_normalize(to_world(h, tangent, bitangent, N));
+        wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else {                             /* diffuse / sheen (cosine) */
         wi = to_world(sample_cosine_hemisphere(u1, u2), T, B, N);
     }
@@ -712,6 +774,6 @@ v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
 
 BsdfLobeWeights bsdf_lobe_weights(const OpenPBRParams *p) {
     const Layers L = extract(p);
-    BsdfLobeWeights weights = {L.pd, L.ps, L.pc, L.pg};
+    BsdfLobeWeights weights = {L.pd, L.ps + L.pm, L.pc, L.pg};
     return weights;
 }

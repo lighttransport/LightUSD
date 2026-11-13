@@ -75,7 +75,8 @@ v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, v3 *out_diffuse,
 
 /* Probabilities used to select diffuse, specular, coat and transmission
  * lobes during importance sampling. These are diagnostic weights, not
- * integrated energy fractions. */
+ * integrated energy fractions. Explicit conductor proposals are included in
+ * the reported specular probability. */
 BsdfLobeWeights bsdf_lobe_weights(const OpenPBRParams *p);
 
 #endif /* MTLXRENDER_BSDF_H_ */

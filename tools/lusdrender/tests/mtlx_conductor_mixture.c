@@ -50,6 +50,17 @@ static int overflow_check(int count, int expected) {
   return 1;
 }
 
+/* Independent density for the NDF-reflection proposal in the lobe frame. */
+static double reference_conductor_pdf(const MtlxConductorLobe *l, v3 h, double vh) {
+  v3 t=v3_normalize(v3_make(l->tangent.x,l->tangent.y,0));
+  v3 b=v3_cross(v3_make(0,0,1),t);
+  double ax=fmax(1e-4,fmin(1.0,l->roughness));
+  double ay=fmax(1e-4,fmin(1.0,l->roughness_y));
+  double x=v3_dot(h,t)/ax, y=v3_dot(h,b)/ay, z=h.z;
+  double d=x*x+y*y+z*z;
+  return z/(4.0*vh*3.14159265358979323846*ax*ay*d*d);
+}
+
 int main(void) {
   const char *nodes=
     "<oren_nayar_diffuse_bsdf name=\"d\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/></oren_nayar_diffuse_bsdf>"
@@ -95,8 +106,82 @@ int main(void) {
       fprintf(stderr,"conductor mixture/layer response failed view=%d\n",i);return 1;
     }
   }
+  /* Check the whole mixture PDF, including the small generic GGX proposal. */
+  const int pdf_cases[]={5,8,9};
+  for (int k=0;k<3;k++) {
+    int index=pdf_cases[k];
+    v3 wo=views[1], wi=light, half=v3_normalize(v3_add(wo,wi));
+    double vh=v3_dot(wo,half), nh=half.z;
+    double alpha=fmax(.02,p[index].specular_roughness); alpha*=alpha;
+    double d=(1.0-nh*nh)+alpha*alpha*nh*nh;
+    double generic=alpha*alpha/(3.14159265358979323846*d*d)*nh/(4.0*vh);
+    double total=.04, expected=.04*generic;
+    for(int j=0;j<p[index].conductor_lobe_count;j++) {
+      const MtlxConductorLobe *l=&p[index].conductor_lobes[j];
+      double w=l->weight*(.2126*l->weight_color.x+.7152*l->weight_color.y+.0722*l->weight_color.z);
+      total+=w; expected+=w*reference_conductor_pdf(l,half,vh);
+    }
+    float pdf; (void)bsdf_eval(&p[index],n,wo,wi,&pdf);
+    if(fabs(pdf-expected/total)>2e-5*fmax(1.0,expected/total)) {
+      fprintf(stderr,"conductor proposal PDF mismatch %d: %g vs %g\n",index,pdf,expected/total); return 1;
+    }
+  }
+  {
+    /* At the smooth normal-incidence peak, avoid float cancellation in D. */
+    OpenPBRParams smooth=p[8]; smooth.specular_roughness=0.0f;
+    float pdf; (void)bsdf_eval(&smooth,n,n,n,&pdf);
+    const double proposal_alpha=.02*.02;
+    const double generic=1.0/(3.14159265358979323846*proposal_alpha*proposal_alpha*4.0);
+    const double conductor=1.0/(3.14159265358979323846*.1*.6*4.0);
+    const double expected=(.04*generic+conductor)/1.04;
+    if (fabs(pdf-expected)>1e-4*expected) {
+      fprintf(stderr,"smooth GGX proposal PDF got %g expected %g\n",pdf,expected);return 1;
+    }
+  }
+  /* The anisotropic proposal follows the authored tangent frame. */
+  for(int index=8;index<=9;index++) {
+    pcg32 gen; pcg32_seed(&gen,734,913); double sx=0,sy=0; int valid=0;
+    for(int k=0;k<30000;k++) {
+      BsdfSample sample;
+      if(!bsdf_sample(&p[index],n,n,&gen,&sample)) continue;
+      sx+=sample.wi.x*sample.wi.x; sy+=sample.wi.y*sample.wi.y; valid++;
+    }
+    if(valid<1000 || (index==8 && !(sy>2.0*sx)) || (index==9 && !(sx>2.0*sy))) {
+      fprintf(stderr,"anisotropic sampling orientation failed %d: %g %g\n",index,sx,sy);return 1;
+    }
+  }
+  for(int index=0;index<10;index++) {
+    BsdfLobeWeights w=bsdf_lobe_weights(&p[index]);
+    if(fabsf(w.diffuse+w.specular+w.coat+w.transmission-1.0f)>1e-6f) {
+      fprintf(stderr,"sampling probabilities do not sum to one %d\n",index);return 1;
+    }
+  }
+  /* Compare anisotropic sampling against independent hemisphere quadrature. */
+  for(int index=8;index<=9;index++) {
+    v3 reference=v3_splat(0.0f); const int nm=96, np=192;
+    for(int i=0;i<nm;i++) for(int j=0;j<np;j++) {
+      float mu=(i+.5f)/(float)nm, phi=2.0f*MTLX_PI*(j+.5f)/(float)np;
+      float radial=sqrtf(1.0f-mu*mu);
+      v3 wi=v3_make(radial*cosf(phi),radial*sinf(phi),mu), diff, spec;
+      float pdf; bsdf_eval_lobes(&p[index],n,views[1],wi,&diff,&spec,&pdf);
+      reference=v3_add(reference,v3_scale(spec,mu*(2.0f*MTLX_PI/(nm*np))));
+    }
+    pcg32 gen; pcg32_seed(&gen,2345,6789); v3 sum=v3_splat(0.0f);
+    const int samples=80000;
+    for(int i=0;i<samples;i++) {
+      BsdfSample sample;
+      if(bsdf_sample(&p[index],n,views[1],&gen,&sample)) sum=v3_add(sum,sample.throughput);
+    }
+    v3 estimate=v3_scale(sum,1.0f/samples);
+    if(fabsf(estimate.x-reference.x)>.025f || fabsf(estimate.y-reference.y)>.025f ||
+       fabsf(estimate.z-reference.z)>.025f) {
+      fprintf(stderr,"anisotropic sampling energy %d got=(%g,%g,%g) ref=(%g,%g,%g)\n",
+        index,estimate.x,estimate.y,estimate.z,reference.x,reference.y,reference.z);return 1;
+    }
+  }
   /* Uniform-solid-angle white furnace: unit radiance, cosine-weighted BRDF.
    * The reference's fitted multiple-scatter compensation is approximate. */
+  v3 furnace[2];
   for (int v=0;v<2;v++) {
     v3 energy=v3_splat(0.0f);
     const int nm=48, np=96;
@@ -108,9 +193,36 @@ int main(void) {
       bsdf_eval_lobes(&p[1],n,views[v],wi,&diffuse,&specular,&pdf);
       energy=v3_add(energy,v3_scale(specular,mu*(2.0f*MTLX_PI/(nm*np))));
     }
+    furnace[v]=energy;
     if (!v3_is_finite(energy) || energy.x>0.42f || energy.y>0.42f || energy.z>0.42f ||
         energy.x<0.01f || energy.y<0.01f || energy.z<0.01f) {
       fprintf(stderr,"conductor furnace view=%d energy=(%g,%g,%g)\n",v,energy.x,energy.y,energy.z);return 1;
+    }
+  }
+  /* Unconditional Monte Carlo averages include rejected below-horizon samples. */
+  for(int v=0;v<2;v++) {
+    pcg32 gen; pcg32_seed(&gen,867,5309); v3 sum=v3_splat(0.0f);
+    const int samples=60000;
+    for(int i=0;i<samples;i++) {
+      BsdfSample sample;
+      if(bsdf_sample(&p[1],n,views[v],&gen,&sample)) sum=v3_add(sum,sample.throughput);
+    }
+    v3 estimate=v3_scale(sum,1.0f/samples);
+    if(fabsf(estimate.x-furnace[v].x)>.015f || fabsf(estimate.y-furnace[v].y)>.015f ||
+       fabsf(estimate.z-furnace[v].z)>.015f) {
+      fprintf(stderr,"conductor sampling energy view=%d got=(%g,%g,%g) ref=(%g,%g,%g)\n",
+        v,estimate.x,estimate.y,estimate.z,furnace[v].x,furnace[v].y,furnace[v].z);return 1;
+    }
+  }
+  {
+    OpenPBRParams invalid=p[8]; invalid.conductor_lobes[0].roughness=NAN;
+    pcg32 gen; pcg32_seed(&gen,17,31);
+    for(int i=0;i<256;i++) {
+      BsdfSample sample;
+      if(bsdf_sample(&invalid,n,n,&gen,&sample) &&
+         (!v3_is_finite(sample.wi) || !v3_is_finite(sample.throughput) || !isfinite(sample.pdf))) {
+        fprintf(stderr,"nonfinite conductor proposal\n");return 1;
+      }
     }
   }
   pcg32 rng; pcg32_seed(&rng, 1234, 5678);
