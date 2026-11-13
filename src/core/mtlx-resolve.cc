@@ -1482,6 +1482,21 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
       return false;
     }
     const std::string source_name = output.AttrOr("nodename");
+    const std::string *literal = output.Attr("value");
+    if (!output.Attr("nodename") && !output.Attr("nodegraph") &&
+        !output.Attr("output") && !output.Attr("interfacename")) {
+      if (output_type.empty()) {
+        *err = "cannot resolve graph output type for '" + output.Name() + "'";
+        return false;
+      }
+      MtlxTypedValue parsed;
+      if (literal && IsBuiltinMtlxType(output_type) &&
+          !ParseMtlxAuthoredValue(output_type, *literal, &parsed)) {
+        *err = "invalid literal graph output '" + output.Name() + "'";
+        return false;
+      }
+      continue;
+    }
     const MtlxElem *source = FindMtlxNode(graph, source_name);
     if (!source) {
       if (err) *err = "graph output '" + output.Name() + "' references missing node '" +

@@ -609,6 +609,62 @@ static void CheckTypedMtlxGraphResolution() {
          error.empty() ? "nodegraph dependency order differed" : error);
   }
 
+  // The reference permits a graph output to carry a literal value.
+  MtlxElem literal_root = root;
+  MtlxElem literal_output = elem("output", "value");
+  literal_output.SetAttr("type", "float");
+  literal_output.SetAttr("value", "0.25");
+  literal_root.children[0].children[1] = literal_output;
+  g_checks++;
+  if (!ResolveMtlxGraph(literal_root, literal_root.children[0], library, {},
+                        &resolved, &error)) {
+    Fail("MTLX_GRAPH_LITERAL_OUTPUT", 0, error);
+  }
+  g_checks++;
+  if (ResolveMtlxGraph(literal_root, literal_root.children[1], library, {},
+                       &resolved, &error)) {
+    Fail("MTLX_GRAPH_LITERAL_OUTPUT_CONNECTION", 0,
+         "reference-invalid connection to a literal graph output was accepted");
+  }
+  MtlxElem invalid_literal_root = literal_root;
+  invalid_literal_root.children[0].children[1].SetAttr("value", "not-a-float");
+  g_checks++;
+  if (ResolveMtlxGraph(invalid_literal_root, invalid_literal_root.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_LITERAL_OUTPUT_INVALID", 0, "invalid graph output literal was accepted");
+  }
+  g_checks++;
+  if (ResolveMtlxGraph(invalid_literal_root, invalid_literal_root.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_LITERAL_OUTPUT_CONNECTION_INVALID", 0,
+         "connection to invalid graph output literal was accepted");
+  }
+  MtlxElem wrong_literal_type = literal_root;
+  wrong_literal_type.children[0].children[1].SetAttr("type", "integer");
+  wrong_literal_type.children[0].children[1].SetAttr("value", "1");
+  g_checks++;
+  if (ResolveMtlxGraph(wrong_literal_type, wrong_literal_type.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_LITERAL_OUTPUT_CONNECTION_TYPE", 0,
+         "connection to a differently typed literal output was accepted");
+  }
+
+  MtlxElem empty_output_root = root;
+  MtlxElem empty_output = elem("output", "value");
+  empty_output.SetAttr("type", "float");
+  empty_output_root.children[0].children[1] = empty_output;
+  g_checks++;
+  if (!ResolveMtlxGraph(empty_output_root, empty_output_root.children[0],
+                        library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_EMPTY_OUTPUT", 0, error);
+  }
+  g_checks++;
+  if (ResolveMtlxGraph(empty_output_root, empty_output_root.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_EMPTY_OUTPUT_CONNECTION", 0,
+         "connection to an unconnected graph output was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

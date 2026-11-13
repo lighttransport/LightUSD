@@ -4585,3 +4585,13 @@ unresolved authored `operationorder` connection must not use the default.
 The Tydra vector replay covers MaterialX colorcorrect saturation, hue wrap,
 gamma, lift/gain/contrast/exposure ordering, and color4 alpha preservation;
 an unresolved authored control is rejected rather than defaulted.
+
+The MaterialX graph-resolution regression (`core_test_mtlx_lean_vectors`) also
+checks typed nodegraph outputs with literal values or no connection. These are
+accepted by the MaterialX 1.39.5 document validator; invalid typed literals
+and the tested cross-graph connection to an unconnected or literal output are
+rejected. Run it headlessly with:
+
+```sh
+scripts/xctest.sh ctest --test-dir build_ninja -R '^core_test_mtlx_lean_vectors$' --output-on-failure
+```
