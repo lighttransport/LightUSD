@@ -4557,3 +4557,8 @@ CPU Ptex routing also checks that a texture forwarded through a referenced
 material interface resolves at the scene anchor when the inherited look-layer
 anchor has no matching file. The viewer enables the public material converter's
 default resolver for this lookup.
+
+The Tydra MaterialX constant-evaluator suite (`./build_ninja/src/test_tydra`)
+checks boolean-output `ifgreater`, `ifgreatereq` and `ifequal` with integer,
+boolean and float comparison inputs, including adjacent binary32 values for
+exact equality. These nodes return the comparison result directly.

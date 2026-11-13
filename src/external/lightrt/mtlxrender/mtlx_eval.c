@@ -1143,9 +1143,14 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_FLAKE2D: case OP_FLAKE3D:r=eval_flake_output(ctx,n,"flakenormal");break;
         case OP_RANDOMFLOAT: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),lo=in_or(ctx,n,"min",mv_float(0)),hi=in_or(ctx,n,"max",mv_float(1));int x=(int)floorf(a.v[0]*(a.type==MV_INT?1.0f:4096.0f)),y=(int)floorf(seed.v[0]);float q=(float)mx_hash_int2(x,y)/(float)0xffffffffu;r=mv_float(lo.v[0]+q*(hi.v[0]-lo.v[0]));break; }
         case OP_RANDOMCOLOR: { a=in_or(ctx,n,"in",mv_float(0));MtlxValue seed=in_or(ctx,n,"seed",mv_zero(MV_INT)),hl=in_or(ctx,n,"huelow",mv_float(0)),hh=in_or(ctx,n,"huehigh",mv_float(1)),sl=in_or(ctx,n,"saturationlow",mv_float(0.825f)),sh=in_or(ctx,n,"saturationhigh",mv_float(1)),bl=in_or(ctx,n,"brightnesslow",mv_float(1)),bh=in_or(ctx,n,"brightnesshigh",mv_float(1));int s=(int)floorf(seed.v[0]);float h=randomfloat_value(a.v[0],(int)ceilf((float)s+413.3f),hl.v[0],hh.v[0]),ss=randomfloat_value(a.v[0],(int)ceilf((float)s+1522.4f),sl.v[0],sh.v[0]),v=randomfloat_value(a.v[0],(int)ceilf((float)s+1813.8f),bl.v[0],bh.v[0]);r=mv_color3(hsv_to_rgb(v3_make(h,ss,v)));break; }
-        case OP_IFGREATER: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
-        case OP_IFGREATEREQ: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)>=mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
-        case OP_IFEQUAL: { MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)),v2=in_or(ctx,n,"value2",mv_float(0)); r=(mv_as_float(&v1)==mv_as_float(&v2))?in_or(ctx,n,"in1",mv_zero(n->type)):in_or(ctx,n,"in2",mv_zero(n->type)); break; }
+        case OP_IFGREATER: case OP_IFGREATEREQ: case OP_IFEQUAL: {
+            MtlxValue v1=in_or(ctx,n,"value1",mv_float(0)), v2=in_or(ctx,n,"value2",mv_float(0));
+            float a=mv_as_float(&v1), b=mv_as_float(&v2);
+            int condition=node_op == OP_IFGREATER ? a>b : (node_op == OP_IFGREATEREQ ? a>=b : a==b);
+            if (n->type == MV_BOOL) { r=mv_zero(MV_BOOL); r.v[0]=condition ? 1.0f : 0.0f; }
+            else r=condition ? in_or(ctx,n,"in1",mv_zero(n->type)) : in_or(ctx,n,"in2",mv_zero(n->type));
+            break;
+        }
         case OP_SWITCH: { MtlxValue w=in_or(ctx,n,"which",mv_float(0)); int k=(int)floorf(mv_as_float(&w)); if(k<0)k=0; if(k>9)k=9; char nm[8]; snprintf(nm,sizeof(nm),"in%d",k+1); r=in_or(ctx,n,nm,mv_zero(n->type)); break; }
         case OP_DOT: r=in_or(ctx,n,"in",mv_zero(n->type)); break;
         case OP_ONEMINUS: { a=in_or(ctx,n,"in",mv_zero(n->type)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++) r.v[i]=1.0f-a.v[i]; break; }

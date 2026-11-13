@@ -1211,11 +1211,8 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
 
   if (starts("ND_ifgreater_") || starts("ND_ifgreatereq_") ||
       starts("ND_ifequal_")) {
-    MtlxConstantValue value1, value2, when_true, when_false;
-    if (!input("value1", &value1) || !input("value2", &value2) ||
-        !input("in1", &when_true) || !input("in2", &when_false)) {
-      return false;
-    }
+    MtlxConstantValue value1, value2;
+    if (!input("value1", &value1) || !input("value2", &value2)) return false;
     const float a = value1.component(0);
     const float b = value2.component(0);
     bool condition = false;
@@ -1224,10 +1221,17 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     } else if (starts("ND_ifgreater_")) {
       condition = a > b;
     } else {
-      const float scale = std::max({std::fabs(a), std::fabs(b), 1.0f});
-      condition = std::fabs(a - b) <=
-                  std::numeric_limits<float>::epsilon() * scale;
+      condition = a == b;
     }
+    if (starts("ND_ifgreater_boolean") || starts("ND_ifgreatereq_boolean") ||
+        starts("ND_ifequal_boolean")) {
+      out->components = 1;
+      out->value[0] = condition ? 1.0f : 0.0f;
+      out->color_managed = false;
+      return true;
+    }
+    MtlxConstantValue when_true, when_false;
+    if (!input("in1", &when_true) || !input("in2", &when_false)) return false;
     *out = condition ? when_true : when_false;
     return true;
   }

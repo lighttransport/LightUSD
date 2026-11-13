@@ -278,6 +278,72 @@ bool ParseLeanApproxPayload(const char* payload, std::vector<double>* values) {
 }
 }  // namespace
 
+void TestMtlxBooleanConditionals() {
+  const std::string usda = R"USDA(#usda 1.0
+    def Scope "M" {
+      def Shader "gt" {
+        uniform token info:id = "ND_ifgreater_boolean"
+        float inputs:value1 = 0.5
+        float inputs:value2 = 0.25
+        bool outputs:out
+      }
+      def Shader "gt_eq" {
+        uniform token info:id = "ND_ifgreater_booleanI"
+        int inputs:value1 = 1
+        int inputs:value2 = 1
+        bool outputs:out
+      }
+      def Shader "ge" {
+        uniform token info:id = "ND_ifgreatereq_boolean"
+        float inputs:value1 = 0.25
+        float inputs:value2 = 0.25
+        bool outputs:out
+      }
+      def Shader "ge_low" {
+        uniform token info:id = "ND_ifgreatereq_booleanI"
+        int inputs:value1 = -1
+        int inputs:value2 = 0
+        bool outputs:out
+      }
+      def Shader "eq" {
+        uniform token info:id = "ND_ifequal_booleanI"
+        int inputs:value1 = 0
+        int inputs:value2 = 0
+        bool outputs:out
+      }
+      def Shader "eq_no" {
+        uniform token info:id = "ND_ifequal_booleanI"
+        int inputs:value1 = 2
+        int inputs:value2 = 0
+        bool outputs:out
+      }
+      def Shader "eq_bool" {
+        uniform token info:id = "ND_ifequal_booleanB"
+        bool inputs:value1 = true
+        bool inputs:value2 = false
+        bool outputs:out
+      }
+      def Shader "eq_near" {
+        uniform token info:id = "ND_ifequal_boolean"
+        float inputs:value1 = 1
+        float inputs:value2 = 1.0000001192092896
+        bool outputs:out
+      }
+    })USDA";
+  Stage stage; std::string warning, error;
+  assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
+                           usda.size(), &stage, &warning, &error));
+  const std::pair<const char*, float> cases[] = {
+      {"gt", 1}, {"gt_eq", 0}, {"ge", 1}, {"ge_low", 0},
+      {"eq", 1}, {"eq_no", 0}, {"eq_bool", 0}, {"eq_near", 0}};
+  for (const auto& c : cases) {
+    MtlxConstantValue actual; std::set<std::string> visiting;
+    assert(EvalMtlxConstantNode(stage, stage.GetPrimAtPath(std::string("/M/") + c.first),
+                                0.0, "", &actual, &visiting, 0));
+    assert(actual.components == 1 && actual.value[0] == c.second);
+  }
+}
+
 void TestMtlxConstantEvaluatorLeanVectors() {
   std::string usda = "#usda 1.0\ndef Scope \"M\" {\n";
   std::vector<const LeanMtlxEvalApproxVector*> selected;
@@ -9815,6 +9881,7 @@ int main() {
     assert(preview.specularIor == 1.0f);
   }
   TestMtlxConstantEvaluatorRealNodes();
+  TestMtlxBooleanConditionals();
   TestMtlxConstantEvaluatorLeanVectors();
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();

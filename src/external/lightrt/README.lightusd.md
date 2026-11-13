@@ -215,3 +215,5 @@ upstream provenance intact.
   glass furnace test covers both interface sides and a grazing-weight regression.
 - 2026-11-13: `mtlxrender/bsdf.{c,h}` matches LightRT `3fcc2c0` for
   evaluable rough OpenPBR transmission and its visible-normal MIS density.
+- 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `3d3db05` for
+  boolean-output conditional nodes.
