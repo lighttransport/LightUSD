@@ -867,6 +867,50 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_INTERFACE_MISSING_SOURCE", 0,
          "compound graph input with missing source was accepted");
   }
+  MtlxElem bad_compound_port = compound_root;
+  bad_compound_port.children[0].children[0].SetAttr("output", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(bad_compound_port, bad_compound_port.children[0], library,
+                       {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_MISSING_OUTPUT", 0,
+         "compound graph input with missing output was accepted");
+  }
+  MtlxElem bad_compound_type = compound_root;
+  bad_compound_type.children[0].children[0].SetAttr("type", "integer");
+  MtlxElem independent_in2 = elem("input", "in2");
+  independent_in2.SetAttr("type", "float");
+  independent_in2.SetAttr("value", "1");
+  bad_compound_type.children[0].children[2].children[1] = independent_in2;
+  g_checks++;
+  if (ResolveMtlxGraph(bad_compound_type, bad_compound_type.children[0], library,
+                       {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_SOURCE_TYPE", 0,
+         "compound graph input with incompatible source type was accepted");
+  }
+  MtlxElem bad_compound_value = compound_root;
+  bad_compound_value.children[1].children[1].SetAttr("value", "not-a-float");
+  g_checks++;
+  if (ResolveMtlxGraph(bad_compound_value, bad_compound_value.children[0], library,
+                       {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_SOURCE_VALUE", 0,
+         "compound graph input with invalid source output value was accepted");
+  }
+
+  MtlxElem compound_input_with_value = compound_root;
+  compound_input_with_value.children[0].children[0].SetAttr("value", "0.5");
+  g_checks++;
+  if (!ResolveMtlxGraph(compound_input_with_value, compound_input_with_value.children[0],
+                        library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_CONNECTED_VALUE", 0, error);
+  }
+  compound_input_with_value.children[0].children[0].SetAttr("value", "not-a-float");
+  g_checks++;
+  if (ResolveMtlxGraph(compound_input_with_value, compound_input_with_value.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_INTERFACE_CONNECTED_BAD_VALUE", 0,
+         "compound graph input with invalid authored value was accepted");
+  }
+
   MtlxElem compound_cycle = compound_root;
   MtlxElem helper_input = elem("input", "cycle");
   helper_input.SetAttr("type", "float");

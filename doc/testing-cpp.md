@@ -4614,5 +4614,11 @@ cycle returning to a graph was checked against MaterialX 1.39.5.
 The same graph-order test covers `nodegraph` connections authored directly on
 compound graph inputs, including a missing graph and a cycle. MaterialX 1.39.5
 accepts the tested compound input connection. Ordering treats all such authored
-connections as dependencies, including unused ones; it does not yet validate
-all graph-input source ports or trace graph inputs through document root nodes.
+connections as dependencies, including unused ones. It validates nodegraph
+source outputs and types on graph inputs; tracing graph inputs through document
+root nodes remains open.
+The graph-input regression checks missing outputs, incompatible source types,
+invalid source-output values, and valid or invalid fallback values on a
+nodegraph-connected graph input. MaterialX 1.39.5 accepts the valid connected
+input and rejects the tested missing output, incompatible type, and invalid
+fallback value.
