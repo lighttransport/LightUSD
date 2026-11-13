@@ -4603,3 +4603,7 @@ The graph-resolution regression also rejects node inputs that combine an
 authored value with a node, nodegraph, or interface connection, and rejects an
 explicit input with no binding. Omitted inputs remain eligible for nodedef
 defaults. These cases match the MaterialX 1.39.5 input validator.
+The graph-resolution regression also covers an `output`-only node input
+referencing a document-level output, including missing output or source,
+incompatible type, and invalid output value cases. The valid reference and
+missing-reference cases were checked with MaterialX 1.39.5.

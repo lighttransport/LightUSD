@@ -736,6 +736,51 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INPUT_NO_BINDING", 0, "authored input without a binding was accepted");
   }
 
+  MtlxElem document_output_root = root;
+  document_output_root.children.push_back(constant_node("global_source"));
+  MtlxElem document_output = elem("output", "global_output");
+  document_output.SetAttr("type", "float");
+  document_output.SetAttr("nodename", "global_source");
+  document_output_root.children.push_back(document_output);
+  MtlxElem document_output_input = elem("input", "in1");
+  document_output_input.SetAttr("type", "float");
+  document_output_input.SetAttr("output", "global_output");
+  document_output_root.children[1].children[2].children[0] = document_output_input;
+  g_checks++;
+  if (!ResolveMtlxGraph(document_output_root, document_output_root.children[1],
+                        library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_DOCUMENT_OUTPUT", 0, error);
+  }
+  MtlxElem missing_document_output = document_output_root;
+  missing_document_output.children[1].children[2].children[0].SetAttr("output", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(missing_document_output, missing_document_output.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_MISSING", 0, "missing document output was accepted");
+  }
+  MtlxElem bad_document_output_type = document_output_root;
+  bad_document_output_type.children.back().SetAttr("type", "integer");
+  g_checks++;
+  if (ResolveMtlxGraph(bad_document_output_type, bad_document_output_type.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_TYPE", 0, "wrong document output type was accepted");
+  }
+  MtlxElem bad_document_output_node = document_output_root;
+  bad_document_output_node.children.back().SetAttr("nodename", "missing");
+  g_checks++;
+  if (ResolveMtlxGraph(bad_document_output_node, bad_document_output_node.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_NODE", 0, "missing document output source was accepted");
+  }
+
+  MtlxElem bad_document_output_value = document_output_root;
+  bad_document_output_value.children.back().SetAttr("value", "not-a-float");
+  g_checks++;
+  if (ResolveMtlxGraph(bad_document_output_value, bad_document_output_value.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_VALUE", 0, "invalid document output value was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

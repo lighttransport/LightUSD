@@ -1476,6 +1476,37 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                           interface_type + ", expected " + input_type;
           return false;
         }
+      } else if (const std::string *output_name = input.Attr("output")) {
+        const MtlxElem *document_output =
+            FindMtlxChild(document, "output", *output_name);
+        if (!document_output) {
+          *err = "input '" + input_name + "' references missing document output '" +
+                 *output_name + "'";
+          return false;
+        }
+        const std::string output_type = document_output->AttrOr("type");
+        if (output_type.empty() ||
+            !ValidateMtlxGraphOutputAttributes(*document_output, output_type, err)) {
+          if (err->empty()) *err = "cannot resolve document output type for '" + *output_name + "'";
+          return false;
+        }
+        const std::string source_name = document_output->AttrOr("nodename");
+        const MtlxElem *source = FindMtlxNode(document, source_name);
+        if (!source) {
+          *err = "document output '" + *output_name + "' references missing node '" +
+                 source_name + "'";
+          return false;
+        }
+        std::string source_type;
+        if (!MtlxNodeOutputType(library, *source, MtlxScope{&document},
+                                document_output->AttrOr("output"), &source_type, err))
+          return false;
+        if (output_type != source_type ||
+            (output_type != input_type &&
+             !MtlxChannelConversionMatches(input, output_type, input_type))) {
+          *err = "document output '" + *output_name + "' has incompatible type";
+          return false;
+        }
       } else if (value) {
         MtlxTypedValue parsed;
         if (IsBuiltinMtlxType(input_type) &&
