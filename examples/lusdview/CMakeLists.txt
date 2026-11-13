@@ -631,7 +631,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_scene_safety_test PRIVATE
-      lightusd_preview_images tydra lightusd_core)
+      tydra lightusd_preview_images lightusd_core)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_scene_safety_test PRIVATE Threads::Threads)
   endif()
