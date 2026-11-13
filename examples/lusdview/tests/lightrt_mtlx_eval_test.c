@@ -104,12 +104,39 @@ int main(void) {
   MtlxDoc *udim_doc = mtlx_load_string(
       "<materialx><image name=\"udim\" type=\"color3\"><input "
       "name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "</image><tiledimage name=\"udim_scaled\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" value=\"2,1\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</tiledimage><image name=\"udim_literal\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.92,0.5\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</image></materialx>");
   if (!udim_doc) {
     texcache_free(udim_cache); remove(udim_1001); remove(udim_1002);
     remove(udim_1101); return 1;
   }
   texcache_preload(udim_cache, udim_doc);
+  ShadeContext udim_ctx = {0};
+  udim_ctx.doc = udim_doc;
+  udim_ctx.tex = udim_cache;
+  udim_ctx.uv[0] = 0.46f; udim_ctx.uv[1] = 0.5f;
+  udim_ctx.uv_dx[0] = 0.4f; udim_ctx.has_uv_derivatives = 1;
+  udim_ctx.memo = (MtlxValue *)calloc((size_t)udim_doc->nnode, sizeof(MtlxValue));
+  udim_ctx.memo_done = (char *)calloc((size_t)udim_doc->nnode, 1);
+  const int udim_scaled_node = mtlx_find_node(udim_doc, -1, "udim_scaled");
+  const int udim_literal_node = mtlx_find_node(udim_doc, -1, "udim_literal");
+  int udim_scaled_ok = udim_ctx.memo && udim_ctx.memo_done &&
+                       udim_scaled_node >= 0 && udim_literal_node >= 0;
+  if (udim_scaled_ok) {
+    const MtlxValue value = mtlx_eval_node_test(&udim_ctx, udim_scaled_node);
+    udim_scaled_ok = fabsf(value.v[0] - 0.5f) < 1e-6f &&
+                     fabsf(value.v[2] - 0.5f) < 1e-6f;
+    const MtlxValue literal = mtlx_eval_node_test(&udim_ctx, udim_literal_node);
+    udim_scaled_ok = udim_scaled_ok && literal.v[0] > 0.99f && literal.v[2] < 0.01f;
+  }
+  free(udim_ctx.memo); free(udim_ctx.memo_done);
   mtlx_free(udim_doc);
   float udim_sample[4];
   const int udim_first = texcache_sample_file(
@@ -132,7 +159,7 @@ int main(void) {
   remove(udim_1002);
   remove(udim_1101);
   if (!udim_first || !udim_second || !udim_high || !first_red ||
-      !second_blue || !high_green || udim_missing ||
+      !second_blue || !high_green || !udim_scaled_ok || udim_missing ||
       udim_sample[3] != 1.0f) {
     fprintf(stderr, "UDIM present/missing tile resolution failed\n");
     return 1;
@@ -317,6 +344,10 @@ int main(void) {
       "<materialx><image name=\"nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</image><image name=\"literal_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.5\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</image><hextiledimage name=\"hex_nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
@@ -345,14 +376,23 @@ int main(void) {
                                             sizeof(MtlxValue));
     nearest_ctx.memo_done = (char *)calloc((size_t)nearest_doc->nnode, 1);
     int nearest_node = mtlx_find_node(nearest_doc, -1, "nearest");
+    int literal_uv_node = mtlx_find_node(nearest_doc, -1, "literal_uv");
     int hex_nearest_node = mtlx_find_node(nearest_doc, -1, "hex_nearest");
     int hex_linear_node = mtlx_find_node(nearest_doc, -1, "hex_linear");
-    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 ||
+    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 || literal_uv_node < 0 ||
         hex_nearest_node < 0 || hex_linear_node < 0) {
       nearest_ok = 0;
     } else {
       nearest_value = mtlx_eval_node_test(&nearest_ctx, nearest_node);
       nearest_ok = nearest_value.v[2] > 0.99f && nearest_value.v[0] < 0.01f;
+      MtlxValue literal_value = mtlx_eval_node_test(&nearest_ctx, literal_uv_node);
+      nearest_ok = nearest_ok && literal_value.v[0] > 0.99f && literal_value.v[2] < 0.01f;
+      nearest_ctx.has_uv_derivatives = 1;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      literal_value = mtlx_eval_node_test(&nearest_ctx, literal_uv_node);
+      nearest_ok = nearest_ok && literal_value.v[0] > 0.99f && literal_value.v[2] < 0.01f;
+      nearest_ctx.has_uv_derivatives = 0;
+      nearest_ctx.uv_dx[0] = 0.0f;
       memset(nearest_ctx.memo_done, 0, (size_t)nearest_doc->nnode);
       MtlxValue hex_nearest_value =
           mtlx_eval_node_test(&nearest_ctx, hex_nearest_node);

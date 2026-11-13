@@ -567,12 +567,15 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     const MtlxInput *file = find_input(n, "file");
     int srgb = file ? file->colorspace_srgb : 0;
     const char *path = (file && file->value.s) ? file->value.s : NULL;
-    /* honor an explicit texcoord input (e.g. from place2d) */
+    /* A literal coordinate has no screen-space footprint. */
     float u = ctx->uv[0], v = ctx->uv[1];
     const MtlxInput *tc = find_input(n, "texcoord");
-    if (tc && tc->src_node >= 0) { MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1]; }
     float dudx = ctx->uv_dx[0], dvdx = ctx->uv_dx[1];
     float dudy = ctx->uv_dy[0], dvdy = ctx->uv_dy[1];
+    if (tc && (tc->src_node >= 0 || tc->has_value)) {
+        MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1];
+        if (tc->src_node < 0) dudx = dvdx = dudy = dvdy = 0.0f;
+    }
     if (!strcmp(n->category, "tiledimage")) {
         MtlxValue tiling = in_or(ctx, n, "uvtiling", mv_vec2(1, 1));
         MtlxValue offset = in_or(ctx, n, "uvoffset", mv_vec2(0, 0));
@@ -619,8 +622,8 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     } else if (!outside_constant && path) {
         if (ctx->has_uv_derivatives) {
             sampled = texcache_sample_file_grad_filter(
-                ctx->tex, path, srgb, u, v, ctx->uv_dx[0], ctx->uv_dx[1],
-                ctx->uv_dy[0], ctx->uv_dy[1], filtertype, s);
+                ctx->tex, path, srgb, u, v, dudx, dvdx, dudy, dvdy,
+                filtertype, s);
         } else {
             sampled = texcache_sample_file_filter(ctx->tex, path, srgb,
                                                   u, v, filtertype, s);

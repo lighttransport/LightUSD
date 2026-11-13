@@ -4660,3 +4660,7 @@ object-space position defaults, object/world geometry transforms under
 nonuniform scale, authored geometry overrides, shared generated nodes and
 rejection of unsupported indices. The LightRT evaluator currently supports a
 single UV/tangent set and object/world default geometry spaces.
+`lusdview_lightrt_mtlx_eval_test` checks authored image coordinates with and
+without screen derivatives, zero footprints for literal coordinates, and
+scaled tiled-image footprints across a UDIM seam. Derivatives through arbitrary
+connected coordinate graphs are not yet propagated.
