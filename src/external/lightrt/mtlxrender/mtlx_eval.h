@@ -174,6 +174,9 @@ typedef struct {
     /* Optional renderer callback for arbitrary geompropvalue primvars. */
     int (*geomprop)(void *user,const char *name,MtlxType type,MtlxValue *out);
     void *geomprop_user;
+    /* Optional indexed UV-set sampler used by texcoord nodes. */
+    int (*texcoord)(void *user,int index,float out_uv[2]);
+    void *texcoord_user;
     /* per-shade-point memo (size doc->nnode) */
     MtlxValue *memo;
     char      *memo_done;

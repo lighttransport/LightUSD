@@ -259,3 +259,9 @@ upstream provenance intact.
 - 2026-11-14: `mtlxrender/mtlx_doc.c` matches LightRT `f2bf750` for accepting
   model-space `geompropdef` defaults; its 81-case node-truth regression evaluates
   the implicit position node through the supplied world-to-model transform.
+- 2026-11-14: `mtlxrender/{mtlx_doc.c,mtlx_eval.c,mtlx_eval.h}` matches
+  LightRT `4a7c3c0` for nonnegative geometry indices and an indexed texcoord
+  callback, with UV0 fallback when the renderer cannot sample the requested set.
+- 2026-11-14: `mtlxrender/{mtlx_doc.c,mtlx_eval.c,mtlx_eval.h}` matches
+  LightRT `4a7c3c0` for nonnegative geometry indices and an indexed texcoord
+  callback, with UV0 fallback when the renderer cannot sample the requested set.

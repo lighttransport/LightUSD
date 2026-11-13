@@ -1091,7 +1091,18 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         }
         case OP_HEXTILEDIMAGE: r = eval_hextiledimage(ctx, n); break;
         case OP_NORMALMAP: r = eval_normalmap(ctx, n); break;
-        case OP_TEXCOORD: r = mv_vec2(ctx->uv[0], ctx->uv[1]); break;
+        case OP_TEXCOORD: {
+            MtlxValue index = in_or(ctx, n, "index", mv_zero(MV_INT));
+            float uv[2] = {ctx->uv[0], ctx->uv[1]};
+            if (ctx->texcoord) {
+                float sampled[2] = {uv[0], uv[1]};
+                if (ctx->texcoord(ctx->texcoord_user, (int)index.v[0], sampled)) {
+                    uv[0] = sampled[0]; uv[1] = sampled[1];
+                }
+            }
+            r = mv_vec2(uv[0], uv[1]);
+            break;
+        }
         case OP_POSITION:
             r = mv_vec3(transform_space(ctx, ctx->P, "world", string_input(n, "space", "object"), 0)); break;
         case OP_NORMAL:

@@ -321,13 +321,13 @@ static void node_add_geometry_literal(MtlxNode *node, const char *name,
     parse_value(value, type, &in->value);
 }
 
-static int geometry_index_is_zero(const char *index) {
+static int geometry_index_is_nonnegative(const char *index) {
     if (!index) return 1;
     char *end = NULL;
     long value = strtol(index, &end, 10);
-    if (end == index) return 0;
+    if (end == index || value < 0) return 0;
     while (isspace((unsigned char)*end)) end++;
-    return value == 0 && *end == '\0';
+    return *end == '\0';
 }
 
 static int apply_stdlib_geometry_defaults(Builder *b, const XmlNode *document) {
@@ -378,7 +378,7 @@ static int apply_stdlib_geometry_defaults(Builder *b, const XmlNode *document) {
                      strcmp(category, "normal") && strcmp(category, "tangent") &&
                      strcmp(category, "bitangent")) ||
                     (space && strcmp(space, "model") && strcmp(space, "object") && strcmp(space, "world")) ||
-                    !geometry_index_is_zero(index)) {
+                    !geometry_index_is_nonnegative(index)) {
                     free(cache);
                     return 0;
                 }
