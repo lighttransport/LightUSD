@@ -951,6 +951,37 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_tiledcircles_")) {
+    MtlxConstantValue texcoord, tiling, offset, size, staggered;
+    if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||
+        !input("uvoffset", &offset) || !input("size", &size) ||
+        !input("staggered", &staggered) || texcoord.components < 2 ||
+        tiling.components < 2 || offset.components < 2) return false;
+    const float x = texcoord.component(0) * tiling.component(0) - offset.component(0);
+    const float y = texcoord.component(1) * tiling.component(1) - offset.component(1);
+    auto mod = [](float a, float b) { return a - b * std::floor(a / b); };
+    auto inside = [](float a, float b, float radius) {
+      return a * a + b * b <= radius * radius;
+    };
+    bool hit;
+    if (staggered.component(0) == 0.0f) {
+      hit = inside(2.0f * mod(x, 1.0f) - 1.0f,
+                   2.0f * mod(y, 1.0f) - 1.0f, size.component(0));
+    } else {
+      constexpr float half = 0.866025f;
+      const float shift = mod(y, 2.0f * half) > half ? 0.5f : 0.0f;
+      const float mx = mod(x + shift, 1.0f), my = mod(y, half);
+      const float radius = size.component(0) * 0.5f;
+      hit = inside(mx, my, radius) || inside(1.0f - mx, my, radius) ||
+            inside(mx - 0.5f, half - my, radius);
+    }
+    out->components = 3;
+    out->value[0] = out->value[1] = out->value[2] = hit ? 1.0f : 0.0f;
+    out->color_managed = texcoord.color_managed || tiling.color_managed ||
+                         offset.color_managed || size.color_managed || staggered.color_managed;
+    return true;
+  }
+
   if (starts("ND_crosshatch_")) {
     MtlxConstantValue texcoord, tiling, offset, thickness, staggered;
     if (!input("texcoord", &texcoord) || !input("uvtiling", &tiling) ||

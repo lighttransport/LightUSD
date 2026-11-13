@@ -4566,3 +4566,5 @@ The same suite checks MaterialX line classification at the inclusive radius
 boundary and for a negative radius on a degenerate segment.
 The Tydra Lean-vector replay includes crosshatch cases with negative thickness,
 which must produce black even on a diagonal.
+The same replay covers regular and staggered MaterialX tiled circles, negative
+UV coordinates and signed size.
