@@ -252,6 +252,17 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.diffuse_lobes[i].model = lobe.model;
   }
   p.metalness = src.metalness;
+  static_assert(lightusd::tydra::kMaxRealtimeConductorLobes == MTLX_MAX_CONDUCTOR_LOBES,
+                "Conductor lobe limits must match");
+  p.conductor_lobe_count = std::clamp(src.conductorLobeCount, 0, MTLX_MAX_CONDUCTOR_LOBES);
+  for (int i = 0; i < p.conductor_lobe_count; ++i) {
+    const auto &lobe = src.conductorLobes[i];
+    p.conductor_lobes[i].ior = v3_make(lobe.ior[0], lobe.ior[1], lobe.ior[2]);
+    p.conductor_lobes[i].extinction = v3_make(lobe.extinction[0], lobe.extinction[1], lobe.extinction[2]);
+    p.conductor_lobes[i].weight = lobe.weight;
+    p.conductor_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
+    p.conductor_lobes[i].roughness = lobe.roughness;
+  }
   p.specular_weight = src.specularWeight;
   p.specular_color =
       v3_make(src.specularColor[0], src.specularColor[1], src.specularColor[2]);
@@ -1726,7 +1737,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     float kd_metal;
     float specular_f90 = 1.0f;
     float specular_roughness = tri.roughness;
-    if (tri.use_specular_workflow) {
+    if (tri.use_specular_workflow && !(opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+        tri_openpbr && tri_openpbr->conductorLobeCount > 0)) {
       f0 = tri.specular_color;
       kd_metal = 0.0f;
     } else if (opt.material_shading == Options::MaterialShading::LightRtBsdf &&
@@ -1744,7 +1756,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           dielectric_f0 * p.specular_color.y,
           dielectric_f0 * p.specular_color.z};
       const Vec3 base = Mul(FromMtlxV3(p.base_color), p.base_weight);
-      f0 = Lerp(dielectric_f0_color, base, p.metalness);
+      const float metal = p.conductor_lobe_count > 0 ? 0.0f : p.metalness;
+      f0 = Lerp(dielectric_f0_color, base, metal);
       kd_metal = 0.0f;
       specular_f90 = std::clamp(p.specular_weight, 0.0f, 1.0f);
       specular_roughness = p.specular_roughness;
@@ -1770,6 +1783,25 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
     // bsdf mode, so this stays material-correct.
     Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b * specular_f90);
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
+      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i = 0; i < p.conductor_lobe_count; ++i) {
+        const MtlxConductorLobe &lobe = p.conductor_lobes[i];
+        const v3 one = v3_splat(1.0f), em = v3_sub(lobe.ior, one), ep = v3_add(lobe.ior, one);
+        const v3 k2 = v3_mul(lobe.extinction, lobe.extinction);
+        const v3 num = v3_add(v3_mul(em, em), k2), den = v3_add(v3_mul(ep, ep), k2);
+        const Vec3 cf0{num.x / std::max(den.x, 1.0e-6f), num.y / std::max(den.y, 1.0e-6f),
+                       num.z / std::max(den.z, 1.0e-6f)};
+        // Split-sum preview uses Schlick F0 and filtered environment; it is an
+        // approximation to the full conductor Fresnel and compensation model.
+        const float rough = std::sqrt(std::clamp(lobe.roughness, 0.0f, 1.0f));
+        const Vec3 env = SampleIblMip(ibl->prefiltered, env_refl, rough);
+        float a = 1.0f, b = 0.0f;
+        SampleBrdfLut(*ibl, ndotv, rough, &a, &b);
+        const Vec3 tint{lobe.weight_color.x, lobe.weight_color.y, lobe.weight_color.z};
+        spec = Add(spec, Mul(Mul(EvalIblSpecularSplitSum(env, cf0, a, b), tint), lobe.weight));
+      }
+    }
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
     Vec3 diff =

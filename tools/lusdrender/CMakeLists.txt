@@ -456,6 +456,21 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  add_executable(lusdrender-mtlx-conductor-mixture
+    tests/mtlx_conductor_mixture.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-conductor-mixture PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-conductor-mixture PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-conductor-mixture PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-conductor-mixture
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-conductor-mixture>)
+  set_tests_properties(tool-lusdrender-mtlx-conductor-mixture PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
   add_executable(lusdrender-mtlx-conductor-response
     tests/mtlx_conductor_response.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
   target_include_directories(lusdrender-mtlx-conductor-response PRIVATE ${LUSDR_MTLX_BSDF_DIR})

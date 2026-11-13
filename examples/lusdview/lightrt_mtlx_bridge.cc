@@ -352,6 +352,16 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
     dst->diffuseLobes[i].model = src.diffuse_lobes[i].model;
   }
   dst->metalness = src.metalness;
+  static_assert(tydra::kMaxRealtimeConductorLobes == MTLX_MAX_CONDUCTOR_LOBES,
+                "Conductor lobe limits must match");
+  dst->conductorLobeCount = std::clamp(src.conductor_lobe_count, 0, MTLX_MAX_CONDUCTOR_LOBES);
+  for (int i = 0; i < dst->conductorLobeCount; ++i) {
+    CopyV3(src.conductor_lobes[i].ior, dst->conductorLobes[i].ior);
+    CopyV3(src.conductor_lobes[i].extinction, dst->conductorLobes[i].extinction);
+    dst->conductorLobes[i].weight = src.conductor_lobes[i].weight;
+    CopyV3(src.conductor_lobes[i].weight_color, dst->conductorLobes[i].weightColor);
+    dst->conductorLobes[i].roughness = src.conductor_lobes[i].roughness;
+  }
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);
   dst->specularRoughness = src.specular_roughness;
@@ -434,6 +444,11 @@ void MergeGraphParamsPreservingTextureDeps(
   if (safe("base_weight")) dst->baseWeight = graph.baseWeight;
   if (safe("base_color")) copy3(graph.baseColor, dst->baseColor);
   if (safe("base_metalness")) dst->metalness = graph.metalness;
+  if (safe("base_metalness") && safe("base_color") && safe("specular_roughness")) {
+    dst->conductorLobeCount = graph.conductorLobeCount;
+    std::copy(std::begin(graph.conductorLobes), std::end(graph.conductorLobes),
+              std::begin(dst->conductorLobes));
+  }
   if (safe("base_diffuse_roughness")) {
     dst->diffuseRoughness = graph.diffuseRoughness;
   }

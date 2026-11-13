@@ -21,6 +21,15 @@ struct RealtimeDiffuseLobe {
   int model{0};
 };
 
+constexpr int kMaxRealtimeConductorLobes = 32;
+struct RealtimeConductorLobe {
+  float ior[3]{0.0f, 0.0f, 0.0f};
+  float extinction[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float weightColor[3]{1.0f, 1.0f, 1.0f};
+  float roughness{0.0f};
+};
+
 constexpr int kMaxRealtimeSheenLobes = 32;
 struct RealtimeSheenLobe {
   float color[3]{0.0f, 0.0f, 0.0f};
@@ -40,6 +49,8 @@ struct RealtimePbrMaterial {
   int diffuseLobeCount{0};
   RealtimeDiffuseLobe diffuseLobes[kMaxRealtimeDiffuseLobes]{};
   float metalness{0.0f};
+  int conductorLobeCount{0};
+  RealtimeConductorLobe conductorLobes[kMaxRealtimeConductorLobes]{};
   float specularWeight{1.0f};
   float specularColor[3]{1.0f, 1.0f, 1.0f};
   float specularRoughness{0.3f};

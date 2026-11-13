@@ -1465,7 +1465,7 @@ static float blend_scalar(float old_weight, float old_value, float value,
                       : value;
 }
 
-/* Evaluate vertical throughput for diffuse and sheen closure graphs at the
+/* Evaluate vertical throughput for diffuse, conductor and sheen closure graphs at the
  * shading point. Unknown top closures retain the legacy approximation.
  * Multiplication scales response, not throughput, in MaterialX genglsl. */
 static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
@@ -1475,7 +1475,7 @@ static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
     --*budget;
     const char *cat = n->category;
     if (!strcmp(cat, "diffuse_bsdf") || !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
-        !strcmp(cat, "burley_diffuse_bsdf")) {
+        !strcmp(cat, "burley_diffuse_bsdf") || !strcmp(cat, "conductor_bsdf")) {
         float weight = in_float(ctx, n, "weight", 1.0f);
         if (!(weight >= 0.0f && weight <= 1.0f)) return 0;
         *throughput = 1.0f - weight;
@@ -1541,7 +1541,7 @@ static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
 
 static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 color_scale,
                        OpenPBRParams *out, int depth) {
-    if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow || out->sheen_lobe_overflow) return;
+    if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add")) {
         apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, color_scale, out, depth + 1);
@@ -1593,7 +1593,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
     const int is_diffuse = !strcmp(cat, "diffuse_bsdf") ||
         !strcmp(cat, "oren_nayar_diffuse_bsdf") || !strcmp(cat, "burley_diffuse_bsdf");
     /* Other closure types still use the legacy scalar approximation. */
-    if (!is_diffuse && strcmp(cat, "sheen_bsdf"))
+    if (!is_diffuse && strcmp(cat, "sheen_bsdf") && strcmp(cat, "conductor_bsdf"))
         weight *= fmaxf(0.0f, (color_scale.x + color_scale.y + color_scale.z) / 3.0f);
     if (!strcmp(cat, "diffuse_bsdf") ||
         !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
@@ -1646,8 +1646,21 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
         out->thin_film_ior = in_float(ctx, n, "thinfilm_ior", 1.5f);
         out->thin_film_weight = out->thin_film_thickness > 0.0f ? weight : 0.0f;
     } else if (!strcmp(cat, "conductor_bsdf")) {
+        if (weight <= 0.0f) return;
         const v3 eta = in_color(ctx, n, "ior", v3_make(0.183f, 0.421f, 1.373f));
         const v3 k = in_color(ctx, n, "extinction", v3_make(3.424f, 2.346f, 1.770f));
+        if (weight > 0.0f) {
+            if (out->conductor_lobe_count >= MTLX_MAX_CONDUCTOR_LOBES) {
+                out->conductor_lobe_overflow = 1;
+                return;
+            }
+            MtlxConductorLobe *lobe = &out->conductor_lobes[out->conductor_lobe_count++];
+            lobe->ior = eta;
+            lobe->extinction = k;
+            lobe->weight = weight;
+            lobe->weight_color = color_scale;
+            lobe->roughness = in_component0(ctx, n, "roughness", 0.05f);
+        }
         const v3 one = v3_splat(1.0f);
         const v3 em = v3_sub(eta, one), ep = v3_add(eta, one);
         const v3 k2 = v3_mul(k, k);
@@ -1658,7 +1671,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
                               num.z / fmaxf(den.z, 1.0e-6f));
         const float old_base_weight = out->base_weight;
         const float old_roughness = out->specular_roughness;
-        blend_lobe(&out->base_weight, &out->base_color, f0, weight);
+        blend_lobe(&out->base_weight, &out->base_color, v3_mul(f0, color_scale), weight);
         out->metalness = 1.0f;
         out->specular_roughness = blend_scalar(
             old_base_weight, old_roughness,
@@ -1763,7 +1776,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->subsurface = 0.0f;
         out->sheen_weight = 0.0f;
         apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, v3_splat(1.0f), out, 0);
-        if (out->diffuse_lobe_overflow || out->sheen_lobe_overflow) return 1;
+        if (out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow) return 1;
         out->emission_color = eval_edf(ctx, input_node(ctx, n, "edf"), 0);
         out->emission = v3_maxc(out->emission_color) > 0.0f ? 1.0f : 0.0f;
         out->opacity = in_float(ctx, n, "opacity", 1.0f);

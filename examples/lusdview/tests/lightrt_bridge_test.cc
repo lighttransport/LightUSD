@@ -97,11 +97,21 @@ int main() {
         <input name="in1" type="BSDF" nodename="mix"/>
         <input name="in2" type="BSDF" nodename="sheenmix"/>
       </add>
+      <conductor_bsdf name="metal" type="BSDF">
+        <input name="ior" type="color3" value="0.4, 0.6, 0.8"/>
+        <input name="extinction" type="color3" value="2, 3, 4"/>
+        <input name="weight" type="float" value="0.4"/>
+        <input name="roughness" type="vector2" value="0.3, 0.3"/>
+      </conductor_bsdf>
+      <add name="combined_all" type="BSDF">
+        <input name="in1" type="BSDF" nodename="combined"/>
+        <input name="in2" type="BSDF" nodename="metal"/>
+      </add>
       <constant name="factor" type="color3">
         <input name="value" type="color3" value="0.2, 0.5, 0.9"/>
       </constant>
       <multiply name="tint" type="BSDF">
-        <input name="in1" type="BSDF" nodename="combined"/>
+        <input name="in1" type="BSDF" nodename="combined_all"/>
         <input name="in2" type="color3" nodename="factor"/>
       </multiply>
       <surface name="s" type="surfaceshader">
@@ -121,6 +131,12 @@ int main() {
         !Near(params.diffuseLobes[0].weightColor[0], 0.2f) ||
         !Near(params.diffuseLobes[0].weightColor[1], 0.5f) ||
         !Near(params.diffuseLobes[1].weightColor[2], 0.9f) ||
+        params.conductorLobeCount != 1 ||
+        !Near(params.conductorLobes[0].weight, 0.4f) ||
+        !Near(params.conductorLobes[0].ior[0], 0.4f) ||
+        !Near(params.conductorLobes[0].extinction[2], 4.0f) ||
+        !Near(params.conductorLobes[0].roughness, 0.3f) ||
+        !Near(params.conductorLobes[0].weightColor[1], 0.5f) ||
         params.sheenLobeCount != 2 ||
         !Near(params.sheenLobes[0].weight, 0.6f) ||
         !Near(params.sheenLobes[1].weight, 0.4f) ||

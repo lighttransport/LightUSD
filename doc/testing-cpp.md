@@ -1692,8 +1692,11 @@ isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
 `tool-lusdrender-mtlx-conductor-response` checks the isolated isotropic
-MaterialX conductor response against independent reference vectors; it is not
-yet used for closure composition.
+MaterialX conductor response against independent reference vectors.
+`tool-lusdrender-mtlx-conductor-mixture` checks independent conductor lobes,
+RGB weights, diffuse mixtures, opaque layers, sampling, furnace bounds and
+the 32/33-lobe boundary. The environment preview uses an approximate split-sum
+response; anisotropic and thin-film conductor responses remain incomplete.
 `tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
 responses, RGB-weighted mixtures, the lobe limit, the default BSDF mix weight,
 and view-dependent sheen-layer throughput.
@@ -1703,7 +1706,8 @@ weights and phase-lobe overflow.
 the lobe limit, literal and connected RGB weights, and opaque diffuse
 layer throughput for direct, mixed and nested tops;
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
-and opaque diffuse and sheen layers through the rendered CPU path, and verifies that
+and opaque diffuse, sheen and conductor layers through the rendered CPU path,
+and verifies that
 disabled scattering remains black.
 Sheen environment lighting uses a directional-albedo fit and an irradiance
 approximation for nonuniform environments.

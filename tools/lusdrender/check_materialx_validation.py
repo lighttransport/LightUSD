@@ -561,6 +561,23 @@ def main():
       <input name="in1" type="BSDF" nodename="mix"/>
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>
+    <conductor_bsdf name="metal" type="BSDF">
+      <input name="weight" type="float" value="0.4"/>
+      <input name="roughness" type="vector2" value="0.5, 0.5"/>
+    </conductor_bsdf>
+    <mix name="metal_mix" type="BSDF">
+      <input name="bg" type="BSDF" nodename="a"/>
+      <input name="fg" type="BSDF" nodename="metal"/>
+      <input name="mix" type="float" value="0.25"/>
+    </mix>
+    <layer name="metal_layer" type="BSDF">
+      <input name="top" type="BSDF" nodename="metal"/>
+      <input name="base" type="BSDF" nodename="a"/>
+    </layer>
+    <multiply name="metal_tint" type="BSDF">
+      <input name="in1" type="BSDF" nodename="metal_mix"/>
+      <input name="in2" type="color3" nodename="factor"/>
+    </multiply>
     <sheen_bsdf name="black_sheen" type="BSDF">
       <input name="color" type="color3" value="0, 0, 0"/>
       <input name="roughness" type="float" value="0.8"/>
@@ -592,7 +609,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer", "metal", "metal_mix", "metal_layer", "metal_tint"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -662,6 +679,16 @@ def main():
     if max(closure_images[0][i] - closure_images[10][i]
            for i in range(0, len(closure_images[0]), 4)) < 3:
         raise RuntimeError("view-dependent sheen layer did not attenuate its base")
+
+    for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
+        offset = (y * 64 + x) * 4
+        for channel in range(3):
+            base, metal, mixed, layer, tinted = (linear_srgb(closure_images[i][offset + channel])
+                                                   for i in (0, 11, 12, 13, 14))
+            if abs(mixed - (0.75 * base + 0.25 * metal)) > 0.025 or \
+               abs(layer - (0.6 * base + metal)) > 0.025 or \
+               abs(tinted - mixed * (0.2, 0.5, 0.9)[channel]) > 0.025:
+                raise RuntimeError(f"conductor mixture or layer failed at {(x, y, channel)}")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],

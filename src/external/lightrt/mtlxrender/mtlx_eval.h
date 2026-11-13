@@ -29,6 +29,15 @@ typedef struct {
     int model; /* MTLX_DIFFUSE_* */
 } MtlxDiffuseLobe;
 
+#define MTLX_MAX_CONDUCTOR_LOBES 32
+
+typedef struct {
+    v3 ior, extinction;
+    float weight;
+    v3 weight_color;
+    float roughness; /* MaterialX GGX alpha */
+} MtlxConductorLobe;
+
 #define MTLX_MAX_SHEEN_LOBES 32
 #define MTLX_SHEEN_CONTY_KULLA 0
 #define MTLX_SHEEN_ZELTNER 1
@@ -51,6 +60,9 @@ typedef struct {
     int   diffuse_lobe_overflow;
     MtlxDiffuseLobe diffuse_lobes[MTLX_MAX_DIFFUSE_LOBES];
     float metalness;
+    int conductor_lobe_count;
+    int conductor_lobe_overflow;
+    MtlxConductorLobe conductor_lobes[MTLX_MAX_CONDUCTOR_LOBES];
     /* specular (GGX dielectric) */
     float specular_weight;
     v3    specular_color;

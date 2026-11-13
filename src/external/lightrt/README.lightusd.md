@@ -80,6 +80,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
 - 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h}` matches LightRT `78d407a` for
   an independently tested isotropic MaterialX conductor response building block.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `8967e2a` for bounded independent conductor closures and diffuse layering.
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `4271ac7` for channel-preserving diffuse closure multiplication.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `a46887c` for preserving bounded diffuse closure mixtures.

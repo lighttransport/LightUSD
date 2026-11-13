@@ -319,6 +319,8 @@ typedef struct {
     v3    sheen_color; float sheen_alpha, sheen_w;
     int   sheen_lobe_count;
     const MtlxSheenLobe *sheen_lobes;
+    int conductor_lobe_count;
+    const MtlxConductorLobe *conductor_lobes;
     v3    coat_color; float coat_alpha, coat_w, coat_f0, coat_Ri;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
@@ -328,8 +330,16 @@ typedef struct {
 
 static Layers extract(const OpenPBRParams *p) {
     Layers L;
-    float metal = p->metalness, trans = p->transmission;
+    const int explicit_conductor = p->conductor_lobe_count > 0;
+    float metal = explicit_conductor ? 0.0f : p->metalness, trans = p->transmission;
     v3 base = v3_scale(p->base_color, p->base_weight);
+    if (explicit_conductor) {
+        base = v3_splat(0.0f);
+        for (int i = 0; i < p->diffuse_lobe_count && i < MTLX_MAX_DIFFUSE_LOBES; ++i) {
+            const MtlxDiffuseLobe *d = &p->diffuse_lobes[i];
+            base = v3_add(base, v3_scale(v3_mul(d->color, d->weight_color), d->weight));
+        }
+    }
 
     v3 diff = v3_scale(base, (1.0f - metal) * (1.0f - trans));
     if (p->subsurface > 0.0f)
@@ -337,7 +347,7 @@ static Layers extract(const OpenPBRParams *p) {
     L.diff_color = diff;
     L.diffuse_base_color = p->base_color;
     L.diffuse_subsurface_color = p->subsurface_color;
-    L.diffuse_base_scale = p->base_weight * (1.0f - metal) * (1.0f - trans) * (1.0f - p->subsurface);
+    L.diffuse_base_scale = (explicit_conductor ? 0.0f : p->base_weight) * (1.0f - metal) * (1.0f - trans) * (1.0f - p->subsurface);
     L.diffuse_subsurface_scale = (1.0f - metal) * (1.0f - trans) * p->subsurface;
     L.diffuse_roughness = p->diffuse_roughness;
     L.diffuse_model = p->diffuse_model;
@@ -366,6 +376,9 @@ static Layers extract(const OpenPBRParams *p) {
     L.sheen_lobe_count = p->sheen_lobe_count < 0 ? 0 :
         (p->sheen_lobe_count > MTLX_MAX_SHEEN_LOBES ? MTLX_MAX_SHEEN_LOBES : p->sheen_lobe_count);
     L.sheen_lobes = p->sheen_lobes;
+    L.conductor_lobe_count = p->conductor_lobe_count < 0 ? 0 :
+        (p->conductor_lobe_count > MTLX_MAX_CONDUCTOR_LOBES ? MTLX_MAX_CONDUCTOR_LOBES : p->conductor_lobe_count);
+    L.conductor_lobes = p->conductor_lobes;
 
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
@@ -388,6 +401,8 @@ static Layers extract(const OpenPBRParams *p) {
 
     float lumD = luminance(L.diff_color) + 0.5f * L.sheen_w * luminance(L.sheen_color);
     float lumS = luminance(L.F0) + 0.04f;
+    for (int i = 0; i < L.conductor_lobe_count; ++i)
+        lumS += L.conductor_lobes[i].weight * fmaxf(0.0f, luminance(L.conductor_lobes[i].weight_color));
     float wc = L.coat_w * 0.5f;
     float tot = lumD + lumS + wc + L.glass_w + 1e-4f;
     L.pd = lumD / tot; L.ps = lumS / tot; L.pc = wc / tot; L.pg = L.glass_w / tot;
@@ -524,6 +539,14 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f)
         F = v3_lerp(F, fresnel_airy(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);
+
+    for (int i = 0; i < L->conductor_lobe_count; ++i) {
+        const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
+        v3 response = bsdf_materialx_conductor(lobe->ior, lobe->extinction,
+            lobe->roughness, NdotV, NdotL, NdotH, VdotH);
+        spec = v3_add(spec, v3_mul(base_atten,
+            v3_scale(v3_mul(response, lobe->weight_color), lobe->weight)));
+    }
 
     v3 sheen = v3_splat(0.0f);
     if (L->sheen_lobe_count > 0) {
