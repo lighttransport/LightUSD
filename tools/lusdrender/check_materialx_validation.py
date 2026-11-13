@@ -540,6 +540,15 @@ def main():
       <input name="color" type="color3" value="0.8, 0.3, 0.1"/>
       <input name="roughness" type="float" value="0.4"/>
     </burley_diffuse_bsdf>
+    <oren_nayar_diffuse_bsdf name="top" type="BSDF">
+      <input name="weight" type="float" value="0.25"/>
+      <input name="color" type="color3" value="0.2, 0.5, 0.8"/>
+      <input name="roughness" type="float" value="0.9"/>
+    </oren_nayar_diffuse_bsdf>
+    <layer name="layered" type="BSDF">
+      <input name="top" type="BSDF" nodename="top"/>
+      <input name="base" type="BSDF" nodename="b"/>
+    </layer>
     <mix name="mix" type="BSDF">
       <input name="bg" type="BSDF" nodename="a"/>
       <input name="fg" type="BSDF" nodename="b"/>
@@ -575,7 +584,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -616,6 +625,9 @@ def main():
                 raise RuntimeError(
                     f"diffuse color scaling failed at {(x, y, channel)}: {tinted}"
                 )
+            layer = linear_srgb(closure_images[9][offset + channel])
+            if abs(layer - (0.25 * a + 0.75 * b)) > 0.025:
+                raise RuntimeError(f"opaque layer throughput failed at {(x, y, channel)}")
             if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
                 raise RuntimeError(
                     f"diffuse mixture did not preserve weighted response at {(x, y, channel)}: "

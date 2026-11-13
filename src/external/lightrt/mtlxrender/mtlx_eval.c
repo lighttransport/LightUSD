@@ -1465,6 +1465,49 @@ static float blend_scalar(float old_weight, float old_value, float value,
                       : value;
 }
 
+/* Evaluate angle-independent vertical throughput for graphs made entirely of
+ * opaque diffuse closures. Unknown top closures retain the legacy path until
+ * their direction-dependent throughput can be evaluated at the shading point.
+ * Multiplication scales response, not throughput, in MaterialX genglsl. */
+static int opaque_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
+                                  int depth, size_t *budget, float *throughput) {
+    if (!n) { *throughput = 1.0f; return 1; }
+    if (depth > 32 || !*budget) return 0;
+    --*budget;
+    const char *cat = n->category;
+    if (!strcmp(cat, "diffuse_bsdf") || !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
+        !strcmp(cat, "burley_diffuse_bsdf")) {
+        float weight = in_float(ctx, n, "weight", 1.0f);
+        if (!(weight >= 0.0f && weight <= 1.0f)) return 0;
+        *throughput = 1.0f - weight;
+        return 1;
+    }
+    if (!strcmp(cat, "multiply")) {
+        const MtlxInput *in1 = find_input(n, "in1");
+        const MtlxNode *a = input_node(ctx, n, "in1");
+        const MtlxNode *b = input_node(ctx, n, "in2");
+        const int first_is_closure = a && (!in1 || in1->type == MV_NONE || !b);
+        return opaque_bsdf_throughput(ctx, first_is_closure ? a : b, depth + 1, budget, throughput);
+    }
+    if (!strcmp(cat, "add") || !strcmp(cat, "mix") || !strcmp(cat, "layer")) {
+        const char *a = !strcmp(cat, "add") ? "in1" : (!strcmp(cat, "mix") ? "bg" : "top");
+        const char *b = !strcmp(cat, "add") ? "in2" : (!strcmp(cat, "mix") ? "fg" : "base");
+        float x, y;
+        if (!opaque_bsdf_throughput(ctx, input_node(ctx, n, a), depth + 1, budget, &x) ||
+            !opaque_bsdf_throughput(ctx, input_node(ctx, n, b), depth + 1, budget, &y)) return 0;
+        if (!strcmp(cat, "mix")) {
+            float m = clampf(in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.0f)), 0.0f, 1.0f);
+            *throughput = (1.0f - m) * x + m * y;
+        } else if (!strcmp(cat, "add")) {
+            *throughput = fmaxf(0.0f, x + y - 1.0f);
+        } else {
+            *throughput = x * y;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 color_scale,
                        OpenPBRParams *out, int depth) {
     if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow || out->sheen_lobe_overflow) return;
@@ -1506,8 +1549,12 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
         return;
     }
     if (!strcmp(cat, "layer")) {
-        apply_bsdf(ctx, input_node(ctx, n, "base"), scale, color_scale, out, depth + 1);
-        apply_bsdf(ctx, input_node(ctx, n, "top"), scale, color_scale, out, depth + 1);
+        const MtlxNode *top = input_node(ctx, n, "top");
+        float throughput = 1.0f;
+        size_t budget = 4096;
+        (void)opaque_bsdf_throughput(ctx, top, depth + 1, &budget, &throughput);
+        apply_bsdf(ctx, input_node(ctx, n, "base"), scale * throughput, color_scale, out, depth + 1);
+        apply_bsdf(ctx, top, scale, color_scale, out, depth + 1);
         return;
     }
 

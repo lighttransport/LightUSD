@@ -51,6 +51,38 @@ static int overflow_check(int count, int expected) {
   return 1;
 }
 
+static int layer_checks(void) {
+  const char *parts =
+    "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.25\"/><input name=\"color\" type=\"color3\" value=\"1,0,0\"/></oren_nayar_diffuse_bsdf>"
+    "<burley_diffuse_bsdf name=\"b\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.5\"/><input name=\"color\" type=\"color3\" value=\"0,1,0\"/></burley_diffuse_bsdf>"
+    "<oren_nayar_diffuse_bsdf name=\"c\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0,0,1\"/></oren_nayar_diffuse_bsdf>"
+    "<mix name=\"mix\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.4\"/></mix>"
+    "<add name=\"add\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"a\"/><input name=\"in2\" type=\"BSDF\" nodename=\"b\"/></add>"
+    "<multiply name=\"mult\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"a\"/><input name=\"in2\" type=\"float\" value=\"0.2\"/></multiply>"
+    "<layer name=\"inner\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"a\"/><input name=\"base\" type=\"BSDF\" nodename=\"b\"/></layer>";
+  const char *tops[] = {"a", "mix", "add", "mult", "inner", "c"};
+  /* Expected coefficients of independently evaluated red, green, blue lobes. */
+  const float expected[][3] = {{.25f,0,.75f},{.15f,.20f,.65f},
+      {.25f,.50f,.25f},{.05f,0,.75f},{.25f,.375f,.375f},{0,0,1}};
+  char xml[8192];
+  for (int i = 0; i < 6; ++i) {
+    OpenPBRParams p;
+    snprintf(xml,sizeof(xml),"<materialx>%s<layer name=\"stack\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"%s\"/><input name=\"base\" type=\"BSDF\" nodename=\"c\"/></layer><surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"stack\"/></surface></materialx>",parts,tops[i]);
+    if (!evaluate(xml,&p)) { fprintf(stderr,"FAIL layer graph %d\n",i); return 0; }
+    float coefficients[3]={0,0,0};
+    for (int j=0;j<p.diffuse_lobe_count;j++) {
+      MtlxDiffuseLobe *l=&p.diffuse_lobes[j];
+      coefficients[0]+=l->weight*l->color.x;
+      coefficients[1]+=l->weight*l->color.y;
+      coefficients[2]+=l->weight*l->color.z;
+    }
+    for (int j=0;j<3;j++) if (fabsf(coefficients[j]-expected[i][j])>1e-6f) {
+      fprintf(stderr,"FAIL layer case=%d channel=%d got=%f expected=%f\n",i,j,coefficients[j],expected[i][j]); return 0;
+    }
+  }
+  return 1;
+}
+
 int main(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.9\"/></oren_nayar_diffuse_bsdf>"
@@ -95,6 +127,7 @@ int main(void) {
       }
     }
   }
+  if (!layer_checks()) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||
       !overflow_check(MTLX_MAX_DIFFUSE_LOBES+1, 0)) return 1;
   puts("PASS: mixed diffuse closure responses and bounded overflow");

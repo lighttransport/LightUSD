@@ -1696,9 +1696,11 @@ responses, RGB-weighted mixtures, the lobe limit and the default BSDF mix weight
 `tool-lusdrender-mtlx-volume-lobes` checks VDF/EDF composition, default mix
 weights and phase-lobe overflow.
 `tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses
-and the lobe limit, including literal and connected RGB weights;
+the lobe limit, literal and connected RGB weights, and opaque diffuse
+layer throughput for direct, mixed and nested tops;
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
-through the rendered CPU path and verifies that disabled scattering remains black.
+and an opaque diffuse layer through the rendered CPU path and verifies that
+disabled scattering remains black.
 Sheen environment lighting uses a directional-albedo fit and an irradiance
 approximation for nonuniform environments.
 The CPU path also evaluates qualitative Oren–Nayar and Burley diffuse; use
