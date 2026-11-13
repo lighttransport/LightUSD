@@ -1702,12 +1702,34 @@ bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
       *err = "missing untargeted implementation graph"; return false;
     }
   }
-  if (body->Attr("colorspace") || body->Attr("fileprefix") ||
-      body->Attr("namespace") || graph.Attr("colorspace") ||
-      graph.Attr("fileprefix") || graph.Attr("namespace") ||
-      call->Attr("colorspace") || call->Attr("fileprefix") ||
-      call->Attr("namespace")) {
-    *err = "unsupported implementation graph scope"; return false;
+  MtlxScope body_scope{body};
+  body_scope.insert(body_scope.end(), outer.begin(), outer.end());
+  MtlxScope graph_scope{&graph};
+  graph_scope.insert(graph_scope.end(), outer.begin(), outer.end());
+  for (const char *key : {"colorspace", "fileprefix", "geomprefix", "namespace"}) {
+    std::string body_value, graph_value, call_value;
+    const bool has_body = ScopedMtlxAttr(key, body_scope, &body_value);
+    const bool has_graph = ScopedMtlxAttr(key, graph_scope, &graph_value);
+    const bool has_call = ScopedMtlxAttr(key, call_scope, &call_value);
+    if (has_body != has_graph || has_call != has_graph ||
+        (has_graph && (body_value != graph_value || call_value != graph_value))) {
+      *err = "unsupported differing implementation graph scope"; return false;
+    }
+  }
+  const auto has_tokens = [](const MtlxElem &element) {
+    for (const MtlxElem &child : element.children)
+      if (child.tag == "token") return true;
+    return false;
+  };
+  if (has_tokens(*body) || has_tokens(graph) || has_tokens(*call)) {
+    *err = "unsupported graph or call token scope"; return false;
+  }
+  for (const MtlxElem &child : document.children) {
+    if (child.tag == "nodedef" && has_tokens(child) &&
+        (child.Name() == body->AttrOr("nodedef") ||
+         child.Name() == graph.AttrOr("nodedef") || child.Name() == def->name)) {
+      *err = "unsupported nodedef token scope"; return false;
+    }
   }
   if (!ResolveMtlxGraph(document, *body, library, outer, &checked, err)) return false;
 

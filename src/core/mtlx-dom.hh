@@ -400,6 +400,15 @@ public:
                          std::vector<std::string>* graph_order,
                          std::string* err) const;
 
+  // Recursively inline graph implementations in the named nodegraph. On
+  // failure, the parsed document is unchanged. Implementations must be in
+  // this document; the optional library supplies additional nodedefs.
+  bool FlattenNodeGraph(const std::string& graph_name, size_t max_expansions,
+                        std::string* err);
+  bool FlattenNodeGraph(const std::string& graph_name,
+                        const MtlxLibrary& external_library,
+                        size_t max_expansions, std::string* err);
+
   // Convert authored float and vector2/3/4 node inputs of `unit_type` into
   // `target_unit` using this document's unit definitions. Converted inputs
   // have their unit and unittype annotations removed, matching MaterialX's

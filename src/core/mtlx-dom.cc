@@ -1392,7 +1392,7 @@ void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,
   if (IsMtlxNodeElem(*elem)) {
     if (const MtlxNodeDefInfo *def = library.ResolveReference(*elem, outer)) {
       for (const MtlxPort &port : library.ActiveInputs(*def)) {
-        if (!port.has_value) continue;
+        if (!port.has_value || !port.default_geomprop.empty()) continue;
         MtlxElem *input = nullptr;
         for (MtlxElem &child : elem->children) {
           if (child.tag == "input" && child.Name() == port.name) {
@@ -2142,6 +2142,56 @@ bool MtlxDocument::ResolveNodeGraphs(
   for (const MtlxElem &def : StandardMtlxNodeDefs())
     library.AddNodeDef(def, {});
   return ResolveMtlxGraphs(root, library, graph_order, err);
+}
+
+bool MtlxDocument::FlattenNodeGraph(const std::string &graph_name,
+                                    size_t max_expansions, std::string *err) {
+  const MtlxLibrary empty_library;
+  return FlattenNodeGraph(graph_name, empty_library, max_expansions, err);
+}
+
+bool MtlxDocument::FlattenNodeGraph(const std::string &graph_name,
+                                    const MtlxLibrary &external_library,
+                                    size_t max_expansions, std::string *err) {
+  std::string ignored_error;
+  if (!err) err = &ignored_error;
+  err->clear();
+  if (!parsed_root_) {
+    *err = "MaterialX document has not been parsed";
+    return false;
+  }
+  MtlxElem root = XMLNodeToMtlxElem(parsed_root_);
+  MtlxLibrary library;
+  library.AddFrom(root);
+  library.AddLibrary(external_library);
+  for (const MtlxElem &def : StandardMtlxNodeDefs())
+    library.AddNodeDef(def, {});
+  size_t index = root.children.size();
+  for (size_t i = 0; i < root.children.size(); ++i) {
+    if (root.children[i].tag != "nodegraph" ||
+        root.children[i].Name() != graph_name) continue;
+    if (index != root.children.size()) {
+      *err = "ambiguous nodegraph '" + graph_name + "'";
+      return false;
+    }
+    index = i;
+  }
+  if (index == root.children.size()) {
+    *err = "nodegraph not found: " + graph_name;
+    return false;
+  }
+  MtlxElem flattened;
+  if (!FlattenMtlxGraph(root, root.children[index], library, {&root},
+                        max_expansions, &flattened, err)) return false;
+  root.children[index] = std::move(flattened);
+  MtlxDocument updated;
+  if (!updated.ParseRoot(MtlxElemToXMLNode(root))) {
+    *err = "Failed to rebuild MaterialX document after graph flattening";
+    return false;
+  }
+  updated.warning_ = warning_;
+  *this = std::move(updated);
+  return true;
 }
 
 bool MtlxDocument::ConvertToUnit(const std::string &unit_type,

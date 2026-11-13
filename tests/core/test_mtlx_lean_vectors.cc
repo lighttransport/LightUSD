@@ -1304,6 +1304,119 @@ static void CheckTypedMtlxGraphResolution() {
          error.empty() ? parsed_document.GetError() : error);
   }
 
+  const std::string flatten_xml = R"(<materialx version="1.39" colorspace="lin_rec709" fileprefix="textures/">
+  <nodedef name="ND_test_constant" node="testconstant" type="float"><output name="out" type="float"/></nodedef>
+  <nodedef name="ND_test_add" node="testadd" type="float"><input name="in1" type="float"/><output name="out" type="float"/></nodedef>
+  <nodedef name="ND_test_graph" node="testgraph" type="float"><input name="gain" type="float" value="0.75"/><output name="out" type="float"/></nodedef>
+  <nodegraph name="impl" nodedef="ND_test_graph">
+    <testadd name="inner" type="float" nodedef="ND_test_add"><input name="in1" type="float" interfacename="gain"/></testadd>
+    <output name="out" type="float" nodename="inner"/>
+  </nodegraph>
+  <nodegraph name="caller">
+    <testconstant name="seed" type="float" nodedef="ND_test_constant"/>
+    <testgraph name="call" type="float" nodedef="ND_test_graph"><input name="gain" type="float" nodename="seed"/></testgraph>
+    <output name="out" type="float" nodename="call"/>
+  </nodegraph>
+</materialx>)";
+  MtlxDocument flatten_document;
+  g_checks++;
+  if (!flatten_document.ParseFromXML(flatten_xml)) {
+    Fail("MTLX_DOCUMENT_FLATTEN_PARSE", 0, flatten_document.GetError());
+  } else {
+    const std::string before = flatten_document.GetResolvedXML();
+    g_checks++;
+    if (flatten_document.FlattenNodeGraph("caller", 0, &error) ||
+        flatten_document.GetResolvedXML() != before ||
+        error.find("limit") == std::string::npos) {
+      Fail("MTLX_DOCUMENT_FLATTEN_ATOMIC", 0,
+           "failed flattening modified the document or missed its limit");
+    }
+    g_checks++;
+    if (!flatten_document.FlattenNodeGraph("caller", 1, &error)) {
+      Fail("MTLX_DOCUMENT_FLATTEN", 0, error);
+    } else {
+      const MtlxNodeGraphPtr flat_graph = flatten_document.FindNodeGraph("caller");
+      const MtlxNodePtr flat_inner = flat_graph && flat_graph->GetNodes().size() == 2
+                                         ? flat_graph->GetNodes()[1] : nullptr;
+      const MtlxInputPtr flat_input = flat_inner ? flat_inner->GetInput("in1") : nullptr;
+      if (!flat_graph || flat_graph->GetNode("call") || !flat_input ||
+          flat_input->GetNodeName() != "seed" ||
+          flat_graph->GetOutputs().size() != 1 ||
+          flat_graph->GetOutputs()[0]->GetNodeName() != flat_inner->GetName() ||
+          flat_input->GetColorSpace() != "lin_rec709" ||
+          flat_input->GetFilePrefix() != "textures/") {
+        Fail("MTLX_DOCUMENT_FLATTEN", 1,
+             "rebuilt graph did not retain connections or inherited scope");
+      }
+    }
+  }
+  std::string geomprop_xml = flatten_xml;
+  const std::string default_input = "<input name=\"gain\" type=\"float\" value=\"0.75\"/>";
+  const size_t default_pos = geomprop_xml.find(default_input);
+  const std::string authored_input = "<input name=\"gain\" type=\"float\" nodename=\"seed\"/>";
+  if (default_pos != std::string::npos)
+    geomprop_xml.replace(default_pos, default_input.size(),
+        "<input name=\"gain\" type=\"float\" value=\"0.75\" defaultgeomprop=\"Pworld\"/>");
+  const size_t authored_pos = geomprop_xml.find(authored_input);
+  if (authored_pos != std::string::npos)
+    geomprop_xml.erase(authored_pos, authored_input.size());
+  MtlxDocument geomprop_document;
+  g_checks++;
+  if (default_pos == std::string::npos || authored_pos == std::string::npos ||
+      !geomprop_document.ParseFromXML(geomprop_xml)) {
+    Fail("MTLX_DOCUMENT_FLATTEN_GEOMPROP_SETUP", 0, geomprop_document.GetError());
+  } else {
+    const std::string before = geomprop_document.GetResolvedXML();
+    const MtlxNodeGraphPtr graph_with_call = geomprop_document.FindNodeGraph("caller");
+    const MtlxNodePtr geometry_call = graph_with_call ? graph_with_call->GetNode("call") : nullptr;
+    g_checks++;
+    if (!geometry_call || geometry_call->GetInput("gain") ||
+        geomprop_document.FlattenNodeGraph("caller", 1, &error) ||
+        error.find("geometry") == std::string::npos ||
+        geomprop_document.GetResolvedXML() != before) {
+      Fail("MTLX_DOCUMENT_FLATTEN_GEOMPROP", 0,
+           "geometry-property default was lost or flattening changed the document");
+    }
+  }
+  std::string scoped_flatten_xml = flatten_xml;
+  const std::string impl_tag = "name=\"impl\" nodedef=\"ND_test_graph\"";
+  const size_t impl_pos = scoped_flatten_xml.find(impl_tag);
+  if (impl_pos != std::string::npos)
+    scoped_flatten_xml.replace(impl_pos, impl_tag.size(), impl_tag + " fileprefix=\"other/\"");
+  MtlxDocument scoped_flatten_document;
+  g_checks++;
+  if (impl_pos == std::string::npos || !scoped_flatten_document.ParseFromXML(scoped_flatten_xml)) {
+    Fail("MTLX_DOCUMENT_FLATTEN_SCOPE_SETUP", 0, scoped_flatten_document.GetError());
+  } else {
+    const std::string before = scoped_flatten_document.GetResolvedXML();
+    g_checks++;
+    if (scoped_flatten_document.FlattenNodeGraph("caller", 1, &error) ||
+        error.find("scope") == std::string::npos ||
+        scoped_flatten_document.GetResolvedXML() != before) {
+      Fail("MTLX_DOCUMENT_FLATTEN_SCOPE", 0,
+           "differing graph scopes were accepted or modified the document");
+    }
+  }
+  std::string token_flatten_xml = flatten_xml;
+  const std::string body_node_start = "<testadd name=\"inner\"";
+  const size_t token_pos = token_flatten_xml.find(body_node_start);
+  if (token_pos != std::string::npos)
+    token_flatten_xml.insert(token_pos, "<token name=\"asset\" type=\"string\" value=\"example\"/>");
+  MtlxDocument token_flatten_document;
+  g_checks++;
+  if (token_pos == std::string::npos || !token_flatten_document.ParseFromXML(token_flatten_xml)) {
+    Fail("MTLX_DOCUMENT_FLATTEN_TOKEN_SETUP", 0, token_flatten_document.GetError());
+  } else {
+    const std::string before = token_flatten_document.GetResolvedXML();
+    g_checks++;
+    if (token_flatten_document.FlattenNodeGraph("caller", 1, &error) ||
+        error.find("token") == std::string::npos ||
+        token_flatten_document.GetResolvedXML() != before) {
+      Fail("MTLX_DOCUMENT_FLATTEN_TOKEN", 0,
+           "token scope was ignored or flattening modified the document");
+    }
+  }
+
   g_checks++;
   MtlxDocument external_document;
   MtlxLibrary external_library;
@@ -1345,6 +1458,31 @@ static void CheckTypedMtlxGraphResolution() {
       parsed_order != std::vector<std::string>({"external_graph"})) {
     Fail("MTLX_DOCUMENT_EXTERNAL_LIBRARY", 0,
          error.empty() ? external_document.GetError() : error);
+  }
+  const std::string external_flatten_xml = R"(<materialx version="1.39">
+  <nodegraph name="external_impl" nodedef="ND_external_passthrough">
+    <externalconstant name="source" type="float" nodedef="ND_external_constant"/>
+    <output name="out" type="float" nodename="source"/>
+  </nodegraph>
+  <nodegraph name="external_caller">
+    <externalpassthrough name="call" type="float" nodedef="ND_external_passthrough"/>
+    <output name="out" type="float" nodename="call"/>
+  </nodegraph>
+</materialx>)";
+  MtlxDocument external_flatten_document;
+  g_checks++;
+  if (!external_flatten_document.ParseFromXML(external_flatten_xml) ||
+      !external_flatten_document.FlattenNodeGraph("external_caller", external_library,
+                                                  1, &error)) {
+    Fail("MTLX_DOCUMENT_FLATTEN_EXTERNAL_LIBRARY", 0,
+         error.empty() ? external_flatten_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat_graph = external_flatten_document.FindNodeGraph("external_caller");
+    if (!flat_graph || flat_graph->GetNode("call") || flat_graph->GetNodes().size() != 1 ||
+        flat_graph->GetNodes()[0]->GetCategory() != "externalconstant") {
+      Fail("MTLX_DOCUMENT_FLATTEN_EXTERNAL_LIBRARY", 1,
+           "external-library graph did not flatten");
+    }
   }
 
   g_checks++;

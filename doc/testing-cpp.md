@@ -4638,3 +4638,9 @@ limit and atomic failure. MaterialX 1.39.5 was used to check the connected,
 nested and nodedef-default cases. The inliner currently rejects unsupported
 implementation selection, scope and geometry-property default cases; these
 tests do not establish general corpus or renderer parity.
+The regression also calls `MtlxDocument::FlattenNodeGraph` on parsed documents,
+including external nodedefs and matching inherited scope, and checks that
+expansion-limit, differing-scope, token-scope and geometry-property-default
+failures leave the document unchanged. Authored nodedef geometry-property
+defaults are not replaced with literal defaults during document parsing. The
+bundled generated standard-nodedef table does not yet include this metadata.
