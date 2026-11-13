@@ -844,6 +844,41 @@ static void CheckTypedMtlxGraphResolution() {
          "cycle through document output and root node was accepted");
   }
 
+  MtlxElem compound_main = elem("nodegraph", "main");
+  compound_main.children = root.children[1].children;
+  compound_main.children[0].SetAttr("nodegraph", "helper");
+  compound_main.children[0].SetAttr("output", "value");
+  MtlxElem local_value = elem("input", "in1");
+  local_value.SetAttr("type", "float");
+  local_value.SetAttr("value", "1");
+  compound_main.children[2].children[0] = local_value;
+  MtlxElem compound_root = elem("materialx", "");
+  compound_root.children = {compound_main, root.children[0]};
+  g_checks++;
+  if (!ResolveMtlxGraphs(compound_root, library, &graph_order, &error) ||
+      graph_order != std::vector<std::string>({"helper", "main"})) {
+    Fail("MTLX_GRAPHS_INTERFACE_DEPENDENCY", 0,
+         error.empty() ? "compound graph input dependency was not ordered" : error);
+  }
+  MtlxElem missing_compound_source = compound_root;
+  missing_compound_source.children[0].children[0].SetAttr("nodegraph", "missing");
+  g_checks++;
+  if (ResolveMtlxGraphs(missing_compound_source, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_INTERFACE_MISSING_SOURCE", 0,
+         "compound graph input with missing source was accepted");
+  }
+  MtlxElem compound_cycle = compound_root;
+  MtlxElem helper_input = elem("input", "cycle");
+  helper_input.SetAttr("type", "float");
+  helper_input.SetAttr("nodegraph", "main");
+  helper_input.SetAttr("output", "out");
+  compound_cycle.children[1].children.push_back(helper_input);
+  g_checks++;
+  if (ResolveMtlxGraphs(compound_cycle, library, &graph_order, &error)) {
+    Fail("MTLX_GRAPHS_INTERFACE_CYCLE", 0,
+         "cycle through compound graph inputs was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

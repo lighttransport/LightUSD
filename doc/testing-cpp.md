@@ -4611,3 +4611,8 @@ The MaterialX graph-order regression covers dependencies reached through a
 document-level output and root nodes, including multiple hops, shared upstream
 nodes, and cycles returning to a graph or confined to reachable root nodes. The
 cycle returning to a graph was checked against MaterialX 1.39.5.
+The same graph-order test covers `nodegraph` connections authored directly on
+compound graph inputs, including a missing graph and a cycle. MaterialX 1.39.5
+accepts the tested compound input connection. Ordering treats all such authored
+connections as dependencies, including unused ones; it does not yet validate
+all graph-input source ports or trace graph inputs through document root nodes.

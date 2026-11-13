@@ -1653,6 +1653,14 @@ bool ResolveMtlxGraphs(const MtlxElem &document, const MtlxLibrary &library,
       ++indegree[consumer];
       return true;
     };
+    // Compound graph inputs can themselves connect to other nodegraphs.
+    for (const MtlxElem &input : graphs[consumer]->children) {
+      if (input.tag != "input") continue;
+      if (const std::string *name = input.Attr("nodegraph")) {
+        MtlxScope input_scope{&input, graphs[consumer], &document};
+        if (!add_dependency(*name, input, input_scope)) return false;
+      }
+    }
     for (const MtlxElem &node : graphs[consumer]->children) {
       if (!IsMtlxNodeElem(node)) continue;
       for (const MtlxElem &input : node.children) {
