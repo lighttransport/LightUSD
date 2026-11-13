@@ -1709,9 +1709,9 @@ and view-dependent sheen-layer throughput.
 weights and phase-lobe overflow.
 `tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses,
 the lobe limit, literal and connected RGB weights, opaque diffuse layer
-throughput, and dielectric/generalized Schlick reflection-layer throughput
-(including films) for direct, mixed and nested tops. Separate specular response
-and transmission composition remain approximate;
+throughput, dielectric/generalized Schlick reflection-layer throughput and
+independent reflection lobes (including films), mixed lobes, RGB weights,
+sampling, and overflow. Transmission composition remains approximate;
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
 and opaque diffuse, sheen and conductor layers through the rendered CPU path,
 and verifies that

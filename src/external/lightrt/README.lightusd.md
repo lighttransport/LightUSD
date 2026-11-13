@@ -187,3 +187,6 @@ upstream provenance intact.
 
 - 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `d0c46a3` for
   dielectric and generalized Schlick reflection-layer throughput.
+
+- 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h,mtlx_eval.c,mtlx_eval.h}`
+  matches LightRT `046d86a` for independent dielectric and Schlick reflections.

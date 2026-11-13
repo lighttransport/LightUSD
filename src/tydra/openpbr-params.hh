@@ -36,6 +36,17 @@ struct RealtimeConductorLobe {
   float thinfilmIor{1.5f};
 };
 
+constexpr int kMaxRealtimeSpecularLobes = 32;
+struct RealtimeSpecularLobe {
+  RealtimeConductorLobe frame{};
+  int model{0};
+  float tint[3]{1.0f, 1.0f, 1.0f};
+  float color0[3]{1.0f, 1.0f, 1.0f};
+  float color82[3]{1.0f, 1.0f, 1.0f};
+  float color90[3]{1.0f, 1.0f, 1.0f};
+  float exponent{5.0f};
+};
+
 constexpr int kMaxRealtimeSheenLobes = 32;
 struct RealtimeSheenLobe {
   float color[3]{0.0f, 0.0f, 0.0f};
@@ -57,6 +68,8 @@ struct RealtimePbrMaterial {
   float metalness{0.0f};
   int conductorLobeCount{0};
   RealtimeConductorLobe conductorLobes[kMaxRealtimeConductorLobes]{};
+  int specularLobeCount{0};
+  RealtimeSpecularLobe specularLobes[kMaxRealtimeSpecularLobes]{};
   float specularWeight{1.0f};
   float specularColor[3]{1.0f, 1.0f, 1.0f};
   float specularRoughness{0.3f};

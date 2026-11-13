@@ -368,6 +368,30 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
     dst->conductorLobes[i].thinfilmThickness = src.conductor_lobes[i].thinfilm_thickness;
     dst->conductorLobes[i].thinfilmIor = src.conductor_lobes[i].thinfilm_ior;
   }
+  static_assert(tydra::kMaxRealtimeSpecularLobes == MTLX_MAX_SPECULAR_LOBES,
+                "Specular lobe limits must match");
+  dst->specularLobeCount = std::clamp(src.specular_lobe_count, 0, MTLX_MAX_SPECULAR_LOBES);
+  for (int i = 0; i < dst->specularLobeCount; ++i) {
+    const auto &lobe = src.specular_lobes[i];
+    auto &out = dst->specularLobes[i];
+    CopyV3(lobe.frame.ior, out.frame.ior);
+    CopyV3(lobe.frame.extinction, out.frame.extinction);
+    out.frame.weight = lobe.frame.weight;
+    CopyV3(lobe.frame.weight_color, out.frame.weightColor);
+    out.frame.roughness = lobe.frame.roughness;
+    out.frame.roughnessY = lobe.frame.roughness_y;
+    CopyV3(lobe.frame.tangent, out.frame.tangent);
+    CopyV3(lobe.frame.normal, out.frame.normal);
+    out.frame.retroreflective = lobe.frame.retroreflective != 0;
+    out.frame.thinfilmThickness = lobe.frame.thinfilm_thickness;
+    out.frame.thinfilmIor = lobe.frame.thinfilm_ior;
+    out.model = lobe.model;
+    CopyV3(lobe.tint, out.tint);
+    CopyV3(lobe.color0, out.color0);
+    CopyV3(lobe.color82, out.color82);
+    CopyV3(lobe.color90, out.color90);
+    out.exponent = lobe.exponent;
+  }
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);
   dst->specularRoughness = src.specular_roughness;
@@ -457,6 +481,12 @@ void MergeGraphParamsPreservingTextureDeps(
   }
   if (safe("base_diffuse_roughness")) {
     dst->diffuseRoughness = graph.diffuseRoughness;
+  }
+  if (safe("specular_weight") && safe("specular_color") &&
+      safe("specular_roughness") && safe("specular_ior")) {
+    dst->specularLobeCount = graph.specularLobeCount;
+    std::copy(std::begin(graph.specularLobes), std::end(graph.specularLobes),
+              std::begin(dst->specularLobes));
   }
   if (safe("specular_weight")) dst->specularWeight = graph.specularWeight;
   if (safe("specular_color")) copy3(graph.specularColor, dst->specularColor);

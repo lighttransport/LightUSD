@@ -172,6 +172,7 @@ int main() {
         <input name="roughness" type="vector2" value="0.2,0.7"/>
         <input name="thinfilm_thickness" type="float" value="450"/>
         <input name="thinfilm_ior" type="float" value="1.3"/>
+        <input name="retroreflective" type="boolean" value="true"/>
       </dielectric_bsdf>
       <layer name="stack" type="BSDF">
         <input name="top" type="BSDF" nodename="coat"/>
@@ -183,7 +184,12 @@ int main() {
     lightusd::tydra::LightRtOpenPBRParams params;
     std::string err;
     if (!lusdview::EvaluateMaterialXStringToLightRtOpenPBR(xml, "m", &params, &err) ||
-        params.diffuseLobeCount != 1 || !Near(params.diffuseLobes[0].weight, .968501665f, 2e-6f)) {
+        params.diffuseLobeCount != 1 || !Near(params.diffuseLobes[0].weight, .968501665f, 2e-6f) ||
+        params.specularLobeCount != 1 || params.specularLobes[0].model != 0 ||
+        !Near(params.specularLobes[0].frame.ior[0], 1.6f) ||
+        !Near(params.specularLobes[0].frame.roughnessY, .7f) ||
+        !Near(params.specularLobes[0].frame.thinfilmThickness, 450.0f) ||
+        !params.specularLobes[0].frame.retroreflective) {
       std::fprintf(stderr, "MaterialX dielectric layer bridge failed: %s\n", err.c_str());
       return 1;
     }

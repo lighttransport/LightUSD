@@ -269,6 +269,30 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.conductor_lobes[i].thinfilm_thickness = lobe.thinfilmThickness;
     p.conductor_lobes[i].thinfilm_ior = lobe.thinfilmIor;
   }
+  static_assert(lightusd::tydra::kMaxRealtimeSpecularLobes == MTLX_MAX_SPECULAR_LOBES,
+                "Specular lobe limits must match");
+  p.specular_lobe_count = std::clamp(src.specularLobeCount, 0, MTLX_MAX_SPECULAR_LOBES);
+  for (int i = 0; i < p.specular_lobe_count; ++i) {
+    const auto &lobe=src.specularLobes[i];
+    auto &out=p.specular_lobes[i];
+    out.frame.ior=v3_make(lobe.frame.ior[0],lobe.frame.ior[1],lobe.frame.ior[2]);
+    out.frame.extinction=v3_make(lobe.frame.extinction[0],lobe.frame.extinction[1],lobe.frame.extinction[2]);
+    out.frame.weight=lobe.frame.weight;
+    out.frame.weight_color=v3_make(lobe.frame.weightColor[0],lobe.frame.weightColor[1],lobe.frame.weightColor[2]);
+    out.frame.roughness=lobe.frame.roughness;
+    out.frame.roughness_y=lobe.frame.roughnessY;
+    out.frame.tangent=v3_make(lobe.frame.tangent[0],lobe.frame.tangent[1],lobe.frame.tangent[2]);
+    out.frame.normal=v3_make(lobe.frame.normal[0],lobe.frame.normal[1],lobe.frame.normal[2]);
+    out.frame.retroreflective=lobe.frame.retroreflective;
+    out.frame.thinfilm_thickness=lobe.frame.thinfilmThickness;
+    out.frame.thinfilm_ior=lobe.frame.thinfilmIor;
+    out.model=lobe.model;
+    out.tint=v3_make(lobe.tint[0],lobe.tint[1],lobe.tint[2]);
+    out.color0=v3_make(lobe.color0[0],lobe.color0[1],lobe.color0[2]);
+    out.color82=v3_make(lobe.color82[0],lobe.color82[1],lobe.color82[2]);
+    out.color90=v3_make(lobe.color90[0],lobe.color90[1],lobe.color90[2]);
+    out.exponent=lobe.exponent;
+  }
   p.specular_weight = src.specularWeight;
   p.specular_color =
       v3_make(src.specularColor[0], src.specularColor[1], src.specularColor[2]);
@@ -1744,7 +1768,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     float specular_f90 = 1.0f;
     float specular_roughness = tri.roughness;
     if (tri.use_specular_workflow && !(opt.material_shading == Options::MaterialShading::LightRtBsdf &&
-        tri_openpbr && tri_openpbr->conductorLobeCount > 0)) {
+        tri_openpbr && (tri_openpbr->conductorLobeCount > 0 || tri_openpbr->specularLobeCount > 0))) {
       f0 = tri.specular_color;
       kd_metal = 0.0f;
     } else if (opt.material_shading == Options::MaterialShading::LightRtBsdf &&
@@ -1763,9 +1787,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           dielectric_f0 * p.specular_color.z};
       const Vec3 base = Mul(FromMtlxV3(p.base_color), p.base_weight);
       const float metal = p.conductor_lobe_count > 0 ? 0.0f : p.metalness;
-      f0 = Lerp(dielectric_f0_color, base, metal);
+      f0 = p.specular_lobe_count > 0 ? Vec3{0.0f, 0.0f, 0.0f} : Lerp(dielectric_f0_color, base, metal);
       kd_metal = 0.0f;
-      specular_f90 = std::clamp(p.specular_weight, 0.0f, 1.0f);
+      specular_f90 = p.specular_lobe_count > 0 ? 0.0f : std::clamp(p.specular_weight, 0.0f, 1.0f);
       specular_roughness = p.specular_roughness;
     } else {
       // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
@@ -1833,6 +1857,38 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         }
         const Vec3 tint{lobe.weight_color.x, lobe.weight_color.y, lobe.weight_color.z};
         spec = Add(spec, Mul(Mul(response, tint), lobe.weight));
+      }
+    }
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
+      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i=0; i<p.specular_lobe_count; ++i) {
+        const MtlxSpecularLobe &lobe=p.specular_lobes[i];
+        const MtlxConductorLobe &frame=lobe.frame;
+        Vec3 ln=FromMtlxV3(frame.normal);
+        const float len=Length(ln);
+        if (!std::isfinite(ln.x) || !std::isfinite(ln.y) || !std::isfinite(ln.z) ||
+            !std::isfinite(len) || len<1.0e-6f) ln=n;
+        else ln=Mul(ln,1.0f/len);
+        if (Dot(ln,view)<0.0f) ln=Mul(ln,-1.0f);
+        const float nv=std::max(0.0f,Dot(ln,view));
+        const float ax=std::isfinite(frame.roughness) ? std::clamp(frame.roughness,0.0f,1.0f) : 1.0f;
+        const float ay=std::isfinite(frame.roughness_y) ? std::clamp(frame.roughness_y,0.0f,1.0f) : 1.0f;
+        const float rough=std::sqrt(std::sqrt(ax*ay));
+        const Vec3 direction=EnvDir(*ibl,frame.retroreflective ? view : Reflect(Mul(view,-1.0f),ln));
+        const Vec3 env=SampleIblMip(ibl->prefiltered,direction,rough);
+        float a=1.0f,b=0.0f; SampleBrdfLut(*ibl,nv,rough,&a,&b);
+        const Vec3 f0=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,1.0f));
+        const Vec3 fv=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,nv));
+        const Vec3 f90=(lobe.model==MTLX_SPECULAR_SCHLICK && frame.thinfilm_thickness<=0.0f)
+            ? Vec3{std::max(0.0f,lobe.color90.x),std::max(0.0f,lobe.color90.y),std::max(0.0f,lobe.color90.z)}
+            : Vec3{1.0f,1.0f,1.0f};
+        Vec3 response=Mul(env,Add(Mul(f0,a),Mul(f90,b)));
+        if (frame.thinfilm_thickness>0.0f || lobe.model==MTLX_SPECULAR_SCHLICK)
+          response=Lerp(Mul(env,fv),response,rough);
+        Vec3 tint=FromMtlxV3(frame.weight_color);
+        if (lobe.model==MTLX_SPECULAR_DIELECTRIC)
+          tint=Mul(tint,Vec3{std::max(0.0f,lobe.tint.x),std::max(0.0f,lobe.tint.y),std::max(0.0f,lobe.tint.z)});
+        spec=Add(spec,Mul(Mul(response,tint),frame.weight));
       }
     }
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},

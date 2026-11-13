@@ -395,6 +395,120 @@ v3 bsdf_materialx_conductor_film_fresnel(float cosine, v3 eta, v3 extinction,
     return conductor_airy(cosine, eta, extinction, thickness, film_ior);
 }
 
+/* Hoffman generalized Schlick Fresnel, including the 82-degree control. */
+static v3 materialx_schlick(float cosine, const MtlxSpecularLobe *lobe) {
+    double x=fmin(1.0,fmax(0.0,cosine));
+    double exponent=lobe->exponent;
+    double f0[3]={lobe->color0.x,lobe->color0.y,lobe->color0.z};
+    double f82[3]={lobe->color82.x,lobe->color82.y,lobe->color82.z};
+    double f90[3]={lobe->color90.x,lobe->color90.y,lobe->color90.z};
+    double r=pow(6.0/7.0,exponent), p=pow(1.0-x,exponent);
+    double factor=1.0/((1.0/7.0)*pow(6.0/7.0,6.0));
+    double dip=x*pow(1.0-x,6.0); float result[3];
+    for(int i=0;i<3;i++) {
+        double c0=fmax(0.0,f0[i]), c82=fmax(0.0,f82[i]), c90=fmax(0.0,f90[i]);
+        double a=(c0+(c90-c0)*r)*(1.0-c82)*factor;
+        result[i]=(float)(c0+(c90-c0)*p-a*dip);
+    }
+    return v3_make(result[0],result[1],result[2]);
+}
+
+/* MaterialX Airy Fresnel for a generalized-Schlick substrate. */
+static v3 schlick_airy(float cosine, const MtlxSpecularLobe *lobe) {
+    const MtlxConductorLobe *frame=&lobe->frame;
+    float c=clampf(cosine,1.0e-8f,1.0f), e=maxf(frame->thinfilm_ior,1.0f);
+    float ct=sqrtf(maxf(0.0f,1.0f-(1.0f-c*c)/(e*e)));
+    float r12p,r12s; fresnel_dielectric_pol(c,e,&r12p,&r12s);
+    if(ct<=0.0f) { r12p=1.0f; r12s=1.0f; }
+    float phi1p=c<cosf(atanf(e)) ? 0.0f : MTLX_PI;
+    float opd=2.0f*e*ct*frame->thinfilm_thickness*1.0e-9f;
+    v3 f=materialx_schlick(ct,lobe);
+    const float fs[3]={f.x,f.y,f.z};
+    const float c0[3]={lobe->color0.x,lobe->color0.y,lobe->color0.z};
+    float xyz[3];
+    for(int j=0;j<3;j++) {
+        float root=sqrtf(clampf(c0[j],.01f,.99f));
+        float eta=(1.0f+root)/(1.0f-root);
+        float r23=clampf(.5f*fs[j],0.0f,1.0f);
+        float phi23=eta<e ? MTLX_PI : 0.0f;
+        const float r12[2]={r12p,r12s}, phase[2]={phi1p+phi23,MTLX_PI+phi23};
+        double sum=0.0;
+        for(int pol=0;pol<2;pol++) {
+            double t=1.0-r12[pol], den=1.0-r12[pol]*r23;
+            double dc=den>1e-15 ? t*t*r23/den : 0.0;
+            double cm=dc-t, amp=sqrt(fmax(0.0,r12[pol]*r23));
+            sum+=r12[pol]+dc;
+            for(int m=1;m<=2;m++) {
+                cm*=amp;
+                v3 sensitivity=eval_sensitivity((float)m*opd,(float)m*phase[pol]);
+                float value=j==0 ? sensitivity.x : (j==1 ? sensitivity.y : sensitivity.z);
+                sum+=2.0*cm*value;
+            }
+        }
+        xyz[j]=(float)(.5*sum);
+    }
+    v3 rgb=xyz_to_rgb_airy(v3_make(xyz[0],xyz[1],xyz[2]));
+    return v3_make(clampf(rgb.x,0,1),clampf(rgb.y,0,1),clampf(rgb.z,0,1));
+}
+
+v3 bsdf_materialx_specular_fresnel(const MtlxSpecularLobe *lobe, float cosine) {
+    if (!lobe || !isfinite(cosine) || !isfinite(lobe->frame.thinfilm_thickness) ||
+        !isfinite(lobe->frame.thinfilm_ior)) return v3_splat(0.0f);
+    int film=lobe->frame.thinfilm_thickness>0.0f;
+    if (lobe->model==MTLX_SPECULAR_DIELECTRIC) {
+        float n=lobe->frame.ior.x;
+        if (!isfinite(n) || !(n>0.0f)) return v3_splat(0.0f);
+        v3 result=film ? fresnel_airy(cosine,n,lobe->frame.thinfilm_thickness,lobe->frame.thinfilm_ior)
+                       : v3_splat((float)materialx_conductor_fresnel(cosine,n,0.0));
+        return v3_is_finite(result) ? result : v3_splat(0.0f);
+    }
+    if (!v3_is_finite(lobe->color0) || !v3_is_finite(lobe->color82) ||
+        !v3_is_finite(lobe->color90) || !isfinite(lobe->exponent) || lobe->exponent<0.0f)
+        return v3_splat(0.0f);
+    v3 result=film ? schlick_airy(cosine,lobe) : materialx_schlick(cosine,lobe);
+    return v3_is_finite(result) ? result : v3_splat(0.0f);
+}
+
+/* MaterialX dielectric / generalized-Schlick GGX response for one closure. */
+static v3 specular_closure_response(const MtlxSpecularLobe *lobe, float nv, float nl,
+                                    float hx, float hy, float hz, float vh) {
+    const MtlxConductorLobe *frame=&lobe->frame;
+    if (!(nv>0.0f && nl>0.0f) || !isfinite(nv) || !isfinite(nl) ||
+        !isfinite(hx) || !isfinite(hy) || !isfinite(hz) || !isfinite(vh) ||
+        !isfinite(frame->roughness) || !isfinite(frame->roughness_y) ||
+        !isfinite(frame->thinfilm_thickness) || !isfinite(frame->thinfilm_ior)) return v3_splat(0);
+    if (lobe->model==MTLX_SPECULAR_DIELECTRIC) {
+        if (!isfinite(frame->ior.x) || !(frame->ior.x>0.0f) || !v3_is_finite(lobe->tint)) return v3_splat(0);
+    } else if (!v3_is_finite(lobe->color0) || !v3_is_finite(lobe->color82) ||
+               !v3_is_finite(lobe->color90) || !isfinite(lobe->exponent) || lobe->exponent<0.0f) return v3_splat(0);
+    double v=fmin(1.0,nv), l=fmin(1.0,nl), h=fmin(1.0,fmax(0.0,hz));
+    double ax=fmin(1.0,fmax(1.0e-8,frame->roughness));
+    double ay=fmin(1.0,fmax(1.0e-8,frame->roughness_y));
+    double a=sqrt(ax*ay), a2=a*a;
+    double d=((double)hx/ax)*((double)hx/ax)+((double)hy/ay)*((double)hy/ay)+h*h;
+    if (!(d>0.0)) return v3_splat(0);
+    double D=1.0/(3.14159265358979323846*ax*ay*d*d);
+    double lv=sqrt(a2+(1.0-a2)*v*v), ll=sqrt(a2+(1.0-a2)*l*l);
+    double G=2.0*v*l/(v*ll+l*lv), ess=materialx_ggx_directional_albedo(v,a);
+    if (!(ess>0.0)) return v3_splat(0);
+    int film=frame->thinfilm_thickness>0.0f;
+    v3 f0=bsdf_materialx_specular_fresnel(lobe,1.0f);
+    v3 f=bsdf_materialx_specular_fresnel(lobe,vh);
+    if (!v3_is_finite(f0) || !v3_is_finite(f)) return v3_splat(0.0f);
+    v3 f90=(film || lobe->model==MTLX_SPECULAR_DIELECTRIC) ? v3_splat(1.0f) :
+        v3_make(maxf(0,lobe->color90.x),maxf(0,lobe->color90.y),maxf(0,lobe->color90.z));
+    const float f0c[3]={f0.x,f0.y,f0.z}, fc[3]={f.x,f.y,f.z}, f90c[3]={f90.x,f90.y,f90.z};
+    const float tint[3]={lobe->tint.x,lobe->tint.y,lobe->tint.z};
+    float result[3];
+    for(int j=0;j<3;j++) {
+        double favg=f0c[j]+(f90c[j]-f0c[j])/21.0;
+        double comp=1.0+favg*(1.0-ess)/ess;
+        double t=lobe->model==MTLX_SPECULAR_DIELECTRIC ? fmax(0.0,tint[j]) : 1.0;
+        result[j]=(float)(D*G*fc[j]*comp*t/(4.0*v*l));
+    }
+    return v3_make(result[0],result[1],result[2]);
+}
+
 /* ---- layered material ------------------------------------------------- */
 typedef struct {
     v3    diff_color;  /* effective diffuse albedo (incl. subsurface tint) */
@@ -414,6 +528,8 @@ typedef struct {
     const MtlxSheenLobe *sheen_lobes;
     int conductor_lobe_count;
     const MtlxConductorLobe *conductor_lobes;
+    int specular_lobe_count;
+    const MtlxSpecularLobe *specular_lobes;
     v3    coat_color; float coat_alpha, coat_w, coat_f0, coat_Ri;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
@@ -425,6 +541,7 @@ typedef struct {
 static Layers extract(const OpenPBRParams *p) {
     Layers L;
     const int explicit_conductor = p->conductor_lobe_count > 0;
+    const int explicit_specular = p->specular_lobe_count > 0;
     float metal = explicit_conductor ? 0.0f : p->metalness, trans = p->transmission;
     v3 base = v3_scale(p->base_color, p->base_weight);
     if (explicit_conductor) {
@@ -461,6 +578,7 @@ static Layers extract(const OpenPBRParams *p) {
     f0d = f0d * f0d * p->specular_weight;
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
+    if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
     L.ior = p->specular_ior;
     float specular_roughness = isfinite(p->specular_roughness) ? p->specular_roughness : 1.0f;
     L.alpha = clampf(specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
@@ -474,6 +592,9 @@ static Layers extract(const OpenPBRParams *p) {
     L.conductor_lobe_count = p->conductor_lobe_count < 0 ? 0 :
         (p->conductor_lobe_count > MTLX_MAX_CONDUCTOR_LOBES ? MTLX_MAX_CONDUCTOR_LOBES : p->conductor_lobe_count);
     L.conductor_lobes = p->conductor_lobes;
+    L.specular_lobe_count = p->specular_lobe_count < 0 ? 0 :
+        (p->specular_lobe_count > MTLX_MAX_SPECULAR_LOBES ? MTLX_MAX_SPECULAR_LOBES : p->specular_lobe_count);
+    L.specular_lobes = p->specular_lobes;
 
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
@@ -488,7 +609,7 @@ static Layers extract(const OpenPBRParams *p) {
     { float n = p->coat_ior;
       L.coat_Ri = (n > 1.001f) ? (-1.440f / (n * n) + 0.710f / n + 0.668f + 0.0636f * n) : 0.0f; }
 
-    L.tf_weight = clampf(p->thin_film_weight, 0.0f, 1.0f);
+    L.tf_weight = explicit_specular ? 0.0f : clampf(p->thin_film_weight, 0.0f, 1.0f);
     L.tf_thickness = p->thin_film_thickness;
     L.tf_ior = p->thin_film_ior;
 
@@ -500,6 +621,9 @@ static Layers extract(const OpenPBRParams *p) {
     for (int i = 0; i < L.conductor_lobe_count; ++i)
         L.conductor_weight_sum += fmaxf(0.0f, L.conductor_lobes[i].weight) *
             fmaxf(0.0f, luminance(L.conductor_lobes[i].weight_color));
+    for (int i = 0; i < L.specular_lobe_count; ++i)
+        L.conductor_weight_sum += fmaxf(0.0f, L.specular_lobes[i].frame.weight) *
+            fmaxf(0.0f, luminance(L.specular_lobes[i].frame.weight_color));
     float wc = L.coat_w * 0.5f;
     float tot = lumD + lumS + wc + L.glass_w + L.conductor_weight_sum;
     L.pd = lumD / tot; L.ps = lumS / tot; L.pc = wc / tot; L.pg = L.glass_w / tot;
@@ -725,6 +849,22 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
             v3_scale(v3_mul(response, lobe->weight_color), lobe->weight * ll / NdotL)));
     }
 
+    for (int i = 0; i < L->specular_lobe_count; ++i) {
+        const MtlxSpecularLobe *lobe = &L->specular_lobes[i];
+        const MtlxConductorLobe *frame = &lobe->frame;
+        v3 ln = conductor_normal(frame, N, wo), tangent, bitangent;
+        v3 view = conductor_view(frame, ln, wo);
+        float lv = v3_dot(ln, view), ll = v3_dot(ln, wi);
+        if (!(lv > 0.0f && ll > 0.0f)) continue;
+        v3 half = frame->retroreflective ? v3_normalize(v3_add(view,wi)) : H;
+        float vhalf = frame->retroreflective ? v3_dot(view,half) : VdotH;
+        conductor_frame(ln,frame->tangent,&tangent,&bitangent);
+        v3 response=specular_closure_response(lobe,lv,ll,v3_dot(half,tangent),
+            v3_dot(half,bitangent),v3_dot(half,ln),vhalf);
+        spec=v3_add(spec,v3_mul(base_atten,
+            v3_scale(v3_mul(response,frame->weight_color),frame->weight*ll/NdotL)));
+    }
+
     v3 sheen = v3_splat(0.0f);
     if (L->sheen_lobe_count > 0) {
         for (int i = 0; i < L->sheen_lobe_count; ++i) {
@@ -761,6 +901,16 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
             float vhalf = lobe->retroreflective ? v3_dot(view, half) : VdotH;
             pdf_conductor += (conductor_sampling_weight(lobe) / L->conductor_weight_sum) *
                 conductor_reflection_pdf(lobe, ln, view, half, v3_dot(ln,half), vhalf);
+        }
+    }
+    if (L->conductor_weight_sum > 0.0f) {
+        for (int i = 0; i < L->specular_lobe_count; ++i) {
+            const MtlxConductorLobe *frame=&L->specular_lobes[i].frame;
+            v3 ln=conductor_normal(frame,N,wo), view=conductor_view(frame,ln,wo);
+            v3 half=frame->retroreflective ? v3_normalize(v3_add(view,wi)) : H;
+            float vhalf=frame->retroreflective ? v3_dot(view,half) : VdotH;
+            pdf_conductor+=(conductor_sampling_weight(frame)/L->conductor_weight_sum)*
+                conductor_reflection_pdf(frame,ln,view,half,v3_dot(ln,half),vhalf);
         }
     }
     *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat + L->pm * pdf_conductor;
@@ -800,12 +950,16 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         float cosi = clampf(v3_dot(m, wo), 0.0f, 1.0f);
         float Fr = fresnel_dielectric(cosi, eta);
         v3 wi; int refracted;
-        if (pcg32_f(rng) < Fr) {
+        /* Explicit reflection closures already account for reflection. Keep
+         * the legacy glass proposal for transmission only in that case. */
+        int transmission_only = L.specular_lobe_count > 0;
+        if (!transmission_only && pcg32_f(rng) < Fr) {
             wi = v3_sub(v3_scale(m, 2.0f * v3_dot(m, wo)), wo);
             if (v3_dot(wi, N) <= 0.0f) return 0; /* reflected below surface: reject */
             refracted = 0;
         } else {
             float sint2 = eta * eta * (1.0f - cosi * cosi);
+            if (sint2 >= 1.0f) return 0;
             float cost = sqrtf(maxf(0.0f, 1.0f - sint2));
             wi = v3_normalize(v3_sub(v3_scale(m, eta * cosi - cost), v3_scale(wo, eta)));
             refracted = 1;
@@ -817,6 +971,10 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         out->throughput = !refracted ? p->specular_color
                         : (p->transmission_depth > 0.0f ? v3_splat(1.0f)
                                                         : p->transmission_color);
+        if (transmission_only) {
+            /* Compensate the probability of selecting this delta branch. */
+            out->throughput = v3_scale(out->throughput, (1.0f-Fr) * L.glass_w / L.pg);
+        }
         out->wi = wi; out->pdf = 1.0f;
         out->specular = 1; out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;
@@ -833,14 +991,25 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else if (u < L.pg + L.pc + L.ps + L.pm && L.conductor_weight_sum > 0.0f) {
         float target = ((u - L.pg - L.pc - L.ps) / L.pm) * L.conductor_weight_sum;
-        const MtlxConductorLobe *chosen = NULL;
+        const MtlxConductorLobe *chosen = NULL, *last = NULL;
         for (int i = 0; i < L.conductor_lobe_count; ++i) {
             float weight = conductor_sampling_weight(&L.conductor_lobes[i]);
             if (weight <= 0.0f) continue;
-            chosen = &L.conductor_lobes[i];
+            chosen = &L.conductor_lobes[i]; last = chosen;
             if (target < weight) break;
-            target -= weight;
+            target -= weight; chosen = NULL;
         }
+        if (!chosen) {
+            for (int i = 0; i < L.specular_lobe_count; ++i) {
+                const MtlxConductorLobe *frame=&L.specular_lobes[i].frame;
+                float weight=conductor_sampling_weight(frame);
+                if (weight <= 0.0f) continue;
+                chosen=frame; last=chosen;
+                if (target < weight) break;
+                target-=weight; chosen=NULL;
+            }
+        }
+        if (!chosen) chosen=last; /* account for roundoff at the upper edge */
         if (!chosen) return 0;
         v3 ln = conductor_normal(chosen, N, wo), tangent, bitangent;
         v3 view = conductor_view(chosen, ln, wo);

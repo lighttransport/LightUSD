@@ -1665,7 +1665,7 @@ static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
 
 static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 color_scale,
                        OpenPBRParams *out, int depth) {
-    if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow) return;
+    if (!n || depth > 32 || scale <= 0.0f || out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow || out->specular_lobe_overflow) return;
     const char *cat = n->category;
     if (!strcmp(cat, "add")) {
         apply_bsdf(ctx, input_node(ctx, n, "in1"), scale, color_scale, out, depth + 1);
@@ -1717,8 +1717,39 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
     const int is_diffuse = !strcmp(cat, "diffuse_bsdf") ||
         !strcmp(cat, "oren_nayar_diffuse_bsdf") || !strcmp(cat, "burley_diffuse_bsdf");
     /* Other closure types still use the legacy scalar approximation. */
-    if (!is_diffuse && strcmp(cat, "sheen_bsdf") && strcmp(cat, "conductor_bsdf"))
+    if (!is_diffuse && strcmp(cat, "sheen_bsdf") && strcmp(cat, "conductor_bsdf") &&
+        strcmp(cat, "dielectric_bsdf") && strcmp(cat, "generalized_schlick_bsdf"))
         weight *= fmaxf(0.0f, (color_scale.x + color_scale.y + color_scale.z) / 3.0f);
+    if ((!strcmp(cat, "dielectric_bsdf") || !strcmp(cat, "generalized_schlick_bsdf")) &&
+        scatter_mode_has(in_string(n, "scatter_mode", "R"), 'R') && weight > 0.0f) {
+        if (out->specular_lobe_count >= MTLX_MAX_SPECULAR_LOBES) {
+            out->specular_lobe_overflow = 1; return;
+        }
+        MtlxSpecularLobe *lobe = &out->specular_lobes[out->specular_lobe_count++];
+        MtlxConductorLobe *frame = &lobe->frame;
+        frame->ior = v3_splat(in_float(ctx,n,"ior",1.5f));
+        frame->extinction = v3_splat(0.0f);
+        frame->weight = weight; frame->weight_color = color_scale;
+        frame->thinfilm_thickness = in_float(ctx,n,"thinfilm_thickness",0.0f);
+        frame->thinfilm_ior = in_float(ctx,n,"thinfilm_ior",1.5f);
+        frame->retroreflective = in_float(ctx,n,"retroreflective",0.0f) != 0.0f;
+        const MtlxInput *rough = find_input(n,"roughness");
+        MtlxValue rv = rough ? eval_input(ctx,rough) : mv_vec2(.05f,.05f);
+        frame->roughness = rv.v[0];
+        frame->roughness_y = ncomp_of(&rv)>=2 ? rv.v[1] : rv.v[0];
+        const MtlxInput *normal = find_input(n,"normal");
+        frame->normal = (normal && (normal->has_value || normal->src_node>=0))
+            ? in_color(ctx,n,"normal",ctx->Ns) : ctx->Ns;
+        const MtlxInput *tangent = find_input(n,"tangent");
+        frame->tangent = (tangent && (tangent->has_value || tangent->src_node>=0))
+            ? in_color(ctx,n,"tangent",ctx->dpdu) : ctx->dpdu;
+        lobe->model = !strcmp(cat,"dielectric_bsdf") ? MTLX_SPECULAR_DIELECTRIC : MTLX_SPECULAR_SCHLICK;
+        lobe->tint = in_color(ctx,n,"tint",v3_splat(1.0f));
+        lobe->color0 = in_color(ctx,n,"color0",v3_splat(1.0f));
+        lobe->color82 = in_color(ctx,n,"color82",v3_splat(1.0f));
+        lobe->color90 = in_color(ctx,n,"color90",v3_splat(1.0f));
+        lobe->exponent = in_float(ctx,n,"exponent",5.0f);
+    }
     if (!strcmp(cat, "diffuse_bsdf") ||
         !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
         !strcmp(cat, "burley_diffuse_bsdf")) {
@@ -1751,24 +1782,26 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
         blend_lobe(&out->transmission, &out->transmission_color,
                    in_color(ctx, n, "color", v3_splat(1.0f)), weight);
     } else if (!strcmp(cat, "dielectric_bsdf")) {
+        const float aggregate_weight = weight * fmaxf(0.0f,
+            (color_scale.x + color_scale.y + color_scale.z) / 3.0f);
         const char *mode = in_string(n, "scatter_mode", "R");
         const float roughness = in_component0(ctx, n, "roughness", 0.05f);
         if (scatter_mode_has(mode, 'R')) {
             const float old_weight = out->specular_weight;
             const float old_roughness = out->specular_roughness;
             blend_lobe(&out->specular_weight, &out->specular_color,
-                       in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
+                       in_color(ctx, n, "tint", v3_splat(1.0f)), aggregate_weight);
             out->specular_roughness = blend_scalar(
-                old_weight, old_roughness, roughness, weight);
+                old_weight, old_roughness, roughness, aggregate_weight);
         }
         if (scatter_mode_has(mode, 'T')) {
             blend_lobe(&out->transmission, &out->transmission_color,
-                       in_color(ctx, n, "tint", v3_splat(1.0f)), weight);
+                       in_color(ctx, n, "tint", v3_splat(1.0f)), aggregate_weight);
         }
         out->specular_ior = in_float(ctx, n, "ior", 1.5f);
         out->thin_film_thickness = in_float(ctx, n, "thinfilm_thickness", 0.0f);
         out->thin_film_ior = in_float(ctx, n, "thinfilm_ior", 1.5f);
-        out->thin_film_weight = out->thin_film_thickness > 0.0f ? weight : 0.0f;
+        out->thin_film_weight = out->thin_film_thickness > 0.0f ? aggregate_weight : 0.0f;
     } else if (!strcmp(cat, "conductor_bsdf")) {
         if (weight <= 0.0f) return;
         const v3 eta = in_color(ctx, n, "ior", v3_make(0.183f, 0.421f, 1.373f));
@@ -1813,19 +1846,21 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
             old_base_weight, old_roughness,
             in_component0(ctx, n, "roughness", 0.05f), weight);
     } else if (!strcmp(cat, "generalized_schlick_bsdf")) {
+        const float aggregate_weight = weight * fmaxf(0.0f,
+            (color_scale.x + color_scale.y + color_scale.z) / 3.0f);
         const char *mode = in_string(n, "scatter_mode", "R");
         const v3 c0 = in_color(ctx, n, "color0", v3_splat(1.0f));
         if (scatter_mode_has(mode, 'R')) {
             const float old_weight = out->specular_weight;
             const float old_roughness = out->specular_roughness;
-            blend_lobe(&out->specular_weight, &out->specular_color, c0, weight);
+            blend_lobe(&out->specular_weight, &out->specular_color, c0, aggregate_weight);
             out->specular_roughness = blend_scalar(
                 old_weight, old_roughness,
-                in_component0(ctx, n, "roughness", 0.05f), weight);
+                in_component0(ctx, n, "roughness", 0.05f), aggregate_weight);
         }
         if (scatter_mode_has(mode, 'T'))
             blend_lobe(&out->transmission, &out->transmission_color,
-                       v3_splat(1.0f), weight);
+                       v3_splat(1.0f), aggregate_weight);
     } else if (!strcmp(cat, "subsurface_bsdf")) {
         blend_lobe(&out->subsurface, &out->subsurface_color,
                    in_color(ctx, n, "color", v3_splat(0.18f)), weight);
@@ -1912,7 +1947,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->subsurface = 0.0f;
         out->sheen_weight = 0.0f;
         apply_bsdf(ctx, input_node(ctx, n, "bsdf"), 1.0f, v3_splat(1.0f), out, 0);
-        if (out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow) return 1;
+        if (out->diffuse_lobe_overflow || out->sheen_lobe_overflow || out->conductor_lobe_overflow || out->specular_lobe_overflow) return 1;
         out->emission_color = eval_edf(ctx, input_node(ctx, n, "edf"), 0);
         out->emission = v3_maxc(out->emission_color) > 0.0f ? 1.0f : 0.0f;
         out->opacity = in_float(ctx, n, "opacity", 1.0f);

@@ -36,6 +36,9 @@ float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
 v3 bsdf_materialx_conductor_film_fresnel(float cosine, v3 eta, v3 extinction,
                                          float thickness, float film_ior);
 
+/* Unweighted MaterialX Fresnel for an explicit specular closure. */
+v3 bsdf_materialx_specular_fresnel(const MtlxSpecularLobe *lobe, float cosine);
+
 /* MaterialX genglsl isotropic conductor BRDF (unit weight, no thin film).
  * alpha is the authored microfacet roughness, not its square. Directions are
  * represented by positive cosine inputs; a nonpositive NdotV/L returns zero. */

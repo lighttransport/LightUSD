@@ -55,6 +55,32 @@ static int overflow_check(int count, int expected) {
   return 1;
 }
 
+static int specular_overflow_check(int count, int expected) {
+  char xml[32768]; size_t used=0; int ids[64],next=count;
+  used+=(size_t)snprintf(xml+used,sizeof(xml)-used,"<materialx>");
+  for(int i=0;i<count;i++) {
+    ids[i]=i;
+    used+=(size_t)snprintf(xml+used,sizeof(xml)-used,
+      "<dielectric_bsdf name=\"n%d\" type=\"BSDF\"/>",i);
+  }
+  while(count>1) {
+    int k=0;
+    for(int i=0;i<count;i+=2) {
+      if(i+1==count) { ids[k++]=ids[i]; continue; }
+      used+=(size_t)snprintf(xml+used,sizeof(xml)-used,
+        "<add name=\"n%d\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"n%d\"/><input name=\"in2\" type=\"BSDF\" nodename=\"n%d\"/></add>",next,ids[i],ids[i+1]);
+      ids[k++]=next++;
+    }
+    count=k;
+  }
+  snprintf(xml+used,sizeof(xml)-used,"<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"n%d\"/></surface></materialx>",ids[0]);
+  OpenPBRParams p; int ok=evaluate(xml,&p);
+  if(ok!=expected || (ok && p.specular_lobe_count!=MTLX_MAX_SPECULAR_LOBES)) {
+    fprintf(stderr,"specular lobe overflow accepted=%d expected=%d\n",ok,expected);return 0;
+  }
+  return 1;
+}
+
 static int layer_checks(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.25\"/><input name=\"color\" type=\"color3\" value=\"1,0,0\"/></oren_nayar_diffuse_bsdf>"
@@ -123,6 +149,139 @@ static int specular_layer_checks(void) {
   return 1;
 }
 
+/* Independent MaterialX genglsl reflection reference vectors, in order:
+ * dielectric, dielectric film, generalized Schlick, generalized Schlick film. */
+static const float specular_response_reference[4][2][3] = {
+ {{.0156327250f,.0250123600f,.0312654500f},{.0007798742f,.0012477988f,.0015597485f}},
+ {{.0146400639f,.0197808128f,.0047630506f},{.0004317322f,.0010823248f,.0003889846f}},
+ {{.0590012755f,.2172329386f,.4642646361f},{.0028684316f,.0106457343f,.0230269579f}},
+ {{.0000000000f,.1216358210f,.2777817198f},{.0000000000f,.0064307468f,.0131264403f}}
+};
+static int specular_response_checks(void) {
+  const char *parts=
+    "<dielectric_bsdf name=\"d\" type=\"BSDF\"><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></dielectric_bsdf>"
+    "<dielectric_bsdf name=\"df\" type=\"BSDF\"><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"450\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.3\"/></dielectric_bsdf>"
+    "<generalized_schlick_bsdf name=\"sc\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"color0\" type=\"color3\" value=\"0.1,0.35,0.7\"/><input name=\"color82\" type=\"color3\" value=\"0.7,0.9,0.3\"/><input name=\"color90\" type=\"color3\" value=\"0.9,0.8,0.6\"/><input name=\"exponent\" type=\"float\" value=\"4\"/></generalized_schlick_bsdf>"
+    "<generalized_schlick_bsdf name=\"sf\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/><input name=\"color0\" type=\"color3\" value=\"0.1,0.35,0.7\"/><input name=\"color82\" type=\"color3\" value=\"0.7,0.9,0.3\"/><input name=\"color90\" type=\"color3\" value=\"0.9,0.8,0.6\"/><input name=\"exponent\" type=\"float\" value=\"4\"/><input name=\"thinfilm_thickness\" type=\"float\" value=\"500\"/><input name=\"thinfilm_ior\" type=\"float\" value=\"1.4\"/></generalized_schlick_bsdf>"
+    "<mix name=\"mix\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"df\"/><input name=\"fg\" type=\"BSDF\" nodename=\"sf\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
+    "<multiply name=\"tinted\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mix\"/><input name=\"in2\" type=\"color3\" value=\"0.2,0.5,0.9\"/></multiply>"
+    "<constant name=\"factor\" type=\"color3\"><input name=\"value\" type=\"color3\" value=\"0.2,0.5,0.9\"/></constant>"
+    "<multiply name=\"tintconn\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mix\"/><input name=\"in2\" type=\"color3\" nodename=\"factor\"/></multiply>"
+    "<multiply name=\"tintreverse\" type=\"BSDF\"><input name=\"in1\" type=\"color3\" nodename=\"factor\"/><input name=\"in2\" type=\"BSDF\" nodename=\"mix\"/></multiply>"
+    "<conductor_bsdf name=\"metal\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></conductor_bsdf>"
+    "<mix name=\"cross\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"d\"/><input name=\"fg\" type=\"BSDF\" nodename=\"metal\"/><input name=\"mix\" type=\"float\" value=\"0.4\"/></mix>";
+  const char *roots[]={"d","df","sc","sf","mix","tinted","cross","tintconn","tintreverse"};
+  const v3 views[]={{0,0,1},{.8f,0,.6f}}, light={0,.6f,.8f}, n={0,0,1};
+  char xml[8192]; OpenPBRParams p[9];
+  for(int i=0;i<9;i++) {
+    snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",parts,roots[i]);
+    if(!evaluate(xml,&p[i]) || p[i].specular_lobe_count!=(i<4 || i==6 ? 1 : 2)) {
+      fprintf(stderr,"specular response graph failed %d\n",i);return 0;
+    }
+  }
+  for(int v=0;v<2;v++) {
+    v3 output[9],diff;float pdf;
+    for(int i=0;i<9;i++) bsdf_eval_lobes(&p[i],n,views[v],light,&diff,&output[i],&pdf);
+    for(int i=0;i<4;i++) {
+      const float *r=specular_response_reference[i][v];
+      if(fabsf(output[i].x-r[0])>3e-5f || fabsf(output[i].y-r[1])>3e-5f || fabsf(output[i].z-r[2])>3e-5f) {
+        fprintf(stderr,"specular response %d/%d got %g %g %g expected %g %g %g\n",i,v,output[i].x,output[i].y,output[i].z,r[0],r[1],r[2]);return 0;
+      }
+    }
+    v3 half=v3_normalize(v3_add(views[v],light));
+    v3 metal=bsdf_materialx_conductor_anisotropic(v3_make(.183f,.421f,1.373f),
+        v3_make(3.424f,2.346f,1.770f),.2f,.7f,views[v].z,light.z,half.x,half.y,half.z,v3_dot(views[v],half));
+    v3 cross=v3_add(v3_scale(output[0],.6f),v3_scale(metal,.4f));
+    if(fabsf(output[6].x-cross.x)>2e-5f || fabsf(output[6].y-cross.y)>2e-5f || fabsf(output[6].z-cross.z)>2e-5f) {
+      fprintf(stderr,"dielectric/conductor mixture failed view %d\n",v);return 0;
+    }
+    v3 expect=v3_add(v3_scale(output[1],.7f),v3_scale(output[3],.3f));
+    v3 tint=v3_mul(expect,v3_make(.2f,.5f,.9f));
+    if(fabsf(output[4].x-expect.x)>1e-5f || fabsf(output[4].y-expect.y)>1e-5f || fabsf(output[4].z-expect.z)>1e-5f ||
+       fabsf(output[5].x-tint.x)>1e-5f || fabsf(output[5].y-tint.y)>1e-5f || fabsf(output[5].z-tint.z)>1e-5f ||
+       fabsf(output[7].x-tint.x)>1e-5f || fabsf(output[7].y-tint.y)>1e-5f || fabsf(output[7].z-tint.z)>1e-5f ||
+       fabsf(output[8].x-tint.x)>1e-5f || fabsf(output[8].y-tint.y)>1e-5f || fabsf(output[8].z-tint.z)>1e-5f) {
+      fprintf(stderr,"specular closure mixture failed view %d\n",v);return 0;
+    }
+  }
+  /* Rotating a lobe frame preserves its response after accounting for the
+   * common surface cosine; retroreflection reflects the local view first. */
+  {
+    OpenPBRParams tilted=p[2];
+    tilted.specular_lobes[0].frame.normal=v3_make(.6f,0,.8f);
+    tilted.specular_lobes[0].frame.tangent=v3_make(0,1,0);
+    tilted.specular_lobes[0].frame.retroreflective=1;
+    v3 world_view=v3_make(.8f,0,.6f), world_light=v3_make(0,.6f,.8f);
+    v3 local_view=v3_make(0,.28f,.96f), local_light=v3_make(.6f,.48f,.64f);
+    v3 d,actual,expected;float pdf;
+    bsdf_eval_lobes(&tilted,n,world_view,world_light,&d,&actual,&pdf);
+    bsdf_eval_lobes(&p[2],n,local_view,local_light,&d,&expected,&pdf);
+    expected=v3_scale(expected,.64f/.8f);
+    if(fabsf(actual.x-expected.x)>2e-5f || fabsf(actual.y-expected.y)>2e-5f ||
+       fabsf(actual.z-expected.z)>2e-5f) {
+      fprintf(stderr,"tilted retroreflective specular frame failed\n");return 0;
+    }
+  }
+  /* Proposal and PDF include each independent closure, including retro mode. */
+  p[4].specular_lobes[1].frame.retroreflective=1;
+  p[4].specular_roughness=1.0f;
+  v3 view=views[1];double bins[4]={0},energy=0;int observed[4]={0};
+  const int nm=192,np=384,count=120000;
+  for(int i=0;i<nm;i++) for(int j=0;j<np;j++) {
+    float mu=(i+.5f)/nm, phi=2.0f*MTLX_PI*(j+.5f)/np,r=sqrtf(1-mu*mu);
+    v3 wi=v3_make(r*cosf(phi),r*sinf(phi),mu);float pdf;
+    v3 value=bsdf_eval(&p[4],n,view,wi,&pdf);
+    int bin=(mu>=.5f?2:0)+(wi.x>=0?1:0);
+    bins[bin]+=pdf*(2.0*3.14159265358979323846/(nm*np));
+    energy+=value.y*mu*(2.0*3.14159265358979323846/(nm*np));
+  }
+  pcg32 gen;pcg32_seed(&gen,628,413);double estimate=0;
+  for(int i=0;i<count;i++) {
+    BsdfSample sample;if(!bsdf_sample(&p[4],n,view,&gen,&sample))continue;
+    int bin=(sample.wi.z>=.5f?2:0)+(sample.wi.x>=0?1:0);
+    observed[bin]++;estimate+=sample.throughput.y;
+  }
+  for(int i=0;i<4;i++) if(fabs((double)observed[i]/count-bins[i])>.01) {
+    fprintf(stderr,"specular proposal histogram %d: %g vs %g\n",i,(double)observed[i]/count,bins[i]);return 0;
+  }
+  if(fabs(estimate/count-energy)>.025) {
+    fprintf(stderr,"specular sampling integral %g vs %g\n",estimate/count,energy);return 0;
+  }
+  {
+    OpenPBRParams invalid=p[0];
+    invalid.specular_lobes[0].frame.thinfilm_thickness=500.0f;
+    invalid.specular_lobes[0].frame.thinfilm_ior=1.0e35f;
+    float pdf; v3 value=bsdf_eval(&invalid,n,views[1],light,&pdf);
+    if(!v3_is_finite(value) || !isfinite(pdf)) {
+      fprintf(stderr,"nonfinite specular film response\n");return 0;
+    }
+  }
+  /* An RT closure must not emit a second reflection from the glass branch. */
+  const char *rt_graph="<materialx><dielectric_bsdf name=\"glass\" type=\"BSDF\">"
+    "<input name=\"ior\" type=\"float\" value=\"1.5\"/>"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.02,0.02\"/>"
+    "<input name=\"scatter_mode\" type=\"string\" value=\"RT\"/>"
+    "</dielectric_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"glass\"/>"
+    "</surface></materialx>";
+  OpenPBRParams glass;
+  if(!evaluate(rt_graph,&glass) || glass.specular_lobe_count!=1 || glass.transmission<.99f) return 0;
+  pcg32 rng;pcg32_seed(&rng,957,341);double transmitted=0;const int nrt=30000;
+  for(int i=0;i<nrt;i++) {
+    BsdfSample sample;if(!bsdf_sample(&glass,n,n,&rng,&sample))continue;
+    if(sample.transmission) {
+      if(!sample.crossed || !v3_is_finite(sample.throughput)) {
+        fprintf(stderr,"RT glass branch duplicated reflection\n");return 0;
+      }
+      transmitted+=sample.throughput.x;
+    }
+  }
+  if(fabs(transmitted/nrt-.96)>.02) {
+    fprintf(stderr,"RT transmitted weight %g expected about .96\n",transmitted/nrt);return 0;
+  }
+  return 1;
+}
+
 int main(void) {
   const char *parts =
     "<oren_nayar_diffuse_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.9\"/></oren_nayar_diffuse_bsdf>"
@@ -167,7 +326,9 @@ int main(void) {
       }
     }
   }
-  if (!layer_checks() || !specular_layer_checks()) return 1;
+  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() ||
+      !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
+      !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||
       !overflow_check(MTLX_MAX_DIFFUSE_LOBES+1, 0)) return 1;
   puts("PASS: mixed diffuse closure responses and bounded overflow");

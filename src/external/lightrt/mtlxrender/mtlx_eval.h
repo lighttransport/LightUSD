@@ -44,6 +44,19 @@ typedef struct {
     float thinfilm_ior;
 } MtlxConductorLobe;
 
+#define MTLX_MAX_SPECULAR_LOBES 32
+#define MTLX_SPECULAR_DIELECTRIC 0
+#define MTLX_SPECULAR_SCHLICK 1
+
+typedef struct {
+    /* Shared microfacet frame, roughness, weight, film and retroreflection. */
+    MtlxConductorLobe frame;
+    int model;
+    v3 tint; /* dielectric reflection tint */
+    v3 color0, color82, color90; /* generalized Schlick */
+    float exponent;
+} MtlxSpecularLobe;
+
 #define MTLX_MAX_SHEEN_LOBES 32
 #define MTLX_SHEEN_CONTY_KULLA 0
 #define MTLX_SHEEN_ZELTNER 1
@@ -69,7 +82,11 @@ typedef struct {
     int conductor_lobe_count;
     int conductor_lobe_overflow;
     MtlxConductorLobe conductor_lobes[MTLX_MAX_CONDUCTOR_LOBES];
-    /* specular (GGX dielectric) */
+    /* Explicit MaterialX specular reflection closures. */
+    int specular_lobe_count;
+    int specular_lobe_overflow;
+    MtlxSpecularLobe specular_lobes[MTLX_MAX_SPECULAR_LOBES];
+    /* Aggregate fields used by direct OpenPBR and non-CPU consumers. */
     float specular_weight;
     v3    specular_color;
     float specular_roughness;

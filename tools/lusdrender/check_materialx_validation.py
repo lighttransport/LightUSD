@@ -597,6 +597,25 @@ def main():
       <input name="fg" type="BSDF" nodename="metal_normal_b"/>
       <input name="mix" type="float" value="0.25"/>
     </mix>
+    <dielectric_bsdf name="spec_dielectric" type="BSDF">
+      <input name="ior" type="float" value="1.6"/>
+      <input name="tint" type="color3" value="0.5,0.8,1"/>
+      <input name="roughness" type="vector2" value="0.2,0.7"/>
+    </dielectric_bsdf>
+    <generalized_schlick_bsdf name="spec_schlick" type="BSDF">
+      <input name="color0" type="color3" value="0.1,0.35,0.7"/>
+      <input name="color82" type="color3" value="0.7,0.9,0.3"/>
+      <input name="color90" type="color3" value="0.9,0.8,0.6"/>
+      <input name="exponent" type="float" value="4"/>
+      <input name="roughness" type="vector2" value="0.2,0.7"/>
+      <input name="thinfilm_thickness" type="float" value="500"/>
+      <input name="thinfilm_ior" type="float" value="1.4"/>
+    </generalized_schlick_bsdf>
+    <mix name="spec_mix" type="BSDF">
+      <input name="bg" type="BSDF" nodename="spec_dielectric"/>
+      <input name="fg" type="BSDF" nodename="spec_schlick"/>
+      <input name="mix" type="float" value="0.3"/>
+    </mix>
     <mix name="metal_mix" type="BSDF">
       <input name="bg" type="BSDF" nodename="a"/>
       <input name="fg" type="BSDF" nodename="metal"/>
@@ -641,7 +660,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer", "metal", "metal_mix", "metal_layer", "metal_tint", "metal_film_a", "metal_film_b", "metal_film_mix", "metal_normal_a", "metal_normal_b", "metal_normal_mix"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer", "metal", "metal_mix", "metal_layer", "metal_tint", "metal_film_a", "metal_film_b", "metal_film_mix", "metal_normal_a", "metal_normal_b", "metal_normal_mix", "spec_dielectric", "spec_schlick", "spec_mix"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -743,6 +762,17 @@ def main():
                            for i in (18, 19, 20))
             if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
                 raise RuntimeError(f"conductor normal mixture failed at {(x, y, channel)}")
+
+    if max(abs(closure_images[21][i] - closure_images[22][i])
+           for i in range(len(closure_images[21])) if i % 4 != 3) < 2:
+        raise RuntimeError("specular closures rendered identically")
+    for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
+        offset = (y * 64 + x) * 4
+        for channel in range(3):
+            a, b, mixed = (linear_srgb(closure_images[i][offset + channel])
+                           for i in (21, 22, 23))
+            if abs(mixed - (0.7 * a + 0.3 * b)) > 0.025:
+                raise RuntimeError(f"specular closure mixture failed at {(x, y, channel)}")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
