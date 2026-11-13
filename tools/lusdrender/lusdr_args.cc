@@ -285,7 +285,7 @@ void PrintUsage(const char *prog) {
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
       << "  -cuda                 Use the shared CUDA/NVRTC RT backend (NVIDIA).\n"
-      << "  --path-trace          Use the shared multi-bounce GPU integrator.\n"
+      << "  --path-trace          Trace paths on GPU, or on CPU with --mtlx.\n"
       << "  --pt-quality interactive|final\n"
       << "  --pt-samples <N>      Path-trace sample target (0 = backend default).\n"
       << "  --pt-max-depth <N>    Maximum path depth (1..64).\n"
@@ -1251,7 +1251,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   }
   if (!opt->mtlx_file.empty() &&
       (opt->vulkan || opt->vulkan_rt || opt->vulkan_instanced || opt->use_d3d ||
-       opt->cuda || opt->hip || opt->path_trace)) {
+       opt->cuda || opt->hip)) {
     std::cerr << "--mtlx validation mode currently uses the CPU renderer only.\n";
     return false;
   }
@@ -1277,8 +1277,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     opt->input = positional[0];
     opt->output = positional.size() > 1 ? positional[1] : std::string();
   }
-  if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
-    std::cerr << "--path-trace requires -vkr, -cuda, or -hip.\n";
+  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
+    std::cerr << "--path-trace requires --mtlx, -vkr, -cuda, or -hip.\n";
     return false;
   }
   return true;

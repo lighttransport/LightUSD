@@ -19,6 +19,7 @@ lusdrender --mtlx material.mtlx material.png
 lusdrender --mtlx material.mtlx material.png --mtlx-material MyMaterial -w 512 -height 512
 lusdrender --mtlx material.mtlx node.pfm --mtlx-material MyMaterial --aov mtlxNode:BaseColor
 lusdrender --mtlx material.mtlx lobe.pfm --mtlx-material MyMaterial --aov mtlxDiffuseWeight
+lusdrender --mtlx material.mtlx beauty.pfm --path-trace --pt-samples 1024 --pt-seed 1 --pt-max-depth 6
 ```
 
 This CPU-only entry point evaluates the selected MaterialX surface with
@@ -44,6 +45,15 @@ for diffuse, dielectric, metal, subsurface, coat, sheen, and colored materials
 at normal and grazing views, plus an analytic Lambert check against its base
 color. MaterialXView/OSL reference-image comparisons and full lobe-response
 parity remain open.
+
+`--path-trace` selects a CPU BSDF-sampling integrator for this sphere and
+uniform environment. It re-evaluates the graph at every hit, including both
+sides of the sphere, and uses deterministic per-sample random streams. Color
+output with a `.pfm` extension is scene-linear float RGB; PNG uses the selected
+display transform. `--pt-samples` sets a fixed sample count (defaults to 32 for
+interactive quality and 256 for final quality); adaptive `--pt-variance` is
+not implemented for this CPU path. Secondary rays do not carry texture
+derivatives, and transmission and layered closures remain approximate.
 
 Use `--displayTransform srgb` to compare linear render values against analytic
 MaterialX results without the default filmic curve. The CPU renderer honors

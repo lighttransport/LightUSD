@@ -1281,7 +1281,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                *openpbr_mats,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
-           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted) {
+           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted,
+           uint64_t path_seed, std::atomic<bool>* materialx_error) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1544,7 +1545,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
-  const bool gathered_directly = indirect && !opt.light_double_count;
+  const bool cpu_materialx_path = opt.path_trace && opt.mtlx_runtime;
+  const bool gathered_directly = indirect && !opt.light_double_count && !cpu_materialx_path;
   if (!tri_hit && !direct_hit.hit) {
     if (primary_hit_t) *primary_hit_t = camera.zfar;
     if (opt.aov != CaptureAov::Color) return Vec3{0, 0, 0};
@@ -1629,6 +1631,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         if (!reported.exchange(true, std::memory_order_relaxed))
           std::cerr << "MaterialX node AOV evaluation failed: " << eval_error
                     << "\n";
+        if (materialx_error) materialx_error->store(true, std::memory_order_relaxed);
         return Vec3{0.0f, 0.0f, 0.0f};
       }
       return Vec3{value.rgb[0], value.rgb[1], value.rgb[2]};
@@ -1660,6 +1663,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       if (!reported.exchange(true, std::memory_order_relaxed)) {
         std::cerr << "MaterialX hit evaluation failed: " << eval_error << "\n";
       }
+      if (materialx_error) materialx_error->store(true, std::memory_order_relaxed);
+      return Vec3{0.0f,0.0f,0.0f};
     }
   }
   if (opt.aov == CaptureAov::MaterialXDiffuseWeight ||
@@ -1680,6 +1685,57 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       default: break;
     }
     return Vec3{weight, weight, weight};
+  }
+  if (cpu_materialx_path && tri_hit && tri_openpbr) {
+    // A separate deterministic PCG stream is derived for each path vertex.
+    // The validation scene has a uniform environment; BSDF sampling alone is
+    // unbiased there and avoids double counting the preview's split-sum IBL.
+    pcg32 rng;
+    pcg32_seed(&rng, path_seed, Mix64(path_seed ^ 0xd1b54a32d192ed03ULL));
+    const unsigned max_depth=std::max(1u,std::min(opt.path_trace_max_depth,64u));
+    const float mag=std::max(std::max(std::fabs(p.x),std::fabs(p.y)),std::fabs(p.z));
+    const float eps=std::max(1.0e-4f,mag*3.0e-6f);
+    const float opacity=std::clamp(tri.opacity,0.0f,1.0f);
+    if (opacity<1.0f && pcg32_f(&rng)>=opacity) {
+      if (static_cast<unsigned>(depth)>=max_depth) return Vec3{0.0f,0.0f,0.0f};
+      CameraFrame next_camera=camera; next_camera.znear=eps;
+      RayDiff next_rd; next_rd.valid=false;
+      return Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
+          Add(p,Mul(ray_dir,eps)),ray_dir,textures,tri_uvs,tri_uvs1,tlas,blas,
+          instances,next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,
+          triangle_chunks,nullptr,diagnostic_exhausted,Mix64(rng.state),materialx_error);
+    }
+    if (static_cast<unsigned>(depth)>=max_depth) return tri.emission;
+    const Vec3 view=Normalize(Mul(ray_dir,-1.0f));
+    OpenPBRParams params=OpenPBRParamsForMaterial(tri,tri.n,tri_openpbr);
+    BsdfSample sample{};
+    if (!bsdf_sample(&params,ToMtlxV3(tri.n),ToMtlxV3(view),&rng,&sample) ||
+        sample.pdf<=0.0f || !v3_is_finite(sample.throughput) || !v3_is_finite(sample.wi))
+      return tri.emission;
+    Vec3 throughput=FromMtlxV3(sample.throughput);
+    if (!FiniteColor(throughput)) return tri.emission;
+    const unsigned rr_depth=std::min(opt.path_trace_rr_depth,max_depth);
+    if (static_cast<unsigned>(depth+1)<max_depth &&
+        static_cast<unsigned>(depth+1)>=rr_depth) {
+      const float survival=std::clamp(std::max({throughput.x,throughput.y,throughput.z}),0.05f,0.95f);
+      if (pcg32_f(&rng)>=survival) return tri.emission;
+      throughput=Mul(throughput,1.0f/survival);
+    }
+    Vec3 wi=Normalize(FromMtlxV3(sample.wi));
+    if (!FiniteColor(wi) || Length(wi)<=0.0f) return tri.emission;
+    CameraFrame next_camera=camera; next_camera.znear=eps;
+    RayDiff next_rd; next_rd.valid=false; float next_hit=next_camera.zfar;
+    Vec3 incoming=Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
+        Add(p,Mul(wi,eps)),wi,textures,tri_uvs,tri_uvs1,tlas,blas,instances,
+        next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,triangle_chunks,
+        &next_hit,diagnostic_exhausted,Mix64(rng.state),materialx_error);
+    if (sample.transmission && sample.crossed && next_hit<next_camera.zfar) {
+      const VolumeMedium medium=transmission_medium(&params);
+      incoming.x*=std::exp(-medium.sigma_t.x*next_hit);
+      incoming.y*=std::exp(-medium.sigma_t.y*next_hit);
+      incoming.z*=std::exp(-medium.sigma_t.z*next_hit);
+    }
+    return FiniteColor(incoming) ? Add(tri.emission,Mul(throughput,incoming)) : tri.emission;
   }
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray; bounded recursion). Opaque hits (default
@@ -1704,7 +1760,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               ray_dir, textures, tri_uvs, tri_uvs1, tlas, blas, instances, rd,
               depth + 1,
               tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
-              nullptr, diagnostic_exhausted);
+              nullptr, diagnostic_exhausted, path_seed, materialx_error);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (opt.diagnostic_emission) {
@@ -1995,7 +2051,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                         opt, bounce_org, wi, textures, tri_uvs, tri_uvs1, tlas,
                         blas, instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
-                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted);
+                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted, path_seed, materialx_error);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
     // Beer-Lambert extinction over the actual continuation-ray distance instead
     // of tinting only at the interface; this makes thick glass absorb more than
@@ -2931,9 +2987,12 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   img.height = height;
   img.channels = 4;
   const bool data_aov = opt.aov != CaptureAov::Color;
-  img.bpp = data_aov ? 32 : 8;
-  img.format = data_aov ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
-  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (data_aov ? 4 : 1));
+  const bool linear_color_pfm = opt.mtlx_runtime && opt.path_trace &&
+      opt.output.size() >= 4 && opt.output.substr(opt.output.size()-4) == ".pfm";
+  const bool float_output = data_aov || linear_color_pfm;
+  img.bpp = float_output ? 32 : 8;
+  img.format = float_output ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (float_output ? 4 : 1));
   float aspect = float(img.width) / float(img.height);
   // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)
   // low-discrepancy sequence (PixelJitter). This supersedes the old
@@ -2941,7 +3000,13 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   // square and aliased against regular geometry/texture patterns; Halton spreads
   // the same N samples evenly while staying fully deterministic in `s`.
   int spp = data_aov ? 1 : std::max(1, opt.samples);
+  if (!data_aov && opt.path_trace && opt.mtlx_runtime) {
+    const uint32_t requested=opt.path_trace_samples ? opt.path_trace_samples :
+        (opt.path_trace_quality==Options::PathTraceQuality::Final ? 256u : 32u);
+    spp=static_cast<int>(requested);
+  }
   std::atomic<bool> diagnostic_exhausted{false};
+  std::atomic<bool> materialx_error{false};
   std::atomic<bool> volume_material_error{false};
   const unsigned nthreads = std::min<unsigned>(WorkerThreadCount(opt.threads),
                                                 img.height > 0 ? unsigned(img.height) : 1u);
@@ -3004,7 +3069,12 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             instances, rd, 0, tri_colors, tri_normals,
                             openpbr_mats,
                             false, triangle_chunks, &primary_hit_t,
-                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr);
+                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr,
+                            opt.path_trace && opt.mtlx_runtime ?
+                                Mix64(uint64_t(opt.path_trace_seed) ^
+                                      Mix64(uint64_t(y)*uint64_t(img.width)+uint64_t(x)) ^
+                                      Mix64(uint64_t(s)+0x9e3779b97f4a7c15ULL)) : 0,
+                            opt.mtlx_runtime ? &materialx_error : nullptr);
           if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;
@@ -3035,7 +3105,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
         }
         color = Mul(color, 1.0f / float(spp));
         size_t ofs = (size_t(y) * size_t(img.width) + size_t(x)) * 4;
-        if (data_aov) {
+        if (float_output) {
           const float values[4] = {color.x, color.y, color.z, 1.f};
           std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
           continue;
@@ -3066,6 +3136,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
       pool.emplace_back(render_rows, y0, y1);
     }
     for (std::thread &th : pool) th.join();
+  }
+  if (materialx_error.load(std::memory_order_relaxed)) {
+    std::cerr << "MaterialX surface evaluation failed during rendering.\n";
+    return {};
   }
   if (diagnostic_exhausted.load(std::memory_order_relaxed)) {
     std::cerr << "CPU material diagnostic exceeds the maximum 16 transparency layers.\n";

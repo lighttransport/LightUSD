@@ -774,8 +774,82 @@ def main():
             if abs(mixed - (0.7 * a + 0.3 * b)) > 0.025:
                 raise RuntimeError(f"specular closure mixture failed at {(x, y, channel)}")
 
+    # The CPU path tracer must converge to Lambert under the white environment
+    # and produce scene-linear, deterministic PFM output across worker counts.
+    path_source = out_dir / "path-lambert.mtlx"
+    path_source.write_text('''<materialx version="1.39">
+      <diffuse_bsdf name="d" type="BSDF"><input name="color" type="color3" value="0.2,0.4,0.6"/></diffuse_bsdf>
+      <surface name="s" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="d"/></surface>
+      <surfacematerial name="m" type="material"><input name="surfaceshader" type="surfaceshader" nodename="s"/></surfacematerial>
+    </materialx>''', encoding="utf-8")
+    path_images = []
+    for seed, threads in ((17, 1), (17, 4), (18, 4)):
+        path_image = out_dir / f"path-lambert-{seed}-{threads}.pfm"
+        run_path = subprocess.run(
+            [exe, "--mtlx", str(path_source), str(path_image), "--mtlx-material", "m",
+             "-w", "32", "-height", "32", "--path-trace", "--pt-samples", "2048",
+             "--pt-max-depth", "1", "--pt-seed", str(seed), "-threads", str(threads)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if run_path.returncode:
+            raise RuntimeError(f"CPU MaterialX path trace failed:\n{run_path.stderr}")
+        pw, ph, pixels = read_pfm_rgb(path_image)
+        if (pw, ph) != (32, 32):
+            raise RuntimeError("CPU path trace dimensions changed")
+        center = (16 * 32 + 16) * 3
+        if any(abs(pixels[center+i] - expected) > 0.025
+               for i, expected in enumerate((0.2, 0.4, 0.6))):
+            raise RuntimeError(f"CPU path Lambert response differs: {pixels[center:center+3]}")
+        path_images.append(path_image.read_bytes())
+    if path_images[0] != path_images[1]:
+        raise RuntimeError("CPU MaterialX path trace changed across worker counts")
+    if path_images[0] == path_images[2]:
+        raise RuntimeError("CPU MaterialX path trace ignored its seed")
+
+    path_emission_source = out_dir / "path-emission.mtlx"
+    path_emission_source.write_text(
+        emission_source.read_text(encoding="utf-8").replace(
+            '<input name="base" type="float" value="0" />',
+            '<input name="base" type="float" value="0" />\n'
+            '    <input name="specular" type="float" value="0" />'),
+        encoding="utf-8")
+    path_emission = out_dir / "path-emission.pfm"
+    emitted = subprocess.run(
+        [exe, "--mtlx", str(path_emission_source), str(path_emission), "--mtlx-material", "EmissionMaterial",
+         "-w", "32", "-height", "32", "--path-trace", "--pt-samples", "8", "--pt-max-depth", "1"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if emitted.returncode:
+        raise RuntimeError(f"CPU path emission failed:\n{emitted.stderr}")
+    ew, eh, emission_pixels = read_pfm_rgb(path_emission)
+    center = (16 * ew + 16) * 3
+    if (ew, eh) != (32, 32) or any(abs(emission_pixels[center+i] - expected) > 2e-5
+                                    for i, expected in enumerate((0.2, 0.4, 0.6))):
+        raise RuntimeError(f"CPU path emission differs: {emission_pixels[center:center+3]}")
+
+    # A transparent sphere requires two surface interactions before the ray
+    # reaches the environment. This also checks visibility of its back faces.
+    transmission_source = out_dir / "path-transmission.mtlx"
+    transmission_source.write_text('''<materialx version="1.39">
+      <dielectric_bsdf name="d" type="BSDF"><input name="ior" type="float" value="1"/>
+        <input name="scatter_mode" type="string" value="T"/>
+        <input name="roughness" type="vector2" value="0,0"/></dielectric_bsdf>
+      <surface name="s" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="d"/></surface>
+      <surfacematerial name="m" type="material"><input name="surfaceshader" type="surfaceshader" nodename="s"/></surfacematerial>
+    </materialx>''', encoding="utf-8")
+    for depth, expected in ((1, 0.0), (3, 1.0)):
+        path_image = out_dir / f"path-transmission-{depth}.pfm"
+        run_path = subprocess.run(
+            [exe, "--mtlx", str(transmission_source), str(path_image), "--mtlx-material", "m",
+             "-w", "32", "-height", "32", "--path-trace", "--pt-samples", "256",
+             "--pt-max-depth", str(depth)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if run_path.returncode:
+            raise RuntimeError(f"CPU transmission path failed:\n{run_path.stderr}")
+        _, _, pixels = read_pfm_rgb(path_image)
+        center = (16 * 32 + 16) * 3
+        if any(abs(pixels[center+i] - expected) > 0.08 for i in range(3)):
+            raise RuntimeError(f"CPU transmission depth {depth} differs: {pixels[center:center+3]}")
+
     rejected = subprocess.run(
-        [exe, "--mtlx", str(source), str(image), "--path-trace"],
+        [exe, "--mtlx", str(source), str(image), "--path-trace", "-cuda"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

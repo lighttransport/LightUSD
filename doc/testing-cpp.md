@@ -1726,6 +1726,12 @@ roughness. `tool-lusdrender-bsdf-eon-response` checks point responses, and
 render. LightRT's `make test-white-furnace` includes rough white diffuse cases.
 These checks do not establish complete OpenPBR or GPU parity.
 
+`tool-lusdrender-materialx-validation` also checks CPU path-traced linear PFM
+output against analytic Lambert and emission values, deterministic results
+across worker counts, seed variation, and a two-interface transmission path
+at different depth limits. The native and vendored diffuse-mixture tests check
+the glass branch's sampling probability with a white-furnace Monte Carlo test.
+
 After changing the WASM shading snapshot binding, rebuild both web modules and
 run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node
 profile includes this typed connection/default preservation fixture.

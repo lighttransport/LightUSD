@@ -971,10 +971,11 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         out->throughput = !refracted ? p->specular_color
                         : (p->transmission_depth > 0.0f ? v3_splat(1.0f)
                                                         : p->transmission_color);
-        if (transmission_only) {
-            /* Compensate the probability of selecting this delta branch. */
-            out->throughput = v3_scale(out->throughput, (1.0f-Fr) * L.glass_w / L.pg);
-        }
+        /* Compensate selection of the glass branch in the full mixture. The
+         * explicit-reflection case samples transmission unconditionally, so
+         * it also retains the physical transmission Fresnel factor. */
+        out->throughput = v3_scale(out->throughput,
+            L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
         out->wi = wi; out->pdf = 1.0f;
         out->specular = 1; out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;

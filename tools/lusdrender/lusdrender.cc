@@ -188,7 +188,8 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
          "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
          "    ) {\n"
          "        double radius = 1\n"
-         "        rel material:binding = </World/Material>\n"
+      << (opt.path_trace ? "        uniform bool doubleSided = true\n" : "")
+      << "        rel material:binding = </World/Material>\n"
          "    }\n"
          "    def Material \"Material\" {\n"
          "        token outputs:surface.connect = </World/Material/Surface.outputs:surface>\n"
@@ -1641,7 +1642,8 @@ int main(int argc, char **argv) {
     opt.rt_preview = true;
     opt.material_shading = Options::MaterialShading::LightRtBsdf;
     opt.ambient = 0.0f;
-    std::cerr << "MaterialX validation: sphere, uniform white environment, CPU LightRT BSDF\n";
+    std::cerr << "MaterialX validation: sphere, uniform white environment, CPU LightRT BSDF"
+              << (opt.path_trace ? " path tracing\n" : "\n");
   }
   if (scenePreview.enabled) {
     scenePreview.options.time_code = std::isfinite(opt.timecode) ? opt.timecode : 0.0;

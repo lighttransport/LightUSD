@@ -7577,7 +7577,9 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
     return -1;
   }
   const auto t1 = std::chrono::steady_clock::now();
-  if (ctx.opt.aov != CaptureAov::Color) {
+  const bool linear_color_pfm = ctx.opt.mtlx_runtime && ctx.opt.path_trace &&
+      path.size() >= 4 && path.substr(path.size()-4) == ".pfm";
+  if (ctx.opt.aov != CaptureAov::Color || linear_color_pfm) {
     if (path.size() < 4 || path.substr(path.size() - 4) != ".pfm") {
       std::cerr << "Data AOV output must use .pfm (raw float32, no color transform)\n";
       return -1;

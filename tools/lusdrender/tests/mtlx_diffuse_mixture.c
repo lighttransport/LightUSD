@@ -256,6 +256,22 @@ static int specular_response_checks(void) {
       fprintf(stderr,"nonfinite specular film response\n");return 0;
     }
   }
+  /* The legacy glass branch must account for its mixture selection chance. */
+  {
+    OpenPBRParams legacy;openpbr_defaults(&legacy);
+    legacy.base_weight=0.0f;legacy.specular_weight=0.0f;
+    legacy.transmission=1.0f;legacy.specular_ior=1.5f;
+    legacy.specular_roughness=.02f;legacy.transmission_color=v3_splat(1.0f);
+    pcg32 gen;pcg32_seed(&gen,218,617);double sum=0;const int count=60000;
+    for(int i=0;i<count;i++) {
+      BsdfSample sample;
+      if(bsdf_sample(&legacy,n,n,&gen,&sample) && sample.transmission)
+        sum+=sample.throughput.x;
+    }
+    if(fabs(sum/count-1.0)>.01) {
+      fprintf(stderr,"legacy glass mixture weight %g expected 1\n",sum/count);return 0;
+    }
+  }
   /* An RT closure must not emit a second reflection from the glass branch. */
   const char *rt_graph="<materialx><dielectric_bsdf name=\"glass\" type=\"BSDF\">"
     "<input name=\"ior\" type=\"float\" value=\"1.5\"/>"

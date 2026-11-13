@@ -5,6 +5,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 
 #include "eval/value-clip.hh"
@@ -252,6 +253,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const Options &opt, const Vec3 &ray_org, const Vec3 &ray_dir,
            const std::vector<Texture> *textures = nullptr,
            const std::vector<float> *tri_uvs = nullptr,
+           const std::vector<float> *tri_uvs1 = nullptr,
            const lrt_tlas *tlas = nullptr,
            const std::vector<Blas> *blas = nullptr,
            const std::vector<InstanceRT> *instances = nullptr,
@@ -271,7 +273,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            bool indirect = false,
            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
            float *primary_hit_t = nullptr,
-           std::atomic<bool>* diagnostic_exhausted = nullptr);
+           std::atomic<bool>* diagnostic_exhausted = nullptr,
+           uint64_t path_seed = 0,
+           std::atomic<bool>* materialx_error = nullptr);
 
 uint8_t ToSRGB8(float linear, bool srgb_display_transform);
 
