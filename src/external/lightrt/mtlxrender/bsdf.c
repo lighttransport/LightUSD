@@ -384,7 +384,8 @@ static Layers extract(const OpenPBRParams *p) {
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     L.ior = p->specular_ior;
-    L.alpha = clampf(p->specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
+    float specular_roughness = isfinite(p->specular_roughness) ? p->specular_roughness : 1.0f;
+    L.alpha = clampf(specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
 
     L.sheen_w = p->sheen_weight;
     L.sheen_color = p->sheen_color;

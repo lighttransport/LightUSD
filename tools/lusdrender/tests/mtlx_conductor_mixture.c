@@ -216,6 +216,8 @@ int main(void) {
   }
   {
     OpenPBRParams invalid=p[8]; invalid.conductor_lobes[0].roughness=NAN;
+    invalid.conductor_lobes[0].roughness_y=NAN;
+    invalid.specular_roughness=NAN;
     pcg32 gen; pcg32_seed(&gen,17,31);
     for(int i=0;i<256;i++) {
       BsdfSample sample;

@@ -85,6 +85,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   LightRT `7dc1d03` for anisotropic conductor response and tangent routing.
 - 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h}` matches LightRT `99e5a9e` for
   anisotropic conductor proposals and normalized mixture sampling.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `ac60f55` for the
+  aggregate nonfinite roughness guard.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `4271ac7` for channel-preserving diffuse closure multiplication.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
