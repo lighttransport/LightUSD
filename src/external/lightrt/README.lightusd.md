@@ -65,6 +65,10 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   defaults at load, nearest-scope `fileprefix`, node fixes found by the
   Lean vectors, and a V-axis correction for `ramptb`, `ramp4` and `splittb`. `mtlx_stdlib_defs.inc`
   is generated (`lake exe mtlxspec-gen`); do not edit it by hand.
+- 2026-11-14: `mtlxrender/mtlx_doc.c` and the generated standard nodedef
+  table match LightRT `552c128` for retaining `defaultgeomprop` metadata.
+  The table is generated from conformance commit `bfc654e`; this change does
+  not yet evaluate geometry-property defaults.
 - 2026-11-12: `mtlxrender/bsdf.c` is synchronized with LightRT
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test

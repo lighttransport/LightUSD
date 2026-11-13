@@ -1416,6 +1416,59 @@ static void CheckTypedMtlxGraphResolution() {
            "token scope was ignored or flattening modified the document");
     }
   }
+  const std::string standard_geomprop_xml = R"(<materialx version="1.39">
+  <nodedef name="ND_test_uv" node="testuv" type="float">
+    <input name="uv" type="vector2"/><output name="out" type="float"/>
+  </nodedef>
+  <nodegraph name="image_impl" nodedef="ND_image_float">
+    <testuv name="body" type="float" nodedef="ND_test_uv">
+      <input name="uv" type="vector2" interfacename="texcoord"/>
+    </testuv>
+    <output name="out" type="float" nodename="body"/>
+  </nodegraph>
+  <nodegraph name="image_caller">
+    <image name="call" type="float" nodedef="ND_image_float"/>
+    <output name="out" type="float" nodename="call"/>
+  </nodegraph>
+</materialx>)";
+  MtlxDocument standard_geomprop_document;
+  g_checks++;
+  if (!standard_geomprop_document.ParseFromXML(standard_geomprop_xml)) {
+    Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_SETUP", 0, standard_geomprop_document.GetError());
+  } else {
+    const std::string before = standard_geomprop_document.GetResolvedXML();
+    g_checks++;
+    if (standard_geomprop_document.FlattenNodeGraph("image_caller", 1, &error) ||
+        error.find("geometry") == std::string::npos ||
+        standard_geomprop_document.GetResolvedXML() != before) {
+      Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 0,
+           error.empty() ? "standard UV default was not retained" : error);
+    }
+  }
+  std::string explicit_uv_xml = standard_geomprop_xml;
+  const std::string image_call = "<image name=\"call\" type=\"float\" nodedef=\"ND_image_float\"/>";
+  const size_t image_call_pos = explicit_uv_xml.find(image_call);
+  if (image_call_pos != std::string::npos)
+    explicit_uv_xml.replace(image_call_pos, image_call.size(),
+        "<image name=\"call\" type=\"float\" nodedef=\"ND_image_float\">"
+        "<input name=\"texcoord\" type=\"vector2\" value=\"0,0\"/></image>");
+  MtlxDocument explicit_uv_document;
+  g_checks++;
+  if (image_call_pos == std::string::npos ||
+      !explicit_uv_document.ParseFromXML(explicit_uv_xml) ||
+      !explicit_uv_document.FlattenNodeGraph("image_caller", 1, &error)) {
+    Fail("MTLX_DOCUMENT_STDLIB_AUTHORED_UV", 0,
+         error.empty() ? explicit_uv_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat_graph = explicit_uv_document.FindNodeGraph("image_caller");
+    const MtlxNodePtr flat_body = flat_graph && flat_graph->GetNodes().size() == 1
+                                      ? flat_graph->GetNodes()[0] : nullptr;
+    const MtlxInputPtr flat_uv = flat_body ? flat_body->GetInput("uv") : nullptr;
+    if (!flat_uv || flat_uv->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+        flat_uv->GetValue().float_vec.size() != 2) {
+      Fail("MTLX_DOCUMENT_STDLIB_AUTHORED_UV", 1, "authored UV was not preserved");
+    }
+  }
 
   g_checks++;
   MtlxDocument external_document;

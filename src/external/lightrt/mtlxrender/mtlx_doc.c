@@ -158,18 +158,18 @@ static void node_set_nodedef(MtlxNode *n, const XmlNode *x) {
  * (`lake exe mtlxspec-gen`): one row per <nodedef> with inheritance applied,
  * followed by its inputs and their default value strings. */
 typedef struct { const char *name, *node, *out_type; int first, count; } StdNodeDef;
-typedef struct { const char *name, *type; int has_default; const char *dflt; } StdInput;
+typedef struct { const char *name, *type; int has_default; const char *dflt, *default_geomprop; } StdInput;
 
 static const StdNodeDef g_std_nodedefs[] = {
 #define MTLX_STD_NODEDEF(name, node, type, first, count) { name, node, type, first, count },
-#define MTLX_STD_INPUT(name, type, has_default, dflt)
+#define MTLX_STD_INPUT(name, type, has_default, dflt, geomprop)
 #include "mtlx_stdlib_defs.inc"
 #undef MTLX_STD_NODEDEF
 #undef MTLX_STD_INPUT
 };
 static const StdInput g_std_inputs[] = {
 #define MTLX_STD_NODEDEF(name, node, type, first, count)
-#define MTLX_STD_INPUT(name, type, has_default, dflt) { name, type, has_default, dflt },
+#define MTLX_STD_INPUT(name, type, has_default, dflt, geomprop) { name, type, has_default, dflt, geomprop },
 #include "mtlx_stdlib_defs.inc"
 #undef MTLX_STD_NODEDEF
 #undef MTLX_STD_INPUT

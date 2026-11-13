@@ -4643,4 +4643,5 @@ including external nodedefs and matching inherited scope, and checks that
 expansion-limit, differing-scope, token-scope and geometry-property-default
 failures leave the document unchanged. Authored nodedef geometry-property
 defaults are not replaced with literal defaults during document parsing. The
-bundled generated standard-nodedef table does not yet include this metadata.
+generated standard-nodedef table retains this metadata; a standard image UV
+regression checks the implicit default and an explicitly authored UV.
