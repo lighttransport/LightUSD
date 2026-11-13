@@ -4562,3 +4562,5 @@ The Tydra MaterialX constant-evaluator suite (`./build_ninja/src/test_tydra`)
 checks boolean-output `ifgreater`, `ifgreatereq` and `ifequal` with integer,
 boolean and float comparison inputs, including adjacent binary32 values for
 exact equality. These nodes return the comparison result directly.
+The same suite checks MaterialX line classification at the inclusive radius
+boundary and for a negative radius on a degenerate segment.

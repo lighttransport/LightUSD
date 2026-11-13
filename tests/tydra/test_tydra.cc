@@ -344,6 +344,39 @@ void TestMtlxBooleanConditionals() {
   }
 }
 
+void TestMtlxLineClassification() {
+  const std::string usda = R"USDA(#usda 1.0
+    def Scope "M" {
+      def Shader "line" {
+        uniform token info:id = "ND_line_float"
+        float2 inputs:texcoord = (0.5, 0.25)
+        float2 inputs:center = (0, 0)
+        float inputs:radius = 0.25
+        float2 inputs:point1 = (0.25, 0.5)
+        float2 inputs:point2 = (0.75, 0.5)
+        float outputs:out
+      }
+      def Shader "negative" {
+        uniform token info:id = "ND_line_float"
+        float2 inputs:texcoord = (0, 0)
+        float2 inputs:center = (0, 0)
+        float inputs:radius = -1
+        float2 inputs:point1 = (0, 0)
+        float2 inputs:point2 = (0, 0)
+        float outputs:out
+      }
+    })USDA";
+  Stage stage; std::string warning, error;
+  assert(LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda.data()),
+                           usda.size(), &stage, &warning, &error));
+  for (const auto& c : {std::pair<const char*, float>{"line", 1}, {"negative", 0}}) {
+    MtlxConstantValue actual; std::set<std::string> visiting;
+    assert(EvalMtlxConstantNode(stage, stage.GetPrimAtPath(std::string("/M/") + c.first),
+                                0.0, "", &actual, &visiting, 0));
+    assert(actual.components == 1 && actual.value[0] == c.second);
+  }
+}
+
 void TestMtlxConstantEvaluatorLeanVectors() {
   std::string usda = "#usda 1.0\ndef Scope \"M\" {\n";
   std::vector<const LeanMtlxEvalApproxVector*> selected;
@@ -9882,6 +9915,7 @@ int main() {
   }
   TestMtlxConstantEvaluatorRealNodes();
   TestMtlxBooleanConditionals();
+  TestMtlxLineClassification();
   TestMtlxConstantEvaluatorLeanVectors();
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();
