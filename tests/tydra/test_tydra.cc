@@ -120,6 +120,16 @@ def Scope "M" {
     float inputs:outhigh = 1
     float inputs:gamma = 1
   }
+  def Shader "RangeUnresolved" {
+    uniform token info:id = "ND_range_float"
+    float inputs:in = 0.25
+    float inputs:inlow = 0
+    float inputs:inhigh = 1
+    float inputs:outlow = 0
+    float inputs:outhigh = 1
+    float inputs:gamma = 1
+    bool inputs:doclamp.connect = </M/Missing.outputs:out>
+  }
   def Shader "Triangle" {
     uniform token info:id = "ND_trianglewave_float"
     float inputs:in = 0.25
@@ -193,6 +203,10 @@ def Scope "M" {
              1.0e-5f);
     }
   }
+  MtlxConstantValue unresolved_value;
+  std::set<std::string> unresolved_visiting;
+  assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/RangeUnresolved"),
+                               0.0, "", &unresolved_value, &unresolved_visiting, 0));
 }
 namespace {
 using namespace lightusd::mtlx;

@@ -787,22 +787,30 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
   }
 
   if (starts("ND_range_")) {
-    MtlxConstantValue value, in_low, in_high, out_low, out_high, gamma;
+    MtlxConstantValue value, in_low, in_high, out_low, out_high, gamma, do_clamp;
     if (!input("in", &value) || !input("inlow", &in_low) ||
         !input("inhigh", &in_high) || !input("outlow", &out_low) ||
         !input("outhigh", &out_high) || !input("gamma", &gamma)) return false;
+    if (!input("doclamp", &do_clamp)) {
+      const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+      if (spec && (spec->property("inputs:doclamp") ||
+                   spec->connection("inputs:doclamp"))) return false;
+      // An omitted doclamp uses the MaterialX default, false.
+    }
     *out = value;
     out->color_managed = value.color_managed || in_low.color_managed ||
         in_high.color_managed || out_low.color_managed ||
-        out_high.color_managed || gamma.color_managed;
+        out_high.color_managed || gamma.color_managed || do_clamp.color_managed;
     for (int i = 0; i < value.components; ++i) {
       const float lo = in_low.component(i), hi = in_high.component(i);
-      const float denom = hi - lo;
-      const float t = denom != 0.0f
-          ? std::clamp((value.component(i) - lo) / denom, 0.0f, 1.0f)
-          : 0.0f;
-      out->value[static_cast<size_t>(i)] = out_low.component(i) +
-          std::pow(t, gamma.component(i)) * (out_high.component(i) - out_low.component(i));
+      const float outlo = out_low.component(i), outhi = out_high.component(i);
+      const float t = (value.component(i) - lo) / (hi - lo);
+      const float sign = t > 0.0f ? 1.0f : (t < 0.0f ? -1.0f : 0.0f);
+      const float mapped = outlo + sign * std::pow(std::fabs(t), 1.0f / gamma.component(i)) *
+                                      (outhi - outlo);
+      out->value[static_cast<size_t>(i)] = do_clamp.component(0) != 0.0f
+          ? std::clamp(mapped, std::min(outlo, outhi), std::max(outlo, outhi))
+          : mapped;
     }
     return true;
   }

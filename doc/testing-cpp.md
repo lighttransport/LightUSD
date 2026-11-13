@@ -4574,3 +4574,6 @@ Tiled-hexagon vector replay covers regular and staggered layouts, negative UVs,
 and signed size, alongside the direct hexagon cases.
 The same vector replay checks that `ramplr`, `ramptb`, and `ramp4` clamp
 out-of-range UV coordinates, including scalar and color-valued outputs.
+The replay also checks MaterialX range reciprocal gamma, signed and out-of-range
+inputs, optional output clamping with reversed bounds, and per-channel values.
+An unresolved authored `doclamp` connection must not be treated as the default.

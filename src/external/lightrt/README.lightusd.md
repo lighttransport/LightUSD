@@ -217,3 +217,5 @@ upstream provenance intact.
   evaluable rough OpenPBR transmission and its visible-normal MIS density.
 - 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `3d3db05` for
   boolean-output conditional nodes.
+- 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `df64395` for
+  MaterialX range reciprocal gamma, per-channel remapping and optional clamp.

@@ -1078,7 +1078,23 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_HSVADJUST: { a=in_or(ctx,n,"in",mv_zero(n->type));MtlxValue amount=in_or(ctx,n,"amount",mv_vec3(v3_make(0,1,1)));v3 hsv=rgb_to_hsv(mv_as_v3(&a));hsv.x=hsv.x+amount.v[0];hsv.y=hsv.y*amount.v[1];hsv.z=hsv.z*amount.v[2];v3 rgb=hsv_to_rgb(hsv);r=a;r.v[0]=rgb.x;r.v[1]=rgb.y;r.v[2]=rgb.z;break; }
         case OP_SATURATE: { a=in_or(ctx,n,"in",mv_zero(MV_COLOR3)); MtlxValue am=in_or(ctx,n,"amount",mv_float(1)),k=in_or(ctx,n,"lumacoeffs",working_lumacoeffs()); float l=a.v[0]*k.v[0]+a.v[1]*k.v[1]+a.v[2]*k.v[2]; r=a; for(int i=0;i<3;i++) r.v[i]=l+(a.v[i]-l)*am.v[0]; break; }
         case OP_CONTRAST: { a=in_or(ctx,n,"in",mv_zero(n->type)); MtlxValue am=in_or(ctx,n,"amount",mv_float(1)),pv=in_or(ctx,n,"pivot",mv_float(0.5f)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float am_i=ncomp_of(&am)==1?am.v[0]:am.v[i],pv_i=ncomp_of(&pv)==1?pv.v[0]:pv.v[i]; r.v[i]=(a.v[i]-pv_i)*am_i+pv_i; } break; }
-        case OP_RANGE: { a=in_or(ctx,n,"in",mv_zero(n->type)); MtlxValue il=in_or(ctx,n,"inlow",mv_float(0)),ih=in_or(ctx,n,"inhigh",mv_float(1)),ol=in_or(ctx,n,"outlow",mv_float(0)),oh=in_or(ctx,n,"outhigh",mv_float(1)),g=in_or(ctx,n,"gamma",mv_float(1)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++){ float t=clampf((a.v[i]-il.v[0])/((ih.v[0]-il.v[0])!=0?ih.v[0]-il.v[0]:1),0,1); t=powf(t,g.v[0]); r.v[i]=ol.v[0]+t*(oh.v[0]-ol.v[0]);} break; }
+        case OP_RANGE: {
+            MtlxValue value=in_or(ctx,n,"in",mv_zero(n->type));
+            MtlxValue il=in_or(ctx,n,"inlow",mv_float(0)), ih=in_or(ctx,n,"inhigh",mv_float(1));
+            MtlxValue ol=in_or(ctx,n,"outlow",mv_float(0)), oh=in_or(ctx,n,"outhigh",mv_float(1));
+            MtlxValue gamma=in_or(ctx,n,"gamma",mv_float(1)), dc=in_or(ctx,n,"doclamp",mv_float(0));
+            int nc=ncomp_of(&value); r=value;
+            for (int i=0;i<nc;i++) {
+                float lo=il.v[ncomp_of(&il)==1?0:i], hi=ih.v[ncomp_of(&ih)==1?0:i];
+                float outlo=ol.v[ncomp_of(&ol)==1?0:i], outhi=oh.v[ncomp_of(&oh)==1?0:i];
+                float g=gamma.v[ncomp_of(&gamma)==1?0:i];
+                float t=(value.v[i]-lo)/(hi-lo);
+                float sign=(t>0.0f)?1.0f:((t<0.0f)?-1.0f:0.0f);
+                float mapped=outlo+sign*powf(fabsf(t),1.0f/g)*(outhi-outlo);
+                r.v[i]=dc.v[0]!=0.0f ? clampf(mapped,fminf(outlo,outhi),fmaxf(outlo,outhi)) : mapped;
+            }
+            break;
+        }
         case OP_SEPARATE: r = in_or(ctx, n, "in", mv_zero(MV_VEC3)); break; /* consumer swizzles */
         case OP_COMBINE2: { a=in_or(ctx,n,"in1",mv_float(0)); b=in_or(ctx,n,"in2",mv_float(0)); if(n->type==MV_VEC2||n->type==MV_NONE){ r=mv_vec2(a.v[0],b.v[0]); } else { r=mv_zero(n->type); int na=ncomp_of(&a),nb=ncomp_of(&b),k=0; for(int i=0;i<na&&k<4;i++) r.v[k++]=a.v[i]; for(int i=0;i<nb&&k<4;i++) r.v[k++]=b.v[i]; } break; }
         case OP_COMBINE3: { MtlxValue i1=in_or(ctx,n,"in1",mv_float(0)),i2=in_or(ctx,n,"in2",mv_float(0)),i3=in_or(ctx,n,"in3",mv_float(0)); r=(n->type==MV_VEC3)?mv_vec3(v3_make(i1.v[0],i2.v[0],i3.v[0])):mv_color3(v3_make(i1.v[0],i2.v[0],i3.v[0])); break; }
