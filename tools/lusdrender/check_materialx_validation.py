@@ -561,6 +561,14 @@ def main():
       <input name="in1" type="BSDF" nodename="mix"/>
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>
+    <sheen_bsdf name="black_sheen" type="BSDF">
+      <input name="color" type="color3" value="0, 0, 0"/>
+      <input name="roughness" type="float" value="0.8"/>
+    </sheen_bsdf>
+    <layer name="sheen_layer" type="BSDF">
+      <input name="top" type="BSDF" nodename="black_sheen"/>
+      <input name="base" type="BSDF" nodename="a"/>
+    </layer>
     <sheen_bsdf name="sheen_a" type="BSDF">
       <input name="color" type="color3" value="0.2, 0.5, 0.8"/>
       <input name="roughness" type="float" value="0.2"/>
@@ -584,7 +592,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -648,6 +656,12 @@ def main():
     if max(abs(closure_images[5][center_offset + c] - closure_images[8][center_offset + c])
            for c in range(3)) < 2:
         raise RuntimeError("authored Zeltner and Conty–Kulla modes rendered identically")
+
+    # A black sheen top emits no visible sheen but still attenuates the base.
+    # Compare the full image to avoid assuming a particular sphere pixel layout.
+    if max(closure_images[0][i] - closure_images[10][i]
+           for i in range(0, len(closure_images[0]), 4)) < 3:
+        raise RuntimeError("view-dependent sheen layer did not attenuate its base")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],

@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int evaluate(const char *xml, OpenPBRParams *out) {
+static int evaluate_view(const char *xml, OpenPBRParams *out, v3 view) {
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) return 0;
   /* Model an in-memory graph whose nodedef defaults have not been inserted. */
@@ -18,7 +18,7 @@ static int evaluate(const char *xml, OpenPBRParams *out) {
           if (!strcmp(n->inputs[j].name, "mix")) n->inputs[j].name[0] = '_';
   }
   ShadeContext ctx; memset(&ctx, 0, sizeof(ctx));
-  ctx.doc = doc; ctx.Ns = v3_make(0,0,1); ctx.Ng = ctx.Ns;
+  ctx.doc = doc; ctx.Ns = v3_make(0,0,1); ctx.Ng = ctx.Ns; ctx.V = view;
   ctx.dpdu = v3_make(1,0,0); ctx.dpdv = v3_make(0,1,0);
   ctx.memo = calloc((size_t)(doc->nnode ? doc->nnode : 1), sizeof(MtlxValue));
   ctx.memo_done = calloc((size_t)(doc->nnode ? doc->nnode : 1), 1);
@@ -26,6 +26,45 @@ static int evaluate(const char *xml, OpenPBRParams *out) {
   int ok = ctx.memo && ctx.memo_done && !mtlx_eval_surface(&ctx, id, out);
   free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
   return ok;
+}
+
+static int evaluate(const char *xml, OpenPBRParams *out) {
+  return evaluate_view(xml, out, v3_make(0,0,1));
+}
+
+static int layer_checks(void) {
+  const char *parts =
+    "<oren_nayar_diffuse_bsdf name=\"base\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.4,0.6\"/></oren_nayar_diffuse_bsdf>"
+    "<sheen_bsdf name=\"c\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.4\"/><input name=\"roughness\" type=\"float\" value=\"0.5\"/></sheen_bsdf>"
+    "<sheen_bsdf name=\"z\" type=\"BSDF\"><input name=\"weight\" type=\"float\" value=\"0.6\"/><input name=\"roughness\" type=\"float\" value=\"0.5\"/><input name=\"mode\" type=\"string\" value=\"zeltner\"/></sheen_bsdf>"
+    "<mix name=\"mixed\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"c\"/><input name=\"fg\" type=\"BSDF\" nodename=\"z\"/><input name=\"mix\" type=\"float\" value=\"0.4\"/></mix>"
+    "<multiply name=\"scaled\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"c\"/><input name=\"in2\" type=\"float\" value=\"0.2\"/></multiply>"
+    "<layer name=\"inner\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"c\"/><input name=\"base\" type=\"BSDF\" nodename=\"z\"/></layer>";
+  const char *tops[] = {"c", "z", "mixed", "scaled", "inner"};
+  const float cosines[] = {1.0f, 0.6f, 0.1f};
+  char xml[8192];
+  for (int k=0;k<3;k++) {
+    double x=cosines[k], y=.5;
+    double num=13.67300-68.78018*x+799.08825*y-905.00061*x*y+60.28956*x*x+1086.96473*y*y;
+    double den=1+61.57746*x+442.78211*y+2597.49308*x*y+121.81241*x*x+3045.55075*y*y;
+    double c=fmax(0,fmin(1,num/den));
+    double sig=y*(.0206607+1.58491*y)/(.0379424+y*(1.32227+y));
+    double mu=y*(-.193854+y*(-1.14885+y*(1.7932-.95943*y*y)))/(.046391+y);
+    double off=y*(.000654023+(-.0207818+.119681*y)*y)/(1.26264+y*(-1.92021+y));
+    double z=exp(-.5*pow((x-mu)/sig,2))/(sig*sqrt(2.0*3.14159265358979323846))+off;
+    double tc=1-.4*c, tz=1-.6*z;
+    double expected[]={tc,tz,.6*tc+.4*tz,tc,tc*tz};
+    v3 view=v3_make(sqrtf(1.0f-cosines[k]*cosines[k]),0,cosines[k]);
+    for (int i=0;i<5;i++) {
+      OpenPBRParams p; memset(&p, 0, sizeof(p));
+      snprintf(xml,sizeof(xml),"<materialx>%s<layer name=\"stack\" type=\"BSDF\"><input name=\"top\" type=\"BSDF\" nodename=\"%s\"/><input name=\"base\" type=\"BSDF\" nodename=\"base\"/></layer><surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"stack\"/></surface></materialx>",parts,tops[i]);
+      if (!evaluate_view(xml,&p,view) || p.diffuse_lobe_count != 1 ||
+          fabs(p.diffuse_lobes[0].weight-expected[i])>2e-5) {
+        fprintf(stderr,"FAIL sheen layer top=%s view=%g got=%g expected=%g\n",tops[i],x,p.diffuse_lobes[0].weight,expected[i]); return 0;
+      }
+    }
+  }
+  return 1;
 }
 
 static int overflow_check(int count, int expected) {
@@ -146,6 +185,7 @@ int main(void) {
       }
     }
   }
+  if (!layer_checks()) return 1;
   if (!overflow_check(MTLX_MAX_SHEEN_LOBES, 1) ||
       !overflow_check(MTLX_MAX_SHEEN_LOBES+1, 0)) return 1;
   puts("PASS: mixed sheen closure responses and bounded overflow");

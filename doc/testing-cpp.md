@@ -1692,14 +1692,15 @@ isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
 `tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
-responses, RGB-weighted mixtures, the lobe limit and the default BSDF mix weight.
+responses, RGB-weighted mixtures, the lobe limit, the default BSDF mix weight,
+and view-dependent sheen-layer throughput.
 `tool-lusdrender-mtlx-volume-lobes` checks VDF/EDF composition, default mix
 weights and phase-lobe overflow.
-`tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses
+`tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses,
 the lobe limit, literal and connected RGB weights, and opaque diffuse
 layer throughput for direct, mixed and nested tops;
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
-and an opaque diffuse layer through the rendered CPU path and verifies that
+and opaque diffuse and sheen layers through the rendered CPU path, and verifies that
 disabled scattering remains black.
 Sheen environment lighting uses a directional-albedo fit and an irradiance
 approximation for nonuniform environments.

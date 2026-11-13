@@ -1465,11 +1465,10 @@ static float blend_scalar(float old_weight, float old_value, float value,
                       : value;
 }
 
-/* Evaluate angle-independent vertical throughput for graphs made entirely of
- * opaque diffuse closures. Unknown top closures retain the legacy path until
- * their direction-dependent throughput can be evaluated at the shading point.
+/* Evaluate vertical throughput for diffuse and sheen closure graphs at the
+ * shading point. Unknown top closures retain the legacy approximation.
  * Multiplication scales response, not throughput, in MaterialX genglsl. */
-static int opaque_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
+static int known_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
                                   int depth, size_t *budget, float *throughput) {
     if (!n) { *throughput = 1.0f; return 1; }
     if (depth > 32 || !*budget) return 0;
@@ -1482,19 +1481,51 @@ static int opaque_bsdf_throughput(ShadeContext *ctx, const MtlxNode *n,
         *throughput = 1.0f - weight;
         return 1;
     }
+    if (!strcmp(cat, "sheen_bsdf")) {
+        const float weight = in_float(ctx, n, "weight", 1.0f);
+        const MtlxInput *normal_input = find_input(n, "normal");
+        v3 normal = ctx->Ns;
+        if (normal_input && (normal_input->has_value || normal_input->src_node >= 0))
+            normal = in_color(ctx, n, "normal", normal);
+        if (!(weight >= 0.0f && weight <= 1.0f) ||
+            !v3_is_finite(normal) || !v3_is_finite(ctx->V) ||
+            v3_len(normal) < 1.0e-6f || v3_len(ctx->V) < 1.0e-6f) return 0;
+        float x = clampf(fabsf(v3_dot(v3_normalize(normal), v3_normalize(ctx->V))), 1.0e-6f, 1.0f);
+        float y = in_float(ctx, n, "roughness", 0.3f);
+        if (!isfinite(y)) return 0;
+        float albedo;
+        if (!strcmp(string_input(n, "mode", "conty_kulla"), "zeltner")) {
+            y = clampf(y, 0.01f, 1.0f);
+            float sig = y*(0.0206607f + 1.58491f*y)/(0.0379424f + y*(1.32227f + y));
+            float mu = y*(-0.193854f + y*(-1.14885f + y*(1.7932f - 0.95943f*y*y)))/(0.046391f + y);
+            float off = y*(0.000654023f + (-0.0207818f + 0.119681f*y)*y)/(1.26264f + y*(-1.92021f + y));
+            float q = (x-mu)/sig;
+            albedo = expf(-0.5f*q*q)/(sig*sqrtf(2.0f*MTLX_PI)) + off;
+        } else {
+            y = clampf(y, 0.0f, 1.0f);
+            float num = 13.67300f - 68.78018f*x + 799.08825f*y - 905.00061f*x*y +
+                        60.28956f*x*x + 1086.96473f*y*y;
+            float den = 1.0f + 61.57746f*x + 442.78211f*y + 2597.49308f*x*y +
+                        121.81241f*x*x + 3045.55075f*y*y;
+            albedo = clampf(num/den, 0.0f, 1.0f);
+        }
+        if (!isfinite(albedo)) return 0;
+        *throughput = 1.0f - weight*albedo;
+        return 1;
+    }
     if (!strcmp(cat, "multiply")) {
         const MtlxInput *in1 = find_input(n, "in1");
         const MtlxNode *a = input_node(ctx, n, "in1");
         const MtlxNode *b = input_node(ctx, n, "in2");
         const int first_is_closure = a && (!in1 || in1->type == MV_NONE || !b);
-        return opaque_bsdf_throughput(ctx, first_is_closure ? a : b, depth + 1, budget, throughput);
+        return known_bsdf_throughput(ctx, first_is_closure ? a : b, depth + 1, budget, throughput);
     }
     if (!strcmp(cat, "add") || !strcmp(cat, "mix") || !strcmp(cat, "layer")) {
         const char *a = !strcmp(cat, "add") ? "in1" : (!strcmp(cat, "mix") ? "bg" : "top");
         const char *b = !strcmp(cat, "add") ? "in2" : (!strcmp(cat, "mix") ? "fg" : "base");
         float x, y;
-        if (!opaque_bsdf_throughput(ctx, input_node(ctx, n, a), depth + 1, budget, &x) ||
-            !opaque_bsdf_throughput(ctx, input_node(ctx, n, b), depth + 1, budget, &y)) return 0;
+        if (!known_bsdf_throughput(ctx, input_node(ctx, n, a), depth + 1, budget, &x) ||
+            !known_bsdf_throughput(ctx, input_node(ctx, n, b), depth + 1, budget, &y)) return 0;
         if (!strcmp(cat, "mix")) {
             float m = clampf(in_float(ctx, n, "mix", in_float(ctx, n, "amount", 0.0f)), 0.0f, 1.0f);
             *throughput = (1.0f - m) * x + m * y;
@@ -1552,7 +1583,7 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
         const MtlxNode *top = input_node(ctx, n, "top");
         float throughput = 1.0f;
         size_t budget = 4096;
-        (void)opaque_bsdf_throughput(ctx, top, depth + 1, &budget, &throughput);
+        (void)known_bsdf_throughput(ctx, top, depth + 1, &budget, &throughput);
         apply_bsdf(ctx, input_node(ctx, n, "base"), scale * throughput, color_scale, out, depth + 1);
         apply_bsdf(ctx, top, scale, color_scale, out, depth + 1);
         return;
