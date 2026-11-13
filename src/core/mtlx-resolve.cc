@@ -1745,6 +1745,12 @@ bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
   }
   const std::string prefix(longest + 1, '_');
   auto renamed = [&](const std::string &name) { return prefix + name; };
+  size_t longest_body_name = 0;
+  for (const MtlxElem *node : body_nodes)
+    if (node->Name().size() > longest_body_name) longest_body_name = node->Name().size();
+  const std::string geom_prefix = prefix + std::string(longest_body_name + 1, '_') + "geom";
+  std::vector<MtlxElem> generated_geom_nodes;
+  std::vector<std::pair<std::string, std::string>> generated_geom_names;
   auto erase_sources = [](MtlxElem *port) {
     for (auto it = port->attrs.begin(); it != port->attrs.end();) {
       if (it->first == "nodename" || it->first == "nodegraph" ||
@@ -1772,7 +1778,41 @@ bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
     for (const MtlxPort &p : library.ActiveInputs(*def)) {
       if (p.name != name) continue;
       if (!p.default_geomprop.empty()) {
-        *err = "unsupported default geometry property"; return false;
+        for (const auto &generated : generated_geom_names) {
+          if (generated.first == p.default_geomprop) {
+            port->SetAttr("nodename", generated.second);
+            return true;
+          }
+        }
+        const MtlxElem *geomdef = nullptr;
+        for (const MtlxElem &child : document.children) {
+          if (child.tag != "geompropdef" || child.Name() != p.default_geomprop) continue;
+          if (geomdef) { *err = "ambiguous default geometry property"; return false; }
+          geomdef = &child;
+        }
+        if (!geomdef) { *err = "missing default geometry property '" + p.default_geomprop + "'"; return false; }
+        if (geomdef->AttrOr("type") != p.type || geomdef->AttrOr("geomprop").empty()) {
+          *err = "invalid default geometry property '" + p.default_geomprop + "'"; return false;
+        }
+        MtlxElem geom;
+        geom.tag = geomdef->AttrOr("geomprop");
+        const std::string geom_name = geom_prefix + std::to_string(generated_geom_nodes.size());
+        geom.SetAttr("name", geom_name);
+        geom.SetAttr("type", p.type);
+        for (const char *attr : {"space", "index"}) {
+          if (const std::string *value = geomdef->Attr(attr)) {
+            MtlxElem input;
+            input.tag = "input";
+            input.SetAttr("name", attr);
+            input.SetAttr("type", std::string(attr) == "space" ? "string" : "integer");
+            input.SetAttr("value", *value);
+            geom.children.push_back(std::move(input));
+          }
+        }
+        generated_geom_names.emplace_back(p.default_geomprop, geom_name);
+        generated_geom_nodes.push_back(std::move(geom));
+        port->SetAttr("nodename", geom_name);
+        return true;
       }
       if (p.has_value) { port->SetAttr("value", p.value); return true; }
     }
@@ -1860,6 +1900,8 @@ bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
       }
     }
   }
+  for (MtlxElem &node : generated_geom_nodes)
+    result.children.push_back(std::move(node));
   if (!ResolveMtlxGraph(document, result, library, outer, &checked, err)) return false;
   *flattened = std::move(result);
   return true;

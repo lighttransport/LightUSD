@@ -228,8 +228,9 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
 
 // Inline one graph-implemented node into a copy of `graph`. This initial
 // implementation supports untargeted, unambiguous direct or linked nodegraphs
-// and direct node/literal/interface connections. Unsupported forms return false
-// without modifying `flattened`.
+// and direct node/literal/interface connections. Geometry defaults require a
+// matching document geompropdef. Unsupported forms return false without
+// modifying `flattened`.
 bool FlattenMtlxGraphCall(const MtlxElem &document, const MtlxElem &graph,
                           const MtlxLibrary &library, const MtlxScope &outer,
                           const std::string &call_name, MtlxElem *flattened,

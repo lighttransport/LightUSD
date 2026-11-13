@@ -644,6 +644,68 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_DEFAULT_GEOMPROP", 0,
          "geometry-property default was silently replaced by a literal");
   }
+  MtlxElem geomprop_doc = inline_doc;
+  MtlxElem geomdef = elem("geompropdef", "Pworld");
+  geomdef.SetAttr("type", "float");
+  geomdef.SetAttr("geomprop", "testconstant");
+  geomprop_doc.children.push_back(geomdef);
+  MtlxElem second_geom_input = body_input;
+  second_geom_input.SetAttr("name", "in2");
+  geomprop_doc.children[0].children[0].children.push_back(second_geom_input);
+  g_checks++;
+  if (!FlattenMtlxGraphCall(geomprop_doc, default_caller, geomprop_library, {},
+                            "call", &flattened, &inline_error) ||
+      flattened.children.size() != 4 ||
+      flattened.children[3].tag != "testconstant" ||
+      flattened.children[1].children.size() != 2 ||
+      flattened.children[1].children[0].AttrOr("nodename") != flattened.children[3].Name() ||
+      flattened.children[1].children[1].AttrOr("nodename") != flattened.children[3].Name() ||
+      flattened.children[1].children[0].Attr("value")) {
+    Fail("MTLX_GRAPH_INLINE_GEOMPROP", 0, inline_error.empty() ?
+         "geometry node was not generated and shared" : inline_error);
+  }
+  MtlxElem geometry_node_def = elem("nodedef", "ND_test_geometry");
+  geometry_node_def.SetAttr("node", "testgeometry");
+  geometry_node_def.SetAttr("type", "float");
+  add_port(&geometry_node_def, "input", "space", "string");
+  add_port(&geometry_node_def, "output", "out", "float");
+  geomprop_library.AddNodeDef(geometry_node_def, {});
+  MtlxElem spatial_geomprop_doc = geomprop_doc;
+  spatial_geomprop_doc.children.back().SetAttr("geomprop", "testgeometry");
+  spatial_geomprop_doc.children.back().SetAttr("space", "world");
+  g_checks++;
+  if (!FlattenMtlxGraphCall(spatial_geomprop_doc, default_caller, geomprop_library, {},
+                            "call", &flattened, &inline_error) ||
+      flattened.children.size() != 4 || flattened.children[3].tag != "testgeometry" ||
+      flattened.children[3].children.size() != 1 ||
+      flattened.children[3].children[0].AttrOr("name") != "space" ||
+      flattened.children[3].children[0].AttrOr("type") != "string" ||
+      flattened.children[3].children[0].AttrOr("value") != "world") {
+    Fail("MTLX_GRAPH_INLINE_GEOMPROP_SPACE", 0, inline_error.empty() ?
+         "geometry property space was not transferred" : inline_error);
+  }
+  MtlxElem ambiguous_geomprop_doc = geomprop_doc;
+  ambiguous_geomprop_doc.children.push_back(geomdef);
+  MtlxElem ambiguous_geomprop_result = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraphCall(ambiguous_geomprop_doc, default_caller, geomprop_library, {},
+                           "call", &ambiguous_geomprop_result, &inline_error) ||
+      ambiguous_geomprop_result.Name() != "unchanged" ||
+      inline_error.find("ambiguous") == std::string::npos) {
+    Fail("MTLX_GRAPH_INLINE_GEOMPROP_AMBIGUOUS", 0,
+         "duplicate geometry definitions were accepted or changed the output");
+  }
+  MtlxElem wrong_geomprop_doc = geomprop_doc;
+  wrong_geomprop_doc.children.back().SetAttr("type", "vector3");
+  MtlxElem wrong_geomprop_result = elem("nodegraph", "unchanged");
+  g_checks++;
+  if (FlattenMtlxGraphCall(wrong_geomprop_doc, default_caller, geomprop_library, {},
+                           "call", &wrong_geomprop_result, &inline_error) ||
+      wrong_geomprop_result.Name() != "unchanged" ||
+      inline_error.find("geometry") == std::string::npos) {
+    Fail("MTLX_GRAPH_INLINE_GEOMPROP_TYPE", 0,
+         "mismatched geometry type was accepted or changed the output");
+  }
   MtlxElem downstream = caller;
   MtlxElem consumer = add_node("consumer");
   MtlxElem consumer_input = elem("input", "in1");
@@ -1443,6 +1505,34 @@ static void CheckTypedMtlxGraphResolution() {
         standard_geomprop_document.GetResolvedXML() != before) {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 0,
            error.empty() ? "standard UV default was not retained" : error);
+    }
+  }
+  std::string resolved_geomprop_xml = standard_geomprop_xml;
+  const std::string image_impl_tag = "<nodegraph name=\"image_impl\"";
+  const size_t image_impl_pos = resolved_geomprop_xml.find(image_impl_tag);
+  if (image_impl_pos != std::string::npos)
+    resolved_geomprop_xml.insert(image_impl_pos,
+        "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"0\"/>");
+  MtlxDocument resolved_geomprop_document;
+  g_checks++;
+  if (image_impl_pos == std::string::npos ||
+      !resolved_geomprop_document.ParseFromXML(resolved_geomprop_xml) ||
+      !resolved_geomprop_document.FlattenNodeGraph("image_caller", 1, &error)) {
+    Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 0,
+         error.empty() ? resolved_geomprop_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat_graph = resolved_geomprop_document.FindNodeGraph("image_caller");
+    const MtlxNodePtr flat_body = flat_graph && flat_graph->GetNodes().size() == 2
+                                      ? flat_graph->GetNodes()[0] : nullptr;
+    const MtlxNodePtr geom_node = flat_graph && flat_graph->GetNodes().size() == 2
+                                      ? flat_graph->GetNodes()[1] : nullptr;
+    const MtlxInputPtr uv = flat_body ? flat_body->GetInput("uv") : nullptr;
+    const MtlxInputPtr index = geom_node ? geom_node->GetInput("index") : nullptr;
+    if (!uv || !geom_node || geom_node->GetCategory() != "texcoord" ||
+        uv->GetNodeName() != geom_node->GetName() || !index ||
+        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 0) {
+      Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 1,
+           "UV0 was not connected to a texcoord node with index zero");
     }
   }
   std::string explicit_uv_xml = standard_geomprop_xml;

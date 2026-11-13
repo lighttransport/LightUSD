@@ -4636,11 +4636,15 @@ nodedef defaults and authored input metadata. It also checks nested expansion,
 source-code-only implementations, recursive graph rejection, the expansion
 limit and atomic failure. MaterialX 1.39.5 was used to check the connected,
 nested and nodedef-default cases. The inliner currently rejects unsupported
-implementation selection, scope and geometry-property default cases; these
-tests do not establish general corpus or renderer parity.
+implementation selection and scope cases; these
+tests do not establish general corpus or renderer parity. A geometry-property
+default with a matching document `geompropdef` creates a connected geometry
+node, preserving its `space` and `index` and sharing repeated uses; MaterialX
+1.39.5 confirms the UV and world-space examples. Missing,
+ambiguous or incompatible definitions fail without changing the output.
 The regression also calls `MtlxDocument::FlattenNodeGraph` on parsed documents,
 including external nodedefs and matching inherited scope, and checks that
-expansion-limit, differing-scope, token-scope and geometry-property-default
+expansion-limit, differing-scope, token-scope and missing geometry-definition
 failures leave the document unchanged. Authored nodedef geometry-property
 defaults are not replaced with literal defaults during document parsing. The
 generated standard-nodedef table retains this metadata; a standard image UV
