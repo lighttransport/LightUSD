@@ -24,7 +24,7 @@ static v3 integrate(const OpenPBRParams *p, float view_cosine, int lobe) {
   const float view_sine = sqrtf(fmaxf(0.0f, 1.0f - view_cosine * view_cosine));
   const v3 N = v3_make(0.0f, 0.0f, 1.0f);
   const v3 wo = v3_make(view_sine, 0.0f, view_cosine);
-  v3 result = v3_splat(0.0f);
+  double xsum = 0.0, ysum = 0.0, zsum = 0.0;
 
   for (int y = 0; y < n_mu; ++y) {
     const float mu = ((float)y + 0.5f) * dmu;
@@ -37,10 +37,12 @@ static v3 integrate(const OpenPBRParams *p, float view_cosine, int lobe) {
       (void)bsdf_eval_lobes(p, N, wo, wi, &diffuse, &specular, &pdf);
       const v3 f = lobe == 0 ? v3_add(diffuse, specular)
                              : (lobe == 1 ? diffuse : specular);
-      result = v3_add(result, v3_scale(f, mu * dmu * dphi));
+      xsum += (double)f.x * mu * dmu * dphi;
+      ysum += (double)f.y * mu * dmu * dphi;
+      zsum += (double)f.z * mu * dmu * dphi;
     }
   }
-  return result;
+  return v3_make((float)xsum, (float)ysum, (float)zsum);
 }
 
 static void set_defaults(OpenPBRParams *p, const FurnaceCase *c) {
@@ -60,6 +62,7 @@ static void set_defaults(OpenPBRParams *p, const FurnaceCase *c) {
   p->subsurface_radius = v3_splat(1.0f);
   p->subsurface_scale = 1.0f;
   p->coat_weight = c->coat;
+  p->coat_darkening = 1.0f;
   p->coat_color = v3_splat(1.0f);
   p->coat_roughness = 0.2f;
   p->coat_ior = 1.5f;
@@ -117,6 +120,41 @@ int main(void) {
              diffuse.x, diffuse.y, diffuse.z,
              specular.x, specular.y, specular.z);
     }
+  }
+
+  // The OpenPBR graph attenuates the whole base by a bounded coat-darkening
+  // ratio. Check its per-channel values and authored interpolation amount.
+  {
+    FurnaceCase c = {"coat-formula", 0.6f, 0.25f, 0.3f, 0.8f, 0.0f, 0.7f, 0};
+    OpenPBRParams p; set_defaults(&p, &c);
+    p.base_color = v3_make(0.2f, 0.4f, 0.6f);
+    p.subsurface_color = v3_make(0.4f, 0.5f, 0.7f);
+    const v3 n = v3_make(0.0f, 0.0f, 1.0f);
+    v3 baseline, spec; float pdf;
+    p.coat_darkening = 0.0f;
+    bsdf_eval_lobes(&p, n, n, n, &baseline, &spec, &pdf);
+    const float base[] = {0.2f, 0.4f, 0.6f};
+    const float subsurface[] = {0.4f, 0.5f, 0.7f};
+    const float f0 = (1.5f - 1.0f) / (1.5f + 1.0f);
+    const float k = 1.0f - (1.0f - f0 * f0) / (1.5f * 1.5f);
+    for (int step = 1; step <= 2; ++step) {
+      p.coat_darkening = 0.5f * (float)step;
+      v3 diff;
+      bsdf_eval_lobes(&p, n, n, n, &diff, &spec, &pdf);
+      const float b[] = {baseline.x, baseline.y, baseline.z};
+      const float d[] = {diff.x, diff.y, diff.z};
+      for (int ch = 0; ch < 3; ++ch) {
+        const float dielectric = (1.0f - c.subsurface) * base[ch] + c.subsurface * subsurface[ch];
+        const float albedo = (1.0f - c.metal) * dielectric + c.metal * base[ch] * c.specular_weight;
+        const float factor = (1.0f - k) / (1.0f - albedo * k);
+        const float expected = b[ch] * (1.0f + c.coat * p.coat_darkening * (factor - 1.0f));
+        if (fabsf(d[ch] - expected) > 1.0e-6f) {
+          fprintf(stderr, "FAIL: coat darkening channel=%d got=%g expected=%g\n", ch, d[ch], expected);
+          return 1;
+        }
+      }
+    }
+    printf("PASS: OpenPBR coat darkening and authored interpolation\n");
   }
 
   // Sweep the principal base/specular controls so the furnace bound also

@@ -319,6 +319,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.coat_color = v3_make(src.coatColor[0], src.coatColor[1], src.coatColor[2]);
   p.coat_roughness = src.coatRoughness;
   p.coat_ior = src.coatIor;
+  p.coat_darkening = src.coatDarkening;
   p.sheen_weight = src.sheenWeight;
   p.sheen_color =
       v3_make(src.sheenColor[0], src.sheenColor[1], src.sheenColor[2]);

@@ -1731,6 +1731,9 @@ output against analytic Lambert and emission values, deterministic results
 across worker counts, seed variation, and a two-interface transmission path
 at different depth limits. The native and vendored diffuse-mixture tests check
 the glass branch's sampling probability with a white-furnace Monte Carlo test.
+The MaterialX validation also checks that a connected OpenPBR coat-darkening
+input affects path-traced color. The white-furnace test checks the per-channel
+OpenPBR coat-darkening formula, authored interpolation and energy bounds.
 
 After changing the WASM shading snapshot binding, rebuild both web modules and
 run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node

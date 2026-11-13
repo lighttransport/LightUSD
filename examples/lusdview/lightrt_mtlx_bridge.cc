@@ -203,6 +203,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   p->diffuseModel = MTLX_DIFFUSE_EON;
+  p->coatDarkening = 1.0f;
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -410,6 +411,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   CopyV3(src.coat_color, dst->coatColor);
   dst->coatRoughness = src.coat_roughness;
   dst->coatIor = src.coat_ior;
+  dst->coatDarkening = src.coat_darkening;
   dst->sheenWeight = src.sheen_weight;
   CopyV3(src.sheen_color, dst->sheenColor);
   dst->sheenRoughness = src.sheen_roughness;
@@ -526,6 +528,7 @@ void MergeGraphParamsPreservingTextureDeps(
   if (safe("coat_color")) copy3(graph.coatColor, dst->coatColor);
   if (safe("coat_roughness")) dst->coatRoughness = graph.coatRoughness;
   if (safe("coat_ior")) dst->coatIor = graph.coatIor;
+  if (safe("coat_darkening")) dst->coatDarkening = graph.coatDarkening;
   if (safe("fuzz_weight") && safe("fuzz_color") && safe("fuzz_roughness")) {
     dst->sheenLobeCount = graph.sheenLobeCount;
     std::copy(std::begin(graph.sheenLobes), std::end(graph.sheenLobes),

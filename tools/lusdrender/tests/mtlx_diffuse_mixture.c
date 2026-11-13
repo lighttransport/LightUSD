@@ -256,6 +256,21 @@ static int specular_response_checks(void) {
       fprintf(stderr,"nonfinite specular film response\n");return 0;
     }
   }
+  /* OpenPBR defaults and connected inputs must reach the native BSDF. */
+  {
+    const char *defaults = "<materialx><open_pbr_surface name=\"s\" type=\"surfaceshader\"/></materialx>";
+    const char *authored = "<materialx><constant name=\"v\" type=\"float\">"
+      "<input name=\"value\" type=\"float\" value=\"0.3\"/></constant>"
+      "<open_pbr_surface name=\"s\" type=\"surfaceshader\">"
+      "<input name=\"coat_darkening\" type=\"float\" nodename=\"v\"/>"
+      "</open_pbr_surface></materialx>";
+    OpenPBRParams a, b;
+    if (!evaluate(defaults, &a) || !evaluate(authored, &b) ||
+        fabsf(a.coat_darkening - 1.0f) > 1.0e-6f ||
+        fabsf(b.coat_darkening - 0.3f) > 1.0e-6f) {
+      fprintf(stderr, "FAIL: OpenPBR coat darkening input routing\n"); return 0;
+    }
+  }
   /* The legacy glass branch must account for its mixture selection chance. */
   {
     OpenPBRParams legacy;openpbr_defaults(&legacy);

@@ -214,6 +214,7 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
       << "            color3f inputs:coat_color = " << color(pbr.coatColor) << "\n"
       << "            float inputs:coat_roughness = " << scalar(pbr.coatRoughness) << "\n"
       << "            float inputs:coat_ior = " << scalar(pbr.coatIor) << "\n"
+      << "            float inputs:coat_darkening = " << scalar(pbr.coatDarkening) << "\n"
       << "            float inputs:sheen_weight = " << scalar(pbr.sheenWeight) << "\n"
       << "            color3f inputs:sheen_color = " << color(pbr.sheenColor) << "\n"
       << "            float inputs:sheen_roughness = " << scalar(pbr.sheenRoughness) << "\n"

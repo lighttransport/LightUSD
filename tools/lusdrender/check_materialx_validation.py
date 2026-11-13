@@ -848,6 +848,35 @@ def main():
         if any(abs(pixels[center+i] - expected) > 0.08 for i in range(3)):
             raise RuntimeError(f"CPU transmission depth {depth} differs: {pixels[center:center+3]}")
 
+    # The authored OpenPBR coat-darkening amount must survive graph evaluation
+    # and the LightRT bridge all the way to the path-traced color.
+    coat_colors = []
+    for darkening in (0, 1):
+        coat_source = out_dir / f"path-coat-{darkening}.mtlx"
+        coat_source.write_text(f'''<materialx version="1.39">
+          <constant name="dark" type="float"><input name="value" type="float" value="{darkening}"/></constant>
+          <open_pbr_surface name="s" type="surfaceshader">
+            <input name="base_color" type="color3" value="0.2,0.4,0.6"/>
+            <input name="coat_weight" type="float" value="0.8"/>
+            <input name="coat_roughness" type="float" value="0.2"/>
+            <input name="coat_darkening" type="float" nodename="dark"/>
+          </open_pbr_surface>
+          <surfacematerial name="m" type="material"><input name="surfaceshader" type="surfaceshader" nodename="s"/></surfacematerial>
+        </materialx>''', encoding="utf-8")
+        coat_image = out_dir / f"path-coat-{darkening}.pfm"
+        rendered = subprocess.run(
+            [exe, "--mtlx", str(coat_source), str(coat_image), "--mtlx-material", "m",
+             "-w", "32", "-height", "32", "--path-trace", "--pt-samples", "1024",
+             "--pt-max-depth", "1", "--pt-seed", "1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if rendered.returncode:
+            raise RuntimeError(f"CPU coat path failed:\n{rendered.stderr}")
+        _, _, pixels = read_pfm_rgb(coat_image)
+        center = (16 * 32 + 16) * 3
+        coat_colors.append(pixels[center:center+3])
+    if any(coat_colors[0][i] - coat_colors[1][i] < 0.025 for i in range(3)):
+        raise RuntimeError(f"OpenPBR coat darkening did not reach the rendered BSDF: {coat_colors}")
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace", "-cuda"],
         stdout=subprocess.PIPE,

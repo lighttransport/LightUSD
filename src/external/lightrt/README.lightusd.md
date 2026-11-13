@@ -192,3 +192,5 @@ upstream provenance intact.
   matches LightRT `046d86a` for independent dielectric and Schlick reflections.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `c93ec00` for the
   probability-corrected legacy glass sampling branch.
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `dc45d46` for view-direction substrate attenuation and OpenPBR coat darkening.

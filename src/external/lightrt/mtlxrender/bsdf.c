@@ -530,7 +530,7 @@ typedef struct {
     const MtlxConductorLobe *conductor_lobes;
     int specular_lobe_count;
     const MtlxSpecularLobe *specular_lobes;
-    v3    coat_color; float coat_alpha, coat_w, coat_f0, coat_Ri;
+    v3    coat_color, coat_base_albedo; float coat_alpha, coat_w, coat_f0, coat_Ri, coat_darkening;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
     /* normalized lobe selection probabilities (glass is delta) */
@@ -597,17 +597,17 @@ static Layers extract(const OpenPBRParams *p) {
     L.specular_lobes = p->specular_lobes;
 
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
+    L.coat_darkening = clampf(p->coat_darkening, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
     L.coat_alpha = clampf(p->coat_roughness, 0.02f, 1.0f); L.coat_alpha *= L.coat_alpha;
     float c = (p->coat_ior - 1.0f) / (p->coat_ior + 1.0f);
     L.coat_f0 = c * c;
-    /* Internal diffuse Fresnel reflectance of the coat (the fraction of base-
-     * reflected light the coat-air interface bounces back down). Drives coat
-     * darkening: light trapped between coat and base re-illuminates it, which
-     * saturates the apparent base color (a clear coat makes a tinted base look
-     * deeper, not washed out). Egan/Hilgeman polynomial in the coat IOR. */
-    { float n = p->coat_ior;
-      L.coat_Ri = (n > 1.001f) ? (-1.440f / (n * n) + 0.710f / n + 0.668f + 0.0636f * n) : 0.0f; }
+    /* OpenPBR's Kcoat and Ebase drive the bounded coat-darkening ratio. */
+    { float n = maxf(p->coat_ior, 1.0f);
+      L.coat_Ri = clampf(1.0f - (1.0f - L.coat_f0) / (n * n), 0.0f, 0.9999f);
+      v3 dielectric = v3_lerp(p->base_color, p->subsurface_color, clampf(p->subsurface, 0.0f, 1.0f));
+      v3 metal_albedo = v3_scale(p->base_color, clampf(p->specular_weight, 0.0f, 1.0f));
+      L.coat_base_albedo = v3_lerp(dielectric, metal_albedo, metal); }
 
     L.tf_weight = explicit_specular ? 0.0f : clampf(p->thin_film_weight, 0.0f, 1.0f);
     L.tf_thickness = p->thin_film_thickness;
@@ -730,20 +730,18 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     v3 base_atten = v3_scale(v3_lerp(v3_splat(1.0f), L->coat_color, L->coat_w),
                              1.0f - coat_fr);
 
-    /* Coat darkening: the multiple-scattering geometric series for light bounced
-     * between the base (albedo rho) and the coat's internal interface boosts the
-     * effective albedo to rho/(1 - rho*Ri), which raises saturation for tinted
-     * bases (more for high-albedo channels). 1 - rho*Ri*coat_w stays positive
-     * since rho <= 1 and Ri*coat_w < 1. */
+    /* Fuzz is outside the coat substrate in OpenPBR; keep its existing coat
+     * treatment while applying base darkening only to the substrate. */
+    v3 sheen_atten = base_atten;
+    v3 e = L->coat_base_albedo;
+    float k = L->coat_Ri;
+    v3 factor = v3_make((1.0f - k) / maxf(1.0e-4f, 1.0f - e.x * k),
+                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.y * k),
+                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.z * k));
+    v3 diffuse_darken = v3_lerp(v3_splat(1.0f), factor, L->coat_w * L->coat_darkening);
+    base_atten = v3_mul(base_atten, diffuse_darken);
+    diffuse_darken = v3_splat(1.0f);
     v3 diff_alb = L->diff_color;
-    v3 diffuse_darken = v3_splat(1.0f);
-    if (L->coat_w > 0.0f && L->coat_Ri > 0.0f) {
-        float k = L->coat_Ri * L->coat_w;
-        diffuse_darken = v3_make(1.0f / (1.0f - diff_alb.x * k),
-                                 1.0f / (1.0f - diff_alb.y * k),
-                                 1.0f / (1.0f - diff_alb.z * k));
-        diff_alb = v3_mul(diff_alb, diffuse_darken);
-    }
     /* Disney/Burley normalized-diffusion approximation. Unlike a plain tint,
      * this broadens the diffuse response at grazing incidence and uses the
      * authored scattering radius/scale to control how strongly the material
@@ -761,17 +759,11 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         diffuse_shape = (1.0f - L->subsurface_w) +
                         L->subsurface_w * maxf(0.0f, ss);
     }
-    /* Preserve the energy left for the diffuse/subsurface response after the
-     * dielectric interface reflects part of the incident and outgoing flux.
-     * Use the same Schlick curve and authored specular weight as the specular
-     * lobe; this also keeps a disabled specular lobe from spuriously reaching
-     * unit reflectance at grazing angles. */
+    /* Approximate the top interface's view-directional throughput. The
+     * reference layer applies this once to its underlying response. */
     const v3 one = v3_splat(1.0f);
     const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->F0, L->F90);
-    const v3 diffuse_fresnel_light = fresnel_schlick(NdotL, L->F0, L->F90);
-    const v3 diffuse_fresnel_attenuation = v3_mul(
-        v3_sub(one, diffuse_fresnel_view),
-        v3_sub(one, diffuse_fresnel_light));
+    const v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
     v3 diff = v3_mul(diff_alb,
                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
                               MTLX_INV_PI * diffuse_shape));
@@ -875,9 +867,9 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                 : charlie_D(NdotH, lobe->roughness) * sheen_V(NdotV, NdotL));
             sheen = v3_add(sheen, v3_scale(color, response));
         }
-        sheen = v3_mul(sheen, base_atten);
+        sheen = v3_mul(sheen, sheen_atten);
     } else if (L->sheen_w > 0.0f) {
-        sheen = v3_mul(v3_scale(L->sheen_color, L->sheen_w * charlie_D(NdotH, L->sheen_alpha) * sheen_V(NdotV, NdotL)), base_atten);
+        sheen = v3_mul(v3_scale(L->sheen_color, L->sheen_w * charlie_D(NdotH, L->sheen_alpha) * sheen_V(NdotV, NdotL)), sheen_atten);
     }
 
     v3 coat = v3_splat(0.0f);
