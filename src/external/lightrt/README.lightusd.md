@@ -256,3 +256,6 @@ upstream provenance intact.
 - 2026-11-14: `mtlxrender/{mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `21d7c2d` for model-space point, direction and normal transforms, including
   normal normalization for identity/same-space transforms.
+- 2026-11-14: `mtlxrender/mtlx_doc.c` matches LightRT `f2bf750` for accepting
+  model-space `geompropdef` defaults; its 81-case node-truth regression evaluates
+  the implicit position node through the supplied world-to-model transform.

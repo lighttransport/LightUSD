@@ -377,7 +377,7 @@ static int apply_stdlib_geometry_defaults(Builder *b, const XmlNode *document) {
                     (strcmp(category, "texcoord") && strcmp(category, "position") &&
                      strcmp(category, "normal") && strcmp(category, "tangent") &&
                      strcmp(category, "bitangent")) ||
-                    (space && strcmp(space, "object") && strcmp(space, "world")) ||
+                    (space && strcmp(space, "model") && strcmp(space, "object") && strcmp(space, "world")) ||
                     !geometry_index_is_zero(index)) {
                     free(cache);
                     return 0;
