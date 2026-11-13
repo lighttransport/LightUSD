@@ -582,6 +582,21 @@ def main():
       <input name="fg" type="BSDF" nodename="metal_film_b"/>
       <input name="mix" type="float" value="0.25"/>
     </mix>
+    <conductor_bsdf name="metal_normal_a" type="BSDF">
+      <input name="weight" type="float" value="0.4"/>
+      <input name="roughness" type="vector2" value="0.5, 0.5"/>
+      <input name="normal" type="vector3" value="0.6, 0, 0.8"/>
+    </conductor_bsdf>
+    <conductor_bsdf name="metal_normal_b" type="BSDF">
+      <input name="weight" type="float" value="0.4"/>
+      <input name="roughness" type="vector2" value="0.5, 0.5"/>
+      <input name="normal" type="vector3" value="0, 0, 1"/>
+    </conductor_bsdf>
+    <mix name="metal_normal_mix" type="BSDF">
+      <input name="bg" type="BSDF" nodename="metal_normal_a"/>
+      <input name="fg" type="BSDF" nodename="metal_normal_b"/>
+      <input name="mix" type="float" value="0.25"/>
+    </mix>
     <mix name="metal_mix" type="BSDF">
       <input name="bg" type="BSDF" nodename="a"/>
       <input name="fg" type="BSDF" nodename="metal"/>
@@ -626,7 +641,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer", "metal", "metal_mix", "metal_layer", "metal_tint", "metal_film_a", "metal_film_b", "metal_film_mix"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty", "layered", "sheen_layer", "metal", "metal_mix", "metal_layer", "metal_tint", "metal_film_a", "metal_film_b", "metal_film_mix", "metal_normal_a", "metal_normal_b", "metal_normal_mix"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -717,6 +732,17 @@ def main():
                            for i in (15, 16, 17))
             if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
                 raise RuntimeError(f"conductor film mixture failed at {(x, y, channel)}")
+
+    if max(abs(closure_images[18][i] - closure_images[19][i])
+           for i in range(len(closure_images[18])) if i % 4 != 3) < 2:
+        raise RuntimeError("conductor normals rendered identically")
+    for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
+        offset = (y * 64 + x) * 4
+        for channel in range(3):
+            a, b, mixed = (linear_srgb(closure_images[i][offset + channel])
+                           for i in (18, 19, 20))
+            if abs(mixed - (0.75 * a + 0.25 * b)) > 0.025:
+                raise RuntimeError(f"conductor normal mixture failed at {(x, y, channel)}")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],

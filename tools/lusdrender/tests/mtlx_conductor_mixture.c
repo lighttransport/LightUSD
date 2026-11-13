@@ -133,6 +133,60 @@ int main(void) {
       fprintf(stderr,"mixed conductor films failed %d\n",i); return 1;
     }
   }
+  /* Two closure normals must retain separate responses and proposals. */
+  const char *normal_graph = "<materialx>"
+    "<conductor_bsdf name=\"a\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.6\"/><input name=\"normal\" type=\"vector3\" value=\"0.6,0,0.8\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/></conductor_bsdf>"
+    "<conductor_bsdf name=\"b\" type=\"BSDF\"><input name=\"roughness\" type=\"vector2\" value=\"0.3,0.6\"/><input name=\"normal\" type=\"vector3\" value=\"-0.6,0,0.8\"/><input name=\"tangent\" type=\"vector3\" value=\"0,1,0\"/></conductor_bsdf>"
+    "<mix name=\"m\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.3\"/></mix>"
+    "<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"m\"/></surface></materialx>";
+  OpenPBRParams oriented;
+  if (!evaluate(normal_graph,&oriented) || oriented.conductor_lobe_count!=2 ||
+      fabsf(oriented.conductor_lobes[0].normal.x-.6f)>1e-6f ||
+      fabsf(oriented.conductor_lobes[1].normal.x+.6f)>1e-6f) {
+    fprintf(stderr,"conductor normals lost\n");return 1;
+  }
+  {
+    v3 view=v3_make(.6f,0,.8f), wi=v3_make(0,.6f,.8f);
+    v3 h=v3_normalize(v3_add(view,wi)), expected=v3_splat(0.0f);
+    const v3 eta=v3_make(.183f,.421f,1.373f), ext=v3_make(3.424f,2.346f,1.770f);
+    for(int i=0;i<2;i++) {
+      const MtlxConductorLobe *l=&oriented.conductor_lobes[i];
+      v3 ln=l->normal,t=v3_make(0,1,0),b=v3_cross(ln,t);
+      float nv=v3_dot(ln,view), nl=v3_dot(ln,wi);
+      v3 response=bsdf_materialx_conductor_anisotropic(eta,ext,.3f,.6f,nv,nl,
+          v3_dot(h,t),v3_dot(h,b),v3_dot(h,ln),v3_dot(view,h));
+      expected=v3_add(expected,v3_scale(response,l->weight*nl/wi.z));
+    }
+    v3 d,actual;float pdf;
+    bsdf_eval_lobes(&oriented,v3_make(0,0,1),view,wi,&d,&actual,&pdf);
+    if(!near3(actual,expected)) {
+      fprintf(stderr,"per-normal conductor response %g vs %g\n",actual.x,expected.x);return 1;
+    }
+    /* Samples and reported PDF agree when the two frames are different. */
+    oriented.specular_roughness=1.0f;
+    double expected_bins[4]={0}, energy=0; int observed_bins[4]={0};
+    const int nm=192,np=384,count=120000;
+    for(int i=0;i<nm;i++) for(int j=0;j<np;j++) {
+      float mu=(i+.5f)/nm, phi=2.0f*MTLX_PI*(j+.5f)/np, r=sqrtf(1-mu*mu);
+      v3 l=v3_make(r*cosf(phi),r*sinf(phi),mu); float density;
+      v3 value=bsdf_eval(&oriented,v3_make(0,0,1),view,l,&density);
+      int bin=(mu>=.5f?2:0)+(l.x>=0?1:0);
+      expected_bins[bin]+=density*(2.0*3.14159265358979323846/(nm*np));
+      energy+=value.x*mu*(2.0*3.14159265358979323846/(nm*np));
+    }
+    pcg32 gen;pcg32_seed(&gen,438,987);double estimate=0;
+    for(int i=0;i<count;i++) {
+      BsdfSample sample;if(!bsdf_sample(&oriented,v3_make(0,0,1),view,&gen,&sample))continue;
+      int bin=(sample.wi.z>=.5f?2:0)+(sample.wi.x>=0?1:0);
+      observed_bins[bin]++;estimate+=sample.throughput.x;
+    }
+    for(int i=0;i<4;i++) if(fabs((double)observed_bins[i]/count-expected_bins[i])>.01) {
+      fprintf(stderr,"normal proposal histogram %d: %g vs %g\n",i,(double)observed_bins[i]/count,expected_bins[i]);return 1;
+    }
+    if(fabs(estimate/count-energy)>.025) {
+      fprintf(stderr,"normal sampling integral: %g vs %g\n",estimate/count,energy);return 1;
+    }
+  }
   if(p[3].conductor_lobe_count!=1 || p[3].diffuse_lobe_count!=1 || p[5].conductor_lobe_count!=2 ||
      fabsf(p[4].diffuse_lobes[0].weight-.6f)>1e-6f) {
     fprintf(stderr,"conductor lobe or layer data lost\n");return 1;
@@ -297,6 +351,8 @@ int main(void) {
     OpenPBRParams invalid=p[8]; invalid.conductor_lobes[0].roughness=NAN;
     invalid.conductor_lobes[0].roughness_y=NAN;
     invalid.specular_roughness=NAN;
+    invalid.conductor_lobes[0].normal=v3_make(1.0e35f,1.0e35f,1.0e35f);
+    invalid.conductor_lobes[0].tangent=v3_make(1.0e35f,1.0e35f,1.0e35f);
     pcg32 gen; pcg32_seed(&gen,17,31);
     for(int i=0;i<256;i++) {
       BsdfSample sample;

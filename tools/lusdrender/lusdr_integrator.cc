@@ -264,6 +264,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.conductor_lobes[i].roughness = lobe.roughness;
     p.conductor_lobes[i].roughness_y = lobe.roughnessY;
     p.conductor_lobes[i].tangent = v3_make(lobe.tangent[0], lobe.tangent[1], lobe.tangent[2]);
+    p.conductor_lobes[i].normal = v3_make(lobe.normal[0], lobe.normal[1], lobe.normal[2]);
     p.conductor_lobes[i].thinfilm_thickness = lobe.thinfilmThickness;
     p.conductor_lobes[i].thinfilm_ior = lobe.thinfilmIor;
   }
@@ -1801,16 +1802,25 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const float ax = std::clamp(lobe.roughness, 0.0f, 1.0f);
         const float ay = std::clamp(lobe.roughness_y, 0.0f, 1.0f);
         const float rough = std::sqrt(std::sqrt(ax * ay));
-        const Vec3 env = SampleIblMip(ibl->prefiltered, env_refl, rough);
+        Vec3 lobe_n = FromMtlxV3(lobe.normal);
+        const float lobe_normal_length = Length(lobe_n);
+        if (!std::isfinite(lobe_n.x) || !std::isfinite(lobe_n.y) ||
+            !std::isfinite(lobe_n.z) || !std::isfinite(lobe_normal_length) ||
+            lobe_normal_length < 1.0e-6f) lobe_n = n;
+        else lobe_n = Mul(lobe_n, 1.0f / lobe_normal_length);
+        if (Dot(lobe_n, view) < 0.0f) lobe_n = Mul(lobe_n, -1.0f);
+        const float lobe_ndotv = std::max(0.0f, Dot(lobe_n, view));
+        const Vec3 lobe_refl = EnvDir(*ibl, Reflect(Mul(view, -1.0f), lobe_n));
+        const Vec3 env = SampleIblMip(ibl->prefiltered, lobe_refl, rough);
         float a = 1.0f, b = 0.0f;
-        SampleBrdfLut(*ibl, ndotv, rough, &a, &b);
+        SampleBrdfLut(*ibl, lobe_ndotv, rough, &a, &b);
         Vec3 response = EvalIblSpecularSplitSum(env, cf0, a, b);
         if (lobe.thinfilm_thickness > 0.0f && std::isfinite(lobe.thinfilm_thickness) &&
             std::isfinite(lobe.thinfilm_ior)) {
           const v3 f0film = bsdf_materialx_conductor_film_fresnel(
               1.0f, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
           const v3 fview = bsdf_materialx_conductor_film_fresnel(
-              ndotv, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
+              lobe_ndotv, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
           // Like the reference's Airy directional-albedo approximation, blend
           // mirror Fresnel with a rough response; the environment LUT and mip
           // remain a rotationally averaged split-sum approximation.

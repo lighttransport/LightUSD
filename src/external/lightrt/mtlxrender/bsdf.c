@@ -509,10 +509,21 @@ static Layers extract(const OpenPBRParams *p) {
 
 static v3 face_forward(v3 N, v3 wo) { return v3_dot(N, wo) < 0.0f ? v3_neg(N) : N; }
 
+/* Unauthored or invalid normals use the surface shading normal. MaterialX
+ * orients each closure's normal towards the view. */
+static v3 conductor_normal(const MtlxConductorLobe *lobe, v3 fallback, v3 wo) {
+    v3 n = lobe->normal;
+    float length = v3_len(n);
+    if (!v3_is_finite(n) || !isfinite(length) || length < 1.0e-6f) n = fallback;
+    else n = v3_scale(n, 1.0f / length);
+    return face_forward(n, wo);
+}
+
 /* Keep evaluation, proposal and PDF in the same tangent frame. */
 static void conductor_frame(v3 N, v3 input, v3 *tangent, v3 *bitangent) {
     *tangent = v3_sub(input, v3_scale(N, v3_dot(input, N)));
-    if (!v3_is_finite(*tangent) || v3_len(*tangent) < 1.0e-6f)
+    float length = v3_len(*tangent);
+    if (!v3_is_finite(*tangent) || !isfinite(length) || length < 1.0e-6f)
         onb(N, tangent, bitangent);
     else {
         *tangent = v3_normalize(*tangent);
@@ -691,14 +702,18 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
 
     for (int i = 0; i < L->conductor_lobe_count; ++i) {
         const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
-        v3 tangent, bitangent;
-        conductor_frame(N, lobe->tangent, &tangent, &bitangent);
+        v3 ln = conductor_normal(lobe, N, wo), tangent, bitangent;
+        float lv = v3_dot(ln, wo), ll = v3_dot(ln, wi);
+        if (!(lv > 0.0f && ll > 0.0f)) continue;
+        conductor_frame(ln, lobe->tangent, &tangent, &bitangent);
         v3 response = conductor_response(lobe->ior, lobe->extinction,
-            lobe->roughness, lobe->roughness_y, NdotV, NdotL,
-            v3_dot(H,tangent), v3_dot(H,bitangent), NdotH, VdotH,
+            lobe->roughness, lobe->roughness_y, lv, ll,
+            v3_dot(H,tangent), v3_dot(H,bitangent), v3_dot(H,ln), VdotH,
             lobe->thinfilm_thickness, lobe->thinfilm_ior);
+        /* The integrator multiplies by the surface cosine. Correct for the
+         * closure's cosine so different lobe normals compose independently. */
         spec = v3_add(spec, v3_mul(base_atten,
-            v3_scale(v3_mul(response, lobe->weight_color), lobe->weight)));
+            v3_scale(v3_mul(response, lobe->weight_color), lobe->weight * ll / NdotL)));
     }
 
     v3 sheen = v3_splat(0.0f);
@@ -731,8 +746,9 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     if (L->conductor_weight_sum > 0.0f) {
         for (int i = 0; i < L->conductor_lobe_count; ++i) {
             const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
+            v3 ln = conductor_normal(lobe, N, wo);
             pdf_conductor += (conductor_sampling_weight(lobe) / L->conductor_weight_sum) *
-                conductor_reflection_pdf(lobe, N, wo, H, NdotH, VdotH);
+                conductor_reflection_pdf(lobe, ln, wo, H, v3_dot(ln,H), VdotH);
         }
     }
     *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat + L->pm * pdf_conductor;
@@ -814,12 +830,14 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
             target -= weight;
         }
         if (!chosen) return 0;
-        v3 tangent, bitangent; conductor_frame(N, chosen->tangent, &tangent, &bitangent);
+        v3 ln = conductor_normal(chosen, N, wo), tangent, bitangent;
+        if (!(v3_dot(wo, ln) > 0.0f)) return 0;
+        conductor_frame(ln, chosen->tangent, &tangent, &bitangent);
         float ax = conductor_proposal_alpha(chosen->roughness);
         float ay = conductor_proposal_alpha(chosen->roughness_y);
-        v3 local_view = v3_make(v3_dot(wo,tangent),v3_dot(wo,bitangent),v3_dot(wo,N));
+        v3 local_view = v3_make(v3_dot(wo,tangent),v3_dot(wo,bitangent),v3_dot(wo,ln));
         v3 h = sample_conductor_vndf(local_view, ax, ay, u1, u2);
-        v3 H = v3_normalize(to_world(h, tangent, bitangent, N));
+        v3 H = v3_normalize(to_world(h, tangent, bitangent, ln));
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else {                             /* diffuse / sheen (cosine) */
         wi = to_world(sample_cosine_hemisphere(u1, u2), T, B, N);

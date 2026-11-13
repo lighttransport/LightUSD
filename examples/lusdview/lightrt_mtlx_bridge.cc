@@ -363,6 +363,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
     dst->conductorLobes[i].roughness = src.conductor_lobes[i].roughness;
     dst->conductorLobes[i].roughnessY = src.conductor_lobes[i].roughness_y;
     CopyV3(src.conductor_lobes[i].tangent, dst->conductorLobes[i].tangent);
+    CopyV3(src.conductor_lobes[i].normal, dst->conductorLobes[i].normal);
     dst->conductorLobes[i].thinfilmThickness = src.conductor_lobes[i].thinfilm_thickness;
     dst->conductorLobes[i].thinfilmIor = src.conductor_lobes[i].thinfilm_ior;
   }

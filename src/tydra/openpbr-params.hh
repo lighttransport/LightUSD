@@ -30,6 +30,7 @@ struct RealtimeConductorLobe {
   float roughness{0.0f};
   float roughnessY{0.0f};
   float tangent[3]{0.0f, 0.0f, 0.0f};
+  float normal[3]{0.0f, 0.0f, 0.0f};
   float thinfilmThickness{0.0f};
   float thinfilmIor{1.5f};
 };

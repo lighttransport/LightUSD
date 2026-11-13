@@ -1665,6 +1665,9 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
             MtlxValue rv = rough ? eval_input(ctx, rough) : mv_vec2(0.05f, 0.05f);
             lobe->roughness = rv.v[0];
             lobe->roughness_y = ncomp_of(&rv) >= 2 ? rv.v[1] : rv.v[0];
+            const MtlxInput *normal = find_input(n, "normal");
+            lobe->normal = (normal && (normal->has_value || normal->src_node >= 0))
+                ? in_color(ctx, n, "normal", ctx->Ns) : ctx->Ns;
             const MtlxInput *tangent = find_input(n, "tangent");
             lobe->tangent = (tangent && (tangent->has_value || tangent->src_node >= 0))
                 ? in_color(ctx, n, "tangent", ctx->dpdu) : ctx->dpdu;

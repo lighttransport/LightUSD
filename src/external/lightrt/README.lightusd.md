@@ -178,3 +178,6 @@ upstream provenance intact.
 
 - 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h,mtlx_eval.c,mtlx_eval.h}`
   matches LightRT `786c4ad` for independent conductor thin films.
+
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `c3339f4` for per-conductor normals and matching sampling.
