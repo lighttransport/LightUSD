@@ -4595,3 +4595,7 @@ rejected. Run it headlessly with:
 ```sh
 scripts/xctest.sh ctest --test-dir build_ninja -R '^core_test_mtlx_lean_vectors$' --output-on-failure
 ```
+The same regression checks that a connected graph output's authored value is
+still validated and that graph outputs cannot use `interfacename`, both for
+the graph itself and when another graph references it. The valid connected
+output with a fallback value remains accepted.

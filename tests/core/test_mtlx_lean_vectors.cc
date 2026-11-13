@@ -665,6 +665,42 @@ static void CheckTypedMtlxGraphResolution() {
          "connection to an unconnected graph output was accepted");
   }
 
+  MtlxElem connected_bad_literal = root;
+  connected_bad_literal.children[0].children[1].SetAttr("value", "not-a-float");
+  g_checks++;
+  if (ResolveMtlxGraph(connected_bad_literal, connected_bad_literal.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CONNECTED_OUTPUT_BAD_VALUE", 0,
+         "connected graph output with invalid literal was accepted");
+  }
+  g_checks++;
+  if (ResolveMtlxGraph(connected_bad_literal, connected_bad_literal.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CONNECTED_OUTPUT_BAD_VALUE_REFERENCE", 0,
+         "connection to graph output with invalid literal was accepted");
+  }
+  MtlxElem connected_with_value = root;
+  connected_with_value.children[0].children[1].SetAttr("value", "0.5");
+  g_checks++;
+  if (!ResolveMtlxGraph(connected_with_value, connected_with_value.children[0],
+                        library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CONNECTED_OUTPUT_VALUE", 0, error);
+  }
+  MtlxElem connected_bad_interface = root;
+  connected_bad_interface.children[0].children[1].SetAttr("interfacename", "gain");
+  g_checks++;
+  if (ResolveMtlxGraph(connected_bad_interface, connected_bad_interface.children[0],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CONNECTED_OUTPUT_INTERFACE", 0,
+         "graph output interface binding was accepted");
+  }
+  g_checks++;
+  if (ResolveMtlxGraph(connected_bad_interface, connected_bad_interface.children[1],
+                       library, {}, &resolved, &error)) {
+    Fail("MTLX_GRAPH_CONNECTED_OUTPUT_INTERFACE_REFERENCE", 0,
+         "connection to graph output with interface binding was accepted");
+  }
+
   MtlxElem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");

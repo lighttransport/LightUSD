@@ -1180,6 +1180,26 @@ bool ParseMtlxAuthoredValue(const std::string &type, const std::string &text,
   return ParseMtlxValue(type, comma_separated, value);
 }
 
+// Output values remain subject to value validation even when a connection
+// takes precedence. MaterialX permits interface names only on inputs/tokens.
+bool ValidateMtlxGraphOutputAttributes(const MtlxElem &output,
+                                       const std::string &type,
+                                       std::string *err) {
+  if (output.Attr("interfacename")) {
+    *err = "graph output '" + output.Name() + "' cannot use interfacename";
+    return false;
+  }
+  if (const std::string *literal = output.Attr("value")) {
+    MtlxTypedValue parsed;
+    if (type.empty() || (IsBuiltinMtlxType(type) &&
+                         !ParseMtlxAuthoredValue(type, *literal, &parsed))) {
+      *err = "invalid literal graph output '" + output.Name() + "'";
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
@@ -1400,6 +1420,8 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
                           "' disagrees with its nodedef output type";
           return false;
         }
+        if (!ValidateMtlxGraphOutputAttributes(*output, resolved_graph_type, err))
+          return false;
         if (!resolved_graph_type.empty() && resolved_graph_type != source_type) {
           if (err) *err = "output '" + output_name + "' of nodegraph '" + *graph_name +
                           "' declares type " + resolved_graph_type +
@@ -1481,18 +1503,13 @@ bool ResolveMtlxGraph(const MtlxElem &document, const MtlxElem &graph,
       *err = "graph output '" + output.Name() + "' disagrees with its nodedef output type";
       return false;
     }
+    if (!ValidateMtlxGraphOutputAttributes(output, output_type, err))
+      return false;
     const std::string source_name = output.AttrOr("nodename");
-    const std::string *literal = output.Attr("value");
     if (!output.Attr("nodename") && !output.Attr("nodegraph") &&
-        !output.Attr("output") && !output.Attr("interfacename")) {
+        !output.Attr("output")) {
       if (output_type.empty()) {
         *err = "cannot resolve graph output type for '" + output.Name() + "'";
-        return false;
-      }
-      MtlxTypedValue parsed;
-      if (literal && IsBuiltinMtlxType(output_type) &&
-          !ParseMtlxAuthoredValue(output_type, *literal, &parsed)) {
-        *err = "invalid literal graph output '" + output.Name() + "'";
         return false;
       }
       continue;
