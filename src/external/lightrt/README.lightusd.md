@@ -69,6 +69,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test
   in LightRT and a CTest integration in `tools/lusdrender`.
+- 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
+  `5eaf175` for energy-compensated rough diffuse shading and its selection.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `5827793` for isotropic
   height-correlated Smith visibility in the base and coat GGX lobes.
 - 2026-11-12: `mtlxrender/bsdf.{c,h}` is synchronized with LightRT

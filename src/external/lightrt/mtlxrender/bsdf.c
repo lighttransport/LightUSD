@@ -37,6 +37,38 @@ static float ggx_G(float NdotV, float NdotL, float a) {
     return 2.0f * NdotV * NdotL / (NdotV * ll + NdotL * lv);
 }
 
+/* Energy-compensated Oren-Nayar from the MaterialX PBRSpec. The algebraic
+ * form of G avoids cancellation and division by zero as cosTheta approaches 0. */
+static double eon_directional(double mu, double sigma, double a) {
+    const double pi = 3.14159265358979323846;
+    double c = fmin(1.0, fmax(0.0, mu));
+    double sn = sqrt(fmax(0.0, 1.0 - c * c));
+    double ratio = sn * c * (1.0 + sn + sn * sn) / (1.0 + sn);
+    double g = sn * (acos(c) - sn * c) + (2.0 / 3.0) * (ratio - sn);
+    return a * (1.0 + sigma * g / pi);
+}
+
+static v3 eon_diffuse(v3 rho, float roughness, float nv, float nl, float lv) {
+    const double pi = 3.14159265358979323846;
+    double sigma = fmin(1.0, fmax(0.0, (double)roughness));
+    if (sigma == 0.0) return v3_scale(rho, MTLX_INV_PI);
+    double c1 = 0.5 - 2.0 / (3.0 * pi);
+    double c2 = 2.0 / 3.0 - 28.0 / (15.0 * pi);
+    double a = 1.0 / (1.0 + c1 * sigma);
+    double avg = a * (1.0 + c2 * sigma);
+    double ev = eon_directional(nv, sigma, a);
+    double el = eon_directional(nl, sigma, a);
+    double s = (double)lv - (double)nv * nl;
+    double st = s > 0.0 ? s / fmax((double)nv, (double)nl) : s;
+    double single = a * (1.0 + sigma * st);
+    double multi = fmax(1.0e-8, 1.0 - ev) * fmax(1.0e-8, 1.0 - el) /
+                   fmax(1.0e-8, 1.0 - avg);
+    double r = rho.x, g = rho.y, b = rho.z;
+    return v3_make((float)((r * single + r * r * avg / (1.0 - r * fmax(0.0, 1.0 - avg)) * multi) / pi),
+                   (float)((g * single + g * g * avg / (1.0 - g * fmax(0.0, 1.0 - avg)) * multi) / pi),
+                   (float)((b * single + b * b * avg / (1.0 - b * fmax(0.0, 1.0 - avg)) * multi) / pi));
+}
+
 /* "Charlie" sheen NDF (Estevez & Kulla 2017) + Neubelt visibility. */
 static float charlie_D(float NdotH, float r) {
     r = clampf(r, 0.05f, 1.0f);
@@ -172,6 +204,10 @@ static v3 fresnel_airy(float cosTheta, float ior_substrate, float tf_thickness_n
 /* ---- layered material ------------------------------------------------- */
 typedef struct {
     v3    diff_color;  /* effective diffuse albedo (incl. subsurface tint) */
+    v3    diffuse_base_color, diffuse_subsurface_color;
+    float diffuse_base_scale, diffuse_subsurface_scale;
+    float diffuse_roughness;
+    int   diffuse_energy_compensation;
     float subsurface_w; /* normalized-diffusion strength */
     v3    F0;          /* specular reflectance at normal incidence */
     float F90;         /* specular-weighted grazing reflectance */
@@ -193,6 +229,12 @@ static Layers extract(const OpenPBRParams *p) {
     if (p->subsurface > 0.0f)
         diff = v3_lerp(diff, v3_scale(p->subsurface_color, (1.0f - metal) * (1.0f - trans)), p->subsurface);
     L.diff_color = diff;
+    L.diffuse_base_color = p->base_color;
+    L.diffuse_subsurface_color = p->subsurface_color;
+    L.diffuse_base_scale = p->base_weight * (1.0f - metal) * (1.0f - trans) * (1.0f - p->subsurface);
+    L.diffuse_subsurface_scale = (1.0f - metal) * (1.0f - trans) * p->subsurface;
+    L.diffuse_roughness = p->diffuse_roughness;
+    L.diffuse_energy_compensation = p->diffuse_energy_compensation;
     {
         float mean_radius = (p->subsurface_radius.x + p->subsurface_radius.y +
                              p->subsurface_radius.z) * (1.0f / 3.0f);
@@ -276,11 +318,13 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * bases (more for high-albedo channels). 1 - rho*Ri*coat_w stays positive
      * since rho <= 1 and Ri*coat_w < 1. */
     v3 diff_alb = L->diff_color;
+    v3 diffuse_darken = v3_splat(1.0f);
     if (L->coat_w > 0.0f && L->coat_Ri > 0.0f) {
         float k = L->coat_Ri * L->coat_w;
-        diff_alb = v3_make(diff_alb.x / (1.0f - diff_alb.x * k),
-                           diff_alb.y / (1.0f - diff_alb.y * k),
-                           diff_alb.z / (1.0f - diff_alb.z * k));
+        diffuse_darken = v3_make(1.0f / (1.0f - diff_alb.x * k),
+                                 1.0f / (1.0f - diff_alb.y * k),
+                                 1.0f / (1.0f - diff_alb.z * k));
+        diff_alb = v3_mul(diff_alb, diffuse_darken);
     }
     /* Disney/Burley normalized-diffusion approximation. Unlike a plain tint,
      * this broadens the diffuse response at grazing incidence and uses the
@@ -313,6 +357,23 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     v3 diff = v3_mul(diff_alb,
                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation),
                               MTLX_INV_PI * diffuse_shape));
+
+    if (L->diffuse_energy_compensation && L->diffuse_roughness > 0.0f) {
+        float lv = v3_dot(wi, wo);
+        v3 rough_diffuse = v3_splat(0.0f);
+        if (L->diffuse_base_scale != 0.0f) {
+            v3 base_eon = eon_diffuse(v3_mul(L->diffuse_base_color, diffuse_darken),
+                                       L->diffuse_roughness, NdotV, NdotL, lv);
+            rough_diffuse = v3_scale(base_eon, L->diffuse_base_scale);
+        }
+        if (L->diffuse_subsurface_scale != 0.0f) {
+            v3 sub_eon = eon_diffuse(v3_mul(L->diffuse_subsurface_color, diffuse_darken),
+                                      L->diffuse_roughness, NdotV, NdotL, lv);
+            rough_diffuse = v3_add(rough_diffuse, v3_scale(sub_eon, L->diffuse_subsurface_scale));
+        }
+        diff = v3_mul(rough_diffuse,
+                      v3_scale(v3_mul(base_atten, diffuse_fresnel_attenuation), diffuse_shape));
+    }
 
     float D = ggx_D(NdotH, L->alpha), G = ggx_G(NdotV, NdotL, L->alpha);
     /* Thin film replaces the plain Fresnel with the iridescent airy reflectance

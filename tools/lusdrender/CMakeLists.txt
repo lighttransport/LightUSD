@@ -456,6 +456,18 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  add_executable(lusdrender-bsdf-eon-response
+    tests/bsdf_eon_response.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-eon-response PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-eon-response PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-bsdf-eon-response PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-eon-response
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-eon-response>)
+  set_tests_properties(tool-lusdrender-bsdf-eon-response PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
   add_executable(lusdrender-bsdf-white-furnace
     tests/bsdf_white_furnace.c
     ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)

@@ -17,6 +17,7 @@ typedef struct {
     float base_weight;
     v3    base_color;
     float diffuse_roughness;
+    int   diffuse_energy_compensation; /* OpenPBR EON, rather than Lambert */
     float metalness;
     /* specular (GGX dielectric) */
     float specular_weight;

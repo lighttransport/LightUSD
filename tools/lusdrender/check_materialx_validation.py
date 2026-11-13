@@ -446,6 +446,34 @@ def main():
             f"uniform-environment Lambert disagrees with analytic sRGB result: {actual}"
         )
 
+    rough_source = out_dir / "rough-diffuse.mtlx"
+    rough_source.write_text(
+        lambert_source.read_text(encoding="utf-8").replace(
+            '<input name="base_weight" type="float" value="1" />',
+            '<input name="base_weight" type="float" value="1" />'
+            '<input name="base_diffuse_roughness" type="float" value="1" />',
+        ),
+        encoding="utf-8",
+    )
+    rough_image = out_dir / "rough-diffuse.png"
+    rough = subprocess.run(
+        [exe, "--mtlx", str(rough_source), str(rough_image),
+         "--mtlx-material", "LambertMaterial", "-w", "64", "-height", "64",
+         "--displayTransform", "srgb"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if rough.returncode:
+        raise RuntimeError(f"rough-diffuse render failed:\n{rough.stderr}")
+    rw, rh, rough_rgba = read_png_rgba(rough_image)
+    if (rw, rh) != (lw, lh):
+        raise RuntimeError("rough diffuse render dimensions changed")
+    # Compare sphere pixels, not the background. A nonzero roughness must reach
+    # the actual per-hit CPU shading path and change its angular response.
+    differences = [abs(rough_rgba[i] - lambert_rgba[i])
+                   for i in range(0, len(rough_rgba), 4)]
+    if max(differences) < 2:
+        raise RuntimeError("OpenPBR diffuse roughness did not affect the render")
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],
         stdout=subprocess.PIPE,
@@ -455,7 +483,7 @@ def main():
     if rejected.returncode == 0 or "CPU renderer only" not in rejected.stderr:
         raise RuntimeError("MaterialX validation accepted an unsupported GPU path")
 
-    print("PASS: MaterialX graph, spatial/UV evaluation, node/lobe AOVs, and analytic Lambert checks")
+    print("PASS: MaterialX graph, spatial/UV evaluation, node/lobe AOVs, Lambert and rough diffuse checks")
     return 0
 
 

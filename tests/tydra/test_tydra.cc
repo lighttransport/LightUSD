@@ -28,6 +28,7 @@
 
 #include "tydra/chunked-array.hh"
 #include "tydra/materialx.hh"
+#include "tydra/openpbr-params-converter.hh"
 #include "../../../src/tydra/render-data.hh"
 #include "../../../src/tydra/scene-access.hh"
 #include "tydra/render-extract.hh"
@@ -9786,6 +9787,19 @@ static void TestGeneratedSmoothNormals() {
 }
 
 int main() {
+  {
+    RenderMaterial mat;
+    mat.shader_type = RenderMaterial::ShaderType::OpenPBR;
+    mat.openpbr = std::make_shared<OpenPBRSurfaceShader>();
+    mat.openpbr->base_diffuse_roughness.value.x = 0.7f;
+    mat.openpbr->base_roughness.value.x = 0.1f;
+    mat.openpbr->specular_roughness.value.x = 0.3f;
+    RealtimePbrMaterial p;
+    assert(BuildRealtimePbrMaterial(mat, &p));
+    assert(p.diffuseEnergyCompensation);
+    assert(std::abs(p.diffuseRoughness - 0.7f) < 1.0e-6f);
+    assert(std::abs(p.specularRoughness - 0.3f) < 1.0e-6f);
+  }
   TestMtlxConstantEvaluatorRealNodes();
   TestMtlxConstantEvaluatorLeanVectors();
   TestAuthoredPlaneTextureDomain();

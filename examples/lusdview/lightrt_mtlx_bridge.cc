@@ -202,6 +202,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
+  p->diffuseEnergyCompensation = true;
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -339,6 +340,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   dst->baseWeight = src.base_weight;
   CopyV3(src.base_color, dst->baseColor);
   dst->diffuseRoughness = src.diffuse_roughness;
+  dst->diffuseEnergyCompensation = src.diffuse_energy_compensation != 0;
   dst->metalness = src.metalness;
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);
@@ -2020,6 +2022,8 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
           FindParam(*mat, "OpenPBRSurface", "base_color") != nullptr;
       const bool hasDirectMetalness =
           FindParam(*mat, "OpenPBRSurface", "base_metalness") != nullptr;
+      const bool hasDirectDiffuseRoughness =
+          FindParam(*mat, "OpenPBRSurface", "base_diffuse_roughness") != nullptr;
       const bool hasDirectRoughness =
           FindParam(*mat, "OpenPBRSurface", "specular_roughness") != nullptr ||
           FindParam(*mat, "OpenPBRSurface", "base_roughness") != nullptr;
@@ -2039,12 +2043,11 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
       if (hasDirectMetalness && mat->metallicTex < 0 &&
           !graphDrives("base_metalness"))
         p.metalness = directParams.metalness;
-      if (hasDirectRoughness && mat->roughnessTex < 0 &&
-          !graphDrives("base_diffuse_roughness") &&
-          !graphDrives("specular_roughness")) {
+      if (hasDirectDiffuseRoughness && !graphDrives("base_diffuse_roughness"))
         p.diffuseRoughness = directParams.diffuseRoughness;
+      if (hasDirectRoughness && mat->roughnessTex < 0 &&
+          !graphDrives("specular_roughness"))
         p.specularRoughness = directParams.specularRoughness;
-      }
       if (hasDirectOpacity && mat->opacityTex < 0 &&
           !graphDrives("geometry_opacity"))
         p.opacity = directParams.opacity;

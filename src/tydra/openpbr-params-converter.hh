@@ -69,7 +69,8 @@ inline bool BuildRealtimePbrMaterial(
     const OpenPBRSurfaceShader &s = *rm.openpbr;
     p.baseWeight = s.base_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.base_color, p.baseColor);
-    p.diffuseRoughness = s.base_roughness.value.x;
+    p.diffuseRoughness = s.base_diffuse_roughness.value.x;
+    p.diffuseEnergyCompensation = true;
     p.metalness = s.base_metalness.value.x;
     p.specularWeight = s.specular_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.specular_color, p.specularColor);

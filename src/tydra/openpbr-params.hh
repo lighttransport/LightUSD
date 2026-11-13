@@ -16,6 +16,7 @@ struct RealtimePbrMaterial {
   float baseWeight{1.0f};
   float baseColor[3]{0.8f, 0.8f, 0.8f};
   float diffuseRoughness{0.0f};
+  bool diffuseEnergyCompensation{false}; // CPU OpenPBR EON selection
   float metalness{0.0f};
   float specularWeight{1.0f};
   float specularColor[3]{1.0f, 1.0f, 1.0f};

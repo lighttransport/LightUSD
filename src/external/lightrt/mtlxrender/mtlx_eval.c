@@ -1506,6 +1506,9 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale,
         !strcmp(cat, "oren_nayar_diffuse_bsdf") ||
         !strcmp(cat, "burley_diffuse_bsdf")) {
         const float old = out->base_weight;
+        if (!strcmp(cat, "oren_nayar_diffuse_bsdf") &&
+            in_float(ctx, n, "energy_compensation", 0.0f) > 0.0f)
+            out->diffuse_energy_compensation = 1;
         blend_lobe(&out->base_weight, &out->base_color,
                    in_color(ctx, n, "color", v3_splat(0.18f)), weight);
         out->diffuse_roughness = (out->diffuse_roughness * old +
@@ -1651,6 +1654,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->transmission_color = in_color(ctx, n, "transmission_color", v3_splat(1.0f));
         out->opacity = in_float(ctx, n, "opacity", 1.0f);
     } else if (!strcmp(cat, "open_pbr_surface")) {
+        out->diffuse_energy_compensation = 1;
         out->base_weight = in_float(ctx, n, "base_weight", 1.0f);
         out->base_color = in_color(ctx, n, "base_color", out->base_color);
         out->diffuse_roughness = in_float(ctx, n, "base_diffuse_roughness", 0.0f);

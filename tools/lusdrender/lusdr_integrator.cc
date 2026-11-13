@@ -204,7 +204,7 @@ OpenPBRParams OpenPBRParamsFromTri(const TriInfo &tri, const Vec3 &normal) {
   OpenPBRParams p{};
   p.base_weight = 1.0f;
   p.base_color = ToMtlxV3(tri.base_color);
-  p.diffuse_roughness = tri.roughness;
+  p.diffuse_roughness = 0.0f;
   p.metalness = tri.metallic;
   p.specular_weight = 1.0f;
   p.specular_color = tri.use_specular_workflow
@@ -239,6 +239,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.base_weight = src.baseWeight;
   p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
   p.diffuse_roughness = src.diffuseRoughness;
+  p.diffuse_energy_compensation = src.diffuseEnergyCompensation ? 1 : 0;
   p.metalness = src.metalness;
   p.specular_weight = src.specularWeight;
   p.specular_color =
