@@ -4662,5 +4662,11 @@ rejection of unsupported indices. The LightRT evaluator currently supports a
 single UV/tangent set and object/world default geometry spaces.
 `lusdview_lightrt_mtlx_eval_test` checks authored image coordinates with and
 without screen derivatives, zero footprints for literal coordinates, and
-scaled tiled-image footprints across a UDIM seam. Derivatives through arbitrary
-connected coordinate graphs are not yet propagated.
+scaled tiled-image footprints across a UDIM seam. It also covers connected
+coordinate graphs, varying tiling, position-driven and nonlinear coordinates,
+channel swizzles, shared memoized nodes and a cycle. Nontrivial connections
+use forward differences at neighboring UV, position and view inputs; nested
+texture lookups in those probes use point sampling. The probes allocate scratch
+memory proportional to document size and do not have normal, tangent or
+arbitrary geomprop derivatives. Failed probes retain the previous derivative
+approximation.

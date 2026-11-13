@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---- MtlxValue helpers ------------------------------------------------- */
@@ -540,6 +541,59 @@ static MtlxValue in_or(ShadeContext *ctx, const MtlxNode *n, const char *name, M
     return in ? eval_input(ctx, in) : dflt;
 }
 
+/* Estimate a connected coordinate graph at adjacent shading points. Separate
+ * memo tables preserve the caller's active graph and cycle sentinels. Nested
+ * texture lookups use point samples during these finite-difference probes. */
+static int coordinate_graph_gradients(ShadeContext *ctx, const MtlxInput *input,
+                                      const MtlxNode *tiled, float *dudx, float *dvdx,
+                                      float *dudy, float *dvdy) {
+    const size_t count = (size_t)ctx->doc->nnode;
+    MtlxValue *memo = calloc(count, sizeof(*memo));
+    char *done = calloc(count, sizeof(*done));
+    if (!memo || !done) { free(memo); free(done); return 0; }
+    MtlxValue sample_value[3];
+    for (int axis = 0; axis < 3; axis++) {
+        ShadeContext sample = *ctx;
+        sample.memo = memo;
+        sample.memo_done = done;
+        if (axis && ctx->has_uv_derivatives) {
+            const float *delta = axis == 1 ? ctx->uv_dx : ctx->uv_dy;
+            sample.uv[0] += delta[0]; sample.uv[1] += delta[1];
+        }
+        if (axis && ctx->has_position_derivatives)
+            sample.P = v3_add(sample.P, axis == 1 ? ctx->dPdx : ctx->dPdy);
+        if (axis && ctx->has_view_derivatives)
+            sample.V = v3_add(sample.V, axis == 1 ? ctx->dVdx : ctx->dVdy);
+        sample.has_uv_derivatives = 0;
+        sample.has_position_derivatives = 0;
+        sample.has_view_derivatives = 0;
+        memset(done, 0, count);
+        sample_value[axis] = input && (input->src_node >= 0 || input->has_value)
+                                 ? eval_input(&sample, input)
+                                 : mv_vec2(sample.uv[0], sample.uv[1]);
+        if (tiled) {
+            MtlxValue tiling = in_or(&sample, tiled, "uvtiling", mv_vec2(1, 1));
+            MtlxValue offset = in_or(&sample, tiled, "uvoffset", mv_vec2(0, 0));
+            MtlxValue size = in_or(&sample, tiled, "realworldimagesize", mv_vec2(1, 1));
+            MtlxValue tile = in_or(&sample, tiled, "realworldtilesize", mv_vec2(1, 1));
+            sample_value[axis].v[0] = (sample_value[axis].v[0] * tiling.v[0] - offset.v[0]) / size.v[0] * tile.v[0];
+            sample_value[axis].v[1] = (sample_value[axis].v[1] * tiling.v[1] - offset.v[1]) / size.v[1] * tile.v[1];
+        }
+    }
+    free(memo);
+    free(done);
+    for (int i = 0; i < 3; i++) {
+        if (!isfinite(sample_value[i].v[0]) || !isfinite(sample_value[i].v[1])) return 0;
+    }
+    const float dx_u = sample_value[1].v[0] - sample_value[0].v[0];
+    const float dx_v = sample_value[1].v[1] - sample_value[0].v[1];
+    const float dy_u = sample_value[2].v[0] - sample_value[0].v[0];
+    const float dy_v = sample_value[2].v[1] - sample_value[0].v[1];
+    if (!isfinite(dx_u) || !isfinite(dx_v) || !isfinite(dy_u) || !isfinite(dy_v)) return 0;
+    *dudx = dx_u; *dvdx = dx_v; *dudy = dy_u; *dvdy = dy_v;
+    return 1;
+}
+
 static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
                                    const char *output){
     MtlxValue sv=in_or(ctx,n,"size",mv_float(.01f)),rv=in_or(ctx,n,"roughness",mv_float(.1f)),cv=in_or(ctx,n,"coverage",mv_float(.5f));
@@ -570,13 +624,42 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     /* A literal coordinate has no screen-space footprint. */
     float u = ctx->uv[0], v = ctx->uv[1];
     const MtlxInput *tc = find_input(n, "texcoord");
-    float dudx = ctx->uv_dx[0], dvdx = ctx->uv_dx[1];
-    float dudy = ctx->uv_dy[0], dvdy = ctx->uv_dy[1];
+    float dudx = ctx->has_uv_derivatives ? ctx->uv_dx[0] : 0.0f;
+    float dvdx = ctx->has_uv_derivatives ? ctx->uv_dx[1] : 0.0f;
+    float dudy = ctx->has_uv_derivatives ? ctx->uv_dy[0] : 0.0f;
+    float dvdy = ctx->has_uv_derivatives ? ctx->uv_dy[1] : 0.0f;
+    int has_derivatives = ctx->has_uv_derivatives;
+    const int is_tiled = !strcmp(n->category, "tiledimage");
+    int dynamic_tiling = 0;
+    if (is_tiled) {
+        const char *names[] = {"uvtiling", "uvoffset", "realworldimagesize", "realworldtilesize"};
+        for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+            const MtlxInput *control = find_input(n, names[i]);
+            if (control && control->src_node >= 0) dynamic_tiling = 1;
+        }
+    }
     if (tc && (tc->src_node >= 0 || tc->has_value)) {
         MtlxValue t = eval_input(ctx, tc); u = t.v[0]; v = t.v[1];
-        if (tc->src_node < 0) dudx = dvdx = dudy = dvdy = 0.0f;
+        if (tc->src_node < 0) {
+            dudx = dvdx = dudy = dvdy = 0.0f;
+        } else {
+            has_derivatives = has_derivatives || ctx->has_position_derivatives ||
+                              ctx->has_view_derivatives;
+            if (has_derivatives) {
+                const MtlxNode *src = &ctx->doc->nodes[tc->src_node];
+                const MtlxInput *value = find_input(src, "value");
+                const int direct_uv = !strcmp(src->category, "texcoord") &&
+                    src->type == MV_VEC2 && !tc->channels &&
+                    (!tc->src_output || !strcmp(tc->src_output, "out"));
+                const int constant = !strcmp(src->category, "constant") &&
+                    (!value || (value->src_node < 0 && !value->has_connection));
+                if (constant) dudx = dvdx = dudy = dvdy = 0.0f;
+                else if (!direct_uv && !dynamic_tiling)
+                    (void)coordinate_graph_gradients(ctx, tc, NULL, &dudx, &dvdx, &dudy, &dvdy);
+            }
+        }
     }
-    if (!strcmp(n->category, "tiledimage")) {
+    if (is_tiled) {
         MtlxValue tiling = in_or(ctx, n, "uvtiling", mv_vec2(1, 1));
         MtlxValue offset = in_or(ctx, n, "uvoffset", mv_vec2(0, 0));
         MtlxValue image_size = in_or(ctx, n, "realworldimagesize", mv_vec2(1, 1));
@@ -587,6 +670,11 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
         v = (v * tiling.v[1] - offset.v[1]) / image_size.v[1] * tile_size.v[1];
         dudx *= scale_u; dudy *= scale_u;
         dvdx *= scale_v; dvdy *= scale_v;
+        if (dynamic_tiling && (ctx->has_uv_derivatives || ctx->has_position_derivatives ||
+                               ctx->has_view_derivatives)) {
+            has_derivatives = 1;
+            (void)coordinate_graph_gradients(ctx, tc, n, &dudx, &dvdx, &dudy, &dvdy);
+        }
     }
     float s[4];
     const MtlxInput *us = find_input(n, "uaddressmode");
@@ -609,7 +697,7 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
     if (!outside_constant && path && !strstr(path, "<UDIM>")) {
         int id = texcache_get(ctx->tex, path, srgb);
         if (id >= 0) {
-            if (ctx->has_uv_derivatives) {
+            if (has_derivatives) {
                 texcache_sample_address_grad_filter(ctx->tex, id, u, v,
                     dudx, dvdx, dudy, dvdy,
                     u_mode, v_mode, filtertype, s);
@@ -620,7 +708,7 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
             sampled = 1;
         }
     } else if (!outside_constant && path) {
-        if (ctx->has_uv_derivatives) {
+        if (has_derivatives) {
             sampled = texcache_sample_file_grad_filter(
                 ctx->tex, path, srgb, u, v, dudx, dvdx, dudy, dvdy,
                 filtertype, s);

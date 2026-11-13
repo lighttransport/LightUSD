@@ -74,6 +74,9 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   transforms. Nonzero geometry indices and unsupported definitions are rejected.
 - 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `238a0dd`'s literal
   image-coordinate and tiled UDIM footprint fixes.
+- 2026-11-14: `mtlxrender/mtlx_eval.c` includes LightRT `f912eb5`'s
+  finite-difference footprints for connected coordinate graphs and varying
+  tiled-image controls.
 - 2026-11-12: `mtlxrender/bsdf.c` is synchronized with LightRT
   `mtlx-conformance` commit `87f8a75`: the weighted Schlick response now
   attenuates diffuse/subsurface energy, with a standalone white-furnace test

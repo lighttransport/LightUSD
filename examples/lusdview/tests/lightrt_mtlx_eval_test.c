@@ -112,7 +112,14 @@ int main(void) {
       "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
       "<input name=\"texcoord\" type=\"vector2\" value=\"0.92,0.5\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
-      "</image></materialx>");
+      "</image><texcoord name=\"udim_uv_source\" type=\"vector2\"/>"
+      "<place2d name=\"udim_uv_scaled\" type=\"vector2\">"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"udim_uv_source\"/>"
+      "<input name=\"scale\" type=\"vector2\" value=\"0.25,1\"/></place2d>"
+      "<image name=\"udim_graph\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"udim_uv_scaled\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image></materialx>");
   if (!udim_doc) {
     texcache_free(udim_cache); remove(udim_1001); remove(udim_1002);
     remove(udim_1101); return 1;
@@ -127,14 +134,19 @@ int main(void) {
   udim_ctx.memo_done = (char *)calloc((size_t)udim_doc->nnode, 1);
   const int udim_scaled_node = mtlx_find_node(udim_doc, -1, "udim_scaled");
   const int udim_literal_node = mtlx_find_node(udim_doc, -1, "udim_literal");
+  const int udim_graph_node = mtlx_find_node(udim_doc, -1, "udim_graph");
   int udim_scaled_ok = udim_ctx.memo && udim_ctx.memo_done &&
-                       udim_scaled_node >= 0 && udim_literal_node >= 0;
+                       udim_scaled_node >= 0 && udim_literal_node >= 0 && udim_graph_node >= 0;
   if (udim_scaled_ok) {
     const MtlxValue value = mtlx_eval_node_test(&udim_ctx, udim_scaled_node);
     udim_scaled_ok = fabsf(value.v[0] - 0.5f) < 1e-6f &&
                      fabsf(value.v[2] - 0.5f) < 1e-6f;
     const MtlxValue literal = mtlx_eval_node_test(&udim_ctx, udim_literal_node);
     udim_scaled_ok = udim_scaled_ok && literal.v[0] > 0.99f && literal.v[2] < 0.01f;
+    udim_ctx.uv[0] = 0.23f; udim_ctx.uv_dx[0] = 0.2f;
+    const MtlxValue graph = mtlx_eval_node_test(&udim_ctx, udim_graph_node);
+    udim_scaled_ok = udim_scaled_ok && fabsf(graph.v[0] - 0.5f) < 1e-6f &&
+                     fabsf(graph.v[2] - 0.5f) < 1e-6f;
   }
   free(udim_ctx.memo); free(udim_ctx.memo_done);
   mtlx_free(udim_doc);
@@ -344,7 +356,61 @@ int main(void) {
       "<materialx><image name=\"nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
-      "</image><image name=\"literal_uv\" type=\"color3\">"
+      "</image><texcoord name=\"uv_source\" type=\"vector2\"/>"
+      "<place2d name=\"uv_scaled\" type=\"vector2\">"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"scale\" type=\"vector2\" value=\"0.25,1\"/></place2d>"
+      "<constant name=\"uv_constant\" type=\"vector2\">"
+      "<input name=\"value\" type=\"vector2\" value=\"0.25,0.5\"/></constant>"
+      "<position name=\"uv_position\" type=\"vector3\">"
+      "<input name=\"space\" type=\"string\" value=\"world\"/></position>"
+      "<convert name=\"uv_from_position\" type=\"vector2\">"
+      "<input name=\"in\" type=\"vector3\" nodename=\"uv_position\"/></convert>"
+      "<multiply name=\"uv_squared\" type=\"vector2\">"
+      "<input name=\"in1\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"in2\" type=\"vector2\" nodename=\"uv_source\"/></multiply>"
+      "<image name=\"mapped_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_scaled\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"constant_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_constant\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"swizzle_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_source\" channels=\"yx\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"position_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_from_position\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"squared_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_squared\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<tiledimage name=\"dynamic_tiling\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.75,0.5\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></tiledimage>"
+      "<tiledimage name=\"dynamic_position\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.75,0.5\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" nodename=\"uv_from_position\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></tiledimage>"
+      "<convert name=\"uv_as_color\" type=\"color3\">"
+      "<input name=\"in\" type=\"vector2\" nodename=\"uv_scaled\"/></convert>"
+      "<add name=\"shared_uv\" type=\"color3\">"
+      "<input name=\"in1\" type=\"color3\" nodename=\"mapped_uv\"/>"
+      "<input name=\"in2\" type=\"color3\" nodename=\"uv_as_color\"/></add>"
+      "<convert name=\"cycle_uv\" type=\"vector2\">"
+      "<input name=\"in\" type=\"color3\" nodename=\"cycle_image\"/></convert>"
+      "<image name=\"cycle_image\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"cycle_uv\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"literal_uv\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
       "<input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.5\"/>"
       "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
@@ -377,9 +443,21 @@ int main(void) {
     nearest_ctx.memo_done = (char *)calloc((size_t)nearest_doc->nnode, 1);
     int nearest_node = mtlx_find_node(nearest_doc, -1, "nearest");
     int literal_uv_node = mtlx_find_node(nearest_doc, -1, "literal_uv");
+    int mapped_uv_node = mtlx_find_node(nearest_doc, -1, "mapped_uv");
+    int constant_uv_node = mtlx_find_node(nearest_doc, -1, "constant_uv");
+    int swizzle_uv_node = mtlx_find_node(nearest_doc, -1, "swizzle_uv");
+    int position_uv_node = mtlx_find_node(nearest_doc, -1, "position_uv");
+    int dynamic_tiling_node = mtlx_find_node(nearest_doc, -1, "dynamic_tiling");
+    int dynamic_position_node = mtlx_find_node(nearest_doc, -1, "dynamic_position");
+    int squared_uv_node = mtlx_find_node(nearest_doc, -1, "squared_uv");
+    int shared_uv_node = mtlx_find_node(nearest_doc, -1, "shared_uv");
+    int cycle_image_node = mtlx_find_node(nearest_doc, -1, "cycle_image");
     int hex_nearest_node = mtlx_find_node(nearest_doc, -1, "hex_nearest");
     int hex_linear_node = mtlx_find_node(nearest_doc, -1, "hex_linear");
     if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 || literal_uv_node < 0 ||
+        mapped_uv_node < 0 || constant_uv_node < 0 || swizzle_uv_node < 0 || position_uv_node < 0 ||
+        dynamic_tiling_node < 0 || dynamic_position_node < 0 || squared_uv_node < 0 ||
+        shared_uv_node < 0 || cycle_image_node < 0 ||
         hex_nearest_node < 0 || hex_linear_node < 0) {
       nearest_ok = 0;
     } else {
@@ -403,6 +481,45 @@ int main(void) {
           (fabsf(hex_nearest_value.v[0] - hex_linear_value.v[0]) > 0.001f ||
            fabsf(hex_nearest_value.v[1] - hex_linear_value.v[1]) > 0.001f ||
            fabsf(hex_nearest_value.v[2] - hex_linear_value.v[2]) > 0.001f);
+      nearest_ctx.uv[0] = 0.0625f; nearest_ctx.uv[1] = 0.5f;
+      nearest_ctx.uv_dx[0] = 0.25f; nearest_ctx.has_uv_derivatives = 1;
+      MtlxValue mapped = mtlx_eval_node_test(&nearest_ctx, mapped_uv_node);
+      nearest_ok = nearest_ok && fabsf(mapped.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(mapped.v[2] - 0.5f) < 1e-6f;
+      nearest_ctx.uv_dy[1] = 0.1f;
+      MtlxValue shared = mtlx_eval_node_test(&nearest_ctx, shared_uv_node);
+      nearest_ok = nearest_ok && fabsf(shared.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(shared.v[1] - 0.5f) < 1e-6f &&
+                   fabsf(shared.v[2] - 0.5f) < 1e-6f;
+      MtlxValue cycle = mtlx_eval_node_test(&nearest_ctx, cycle_image_node);
+      nearest_ok = nearest_ok && isfinite(cycle.v[0]) && isfinite(cycle.v[2]);
+      nearest_ctx.uv_dy[1] = 0.0f;
+      nearest_ctx.uv[0] = 0.25f; nearest_ctx.uv[1] = 0.5f;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      MtlxValue dynamic_tiling = mtlx_eval_node_test(&nearest_ctx, dynamic_tiling_node);
+      nearest_ok = nearest_ok && fabsf(dynamic_tiling.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(dynamic_tiling.v[2] - 0.25f) < 1e-6f;
+      MtlxValue squared = mtlx_eval_node_test(&nearest_ctx, squared_uv_node);
+      nearest_ok = nearest_ok && fabsf(squared.v[0] - 0.25f) < 1e-6f &&
+                   fabsf(squared.v[2] - 0.75f) < 1e-6f;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      MtlxValue constant = mtlx_eval_node_test(&nearest_ctx, constant_uv_node);
+      nearest_ok = nearest_ok && constant.v[0] > 0.99f && constant.v[2] < 0.01f;
+      nearest_ctx.uv[0] = 0.5f; nearest_ctx.uv[1] = 0.0625f;
+      nearest_ctx.uv_dx[0] = 0.0f; nearest_ctx.uv_dx[1] = 1.0f;
+      MtlxValue swizzle = mtlx_eval_node_test(&nearest_ctx, swizzle_uv_node);
+      nearest_ok = nearest_ok && fabsf(swizzle.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(swizzle.v[2] - 0.5f) < 1e-6f;
+      nearest_ctx.has_uv_derivatives = 0;
+      nearest_ctx.P = v3_make(0.25f, 0.5f, 0.0f);
+      nearest_ctx.dPdx = v3_make(1.0f, 0.0f, 0.0f);
+      nearest_ctx.has_position_derivatives = 1;
+      MtlxValue projected = mtlx_eval_node_test(&nearest_ctx, position_uv_node);
+      nearest_ok = nearest_ok && fabsf(projected.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(projected.v[2] - 0.5f) < 1e-6f;
+      MtlxValue position_tiling = mtlx_eval_node_test(&nearest_ctx, dynamic_position_node);
+      nearest_ok = nearest_ok && fabsf(position_tiling.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(position_tiling.v[2] - 0.25f) < 1e-6f;
     }
     free(nearest_ctx.memo);
     free(nearest_ctx.memo_done);
