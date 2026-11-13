@@ -202,3 +202,5 @@ upstream provenance intact.
   no-film OpenPBR dielectric/metal closure mixture.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `75d0165` for the
   specular-weighted OpenPBR transmission IOR and refraction tests.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `7216cae` for
+  OpenPBR glass reflection and interior IOR handling.

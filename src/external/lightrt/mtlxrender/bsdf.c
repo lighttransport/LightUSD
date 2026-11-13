@@ -1064,9 +1064,9 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         float cosi = clampf(v3_dot(m, wo), 0.0f, 1.0f);
         float Fr = fresnel_dielectric(cosi, eta);
         v3 wi; int refracted;
-        /* Explicit reflection closures already account for reflection. Keep
-         * the legacy glass proposal for transmission only in that case. */
-        int transmission_only = L.specular_lobe_count > 0;
+        /* Explicit and OpenPBR base reflection closures already account for
+         * reflection. Use the glass proposal only for transmission there. */
+        int transmission_only = L.specular_lobe_count > 0 || L.openpbr_base;
         if (!transmission_only && pcg32_f(rng) < Fr) {
             wi = v3_sub(v3_scale(m, 2.0f * v3_dot(m, wo)), wo);
             if (v3_dot(wi, N) <= 0.0f) return 0; /* reflected below surface: reject */
@@ -1086,7 +1086,7 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
                         : (p->transmission_depth > 0.0f ? v3_splat(1.0f)
                                                         : p->transmission_color);
         /* Compensate selection of the glass branch in the full mixture. The
-         * explicit-reflection case samples transmission unconditionally, so
+         * transmission-only case samples transmission unconditionally, so
          * it also retains the physical transmission Fresnel factor. */
         out->throughput = v3_scale(out->throughput,
             L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
@@ -1095,6 +1095,9 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         out->subsurface = 0;
         return 1;
     }
+
+    /* Reflection on the interior side sees the reciprocal interface IOR. */
+    if (!entering && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
 
     /* choose a reflection lobe to generate a direction */
     v3 wi;
@@ -1172,15 +1175,19 @@ VolumeMedium transmission_medium(const OpenPBRParams *p) {
 }
 
 v3 bsdf_eval(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, float *pdf_out) {
-    v3 N = face_forward(v3_normalize(Ns), wo);
+    v3 outward = v3_normalize(Ns);
+    v3 N = face_forward(outward, wo);
     Layers L = extract(p);
+    if (v3_dot(outward, wo) < 0.0f && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
     return eval_reflection(&L, N, wo, wi, pdf_out);
 }
 
 v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
                    v3 *out_specular, float *pdf_out) {
-    v3 N = face_forward(v3_normalize(Ns), wo);
+    v3 outward = v3_normalize(Ns);
+    v3 N = face_forward(outward, wo);
     Layers L = extract(p);
+    if (v3_dot(outward, wo) < 0.0f && L.openpbr_base && L.glass_w > 0.0f) L.base_ior = 1.0f / L.base_ior;
     return eval_reflection_split(&L, N, wo, wi, pdf_out, out_diffuse, out_specular);
 }
 

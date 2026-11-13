@@ -536,6 +536,51 @@ static int openpbr_transmission_ior_checks(void) {
       if (!found) { fprintf(stderr,"FAIL: no transmission IOR sample case=%zu side=%d\n",i,side); return 0; }
     }
   }
+  /* The transmission substrate must not add a second reflected lobe.
+   * Compare Monte Carlo reflected energies with the substrate off/on. */
+  {
+    double reflected[2]={0,0}, transmitted=0;
+    const int samples=200000;
+    for (int enabled=0;enabled<2;++enabled) {
+      OpenPBRParams p; openpbr_defaults(&p); p.base_weight=0;
+      p.openpbr_coat_remap=1; p.transmission=(float)enabled;
+      p.specular_weight=1; p.specular_ior=1.5f; p.specular_roughness=.3f;
+      p.transmission_color=v3_splat(1);
+      pcg32 rng; pcg32_seed(&rng,42,91);
+      for (int i=0;i<samples;++i) {
+        BsdfSample sample;
+        if (!bsdf_sample(&p,n,n,&rng,&sample)) continue;
+        if (!sample.crossed) reflected[enabled]+=sample.throughput.x;
+        else transmitted+=sample.throughput.x;
+      }
+      reflected[enabled]/=samples;
+    }
+    transmitted/=samples;
+    if (fabs(reflected[0]-reflected[1])>.004 ||
+        reflected[0]<.03 || reflected[0]>.05 ||
+        transmitted<.93 || transmitted>.98) {
+      fprintf(stderr,"FAIL: OpenPBR reflection/transmission energy %g %g %g\n",
+              reflected[0],reflected[1],transmitted); return 0;
+    }
+  }
+  /* The surviving reflection must carry total internal reflection on exit. */
+  {
+    OpenPBRParams p; openpbr_defaults(&p); p.base_weight=0; p.transmission=1;
+    p.openpbr_coat_remap=1; p.specular_ior=1.5f; p.specular_weight=1;
+    p.specular_roughness=.3f; p.transmission_color=v3_splat(1);
+    const v3 wo={.9f,0,-.435889894f};
+    pcg32 rng; pcg32_seed(&rng,42,91); double reflected=0;
+    const int samples=200000;
+    for (int i=0;i<samples;++i) {
+      BsdfSample sample;
+      if (bsdf_sample(&p,n,wo,&rng,&sample) && !sample.crossed)
+        reflected+=sample.throughput.x;
+    }
+    reflected/=samples;
+    if (reflected<.85 || reflected>1.05) {
+      fprintf(stderr,"FAIL: OpenPBR internal reflection energy %g\n",reflected); return 0;
+    }
+  }
   /* At an exiting angle beyond the critical angle, full-weight glass must
    * reflect, while zero specular weight gives IOR 1 and must cross. */
   for (int weighted=0;weighted<2;++weighted) {
@@ -546,7 +591,10 @@ static int openpbr_transmission_ior_checks(void) {
     int found=0;
     for(int j=0;j<2000 && !found;++j) {
       BsdfSample sample;
-      if(!bsdf_sample(&p,n,wo,&rng,&sample) || !sample.transmission) continue;
+      if(!bsdf_sample(&p,n,wo,&rng,&sample)) continue;
+      if (weighted && sample.transmission) { fprintf(stderr,"FAIL: transmission at total internal reflection\n"); return 0; }
+      if (weighted && !sample.transmission) { found=1; continue; }
+      if (!sample.transmission) continue;
       if(sample.crossed == weighted) {
         fprintf(stderr,"FAIL: weighted OpenPBR critical-angle routing\n");return 0;
       }
