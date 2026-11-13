@@ -221,3 +221,5 @@ upstream provenance intact.
   MaterialX range reciprocal gamma, per-channel remapping and optional clamp.
 - 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `adaf32c` for
   MaterialX place2d reference rotation, offset and operation order.
+- 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `bda215a` for
+  MaterialX colorcorrect luma, gamma and input defaults.

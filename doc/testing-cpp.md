@@ -4582,3 +4582,6 @@ and non-unit normals; the reference graph applies the supplied normal directly.
 MaterialX place2d vectors check SRT and TRS ordering, reference rotation,
 nonuniform scales, offset subtraction, and out-of-range order selectors. An
 unresolved authored `operationorder` connection must not use the default.
+The Tydra vector replay covers MaterialX colorcorrect saturation, hue wrap,
+gamma, lift/gain/contrast/exposure ordering, and color4 alpha preservation;
+an unresolved authored control is rejected rather than defaulted.

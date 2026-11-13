@@ -151,6 +151,17 @@ def Scope "M" {
     float inputs:rotate = 0
     int inputs:operationorder.connect = </M/Missing.outputs:out>
   }
+  def Shader "ColorCorrectDefault3" {
+    uniform token info:id = "ND_colorcorrect_color3"
+  }
+  def Shader "ColorCorrectDefault4" {
+    uniform token info:id = "ND_colorcorrect_color4"
+  }
+  def Shader "ColorCorrectUnresolved" {
+    uniform token info:id = "ND_colorcorrect_color3"
+    color3f inputs:in = (0.25, 0.5, 0.75)
+    float inputs:hue.connect = </M/Missing.outputs:out>
+  }
   def Shader "Reflect" {
     uniform token info:id = "ND_reflect_vector3"
     vector3f inputs:in = (1, -1, 0)
@@ -184,6 +195,8 @@ def Scope "M" {
       {"/M/Asin", {0.5235987756f}, 1},
       {"/M/Acos", {1.0471975512f}, 1},
       {"/M/Range", {-0.5f}, 1},
+      {"/M/ColorCorrectDefault3", {1.0f, 1.0f, 1.0f}, 3},
+      {"/M/ColorCorrectDefault4", {1.0f, 1.0f, 1.0f, 0.0f}, 4},
       {"/M/Triangle", {0.25f}, 1},
       {"/M/Place", {-0.25f, 1.0f}, 2},
       {"/M/Reflect", {1.0f, 1.0f, 0.0f}, 3},
@@ -219,6 +232,9 @@ def Scope "M" {
   unresolved_visiting.clear();
   assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/PlaceUnresolved"),
                                0.0, "", &unresolved_value, &unresolved_visiting, 0));
+  unresolved_visiting.clear();
+  assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/ColorCorrectUnresolved"),
+                               0.0, "", &unresolved_value, &unresolved_visiting, 0));
 }
 namespace {
 using namespace lightusd::mtlx;
@@ -244,7 +260,7 @@ bool MtlxEvalApproxSupportedTag(const std::string& tag) {
       "reflect", "refract", "worleynoise2d", "worleynoise3d",
       "unifiednoise2d", "unifiednoise3d",
       "ramplr", "ramptb", "ramp4", "splitlr",
-      "splittb", "checkerboard", "circle", "line", "grid", "crosshatch", "tiledcircles",
+      "splittb", "colorcorrect", "checkerboard", "circle", "line", "grid", "crosshatch", "tiledcircles",
       "cloverleaf", "tiledcloverleafs", "tiledhexagons",
       "hexagon"};
   return supported.count(tag) != 0;

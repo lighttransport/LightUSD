@@ -1242,6 +1242,50 @@ bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
     return true;
   }
 
+  if (starts("ND_colorcorrect_")) {
+    MtlxConstantValue value, hue, saturation, gamma, lift, gain, contrast, pivot, exposure;
+    if (!input("in", &value)) {
+      const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+      if (spec && (spec->property("inputs:in") || spec->connection("inputs:in"))) return false;
+      value.components = starts("ND_colorcorrect_color4") ? 4 : 3;
+      value.value = {{1.0f, 1.0f, 1.0f, 0.0f}};
+    }
+    if (value.components != 3 && value.components != 4) return false;
+    auto parameter = [&](const char* name, float fallback, MtlxConstantValue* result) {
+      if (input(name, result)) return true;
+      const ::lightusd::PrimSpec* spec = node.GetPrimSpec();
+      const std::string property = std::string("inputs:") + name;
+      if (spec && (spec->property(property) || spec->connection(property))) return false;
+      result->components = 1;
+      result->value[0] = fallback;
+      return true;
+    };
+    if (!parameter("hue", 0.0f, &hue) || !parameter("saturation", 1.0f, &saturation) ||
+        !parameter("gamma", 1.0f, &gamma) || !parameter("lift", 0.0f, &lift) ||
+        !parameter("gain", 1.0f, &gain) || !parameter("contrast", 1.0f, &contrast) ||
+        !parameter("contrastpivot", 0.5f, &pivot) || !parameter("exposure", 0.0f, &exposure)) return false;
+    float hsv[3], rgb[3];
+    MtlxRgbToHsv(value.value.data(), hsv);
+    hsv[0] += hue.component(0);
+    MtlxHsvToRgb(hsv, rgb);
+    const float gray = 0.2722287f * rgb[0] + 0.6740818f * rgb[1] + 0.0536895f * rgb[2];
+    const float factor = std::pow(2.0f, exposure.component(0));
+    const float reciprocal_gamma = 1.0f / gamma.component(0);
+    *out = value;
+    for (int i = 0; i < 3; ++i) {
+      float x = gray + saturation.component(0) * (rgb[i] - gray);
+      const float sign = x > 0.0f ? 1.0f : (x < 0.0f ? -1.0f : 0.0f);
+      x = sign * std::pow(std::fabs(x), reciprocal_gamma);
+      x = (x * (1.0f - lift.component(0)) + lift.component(0)) * gain.component(0);
+      out->value[static_cast<size_t>(i)] =
+          ((x - pivot.component(0)) * contrast.component(0) + pivot.component(0)) * factor;
+    }
+    out->color_managed = value.color_managed || hue.color_managed || saturation.color_managed ||
+        gamma.color_managed || lift.color_managed || gain.color_managed ||
+        contrast.color_managed || pivot.color_managed || exposure.color_managed;
+    return true;
+  }
+
   if (starts("ND_hsvadjust_")) {
     MtlxConstantValue value, amount;
     if (!input("in", &value) || !input("amount", &amount) ||
