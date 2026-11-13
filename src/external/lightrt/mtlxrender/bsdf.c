@@ -564,9 +564,9 @@ typedef struct {
     int specular_lobe_count;
     const MtlxSpecularLobe *specular_lobes;
     v3    coat_color, coat_base_albedo; float coat_alpha, coat_w, coat_f0, coat_Ri, coat_darkening, coat_ior;
-    int openpbr, openpbr_dielectric;
-    float base_ior;
-    v3 base_tint;
+    int openpbr, openpbr_base;
+    float base_ior, base_metalness, base_specular_weight;
+    v3 base_tint, base_metal_color;
     float tf_weight, tf_thickness, tf_ior; /* thin-film iridescence */
     float glass_w, ior;
     /* normalized lobe selection probabilities (glass is delta) */
@@ -626,8 +626,11 @@ static Layers extract(const OpenPBRParams *p) {
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
     L.ior = specular_ior;
-    L.openpbr_dielectric = p->openpbr_coat_remap && metal == 0.0f &&
-        !explicit_specular && !explicit_conductor && p->thin_film_weight <= 0.0f;
+    L.openpbr_base = p->openpbr_coat_remap && !explicit_specular && !explicit_conductor &&
+        !(p->thin_film_weight > 0.0f && p->thin_film_thickness > 0.0f);
+    L.base_metalness = clampf(metal, 0.0f, 1.0f);
+    L.base_metal_color = base;
+    L.base_specular_weight = isfinite(p->specular_weight) ? maxf(p->specular_weight, 0.0f) : 0.0f;
     float f0_weighted = clampf(f0d, 0.0f, 0.99999f);
     float f0_root = sqrtf(f0_weighted);
     L.base_ior = specular_ior < 1.0f ? (1.0f - f0_root) / (1.0f + f0_root)
@@ -660,7 +663,8 @@ static Layers extract(const OpenPBRParams *p) {
     { float n = maxf(coat_ior, 1.0f);
       L.coat_Ri = clampf(1.0f - (1.0f - L.coat_f0) / (n * n), 0.0f, 0.9999f);
       v3 dielectric = v3_lerp(p->base_color, p->subsurface_color, clampf(p->subsurface, 0.0f, 1.0f));
-      v3 metal_albedo = v3_scale(p->base_color, clampf(p->specular_weight, 0.0f, 1.0f));
+      v3 metal_albedo = v3_scale(p->base_color,
+          isfinite(p->specular_weight) ? maxf(p->specular_weight, 0.0f) : 0.0f);
       L.coat_base_albedo = v3_lerp(dielectric, metal_albedo, metal); }
 
     L.tf_weight = explicit_specular ? 0.0f : clampf(p->thin_film_weight, 0.0f, 1.0f);
@@ -827,7 +831,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     const v3 one = v3_splat(1.0f);
     const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->F0, L->F90);
     v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
-    if (L->openpbr_dielectric) {
+    if (L->openpbr_base) {
         double a,b,ess=materialx_ggx_directional_terms(NdotV,L->alpha,&a,&b);
         double q=(L->base_ior-1.0)/(L->base_ior+1.0), f0=q*q;
         if (ess>0.0 && isfinite(ess)) {
@@ -893,7 +897,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f)
         F = v3_lerp(F, fresnel_airy(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);
-    if (L->openpbr_dielectric) {
+    if (L->openpbr_base) {
         MtlxSpecularLobe lobe = {0};
         lobe.model = MTLX_SPECULAR_DIELECTRIC;
         lobe.frame.ior = v3_splat(L->base_ior);
@@ -901,7 +905,19 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         lobe.frame.thinfilm_ior = 1.5f;
         lobe.tint = L->base_tint;
         float hx = sqrtf(maxf(0.0f,1.0f-NdotH*NdotH));
-        spec = v3_mul(base_atten, specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH));
+        v3 dielectric = v3_splat(0.0f), metal = v3_splat(0.0f);
+        if (L->base_metalness < 1.0f)
+            dielectric = specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH);
+        if (L->base_metalness > 0.0f) {
+            lobe.model = MTLX_SPECULAR_SCHLICK;
+            lobe.color0 = L->base_metal_color;
+            lobe.color82 = L->base_tint;
+            lobe.color90 = v3_splat(1.0f);
+            lobe.exponent = 5.0f;
+            metal = v3_scale(specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH),
+                             L->base_specular_weight);
+        }
+        spec = v3_mul(base_atten, v3_lerp(dielectric, metal, L->base_metalness));
     }
 
     for (int i = 0; i < L->conductor_lobe_count; ++i) {

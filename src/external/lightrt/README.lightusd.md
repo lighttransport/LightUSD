@@ -198,3 +198,5 @@ upstream provenance intact.
   coat-relative IOR and base-roughness remapping.
 - 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h}` matches LightRT `2c78177` for
   compensated OpenPBR dielectric base and coat responses.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `fee41a9` for the
+  no-film OpenPBR dielectric/metal closure mixture.

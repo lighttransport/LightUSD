@@ -877,6 +877,34 @@ def main():
     if any(coat_colors[0][i] - coat_colors[1][i] < 0.025 for i in range(3)):
         raise RuntimeError(f"OpenPBR coat darkening did not reach the rendered BSDF: {coat_colors}")
 
+    # OpenPBR specular weight has a soft maximum: the CPU material bridge must
+    # preserve values above one instead of clamping the metallic lobe.
+    metal_colors = []
+    for weight in (1.0, 1.5):
+        metal_source = out_dir / f"path-metal-weight-{weight}.mtlx"
+        metal_source.write_text(f'''<materialx version="1.39">
+          <open_pbr_surface name="s" type="surfaceshader">
+            <input name="base_color" type="color3" value="0.2,0.4,0.6"/>
+            <input name="base_metalness" type="float" value="1"/>
+            <input name="specular_roughness" type="float" value="0.45"/>
+            <input name="specular_weight" type="float" value="{weight}"/>
+          </open_pbr_surface>
+          <surfacematerial name="m" type="material"><input name="surfaceshader" type="surfaceshader" nodename="s"/></surfacematerial>
+        </materialx>''', encoding="utf-8")
+        metal_image = out_dir / f"path-metal-weight-{weight}.pfm"
+        rendered = subprocess.run(
+            [exe, "--mtlx", str(metal_source), str(metal_image), "--mtlx-material", "m",
+             "-w", "32", "-height", "32", "--path-trace", "--pt-samples", "512",
+             "--pt-max-depth", "1", "--pt-seed", "1"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if rendered.returncode:
+            raise RuntimeError(f"CPU metal weight path failed:\n{rendered.stderr}")
+        _, _, pixels = read_pfm_rgb(metal_image)
+        center = (16 * 32 + 16) * 3
+        metal_colors.append(pixels[center:center+3])
+    if any(abs(metal_colors[1][i] - 1.5 * metal_colors[0][i]) > 0.015 for i in range(3)):
+        raise RuntimeError(f"OpenPBR metal weight was not preserved: {metal_colors}")
+
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace", "-cuda"],
         stdout=subprocess.PIPE,

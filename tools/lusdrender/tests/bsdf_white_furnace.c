@@ -239,24 +239,28 @@ int main(void) {
     OpenPBRParams p; set_defaults(&p, &c); p.openpbr_coat_remap = 1;
     p.specular_roughness = 0.5f; p.coat_roughness = 0.4f;
     const v3 n = v3_make(0, 0, 1), wo = v3_make(0.6f, 0, 0.8f);
-    const v3 expected = integrate(&p, 0.8f, 0);
-    pcg32 rng; pcg32_seed(&rng, 4321, 9876);
-    const int count = 180000; double sum[3] = {0.0, 0.0, 0.0};
-    for (int i = 0; i < count; ++i) {
-      BsdfSample sample;
-      if (bsdf_sample(&p, n, wo, &rng, &sample)) {
-        if (!v3_is_finite(sample.throughput) || !isfinite(sample.pdf)) {
-          fprintf(stderr, "FAIL: OpenPBR sample is nonfinite\n"); return 1;
+    const float metalness[] = {0.0f, 0.5f, 1.0f};
+    for (size_t mi = 0; mi < sizeof(metalness)/sizeof(metalness[0]); ++mi) {
+      p.metalness = metalness[mi];
+      const v3 expected = integrate(&p, 0.8f, 0);
+      pcg32 rng; pcg32_seed(&rng, 4321, 9876);
+      const int count = 180000; double sum[3] = {0.0, 0.0, 0.0};
+      for (int i = 0; i < count; ++i) {
+        BsdfSample sample;
+        if (bsdf_sample(&p, n, wo, &rng, &sample)) {
+          if (!v3_is_finite(sample.throughput) || !isfinite(sample.pdf)) {
+            fprintf(stderr, "FAIL: OpenPBR sample is nonfinite\n"); return 1;
+          }
+          sum[0] += sample.throughput.x; sum[1] += sample.throughput.y;
+          sum[2] += sample.throughput.z;
         }
-        sum[0] += sample.throughput.x; sum[1] += sample.throughput.y;
-        sum[2] += sample.throughput.z;
       }
-    }
-    const float target[] = {expected.x, expected.y, expected.z};
-    for (int ch = 0; ch < 3; ++ch) {
-      if (fabs(sum[ch] / count - target[ch]) > 0.02) {
-        fprintf(stderr, "FAIL: OpenPBR sampled energy channel=%d got=%g expected=%g\n",
-                ch, sum[ch] / count, target[ch]); return 1;
+      const float target[] = {expected.x, expected.y, expected.z};
+      for (int ch = 0; ch < 3; ++ch) {
+        if (fabs(sum[ch] / count - target[ch]) > 0.02) {
+          fprintf(stderr, "FAIL: OpenPBR sampled energy metal=%g channel=%d got=%g expected=%g\n",
+                  p.metalness, ch, sum[ch] / count, target[ch]); return 1;
+        }
       }
     }
     printf("PASS: OpenPBR sample estimate matches quadrature\n");

@@ -231,6 +231,85 @@ static int openpbr_dielectric_response_checks(void) {
   return 1;
 }
 
+/* The OpenPBR graph mixes a weighted generalized-Schlick metal closure with
+ * its dielectric base; compare each mixture against independent closures. */
+static int openpbr_metal_response_checks(void) {
+  const char *base = "<materialx><open_pbr_surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"base_weight\" type=\"float\" value=\"0.75\"/>"
+    "<input name=\"base_color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+    "<input name=\"specular_weight\" type=\"float\" value=\"0.7\"/>"
+    "<input name=\"specular_ior\" type=\"float\" value=\"1.6\"/>"
+    "<input name=\"specular_roughness\" type=\"float\" value=\"0.5\"/>"
+    "<input name=\"specular_color\" type=\"color3\" value=\"0.4,0.7,1\"/>"
+    "</open_pbr_surface></materialx>";
+  const char *dielectric = "<materialx><dielectric_bsdf name=\"d\" type=\"BSDF\">"
+    "<input name=\"ior\" type=\"float\" value=\"1.478546294\"/>"
+    "<input name=\"tint\" type=\"color3\" value=\"0.4,0.7,1\"/>"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.25,0.25\"/>"
+    "</dielectric_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"d\"/></surface></materialx>";
+  const char *metal = "<materialx><generalized_schlick_bsdf name=\"d\" type=\"BSDF\">"
+    "<input name=\"weight\" type=\"float\" value=\"0.7\"/>"
+    "<input name=\"color0\" type=\"color3\" value=\"0.15,0.3,0.45\"/>"
+    "<input name=\"color82\" type=\"color3\" value=\"0.4,0.7,1\"/>"
+    "<input name=\"roughness\" type=\"vector2\" value=\"0.25,0.25\"/>"
+    "</generalized_schlick_bsdf><surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"bsdf\" type=\"BSDF\" nodename=\"d\"/></surface></materialx>";
+  OpenPBRParams p, d, m;
+  if (!evaluate(base, &p) || !evaluate(dielectric, &d) || !evaluate(metal, &m)) return 0;
+  const v3 n = {0,0,1}, views[] = {{0,0,1},{0.8f,0,0.6f}};
+  const v3 lights[] = {{0.6f,0,0.8f},{0,0.8f,0.6f}};
+  const float amounts[] = {0.0f,0.25f,0.5f,1.0f};
+  for (int v = 0; v < 2; ++v) for (int l = 0; l < 2; ++l) {
+    float pdf; v3 dref = bsdf_eval(&d,n,views[v],lights[l],&pdf);
+    v3 mref = bsdf_eval(&m,n,views[v],lights[l],&pdf);
+    p.metalness = 0.0f; v3 full_dielectric = bsdf_eval(&p,n,views[v],lights[l],&pdf);
+    p.metalness = 1.0f; v3 full_metal = bsdf_eval(&p,n,views[v],lights[l],&pdf);
+    for (int i = 0; i < 4; ++i) {
+      p.metalness = amounts[i]; v3 diff, actual;
+      bsdf_eval_lobes(&p,n,views[v],lights[l],&diff,&actual,&pdf);
+      v3 expected = v3_lerp(dref,mref,amounts[i]);
+      v3 full = bsdf_eval(&p,n,views[v],lights[l],&pdf);
+      v3 full_expected = v3_lerp(full_dielectric,full_metal,amounts[i]);
+      if (fabsf(full.x-full_expected.x)>3e-6f || fabsf(full.y-full_expected.y)>3e-6f ||
+          fabsf(full.z-full_expected.z)>3e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR full metal mixture amount=%g view=%d light=%d\n",amounts[i],v,l);
+        return 0;
+      }
+      if (fabsf(actual.x-expected.x)>3e-6f || fabsf(actual.y-expected.y)>3e-6f ||
+          fabsf(actual.z-expected.z)>3e-6f) {
+        fprintf(stderr,"FAIL: OpenPBR metal mixture amount=%g view=%d light=%d\n",amounts[i],v,l);
+        return 0;
+      }
+    }
+  }
+  /* A zero-thickness film must not change either component of the mix. */
+  {
+    OpenPBRParams nofilm = p, zero = p;
+    nofilm.metalness = zero.metalness = 0.5f;
+    nofilm.thin_film_weight = 0.0f; zero.thin_film_weight = 1.0f;
+    nofilm.thin_film_thickness = zero.thin_film_thickness = 0.0f;
+    float pdf; v3 a = bsdf_eval(&nofilm,n,views[1],lights[0],&pdf);
+    v3 b = bsdf_eval(&zero,n,views[1],lights[0],&pdf);
+    if (fabsf(a.x-b.x)>3e-6f || fabsf(a.y-b.y)>3e-6f || fabsf(a.z-b.z)>3e-6f) {
+      fprintf(stderr,"FAIL: zero-thickness OpenPBR film changed the response\n"); return 0;
+    }
+  }
+  /* OpenPBR's specular weight has a soft UI maximum, not a hard clamp. */
+  p.metalness = 1.0f; p.specular_weight = 1.5f;
+  m.specular_lobes[0].frame.weight = 1.5f;
+  {
+    float pdf; v3 diffuse, actual;
+    bsdf_eval_lobes(&p,n,views[1],lights[0],&diffuse,&actual,&pdf);
+    const v3 expected = bsdf_eval(&m,n,views[1],lights[0],&pdf);
+    if (fabsf(actual.x-expected.x)>3e-6f || fabsf(actual.y-expected.y)>3e-6f ||
+        fabsf(actual.z-expected.z)>3e-6f) {
+      fprintf(stderr,"FAIL: OpenPBR metal specular weight above one\n"); return 0;
+    }
+  }
+  return 1;
+}
+
 static int specular_response_checks(void) {
   const char *parts=
     "<dielectric_bsdf name=\"d\" type=\"BSDF\"><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></dielectric_bsdf>"
@@ -433,7 +512,7 @@ int main(void) {
       }
     }
   }
-  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() ||
+  if (!layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||

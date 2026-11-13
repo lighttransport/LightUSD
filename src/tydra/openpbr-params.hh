@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 namespace lightusd {
 namespace tydra {
@@ -112,7 +113,7 @@ struct RealtimePbrMaterial {
   float coatAffectRoughness{0.0f};
   float coatRoughnessAnisotropy{0.0f};
   float coatDarkening{0.0f};
-  // CPU-only: the source shader is OpenPBR and uses its coat parameter remaps.
+  // Identifies the OpenPBR source model for CPU remaps and parameter bounds.
   int openPbrCoatRemap{0};
   float volumeDensity{0.0f};
   float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
@@ -144,9 +145,15 @@ inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
   auto clamp01 = [](float v) { return std::max(0.0f, std::min(1.0f, v)); };
   p->baseWeight = clamp01(p->baseWeight);
   p->metalness = clamp01(p->metalness);
-  p->specularWeight = clamp01(p->specularWeight);
+  p->specularWeight = p->openPbrCoatRemap
+                          ? (std::isfinite(p->specularWeight)
+                                 ? std::max(0.0f, p->specularWeight) : 0.0f)
+                          : clamp01(p->specularWeight);
   p->specularRoughness = std::max(0.0f, p->specularRoughness);
-  p->specularIor = std::max(1.0f, p->specularIor);
+  p->specularIor = p->openPbrCoatRemap
+                       ? (std::isfinite(p->specularIor) && p->specularIor > 0.0f
+                              ? p->specularIor : 1.5f)
+                       : std::max(1.0f, p->specularIor);
   p->transmission = clamp01(p->transmission);
   p->transmissionDepth = std::max(0.0f, p->transmissionDepth);
   p->subsurface = clamp01(p->subsurface);

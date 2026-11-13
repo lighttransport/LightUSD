@@ -9794,13 +9794,23 @@ int main() {
     mat.openpbr->base_diffuse_roughness.value.x = 0.7f;
     mat.openpbr->base_roughness.value.x = 0.1f;
     mat.openpbr->specular_roughness.value.x = 0.3f;
+    mat.openpbr->specular_weight.value.x = 1.5f;
+    mat.openpbr->specular_ior.value.x = 0.8f;
     RealtimePbrMaterial p;
     assert(BuildRealtimePbrMaterial(mat, &p));
     assert(p.diffuseModel == 1);
     assert(p.openPbrCoatRemap == 1);
     assert(p.coatDarkening == 1.0f);
+    assert(std::abs(p.specularWeight - 1.5f) < 1.0e-6f);
+    assert(std::abs(p.specularIor - 0.8f) < 1.0e-6f);
     assert(std::abs(p.diffuseRoughness - 0.7f) < 1.0e-6f);
     assert(std::abs(p.specularRoughness - 0.3f) < 1.0e-6f);
+    RealtimePbrMaterial preview;
+    preview.specularWeight = 1.5f;
+    preview.specularIor = 0.8f;
+    ClampRealtimePbrMaterial(&preview);
+    assert(preview.specularWeight == 1.0f);
+    assert(preview.specularIor == 1.0f);
   }
   TestMtlxConstantEvaluatorRealNodes();
   TestMtlxConstantEvaluatorLeanVectors();
