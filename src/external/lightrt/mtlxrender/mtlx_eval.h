@@ -30,12 +30,15 @@ typedef struct {
 } MtlxDiffuseLobe;
 
 #define MTLX_MAX_SHEEN_LOBES 32
+#define MTLX_SHEEN_CONTY_KULLA 0
+#define MTLX_SHEEN_ZELTNER 1
 
 typedef struct {
     v3 color;
     float weight;
     v3 weight_color;
     float roughness;
+    int model; /* MTLX_SHEEN_* */
 } MtlxSheenLobe;
 
 typedef struct {

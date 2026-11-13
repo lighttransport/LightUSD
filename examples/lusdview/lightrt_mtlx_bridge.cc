@@ -381,6 +381,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
     dst->sheenLobes[i].weight = src.sheen_lobes[i].weight;
     CopyV3(src.sheen_lobes[i].weight_color, dst->sheenLobes[i].weightColor);
     dst->sheenLobes[i].roughness = src.sheen_lobes[i].roughness;
+    dst->sheenLobes[i].model = src.sheen_lobes[i].model;
   }
   dst->thinFilmWeight = src.thin_film_weight;
   dst->thinFilmThicknessNm = src.thin_film_thickness;

@@ -86,6 +86,7 @@ int main() {
       <sheen_bsdf name="sb" type="BSDF">
         <input name="color" type="color3" value="0.1, 0.3, 0.7"/>
         <input name="roughness" type="float" value="0.7"/>
+        <input name="mode" type="string" value="zeltner"/>
       </sheen_bsdf>
       <mix name="sheenmix" type="BSDF">
         <input name="bg" type="BSDF" nodename="sa"/>
@@ -127,6 +128,7 @@ int main() {
         !Near(params.sheenLobes[1].weightColor[2], 0.9f) ||
         !Near(params.sheenLobes[0].roughness, 0.1f) ||
         !Near(params.sheenLobes[1].roughness, 0.7f) ||
+        params.sheenLobes[0].model != 0 || params.sheenLobes[1].model != 1 ||
         !Near(params.diffuseLobes[0].roughness, 0.8f) ||
         !Near(params.diffuseLobes[1].roughness, 0.3f)) {
       std::fprintf(stderr, "MaterialX diffuse/sheen mixture bridge failed: %s\n", err.c_str());

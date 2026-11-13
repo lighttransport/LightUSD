@@ -56,6 +56,7 @@ int main(void) {
     "<sheen_bsdf name=\"a\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.2,0.5,0.8\"/><input name=\"roughness\" type=\"float\" value=\"0.02\"/></sheen_bsdf>"
     "<sheen_bsdf name=\"b\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.9,0.3,0.1\"/><input name=\"roughness\" type=\"float\" value=\"0.4\"/></sheen_bsdf>"
     "<sheen_bsdf name=\"c\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.4,0.7,0.3\"/><input name=\"roughness\" type=\"float\" value=\"0.6\"/></sheen_bsdf>"
+    "<sheen_bsdf name=\"z\" type=\"BSDF\"><input name=\"color\" type=\"color3\" value=\"0.7,0.4,0.2\"/><input name=\"roughness\" type=\"float\" value=\"0.5\"/><input name=\"mode\" type=\"string\" value=\"zeltner\"/></sheen_bsdf>"
     "<mix name=\"mixab\" type=\"BSDF\"><input name=\"bg\" type=\"BSDF\" nodename=\"a\"/><input name=\"fg\" type=\"BSDF\" nodename=\"b\"/><input name=\"mix\" type=\"float\" value=\"0.25\"/></mix>"
     "<add name=\"sum\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"mixab\"/><input name=\"in2\" type=\"BSDF\" nodename=\"c\"/></add>"
     "<multiply name=\"scaled\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"float\" value=\"0.4\"/></multiply>"
@@ -63,9 +64,9 @@ int main(void) {
     "<multiply name=\"tint\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" nodename=\"factor\"/></multiply>"
     "<multiply name=\"tint_reverse\" type=\"BSDF\"><input name=\"in1\" type=\"color3\" nodename=\"factor\"/><input name=\"in2\" type=\"BSDF\" nodename=\"sum\"/></multiply>"
     "<multiply name=\"tint_literal\" type=\"BSDF\"><input name=\"in1\" type=\"BSDF\" nodename=\"sum\"/><input name=\"in2\" type=\"color3\" value=\"0.2,0.5,0.9\"/></multiply>";
-  const char *roots[] = {"scaled", "a", "b", "c", "sum", "tint", "tint_reverse", "tint_literal"};
-  OpenPBRParams params[8]; char xml[8192];
-  for (int i=0;i<8;i++) {
+  const char *roots[] = {"scaled", "a", "b", "c", "sum", "tint", "tint_reverse", "tint_literal", "z"};
+  OpenPBRParams params[9]; char xml[8192];
+  for (int i=0;i<9;i++) {
     snprintf(xml,sizeof(xml),"<materialx>%s<surface name=\"s\" type=\"surfaceshader\"><input name=\"bsdf\" type=\"BSDF\" nodename=\"%s\"/></surface></materialx>",parts,roots[i]);
     if (!evaluate(xml,&params[i])) { fprintf(stderr,"FAIL closure parse/evaluation %d\n",i); return 1; }
   }
@@ -75,11 +76,15 @@ int main(void) {
       fabsf(params[0].sheen_lobes[2].weight-0.4f)>1e-6f) {
     fprintf(stderr,"FAIL sheen lobe data was lost\n"); return 1;
   }
+  if (params[8].sheen_lobes[0].model != MTLX_SHEEN_ZELTNER ||
+      params[1].sheen_lobes[0].model != MTLX_SHEEN_CONTY_KULLA) {
+    fprintf(stderr,"FAIL sheen mode parsing\n"); return 1;
+  }
   const v3 normal={0,0,1}, views[]={{0,0,1},{0.8f,0,0.6f},{0.99995f,0,0.009999875f}},
            lights[]={{0.6f,0,0.8f},{-0.6f,0,0.8f},{0,0.8f,0.6f},{0.99995f,0,0.009999875f}};
   for (int v=0;v<3;v++) for (int l=0;l<4;l++) {
-    v3 d[8], diffuse; float pdf;
-    for (int j=0;j<8;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&diffuse,&d[j],&pdf);
+    v3 d[9], diffuse; float pdf;
+    for (int j=0;j<9;j++) bsdf_eval_lobes(&params[j],normal,views[v],lights[l],&diffuse,&d[j],&pdf);
     /* Independent Conty-Kulla BRDF: D / (4 * (Nv + Nl - Nv*Nl)). */
     const float roughness[] = {0.02f, 0.4f, 0.6f};
     const v3 color[] = {{0.2f,0.5f,0.8f}, {0.9f,0.3f,0.1f}, {0.4f,0.7f,0.3f}};
@@ -94,6 +99,25 @@ int main(void) {
           fabsf(d[j+1].y - color[j].y*dref)>tol ||
           fabsf(d[j+1].z - color[j].z*dref)>tol) {
         fprintf(stderr,"FAIL sheen reference lobe=%d view=%d light=%d\n",j,v,l); return 1;
+      }
+    }
+    /* Independently evaluate the upstream LTC fit in double precision. */
+    {
+      double x=views[v].z, y=0.5, nl=lights[l].z;
+      double sig=y*(0.0206607+1.58491*y)/(0.0379424+y*(1.32227+y));
+      double mu=y*(-0.193854+y*(-1.14885+y*(1.7932-0.95943*y*y)))/(0.046391+y);
+      double off=y*(0.000654023+(-0.0207818+0.119681*y)*y)/(1.26264+y*(-1.92021+y));
+      double e=exp(-0.5*pow((x-mu)/sig,2))/(sig*sqrt(2.0*3.14159265358979323846))+off;
+      double a=(2.58126*x+0.813703*y)*y/(1.0+0.310327*x*x+2.60994*x*y);
+      double b=sqrt(1.0-x)*(y-1.0)*y*y*y/(0.0000254053+1.71228*x-1.71506*x*y+1.34174*y*y);
+      double tangent=sqrt(fmax(0.0,1.0-x*x));
+      double wx=tangent>1e-6 ? (v3_dot(views[v],lights[l])-x*nl)/tangent : 0.0;
+      double wy2=fmax(0.0,1.0-nl*nl-wx*wx), tx=a*wx+b*nl;
+      double len2=tx*tx+a*a*wy2+nl*nl;
+      double ref=e/3.14159265358979323846*pow(a/len2,2);
+      double tol=5e-4*fmax(1.0,ref);
+      if (fabs(d[8].x-0.7*ref)>tol || fabs(d[8].y-0.4*ref)>tol || fabs(d[8].z-0.2*ref)>tol) {
+        fprintf(stderr,"FAIL Zeltner reference view=%d light=%d got=%g expected=%g\n",v,l,d[8].x,0.7*ref); return 1;
       }
     }
     v3 expected=v3_add(v3_add(v3_scale(d[1],0.3f),v3_scale(d[2],0.1f)),v3_scale(d[3],0.4f));

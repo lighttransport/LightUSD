@@ -2,6 +2,31 @@
 
 #include <math.h>
 
+/* MaterialX genglsl Zeltner LTC fit. The LTC density contains NdotL;
+ * divide that factor out here because bsdf_eval returns a BRDF. */
+float bsdf_zeltner_sheen_albedo(float ndotv, float roughness) {
+    float x = clampf(ndotv, 0.0f, 1.0f);
+    float y = clampf(roughness, 0.01f, 1.0f);
+    float s = y * (0.0206607f + 1.58491f*y) / (0.0379424f + y*(1.32227f + y));
+    float m = y * (-0.193854f + y*(-1.14885f + y*(1.7932f - 0.95943f*y*y))) / (0.046391f + y);
+    float o = y * (0.000654023f + (-0.0207818f + 0.119681f*y)*y) / (1.26264f + y*(-1.92021f + y));
+    float q = (x - m) / s;
+    return expf(-0.5f*q*q) / (s*sqrtf(2.0f*MTLX_PI)) + o;
+}
+
+static float zeltner_sheen_brdf(v3 wo, v3 wi, float nv, float nl, float roughness) {
+    float y = clampf(roughness, 0.01f, 1.0f);
+    float a = (2.58126f*nv + 0.813703f*y)*y / (1.0f + 0.310327f*nv*nv + 2.60994f*nv*y);
+    float b = sqrtf(maxf(0.0f, 1.0f - nv))*(y - 1.0f)*y*y*y /
+              (0.0000254053f + 1.71228f*nv - 1.71506f*nv*y + 1.34174f*y*y);
+    float tangent_len = sqrtf(maxf(0.0f, 1.0f - nv*nv));
+    float wx = tangent_len > 1.0e-6f ? (v3_dot(wi, wo) - nv*nl) / tangent_len : 0.0f;
+    float wy2 = maxf(0.0f, 1.0f - nl*nl - wx*wx);
+    float tx = a*wx + b*nl;
+    float len2 = tx*tx + a*a*wy2 + nl*nl;
+    return bsdf_zeltner_sheen_albedo(nv, y) * MTLX_INV_PI * (a/len2)*(a/len2);
+}
+
 /* ---- microfacet helpers ----------------------------------------------- */
 
 static v3 fresnel_schlick(float cos_t, v3 f0, float f90) {
@@ -451,7 +476,9 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         for (int i = 0; i < L->sheen_lobe_count; ++i) {
             const MtlxSheenLobe *lobe = &L->sheen_lobes[i];
             v3 color = v3_mul(lobe->color, lobe->weight_color);
-            float response = lobe->weight * charlie_D(NdotH, lobe->roughness) * sheen_V(NdotV, NdotL);
+            float response = lobe->weight * (lobe->model == MTLX_SHEEN_ZELTNER
+                ? zeltner_sheen_brdf(wo, wi, NdotV, NdotL, lobe->roughness)
+                : charlie_D(NdotH, lobe->roughness) * sheen_V(NdotV, NdotL));
             sheen = v3_add(sheen, v3_scale(color, response));
         }
         sheen = v3_mul(sheen, base_atten);

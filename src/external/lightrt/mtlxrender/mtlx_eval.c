@@ -1619,6 +1619,8 @@ static void apply_bsdf(ShadeContext *ctx, const MtlxNode *n, float scale, v3 col
             lobe->weight = weight;
             lobe->weight_color = color_scale;
             lobe->roughness = roughness;
+            lobe->model = !strcmp(string_input(n, "mode", "conty_kulla"), "zeltner")
+                ? MTLX_SHEEN_ZELTNER : MTLX_SHEEN_CONTY_KULLA;
         }
         blend_lobe(&out->sheen_weight, &out->sheen_color, v3_mul(color, color_scale), weight);
         out->sheen_roughness = blend_scalar(old_weight, out->sheen_roughness, roughness, weight);

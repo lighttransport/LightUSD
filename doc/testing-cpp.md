@@ -1691,8 +1691,8 @@ The shared CPU MaterialX BSDF uses height-correlated Smith visibility for its
 isotropic base and coat GGX lobes. When changing it, run the LightRT
 `examples/mtlxrender` `make test` suite: its generated point-response vectors
 include a grazing case, and its white-furnace test checks a material/view sweep.
-`tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla sheen response,
-RGB-weighted mixtures and the lobe limit.
+`tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
+responses, RGB-weighted mixtures and the lobe limit.
 `tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses
 and the lobe limit, including literal and connected RGB weights;
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures

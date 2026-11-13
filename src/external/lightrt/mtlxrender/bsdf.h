@@ -29,6 +29,9 @@ typedef struct {
     float transmission;
 } BsdfLobeWeights;
 
+/* MaterialX Zeltner directional-albedo fit (cosine and roughness in [0,1]). */
+float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
+
 /* Importance-sample the BSDF. Returns 0 if no valid sample. */
 int bsdf_sample(const OpenPBRParams *p, v3 N, v3 wo, pcg32 *rng, BsdfSample *out);
 

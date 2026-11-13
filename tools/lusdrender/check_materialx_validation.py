@@ -559,6 +559,11 @@ def main():
     <sheen_bsdf name="sheen_b" type="BSDF">
       <input name="color" type="color3" value="0.8, 0.3, 0.1"/>
       <input name="roughness" type="float" value="0.8"/>
+      <input name="mode" type="string" value="zeltner"/>
+    </sheen_bsdf>
+    <sheen_bsdf name="sheen_b_conty" type="BSDF">
+      <input name="color" type="color3" value="0.8, 0.3, 0.1"/>
+      <input name="roughness" type="float" value="0.8"/>
     </sheen_bsdf>
     <mix name="sheen_mix" type="BSDF">
       <input name="bg" type="BSDF" nodename="sheen_a"/>
@@ -570,7 +575,7 @@ def main():
       <input name="in2" type="color3" nodename="factor"/>
     </multiply>'''
     closure_images = []
-    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint"):
+    for root_name in ("a", "b", "mix", "tint", "sheen_a", "sheen_b", "sheen_mix", "sheen_tint", "sheen_b_conty"):
         closure_source = out_dir / f"closure-{root_name}.mtlx"
         closure_source.write_text(
             f'''<materialx version="1.39">{closure_parts}
@@ -623,10 +628,14 @@ def main():
     for x, y in ((32, 32), (30, 30), (34, 30), (30, 34)):
         offset = (y * 64 + x) * 4
         for channel in range(3):
-            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images[4:])
+            a, b, mixed, tinted = (linear_srgb(p[offset + channel]) for p in closure_images[4:8])
             if abs(mixed - (0.6 * a + 0.4 * b)) > 0.025 or \
                abs(tinted - mixed * (0.2, 0.5, 0.9)[channel]) > 0.025:
                 raise RuntimeError(f"sheen mixture or RGB scaling failed at {(x, y, channel)}")
+
+    if max(abs(closure_images[5][center_offset + c] - closure_images[8][center_offset + c])
+           for c in range(3)) < 2:
+        raise RuntimeError("authored Zeltner and Conty–Kulla modes rendered identically")
 
     rejected = subprocess.run(
         [exe, "--mtlx", str(source), str(image), "--path-trace"],

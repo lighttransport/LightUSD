@@ -27,6 +27,7 @@ struct RealtimeSheenLobe {
   float weight{0.0f};
   float weightColor[3]{1.0f, 1.0f, 1.0f};
   float roughness{0.0f};
+  int model{0};
 };
 
 struct RealtimePbrMaterial {

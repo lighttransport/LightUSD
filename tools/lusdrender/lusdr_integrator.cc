@@ -291,6 +291,7 @@ OpenPBRParams OpenPBRParamsFromLightRt(
     p.sheen_lobes[i].weight = lobe.weight;
     p.sheen_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
     p.sheen_lobes[i].roughness = lobe.roughness;
+    p.sheen_lobes[i].model = lobe.model;
   }
   p.thin_film_weight = src.thinFilmWeight;
   p.thin_film_thickness = src.thinFilmThicknessNm;
@@ -660,7 +661,10 @@ Vec3 EvalMaterialIblSheen(const TriInfo &tri, const Vec3 &normal,
   if (p.sheen_lobe_count > 0) {
     for (int i = 0; i < p.sheen_lobe_count; ++i) {
       const MtlxSheenLobe &lobe = p.sheen_lobes[i];
-      const float weight = lobe.weight * MaterialXSheenDirectionalAlbedo(ndotv, lobe.roughness);
+      const float albedo = lobe.model == MTLX_SHEEN_ZELTNER
+          ? bsdf_zeltner_sheen_albedo(ndotv, lobe.roughness)
+          : MaterialXSheenDirectionalAlbedo(ndotv, lobe.roughness);
+      const float weight = lobe.weight * albedo;
       response.x += lobe.color.x * lobe.weight_color.x * weight;
       response.y += lobe.color.y * lobe.weight_color.y * weight;
       response.z += lobe.color.z * lobe.weight_color.z * weight;
