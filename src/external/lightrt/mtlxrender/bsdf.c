@@ -28,13 +28,14 @@ static float ggx_D(float NdotH, float a) {
     float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
     return a2 / (MTLX_PI * d * d);
 }
-static float ggx_G1(float NdotX, float a) {
-    if (NdotX <= 0.0f) return 0.0f;
+/* Height-correlated Smith G2 for unit directions and isotropic GGX. */
+static float ggx_G(float NdotV, float NdotL, float a) {
+    if (NdotV <= 0.0f || NdotL <= 0.0f) return 0.0f;
     float a2 = a * a;
-    float t = NdotX * NdotX;
-    return 2.0f * NdotX / (NdotX + sqrtf(a2 + (1.0f - a2) * t));
+    float lv = sqrtf(a2 + (1.0f - a2) * NdotV * NdotV);
+    float ll = sqrtf(a2 + (1.0f - a2) * NdotL * NdotL);
+    return 2.0f * NdotV * NdotL / (NdotV * ll + NdotL * lv);
 }
-static float ggx_G(float NdotV, float NdotL, float a) { return ggx_G1(NdotV, a) * ggx_G1(NdotL, a); }
 
 /* "Charlie" sheen NDF (Estevez & Kulla 2017) + Neubelt visibility. */
 static float charlie_D(float NdotH, float r) {
