@@ -1463,6 +1463,27 @@ const std::vector<MtlxElem> &StandardMtlxNodeDefs() {
   return defs;
 }
 
+const std::vector<MtlxElem> &StandardMtlxGeomPropDefs() {
+  static const std::vector<MtlxElem> defs = [] {
+    std::vector<MtlxElem> result;
+#define MTLX_STD_GEOMPROPDEF(nm, ty, category, has_space, space, has_index, index) \
+    do {                                                                           \
+      MtlxElem def;                                                                \
+      def.tag = "geompropdef";                                                      \
+      def.SetAttr("name", nm);                                                     \
+      def.SetAttr("type", ty);                                                     \
+      def.SetAttr("geomprop", category);                                           \
+      if (has_space) def.SetAttr("space", space);                                  \
+      if (has_index) def.SetAttr("index", index);                                  \
+      result.push_back(std::move(def));                                             \
+    } while (false);
+#include "core/generated/mtlx-stdlib-geomprops.inc"
+#undef MTLX_STD_GEOMPROPDEF
+    return result;
+  }();
+  return defs;
+}
+
 void ApplyMtlxNodeDefDefaults(MtlxElem *root) {
   if (!root) return;
   MtlxLibrary library;
@@ -2182,8 +2203,19 @@ bool MtlxDocument::FlattenNodeGraph(const std::string &graph_name,
     *err = "nodegraph not found: " + graph_name;
     return false;
   }
+  MtlxElem lookup_document = root;
+  for (const MtlxElem &def : StandardMtlxGeomPropDefs()) {
+    bool overridden = false;
+    for (const MtlxElem &child : root.children) {
+      if (child.tag == "geompropdef" && child.Name() == def.Name()) {
+        overridden = true;
+        break;
+      }
+    }
+    if (!overridden) lookup_document.children.push_back(def);
+  }
   MtlxElem flattened;
-  if (!FlattenMtlxGraph(root, root.children[index], library, {&root},
+  if (!FlattenMtlxGraph(lookup_document, root.children[index], library, {&root},
                         max_expansions, &flattened, err)) return false;
   root.children[index] = std::move(flattened);
   MtlxDocument updated;

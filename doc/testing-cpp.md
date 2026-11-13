@@ -4647,5 +4647,7 @@ including external nodedefs and matching inherited scope, and checks that
 expansion-limit, differing-scope, token-scope and missing geometry-definition
 failures leave the document unchanged. Authored nodedef geometry-property
 defaults are not replaced with literal defaults during document parsing. The
-generated standard-nodedef table retains this metadata; a standard image UV
-regression checks the implicit default and an explicitly authored UV.
+generated standard-nodedef table retains this metadata. Document flattening
+uses generated standard geometry definitions as a fallback, without inserting
+them into the document; regressions cover implicit UV and world-position nodes,
+an authored geometry-definition override and an explicitly authored UV.

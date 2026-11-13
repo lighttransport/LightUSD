@@ -1498,13 +1498,23 @@ static void CheckTypedMtlxGraphResolution() {
   if (!standard_geomprop_document.ParseFromXML(standard_geomprop_xml)) {
     Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_SETUP", 0, standard_geomprop_document.GetError());
   } else {
-    const std::string before = standard_geomprop_document.GetResolvedXML();
     g_checks++;
-    if (standard_geomprop_document.FlattenNodeGraph("image_caller", 1, &error) ||
-        error.find("geometry") == std::string::npos ||
-        standard_geomprop_document.GetResolvedXML() != before) {
+    if (!standard_geomprop_document.FlattenNodeGraph("image_caller", 1, &error)) {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 0,
-           error.empty() ? "standard UV default was not retained" : error);
+           error.empty() ? "standard UV default was not resolved" : error);
+    } else {
+      const MtlxNodeGraphPtr flat = standard_geomprop_document.FindNodeGraph("image_caller");
+      const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+      const MtlxNodePtr body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
+      const MtlxInputPtr uv = body ? body->GetInput("uv") : nullptr;
+      const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+      if (!geom || geom->GetCategory() != "texcoord" || !uv ||
+          uv->GetNodeName() != geom->GetName() || !index ||
+          index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 0 ||
+          standard_geomprop_document.GetResolvedXML().find("<geompropdef") != std::string::npos) {
+        Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 1,
+             "standard UV node was incorrect or library definitions were written into the document");
+      }
     }
   }
   std::string resolved_geomprop_xml = standard_geomprop_xml;
@@ -1512,7 +1522,7 @@ static void CheckTypedMtlxGraphResolution() {
   const size_t image_impl_pos = resolved_geomprop_xml.find(image_impl_tag);
   if (image_impl_pos != std::string::npos)
     resolved_geomprop_xml.insert(image_impl_pos,
-        "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"0\"/>");
+        "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"3\"/>");
   MtlxDocument resolved_geomprop_document;
   g_checks++;
   if (image_impl_pos == std::string::npos ||
@@ -1530,9 +1540,9 @@ static void CheckTypedMtlxGraphResolution() {
     const MtlxInputPtr index = geom_node ? geom_node->GetInput("index") : nullptr;
     if (!uv || !geom_node || geom_node->GetCategory() != "texcoord" ||
         uv->GetNodeName() != geom_node->GetName() || !index ||
-        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 0) {
+        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 3) {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 1,
-           "UV0 was not connected to a texcoord node with index zero");
+           "the document UV0 override did not supply texcoord index three");
     }
   }
   std::string explicit_uv_xml = standard_geomprop_xml;
@@ -1557,6 +1567,45 @@ static void CheckTypedMtlxGraphResolution() {
     if (!flat_uv || flat_uv->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
         flat_uv->GetValue().float_vec.size() != 2) {
       Fail("MTLX_DOCUMENT_STDLIB_AUTHORED_UV", 1, "authored UV was not preserved");
+    }
+  }
+  const std::string standard_position_xml = R"(<materialx version="1.39">
+  <nodedef name="ND_test_position_sink" node="position_sink" type="float">
+    <input name="position" type="vector3"/><output name="out" type="float"/>
+  </nodedef>
+  <nodedef name="ND_test_position_graph" node="position_graph" type="float">
+    <input name="position" type="vector3" defaultgeomprop="Pworld"/>
+    <output name="out" type="float"/>
+  </nodedef>
+  <nodegraph name="position_impl" nodedef="ND_test_position_graph">
+    <position_sink name="body" type="float" nodedef="ND_test_position_sink">
+      <input name="position" type="vector3" interfacename="position"/>
+    </position_sink>
+    <output name="out" type="float" nodename="body"/>
+  </nodegraph>
+  <nodegraph name="position_caller">
+    <position_graph name="call" type="float" nodedef="ND_test_position_graph"/>
+    <output name="out" type="float" nodename="call"/>
+  </nodegraph>
+</materialx>)";
+  MtlxDocument standard_position_document;
+  g_checks++;
+  if (!standard_position_document.ParseFromXML(standard_position_xml) ||
+      !standard_position_document.FlattenNodeGraph("position_caller", 1, &error)) {
+    Fail("MTLX_DOCUMENT_STDLIB_WORLD_POSITION", 0,
+         error.empty() ? standard_position_document.GetError() : error);
+  } else {
+    const MtlxNodeGraphPtr flat = standard_position_document.FindNodeGraph("position_caller");
+    const MtlxNodePtr geometry = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const MtlxNodePtr body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
+    const MtlxInputPtr input = body ? body->GetInput("position") : nullptr;
+    const MtlxInputPtr space = geometry ? geometry->GetInput("space") : nullptr;
+    if (!geometry || geometry->GetCategory() != "position" || !input ||
+        input->GetNodeName() != geometry->GetName() || !space ||
+        space->GetValue().type != MtlxValue::TYPE_STRING ||
+        space->GetValue().string_val != "world") {
+      Fail("MTLX_DOCUMENT_STDLIB_WORLD_POSITION", 1,
+           "Pworld did not create a connected world-space position node");
     }
   }
 

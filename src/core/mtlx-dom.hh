@@ -403,6 +403,8 @@ public:
   // Recursively inline graph implementations in the named nodegraph. On
   // failure, the parsed document is unchanged. Implementations must be in
   // this document; the optional library supplies additional nodedefs.
+  // Standard geometry-property definitions are used when the document has
+  // no definition of the same name.
   bool FlattenNodeGraph(const std::string& graph_name, size_t max_expansions,
                         std::string* err);
   bool FlattenNodeGraph(const std::string& graph_name,
