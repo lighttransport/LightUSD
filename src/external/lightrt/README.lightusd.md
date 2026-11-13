@@ -77,6 +77,8 @@ CPU/Vulkan/HIP files remain the lightusd-maintained fork described above.
   angle-independent opaque-diffuse layer throughput.
 - 2026-11-13: `mtlxrender/mtlx_eval.c` matches LightRT `e700f11` for
   view-dependent sheen layer throughput.
+- 2026-11-13: `mtlxrender/{bsdf.c,bsdf.h}` matches LightRT `78d407a` for
+  an independently tested isotropic MaterialX conductor response building block.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT
   `4271ac7` for channel-preserving diffuse closure multiplication.
 - 2026-11-13: `mtlxrender/{bsdf.c,mtlx_eval.c,mtlx_eval.h}` matches LightRT

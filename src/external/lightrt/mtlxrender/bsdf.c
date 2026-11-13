@@ -27,6 +27,60 @@ static float zeltner_sheen_brdf(v3 wo, v3 wi, float nv, float nl, float roughnes
     return bsdf_zeltner_sheen_albedo(nv, y) * MTLX_INV_PI * (a/len2)*(a/len2);
 }
 
+/* MaterialX genglsl conductor Fresnel. Double intermediates avoid loss of
+ * significance for smooth lobes and preserve finite values at normal incidence. */
+static double materialx_conductor_fresnel(double cosine, double n, double k) {
+    double c = fmin(1.0, fmax(0.0, cosine));
+    double c2 = c*c, sin2 = 1.0-c2, n2 = n*n, k2 = k*k;
+    double t0 = n2-k2-sin2;
+    double ab = sqrt(t0*t0+4.0*n2*k2);
+    double aa = sqrt(fmax(0.5*(ab+t0),0.0));
+    double t1 = ab+c2, t2 = 2.0*aa*c;
+    double t3 = c2*ab+sin2*sin2, t4 = t2*sin2;
+    if (t1+t2 <= 0.0 || t3+t4 <= 0.0) return 1.0;
+    double rs = (t1-t2)/(t1+t2);
+    double rp = rs*(t3-t4)/(t3+t4);
+    return 0.5*(rp+rs);
+}
+
+static double materialx_ggx_directional_albedo(double x, double y) {
+    double x2=x*x, y2=y*y;
+    double r0=.1003-.6303*x+9.748*y-2.038*x*y+29.34*x2-8.245*y2
+              -26.44*x2*y+19.99*x*y2-5.448*x2*y2;
+    double r1=.9345-2.323*x+2.229*y-3.748*x*y+1.424*x2-.7684*y2
+              +1.436*x2*y+.2913*x*y2+.6286*x2*y2;
+    double r2=1.0-1.765*x+8.263*y+11.53*x*y+28.96*x2-7.507*y2
+              -36.11*x2*y+15.86*x*y2+33.37*x2*y2;
+    double r3=1.0+.2281*x+15.94*y-55.83*x*y+13.08*x2+41.26*y2
+              +54.9*x2*y+300.2*x*y2-285.1*x2*y2;
+    return fmin(1.0,fmax(0.0,r0/r2))+fmin(1.0,fmax(0.0,r1/r3));
+}
+
+v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
+                           float ndotv, float ndotl, float ndoth, float vdoth) {
+    if (!(ndotv > 0.0f && ndotl > 0.0f) || !v3_is_finite(eta) ||
+        !v3_is_finite(extinction) || !isfinite(alpha) ||
+        !isfinite(ndotv) || !isfinite(ndotl) || !isfinite(ndoth) || !isfinite(vdoth)) return v3_splat(0.0f);
+    double v=fmin(1.0,ndotv), l=fmin(1.0,ndotl), h=fmin(1.0,fmax(0.0,ndoth));
+    double a=fmin(1.0,fmax(1.0e-8,(double)alpha)), a2=a*a;
+    double d=a2*h*h+(1.0-h*h);
+    double D=a2/(3.14159265358979323846*d*d);
+    double lv=sqrt(a2+(1.0-a2)*v*v), ll=sqrt(a2+(1.0-a2)*l*l);
+    double G=2.0*v*l/(v*ll+l*lv);
+    double ess=materialx_ggx_directional_albedo(v,a);
+    if (!(ess > 0.0)) return v3_splat(0.0f);
+    double n[3]={eta.x,eta.y,eta.z}, k[3]={extinction.x,extinction.y,extinction.z};
+    float result[3];
+    for (int i=0;i<3;i++) {
+        double f0=materialx_conductor_fresnel(1.0,n[i],k[i]);
+        double f=materialx_conductor_fresnel(vdoth,n[i],k[i]);
+        double favg=f0+(1.0-f0)/21.0;
+        double compensation=1.0+favg*(1.0-ess)/ess;
+        result[i]=(float)(D*G*f*compensation/(4.0*v*l));
+    }
+    return v3_make(result[0],result[1],result[2]);
+}
+
 /* ---- microfacet helpers ----------------------------------------------- */
 
 static v3 fresnel_schlick(float cos_t, v3 f0, float f90) {

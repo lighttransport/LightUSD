@@ -32,6 +32,12 @@ typedef struct {
 /* MaterialX Zeltner directional-albedo fit (cosine and roughness in [0,1]). */
 float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
 
+/* MaterialX genglsl isotropic conductor BRDF (unit weight, no thin film).
+ * alpha is the authored microfacet roughness, not its square. Directions are
+ * represented by positive cosine inputs; a nonpositive NdotV/L returns zero. */
+v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
+                           float ndotv, float ndotl, float ndoth, float vdoth);
+
 /* Importance-sample the BSDF. Returns 0 if no valid sample. */
 int bsdf_sample(const OpenPBRParams *p, v3 N, v3 wo, pcg32 *rng, BsdfSample *out);
 
