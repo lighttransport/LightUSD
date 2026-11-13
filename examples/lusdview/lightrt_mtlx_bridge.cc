@@ -204,6 +204,7 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
   p->diffuseModel = MTLX_DIFFUSE_EON;
   p->coatDarkening = 1.0f;
+  p->openPbrCoatRemap = 1;
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -412,6 +413,7 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   dst->coatRoughness = src.coat_roughness;
   dst->coatIor = src.coat_ior;
   dst->coatDarkening = src.coat_darkening;
+  dst->openPbrCoatRemap = src.openpbr_coat_remap;
   dst->sheenWeight = src.sheen_weight;
   CopyV3(src.sheen_color, dst->sheenColor);
   dst->sheenRoughness = src.sheen_roughness;

@@ -157,6 +157,56 @@ int main(void) {
     printf("PASS: OpenPBR coat darkening and authored interpolation\n");
   }
 
+  // Reference graph values for the coat-relative IOR and coat-affected
+  // specular roughness, covering both sides of the IOR ratio and saturation.
+  {
+    const float cases[][6] = {{1.5f, 1.6f, 0.8f, 0.3f, 0.2f, 1.153333333f},
+                              {1.8f, 1.2f, 0.4f, 0.7f, 0.4f, 1.68f},
+                              {1.5f, 1.5f, 1.0f, 0.2f, 0.9f, 1.0f}};
+    const float roughness[] = {0.320831235f, 0.713863138f, 1.0f};
+    const v3 n = v3_make(0, 0, 1), view = v3_make(0.6f, 0, 0.8f);
+    const v3 light = v3_make(0, 0.6f, 0.8f);
+    for (size_t i = 0; i < sizeof(roughness)/sizeof(roughness[0]); ++i) {
+      FurnaceCase c = {"coat-remap", 0.6f, 0.0f, 0.0f, cases[i][2], 0.0f, 1.0f, 0};
+      OpenPBRParams actual; set_defaults(&actual, &c);
+      actual.openpbr_coat_remap = 1;
+      actual.specular_ior = cases[i][0]; actual.coat_ior = cases[i][1];
+      actual.specular_roughness = cases[i][3]; actual.coat_roughness = cases[i][4];
+      OpenPBRParams expected = actual;
+      expected.openpbr_coat_remap = 0;
+      expected.specular_ior = cases[i][5]; expected.specular_roughness = roughness[i];
+      float actual_pdf, expected_pdf;
+      const v3 a = bsdf_eval(&actual, n, view, light, &actual_pdf);
+      const v3 b = bsdf_eval(&expected, n, view, light, &expected_pdf);
+      if (fabsf(a.x-b.x) > 1.0e-5f || fabsf(a.y-b.y) > 1.0e-5f ||
+          fabsf(a.z-b.z) > 1.0e-5f || fabsf(actual_pdf-expected_pdf) > 1.0e-5f) {
+        fprintf(stderr, "FAIL: OpenPBR coat IOR/roughness remap case=%zu\n", i);
+        return 1;
+      }
+    }
+    printf("PASS: OpenPBR coat IOR and roughness remapping\n");
+  }
+
+  // Invalid coat roughness must not poison an uncoated BSDF through 0 * NaN,
+  // and the active-coat path uses a finite roughness fallback as well.
+  {
+    FurnaceCase c = {"coat-nonfinite", 0.6f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0};
+    OpenPBRParams p; set_defaults(&p, &c);
+    p.openpbr_coat_remap = 1;
+    p.coat_roughness = NAN;
+    const v3 n = v3_make(0, 0, 1), view = v3_make(0.6f, 0, 0.8f);
+    for (int i = 0; i < 2; ++i) {
+      p.coat_weight = i ? 0.8f : 0.0f;
+      float pdf;
+      v3 result = bsdf_eval(&p, n, view, n, &pdf);
+      if (!v3_is_finite(result) || !isfinite(pdf)) {
+        fprintf(stderr, "FAIL: nonfinite coat roughness at weight %.1f\n", p.coat_weight);
+        return 1;
+      }
+    }
+    printf("PASS: nonfinite coat roughness fallback\n");
+  }
+
   // Sweep the principal base/specular controls so the furnace bound also
   // covers combinations between the named material fixtures above.
   const v3 sweep_colors[] = {

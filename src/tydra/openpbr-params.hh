@@ -112,6 +112,8 @@ struct RealtimePbrMaterial {
   float coatAffectRoughness{0.0f};
   float coatRoughnessAnisotropy{0.0f};
   float coatDarkening{0.0f};
+  // CPU-only: the source shader is OpenPBR and uses its coat parameter remaps.
+  int openPbrCoatRemap{0};
   float volumeDensity{0.0f};
   float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
   float volumeEmission[3]{0.0f, 0.0f, 0.0f};

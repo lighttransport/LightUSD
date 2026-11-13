@@ -1184,7 +1184,7 @@ void openpbr_defaults(OpenPBRParams *p) {
     p->specular_roughness = 0.3f; p->specular_ior = 1.5f;
     p->transmission_color = v3_splat(1.0f);
     p->subsurface_color = v3_splat(0.8f); p->subsurface_radius = v3_splat(1.0f); p->subsurface_scale = 1.0f;
-    p->coat_color = v3_splat(1.0f); p->coat_roughness = 0.1f; p->coat_ior = 1.5f; p->coat_darkening = 1.0f;
+    p->coat_color = v3_splat(1.0f); p->coat_roughness = 0.1f; p->coat_ior = 1.5f; p->coat_darkening = 1.0f; p->openpbr_coat_remap = 1;
     p->sheen_color = v3_splat(1.0f); p->sheen_roughness = 0.3f;
     p->thin_film_ior = 1.5f; /* weight/thickness default to 0 (off) via memset */
     p->emission_color = v3_splat(1.0f); p->opacity = 1.0f;
@@ -1939,7 +1939,10 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
 
     const MtlxNode *n = &ctx->doc->nodes[surface_node];
     const char *cat = n->category;
-    if (strcmp(cat, "open_pbr_surface")) out->coat_darkening = 0.0f;
+    if (strcmp(cat, "open_pbr_surface")) {
+        out->coat_darkening = 0.0f;
+        out->openpbr_coat_remap = 0;
+    }
 
     if (!strcmp(cat, "surface")) {
         out->base_weight = 0.0f;

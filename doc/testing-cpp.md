@@ -1734,6 +1734,8 @@ the glass branch's sampling probability with a white-furnace Monte Carlo test.
 The MaterialX validation also checks that a connected OpenPBR coat-darkening
 input affects path-traced color. The white-furnace test checks the per-channel
 OpenPBR coat-darkening formula, authored interpolation and energy bounds.
+It also checks three coat-relative IOR and base-roughness remap cases, including
+the inverted IOR ratio, saturation, and a non-finite coat-roughness fallback.
 
 After changing the WASM shading snapshot binding, rebuild both web modules and
 run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node

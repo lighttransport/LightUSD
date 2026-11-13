@@ -574,13 +574,35 @@ static Layers extract(const OpenPBRParams *p) {
         L.subsurface_w = clampf(p->subsurface * radius_response, 0.0f, 1.0f);
     }
 
-    float f0d = (p->specular_ior - 1.0f) / (p->specular_ior + 1.0f);
+    /* OpenPBR mixes in the coat-relative, TIR-safe IOR and roughens the
+     * base reflection as coat coverage increases. Other shader models do not
+     * share this parameter remapping. */
+    float specular_ior = p->specular_ior;
+    float coat_roughness = isfinite(p->coat_roughness) ? p->coat_roughness : 1.0f;
+    float cw = p->openpbr_coat_remap && isfinite(p->coat_weight)
+                   ? clampf(p->coat_weight, 0.0f, 1.0f) : 0.0f;
+    if (cw > 0.0f && isfinite(p->coat_ior) && p->coat_ior > 0.0f &&
+        isfinite(specular_ior) && specular_ior > 0.0f) {
+        float r = specular_ior / p->coat_ior;
+        if (isfinite(r) && r > 0.0f) {
+            float adjusted = maxf(r, 1.0f / r);
+            if (isfinite(adjusted))
+                specular_ior = (1.0f - cw) * specular_ior + cw * adjusted;
+        }
+    }
+    float f0d = (specular_ior - 1.0f) / (specular_ior + 1.0f);
     f0d = f0d * f0d * p->specular_weight;
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
     if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
-    L.ior = p->specular_ior;
+    L.ior = specular_ior;
     float specular_roughness = isfinite(p->specular_roughness) ? p->specular_roughness : 1.0f;
+    if (cw > 0.0f) {
+        float cr = clampf(coat_roughness, 0.0f, 1.0f);
+        float sr = clampf(specular_roughness, 0.0f, 1.0f);
+        float affected = powf(minf(1.0f, 2.0f * cr * cr * cr * cr + sr * sr * sr * sr), 0.25f);
+        specular_roughness = (1.0f - cw) * specular_roughness + cw * affected;
+    }
     L.alpha = clampf(specular_roughness, 0.02f, 1.0f); L.alpha *= L.alpha;
 
     L.sheen_w = p->sheen_weight;
@@ -599,7 +621,7 @@ static Layers extract(const OpenPBRParams *p) {
     L.coat_w = clampf(p->coat_weight, 0.0f, 1.0f);
     L.coat_darkening = clampf(p->coat_darkening, 0.0f, 1.0f);
     L.coat_color = p->coat_color;
-    L.coat_alpha = clampf(p->coat_roughness, 0.02f, 1.0f); L.coat_alpha *= L.coat_alpha;
+    L.coat_alpha = clampf(coat_roughness, 0.02f, 1.0f); L.coat_alpha *= L.coat_alpha;
     float c = (p->coat_ior - 1.0f) / (p->coat_ior + 1.0f);
     L.coat_f0 = c * c;
     /* OpenPBR's Kcoat and Ebase drive the bounded coat-darkening ratio. */

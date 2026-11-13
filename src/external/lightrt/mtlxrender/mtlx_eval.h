@@ -109,6 +109,7 @@ typedef struct {
     float coat_roughness;
     float coat_ior;
     float coat_darkening; /* OpenPBR coat darkening amount, 0..1 */
+    int openpbr_coat_remap; /* apply OpenPBR's coat/IOR and roughness graph */
     /* sheen */
     float sheen_weight;
     v3    sheen_color;

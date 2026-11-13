@@ -67,6 +67,8 @@ inline bool BuildRealtimePbrMaterial(
   } else if (rm.shader_type == RenderMaterial::ShaderType::OpenPBR &&
              rm.openpbr) {
     const OpenPBRSurfaceShader &s = *rm.openpbr;
+    p.openPbrCoatRemap = 1;
+    p.coatDarkening = 1.0f;
     p.baseWeight = s.base_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.base_color, p.baseColor);
     p.diffuseRoughness = s.base_diffuse_roughness.value.x;

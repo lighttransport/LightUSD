@@ -9797,6 +9797,8 @@ int main() {
     RealtimePbrMaterial p;
     assert(BuildRealtimePbrMaterial(mat, &p));
     assert(p.diffuseModel == 1);
+    assert(p.openPbrCoatRemap == 1);
+    assert(p.coatDarkening == 1.0f);
     assert(std::abs(p.diffuseRoughness - 0.7f) < 1.0e-6f);
     assert(std::abs(p.specularRoughness - 0.3f) < 1.0e-6f);
   }

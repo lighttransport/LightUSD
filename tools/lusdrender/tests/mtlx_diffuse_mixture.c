@@ -264,10 +264,12 @@ static int specular_response_checks(void) {
       "<open_pbr_surface name=\"s\" type=\"surfaceshader\">"
       "<input name=\"coat_darkening\" type=\"float\" nodename=\"v\"/>"
       "</open_pbr_surface></materialx>";
-    OpenPBRParams a, b;
-    if (!evaluate(defaults, &a) || !evaluate(authored, &b) ||
+    const char *standard = "<materialx><standard_surface name=\"s\" type=\"surfaceshader\"/></materialx>";
+    OpenPBRParams a, b, c;
+    if (!evaluate(defaults, &a) || !evaluate(authored, &b) || !evaluate(standard, &c) ||
         fabsf(a.coat_darkening - 1.0f) > 1.0e-6f ||
-        fabsf(b.coat_darkening - 0.3f) > 1.0e-6f) {
+        fabsf(b.coat_darkening - 0.3f) > 1.0e-6f ||
+        !a.openpbr_coat_remap || !b.openpbr_coat_remap || c.openpbr_coat_remap) {
       fprintf(stderr, "FAIL: OpenPBR coat darkening input routing\n"); return 0;
     }
   }
