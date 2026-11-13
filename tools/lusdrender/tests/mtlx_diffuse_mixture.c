@@ -569,6 +569,64 @@ static int openpbr_transmission_ior_checks(void) {
     }
     if(checked<100) { fprintf(stderr,"FAIL: too few rough transmission samples\n");return 0; }
   }
+  /* The coat's authored tint and base-darkening multiplier apply to the
+   * transmitting substrate too. Compare paired samples so the coat Fresnel
+   * and microfacet factors cancel; derive the multiplier from the graph. */
+  for (int j=0;j<3;++j) {
+    OpenPBRParams reference, tinted; openpbr_defaults(&reference);
+    reference.openpbr_coat_remap=1; reference.base_weight=0;
+    reference.base_color=v3_make(.2f,.5f,.8f); reference.transmission=1;
+    reference.transmission_color=v3_splat(1); reference.specular_weight=1;
+    reference.specular_ior=1.6f; reference.specular_roughness=.3f;
+    reference.coat_weight=j==0 ? .25f : 1.0f;
+    reference.coat_ior=1.4f; reference.coat_roughness=.25f;
+    reference.coat_color=v3_splat(1); reference.coat_darkening=0;
+    tinted=reference; tinted.coat_color=j==2 ? v3_splat(0) : v3_make(.2f,.6f,.9f);
+    tinted.coat_darkening=j==2 ? 0 : .7f;
+    float f0=(1.4f-1)/(1.4f+1); f0*=f0;
+    float k=1-(1-f0)/(1.4f*1.4f), w=reference.coat_weight;
+    float c[3]={tinted.coat_color.x,tinted.coat_color.y,tinted.coat_color.z};
+    float e[3]={reference.base_color.x,reference.base_color.y,reference.base_color.z};
+    pcg32 a,b; pcg32_seed(&a,113,23+j); pcg32_seed(&b,113,23+j);
+    int checked=0;
+    for(int i=0;i<500 && checked<80;++i) {
+      BsdfSample x,y; int okx=bsdf_sample(&reference,n,n,&a,&x);
+      int oky=bsdf_sample(&tinted,n,n,&b,&y);
+      if(okx!=oky) { fprintf(stderr,"FAIL: coat paired sample mismatch\n");return 0; }
+      if(!okx || !x.transmission || !x.crossed) continue;
+      float actual[3]={y.throughput.x,y.throughput.y,y.throughput.z};
+      for(int channel=0;channel<3;++channel) {
+        float dark=(1-k)/(1-e[channel]*k);
+        float factor=(1-w+w*c[channel])*(1-w*tinted.coat_darkening+w*tinted.coat_darkening*dark);
+        if(fabsf(actual[channel]-x.throughput.x*factor)>2e-5f) {
+          fprintf(stderr,"FAIL: coat transmission case=%d channel=%d got=%g expected=%g\n",j,channel,actual[channel],x.throughput.x*factor);return 0;
+        }
+      }
+      ++checked;
+    }
+    if(checked<30) { fprintf(stderr,"FAIL: too few coated transmission samples\n");return 0; }
+  }
+  /* A clear, smooth coat attenuates even with white tint and no darkening. */
+  {
+    OpenPBRParams plain, coated; openpbr_defaults(&plain);
+    plain.openpbr_coat_remap=1; plain.base_weight=0; plain.transmission=1;
+    plain.transmission_color=v3_splat(1); plain.specular_weight=0;
+    plain.specular_roughness=.02f; plain.coat_ior=1.5f;
+    plain.coat_roughness=.02f; plain.coat_color=v3_splat(1); plain.coat_darkening=0;
+    coated=plain; coated.coat_weight=1;
+    float pg0=bsdf_lobe_weights(&plain).transmission;
+    float pg1=bsdf_lobe_weights(&coated).transmission;
+    pcg32 a,b; pcg32_seed(&a,189,73); pcg32_seed(&b,189,73); int checked=0;
+    for(int i=0;i<500 && checked<80;++i) {
+      BsdfSample x,y; int ax=bsdf_sample(&plain,n,n,&a,&x);
+      int by=bsdf_sample(&coated,n,n,&b,&y);
+      if(!ax || !by || !x.transmission || !y.transmission || !x.crossed || !y.crossed) continue;
+      float ratio=(y.throughput.x*pg1)/(x.throughput.x*pg0);
+      if(fabsf(ratio-.96f)>.01f) { fprintf(stderr,"FAIL: coat Fresnel transmission %g\n",ratio);return 0; }
+      ++checked;
+    }
+    if(checked<30) { fprintf(stderr,"FAIL: too few clear coat samples\n");return 0; }
+  }
   /* The transmission substrate must not add a second reflected lobe.
    * Compare Monte Carlo reflected energies with the substrate off/on. */
   {

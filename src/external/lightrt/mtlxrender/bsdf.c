@@ -758,6 +758,32 @@ static v3 sample_conductor_vndf(v3 view, float ax, float ay, float u1, float u2)
 }
 
 
+/* OpenPBR coat and base-darkening throughput at the view direction. */
+static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
+                                     float *out_comp, v3 *out_coat_atten) {
+    float comp = 1.0f;
+    float coat_fr = L->coat_w * fresnel_schlick_s(ndotv, L->coat_f0);
+    if (L->openpbr && L->coat_w > 0.0f) {
+        double a,b,ess=materialx_ggx_directional_terms(ndotv,L->coat_alpha,&a,&b);
+        if (ess>0.0 && isfinite(ess)) {
+            double favg=L->coat_f0+(1.0-L->coat_f0)/21.0;
+            comp=(float)(1.0+favg*(1.0-ess)/ess);
+            coat_fr=(float)(L->coat_w*(a*L->coat_f0+b)*comp);
+        }
+    }
+    v3 coat_atten = v3_scale(v3_lerp(v3_splat(1.0f), L->coat_color, L->coat_w),
+                             1.0f - coat_fr);
+    v3 e = L->coat_base_albedo;
+    float k = L->coat_Ri;
+    v3 factor = v3_make((1.0f - k) / maxf(1.0e-4f, 1.0f - e.x * k),
+                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.y * k),
+                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.z * k));
+    v3 darken = v3_lerp(v3_splat(1.0f), factor, L->coat_w * L->coat_darkening);
+    if (out_comp) *out_comp = comp;
+    if (out_coat_atten) *out_coat_atten = coat_atten;
+    return v3_mul(coat_atten, darken);
+}
+
 /* Unified reflection-lobe evaluation (diffuse + spec + sheen + coat). Fills the
  * mixture pdf for the sampled wi. Returns f (rgb). Excludes the glass lobe. */
 /* Evaluate the reflection lobes. `out_diff` / `out_spec` (either may be NULL)
@@ -783,30 +809,10 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * filter on everything below; the tint scales with the coat weight). This
      * colored attenuation is what gives e.g. standard_surface copper its orange
      * cast -- the copper color lives in coat_color, not base_color. */
-    float coat_comp = 1.0f;
-    float coat_fr = L->coat_w * fresnel_schlick_s(NdotV, L->coat_f0);
-    if (L->openpbr && L->coat_w > 0.0f) {
-        double a,b,ess=materialx_ggx_directional_terms(NdotV,L->coat_alpha,&a,&b);
-        if (ess>0.0 && isfinite(ess)) {
-            double favg=L->coat_f0+(1.0-L->coat_f0)/21.0;
-            coat_comp=(float)(1.0+favg*(1.0-ess)/ess);
-            coat_fr=(float)(L->coat_w*(a*L->coat_f0+b)*coat_comp);
-        }
-    }
-    v3 base_atten = v3_scale(v3_lerp(v3_splat(1.0f), L->coat_color, L->coat_w),
-                             1.0f - coat_fr);
-
-    /* Fuzz is outside the coat substrate in OpenPBR; keep its existing coat
-     * treatment while applying base darkening only to the substrate. */
-    v3 sheen_atten = base_atten;
-    v3 e = L->coat_base_albedo;
-    float k = L->coat_Ri;
-    v3 factor = v3_make((1.0f - k) / maxf(1.0e-4f, 1.0f - e.x * k),
-                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.y * k),
-                        (1.0f - k) / maxf(1.0e-4f, 1.0f - e.z * k));
-    v3 diffuse_darken = v3_lerp(v3_splat(1.0f), factor, L->coat_w * L->coat_darkening);
-    base_atten = v3_mul(base_atten, diffuse_darken);
-    diffuse_darken = v3_splat(1.0f);
+    float coat_comp;
+    v3 sheen_atten;
+    v3 base_atten = coat_substrate_attenuation(L, NdotV, &coat_comp, &sheen_atten);
+    v3 diffuse_darken = v3_splat(1.0f);
     v3 diff_alb = L->diff_color;
     /* Disney/Burley normalized-diffusion approximation. Unlike a plain tint,
      * this broadens the diffuse response at grazing incidence and uses the
@@ -1106,6 +1112,9 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         }
         out->throughput = v3_scale(out->throughput,
             masking * L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
+        if (L.openpbr_base)
+            out->throughput = v3_mul(out->throughput,
+                coat_substrate_attenuation(&L, v3_dot(N,wo), NULL, NULL));
         out->wi = wi; out->pdf = 1.0f;
         out->specular = 1; out->transmission = 1; out->crossed = refracted;
         out->subsurface = 0;

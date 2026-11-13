@@ -206,3 +206,5 @@ upstream provenance intact.
   OpenPBR glass reflection and interior IOR handling.
 - 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `23d21ed` for
   visible-normal GGX sampling and masking of rough OpenPBR transmission.
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `397cf47` for
+  OpenPBR coat tint, darkening and throughput on transmission.
