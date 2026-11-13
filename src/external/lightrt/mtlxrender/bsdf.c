@@ -453,15 +453,32 @@ static float conductor_proposal_alpha(float alpha) {
 /* The 1e-4 proposal floor avoids float underflow for near-delta lobes. The
  * BRDF itself retains MaterialX's 1e-8 floor; this proposal remains positive. */
 static float conductor_reflection_pdf(const MtlxConductorLobe *lobe, v3 N,
-                                      v3 H, float ndoth, float vdoth) {
-    if (!(ndoth > 0.0f && vdoth > 0.0f)) return 0.0f;
+                                      v3 wo, v3 H, float ndoth, float vdoth) {
+    float ndotv = v3_dot(N, wo);
+    if (!(ndoth > 0.0f && vdoth > 0.0f && ndotv > 0.0f)) return 0.0f;
     v3 t, b; conductor_frame(N, lobe->tangent, &t, &b);
     double ax=conductor_proposal_alpha(lobe->roughness);
     double ay=conductor_proposal_alpha(lobe->roughness_y);
     double x=v3_dot(H,t)/ax, y=v3_dot(H,b)/ay, z=ndoth;
     double d=x*x+y*y+z*z;
-    if (!(d > 0.0) || !isfinite(d)) return 0.0f;
-    return (float)(ndoth/(4.0*(double)vdoth*3.14159265358979323846*ax*ay*d*d));
+    double vx=ax*v3_dot(wo,t), vy=ay*v3_dot(wo,b), v=ndotv;
+    double root=sqrt(v*v+vx*vx+vy*vy);
+    if (!(d > 0.0) || !isfinite(d) || !isfinite(root)) return 0.0f;
+    /* VNDF reflection PDF: D * G1 / (4 NdotV).  The stretched-view
+     * sampling distribution requires directional anisotropic G1. */
+    return (float)(1.0/(2.0*(v+root)*3.14159265358979323846*ax*ay*d*d));
+}
+
+/* Spherical-cap GGX visible-normal sampling, following the MaterialX
+ * genglsl construction in the lobe's orthonormal tangent frame. */
+static v3 sample_conductor_vndf(v3 view, float ax, float ay, float u1, float u2) {
+    v3 stretched=v3_normalize(v3_make(ax*view.x, ay*view.y, view.z));
+    float phi=MTLX_TWO_PI*u1;
+    float z=(1.0f-u2)*(1.0f+stretched.z)-stretched.z;
+    float radial=sqrtf(fmaxf(0.0f,1.0f-z*z));
+    v3 cap=v3_make(radial*cosf(phi),radial*sinf(phi),z);
+    v3 h=v3_add(cap,stretched);
+    return v3_normalize(v3_make(ax*h.x,ay*h.y,fmaxf(h.z,0.0f)));
 }
 
 
@@ -636,7 +653,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         for (int i = 0; i < L->conductor_lobe_count; ++i) {
             const MtlxConductorLobe *lobe = &L->conductor_lobes[i];
             pdf_conductor += (conductor_sampling_weight(lobe) / L->conductor_weight_sum) *
-                conductor_reflection_pdf(lobe, N, H, NdotH, VdotH);
+                conductor_reflection_pdf(lobe, N, wo, H, NdotH, VdotH);
         }
     }
     *pdf = L->pd * pdf_diff + L->ps * pdf_spec + L->pc * pdf_coat + L->pm * pdf_conductor;
@@ -719,10 +736,10 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         }
         if (!chosen) return 0;
         v3 tangent, bitangent; conductor_frame(N, chosen->tangent, &tangent, &bitangent);
-        v3 h = sample_ggx_h(1.0f, u1, u2);
         float ax = conductor_proposal_alpha(chosen->roughness);
         float ay = conductor_proposal_alpha(chosen->roughness_y);
-        h = v3_normalize(v3_make(ax*h.x, ay*h.y, h.z));
+        v3 local_view = v3_make(v3_dot(wo,tangent),v3_dot(wo,bitangent),v3_dot(wo,N));
+        v3 h = sample_conductor_vndf(local_view, ax, ay, u1, u2);
         v3 H = v3_normalize(to_world(h, tangent, bitangent, N));
         wi = v3_sub(v3_scale(H, 2.0f * v3_dot(wo, H)), wo);
     } else {                             /* diffuse / sheen (cosine) */

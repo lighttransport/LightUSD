@@ -50,15 +50,17 @@ static int overflow_check(int count, int expected) {
   return 1;
 }
 
-/* Independent density for the NDF-reflection proposal in the lobe frame. */
-static double reference_conductor_pdf(const MtlxConductorLobe *l, v3 h, double vh) {
+/* Independent anisotropic visible-normal reflection density in the lobe frame. */
+static double reference_conductor_pdf(const MtlxConductorLobe *l, v3 h, v3 view) {
   v3 t=v3_normalize(v3_make(l->tangent.x,l->tangent.y,0));
   v3 b=v3_cross(v3_make(0,0,1),t);
   double ax=fmax(1e-4,fmin(1.0,l->roughness));
   double ay=fmax(1e-4,fmin(1.0,l->roughness_y));
   double x=v3_dot(h,t)/ax, y=v3_dot(h,b)/ay, z=h.z;
   double d=x*x+y*y+z*z;
-  return z/(4.0*vh*3.14159265358979323846*ax*ay*d*d);
+  double nv=view.z, vx=ax*v3_dot(view,t), vy=ay*v3_dot(view,b);
+  double g1=2.0*nv/(nv+sqrt(nv*nv+vx*vx+vy*vy));
+  return g1/(4.0*nv*3.14159265358979323846*ax*ay*d*d);
 }
 
 int main(void) {
@@ -119,7 +121,7 @@ int main(void) {
     for(int j=0;j<p[index].conductor_lobe_count;j++) {
       const MtlxConductorLobe *l=&p[index].conductor_lobes[j];
       double w=l->weight*(.2126*l->weight_color.x+.7152*l->weight_color.y+.0722*l->weight_color.z);
-      total+=w; expected+=w*reference_conductor_pdf(l,half,vh);
+      total+=w; expected+=w*reference_conductor_pdf(l,half,wo);
     }
     float pdf; (void)bsdf_eval(&p[index],n,wo,wi,&pdf);
     if(fabs(pdf-expected/total)>2e-5*fmax(1.0,expected/total)) {
@@ -148,6 +150,32 @@ int main(void) {
     }
     if(valid<1000 || (index==8 && !(sy>2.0*sx)) || (index==9 && !(sx>2.0*sy))) {
       fprintf(stderr,"anisotropic sampling orientation failed %d: %g %g\n",index,sx,sy);return 1;
+    }
+  }
+  /* At a grazing view, compare sampled bin frequencies with independent
+   * hemisphere integration of the reported mixture PDF, including rejects. */
+  for(int index=8;index<=9;index++) {
+    OpenPBRParams material=p[index]; material.specular_roughness=1.0f;
+    v3 view=v3_make(sqrtf(1.0f-.1f*.1f),0,.1f);
+    double expected[4]={0,0,0,0}; int observed[4]={0,0,0,0};
+    const int nm=192, np=384, samples=120000;
+    for(int i=0;i<nm;i++) for(int j=0;j<np;j++) {
+      float mu=(i+.5f)/(float)nm, phi=2.0f*MTLX_PI*(j+.5f)/(float)np;
+      float radial=sqrtf(1.0f-mu*mu);
+      v3 wi=v3_make(radial*cosf(phi),radial*sinf(phi),mu); float pdf;
+      (void)bsdf_eval(&material,n,view,wi,&pdf);
+      int bin=(mu>=.5f ? 2 : 0)+(wi.x>=0 ? 1 : 0);
+      expected[bin]+=pdf*(2.0*3.14159265358979323846/(nm*np));
+    }
+    pcg32 gen; pcg32_seed(&gen,345,987);
+    for(int i=0;i<samples;i++) {
+      BsdfSample sample; if(!bsdf_sample(&material,n,view,&gen,&sample)) continue;
+      int bin=(sample.wi.z>=.5f ? 2 : 0)+(sample.wi.x>=0 ? 1 : 0);
+      observed[bin]++;
+    }
+    for(int bin=0;bin<4;bin++) if(fabs((double)observed[bin]/samples-expected[bin])>.01) {
+      fprintf(stderr,"VNDF histogram %d bin=%d got=%g expected=%g\n",index,bin,
+        (double)observed[bin]/samples,expected[bin]);return 1;
     }
   }
   for(int index=0;index<10;index++) {

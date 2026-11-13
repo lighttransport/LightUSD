@@ -172,3 +172,6 @@ block.
 The top-level `LICENSE` is MIT. Some copied C sources carry
 `SPDX-License-Identifier: Apache-2.0` comments; preserved unchanged to keep
 upstream provenance intact.
+
+- 2026-11-13: `mtlxrender/bsdf.c` matches LightRT `862e1f6` for
+  anisotropic conductor visible-normal proposals.
