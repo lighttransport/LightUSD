@@ -1027,223 +1027,116 @@ void UpgradeMtlxChannels(MtlxElem *scope) {
       UpgradeMtlxChannels(&child);
 }
 
-void UpgradeMtlxLegacyOpgraphs(MtlxElem *root) {
-  if (!root || root->tag != "materialx") return;
-  for (MtlxElem &graph : root->children) {
-    if (graph.tag != "opgraph") continue;
-    graph.tag = "nodegraph";
-    for (MtlxElem &child : graph.children) {
-      if (child.tag == "output") {
-        for (const MtlxElem &parameter : child.children) {
-          if (parameter.tag != "parameter" ||
-              parameter.AttrOr("name") != "in")
-            continue;
-          const std::string node_name = parameter.AttrOr("value");
-          if (!node_name.empty()) child.SetAttr("nodename", node_name);
-          break;
-        }
-        child.children.clear();
-        continue;
-      }
-      if (!IsMtlxNodeElem(child)) continue;
-      std::vector<MtlxElem> upgraded_inputs;
-      for (MtlxElem &parameter : child.children) {
-        if (parameter.tag != "parameter") {
-          upgraded_inputs.push_back(std::move(parameter));
-          continue;
-        }
-        parameter.tag = "input";
-        if (child.tag == "constant" && parameter.AttrOr("name") == "color")
-          parameter.SetAttr("name", "value");
-        EraseMtlxAttr(&parameter, "publicname");
-        upgraded_inputs.push_back(std::move(parameter));
-      }
-      child.children = std::move(upgraded_inputs);
-    }
-  }
+std::string IncrementMtlxName(const std::string &name) {
+  size_t end = name.size();
+  size_t begin = end;
+  while (begin > 0 && std::isdigit(static_cast<unsigned char>(name[begin - 1])))
+    --begin;
+  if (begin == end) return name + "2";
+  const unsigned long long number = std::strtoull(name.c_str() + begin, nullptr, 10);
+  return name.substr(0, begin) + std::to_string(number + 1);
 }
 
-void UpgradeMtlxLegacyShaderFormat(MtlxElem *root) {
-  if (!root || root->tag != "materialx") return;
-  std::vector<std::pair<std::string, MtlxElem>> shaders;
-  for (const MtlxElem &child : root->children) {
-    if (child.tag != "shader") continue;
-    const std::string shader_name = child.Name();
-    const std::string category = child.AttrOr(
-        "shaderprogram", child.AttrOr("shadername", shader_name));
-    const std::string shader_type = child.AttrOr("shadertype");
-
-    MtlxElem node = child;
-    node.tag = category;
-    EraseMtlxAttr(&node, "shaderprogram");
-    EraseMtlxAttr(&node, "shadername");
-    EraseMtlxAttr(&node, "shadertype");
-    node.SetAttr("type", shader_type == "surface" ? "surfaceshader" :
-                          shader_type == "displacement" ? "displacementshader" :
-                          shader_type == "volume" ? "volumeshader" : shader_type);
-    for (MtlxElem &input : node.children) {
-      if (input.tag != "input") continue;
-      const std::string graph_output = input.AttrOr("graphoutput");
-      if (!graph_output.empty()) {
-        input.SetAttr("output", graph_output);
-        EraseMtlxAttr(&input, "graphoutput");
-      }
-      const std::string graph_name = input.AttrOr("graphname");
-      if (!graph_name.empty()) {
-        input.SetAttr("nodegraph", graph_name);
-        EraseMtlxAttr(&input, "graphname");
-      }
-    }
-    shaders.emplace_back(shader_name, std::move(node));
+const MtlxElem *GetMtlxShaderNodeDef(const MtlxElem &root, const MtlxElem &shader_ref) {
+  if (const std::string *nd = shader_ref.Attr("nodedef")) {
+    for (const MtlxElem &c : root.children)
+      if (c.tag == "nodedef" && c.Name() == *nd) return &c;
+    return nullptr;
   }
-
-  std::vector<std::pair<std::string, MtlxElem>> materials;
-  for (const MtlxElem &material : root->children) {
-    if (material.tag != "material") continue;
-    MtlxElem surface_material;
-    surface_material.tag = "surfacematerial";
-    surface_material.SetAttr("name", material.Name());
-    surface_material.SetAttr("type", "material");
-
-    for (const MtlxElem &child : material.children) {
-      if (child.tag == "override") {
-        for (const MtlxElem &shader_ref : material.children) {
-          if (shader_ref.tag != "shaderref") continue;
-          const std::string shader_name = shader_ref.AttrOr("name");
-          auto shader = std::find_if(
-              shaders.begin(), shaders.end(), [&](const auto &item) {
-                return item.first == shader_name;
-              });
-          if (shader == shaders.end()) continue;
-          const std::string public_name = child.Name();
-          for (MtlxElem &input : shader->second.children) {
-            if (input.tag != "input") continue;
-            if (input.AttrOr("publicname") != public_name &&
-                input.Name() != public_name)
-              continue;
-            for (const auto &attr : child.attrs)
-              if (attr.first != "name") input.SetAttr(attr.first, attr.second);
-          }
-        }
-        continue;
-      }
-      if (child.tag != "shaderref") continue;
-      const std::string shader_name = child.AttrOr("name");
-      auto shader = std::find_if(
-          shaders.begin(), shaders.end(), [&](const auto &item) {
-            return item.first == shader_name;
-          });
-      const std::string shader_type = shader == shaders.end()
-          ? "surfaceshader" : shader->second.AttrOr("type", "surfaceshader");
-      MtlxElem input;
-      input.tag = "input";
-      input.SetAttr("name", shader_type);
-      input.SetAttr("type", shader_type);
-      input.SetAttr("nodename", shader_name);
-      surface_material.children.push_back(std::move(input));
-    }
-    materials.emplace_back(material.Name(), std::move(surface_material));
-  }
-
-  std::vector<MtlxElem> upgraded;
-  for (const MtlxElem &child : root->children) {
-    if (child.tag == "shader") {
-      auto shader = std::find_if(
-          shaders.begin(), shaders.end(), [&](const auto &item) {
-            return item.first == child.Name();
-          });
-      if (shader != shaders.end()) {
-        for (MtlxElem &input : shader->second.children)
-          if (input.tag == "input") EraseMtlxAttr(&input, "publicname");
-        upgraded.push_back(shader->second);
-      }
-    } else if (child.tag == "material") {
-      auto material = std::find_if(
-          materials.begin(), materials.end(), [&](const auto &item) {
-            return item.first == child.Name();
-          });
-      if (material != materials.end()) upgraded.push_back(material->second);
-    } else {
-      upgraded.push_back(child);
+  if (const std::string *node = shader_ref.Attr("node")) {
+    const std::string type = shader_ref.AttrOr("type");
+    const std::string target = shader_ref.AttrOr("target");
+    const std::string version = shader_ref.AttrOr("version");
+    for (const MtlxElem &c : root.children) {
+      if (c.tag != "nodedef" || c.AttrOr("node") != *node) continue;
+      const std::string nt = c.AttrOr("target");
+      const bool target_ok = target.empty() || nt.empty() || nt == target;
+      const std::string nv = c.AttrOr("version");
+      const bool version_ok = version.empty() || nv == version;
+      if (target_ok && version_ok && (type.empty() || c.AttrOr("type") == type)) return &c;
     }
   }
-  root->children = std::move(upgraded);
+  return nullptr;
 }
 
 void UpgradeMtlxShaderRefs(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
+  // Names currently in the document scope (the reference checks `createValidChildName`
+  // against the live document, where unconverted materials are still present).
+  std::set<std::string> names;
+  for (const MtlxElem &c : root->children) names.insert(c.Name());
+  auto valid_name = [&](const std::string &base) {
+    std::string name = base;
+    while (names.count(name)) name = IncrementMtlxName(name);
+    return name;
+  };
   std::vector<MtlxElem> upgraded;
-  std::vector<MtlxElem> migrated_materials;
+  std::vector<MtlxElem> migrated;
   for (MtlxElem &child : root->children) {
     if (child.tag != "material") {
       upgraded.push_back(child);
       continue;
     }
-
-    std::vector<MtlxElem> shader_inputs;
     std::vector<MtlxElem> shader_nodes;
+    std::vector<MtlxElem> shader_inputs;
     for (const MtlxElem &shader_ref : child.children) {
       if (shader_ref.tag != "shaderref") continue;
-      const std::string category = shader_ref.AttrOr("node");
-      const std::string shader_name = shader_ref.Name();
-      const MtlxElem *nodedef = nullptr;
-      for (const MtlxElem &candidate : root->children) {
-        if (candidate.tag == "nodedef" &&
-            candidate.AttrOr("node") == category) {
-          nodedef = &candidate;
-          break;
+      const MtlxElem *nodedef = GetMtlxShaderNodeDef(*root, shader_ref);
+      std::string shader_type = "surfaceshader";
+      std::string category = shader_ref.AttrOr("node");
+      if (nodedef) {
+        shader_type = nodedef->AttrOr("type");
+        if (shader_type.empty()) {
+          for (const MtlxElem &output : nodedef->children)
+            if (output.tag == "output") { shader_type = output.AttrOr("type"); break; }
         }
+        if (shader_type.empty()) shader_type = "color3";
+        category = nodedef->AttrOr("node");
       }
-
-      std::string shader_type = nodedef ? nodedef->AttrOr("type") : std::string();
-      if (shader_type.empty() && nodedef) {
-        for (const MtlxElem &output : nodedef->children) {
-          if (output.tag == "output") {
-            shader_type = output.AttrOr("type");
-            if (!shader_type.empty()) break;
-          }
-        }
-      }
-      if (shader_type.empty()) shader_type = "surfaceshader";
-
       MtlxElem shader;
       shader.tag = category;
-      for (const auto &attr : shader_ref.attrs)
-        if (attr.first != "node" && attr.first != "name" &&
-            attr.first != "type" && attr.first != "nodedef")
-          shader.SetAttr(attr.first, attr.second);
+      const std::string shader_name = valid_name(shader_ref.Name());
+      names.insert(shader_name);
       shader.SetAttr("name", shader_name);
       shader.SetAttr("type", shader_type);
-      if (nodedef) shader.SetAttr("nodedef", nodedef->Name());
+      for (const char *attr : {"nodedef", "target", "version"})
+        if (!shader_ref.AttrOr(attr).empty()) shader.SetAttr(attr, shader_ref.AttrOr(attr));
       for (const MtlxElem &binding : shader_ref.children) {
-        if (binding.tag != "bindinput") continue;
-        MtlxElem input = binding;
-        input.tag = "input";
-        shader.children.push_back(std::move(input));
+        if (binding.tag == "bindinput" || binding.tag == "bindparam") {
+          MtlxElem input = binding;
+          input.tag = "input";
+          shader.children.push_back(std::move(input));
+        } else if (binding.tag == "bindtoken") {
+          MtlxElem token = binding;
+          token.tag = "token";
+          shader.children.push_back(std::move(token));
+        }
       }
       shader_nodes.push_back(std::move(shader));
-
-      MtlxElem input;
-      input.tag = "input";
-      input.SetAttr("name", shader_type);
-      input.SetAttr("type", shader_type);
-      input.SetAttr("nodename", shader_name);
-      shader_inputs.push_back(std::move(input));
+      bool have_input = false;
+      for (const MtlxElem &in : shader_inputs)
+        if (in.Name() == shader_type) have_input = true;
+      if (!have_input) {
+        MtlxElem input;
+        input.tag = "input";
+        input.SetAttr("name", shader_type);
+        input.SetAttr("type", shader_type);
+        input.SetAttr("nodename", shader_name);
+        shader_inputs.push_back(std::move(input));
+      }
     }
-
-    if (shader_nodes.empty()) {
-      upgraded.push_back(child);
-      continue;
-    }
-    for (MtlxElem &node : shader_nodes)
-      migrated_materials.push_back(std::move(node));
-    child.tag = "surfacematerial";
+    // The material element is removed; its name is free again for the material node.
+    names.erase(child.Name());
+    if (shader_nodes.empty()) continue;
+    for (MtlxElem &node : shader_nodes) migrated.push_back(std::move(node));
+    child.tag = shader_inputs.empty() || shader_inputs[0].AttrOr("type") != "volumeshader"
+                    ? "surfacematerial" : "volumematerial";
     child.SetAttr("type", "material");
     child.children = std::move(shader_inputs);
-    migrated_materials.push_back(std::move(child));
+    names.insert(child.Name());
+    migrated.push_back(std::move(child));
   }
-  for (MtlxElem &elem : migrated_materials)
-    upgraded.push_back(std::move(elem));
+  for (MtlxElem &elem : migrated) upgraded.push_back(std::move(elem));
   root->children = std::move(upgraded);
 }
 
@@ -1390,43 +1283,10 @@ void UpgradeMtlxAssignAndConstant(MtlxElem *elem, bool from_123, bool from_125) 
   for (MtlxElem &child : elem->children)
     UpgradeMtlxAssignAndConstant(&child, from_123, from_125);
 }
-
-// 1.35 -> 1.36 (reference Document::upgradeVersion): every element typed
-// "filename" gets its value rewritten with the %UDIM / %UVTILE token
-// substitutions. The reference assigns the attribute even when the element has
-// none, so a value-less filename element gains an empty value; reproduce that.
-void UpgradeMtlxFilenameTokens(MtlxElem *elem) {
-  if (!elem) return;
-  if (elem->AttrOr("type") == "filename") {
-    std::string value = elem->AttrOr("value");
-    auto replace_all = [](std::string *text, const std::string &from,
-                          const std::string &to) {
-      for (size_t pos = text->find(from); pos != std::string::npos;
-           pos = text->find(from, pos + to.size())) {
-        text->replace(pos, from.size(), to);
-      }
-    };
-    replace_all(&value, "%UDIM", "<UDIM>");
-    replace_all(&value, "%UVTILE", "<UVTILE>");
-    elem->SetAttr("value", value);
-  }
-  for (MtlxElem &child : elem->children) UpgradeMtlxFilenameTokens(&child);
-}
-
 // 1.37 -> 1.38: a node of a nodegraph may not share its name with an interface
 // name that one of the graph's nodes binds (interfacename); the node is renamed
 // with the reference's createValidChildName (name -> name2) and every port of
 // the graph that connected to it is redirected.
-std::string IncrementMtlxName(const std::string &name) {
-  size_t end = name.size();
-  size_t begin = end;
-  while (begin > 0 && std::isdigit(static_cast<unsigned char>(name[begin - 1])))
-    --begin;
-  if (begin == end) return name + "2";
-  const unsigned long long number = std::strtoull(name.c_str() + begin, nullptr, 10);
-  return name.substr(0, begin) + std::to_string(number + 1);
-}
-
 void UpgradeMtlxInterfaceNameConflicts(MtlxElem *root) {
   if (!root) return;
   for (MtlxElem &graph : root->children) {
@@ -1479,6 +1339,236 @@ void UpgradeMtlxInterfaceNameConflicts(MtlxElem *root) {
   }
 }
 
+// ---- Faithful port of the reference's legacy (1.23 - 1.36) shader/material steps ------------
+
+MtlxElem *FindMtlxChildByName(MtlxElem *parent, const std::string &name) {
+  for (MtlxElem &c : parent->children)
+    if (c.Name() == name) return &c;
+  return nullptr;
+}
+
+// The reference's getShaderNodeDef (Version.cpp): the nodedef a legacy shaderref names, by its
+// `nodedef` attribute or by `node` plus compatible type/target/version.
+// 1.23 -> 1.24: `shadername` becomes the shader's `node`. 1.24 -> 1.25: input `graphname` becomes
+// `opgraph`.
+void UpgradeMtlxShaderNameAndGraphName(MtlxElem *elem, bool from_123, bool from_124) {
+  if (!elem) return;
+  if (from_123 && elem->tag == "shader" && elem->Attr("shadername")) {
+    elem->SetAttr("node", elem->AttrOr("shadername"));
+    EraseMtlxAttr(elem, "shadername");
+  }
+  if (from_124 && elem->tag == "input" && elem->Attr("graphname")) {
+    elem->SetAttr("opgraph", elem->AttrOr("graphname"));
+    EraseMtlxAttr(elem, "graphname");
+  }
+  for (MtlxElem &c : elem->children) UpgradeMtlxShaderNameAndGraphName(&c, from_123, from_124);
+}
+
+void Upgrade26to34Elems(MtlxElem *elem, MtlxElem *parent) {
+  std::vector<size_t> remove;
+  for (size_t i = 0; i < elem->children.size(); ++i) {
+    MtlxElem &child = elem->children[i];
+    if (child.tag == "opgraph") {
+      child.tag = "nodegraph";
+    } else if (child.tag == "shader") {
+      child.tag = "nodedef";
+      if (child.Attr("shadertype")) child.SetAttr("type", "surfaceshader");
+      if (child.Attr("shaderprogram")) child.SetAttr("node", child.AttrOr("shaderprogram"));
+    } else if (child.tag == "shaderref") {
+      if (child.Attr("shadertype")) {
+        child.SetAttr("type", "surfaceshader");
+        EraseMtlxAttr(&child, "shadertype");
+      }
+    } else if (child.tag == "parameter" && child.AttrOr("type") == "opgraphnode") {
+      if (elem->tag != "output" && elem->tag != "materialx" && IsMtlxNodeElem(*elem)) {
+        const std::string value = child.AttrOr("value");
+        child.tag = "input";
+        child.SetAttr("nodename", value);
+        EraseMtlxAttr(&child, "value");
+        std::string type = "color3";
+        if (parent) {
+          for (const MtlxElem &sib : parent->children)
+            if (sib.Name() == value && IsMtlxNodeElem(sib)) { type = sib.AttrOr("type"); break; }
+        }
+        child.SetAttr("type", type);
+      } else if (elem->tag == "output") {
+        if (child.Name() == "in") elem->SetAttr("nodename", child.AttrOr("value"));
+        remove.push_back(i);
+      }
+    }
+  }
+  for (size_t k = remove.size(); k-- > 0;) elem->children.erase(elem->children.begin() + remove[k]);
+  for (MtlxElem &c : elem->children) Upgrade26to34Elems(&c, elem);
+}
+
+void UpgradeMtlx26to34(MtlxElem *root) {
+  if (!root || root->tag != "materialx") return;
+  Upgrade26to34Elems(root, nullptr);
+  // Assign nodedef names to shaderrefs.
+  for (MtlxElem &mat : root->children) {
+    if (mat.tag != "material") continue;
+    for (MtlxElem &sr : mat.children) {
+      if (sr.tag != "shaderref" || GetMtlxShaderNodeDef(*root, sr)) continue;
+      for (const MtlxElem &nd : root->children) {
+        if (nd.tag == "nodedef" && nd.Name() == sr.Name()) {
+          sr.SetAttr("nodedef", nd.Name());
+          sr.SetAttr("node", nd.AttrOr("node"));
+          break;
+        }
+      }
+    }
+  }
+  // Move connections from nodedef inputs to bindinputs.
+  for (MtlxElem &nd : root->children) {
+    if (nd.tag != "nodedef") continue;
+    for (MtlxElem &input : nd.children) {
+      if (input.tag != "input" || !input.Attr("opgraph") || !input.Attr("graphoutput")) continue;
+      for (MtlxElem &mat : root->children) {
+        if (mat.tag != "material") continue;
+        for (MtlxElem &sr : mat.children) {
+          if (sr.tag != "shaderref") continue;
+          const MtlxElem *snd = GetMtlxShaderNodeDef(*root, sr);
+          if (snd != &nd || sr.Child(input.Name())) continue;
+          MtlxElem bind;
+          bind.tag = "bindinput";
+          bind.SetAttr("name", input.Name());
+          bind.SetAttr("type", input.AttrOr("type"));
+          bind.SetAttr("nodegraph", input.AttrOr("opgraph"));
+          bind.SetAttr("output", input.AttrOr("graphoutput"));
+          sr.children.push_back(std::move(bind));
+        }
+      }
+      EraseMtlxAttr(&input, "opgraph");
+      EraseMtlxAttr(&input, "graphoutput");
+    }
+  }
+  // Geometric attributes become properties; combine udim assignments into a udim set.
+  bool has_udim = false, has_udimset = false;
+  std::set<std::string> udims;
+  for (MtlxElem &gi : root->children) {
+    if (gi.tag != "geominfo") continue;
+    for (MtlxElem &ga : gi.children) {
+      if (ga.tag == "geomattr") ga.tag = "geomprop";
+      if (ga.tag == "geomprop" && ga.Name() == "udim") {
+        has_udim = true;
+        udims.insert(ga.AttrOr("value"));
+      }
+      if (ga.tag == "geomprop" && ga.Name() == "udimset") has_udimset = true;
+    }
+  }
+  if (has_udim && !has_udimset) {
+    std::string joined;
+    for (const std::string &u : udims) joined += (joined.empty() ? "" : ", ") + u;
+    MtlxElem info;
+    info.tag = "geominfo";
+    std::string name = "geominfo1";
+    for (int n = 2; FindMtlxChildByName(root, name); ++n) name = "geominfo" + std::to_string(n);
+    info.SetAttr("name", name);
+    MtlxElem prop;
+    prop.tag = "geomprop";
+    prop.SetAttr("name", "udimset");
+    prop.SetAttr("type", "stringarray");
+    prop.SetAttr("value", joined);
+    info.children.push_back(std::move(prop));
+    root->children.push_back(std::move(info));
+  }
+}
+
+// 1.35 -> 1.36: geomname `*` becomes `/`, filename tokens, material overrides bind onto the
+// shaderrefs whose nodedef publishes them, and material/look inheritance becomes `inherit`.
+void Upgrade35to36Elems(MtlxElem *root, MtlxElem *elem) {
+  if (elem->AttrOr("type") == "geomname" && elem->AttrOr("value") == "*") elem->SetAttr("value", "/");
+  if (elem->AttrOr("type") == "filename") {
+    std::string value = elem->AttrOr("value");
+    auto replace_all = [](std::string *text, const std::string &from, const std::string &to) {
+      for (size_t pos = text->find(from); pos != std::string::npos; pos = text->find(from, pos + to.size()))
+        text->replace(pos, from.size(), to);
+    };
+    replace_all(&value, "%UDIM", "<UDIM>");
+    replace_all(&value, "%UVTILE", "<UVTILE>");
+    elem->SetAttr("value", value);
+  }
+  std::vector<size_t> remove;
+  for (size_t i = 0; i < elem->children.size(); ++i) {
+    MtlxElem &child = elem->children[i];
+    if (elem->tag == "material" && child.tag == "override") {
+      for (MtlxElem &sr : elem->children) {
+        if (sr.tag != "shaderref") continue;
+        const MtlxElem *nd = GetMtlxShaderNodeDef(*root, sr);
+        if (!nd) continue;
+        for (const MtlxElem &av : nd->children) {
+          // `parameter` children are no longer value elements in the reference library, so
+          // only inputs publish an override.
+          if (av.tag != "input") continue;
+          if (av.AttrOr("publicname") != child.Name() || sr.Child(child.Name())) continue;
+          MtlxElem bind;
+          bind.tag = "bindinput";
+          bind.SetAttr("name", av.Name());
+          bind.SetAttr("type", av.AttrOr("type"));
+          bind.SetAttr("value", child.AttrOr("value"));
+          sr.children.push_back(std::move(bind));
+        }
+      }
+      remove.push_back(i);
+    } else if (elem->tag == "material" && child.tag == "materialinherit") {
+      elem->SetAttr("inherit", child.AttrOr("material"));
+      remove.push_back(i);
+    } else if (elem->tag == "look" && child.tag == "lookinherit") {
+      elem->SetAttr("inherit", child.AttrOr("look"));
+      remove.push_back(i);
+    }
+  }
+  for (size_t k = remove.size(); k-- > 0;) elem->children.erase(elem->children.begin() + remove[k]);
+  for (MtlxElem &c : elem->children) Upgrade35to36Elems(root, &c);
+}
+
+// 1.36 -> 1.37: a nodedef's `type` attribute becomes an `out` output child (and `defaultinput`
+// moves onto it); then the legacy shader nodedefs (those with a `shadertype`) are removed.
+void UpgradeMtlxNodeDefTypeToOutput(MtlxElem *root) {
+  if (!root) return;
+  for (MtlxElem &nd : root->children) {
+    if (nd.tag != "nodedef" || !nd.Attr("type")) continue;
+    const std::string type = nd.AttrOr("type");
+    MtlxElem *out = nullptr;
+    if (!type.empty() && type != "multioutput") {
+      for (MtlxElem &c : nd.children)
+        if (c.tag == "output" && c.Name() == "out") { out = &c; break; }
+      if (!out) {
+        MtlxElem o;
+        o.tag = "output";
+        o.SetAttr("name", "out");
+        o.SetAttr("type", type);
+        nd.children.push_back(std::move(o));
+        out = &nd.children.back();
+      }
+    }
+    EraseMtlxAttr(&nd, "type");
+    const std::string def_input = nd.AttrOr("defaultinput");
+    if (out && !def_input.empty()) out->SetAttr("defaultinput", def_input);
+    EraseMtlxAttr(&nd, "defaultinput");
+  }
+}
+
+
+void UpgradeMtlxRemoveLegacyShaderNodeDefs(MtlxElem *root) {
+  if (!root) return;
+  std::vector<std::string> names;
+  for (const MtlxElem &c : root->children)
+    if (c.tag == "nodedef" && c.Attr("shadertype")) names.push_back(c.Name());
+  for (const std::string &name : names) {
+    for (MtlxElem &mat : root->children) {
+      if (mat.tag != "material") continue;
+      for (MtlxElem &sr : mat.children)
+        if (sr.tag == "shaderref" && sr.AttrOr("nodedef") == name) EraseMtlxAttr(&sr, "nodedef");
+    }
+    root->children.erase(std::remove_if(root->children.begin(), root->children.end(),
+                                        [&](const MtlxElem &c) {
+                                          return c.tag == "nodedef" && c.Name() == name;
+                                        }),
+                         root->children.end());
+  }
+}
+
 void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
@@ -1495,19 +1585,19 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
   // 1.34 (vector -> vector3 only from 1.22), and the filename-token rewrite for
   // every start at or below 1.35.
   const uint64_t start = minor;
+  if (start <= 24) UpgradeMtlxShaderNameAndGraphName(root, start <= 23, true);
   if (start <= 25)
     UpgradeMtlxAssignAndConstant(root, start <= 23, true);
-  if (start <= 26) {
-    UpgradeMtlxLegacyOpgraphs(root);
-    UpgradeMtlxLegacyShaderFormat(root);
-  }
+  if (start <= 26) UpgradeMtlx26to34(root);
   if (start <= 34) UpgradeMtlxLegacyAttributes(root, start == 22);
   if (start <= 35) {
-    UpgradeMtlxFilenameTokens(root);
+    Upgrade35to36Elems(root, root);
     minor = 36;
   }
   if (minor == 36) {
     UpgradeMtlxElements(root, 36);
+    UpgradeMtlxNodeDefTypeToOutput(root);
+    UpgradeMtlxRemoveLegacyShaderNodeDefs(root);
     minor = 37;
   }
   if (minor == 37) {
