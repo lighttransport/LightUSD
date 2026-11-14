@@ -1808,6 +1808,30 @@ static void CheckTypedMtlxGraphResolution() {
          "legacy diffuse_brdf node was not upgraded to 1.39");
   }
 
+  // Reference upgrade rules found by the claimed-legacy corpus differential
+  // (materialx-conformance tests/run-upgrade-diff.py).
+  {
+    g_checks++;
+    // 1.37 -> 1.38: a node named like a bound interface name is renamed
+    // (mix -> mix2) and its consumers are redirected.
+    MtlxDocument document;
+    const std::string xml = R"(<materialx version="1.37">
+  <nodedef name="ND_t" node="t"><input name="mix" type="float" value="0.5"/><output name="out" type="float"/></nodedef>
+  <nodegraph name="NG_t" nodedef="ND_t">
+    <mix name="mix" type="float">
+      <input name="fg" type="float" value="1"/><input name="bg" type="float" value="0"/>
+      <input name="mix" type="float" interfacename="mix"/>
+    </mix>
+    <output name="out" type="float" nodename="mix"/>
+  </nodegraph>
+</materialx>)";
+    MtlxNodeGraphPtr graph;
+    if (!document.ParseFromXML(xml) || !(graph = document.FindNodeGraph("NG_t")) ||
+        graph->GetNode("mix") || !graph->GetNode("mix2")) {
+      Fail("MTLX_UPGRADE_INTERFACE_NAME_RENAME", 0,
+           "node sharing an interface name was not renamed to mix2");
+    }
+  }
   g_checks++;
   MtlxDocument legacy_opgraph_document;
   const std::string legacy_opgraph_xml = R"(<materialx version="1.22">

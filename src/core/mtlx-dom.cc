@@ -9,6 +9,8 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
@@ -1350,6 +1352,117 @@ void UpgradeMtlxThinFilmLayers(MtlxElem *scope) {
 
 }  // namespace
 
+// Attribute-level legacy upgrades of the reference that touch every element:
+// 1.22 -> 1.23 type "vector" becomes "vector3" (only applied when the document
+// is 1.22), 1.34 -> 1.35 type "matrix" becomes "matrix44" and a `default`
+// attribute becomes `value` when the element has no value of its own.
+void UpgradeMtlxLegacyAttributes(MtlxElem *elem, bool from_122) {
+  if (!elem) return;
+  const std::string type = elem->AttrOr("type");
+  if (from_122 && type == "vector") elem->SetAttr("type", "vector3");
+  if (type == "matrix") elem->SetAttr("type", "matrix44");
+  if (elem->Attr("default") && !elem->Attr("value")) {
+    const std::string value = elem->AttrOr("default");
+    elem->attrs.erase(
+        std::remove_if(elem->attrs.begin(), elem->attrs.end(),
+                       [](const std::pair<std::string, std::string> &a) {
+                         return a.first == "default";
+                       }),
+        elem->attrs.end());
+    elem->SetAttr("value", value);
+  }
+  for (MtlxElem &child : elem->children)
+    UpgradeMtlxLegacyAttributes(&child, from_122);
+}
+
+// 1.35 -> 1.36 (reference Document::upgradeVersion): every element typed
+// "filename" gets its value rewritten with the %UDIM / %UVTILE token
+// substitutions. The reference assigns the attribute even when the element has
+// none, so a value-less filename element gains an empty value; reproduce that.
+void UpgradeMtlxFilenameTokens(MtlxElem *elem) {
+  if (!elem) return;
+  if (elem->AttrOr("type") == "filename") {
+    std::string value = elem->AttrOr("value");
+    auto replace_all = [](std::string *text, const std::string &from,
+                          const std::string &to) {
+      for (size_t pos = text->find(from); pos != std::string::npos;
+           pos = text->find(from, pos + to.size())) {
+        text->replace(pos, from.size(), to);
+      }
+    };
+    replace_all(&value, "%UDIM", "<UDIM>");
+    replace_all(&value, "%UVTILE", "<UVTILE>");
+    elem->SetAttr("value", value);
+  }
+  for (MtlxElem &child : elem->children) UpgradeMtlxFilenameTokens(&child);
+}
+
+// 1.37 -> 1.38: a node of a nodegraph may not share its name with an interface
+// name that one of the graph's nodes binds (interfacename); the node is renamed
+// with the reference's createValidChildName (name -> name2) and every port of
+// the graph that connected to it is redirected.
+std::string IncrementMtlxName(const std::string &name) {
+  size_t end = name.size();
+  size_t begin = end;
+  while (begin > 0 && std::isdigit(static_cast<unsigned char>(name[begin - 1])))
+    --begin;
+  if (begin == end) return name + "2";
+  const unsigned long long number = std::strtoull(name.c_str() + begin, nullptr, 10);
+  return name.substr(0, begin) + std::to_string(number + 1);
+}
+
+void UpgradeMtlxInterfaceNameConflicts(MtlxElem *root) {
+  if (!root) return;
+  for (MtlxElem &graph : root->children) {
+    if (graph.tag != "nodegraph") continue;
+    graph.attrs.erase(
+        std::remove_if(graph.attrs.begin(), graph.attrs.end(),
+                       [](const std::pair<std::string, std::string> &a) {
+                         return a.first == "version";
+                       }),
+        graph.attrs.end());
+    std::vector<std::string> interface_names;
+    for (const MtlxElem &node : graph.children) {
+      if (!IsMtlxNodeElem(node)) continue;
+      for (const MtlxElem &port : node.children) {
+        const std::string *iface = port.Attr("interfacename");
+        if (iface && !iface->empty() &&
+            std::find(interface_names.begin(), interface_names.end(), *iface) ==
+                interface_names.end()) {
+          interface_names.push_back(*iface);
+        }
+      }
+    }
+    for (const std::string &iface : interface_names) {
+      MtlxElem *node = nullptr;
+      for (MtlxElem &child : graph.children) {
+        if (IsMtlxNodeElem(child) && child.Name() == iface) {
+          node = &child;
+          break;
+        }
+      }
+      if (!node) continue;
+      std::string fresh = iface;
+      auto taken = [&](const std::string &candidate) {
+        for (const MtlxElem &child : graph.children)
+          if (child.Name() == candidate) return true;
+        return false;
+      };
+      do {
+        fresh = IncrementMtlxName(fresh);
+      } while (taken(fresh));
+      for (MtlxElem &child : graph.children) {
+        if (child.tag == "output" && child.AttrOr("nodename") == iface)
+          child.SetAttr("nodename", fresh);
+        if (!IsMtlxNodeElem(child)) continue;
+        for (MtlxElem &port : child.children)
+          if (port.AttrOr("nodename") == iface) port.SetAttr("nodename", fresh);
+      }
+      node->SetAttr("name", fresh);
+    }
+  }
+}
+
 void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
@@ -1361,10 +1474,14 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (minor == 22) {
     UpgradeMtlxLegacyOpgraphs(root);
     UpgradeMtlxLegacyShaderFormat(root);
+    UpgradeMtlxLegacyAttributes(root, true);
+    UpgradeMtlxFilenameTokens(root);
     minor = 36;
   }
   if (minor == 25) {
     UpgradeMtlxLegacyShaderFormat(root);
+    UpgradeMtlxLegacyAttributes(root, false);
+    UpgradeMtlxFilenameTokens(root);
     minor = 36;
   }
   if (minor == 36) {
@@ -1375,6 +1492,7 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
     UpgradeColor2ChannelAliases(root);
     UpgradeMtlxElements(root, 37);
     UpgradeMtlxShaderRefs(root);
+    UpgradeMtlxInterfaceNameConflicts(root);
     minor = 38;
   }
   if (minor == 38) {
