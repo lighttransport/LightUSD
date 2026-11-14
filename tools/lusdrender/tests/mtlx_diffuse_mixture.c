@@ -347,6 +347,42 @@ static int openpbr_metal_response_checks(void) {
   return 1;
 }
 
+static int standard_surface_explicit_fresnel_diffuse_check(void) {
+  const char *xml = "<materialx><standard_surface name=\"s\" type=\"surfaceshader\">"
+    "<input name=\"base\" type=\"float\" value=\"0.5\"/>"
+    "<input name=\"base_color\" type=\"color3\" value=\"0.06,0.44,0.19\"/>"
+    "<input name=\"specular_roughness\" type=\"float\" value=\"0.25\"/>"
+    "<input name=\"specular_IOR\" type=\"float\" value=\"2.418\"/>"
+    "<input name=\"specular_anisotropy\" type=\"float\" value=\"0.5\"/>"
+    "<input name=\"subsurface\" type=\"float\" value=\"0.4\"/>"
+    "<input name=\"subsurface_color\" type=\"color3\" value=\"0.06,0.44,0.19\"/>"
+    "</standard_surface></materialx>";
+  OpenPBRParams explicit_closure;
+  if (!evaluate(xml, &explicit_closure) || explicit_closure.specular_lobe_count != 1) {
+    fprintf(stderr, "FAIL: Standard Surface anisotropy closure setup\n");
+    return 0;
+  }
+  OpenPBRParams legacy_specular = explicit_closure;
+  legacy_specular.specular_lobe_count = 0;
+  const v3 n = {0,0,1}, views[] = {{0,0,1},{0.8f,0,0.6f}},
+            lights[] = {{0,0,1},{-0.6f,0,0.8f}};
+  for (int i = 0; i < 2; ++i) {
+    v3 explicit_diffuse, legacy_diffuse, spec;
+    float pdf;
+    bsdf_eval_lobes(&explicit_closure, n, views[i], lights[i],
+                    &explicit_diffuse, &spec, &pdf);
+    bsdf_eval_lobes(&legacy_specular, n, views[i], lights[i],
+                    &legacy_diffuse, &spec, &pdf);
+    if (fabsf(explicit_diffuse.x - legacy_diffuse.x) > 2.0e-6f ||
+        fabsf(explicit_diffuse.y - legacy_diffuse.y) > 2.0e-6f ||
+        fabsf(explicit_diffuse.z - legacy_diffuse.z) > 2.0e-6f) {
+      fprintf(stderr, "FAIL: explicit anisotropic specular dropped diffuse Fresnel attenuation\n");
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static int specular_response_checks(void) {
   const char *parts=
     "<dielectric_bsdf name=\"d\" type=\"BSDF\"><input name=\"ior\" type=\"float\" value=\"1.6\"/><input name=\"tint\" type=\"color3\" value=\"0.5,0.8,1\"/><input name=\"roughness\" type=\"vector2\" value=\"0.2,0.7\"/></dielectric_bsdf>"
@@ -795,7 +831,7 @@ int main(void) {
       }
     }
   }
-  if (!openpbr_fuzz_checks() || !openpbr_transmission_ior_checks() || !layer_checks() || !specular_layer_checks() || !specular_response_checks() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
+  if (!openpbr_fuzz_checks() || !openpbr_transmission_ior_checks() || !layer_checks() || !specular_layer_checks() || !specular_response_checks() || !standard_surface_explicit_fresnel_diffuse_check() || !openpbr_dielectric_response_checks() || !openpbr_metal_response_checks() ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES,1) ||
       !specular_overflow_check(MTLX_MAX_SPECULAR_LOBES+1,0)) return 1;
   if (!overflow_check(MTLX_MAX_DIFFUSE_LOBES, 1) ||

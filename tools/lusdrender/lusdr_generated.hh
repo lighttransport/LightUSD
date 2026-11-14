@@ -17,6 +17,10 @@ struct GeneratedMeshCore {
   std::vector<int32_t> indices;
   std::vector<float> normals;
   std::vector<float> uvs;
+  // Optional MaterialX geometry values expanded per refined face corner.
+  // Each request has four float lanes per corner plus one validity flag.
+  std::vector<std::vector<float>> geomprops;
+  std::vector<uint8_t> geomprop_valid;
   bool normals_facevarying{false};
   bool uvs_facevarying{false};
 };

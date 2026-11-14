@@ -3,6 +3,15 @@
 #include <math.h>
 #include <stddef.h>
 
+/* MaterialX's reference (genglsl mx_subsurface_bsdf) renders subsurface as a
+ * plain tinted diffuse response. The Disney/Burley normalized-diffusion shape
+ * below is opt-in (-DMTLX_SSS_NORMALIZED_DIFFUSION=1); by default we match the
+ * reference, which brings OpenPBR pearl and Standard Surface jade inside the
+ * MaterialXView image gate (issue lightrt/05). */
+#ifndef MTLX_SSS_NORMALIZED_DIFFUSION
+#define MTLX_SSS_NORMALIZED_DIFFUSION 0
+#endif
+
 /* MaterialX genglsl Zeltner LTC fit. The LTC density contains NdotL;
  * divide that factor out here because bsdf_eval returns a BRDF. */
 float bsdf_zeltner_sheen_albedo(float ndotv, float roughness) {
@@ -555,6 +564,8 @@ typedef struct {
     float subsurface_w; /* normalized-diffusion strength */
     v3    F0;          /* specular reflectance at normal incidence */
     float F90;         /* specular-weighted grazing reflectance */
+    v3    diffuse_F0;   /* retained when explicit closures replace base specular */
+    float diffuse_F90;
     float alpha;       /* GGX roughness^2 */
     v3    sheen_color; float sheen_alpha, sheen_w;
     int   sheen_lobe_count;
@@ -624,6 +635,8 @@ static Layers extract(const OpenPBRParams *p) {
     f0d = f0d * f0d * p->specular_weight;
     L.F0 = v3_lerp(v3_mul(v3_splat(f0d), p->specular_color), base, metal);
     L.F90 = clampf(p->specular_weight, 0.0f, 1.0f);
+    L.diffuse_F0 = L.F0;
+    L.diffuse_F90 = L.F90;
     if (explicit_specular) { L.F0 = v3_splat(0.0f); L.F90 = 0.0f; }
     L.ior = specular_ior;
     L.openpbr_base = p->openpbr_coat_remap && !explicit_specular && !explicit_conductor;
@@ -824,7 +837,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * behaves as a subsurface medium. The 1.25 normalization keeps the lobe's
      * integrated energy close to Lambert. */
     float diffuse_shape = 1.0f;
-    if (L->subsurface_w > 0.0f) {
+    if (MTLX_SSS_NORMALIZED_DIFFUSION && L->subsurface_w > 0.0f) {
         float L5 = powf(1.0f - NdotL, 5.0f);
         float V5 = powf(1.0f - NdotV, 5.0f);
         float fss90 = L->alpha * NdotL * NdotL;
@@ -838,7 +851,8 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     /* Approximate the top interface's view-directional throughput. The
      * reference layer applies this once to its underlying response. */
     const v3 one = v3_splat(1.0f);
-    const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->F0, L->F90);
+    const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->diffuse_F0,
+                                                    L->diffuse_F90);
     v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
     if (L->openpbr_base) {
         double a,b,ess=materialx_ggx_directional_terms(NdotV,L->alpha,&a,&b);

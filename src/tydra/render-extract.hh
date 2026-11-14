@@ -252,7 +252,8 @@ bool ReadMeshFloatAttribute(const ::lightusd::UsdPrim& prim,
                             const std::string& name,
                             const ::lightusd::EvalOptions& options,
                             size_t components, size_t point_count,
-                            size_t corner_count, MeshFloatAttribute* out);
+                            size_t corner_count, MeshFloatAttribute* out,
+                            size_t face_count = 0);
 
 bool ReadFloatArray(const ::lightusd::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out);

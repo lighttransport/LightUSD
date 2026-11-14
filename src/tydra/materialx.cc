@@ -1135,16 +1135,28 @@ std::string GetMtlxFilePath(const lightusd::UsdPrim& material_prim) {
 }
 
 ColorSpace ParseMtlxColorSpace(const std::string& cs) {
-  if (cs == "srgb_texture" || cs == "sRGB") {
+  if (cs == "srgb_texture" || cs == "sRGB" || cs == "srgb" ||
+      cs == "srgb_rec709_scene") {
     return ColorSpace::sRGB;
-  } else if (cs == "lin_rec709" || cs == "linear") {
+  } else if (cs == "lin_rec709" || cs == "lin_rec709_scene" ||
+             cs == "lin_srgb" || cs == "linear" || cs == "Linear") {
     return ColorSpace::Linear;
-  } else if (cs == "raw" || cs == "none") {
+  } else if (cs == "raw" || cs == "Raw" || cs == "none" || cs == "data") {
     return ColorSpace::Raw;
-  } else if (cs == "acescg" || cs == "ACEScg") {
+  } else if (cs == "acescg" || cs == "ACEScg" || cs == "lin_ap1" ||
+             cs == "lin_ap1_scene") {
     return ColorSpace::ACEScg;
+  } else if (cs == "rec709" || cs == "Rec709") {
+    return ColorSpace::Rec709;
+  } else if (cs == "rec2020" || cs == "Rec2020" ||
+             cs == "lin_rec2020" || cs == "lin_rec2020_scene") {
+    return ColorSpace::Rec2020;
+  } else if (cs == "displayP3" || cs == "DisplayP3" ||
+             cs == "lin_displayp3" || cs == "lin_p3d65_scene" ||
+             cs == "srgb_displayp3" || cs == "srgb_p3d65_scene") {
+    return ColorSpace::DisplayP3;
   }
-  return ColorSpace::sRGB;  // Default
+  return ColorSpace::Unknown;
 }
 
 }  // namespace tydra

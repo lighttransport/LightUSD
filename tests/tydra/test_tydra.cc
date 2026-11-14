@@ -236,6 +236,18 @@ def Scope "M" {
   assert(!EvalMtlxConstantNode(stage, stage.GetPrimAtPath("/M/ColorCorrectUnresolved"),
                                0.0, "", &unresolved_value, &unresolved_visiting, 0));
 }
+
+void TestMtlxColorSpaceAliases() {
+  assert(ParseMtlxColorSpace("srgb_texture") == ColorSpace::sRGB);
+  assert(ParseMtlxColorSpace("srgb_rec709_scene") == ColorSpace::sRGB);
+  assert(ParseMtlxColorSpace("lin_rec709_scene") == ColorSpace::Linear);
+  assert(ParseMtlxColorSpace("lin_ap1_scene") == ColorSpace::ACEScg);
+  assert(ParseMtlxColorSpace("lin_rec2020_scene") == ColorSpace::Rec2020);
+  assert(ParseMtlxColorSpace("lin_p3d65_scene") == ColorSpace::DisplayP3);
+  assert(ParseMtlxColorSpace("data") == ColorSpace::Raw);
+  assert(ParseMtlxColorSpace("unknown-space") == ColorSpace::Unknown);
+}
+
 namespace {
 using namespace lightusd::mtlx;
 
@@ -3472,11 +3484,27 @@ void TestMaterialXUtilities() {
   assert(converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
                                           &volume_sample, "nested/volume_scene.mtlx"));
   assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  memory_resolver.RegisterMemoryAsset("nested/ap1.ppm",
+      {'P', '6', '\n', '1', ' ', '1', '\n', '2', '5', '5', '\n',
+       128, 64, 32});
+  const std::string ap1_volume = R"(<materialx version="1.39" colorspace="lin_ap1_scene">
+    <image name="density" type="color3"><input name="file" type="filename" value="ap1.ppm"/></image>
+    <absorption_vdf name="fog" type="VDF"><input name="absorption" type="color3" nodename="density"/></absorption_vdf>
+    <volume name="volume" type="volumeshader"><input name="vdf" type="VDF" nodename="fog"/></volume>
+    <volumematerial name="Fog"><input name="volumeshader" type="volumeshader" nodename="volume"/></volumematerial>
+  </materialx>)";
+  volume_options.volume_texture_max_decoded_bytes = 1024;
+  converter.SetOptions(volume_options);
+  assert(converter.EvaluateVolumeMaterial(ap1_volume, "Fog", volume_uv,
+                                          &volume_sample, "nested/volume_scene.mtlx"));
+  const float ap1_expected[3] = {0.687f, 0.219f, 0.100f};
+  for (size_t channel = 0; channel < 3; ++channel)
+    assert(std::abs(volume_sample.absorption[channel] - ap1_expected[channel]) < 0.015f);
   volume_options.volume_texture_max_decoded_bytes = 3;
   converter.SetOptions(volume_options);
   assert(!converter.EvaluateVolumeMaterial(textured_volume, "Fog", volume_uv,
                                            &volume_sample, "nested/volume_scene.mtlx"));
-  assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  assert(std::abs(volume_sample.absorption[1] - ap1_expected[1]) < 0.015f);
   memory_resolver.RegisterMemoryAsset("nested/mip.ppm",
       {'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n',
        0, 0, 0, 255, 255, 255});
@@ -3492,7 +3520,7 @@ void TestMaterialXUtilities() {
   mip_context.uv_dx[0] = 1.0f;
   assert(!converter.EvaluateVolumeMaterial(mip_volume, "Fog", mip_context,
                                            &volume_sample, "nested/volume_scene.mtlx"));
-  assert(std::abs(volume_sample.absorption[1] - 128.0f / 255.0f) < 1e-5f);
+  assert(std::abs(volume_sample.absorption[1] - ap1_expected[1]) < 0.015f);
   volume_options.volume_texture_max_decoded_bytes = 56;
   converter.SetOptions(volume_options);
   assert(converter.EvaluateVolumeMaterial(mip_volume, "Fog", mip_context,
@@ -10017,6 +10045,7 @@ int main() {
   TestRenderConverterPointInstancerInvalidArrays();
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
+  TestMtlxColorSpaceAliases();
   TestExternalMaterialXImageGraph();
   TestForwardedTextureAssetAnchor();
   TestPxrDisneyRiSurfaceMaterial();

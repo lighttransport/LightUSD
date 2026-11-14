@@ -646,6 +646,28 @@ void test_color_transform_numeric() {
     }
   }
 
+  {
+    // cmlib rec709_display decode is pow(max(in, 0), 2.4): negatives clamp to
+    // zero, unlike signed g24_rec709 which mirrors them.
+    ColorSpaceDesc display, signed_gamma;
+    ColorTransform dt, st;
+    if (!GetBuiltinColorSpace("rec709_display", &display) ||
+        !GetBuiltinColorSpace("g24_rec709", &signed_gamma) ||
+        !BuildColorTransform(display, linear, &dt) ||
+        !BuildColorTransform(signed_gamma, linear, &st)) {
+      FAIL("rec709_display transform"); return;
+    }
+    float d[3] = {-0.5f, 0.5f, 1.0f};
+    float g[3] = {-0.5f, 0.5f, 1.0f};
+    lightusd::color::TransformRGB(dt, d);
+    lightusd::color::TransformRGB(st, g);
+    if (std::abs(d[0]) > 3.0e-5f || std::abs(d[1] - 0.18946457f) > 3.0e-5f ||
+        std::abs(d[2] - 1.0f) > 3.0e-5f) {
+      FAIL("rec709_display clamp decode"); return;
+    }
+    if (!(g[0] < -0.1f)) { FAIL("g24_rec709 stays signed"); return; }
+  }
+
   ColorTransform bypass;
   if (!BuildColorTransform(raw, linear, &bypass) || !bypass.bypass) {
     FAIL("raw bypass transform"); return;

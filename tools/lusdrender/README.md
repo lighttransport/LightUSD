@@ -27,9 +27,21 @@ LightUSD's resolved document (including nested XIncludes, version upgrades,
 scoped attributes, and nodedef defaults) through LightRT's MaterialX graph
 evaluator, binds the resulting OpenPBR parameters to a generated sphere, and
 renders under a uniform white `DomeLight` with LightRT BSDF shading. The
-resolved graph is evaluated at each sphere hit, with world position, shading
+resolved graph is evaluated at each hit, with world position, shading
 and geometric normals, UVs, UV screen derivatives, and tangent directions. This
 preserves spatially varying procedural and texture outputs through the render.
+When the graph requests `geompropvalue` or `geompropvalueuniform`, the validation
+scene uses generated flat and instanced meshes and supplies matching typed USD
+primvars at triangle hits; float, color, and vector primvars are interpolated by
+barycentric weights, and integer primvars retain their typed values.
+The render-side primvar stream is included in the configured memory-budget
+check. Subdivision carries floating-point primvars through vertex/varying and
+faceVarying interpolation, and replicates constant/uniform values onto refined
+faces. Integer and boolean subdivision primvars are supported when constant or
+uniform; vertex-interpolated categorical values keep the MaterialX default. The
+validation regression captures float, integer, and uniform node AOVs after one
+Catmull-Clark refinement level. Analytic primitives support constant custom
+primvars; per-point and per-face values require mesh geometry.
 `--mtlx-mipmaps` enables precomputed linear-RGBA texture mipmaps for this
 validation path, selected using the hit's UV derivatives. The base textures
 and mip pixels count together against `-texBudgetMb` when it is set.

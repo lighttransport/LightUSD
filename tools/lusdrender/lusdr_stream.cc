@@ -475,7 +475,13 @@ class StreamRenderServer {
         rc_->use_tlas ? &rc_->instances : nullptr,
         rc_->tri_colors.empty() ? nullptr : &rc_->tri_colors,
         rc_->tri_normals.empty() ? nullptr : &rc_->tri_normals,
-        rc_->volumes.empty() ? nullptr : &rc_->volumes);
+        rc_->volumes.empty() ? nullptr : &rc_->volumes,
+        rc_->flat_openpbr_mats.empty() ? nullptr : &rc_->flat_openpbr_mats,
+        rc_->triangle_chunks.empty() ? nullptr : &rc_->triangle_chunks,
+        rc_->backplates.empty() ? nullptr : &rc_->backplates,
+        rc_->mtlx_geomprop_requests.empty() ? nullptr : &rc_->mtlx_geomprop_requests,
+        rc_->tri_geomprops.empty() ? nullptr : &rc_->tri_geomprops,
+        rc_->tri_geomprops_valid.empty() ? nullptr : &rc_->tri_geomprops_valid);
 
     lightusd::image::WriteOption wopt;
     if (motion) {

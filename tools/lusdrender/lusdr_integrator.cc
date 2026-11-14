@@ -1000,8 +1000,8 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
 bool MakeMaterialXHitContext(const Vec3 &ray_org, const Vec3 &ray_dir,
                              const RayDiff &rd, const Vec3 &p0,
                              const Vec3 &p1, const Vec3 &p2,
-                             const float *uv, float b1, float b2,
-                             MaterialXHitContext *out) {
+                             const float *uv, const float *uv1,
+                             float b1, float b2, MaterialXHitContext *out) {
   if (!uv || !out) return false;
   const float b0 = 1.0f - b1 - b2;
   out->has_uv = true;
@@ -1032,7 +1032,50 @@ bool MakeMaterialXHitContext(const Vec3 &ray_org, const Vec3 &ray_dir,
     out->uv_dy[1] = dvdy;
     out->has_uv_derivatives = true;
   }
+  if (uv1) {
+    out->has_uv1 = true;
+    out->uv1[0] = b0 * uv1[0] + b1 * uv1[2] + b2 * uv1[4];
+    out->uv1[1] = b0 * uv1[1] + b1 * uv1[3] + b2 * uv1[5];
+    if (ComputeUVFootprint(ray_org, ray_dir, rd, p0, p1, p2,
+                           geometric_normal, uv1[0], uv1[1], uv1[2], uv1[3],
+                           uv1[4], uv1[5], &dudx, &dvdx, &dudy, &dvdy)) {
+      out->uv1_dx[0] = dudx;
+      out->uv1_dx[1] = dvdx;
+      out->uv1_dy[0] = dudy;
+      out->uv1_dy[1] = dvdy;
+    }
+  }
   return true;
+}
+
+template <class FVec>
+void InterpolateMaterialXGeomProps(
+    const std::vector<MtlxGeomPropRequest>* requests,
+    const FVec* values, const ByteVec* valid,
+    size_t triangle, float u, float v,
+    std::vector<lusdview::MaterialXGeomPropValue>* out) {
+  if (!out) return;
+  out->clear();
+  if (!requests || !values || !valid || requests->empty()) return;
+  const float weights[3] = {1.0f - u - v, u, v};
+  for (size_t property = 0; property < requests->size(); ++property) {
+    const size_t valid_index = triangle * requests->size() + property;
+    const size_t value_index = valid_index * 12;
+    if (valid_index >= valid->size() || !(*valid)[valid_index] ||
+        value_index > values->size() || values->size() - value_index < 12)
+      continue;
+    const MtlxGeomPropRequest& request = (*requests)[property];
+    lusdview::MaterialXGeomPropValue sample;
+    sample.name = request.name;
+    sample.type = static_cast<lusdview::MaterialXGeomPropType>(request.type);
+    for (size_t component = 0; component < request.components; ++component) {
+      sample.value[component] =
+          weights[0] * (*values)[value_index + component] +
+          weights[1] * (*values)[value_index + 4 + component] +
+          weights[2] * (*values)[value_index + 8 + component];
+    }
+    out->push_back(std::move(sample));
+  }
 }
 
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
@@ -1041,7 +1084,9 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
                     const lightusd::tydra::LightRtOpenPBRParams **out_openpbr,
                     Vec3* geometric_normal, Vec3* shading_normal,
-                    MaterialXHitContext *materialx_hit) {
+                    MaterialXHitContext *materialx_hit,
+                    const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+                    std::vector<lusdview::MaterialXGeomPropValue>* geomprop_values) {
   if (out_openpbr) *out_openpbr = nullptr;
   if (materialx_hit) *materialx_hit = MaterialXHitContext{};
   if (size_t(th.inst_id) >= instances.size()) return false;
@@ -1080,6 +1125,9 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     return true;
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
+  InterpolateMaterialXGeomProps(geomprop_requests, &b.tri_geomprops,
+                                &b.tri_geomprops_valid, size_t(th.prim_id),
+                                th.u, th.v, geomprop_values);
   const TriStore &ts = b.tris[size_t(th.prim_id)];
   TriInfo lt;
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
@@ -1151,8 +1199,11 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   if (materialx_hit && !b.tri_uvs.empty()) {
     const size_t base = size_t(th.prim_id) * 6;
     if (base + 5 < b.tri_uvs.size()) {
+      const float* uv1 = base + 5 < b.tri_uvs1.size()
+                             ? &b.tri_uvs1[base]
+                             : nullptr;
       MakeMaterialXHitContext(ray_org, ray_dir, rd, wp0, wp1, wp2,
-                              &b.tri_uvs[base], th.u, th.v, materialx_hit);
+                              &b.tri_uvs[base], uv1, th.u, th.v, materialx_hit);
     }
   }
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
@@ -1284,7 +1335,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
            float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted,
-           uint64_t path_seed, std::atomic<bool>* materialx_error) {
+           uint64_t path_seed, std::atomic<bool>* materialx_error,
+           const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+           const std::vector<float>* tri_geomprops,
+           const ByteVec* tri_geomprops_valid) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1300,6 +1354,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float tri_t = camera.zfar;
   TriInfo hit_tri;
   MaterialXHitContext materialx_hit;
+  std::vector<lusdview::MaterialXGeomPropValue> materialx_geomprop_values;
   Vec3 hit_geometric_normal{0, 0, 0}, hit_shading_normal{0, 0, 0};
   const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
@@ -1307,7 +1362,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
                        &hit_tri, &hit_openpbr, &hit_geometric_normal,
-                       &hit_shading_normal, &materialx_hit)) {
+                       &hit_shading_normal, &materialx_hit,
+                       geomprop_requests, &materialx_geomprop_values)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -1369,9 +1425,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       if (tri_uvs) {
         const size_t uv_base = size_t(hit.prim_id) * 6;
         if (uv_base + 5 < tri_uvs->size()) {
+          const float* uv1 = tri_uvs1 && uv_base + 5 < tri_uvs1->size()
+                                 ? &(*tri_uvs1)[uv_base]
+                                 : nullptr;
           MakeMaterialXHitContext(ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1,
-                                  hit_tri.p2, &(*tri_uvs)[uv_base], hit.u,
-                                  hit.v, &materialx_hit);
+                                  hit_tri.p2, &(*tri_uvs)[uv_base], uv1,
+                                  hit.u, hit.v, &materialx_hit);
         }
       }
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
@@ -1540,6 +1599,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       if (hit_tri.opacity_threshold > 0.0f)
         hit_tri.opacity =
             (hit_tri.opacity < hit_tri.opacity_threshold) ? 0.0f : 1.0f;
+      InterpolateMaterialXGeomProps(geomprop_requests, tri_geomprops,
+                                    tri_geomprops_valid, size_t(hit.prim_id),
+                                    hit.u, hit.v,
+                                    &materialx_geomprop_values);
       tri_t = hit.t;
       tri_hit = true;
     }
@@ -1594,6 +1657,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   lightusd::tydra::LightRtOpenPBRParams dynamic_openpbr{};
   if (opt.mtlx_runtime && tri_hit) {
     lusdview::MaterialXSurfaceContext context;
+    context.geomprops = &materialx_geomprop_values;
     if (materialx_hit.has_uv) {
       context.uv[0] = materialx_hit.uv[0];
       context.uv[1] = materialx_hit.uv[1];
@@ -1602,6 +1666,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       context.uv_dy[0] = materialx_hit.uv_dy[0];
       context.uv_dy[1] = materialx_hit.uv_dy[1];
       context.has_uv_derivatives = materialx_hit.has_uv_derivatives;
+      context.has_uv1 = materialx_hit.has_uv1;
+      context.uv1[0] = materialx_hit.uv1[0];
+      context.uv1[1] = materialx_hit.uv1[1];
+      context.uv1_dx[0] = materialx_hit.uv1_dx[0];
+      context.uv1_dx[1] = materialx_hit.uv1_dx[1];
+      context.uv1_dy[0] = materialx_hit.uv1_dy[0];
+      context.uv1_dy[1] = materialx_hit.uv1_dy[1];
       context.dpdu[0] = materialx_hit.dpdu.x;
       context.dpdu[1] = materialx_hit.dpdu.y;
       context.dpdu[2] = materialx_hit.dpdu.z;
@@ -1705,7 +1776,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       return Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
           Add(p,Mul(ray_dir,eps)),ray_dir,textures,tri_uvs,tri_uvs1,tlas,blas,
           instances,next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,
-          triangle_chunks,nullptr,diagnostic_exhausted,Mix64(rng.state),materialx_error);
+          triangle_chunks,nullptr,diagnostic_exhausted,Mix64(rng.state),materialx_error,
+          geomprop_requests,tri_geomprops,tri_geomprops_valid);
     }
     if (static_cast<unsigned>(depth)>=max_depth) return tri.emission;
     const Vec3 view=Normalize(Mul(ray_dir,-1.0f));
@@ -1730,7 +1802,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     Vec3 incoming=Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
         Add(p,Mul(wi,eps)),wi,textures,tri_uvs,tri_uvs1,tlas,blas,instances,
         next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,triangle_chunks,
-        &next_hit,diagnostic_exhausted,Mix64(rng.state),materialx_error);
+        &next_hit,diagnostic_exhausted,Mix64(rng.state),materialx_error,
+        geomprop_requests,tri_geomprops,tri_geomprops_valid);
     if (sample.transmission && sample.crossed && next_hit<next_camera.zfar) {
       const VolumeMedium medium=transmission_medium(&params);
       incoming.x*=std::exp(-medium.sigma_t.x*next_hit);
@@ -1762,7 +1835,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               ray_dir, textures, tri_uvs, tri_uvs1, tlas, blas, instances, rd,
               depth + 1,
               tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
-              nullptr, diagnostic_exhausted, path_seed, materialx_error);
+              nullptr, diagnostic_exhausted, path_seed, materialx_error,
+              geomprop_requests, tri_geomprops, tri_geomprops_valid);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (opt.diagnostic_emission) {
@@ -2053,7 +2127,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                         opt, bounce_org, wi, textures, tri_uvs, tri_uvs1, tlas,
                         blas, instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
-                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted, path_seed, materialx_error);
+                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted,
+                        path_seed, materialx_error, geomprop_requests,
+                        tri_geomprops, tri_geomprops_valid);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
     // Beer-Lambert extinction over the actual continuation-ray distance instead
     // of tinting only at the interface; this makes thick glass absorb more than
@@ -2389,6 +2465,25 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
                                  float ambient) {
   Vec3 c = Mul(vd.albedo, ambient);
   auto add_light = [&](const PreviewLight &light) {
+    if (light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f) {
+      const float dist = Length(Sub(light.position, p));
+      if (dist <= light.radius + 1.0e-5f)
+        return;  // the enclosing one-sided sphere emits away from this point
+      constexpr int kSphereSamples = 16;
+      for (int i = 0; i < kSphereSamples; ++i) {
+        const float u = (float(i / 4) + 0.5f) * 0.25f;
+        const float v = (float(i % 4) + 0.5f) * 0.25f;
+        LightSample sample;
+        if (!SampleSphereLight(light, p, u, v, &sample)) continue;
+        const float ndotl = std::max(0.0f, Dot(n, sample.wi));
+        if (ndotl <= 0.0f) continue;
+        const float weight = ndotl / (float(kSphereSamples) * sample.pdf);
+        c = Add(c, Vec3{vd.albedo.x * sample.radiance.x * weight,
+                        vd.albedo.y * sample.radiance.y * weight,
+                        vd.albedo.z * sample.radiance.z * weight});
+      }
+      return;
+    }
     Vec3 radiance = light.radiance;
     Vec3 l;
     if (light.kind == PreviewLight::Kind::Distant) {
@@ -2405,9 +2500,6 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
         const float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
         if (emit_cos <= 0.0f) return;
         radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
-      } else if (light.kind == PreviewLight::Kind::Sphere &&
-                 light.radius > 1.0e-5f) {
-        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
       }
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
@@ -2670,6 +2762,12 @@ static Vec3 CompositeMixedVolumes(
                 incident = Add(incident, Mul(incoming, phase));
               };
               const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
+              // UsdLux SphereLight emits outward from its surface only. A
+              // scattering point inside an enclosing sphere sees its back
+              // faces, so the center-light fallback would invent illumination.
+              if (sphere && Length(Sub(light.position, world)) <=
+                                light.radius + 1.0e-5f)
+                return;
               const bool shaped = light.kind == PreviewLight::Kind::Rect ||
                                   light.kind == PreviewLight::Kind::Disk ||
                                   light.kind == PreviewLight::Kind::Cylinder ||
@@ -2983,7 +3081,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats,
                             const std::vector<TriangleSceneChunk> *triangle_chunks,
-                            const std::vector<BackPlateImage> *backplates) {
+                            const std::vector<BackPlateImage> *backplates,
+                            const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+                            const std::vector<float>* tri_geomprops,
+                            const ByteVec* tri_geomprops_valid) {
   lightusd::Image img;
   img.width = opt.width;
   img.height = height;
@@ -3076,7 +3177,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                                 Mix64(uint64_t(opt.path_trace_seed) ^
                                       Mix64(uint64_t(y)*uint64_t(img.width)+uint64_t(x)) ^
                                       Mix64(uint64_t(s)+0x9e3779b97f4a7c15ULL)) : 0,
-                            opt.mtlx_runtime ? &materialx_error : nullptr);
+                            opt.mtlx_runtime ? &materialx_error : nullptr,
+                            geomprop_requests, tri_geomprops,
+                            tri_geomprops_valid);
           if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;

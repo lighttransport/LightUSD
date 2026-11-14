@@ -9,7 +9,9 @@
 // identical structure.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -630,6 +632,9 @@ struct MaterialXGraphNodeCPU {
                     {0.0f, 0.0f, 0.0f, 1.0f},
                     {0.0f, 0.0f, 0.0f, 1.0f}};
   int textureId{-1};  // resolved DrawScene texture slot, when resident
+  // 0 = descriptor transfer already matches; 1 = undo an sRGB decode;
+  // 2 = apply an sRGB decode to a linearly sampled texture.
+  int colorSpaceTransferCorrection{0};
   // Fourth graph dependency for operators such as splitlr/splittb. Packed in
   // the texture-id lane, which those non-image operators otherwise never use.
   int auxInput{-1};
@@ -641,8 +646,118 @@ struct MaterialXGraphNodeCPU {
   // 32-bit hash in the otherwise-unused UV-transform lane.
   std::string geomPropName;
   std::string imagePath;
+  // Authored MaterialX image colorspace token. Empty means use the existing
+  // semantic/slot-based texture interpretation.
+  std::string colorSpaceToken;
   std::string name;
 };
+
+// Compact image-node conversion IDs packed into the otherwise unused third
+// fallback lane. The GPU samplers decode the texture transfer function first
+// (via the texture descriptor), then convert these source primaries to the
+// renderer's linear Rec.709 working space.
+inline int MaterialXGraphColorSpaceMode(const std::string& token) {
+  if (token == "lin_ap1_scene" || token == "srgb_ap1_scene" ||
+      token == "g22_ap1_scene" || token == "acescg" || token == "lin_ap1" ||
+      token == "g22_ap1") return 1;
+  if (token == "lin_ap0_scene" || token == "aces2065-1" ||
+      token == "lin_ap0") return 2;
+  if (token == "lin_rec2020_scene" || token == "lin_rec2020") return 3;
+  if (token == "lin_p3d65_scene" || token == "srgb_p3d65_scene" ||
+      token == "lin_displayp3" || token == "srgb_displayp3") return 4;
+  if (token == "g22_adobergb_scene" || token == "g563_adobergb_scene" ||
+      token == "lin_adobergb_scene" || token == "adobergb" ||
+      token == "lin_adobergb") return 5;
+  return 0;
+}
+
+inline int MaterialXGraphColorSpaceTransfer(const std::string& token) {
+  if (token.rfind("srgb_", 0) == 0 || token == "srgb" || token == "sRGB" ||
+      token == "srgb_texture") return 1;
+  if (token == "g22_rec709_scene" || token == "g22_ap1_scene" ||
+      token == "g22_adobergb_scene" || token == "g22_rec709" ||
+      token == "g22_ap1" || token == "g22_adobergb") return 2;
+  if (token == "g18_rec709_scene" || token == "g18_rec709") return 3;
+  if (token == "g24_rec709_scene" || token == "g24_rec709") return 4;
+  if (token == "g563_adobergb_scene" || token == "g563_adobergb") return 5;
+  // cmlib rec709_display: pow(max(in, 0), 2.4); distinct from signed gamma 2.4.
+  if (token == "rec709_display") return 6;
+  return 0;
+}
+
+inline int MaterialXGraphTransferCorrection(const std::string& token,
+                                            bool sampledSrgb) {
+  const int transfer = MaterialXGraphColorSpaceTransfer(token);
+  // Codes 1-5/6-10 as before; transfer 6 (rec709_display) uses 11 (sampled
+  // as sRGB) and 12 (sampled linear) to avoid colliding with 6 = sRGB.
+  if (sampledSrgb) {
+    if (transfer == 1) return 0;
+    if (transfer == 6) return 11;
+    return transfer == 0 ? 1 : transfer;
+  }
+  if (transfer == 0) return 0;
+  if (transfer == 6) return 12;
+  return transfer == 1 ? 6 : transfer + 5;
+}
+
+inline bool MaterialXGraphColorSpaceSupported(const std::string& token) {
+  return MaterialXGraphColorSpaceMode(token) != 0 ||
+         token == "lin_rec709_scene" || token == "lin_rec709" ||
+         token == "lin_srgb" || token == "srgb_rec709_scene" ||
+         token == "srgb_texture" || token == "sRGB" || token == "srgb" ||
+         MaterialXGraphColorSpaceTransfer(token) != 0;
+}
+
+inline void MaterialXGraphToLinearRec709(float rgb[3], int mode) {
+  const float r = rgb[0], g = rgb[1], b = rgb[2];
+  if (mode == 1) { // ACEScg / AP1
+    rgb[0] = 1.70505f*r - 0.62179f*g - 0.08326f*b;
+    rgb[1] = -0.13026f*r + 1.14080f*g - 0.01054f*b;
+    rgb[2] = -0.02400f*r - 0.12897f*g + 1.15297f*b;
+  } else if (mode == 2) { // ACES2065-1 / AP0
+    rgb[0] = 2.52169f*r - 1.13413f*g - 0.38756f*b;
+    rgb[1] = -0.27648f*r + 1.37272f*g - 0.09624f*b;
+    rgb[2] = -0.01538f*r - 0.15298f*g + 1.16836f*b;
+  } else if (mode == 3) { // Rec.2020
+    rgb[0] = 1.66049f*r - 0.58764f*g - 0.07285f*b;
+    rgb[1] = -0.12455f*r + 1.13290f*g - 0.00835f*b;
+    rgb[2] = -0.01815f*r - 0.10058f*g + 1.11873f*b;
+  } else if (mode == 4) { // Display P3, D65
+    rgb[0] = 1.22494f*r - 0.22494f*g;
+    rgb[1] = -0.04206f*r + 1.04206f*g;
+    rgb[2] = -0.01964f*r - 0.07864f*g + 1.09828f*b;
+  } else if (mode == 5) { // Adobe RGB (1998)
+    rgb[0] = 1.39835536f*r - 0.39835569f*g;
+    rgb[1] = g;
+    rgb[2] = -0.04292889f*g + 1.04292905f*b;
+  }
+}
+
+inline void MaterialXGraphCorrectSampleTransfer(float rgb[3], int correction) {
+  for (int i = 0; i < 3; ++i) {
+    if (correction == 0) continue;
+    float x = rgb[i];
+    if ((correction >= 1 && correction <= 5) || correction == 11) {
+      const float a = std::fabs(x);
+      x = std::copysign(a <= 0.0031308f ? 12.92f * a
+                  : 1.055f * std::pow(a, 1.0f / 2.4f) - 0.055f, x);
+      if (correction == 1) { rgb[i] = x; continue; }
+    }
+    const int transfer = correction >= 11 ? 6 : (correction >= 6 ? correction - 5 : correction);
+    const float a = std::fabs(x);
+    if (transfer == 6) {
+      rgb[i] = x > 0.0f ? std::pow(a, 2.4f) : 0.0f;
+    } else if (transfer == 1) {
+      rgb[i] = std::copysign(a <= 0.04045f ? a / 12.92f
+                    : std::pow((a + 0.055f) / 1.055f, 2.4f), x);
+    } else {
+      const float gamma = transfer == 2 ? 2.2f :
+                          transfer == 3 ? 1.8f :
+                          transfer == 4 ? 2.4f : 563.0f / 256.0f;
+      rgb[i] = std::copysign(std::pow(a, gamma), x);
+    }
+  }
+}
 
 struct MaterialXGraphRuntimeCPU {
   std::vector<MaterialXGraphNodeCPU> nodes;

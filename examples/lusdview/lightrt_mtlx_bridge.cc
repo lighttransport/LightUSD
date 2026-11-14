@@ -15,6 +15,7 @@
 #include <unordered_map>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+#include "core/color-transform.hh"
 #include "image-loader.hh"
 #include "tydra/texture-cache.hh"
 
@@ -1111,6 +1112,30 @@ bool EvaluateMaterialXJsonGraphForVolume(const DrawMaterialCPU& mat,
       xml.c_str(), "lusdview_material", baseDir.c_str(), out, err);
 }
 
+void TransformMaterialXFileColor(void*, const char* token, float rgb[3]) {
+  if (!token || !rgb) return;
+  thread_local std::unordered_map<std::string,
+                                  lightusd::color::ColorTransform> transforms;
+  const auto cached = transforms.find(token);
+  if (cached != transforms.end()) {
+    lightusd::color::TransformRGB(cached->second, rgb);
+    return;
+  }
+  lightusd::color::ColorSpaceDesc source, destination;
+  if (!lightusd::color::GetBuiltinColorSpace(token, &source) ||
+      !lightusd::color::GetBuiltinColorSpace("lin_rec709_scene", &destination))
+    return;
+  lightusd::color::ColorTransform transform;
+  if (!lightusd::color::BuildColorTransform(source, destination, &transform))
+    return;
+  if (transforms.size() < 64) {
+    const auto inserted = transforms.emplace(token, transform);
+    lightusd::color::TransformRGB(inserted.first->second, rgb);
+  } else {
+    lightusd::color::TransformRGB(transform, rgb);
+  }
+}
+
 int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
                     std::string* err) {
   if (!doc) return -1;
@@ -1160,6 +1185,7 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   ShadeContext ctx{};
   ctx.doc = doc;
   ctx.tex = tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = u;
   ctx.uv[1] = v;
   ctx.uv_dx[0] = dudx;
@@ -1186,6 +1212,59 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   return true;
 }
 
+int SampleMaterialXTexcoord(void* user, int index, int probeAxis,
+                            float outUv[2]) {
+  if (!user || !outUv || index != 1) return 0;
+  const auto* context = static_cast<const MaterialXSurfaceContext*>(user);
+  if (!context->has_uv1) return 0;
+  outUv[0] = context->uv1[0];
+  outUv[1] = context->uv1[1];
+  const float* delta = probeAxis == 1 ? context->uv1_dx :
+                       probeAxis == 2 ? context->uv1_dy : nullptr;
+  if (delta) {
+    outUv[0] += delta[0];
+    outUv[1] += delta[1];
+  }
+  return 1;
+}
+
+int SampleMaterialXGeomProp(void* user, const char* name, MtlxType type,
+                            MtlxValue* out) {
+  if (!user || !name || !out) return 0;
+  const auto* context = static_cast<const MaterialXSurfaceContext*>(user);
+  if (!context->geomprops) return 0;
+  for (const MaterialXGeomPropValue& property : *context->geomprops) {
+    if (property.name != name) continue;
+    MtlxType propertyType = MV_NONE;
+    size_t componentCount = 0;
+    switch (property.type) {
+      case MaterialXGeomPropType::Float:
+        propertyType = MV_FLOAT; componentCount = 1; break;
+      case MaterialXGeomPropType::Integer:
+        propertyType = MV_INT; componentCount = 1; break;
+      case MaterialXGeomPropType::Boolean:
+        propertyType = MV_BOOL; componentCount = 1; break;
+      case MaterialXGeomPropType::Color3:
+        propertyType = MV_COLOR3; componentCount = 3; break;
+      case MaterialXGeomPropType::Color4:
+        propertyType = MV_COLOR4; componentCount = 4; break;
+      case MaterialXGeomPropType::Vector2:
+        propertyType = MV_VEC2; componentCount = 2; break;
+      case MaterialXGeomPropType::Vector3:
+        propertyType = MV_VEC3; componentCount = 3; break;
+      case MaterialXGeomPropType::Vector4:
+        propertyType = MV_VEC4; componentCount = 4; break;
+    }
+    if (type != propertyType) continue;
+    std::memset(out, 0, sizeof(*out));
+    out->type = propertyType;
+    std::copy_n(property.value, componentCount, out->v);
+    return 1;
+  }
+  return 0;
+}
+
+
 }  // namespace
 
 class MaterialXSurfaceRuntime {
@@ -1206,6 +1285,74 @@ class MaterialXSurfaceRuntime {
   uint64_t id{0};
   std::vector<tydra::MaterialXMipChain> mipChains;
 };
+
+bool MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+    const MaterialXSurfaceRuntime* runtime, int index) {
+  if (!runtime || !runtime->doc || index < 0) return false;
+  const MtlxDoc* doc = runtime->doc;
+  for (int i = 0; i < doc->nnode; ++i) {
+    const MtlxNode& node = doc->nodes[i];
+    if (!node.category || std::strcmp(node.category, "texcoord") != 0) continue;
+    int authoredIndex = 0;
+    for (int j = 0; j < node.ninput; ++j) {
+      const MtlxInput& input = node.inputs[j];
+      if (!input.name || std::strcmp(input.name, "index") != 0) continue;
+      if (input.has_value && input.type == MV_INT)
+        authoredIndex = static_cast<int>(input.value.v[0]);
+      break;
+    }
+    if (authoredIndex == index) return true;
+  }
+  return false;
+}
+
+bool MaterialXSurfaceRuntimeGeomPropRequests(
+    const MaterialXSurfaceRuntime* runtime,
+    std::vector<MaterialXGeomPropValue>* out) {
+  if (!runtime || !runtime->doc || !out) return false;
+  std::vector<MaterialXGeomPropValue> requests;
+  for (int i = 0; i < runtime->doc->nnode; ++i) {
+    const MtlxNode& node = runtime->doc->nodes[i];
+    if (!node.category ||
+        (std::strcmp(node.category, "geompropvalue") != 0 &&
+         std::strcmp(node.category, "geompropvalueuniform") != 0))
+      continue;
+    const char* name = nullptr;
+    for (int j = 0; j < node.ninput; ++j) {
+      const MtlxInput& input = node.inputs[j];
+      if (input.name && std::strcmp(input.name, "geomprop") == 0 &&
+          input.has_value && input.type == MV_STRING) {
+        name = input.value.s;
+        break;
+      }
+    }
+    if (!name || !name[0]) continue;
+    MaterialXGeomPropType type;
+    switch (node.type) {
+      case MV_FLOAT: type = MaterialXGeomPropType::Float; break;
+      case MV_INT: type = MaterialXGeomPropType::Integer; break;
+      case MV_BOOL: type = MaterialXGeomPropType::Boolean; break;
+      case MV_COLOR3: type = MaterialXGeomPropType::Color3; break;
+      case MV_COLOR4: type = MaterialXGeomPropType::Color4; break;
+      case MV_VEC2: type = MaterialXGeomPropType::Vector2; break;
+      case MV_VEC3: type = MaterialXGeomPropType::Vector3; break;
+      case MV_VEC4: type = MaterialXGeomPropType::Vector4; break;
+      default: continue;
+    }
+    const auto duplicate = std::find_if(
+        requests.begin(), requests.end(), [&](const MaterialXGeomPropValue& r) {
+          return r.name == name && r.type == type;
+        });
+    if (duplicate == requests.end()) {
+      MaterialXGeomPropValue request;
+      request.name = name;
+      request.type = type;
+      requests.push_back(std::move(request));
+    }
+  }
+  *out = std::move(requests);
+  return true;
+}
 
 namespace {
 struct MtlxThreadScratch {
@@ -1306,13 +1453,18 @@ bool EvaluateMaterialXSurfaceRuntimeAt(
   ShadeContext ctx{};
   ctx.doc = runtime->doc;
   ctx.tex = runtime->tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = context.uv[0];
   ctx.uv[1] = context.uv[1];
+  ctx.texcoord = SampleMaterialXTexcoord;
+  ctx.texcoord_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.geomprop = SampleMaterialXGeomProp;
+  ctx.geomprop_user = const_cast<MaterialXSurfaceContext*>(&context);
   ctx.uv_dx[0] = context.uv_dx[0];
   ctx.uv_dx[1] = context.uv_dx[1];
   ctx.uv_dy[0] = context.uv_dy[0];
   ctx.uv_dy[1] = context.uv_dy[1];
-  ctx.has_uv_derivatives = context.has_uv_derivatives ? 1 : 0;
+  ctx.has_uv_derivatives = (context.has_uv_derivatives || context.has_uv1) ? 1 : 0;
   ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
   ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
                    context.shading_normal[2]);
@@ -1380,13 +1532,18 @@ bool EvaluateMaterialXNodeRuntimeAt(
   ShadeContext ctx{};
   ctx.doc = runtime->doc;
   ctx.tex = runtime->tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = context.uv[0];
   ctx.uv[1] = context.uv[1];
+  ctx.texcoord = SampleMaterialXTexcoord;
+  ctx.texcoord_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.geomprop = SampleMaterialXGeomProp;
+  ctx.geomprop_user = const_cast<MaterialXSurfaceContext*>(&context);
   ctx.uv_dx[0] = context.uv_dx[0];
   ctx.uv_dx[1] = context.uv_dx[1];
   ctx.uv_dy[0] = context.uv_dy[0];
   ctx.uv_dy[1] = context.uv_dy[1];
-  ctx.has_uv_derivatives = context.has_uv_derivatives ? 1 : 0;
+  ctx.has_uv_derivatives = (context.has_uv_derivatives || context.has_uv1) ? 1 : 0;
   ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
   ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
                    context.shading_normal[2]);
@@ -1528,6 +1685,7 @@ bool EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
   ShadeContext ctx{};
   ctx.doc = doc;
   ctx.tex = tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = 0.5f;
   ctx.uv[1] = 0.5f;
   ctx.P = v3_make(0.0f, 0.0f, 0.0f);
@@ -1638,7 +1796,8 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
   for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
        ++nodeIndex) {
     MaterialXGraphNodeCPU& node = mat->materialXGraph.nodes[nodeIndex];
-    if (node.textureId >= 0 || node.imagePath.empty()) continue;
+    if (node.imagePath.empty()) continue;
+    if (node.textureId < 0) {
     const std::string wanted = normalizePath(node.imagePath);
     const size_t slash = wanted.find_last_of('/');
     const std::string basename = slash == std::string::npos
@@ -1692,6 +1851,19 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
           scene->textures.push_back(std::move(texture));
         }
       }
+    }
+    }
+    // Explicit MaterialX tokens can disagree with the scene-wide semantic
+    // heuristic. Record the per-node transfer correction instead of cloning
+    // the image payload, so one asset can be shared without bypassing texture
+    // memory budgets.
+    if (MaterialXGraphColorSpaceSupported(node.colorSpaceToken) &&
+        node.textureId >= 0 &&
+        static_cast<size_t>(node.textureId) < scene->textures.size()) {
+      const bool sampledSrgb =
+          scene->textures[static_cast<size_t>(node.textureId)].srgb;
+      node.colorSpaceTransferCorrection = MaterialXGraphTransferCorrection(
+          node.colorSpaceToken, sampledSrgb);
     }
     if (node.textureId >= 0 &&
         static_cast<size_t>(node.textureId) < scene->textures.size()) {
@@ -1811,8 +1983,13 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     scene->textures.push_back(std::move(tex));
     for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
          ++nodeIndex) {
-      if (outputs[laneIndex] == static_cast<int>(nodeIndex))
+      if (outputs[laneIndex] == static_cast<int>(nodeIndex)) {
         mat->materialXGraph.nodes[nodeIndex].textureId = *lane.slot;
+        // The compatibility bake already evaluated the authored colorspace
+        // conversion into linear Rec.709 pixels.
+        mat->materialXGraph.nodes[nodeIndex].colorSpaceToken.clear();
+        mat->materialXGraph.nodes[nodeIndex].colorSpaceTransferCorrection = 0;
+      }
     }
     if (std::strcmp(lane.name, "base_color") == 0) {
       mat->baseColor[0] = mat->baseColor[1] = mat->baseColor[2] = 1.0f;

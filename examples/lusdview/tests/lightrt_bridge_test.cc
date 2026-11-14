@@ -65,6 +65,153 @@ std::string MaterialTextureDir() {
 
 int main() {
   {
+    lusdview::DrawMaterialCPU indexedUv;
+    indexedUv.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+      {"name":"secondary","category":"texcoord","type":"vector2",
+       "inputs":[{"name":"index","type":"integer","value":1}]}
+    ],"outputs":[]},"connections":[]})json";
+    std::string err;
+    if (!lusdview::CompileMaterialXGraphRuntime(&indexedUv, &err) ||
+        indexedUv.materialXGraph.nodes.size() != 1 ||
+        indexedUv.materialXGraph.nodes[0].op !=
+            lusdview::MaterialXGraphOpCPU::Texcoord ||
+        indexedUv.materialXGraph.nodes[0].value[2][2] != 1.0f) {
+      std::fprintf(stderr, "indexed texcoord graph lowering failed: %s\n",
+                   err.c_str());
+      return 1;
+    }
+    std::vector<float> rtPack(lusdview::kRtMaterialGraphFloats, 0.0f);
+    std::vector<float> rasterPack(lusdview::kRtMaterialGraphFloats, 0.0f);
+    lusdview::PackMaterialXGraphRuntime(indexedUv, rtPack.data());
+    lusdview::PackRasterMaterialXGraphRuntime(indexedUv, rasterPack.data());
+    const size_t packedIndex = lusdview::kRtMaterialGraphHeaderFloats + 14;
+    if (rtPack[packedIndex] != 1.0f || rasterPack[packedIndex] != 1.0f) {
+      std::fprintf(stderr, "indexed texcoord selection was lost during graph packing\n");
+      return 1;
+    }
+
+    lusdview::DrawMaterialCPU dynamicUv;
+    dynamicUv.materialXNodeGraphJson = R"json({"nodegraph":{"nodes":[
+      {"name":"indexValue","category":"constant","type":"integer",
+       "inputs":[{"name":"value","type":"integer","value":1}]},
+      {"name":"secondary","category":"texcoord","type":"vector2",
+       "inputs":[{"name":"index","type":"integer","nodename":"indexValue"}]}
+    ],"outputs":[]},"connections":[]})json";
+    if (!lusdview::CompileMaterialXGraphRuntime(&dynamicUv, &err)) {
+      std::fprintf(stderr, "connected texcoord index lowering failed: %s\n",
+                   err.c_str());
+      return 1;
+    }
+    const auto secondary = std::find_if(
+        dynamicUv.materialXGraph.nodes.begin(),
+        dynamicUv.materialXGraph.nodes.end(),
+        [](const lusdview::MaterialXGraphNodeCPU& node) {
+          return node.name == "secondary";
+        });
+    if (secondary == dynamicUv.materialXGraph.nodes.end() ||
+        secondary->input[2] < 0) {
+      std::fprintf(stderr, "connected texcoord index dependency was lost\n");
+      return 1;
+    }
+  }
+  {
+    const char* xml = R"mtlx(<materialx version="1.39">
+      <texcoord name="secondary" type="vector2">
+        <input name="index" type="integer" value="1"/>
+      </texcoord>
+      <standard_surface name="surface" type="surfaceshader"/>
+      <surfacematerial name="material" type="material">
+        <input name="surfaceshader" type="surfaceshader" nodename="surface"/>
+      </surfacematerial>
+    </materialx>)mtlx";
+    std::string err;
+    auto runtime = lusdview::CreateMaterialXSurfaceRuntime(
+        xml, "material", nullptr, &err);
+    if (!runtime ||
+        !lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(runtime.get(), 1) ||
+        lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(runtime.get(), 0)) {
+      std::fprintf(stderr, "MaterialX indexed texcoord detection failed: %s\n",
+                   err.c_str());
+      return 1;
+    }
+  }
+  {
+    const char* xml = R"mtlx(<materialx version="1.39">
+      <geompropvalue name="custom_color" type="color3">
+        <input name="geomprop" type="string" value="displayColor"/>
+        <input name="default" type="color3" value="0.1,0.2,0.3"/>
+      </geompropvalue>
+      <geompropvalue name="missing_color" type="color3">
+        <input name="geomprop" type="string" value="missingColor"/>
+        <input name="default" type="color3" value="0.1,0.2,0.3"/>
+      </geompropvalue>
+      <geompropvalue name="wrong_type_color" type="vector3">
+        <input name="geomprop" type="string" value="displayColor"/>
+        <input name="default" type="vector3" value="0.3,0.2,0.1"/>
+      </geompropvalue>
+      <geompropvalue name="custom_id" type="integer">
+        <input name="geomprop" type="string" value="instanceId"/>
+        <input name="default" type="integer" value="7"/>
+      </geompropvalue>
+      <standard_surface name="surface" type="surfaceshader"/>
+      <surfacematerial name="material" type="material">
+        <input name="surfaceshader" type="surfaceshader" nodename="surface"/>
+      </surfacematerial>
+    </materialx>)mtlx";
+    std::string err;
+    auto runtime = lusdview::CreateMaterialXSurfaceRuntime(
+        xml, "material", nullptr, &err);
+    std::vector<lusdview::MaterialXGeomPropValue> requests;
+    if (!runtime ||
+        !lusdview::MaterialXSurfaceRuntimeGeomPropRequests(runtime.get(),
+                                                           &requests) ||
+        requests.size() != 4) {
+      std::fprintf(stderr, "MaterialX geomprop request discovery failed: %s\n",
+                   err.c_str());
+      return 1;
+    }
+    std::vector<lusdview::MaterialXGeomPropValue> properties(2);
+    properties[0].name = "displayColor";
+    properties[0].type = lusdview::MaterialXGeomPropType::Color3;
+    properties[0].value[0] = 0.7f;
+    properties[0].value[1] = 0.4f;
+    properties[0].value[2] = 0.2f;
+    properties[1].name = "instanceId";
+    properties[1].type = lusdview::MaterialXGeomPropType::Integer;
+    properties[1].value[0] = 42.0f;
+    lusdview::MaterialXSurfaceContext context;
+    context.geomprops = &properties;
+    lusdview::MaterialXNodeValue sampled, fallback, mismatched, integer_value;
+    if (!runtime ||
+        !lusdview::EvaluateMaterialXNodeRuntimeAt(
+            runtime.get(), context, "custom_color", &sampled, &err) ||
+        !lusdview::EvaluateMaterialXNodeRuntimeAt(
+            runtime.get(), context, "missing_color", &fallback, &err) ||
+        !lusdview::EvaluateMaterialXNodeRuntimeAt(
+            runtime.get(), context, "wrong_type_color", &mismatched, &err) ||
+        !lusdview::EvaluateMaterialXNodeRuntimeAt(
+            runtime.get(), context, "custom_id", &integer_value, &err) ||
+        std::fabs(sampled.rgb[0] - 0.7f) > 1.0e-6f ||
+        std::fabs(sampled.rgb[1] - 0.4f) > 1.0e-6f ||
+        std::fabs(sampled.rgb[2] - 0.2f) > 1.0e-6f ||
+        std::fabs(fallback.rgb[0] - 0.1f) > 1.0e-6f ||
+        std::fabs(fallback.rgb[1] - 0.2f) > 1.0e-6f ||
+        std::fabs(fallback.rgb[2] - 0.3f) > 1.0e-6f ||
+        std::fabs(mismatched.rgb[0] - 0.3f) > 1.0e-6f ||
+        std::fabs(mismatched.rgb[1] - 0.2f) > 1.0e-6f ||
+        std::fabs(mismatched.rgb[2] - 0.1f) > 1.0e-6f ||
+        std::fabs(integer_value.rgb[0] - 42.0f) > 1.0e-6f) {
+      std::fprintf(stderr, "geomprop results: %.3f %.3f %.3f / %.3f %.3f %.3f / %.3f %.3f %.3f\n",
+                   sampled.rgb[0], sampled.rgb[1], sampled.rgb[2],
+                   fallback.rgb[0], fallback.rgb[1], fallback.rgb[2],
+                   mismatched.rgb[0], mismatched.rgb[1], mismatched.rgb[2]);
+      std::fprintf(stderr,
+                   "MaterialX custom geomprop callback or default failed: %s\n",
+                   err.c_str());
+      return 1;
+    }
+  }
+  {
     const char* xml = R"mtlx(<materialx version="1.39">
       <oren_nayar_diffuse_bsdf name="a" type="BSDF">
         <input name="color" type="color3" value="0.2, 0.4, 0.6"/>
@@ -988,7 +1135,8 @@ int main() {
           "category": "image",
           "type": "color3",
           "inputs": [
-            {"name": "file", "type": "filename", "value": "missing_base.png"},
+            {"name": "file", "type": "filename", "value": "missing_base.png",
+             "colorspace": "srgb_rec709_scene"},
             {"name": "default", "type": "color3", "value": [0.9, 0.1, 0.1]}
           ]
         },
@@ -1045,7 +1193,8 @@ int main() {
   lusdview::PackMaterialXGraphRuntime(imageGraphMat, packedGraph.data());
   if (packedGraph[0] != 2.0f || packedGraph[1] < 0.0f ||
       packedGraph[2] < 0.0f ||
-      packedGraph[lusdview::kRtMaterialGraphHeaderFloats + 15] != -1.0f) {
+      packedGraph[lusdview::kRtMaterialGraphHeaderFloats + 15] != -1.0f ||
+      packedGraph[lusdview::kRtMaterialGraphHeaderFloats + 12] != 0.0f) {
     std::fprintf(stderr, "MaterialX graph runtime packing failed\n");
     return 1;
   }
@@ -1928,7 +2077,8 @@ int main() {
                   {"name":"offset", "value":[0.1,0.2]},
                   {"name":"rotation", "value":30.0}]},
       {"name":"img", "category":"image", "type":"color3",
-       "inputs":[{"name":"file", "type":"filename", "value":"x.png"},
+       "inputs":[{"name":"file", "type":"filename", "value":"x.png",
+                    "colorspace":"lin_ap1_scene"},
                   {"name":"texcoord", "nodename":"place"},
                   {"name":"default", "value":[0.2,0.3,0.4]}]}
     ], "outputs":[{"name":"base", "nodename":"img"}]},
@@ -1941,6 +2091,8 @@ int main() {
       placedImageMat.materialXGraph.nodes[1].op !=
           lusdview::MaterialXGraphOpCPU::Transform2D ||
       placedImageMat.materialXGraph.nodes[0].value[2][2] != 1.0f ||
+      placedImageMat.materialXGraph.nodes[2].colorSpaceToken !=
+          "lin_ap1_scene" ||
       placedImageMat.materialXGraph.nodes[2].value[2][3] != 0.0f) {
     std::fprintf(stderr, "MaterialX placed image graph failed: %s\n",
                  placedError.c_str());
@@ -1955,9 +2107,62 @@ int main() {
   if (placedPack[placedNode] !=
           static_cast<float>(lusdview::MaterialXGraphOpCPU::Image) ||
       placedPack[placedNode + 15] != 0.0f ||
+      placedPack[placedNode + 12] != 1.0f ||
       !Near(placedPack[placedTransform + 15], 30.0f)) {
     std::fprintf(stderr, "MaterialX placed image graph packing failed\n");
     return 1;
+  }
+  std::vector<float> placedRasterPack(lusdview::kRtMaterialGraphFloats, 0.0f);
+  lusdview::PackRasterMaterialXGraphRuntime(placedImageMat,
+                                             placedRasterPack.data());
+  if (placedRasterPack[placedNode + 12] != 1.0f) {
+    std::fprintf(stderr, "MaterialX raster colorspace packing failed\n");
+    return 1;
+  }
+  float ap1Sample[3] = {0.25f, 0.5f, 0.75f};
+  lusdview::MaterialXGraphToLinearRec709(ap1Sample, 1);
+  if (!Near(ap1Sample[0], 0.0529225f, 1.0e-5f) ||
+      !Near(ap1Sample[1], 0.52993f, 1.0e-5f) ||
+      !Near(ap1Sample[2], 0.7942425f, 1.0e-5f)) {
+    std::fprintf(stderr, "MaterialX AP1 to Rec.709 conversion failed\n");
+    return 1;
+  }
+  float adobeSample[3] = {0.25f, 0.5f, 0.75f};
+  lusdview::MaterialXGraphToLinearRec709(adobeSample, 5);
+  if (!Near(adobeSample[0], 0.150410995f, 1.0e-6f) ||
+      !Near(adobeSample[1], 0.5f, 1.0e-6f) ||
+      !Near(adobeSample[2], 0.76073234f, 1.0e-6f)) {
+    std::fprintf(stderr, "MaterialX Adobe RGB to Rec.709 conversion failed\n");
+    return 1;
+  }
+  float gammaSample[3] = {0.5f, 0.5f, 0.5f};
+  lusdview::MaterialXGraphCorrectSampleTransfer(gammaSample, 7);
+  if (!Near(gammaSample[0], std::pow(0.5f, 2.2f), 1.0e-6f) ||
+      lusdview::MaterialXGraphColorSpaceMode("g22_adobergb_scene") != 5 ||
+      lusdview::MaterialXGraphTransferCorrection("g22_rec709_scene", true) !=
+          2) {
+    std::fprintf(stderr, "MaterialX built-in gamma conversion failed\n");
+    return 1;
+  }
+
+  {
+    // cmlib rec709_display: clamp negatives, distinct from signed gamma 2.4.
+    float disp[3] = {-0.5f, 0.5f, 1.0f};
+    const int linCode =
+        lusdview::MaterialXGraphTransferCorrection("rec709_display", false);
+    const int srgbCode =
+        lusdview::MaterialXGraphTransferCorrection("rec709_display", true);
+    lusdview::MaterialXGraphCorrectSampleTransfer(disp, linCode);
+    float viaSrgb[3] = {1.0f, 1.0f, 1.0f};  // sampled-as-sRGB: 1 -> 1 -> 1
+    lusdview::MaterialXGraphCorrectSampleTransfer(viaSrgb, srgbCode);
+    if (linCode != 12 || srgbCode != 11 ||
+        lusdview::MaterialXGraphColorSpaceTransfer("rec709_display") != 6 ||
+        lusdview::MaterialXGraphColorSpaceTransfer("g24_rec709") != 4 ||
+        disp[0] != 0.0f || !Near(disp[1], std::pow(0.5f, 2.4f), 1.0e-6f) ||
+        !Near(disp[2], 1.0f, 1.0e-6f) || !Near(viaSrgb[0], 1.0f, 1.0e-6f)) {
+      std::fprintf(stderr, "MaterialX rec709_display conversion failed\n");
+      return 1;
+    }
   }
 
   lusdview::DrawMaterialCPU vector4MathMat;
@@ -2050,6 +2255,7 @@ int main() {
 
   lusdview::DrawScene graphBakeScene;
   lusdview::DrawMaterialCPU graphBakeMat = imageGraphMat;
+  graphBakeMat.materialXGraph.nodes[0].textureId = -1;
   graphBakeMat.absPath =
       (std::filesystem::path(materialTextureDir) / "material.usda").string();
   const std::string missingName = "missing_base.png";
@@ -2058,6 +2264,13 @@ int main() {
     graphBakeMat.materialXNodeGraphJson.replace(
         missingPos, missingName.size(), "checkerboard.png");
   }
+  std::string graphBakeCompileError;
+  if (!lusdview::CompileMaterialXGraphRuntime(&graphBakeMat,
+                                               &graphBakeCompileError)) {
+    std::fprintf(stderr, "MaterialX graph bake recompilation failed: %s\n",
+                 graphBakeCompileError.c_str());
+    return 1;
+  }
   lusdview::BakeMaterialXGraphTextures(&graphBakeMat, &graphBakeScene);
   const bool hasBakedGraphTexture = std::any_of(
       graphBakeMat.materialXGraph.nodes.begin(),
@@ -2065,14 +2278,59 @@ int main() {
       [](const lusdview::MaterialXGraphNodeCPU& node) {
         return node.textureId >= 0;
       });
-  if (graphBakeMat.baseColorTex < 0 || graphBakeScene.textures.size() != 1 ||
-      graphBakeScene.textures[0].image.width != 16 ||
-      graphBakeScene.textures[0].image.height != 16 ||
+  if (graphBakeMat.baseColorTex < 0 || graphBakeScene.textures.size() != 2 ||
+      static_cast<size_t>(graphBakeMat.baseColorTex) >=
+          graphBakeScene.textures.size() ||
+      graphBakeMat.materialXGraph.nodes[0].colorSpaceTransferCorrection != 0 ||
+      !graphBakeMat.materialXGraph.nodes[0].colorSpaceToken.empty() ||
+      graphBakeScene.textures[static_cast<size_t>(graphBakeMat.baseColorTex)]
+              .image.width != 16 ||
+      graphBakeScene.textures[static_cast<size_t>(graphBakeMat.baseColorTex)]
+              .image.height != 16 ||
       !hasBakedGraphTexture) {
     std::fprintf(stderr,
-                 "MaterialX graph texture bake did not produce a map (base=%d textures=%zu nodeTex=%d)\n",
+                 "MaterialX graph texture bake mismatch (base=%d textures=%zu nodeTex=%d transferFix=%d token=%s texId=%d srgb=%d)\n",
                  graphBakeMat.baseColorTex, graphBakeScene.textures.size(),
-                 hasBakedGraphTexture ? 1 : -1);
+                 hasBakedGraphTexture ? 1 : -1,
+                 graphBakeMat.materialXGraph.nodes[0].colorSpaceTransferCorrection,
+                 graphBakeMat.materialXGraph.nodes[0].colorSpaceToken.c_str(),
+                 graphBakeMat.materialXGraph.nodes[0].textureId,
+                 graphBakeScene.textures.empty() ? -1 :
+                     (graphBakeScene.textures[0].srgb ? 1 : 0));
+    return 1;
+  }
+
+  lusdview::DrawMaterialCPU directColorGraphMat = imageGraphMat;
+  directColorGraphMat.materialXGraph.nodes[0].textureId = -1;
+  directColorGraphMat.baseColorTex = 0;
+  directColorGraphMat.absPath = graphBakeMat.absPath;
+  const size_t directMissing =
+      directColorGraphMat.materialXNodeGraphJson.find(missingName);
+  if (directMissing != std::string::npos)
+    directColorGraphMat.materialXNodeGraphJson.replace(
+        directMissing, missingName.size(), "checkerboard.png");
+  std::string directColorCompileError;
+  if (!lusdview::CompileMaterialXGraphRuntime(&directColorGraphMat,
+                                               &directColorCompileError)) {
+    std::fprintf(stderr, "MaterialX direct colorspace graph failed: %s\n",
+                 directColorCompileError.c_str());
+    return 1;
+  }
+  lusdview::DrawScene directColorScene;
+  lusdview::DrawTextureCPU directColorTexture;
+  directColorTexture.assetIdentifier =
+      (std::filesystem::path(materialTextureDir) / "checkerboard.png").string();
+  directColorTexture.image.width = directColorTexture.image.height = 1;
+  directColorTexture.image.channels = 4;
+  directColorTexture.image.data = {128, 128, 128, 255};
+  directColorTexture.srgb = false;
+  directColorScene.textures.push_back(std::move(directColorTexture));
+  lusdview::BakeMaterialXGraphTextures(&directColorGraphMat, &directColorScene);
+  if (directColorGraphMat.materialXGraph.nodes[0].textureId != 0 ||
+      directColorGraphMat.materialXGraph.nodes[0]
+              .colorSpaceTransferCorrection != 6) {
+    std::fprintf(stderr,
+                 "MaterialX image colorspace transfer override was not retained\n");
     return 1;
   }
 

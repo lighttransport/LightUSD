@@ -457,6 +457,14 @@ static MtlxValue eval_artistic_ior(ShadeContext *ctx,const MtlxNode *n,
 static float in_float(ShadeContext *ctx, const MtlxNode *n, const char *name,
                       float fb);
 
+static void transform_file_color(ShadeContext *ctx, const MtlxInput *file,
+                                 MtlxType output_type, float rgba[4]) {
+    if (!ctx || !file || !file->colorspace || file->colorspace_srgb ||
+        !ctx->color_transform ||
+        (output_type != MV_COLOR3 && output_type != MV_COLOR4)) return;
+    ctx->color_transform(ctx->color_transform_user, file->colorspace, rgba);
+}
+
 static const MtlxInput *find_input(const MtlxNode *n, const char *name) {
     for (int i = 0; i < n->ninput; i++)
         if (!strcmp(n->inputs[i].name, name)) return &n->inputs[i];
@@ -556,6 +564,7 @@ static int coordinate_graph_gradients(ShadeContext *ctx, const MtlxInput *input,
         ShadeContext sample = *ctx;
         sample.memo = memo;
         sample.memo_done = done;
+        sample.texcoord_probe_axis = axis;
         if (axis && ctx->has_uv_derivatives) {
             const float *delta = axis == 1 ? ctx->uv_dx : ctx->uv_dy;
             sample.uv[0] += delta[0]; sample.uv[1] += delta[1];
@@ -651,10 +660,12 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
                 const int direct_uv = !strcmp(src->category, "texcoord") &&
                     src->type == MV_VEC2 && !tc->channels &&
                     (!tc->src_output || !strcmp(tc->src_output, "out"));
+                const MtlxValue uv_index = in_or(ctx, src, "index", mv_zero(MV_INT));
+                const int indexed_uv = direct_uv && (int)uv_index.v[0] != 0;
                 const int constant = !strcmp(src->category, "constant") &&
                     (!value || (value->src_node < 0 && !value->has_connection));
                 if (constant) dudx = dvdx = dudy = dvdy = 0.0f;
-                else if (!direct_uv && !dynamic_tiling)
+                else if ((!direct_uv || indexed_uv) && !dynamic_tiling)
                     (void)coordinate_graph_gradients(ctx, tc, NULL, &dudx, &dvdx, &dudy, &dvdy);
             }
         }
@@ -718,6 +729,7 @@ static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
         }
     }
     if (!sampled) { MtlxValue d = in_or(ctx, n, "default", mv_zero(n->type)); v3 dc = mv_as_v3(&d); s[0]=dc.x; s[1]=dc.y; s[2]=dc.z; s[3]=1; }
+    else transform_file_color(ctx, file, n->type, s);
     switch (n->type) {
         case MV_FLOAT: return mv_float(s[0]);
         case MV_VEC2: return mv_vec2(s[0], s[1]);
@@ -771,6 +783,7 @@ static MtlxValue eval_latlongimage(ShadeContext *ctx, const MtlxNode *n) {
         MtlxValue d = in_or(ctx, n, "default", mv_zero(MV_COLOR3));
         s[0] = d.v[0]; s[1] = d.v[1]; s[2] = d.v[2]; s[3] = 1.0f;
     }
+    if (id >= 0) transform_file_color(ctx, file, n->type, s);
     return mv_color3(v3_make(s[0], s[1], s[2]));
 }
 
@@ -804,6 +817,7 @@ static MtlxValue eval_triplanarprojection(ShadeContext *ctx,
             if(ctx->has_position_derivatives)
                 texcache_sample_address_grad_filter(ctx->tex,id,tc[axis][0],tc[axis][1],dtx[axis][0],dtx[axis][1],dty[axis][0],dty[axis][1],"periodic","periodic",filtertype,s);
             else texcache_sample_address_filter(ctx->tex,id,tc[axis][0],tc[axis][1],"periodic","periodic",filtertype,s);
+            transform_file_color(ctx,file,n->type,s);
         }else{MtlxValue d=in_or(ctx,n,"default",mv_zero(n->type));s[0]=d.v[0];s[1]=d.v[1];s[2]=d.v[2];s[3]=n->type==MV_COLOR4||n->type==MV_VEC4?d.v[3]:1;}
         sample[axis]=mv_zero(n->type);int nc=ncomp_of(&sample[axis]);if(nc<1)nc=1;for(int c=0;c<nc;c++)sample[axis].v[c]=s[c];
     }
@@ -906,6 +920,7 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
             texcache_sample_address_filter(ctx->tex, id, cx[i], cy[i],
                                            "periodic", "periodic", filtertype, c[i]);
         }
+        transform_file_color(ctx, file, n->type, c[i]);
     }
     /* blend weights: luminance(mix to 1 by contrast) * barycentric^7, normalized */
     float bw[3], sum = 1e-8f;
@@ -1096,7 +1111,8 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
             float uv[2] = {ctx->uv[0], ctx->uv[1]};
             if (ctx->texcoord) {
                 float sampled[2] = {uv[0], uv[1]};
-                if (ctx->texcoord(ctx->texcoord_user, (int)index.v[0], sampled)) {
+                if (ctx->texcoord(ctx->texcoord_user, (int)index.v[0],
+                                  ctx->texcoord_probe_axis, sampled)) {
                     uv[0] = sampled[0]; uv[1] = sampled[1];
                 }
             }
@@ -2230,6 +2246,95 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
         out->emission_color = in_color(ctx, n, "emission_color", out->emission_color);
         out->opacity = in_float(ctx, n, "opacity", 1.0f);
         apply_normal_input(ctx, n, "normal", out);
+        const float anisotropy = clampf(
+            in_float(ctx, n, "specular_anisotropy", 0.0f), 0.0f, 0.98f);
+        if (anisotropy > 0.0f) {
+            const float roughness = clampf(out->specular_roughness, 0.01f, 1.0f);
+            const float alpha = roughness * roughness;
+            const float aspect = sqrtf(1.0f - anisotropy);
+            const float alpha_x = fminf(alpha / aspect, 1.0f);
+            const float alpha_y = alpha * aspect;
+            v3 normal = v3_normalize(out->normal);
+            v3 tangent = v3_normalize(in_color(ctx, n, "tangent", ctx->dpdu));
+            const float rotation =
+                in_float(ctx, n, "specular_rotation", 0.0f) * 2.0f * (float)MTLX_PI;
+            if (rotation != 0.0f) {
+                const float c = cosf(rotation), s = sinf(rotation);
+                tangent = v3_add(
+                    v3_add(v3_scale(tangent, c),
+                           v3_scale(v3_cross(normal, tangent), s)),
+                    v3_scale(normal, v3_dot(normal, tangent) * (1.0f - c)));
+            }
+            if (out->specular_lobe_count >= MTLX_MAX_SPECULAR_LOBES) {
+                out->specular_lobe_overflow = 1;
+                return 1;
+            }
+            MtlxSpecularLobe *lobe =
+                &out->specular_lobes[out->specular_lobe_count++];
+            memset(lobe, 0, sizeof(*lobe));
+            lobe->frame.ior = v3_splat(out->specular_ior);
+            lobe->frame.weight = out->specular_weight * (1.0f - out->metalness);
+            lobe->frame.weight_color = v3_splat(1.0f);
+            lobe->frame.roughness = alpha_x;
+            lobe->frame.roughness_y = alpha_y;
+            lobe->frame.normal = normal;
+            lobe->frame.tangent = tangent;
+            lobe->frame.thinfilm_thickness = out->thin_film_thickness;
+            lobe->frame.thinfilm_ior = out->thin_film_ior;
+            lobe->model = MTLX_SPECULAR_DIELECTRIC;
+            lobe->tint = out->specular_color;
+
+            if (out->metalness > 0.0f) {
+                if (out->diffuse_lobe_count >= MTLX_MAX_DIFFUSE_LOBES ||
+                    out->conductor_lobe_count >= MTLX_MAX_CONDUCTOR_LOBES) {
+                    out->diffuse_lobe_overflow =
+                        out->diffuse_lobe_count >= MTLX_MAX_DIFFUSE_LOBES;
+                    out->conductor_lobe_overflow =
+                        out->conductor_lobe_count >= MTLX_MAX_CONDUCTOR_LOBES;
+                    return 1;
+                }
+                MtlxDiffuseLobe *diffuse =
+                    &out->diffuse_lobes[out->diffuse_lobe_count++];
+                diffuse->color = out->base_color;
+                diffuse->weight = out->base_weight * (1.0f - out->metalness);
+                diffuse->weight_color = v3_splat(1.0f);
+                diffuse->roughness = out->diffuse_roughness;
+                diffuse->model = out->diffuse_model;
+
+                const v3 reflectivity =
+                    v3_scale(out->base_color, out->base_weight);
+                const v3 edge_color =
+                    v3_scale(out->specular_color, out->specular_weight);
+                const float rv[3] = {reflectivity.x, reflectivity.y, reflectivity.z};
+                const float ev[3] = {edge_color.x, edge_color.y, edge_color.z};
+                float eta[3], extinction[3];
+                for (int lane = 0; lane < 3; ++lane) {
+                    const float q = fminf(fmaxf(rv[lane], 0.0f), 0.99f);
+                    const float root = sqrtf(q);
+                    const float nmin = (1.0f - q) / (1.0f + q);
+                    const float nmax = (1.0f + root) / (1.0f - root);
+                    eta[lane] = nmax + (nmin - nmax) * ev[lane];
+                    const float k2 = fmaxf(
+                        ((eta[lane] + 1.0f) * (eta[lane] + 1.0f) * q -
+                         (eta[lane] - 1.0f) * (eta[lane] - 1.0f)) /
+                            (1.0f - q),
+                        0.0f);
+                    extinction[lane] = sqrtf(k2);
+                }
+                MtlxConductorLobe *metal =
+                    &out->conductor_lobes[out->conductor_lobe_count++];
+                metal->ior = v3_make(eta[0], eta[1], eta[2]);
+                metal->extinction = v3_make(extinction[0], extinction[1], extinction[2]);
+                metal->weight = out->metalness;
+                metal->weight_color = v3_splat(1.0f);
+                metal->roughness = alpha_x;
+                metal->roughness_y = alpha_y;
+                metal->normal = normal;
+                metal->tangent = tangent;
+                metal->thinfilm_thickness = out->thin_film_thickness;
+                metal->thinfilm_ior = out->thin_film_ior;
+            }
+        }
     }
 
     out->specular_roughness = clampf(out->specular_roughness, 0.01f, 1.0f);

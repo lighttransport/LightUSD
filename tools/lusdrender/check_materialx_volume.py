@@ -39,6 +39,7 @@ def main():
   <look name="Look"><materialassign name="binding" geom="/Volume" material="Mat"/></look>
 </materialx>''', encoding="utf-8")
         original = graph.read_text(encoding="utf-8")
+        render_stats = {}
 
         def render(threads, name="volume", background="0,0,0", extra=(),
                    source=scene, camera="/main_cam"):
@@ -51,6 +52,8 @@ def main():
                                  capture_output=True, text=True, timeout=120)
             if run.returncode:
                 raise RuntimeError(f"MaterialX volume render failed: {run.stderr}")
+            if "-stats" in extra:
+                render_stats[name] = run.stderr
             _, _, pixels = read_png_rgba(output)
             return pixels
 
@@ -178,6 +181,25 @@ def RectLight "Panel" {{
             shape = render(1, kind, source=shape_scene, camera="/TestCam", extra=("-noShadows",))
             if sum(shape[0::4]) <= 20:
                 raise RuntimeError(f"{kind} did not illuminate the volume")
+        enclosing_sphere_scene = tmp / "enclosing-sphere.usda"
+        no_sphere_scene = tmp / "no-sphere.usda"
+        scene_without_direct_light = scattering_scene.read_text(encoding="utf-8").split(
+            'def DistantLight "TestLight"')[0]
+        no_sphere_scene.write_text(scene_without_direct_light, encoding="utf-8")
+        enclosing_sphere_scene.write_text(scene_without_direct_light + '''
+def SphereLight "Enclosing" {
+  color3f inputs:color = (1, 0, 0)
+  float inputs:intensity = 100
+  float inputs:radius = 500
+}
+''', encoding="utf-8")
+        graph.write_text(scattering_graph(0.6), encoding="utf-8")
+        no_sphere = render(1, "no-sphere", source=no_sphere_scene, camera="/TestCam",
+                           extra=("-noShadows",))
+        enclosing_sphere = render(1, "enclosing-sphere", source=enclosing_sphere_scene,
+                                  camera="/TestCam", extra=("-noShadows",))
+        if enclosing_sphere != no_sphere:
+            raise RuntimeError("outward-only SphereLight illuminated points inside its surface")
         wide_area_scene = tmp / "area-wide.usda"
         wide_area_scene.write_text(area_scene(100).replace("inputs:intensity = 30000",
                                                          "inputs:intensity = 2"), encoding="utf-8")
@@ -227,6 +249,52 @@ def Mesh "Panel" (prepend apiSchemas = ["MeshLightAPI"]) {
             raise RuntimeError("mesh light did not produce full and partial volume shadows")
         if mesh_lit != render(2, "mesh-lit-threaded", source=mesh_scene, camera="/TestCam"):
             raise RuntimeError("mesh-light volume render differs between worker counts")
+        def instanced_mesh_scene(instance_count):
+            positions = ", ".join(f"({12 * i}, 0, -120)" for i in range(instance_count))
+            return scattering_scene.read_text(encoding="utf-8").split(
+                'def DistantLight "TestLight"')[0] + f'''
+def PointInstancer "PanelInstances" {{
+ rel prototypes = [</PanelInstances/Panel>]
+ int[] protoIndices = [{", ".join("0" for _ in range(instance_count))}]
+ point3f[] positions = [{positions}]
+ def Mesh "Panel" (prepend apiSchemas = ["MeshLightAPI"]) {{
+  color3f inputs:color = (1, 0, 0)
+  float inputs:intensity = 2
+  point3f[] points = [(-50,-50,0), (50,-50,0), (50,50,0), (-50,50,0)]
+  int[] faceVertexCounts = [3,3]
+  int[] faceVertexIndices = [0,1,2,0,2,3]
+  uniform token subdivisionScheme = "none"
+  uniform bool doubleSided = true
+ }}
+}}
+'''
+        one_instance_scene = tmp / "area-mesh-one-instance.usda"
+        two_instance_scene = tmp / "area-mesh-two-instances.usda"
+        no_instance_scene = tmp / "area-mesh-no-instances.usda"
+        one_instance_scene.write_text(instanced_mesh_scene(1), encoding="utf-8")
+        two_instance_scene.write_text(instanced_mesh_scene(2), encoding="utf-8")
+        no_instance_scene.write_text(scattering_scene.read_text(encoding="utf-8").split(
+            'def DistantLight "TestLight"')[0], encoding="utf-8")
+        graph.write_text(scattering_graph(0), encoding="utf-8")
+        no_instances = render(1, "mesh-no-instances", source=no_instance_scene,
+                              camera="/TestCam", extra=("-noShadows",))
+        one_instance = render(1, "mesh-one-instance", source=one_instance_scene,
+                              camera="/TestCam", extra=("-noShadows", "-stats"))
+        two_instances = render(1, "mesh-two-instances", source=two_instance_scene,
+                               camera="/TestCam", extra=("-noShadows", "-stats"))
+        baseline_flux = sum(linear(x) for x in no_instances[0::4])
+        one_flux = sum(linear(x) for x in one_instance[0::4]) - baseline_flux
+        two_flux = sum(linear(x) for x in two_instances[0::4]) - baseline_flux
+        if one_flux < 0.01 or not 1.7 < two_flux / one_flux < 2.3:
+            raise RuntimeError(f"instanced mesh-light volume flux did not scale per placement: "
+                               f"{one_flux}, {two_flux}; one-instance stats:\n"
+                               f"{render_stats.get('mesh-one-instance', '')}\n"
+                               f"two-instance stats:\n"
+                               f"{render_stats.get('mesh-two-instances', '')}")
+        if two_instances != render(2, "mesh-two-instances-threaded",
+                                   source=two_instance_scene, camera="/TestCam",
+                                   extra=("-noShadows",)):
+            raise RuntimeError("instanced mesh-light volume render differs between worker counts")
         dome_scene = tmp / "scattering-dome.usda"
         dome_scene.write_text(scattering_scene.read_text(encoding="utf-8").split('def DistantLight "TestLight"')[0] + '''
 def DomeLight "Environment" {
@@ -318,6 +386,23 @@ def Volume "LevelSetBlocker" {{
                 raise RuntimeError("level-set surface does not shadow volume lighting")
             if any(abs(a - b) > 1 for a, b in zip(level_unshadowed, no_shadow_forward)):
                 raise RuntimeError("-noShadows did not disable level-set shadows")
+            enclosing_level_set_scene = tmp / "enclosing-sphere-level-set.usda"
+            enclosing_level_set_scene.write_text(
+                level_set_scene.read_text(encoding="utf-8") + '''
+def SphereLight "Enclosing" {
+  color3f inputs:color = (1, 0, 0)
+  float inputs:intensity = 100
+  float inputs:radius = 500
+}
+''', encoding="utf-8")
+            level_without_sphere = render(1, "level-set-no-enclosing-sphere",
+                                          source=level_set_scene, camera="/TestCam",
+                                          extra=("-noShadows", "-volumeLevelSet", "surface"))
+            level_inside_sphere = render(1, "level-set-inside-enclosing-sphere",
+                                         source=enclosing_level_set_scene, camera="/TestCam",
+                                         extra=("-noShadows", "-volumeLevelSet", "surface"))
+            if level_inside_sphere != level_without_sphere:
+                raise RuntimeError("enclosing SphereLight illuminated level-set surface points")
         else:
             print("SKIP: vdb_tool unavailable for level-set light shadow check")
         shadow_scene = tmp / "scattering-shadow.usda"

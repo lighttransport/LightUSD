@@ -25,6 +25,16 @@ static MtlxType parse_type(const char *t) {
     return MV_NONE;
 }
 
+/* The vendored texture cache can decode the Rec.709 sRGB transfer curve, but
+ * does not perform gamut conversion. Accept only aliases with those same
+ * Rec.709 primaries here; other named spaces need the full color-transform
+ * path and must not be mistaken for this compatibility decode. */
+static int is_srgb_rec709_texture_space(const char *cs) {
+    return cs && (!strcmp(cs, "srgb_texture") || !strcmp(cs, "sRGB") ||
+                  !strcmp(cs, "srgb") ||
+                  !strcmp(cs, "srgb_rec709_scene"));
+}
+
 static int type_ncomp(MtlxType t) {
     switch (t) {
         case MV_FLOAT: case MV_INT: case MV_BOOL: return 1;
@@ -117,7 +127,8 @@ static void node_add_input(MtlxNode *n, const XmlNode *x, const char *fileprefix
         in->value.s = full;
     }
     const char *cs = xml_attr(x, "colorspace");
-    if (cs && !strcmp(cs, "srgb_texture")) in->colorspace_srgb = 1;
+    in->colorspace_srgb = is_srgb_rec709_texture_space(cs);
+    if (cs && cs[0]) in->colorspace = strdup(cs);
     const char *channels = xml_attr(x, "channels");
     if (channels && channels[0]) in->channels = strdup(channels);
     /* connection attrs stashed temporarily as strings in src_output/value.s;
@@ -604,6 +615,7 @@ static void mtlx_free_contents(MtlxDoc *d) {
             free(n->inputs[j].value.s);
             free(n->inputs[j].src_output);
             free(n->inputs[j].channels);
+            free(n->inputs[j].colorspace);
         }
         free(n->inputs);
         free(n->category);

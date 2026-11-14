@@ -7,6 +7,7 @@
 #include "cpu/ptex-sample.hh"  // lusdview::CpuPtexSampler (lazy Ptex source)
 #include "core/host-services.hh"
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -995,6 +996,13 @@ struct PurposeFilter {
   size_t count{0};
 };
 
+struct MtlxGeomPropRequest {
+  std::string name;
+  uint8_t type{0};  // ordinal of lusdview::MaterialXGeomPropType
+  uint8_t components{1};
+  bool integer{false};
+};
+
 struct Blas {
   FloatVec vertices;  // packed local-space triangle positions (soup; empty when indexed)
   // Indexed geometry (Phase 2b): when `indices` is non-empty the BLAS streamed
@@ -1007,6 +1015,11 @@ struct Blas {
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   std::vector<lightusd::tydra::LightRtOpenPBRParams> openpbr_table;
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
+  FloatVec tri_uvs1;  // second UV set, when a MaterialX graph requests it
+  // Requested MaterialX geomprop values, packed as 3 corners x 4 lanes per
+  // property per triangle. A parallel bit marks attributes absent on a mesh.
+  FloatVec tri_geomprops;
+  ByteVec tri_geomprops_valid;
   ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
   // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
   // for cache-coherent hit reads -- adjacent leaf triangles -> adjacent entries.
@@ -1036,6 +1049,9 @@ struct Blas {
       mat_table = std::move(o.mat_table);
       openpbr_table = std::move(o.openpbr_table);
       tri_uvs = std::move(o.tri_uvs);
+      tri_uvs1 = std::move(o.tri_uvs1);
+      tri_geomprops = std::move(o.tri_geomprops);
+      tri_geomprops_valid = std::move(o.tri_geomprops_valid);
       tri_colors = std::move(o.tri_colors);
       tri_colors_slot = std::move(o.tri_colors_slot);
       tri_normals = std::move(o.tri_normals);

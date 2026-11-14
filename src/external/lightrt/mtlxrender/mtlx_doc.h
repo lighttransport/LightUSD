@@ -30,7 +30,8 @@ typedef struct {
     int      has_connection; /* an authored connection, including unresolved ones */
     char    *src_output;  /* sub-output name on a multi-output node, or NULL */
     char    *channels;    /* MaterialX input channels selector, e.g. "g" */
-    int      colorspace_srgb; /* 1 if colorspace="srgb_texture" */
+    int      colorspace_srgb; /* supported Rec.709 sRGB texture aliases */
+    char    *colorspace;  /* authored token for renderer color management */
 } MtlxInput;
 
 typedef struct {

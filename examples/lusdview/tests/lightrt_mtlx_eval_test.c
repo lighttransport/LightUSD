@@ -10,11 +10,14 @@
 
 static int nearf(float a, float b) { return fabsf(a - b) <= 1.0e-6f; }
 
-static int sample_texcoord(void *user, int index, float out_uv[2]) {
+static int sample_texcoord(void *user, int index, int probe_axis,
+                           float out_uv[2]) {
   (void)user;
   if (index != 1) return 0;
   out_uv[0] = 0.375f;
   out_uv[1] = 0.625f;
+  if (probe_axis == 1) { out_uv[0] += 0.05f; out_uv[1] += 0.01f; }
+  if (probe_axis == 2) { out_uv[0] -= 0.02f; out_uv[1] += 0.04f; }
   return 1;
 }
 
@@ -85,7 +88,85 @@ static int eval_volume_xml(const char *xml, MtlxVolumeParams *p) {
   return ok;
 }
 
+static int test_texture_colorspace_aliases(void) {
+  const char *spaces[] = {"srgb_texture", "sRGB", "srgb",
+                          "srgb_rec709_scene", "lin_rec709_scene", "raw"};
+  const int expected[] = {1, 1, 1, 1, 0, 0};
+  char xml[2048] = "<materialx version=\"1.39\">";
+  size_t used = strlen(xml);
+  for (size_t i = 0; i < sizeof(spaces) / sizeof(spaces[0]); ++i) {
+    int n = snprintf(xml + used, sizeof(xml) - used,
+                     "<image name=\"image%zu\" type=\"color3\">"
+                     "<input name=\"file\" type=\"filename\" "
+                     "value=\"unused%zu.png\" colorspace=\"%s\"/>"
+                     "</image>", i, i, spaces[i]);
+    if (n < 0 || (size_t)n >= sizeof(xml) - used) return 0;
+    used += (size_t)n;
+  }
+  strcat(xml, "</materialx>");
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) return 0;
+  int ok = 1;
+  int found = 0;
+  for (int i = 0; ok && i < doc->nnode; ++i) {
+    const MtlxNode *node = &doc->nodes[i];
+    if (strcmp(node->category, "image") != 0) continue;
+    if (strncmp(node->name, "image", 5) != 0) { ok = 0; break; }
+    const int case_index = atoi(node->name + 5);
+    if (case_index < 0 || case_index >= (int)(sizeof(spaces) / sizeof(spaces[0]))) {
+      ok = 0; break;
+    }
+    ++found;
+    const MtlxInput *file = NULL;
+    for (int j = 0; j < node->ninput; ++j)
+      if (!strcmp(node->inputs[j].name, "file")) file = &node->inputs[j];
+    if (!file || file->colorspace_srgb != expected[case_index]) {
+      fprintf(stderr, "colorspace case %d (%s): node=%s flag=%d expected=%d\n",
+              case_index, spaces[case_index], node->name,
+              file ? file->colorspace_srgb : -1, expected[case_index]);
+      ok = 0;
+    }
+  }
+  ok = ok && found == (int)(sizeof(spaces) / sizeof(spaces[0]));
+  mtlx_free(doc);
+  return ok;
+}
+
 int main(void) {
+  if (!test_texture_colorspace_aliases()) {
+    fprintf(stderr, "MaterialX texture colorspace aliases were not parsed\n");
+    return 1;
+  }
+  const char *anisotropic_standard_xml =
+      "<materialx version=\"1.39\">"
+      "<standard_surface name=\"ss\" type=\"surfaceshader\">"
+      "<input name=\"base_color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+      "<input name=\"metalness\" type=\"float\" value=\"0.2\"/>"
+      "<input name=\"specular_color\" type=\"color3\" value=\"0.5,0.6,0.7\"/>"
+      "<input name=\"specular\" type=\"float\" value=\"0.75\"/>"
+      "<input name=\"specular_roughness\" type=\"float\" value=\"0.25\"/>"
+      "<input name=\"specular_IOR\" type=\"float\" value=\"2.4\"/>"
+      "<input name=\"specular_anisotropy\" type=\"float\" value=\"0.5\"/>"
+      "<input name=\"specular_rotation\" type=\"float\" value=\"0.25\"/>"
+      "</standard_surface>"
+      "<surfacematerial name=\"mat\" type=\"material\">"
+      "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"ss\"/>"
+      "</surfacematerial></materialx>";
+  OpenPBRParams anisotropic_standard;
+  if (!eval_xml(anisotropic_standard_xml, &anisotropic_standard) ||
+      anisotropic_standard.specular_lobe_count != 1 ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.roughness,
+             0.08838835f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.roughness_y,
+             0.04419417f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.tangent.x, 0.0f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.tangent.y, 1.0f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.weight, 0.6f) ||
+      anisotropic_standard.diffuse_lobe_count != 1 ||
+      anisotropic_standard.conductor_lobe_count != 1) {
+    fprintf(stderr, "Standard Surface anisotropic specular closure was not retained\n");
+    return 1;
+  }
   /* A document geompropdef can redirect the standard UV0 alias to UV set 1.
    * Verify the generated texcoord node carries that index to the renderer. */
   MtlxDoc *uv_doc = mtlx_load_string(

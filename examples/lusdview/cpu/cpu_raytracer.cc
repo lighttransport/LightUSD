@@ -519,7 +519,8 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const CpuPtexSampler* ptex = nullptr,
                                   uint32_t ptex_mip = 0,
                                   const CpuPtexSampler::Footprint* ptex_fp =
-                                      nullptr) {
+                                      nullptr,
+                                  int transfer_correction = 0) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
@@ -533,6 +534,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
         : ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
                        srgb, rgb);
     if (ok) {
+      MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
       out[0] = rgb[0];
       out[1] = rgb[1];
       out[2] = rgb[2];
@@ -599,6 +601,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
       rgb[1] = srgbToLinear(rgb[1]);
       rgb[2] = srgbToLinear(rgb[2]);
     }
+    MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
   };
   float c00[3], c10[3], c01[3], c11[3];
   texel(x0, y0, c00); texel(x1, y0, c10);
@@ -1064,8 +1067,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         else if (uvInput == 2) { gu = c[0]; gv = c[1]; }
         const float su = gu * scene.matGraph[p + 17] + scene.matGraph[p + 19];
         const float sv = gv * scene.matGraph[p + 18] + scene.matGraph[p + 20];
-        SampleTextureBilinear(scene.textures, scene.texels, textureId, su, sv,
-                              rgb);
+        SampleTextureBilinear(
+            scene.textures, scene.texels, textureId, su, sv, rgb, -1, nullptr,
+            0, nullptr,
+            static_cast<int>(std::floor(scene.matGraph[p + 13] + 0.5f)));
+        MaterialXGraphToLinearRec709(
+            rgb, static_cast<int>(std::floor(scene.matGraph[p + 12] + 0.5f)));
         dst = {rgb[0], rgb[1], rgb[2], 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::NormalMap)) {
         float nx = a[0] * 2.0f - 1.0f, ny = a[1] * 2.0f - 1.0f,
@@ -1127,7 +1134,7 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Select)) {
         dst = (a[0] >= 0.5f) ? b : c;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Texcoord)) {
-        const bool secondSet = c[2] > 0.5f;
+        const bool secondSet = ic >= 0 ? c[0] == 1.0f : c[2] > 0.5f;
         dst = {secondSet ? u1 : u, secondSet ? v1 : v, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Floor)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::floor(a[cidx]);

@@ -41,8 +41,64 @@
 #include "lusdr_context.hh"
 #include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
+#include "lightrt_mtlx_bridge.hh"
 
 namespace lusdr {
+
+namespace {
+
+struct MeshIntAttributeCore {
+  lightusd::tydra::ValueArrayRead<int32_t> values;
+  lightusd::tydra::ValueArrayRead<int32_t> indices;
+  std::string interpolation;
+  bool valid{false};
+
+  bool TupleIndex(size_t point, size_t corner, size_t face,
+                  size_t* index) const {
+    if (!index) return false;
+    size_t slot = point;
+    if (interpolation == "constant") slot = 0;
+    else if (interpolation == "uniform") slot = face;
+    else if (interpolation == "faceVarying") slot = corner;
+    else if (interpolation != "vertex" && interpolation != "varying")
+      return false;
+    if (!indices.empty()) {
+      if (slot >= indices.size() || indices[slot] < 0) return false;
+      slot = static_cast<size_t>(indices[slot]);
+    }
+    if (slot >= values.size()) return false;
+    *index = slot;
+    return true;
+  }
+};
+
+MeshIntAttributeCore ReadMeshIntAttributeCore(
+    const lightusd::UsdPrim& prim, const std::string& name,
+    const lightusd::EvalOptions& options, size_t point_count,
+    size_t corner_count, size_t face_count) {
+  MeshIntAttributeCore out;
+  if (!lightusd::tydra::ReadIntArray(prim, name.c_str(), options, &out.values) ||
+      out.values.empty()) return out;
+  (void)lightusd::tydra::ReadIntArray(prim, (name + ":indices").c_str(),
+                                      options, &out.indices);
+  const auto* spec = prim.GetPrimSpec();
+  const auto* meta = spec ? spec->property_meta(name) : nullptr;
+  if (meta && !meta->interpolation.empty()) {
+    out.interpolation = meta->interpolation;
+  } else {
+    const size_t count = out.indices.empty() ? out.values.size()
+                                             : out.indices.size();
+    out.interpolation = count == point_count    ? "vertex"
+                        : count == corner_count ? "faceVarying"
+                        : face_count > 1 && count == face_count ? "uniform"
+                        : count == 1            ? "constant"
+                                                : "";
+  }
+  out.valid = !out.interpolation.empty();
+  return out;
+}
+
+}  // namespace
 
 bool ReadFloatArrayViewLazy(const lightusd::UsdPrim &prim,
                             const char *name, double time,
@@ -208,9 +264,28 @@ bool RefineSubdivisionMeshCore(const lightusd::UsdPrim &prim,
                                const lightusd::tydra::ValueArrayRead<int32_t> &indices,
                                const lightusd::tydra::MeshFloatAttribute *st,
                                double time, GeneratedMeshCore *out,
-                               std::vector<uint32_t> *face_source) {
+                               std::vector<uint32_t> *face_source,
+                               const std::vector<MtlxGeomPropRequest>* requests) {
   const int level = g_subdivision_level;
   if (level <= 0) return false;
+  if (requests && !requests->empty()) {
+    size_t corner_bound = indices.size();
+    for (int i = 0; i < std::min(level, lightusd::tsd::kMaxLevel); ++i) {
+      if (corner_bound > SIZE_MAX / 4) return false;
+      corner_bound *= 4;
+    }
+    if (requests->size() > SIZE_MAX / 32 ||
+        corner_bound > SIZE_MAX / (requests->size() * 32))
+      return false;
+    std::string budget_error;
+    if (MemBudget::Get().WouldExceed(
+            corner_bound * requests->size() * 32, &budget_error)) {
+      std::cerr << "Skipping subdivision because MaterialX primvar channels "
+                   "exceed the memory budget: "
+                << budget_error << "\n";
+      return false;
+    }
+  }
   const lightusd::Value *scheme_value =
       prim.GetPropertyValue("subdivisionScheme");
   const auto scheme_token = scheme_value ? scheme_value->as_token() : nullptr;
@@ -300,10 +375,143 @@ bool RefineSubdivisionMeshCore(const lightusd::UsdPrim &prim,
     }
   }
 
+  struct GeomPropInput {
+    size_t components{1};
+    bool integer{false};
+    bool valid{false};
+    bool constant_or_uniform{false};
+    MeshIntAttributeCore ints;
+    lightusd::tydra::MeshFloatAttribute floats;
+    std::vector<float> vertex_values;
+    std::vector<uint32_t> corner_indices;
+    int fvar_channel{-1};
+    int vertex_channel{-1};
+  };
+  std::vector<GeomPropInput> geomprop_inputs(requests ? requests->size() : 0);
+  std::vector<lightusd::tsd::FVarChannelView> fvar_channels;
+  std::vector<lightusd::tsd::VertexPrimvarView> vertex_channels;
+  int uv_fvar_channel = -1;
+  int uv_vertex_channel = -1;
+  if (uv_fvar) {
+    uv_fvar_channel = 0;
+    fvar_channels.push_back(fvar);
+  }
+  if (uv_vertex) {
+    uv_vertex_channel = 0;
+    vertex_channels.push_back(vprim);
+  }
+  lightusd::EvalOptions geom_eval;
+  geom_eval.time = lightusd::TimeQuery::Numeric(time);
+  geom_eval.follow_connections = false;
+  std::vector<size_t> face_by_corner(u_indices.size(), 0);
+  size_t face_corner = 0;
+  for (size_t face = 0; face < u_counts.size(); ++face) {
+    for (uint32_t c = 0; c < u_counts[face] && face_corner < face_by_corner.size();
+         ++c, ++face_corner)
+      face_by_corner[face_corner] = face;
+  }
+  if (requests) {
+    for (size_t request_index = 0; request_index < requests->size();
+         ++request_index) {
+      const MtlxGeomPropRequest& request = (*requests)[request_index];
+      GeomPropInput& input = geomprop_inputs[request_index];
+      input.integer = request.integer;
+      switch (static_cast<lusdview::MaterialXGeomPropType>(request.type)) {
+        case lusdview::MaterialXGeomPropType::Float:
+        case lusdview::MaterialXGeomPropType::Integer:
+        case lusdview::MaterialXGeomPropType::Boolean: input.components = 1; break;
+        case lusdview::MaterialXGeomPropType::Vector2: input.components = 2; break;
+        case lusdview::MaterialXGeomPropType::Color3:
+        case lusdview::MaterialXGeomPropType::Vector3: input.components = 3; break;
+        case lusdview::MaterialXGeomPropType::Color4:
+        case lusdview::MaterialXGeomPropType::Vector4: input.components = 4; break;
+      }
+      const std::string name = request.name.rfind("primvars:", 0) == 0
+                                   ? request.name : "primvars:" + request.name;
+      if (input.integer) {
+        input.ints = ReadMeshIntAttributeCore(
+            prim, name, geom_eval, view.num_points, u_indices.size(),
+            u_counts.size());
+        input.valid = input.ints.valid;
+        input.constant_or_uniform = input.ints.interpolation == "constant" ||
+                                    input.ints.interpolation == "uniform";
+        if (input.constant_or_uniform) {
+          for (size_t face = 0; face < u_counts.size(); ++face) {
+            size_t tuple = 0;
+            if (!input.ints.TupleIndex(0, 0, face, &tuple)) {
+              input.valid = false;
+              break;
+            }
+          }
+        }
+        // Integer and boolean values are categorical. Refine only their
+        // constant and per-face forms; vertex values have no defined linear
+        // subdivision interpolation.
+        if (!input.constant_or_uniform) input.valid = false;
+      } else {
+        input.valid = lightusd::tydra::ReadMeshFloatAttribute(
+            prim, name, geom_eval, input.components, view.num_points,
+            u_indices.size(), &input.floats, u_counts.size());
+        if (input.floats.interpolation == "constant" ||
+            input.floats.interpolation == "uniform") {
+          input.constant_or_uniform = true;
+          for (size_t face = 0; face < u_counts.size(); ++face) {
+            size_t tuple = 0;
+            if (!input.floats.TupleIndex(0, 0, face, &tuple)) {
+              input.valid = false;
+              break;
+            }
+          }
+        } else if (input.floats.interpolation == "faceVarying") {
+          input.corner_indices.resize(u_indices.size());
+          for (size_t corner = 0; corner < u_indices.size(); ++corner) {
+            size_t tuple = 0;
+            if (!input.floats.TupleIndex(u_indices[corner], corner,
+                                         face_by_corner[corner], &tuple) ||
+                tuple > UINT32_MAX) {
+              input.valid = false;
+              break;
+            }
+            input.corner_indices[corner] = uint32_t(tuple);
+          }
+          if (input.valid) {
+            input.fvar_channel = static_cast<int>(fvar_channels.size());
+            fvar_channels.push_back(lightusd::tsd::FVarChannelView{
+                &input.floats.values[0],
+                uint32_t(input.floats.values.size() / input.components),
+                input.corner_indices.data(), uint32_t(input.components)});
+          }
+        } else if (input.floats.interpolation == "vertex" ||
+                   input.floats.interpolation == "varying") {
+          input.vertex_values.resize(size_t(view.num_points) * input.components);
+          for (size_t point = 0; point < view.num_points; ++point) {
+            size_t tuple = 0;
+            if (!input.floats.TupleIndex(point, 0, 0, &tuple)) {
+              input.valid = false;
+              break;
+            }
+            for (size_t component = 0; component < input.components; ++component)
+              input.vertex_values[point * input.components + component] =
+                  input.floats.values[tuple * input.components + component];
+          }
+          if (input.valid) {
+            input.vertex_channel = static_cast<int>(vertex_channels.size());
+            vertex_channels.push_back(lightusd::tsd::VertexPrimvarView{
+                input.vertex_values.data(), uint32_t(input.components),
+                input.floats.interpolation == "varying"});
+          }
+        }
+      }
+    }
+  }
+
   lightusd::tsd::RefinedMesh refined;
   std::string err;
-  if (lightusd::tsd::Refine(view, uv_fvar ? &fvar : nullptr, uv_fvar ? 1u : 0u,
-                            uv_vertex ? &vprim : nullptr, uv_vertex ? 1u : 0u,
+  if (lightusd::tsd::Refine(view,
+                            fvar_channels.empty() ? nullptr : fvar_channels.data(),
+                            uint32_t(fvar_channels.size()),
+                            vertex_channels.empty() ? nullptr : vertex_channels.data(),
+                            uint32_t(vertex_channels.size()),
                             options, &refined, &err) !=
       lightusd::tsd::Result::Success) {
     std::cerr << "WARN: subdivision failed for " << prim.GetPath().str()
@@ -317,12 +525,68 @@ bool RefineSubdivisionMeshCore(const lightusd::UsdPrim &prim,
                       refined.face_vertex_indices.end());
   out->normals.clear();
   out->uvs.clear();
-  if (uv_fvar && !refined.fvar.empty()) {
-    out->uvs = std::move(refined.fvar[0]);
+  if (uv_fvar && uv_fvar_channel >= 0 &&
+      size_t(uv_fvar_channel) < refined.fvar.size()) {
+    out->uvs = std::move(refined.fvar[size_t(uv_fvar_channel)]);
     out->uvs_facevarying = true;
-  } else if (uv_vertex && !refined.vertex_primvars.empty()) {
-    out->uvs = std::move(refined.vertex_primvars[0]);
+  } else if (uv_vertex && uv_vertex_channel >= 0 &&
+             size_t(uv_vertex_channel) < refined.vertex_primvars.size()) {
+    out->uvs = std::move(refined.vertex_primvars[size_t(uv_vertex_channel)]);
     out->uvs_facevarying = false;
+  }
+  out->geomprops.resize(geomprop_inputs.size());
+  out->geomprop_valid.assign(geomprop_inputs.size(), uint8_t(0));
+  size_t refined_corner = 0;
+  for (size_t face = 0; face < refined.face_vertex_counts.size(); ++face) {
+    const size_t source_face = face < refined.face_source.size()
+                                   ? refined.face_source[face] : SIZE_MAX;
+    const uint32_t corner_count = refined.face_vertex_counts[face];
+    for (uint32_t local_corner = 0; local_corner < corner_count;
+         ++local_corner, ++refined_corner) {
+      if (refined_corner >= refined.face_vertex_indices.size()) break;
+      const size_t point = refined.face_vertex_indices[refined_corner];
+      for (size_t property = 0; property < geomprop_inputs.size(); ++property) {
+        const GeomPropInput& input = geomprop_inputs[property];
+        if (!input.valid || source_face >= u_counts.size()) continue;
+        float value[4] = {0, 0, 0, 0};
+        if (input.integer) {
+          size_t tuple = 0;
+          if (!input.ints.TupleIndex(0, 0, source_face, &tuple)) continue;
+          value[0] = float(input.ints.values[tuple]);
+        } else if (input.constant_or_uniform) {
+          size_t tuple = 0;
+          if (!input.floats.TupleIndex(0, 0, source_face, &tuple)) continue;
+          for (size_t component = 0; component < input.components; ++component)
+            value[component] = input.floats.values[
+                tuple * input.components + component];
+        } else if (input.fvar_channel >= 0 &&
+                   size_t(input.fvar_channel) < refined.fvar.size()) {
+          const auto& values = refined.fvar[size_t(input.fvar_channel)];
+          const size_t value_index = refined_corner * input.components;
+          if (value_index > values.size() ||
+              values.size() - value_index < input.components) continue;
+          for (size_t component = 0; component < input.components; ++component)
+            value[component] = values[value_index + component];
+        } else if (input.vertex_channel >= 0 &&
+                   size_t(input.vertex_channel) < refined.vertex_primvars.size()) {
+          const auto& values =
+              refined.vertex_primvars[size_t(input.vertex_channel)];
+          const size_t value_index = point * input.components;
+          if (value_index > values.size() ||
+              values.size() - value_index < input.components) continue;
+          for (size_t component = 0; component < input.components; ++component)
+            value[component] = values[value_index + component];
+        } else {
+          continue;
+        }
+        std::vector<float>& property_values = out->geomprops[property];
+        if (property_values.empty())
+          property_values.assign(refined.face_vertex_indices.size() * 4, 0.0f);
+        std::copy(value, value + 4, property_values.begin() +
+                                      static_cast<ptrdiff_t>(refined_corner * 4));
+        out->geomprop_valid[property] = 1;
+      }
+    }
   }
   *face_source = std::move(refined.face_source);
   return true;
@@ -383,7 +647,12 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
                           // Second UV set (material lanes flagged in
                           // uv_set_bits): 6 floats/tri parallel to tri_uvs.
                           FVec *tri_uvs1 = nullptr,
-                          const std::string &uv_primvar1 = std::string()) {
+                          const std::string &uv_primvar1 = std::string(),
+                          bool materialx_needs_texcoord1 = false,
+                          const std::vector<MtlxGeomPropRequest>*
+                              geomprop_requests = nullptr,
+                          FVec* tri_geomprops = nullptr,
+                          ByteVec* tri_geomprops_valid = nullptr) {
   auto readFloatCopy = [&](const lightusd::UsdPrim& p, const char* name, double t) {
     if (!evaluation) return ReadFloatArrayLazy(p, name, t);
     lightusd::tydra::ValueArrayRead<float> values;
@@ -578,6 +847,7 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
   // primvars no longer match the topology).
   std::vector<uint32_t> subdiv_face_source;
   std::vector<char> subdiv_face_mask;
+  bool generated_from_subdivision = false;
   bool analytic = analytic_prim;
   if (!analytic && g_subdivision_level > 0) {
     lightusd::tydra::MeshFloatAttribute cage_st;
@@ -596,7 +866,8 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
     }
     if (RefineSubdivisionMeshCore(prim, points, counts, indices,
                                   have_cage_st ? &cage_st : nullptr, time,
-                                  &generated, &subdiv_face_source)) {
+                                  &generated, &subdiv_face_source,
+                                  geomprop_requests)) {
       points.view = {generated.points.data(), generated.points.size(), false};
       counts.view = {generated.counts.data(), generated.counts.size(), false};
       indices.view = {generated.indices.data(), generated.indices.size(), false};
@@ -604,6 +875,7 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
       wpts.assign(npts, Vec3{});
       skin_normals.clear();
       analytic = true;
+      generated_from_subdivision = true;
       if (face_mask && !face_mask->empty()) {
         subdiv_face_mask.resize(subdiv_face_source.size(), 0);
         for (size_t f = 0; f < subdiv_face_source.size(); ++f) {
@@ -627,6 +899,58 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
   const auto& attribute_evaluation = evaluation ? *evaluation : fallback_evaluation;
   using lightusd::tydra::MeshFloatAttribute;
   using lightusd::tydra::ReadMeshFloatAttribute;
+  struct GeomPropAttribute {
+    size_t components{1};
+    bool integer{false};
+    bool generated{false};
+    MeshFloatAttribute floats;
+    MeshIntAttributeCore ints;
+    bool valid{false};
+  };
+  std::vector<GeomPropAttribute> geomprop_attributes;
+  if (geomprop_requests && tri_geomprops && tri_geomprops_valid) {
+    geomprop_attributes.resize(geomprop_requests->size());
+    for (size_t i = 0; i < geomprop_requests->size(); ++i) {
+      const auto& request = (*geomprop_requests)[i];
+      GeomPropAttribute& attribute = geomprop_attributes[i];
+      using GType = lusdview::MaterialXGeomPropType;
+      switch (static_cast<GType>(request.type)) {
+        case GType::Float: attribute.components = 1; break;
+        case GType::Integer: attribute.components = 1; attribute.integer = true; break;
+        case GType::Boolean: attribute.components = 1; attribute.integer = true; break;
+        case GType::Color3:
+        case GType::Vector3: attribute.components = 3; break;
+        case GType::Color4:
+        case GType::Vector4: attribute.components = 4; break;
+        case GType::Vector2: attribute.components = 2; break;
+      }
+      const std::string property =
+          request.name.rfind("primvars:", 0) == 0
+              ? request.name : "primvars:" + request.name;
+      if (generated_from_subdivision) {
+        attribute.generated = true;
+        attribute.valid = i < generated.geomprop_valid.size() &&
+                          generated.geomprop_valid[i] &&
+                          i < generated.geomprops.size();
+        continue;
+      }
+      if (analytic && !analytic_prim) continue;
+      if (attribute.integer) {
+        attribute.ints = ReadMeshIntAttributeCore(
+            prim, property, attribute_evaluation, npts, indices.size(),
+            counts.size());
+        attribute.valid = attribute.ints.valid;
+        if (analytic_prim && attribute.ints.interpolation != "constant")
+          attribute.valid = false;
+      } else {
+        attribute.valid = ReadMeshFloatAttribute(
+            prim, property, attribute_evaluation, attribute.components,
+            npts, indices.size(), &attribute.floats, counts.size());
+        if (analytic_prim && attribute.floats.interpolation != "constant")
+          attribute.valid = false;
+      }
+    }
+  }
   MeshFloatAttribute st;
   bool have_st = false;
   if ((want_uvs || displacement_tex_id >= 0) &&
@@ -672,17 +996,61 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
     return {st.values[tuple * 2], st.values[tuple * 2 + 1]};
   };
   MeshFloatAttribute st1;
-  const bool have_st1 =
-      tri_uvs1 && want_uvs && !analytic && !uv_primvar1.empty() &&
-      ReadMeshFloatAttribute(prim, "primvars:" + uv_primvar1,
-                             attribute_evaluation, 2, npts, indices.size(),
-                             &st1);
+  bool have_st1 = false;
+  if (tri_uvs1 && want_uvs && !analytic) {
+    std::vector<std::string> candidates;
+    if (!uv_primvar1.empty()) {
+      candidates.push_back(uv_primvar1);
+    } else if (materialx_needs_texcoord1) {
+      candidates = {"st1", "uv1", "UVMap1", "map2"};
+      for (const std::string& name :
+           lightusd::tydra::MeshConfig{}.uv_primvar_names) {
+        if (name != preferred_uv) candidates.push_back(name);
+      }
+    }
+    for (const std::string& name : candidates) {
+      if (name == preferred_uv) continue;
+      if (ReadMeshFloatAttribute(prim, "primvars:" + name,
+                                 attribute_evaluation, 2, npts,
+                                 indices.size(), &st1)) {
+        have_st1 = true;
+        break;
+      }
+    }
+  }
   auto uv1_at = [&](size_t fv, int32_t pi) -> std::pair<float, float> {
     if (!have_st1 || pi < 0) return uv_at(fv, pi);
     size_t tuple = 0;
     const size_t face = st1.interpolation == "uniform" ? face_for_corner(fv) : 0;
     if (!st1.TupleIndex(size_t(pi), fv, face, &tuple)) return {0.0f, 0.0f};
     return {st1.values[tuple * 2], st1.values[tuple * 2 + 1]};
+  };
+  auto geomprop_at = [&](size_t attribute_index, size_t fv, int32_t pi,
+                         size_t face, float value[4]) {
+    std::fill(value, value + 4, 0.0f);
+    if (attribute_index >= geomprop_attributes.size() || pi < 0) return false;
+    const GeomPropAttribute& attribute = geomprop_attributes[attribute_index];
+    if (attribute.generated) {
+      if (!attribute.valid || attribute_index >= generated.geomprops.size() ||
+          fv > SIZE_MAX / 4 ||
+          fv * 4 > generated.geomprops[attribute_index].size() ||
+          generated.geomprops[attribute_index].size() - fv * 4 < 4)
+        return false;
+      std::copy_n(generated.geomprops[attribute_index].data() + fv * 4, 4,
+                  value);
+      return true;
+    }
+    size_t tuple = 0;
+    if (!attribute.valid) return false;
+    if (attribute.integer) {
+      if (!attribute.ints.TupleIndex(size_t(pi), fv, face, &tuple)) return false;
+      value[0] = float(attribute.ints.values[tuple]);
+      return true;
+    }
+    if (!attribute.floats.TupleIndex(size_t(pi), fv, face, &tuple)) return false;
+    for (size_t c = 0; c < attribute.components; ++c)
+      value[c] = attribute.floats.values[tuple * attribute.components + c];
+    return true;
   };
 
   // Coarse displacement: offset each unique vertex along its smooth (area-weighted)
@@ -1085,6 +1453,25 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
         tri.n = n;
         tris->push_back(tri);
       }
+      if (geomprop_requests && tri_geomprops && tri_geomprops_valid) {
+        for (size_t property = 0; property < geomprop_requests->size(); ++property) {
+          float p0[4], p1[4], p2[4];
+          const bool valid =
+              geomprop_at(property, cursor + 0, i0, face, p0) &&
+              geomprop_at(property, corner1, i1, face, p1) &&
+              geomprop_at(property, corner2, i2, face, p2);
+          tri_geomprops_valid->push_back(valid ? uint8_t(1) : uint8_t(0));
+          for (int c = 0; c < 4; ++c) {
+            tri_geomprops->push_back(valid ? p0[c] : 0.0f);
+          }
+          for (int c = 0; c < 4; ++c) {
+            tri_geomprops->push_back(valid ? p1[c] : 0.0f);
+          }
+          for (int c = 0; c < 4; ++c) {
+            tri_geomprops->push_back(valid ? p2[c] : 0.0f);
+          }
+        }
+      }
       if (want_uvs) {
         // Keep tri_uvs parallel to tris (6 floats/tri). uv0=vert0, uv1=vert(k),
         // uv2=vert(k+1) in fan order, matching i0/i1/i2 above.
@@ -1101,9 +1488,11 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
           auto s0 = uv1_at(cursor + 0, i0);
           auto s1 = uv1_at(corner1, i1);
           auto s2 = uv1_at(corner2, i2);
-          uv_xform.apply(&s0.first, &s0.second);
-          uv_xform.apply(&s1.first, &s1.second);
-          uv_xform.apply(&s2.first, &s2.second);
+          if (!materialx_needs_texcoord1) {
+            uv_xform.apply(&s0.first, &s0.second);
+            uv_xform.apply(&s1.first, &s1.second);
+            uv_xform.apply(&s2.first, &s2.second);
+          }
           tri_uvs1->insert(tri_uvs1->end(), {s0.first, s0.second, s1.first,
                                              s1.second, s2.first, s2.second});
         }
@@ -5455,13 +5844,20 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
                     const lightusd::ValueClipStageLoader& clip_loader = {},
                     // Second UV set stream (6 floats/tri, parallel to
                     // out_tri_uvs); filled only when a material uses it.
-                    FVec *out_tri_uvs1 = nullptr) {
+                    FVec *out_tri_uvs1 = nullptr,
+                    bool materialx_needs_texcoord1 = false,
+                    const std::vector<MtlxGeomPropRequest>*
+                        geomprop_requests = nullptr,
+                    FVec* out_tri_geomprops = nullptr,
+                    ByteVec* out_tri_geomprops_valid = nullptr) {
   const bool indexed = (out_uverts && out_indices);
   struct R {
     FVec v;
     TVec t;
     FVec uv;
     FVec uv1;
+    FVec geomprops;
+    ByteVec geomprops_valid;
     ByteVec col;  // per-corner RGBA8 (12 bytes/tri) when want_colors
     FVec nrm;  // per-corner normals (9 floats/tri) when want_normals
     FVec uvv;  // unique verts (3 floats each) when indexed
@@ -5501,6 +5897,31 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
       out_tri_colors->reserve(out_tri_colors->size() + est_tris * 12);
     if (want_normals && out_tri_normals)
       out_tri_normals->reserve(out_tri_normals->size() + est_tris * 9);
+    if (geomprop_requests && !geomprop_requests->empty() &&
+        out_tri_geomprops && out_tri_geomprops_valid) {
+      if (geomprop_requests->size() > SIZE_MAX / 49 ||
+          est_tris > (SIZE_MAX - out_tri_geomprops->size()) /
+                         (geomprop_requests->size() * 12) ||
+          est_tris > (SIZE_MAX - out_tri_geomprops_valid->size()) /
+                         geomprop_requests->size())
+        return false;
+      const size_t values_per_triangle = geomprop_requests->size() * 12;
+      const size_t bytes_per_triangle = geomprop_requests->size() * 49;
+      if (est_tris > SIZE_MAX / bytes_per_triangle)
+        return false;
+      const size_t geomprop_bytes = est_tris * bytes_per_triangle;
+      std::string geomprop_budget_error;
+      if (MemBudget::Get().WouldExceed(geomprop_bytes,
+                                       &geomprop_budget_error)) {
+        std::cerr << "Aborting geomprop triangle stream: "
+                  << geomprop_budget_error << ".\n";
+        return false;
+      }
+      out_tri_geomprops->reserve(out_tri_geomprops->size() +
+                                 est_tris * values_per_triangle);
+      out_tri_geomprops_valid->reserve(out_tri_geomprops_valid->size() +
+                                       est_tris * geomprop_requests->size());
+    }
   } catch (const std::bad_alloc &) {
     return false;
   }
@@ -5555,8 +5976,9 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
                 job.displacement_tex.bias, &evaluation, job.opacity_presence,
-                (want_uvs && out_tri_uvs1 && !indexed) ? &r.uv1 : nullptr,
-                job.uv_primvar1);
+                (want_uvs && out_tri_uvs1) ? &r.uv1 : nullptr,
+                job.uv_primvar1, materialx_needs_texcoord1,
+                geomprop_requests, &r.geomprops, &r.geomprops_valid);
             r.mat.capture_prim_id = CapturePrimId(job.prim.GetPath().str());
             if (!r.uv1.empty()) {
               // Material lanes (RtTexUvLane) -> CPU shader lane slots.
@@ -5645,7 +6067,7 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
         out_tris->insert(out_tris->end(), r.t.begin(), r.t.end());
         if (want_uvs)
           out_tri_uvs->insert(out_tri_uvs->end(), r.uv.begin(), r.uv.end());
-        if (want_uvs && out_tri_uvs1 && !indexed)
+        if (want_uvs && out_tri_uvs1)
           out_tri_uvs1->insert(out_tri_uvs1->end(), r.uv1.begin(), r.uv1.end());
         if (want_colors && out_tri_colors)
           out_tri_colors->insert(out_tri_colors->end(), r.col.begin(),
@@ -5653,11 +6075,20 @@ bool StreamMeshJobs(const std::vector<MeshJobCore> &jobs, uint32_t purpose_mask,
         if (want_normals && out_tri_normals)
           out_tri_normals->insert(out_tri_normals->end(), r.nrm.begin(),
                                   r.nrm.end());
+        if (geomprop_requests && out_tri_geomprops && out_tri_geomprops_valid) {
+          out_tri_geomprops->insert(out_tri_geomprops->end(),
+                                    r.geomprops.begin(), r.geomprops.end());
+          out_tri_geomprops_valid->insert(out_tri_geomprops_valid->end(),
+                                          r.geomprops_valid.begin(),
+                                          r.geomprops_valid.end());
+        }
         MergeBounds(out_bounds, r.b);
         MergeStats(out_stats, r.s);
         FVec().swap(r.v);
         TVec().swap(r.t);
         FVec().swap(r.uv);
+        FVec().swap(r.geomprops);
+        ByteVec().swap(r.geomprops_valid);
         ByteVec().swap(r.col);
         FVec().swap(r.nrm);
         FVec().swap(r.uvv);
@@ -5722,6 +6153,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.textures.clear();
   ctx.tri_uvs.clear();
   ctx.tri_uvs1.clear();
+  ctx.tri_geomprops.clear();
+  ctx.tri_geomprops_valid.clear();
   ctx.tri_colors.clear();
   ctx.tri_normals.clear();
   ctx.blas.clear();
@@ -5830,12 +6263,18 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                         /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
                         /*out_indices=*/static_cast<IdxVec *>(nullptr),
                         &ctx.textures, disp_scale, ctx.clip_stage_loader,
-                        std::any_of(base_jobs.begin(), base_jobs.end(),
+                        (lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+                             opt.mtlx_runtime.get(), 1) ||
+                         std::any_of(base_jobs.begin(), base_jobs.end(),
                                     [](const MeshJobCore &j) {
                                       return j.uv_set_bits != 0;
-                                    })
+                                    }))
                             ? &ctx.tri_uvs1
-                            : nullptr)) {
+                            : nullptr,
+                        lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+                            opt.mtlx_runtime.get(), 1),
+                        &ctx.mtlx_geomprop_requests, &ctx.tri_geomprops,
+                        &ctx.tri_geomprops_valid)) {
       std::cerr << "Aborting: triangle stream exceeded memory cap "
                 << MemBudget::GiB(MemBudget::Get().Cap())
                 << ".\n  Raise -maxMem, restrict with -mask, or lower -complexity.\n";
@@ -6036,7 +6475,11 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
               &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
               /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
               &ctx.textures, opt.displace ? opt.displace_scale : 0.0f,
-              ctx.clip_stage_loader))
+              ctx.clip_stage_loader, &ctx.blas[b].tri_uvs1,
+              lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+                  opt.mtlx_runtime.get(), 1),
+              &ctx.mtlx_geomprop_requests, &ctx.blas[b].tri_geomprops,
+              &ctx.blas[b].tri_geomprops_valid))
         gstream_ok.store(false, std::memory_order_relaxed);
     }
   };
@@ -6076,7 +6519,12 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                                /*out_indices=*/static_cast<IdxVec *>(nullptr),
                                &ctx.textures,
                                opt.displace ? opt.displace_scale : 0.0f,
-                               ctx.clip_stage_loader);
+                               ctx.clip_stage_loader, &ctx.blas[b].tri_uvs1,
+                               lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+                                   opt.mtlx_runtime.get(), 1),
+                               &ctx.mtlx_geomprop_requests,
+                               &ctx.blas[b].tri_geomprops,
+                               &ctx.blas[b].tri_geomprops_valid);
     // The prototype's geometry and material data now live in ctx.blas[b].
     // Do not retain the authored job records while the remaining prototypes
     // build; this is significant for subset-heavy composed scenes.
@@ -7419,6 +7867,42 @@ bool RefreshVolumesCore(RenderContext &ctx, double time) {
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.opt = opt;
   ctx.width = opt.width > 0 ? opt.width : 960;
+  ctx.mtlx_geomprop_requests.clear();
+  if (ctx.opt.mtlx_runtime) {
+    std::vector<lusdview::MaterialXGeomPropValue> requests;
+    if (!lusdview::MaterialXSurfaceRuntimeGeomPropRequests(
+            ctx.opt.mtlx_runtime.get(), &requests)) {
+      std::cerr << "Failed to inspect MaterialX geometry-property requests\n";
+      return false;
+    }
+    ctx.mtlx_geomprop_requests.reserve(requests.size());
+    for (const auto& request : requests) {
+      MtlxGeomPropRequest converted;
+      converted.name = request.name;
+      converted.type = static_cast<uint8_t>(request.type);
+      switch (request.type) {
+        case lusdview::MaterialXGeomPropType::Float:
+        case lusdview::MaterialXGeomPropType::Integer:
+        case lusdview::MaterialXGeomPropType::Boolean:
+          converted.components = 1;
+          break;
+        case lusdview::MaterialXGeomPropType::Vector2:
+          converted.components = 2;
+          break;
+        case lusdview::MaterialXGeomPropType::Color3:
+        case lusdview::MaterialXGeomPropType::Vector3:
+          converted.components = 3;
+          break;
+        case lusdview::MaterialXGeomPropType::Color4:
+        case lusdview::MaterialXGeomPropType::Vector4:
+          converted.components = 4;
+          break;
+      }
+      converted.integer = request.type == lusdview::MaterialXGeomPropType::Integer ||
+                          request.type == lusdview::MaterialXGeomPropType::Boolean;
+      ctx.mtlx_geomprop_requests.push_back(std::move(converted));
+    }
+  }
 
   const auto load_t0 = std::chrono::steady_clock::now();
   std::string warn, err;
@@ -7571,7 +8055,10 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.volumes.empty() ? nullptr : &ctx.volumes,
       ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats,
       ctx.triangle_chunks.empty() ? nullptr : &ctx.triangle_chunks,
-      ctx.backplates.empty() ? nullptr : &ctx.backplates);
+      ctx.backplates.empty() ? nullptr : &ctx.backplates,
+      ctx.mtlx_geomprop_requests.empty() ? nullptr : &ctx.mtlx_geomprop_requests,
+      ctx.tri_geomprops.empty() ? nullptr : &ctx.tri_geomprops,
+      ctx.tri_geomprops_valid.empty() ? nullptr : &ctx.tri_geomprops_valid);
   if (img.width != ctx.width || img.height != ctx.height || img.data.empty()) {
     std::cerr << "CPU render failed.\n";
     return -1;

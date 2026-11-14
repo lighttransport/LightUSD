@@ -259,12 +259,252 @@ def main():
     if invalid_node_aov.returncode == 0 or "MaterialX node AOV is invalid" not in invalid_node_aov.stderr:
         raise RuntimeError("MaterialX node AOV accepted a missing node")
 
+    indexed_uv_source = out_dir / "indexed-texcoord.mtlx"
+    indexed_uv_source.write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39">
+  <texcoord name="SecondaryUV" type="vector2">
+    <input name="index" type="integer" value="1" />
+  </texcoord>
+  <surface_unlit name="IndexedUVSurface" type="surfaceshader" />
+  <surfacematerial name="IndexedUVMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="IndexedUVSurface" />
+  </surfacematerial>
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    indexed_uv_aov = out_dir / "indexed-texcoord.pfm"
+    indexed_uv = subprocess.run(
+        [
+            exe,
+            "--mtlx",
+            str(indexed_uv_source),
+            str(indexed_uv_aov),
+            "--mtlx-material",
+            "IndexedUVMaterial",
+            "--aov",
+            "mtlxNode:SecondaryUV",
+            "-w",
+            "64",
+            "-height",
+            "64",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if indexed_uv.returncode:
+        raise RuntimeError(f"indexed texcoord render failed:\n{indexed_uv.stderr}")
+    uw, uh, uv_values = read_pfm_rgb(indexed_uv_aov)
+    visible_uvs = [
+        uv_values[i : i + 3]
+        for i in range(0, len(uv_values), 3)
+        if abs(uv_values[i] - 0.75) < 1.0e-5
+        and abs(uv_values[i + 1] - 0.25) < 1.0e-5
+    ]
+    if (uw, uh) != (64, 64) or len(visible_uvs) < 32:
+        raise RuntimeError(
+            "indexed texcoord AOV did not read the generated mesh's secondary UV set"
+        )
+
+    geomprop_source = out_dir / "geomprop-value.mtlx"
+    geomprop_source.write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39">
+  <geompropvalue name="TestGeomColor" type="color3">
+    <input name="geomprop" type="string" value="mtlxTestColor" />
+  </geompropvalue>
+  <geompropvalue name="TestGeomId" type="integer">
+    <input name="geomprop" type="string" value="mtlxTestId" />
+  </geompropvalue>
+  <geompropvalue name="TestGeomUniform" type="float">
+    <input name="geomprop" type="string" value="mtlxTestUniform" />
+  </geompropvalue>
+  <surface_unlit name="GeomPropSurface" type="surfaceshader" />
+  <surfacematerial name="GeomPropMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="GeomPropSurface" />
+  </surfacematerial>
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    geomprop_aov = out_dir / "geomprop-value.pfm"
+    geomprop_run = subprocess.run(
+        [
+            exe,
+            "--mtlx",
+            str(geomprop_source),
+            str(geomprop_aov),
+            "--mtlx-material",
+            "GeomPropMaterial",
+            "--aov",
+            "mtlxNode:TestGeomColor",
+            "-w",
+            "64",
+            "-height",
+            "64",
+            "-subdiv",
+            "1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if geomprop_run.returncode:
+        raise RuntimeError(f"geompropvalue render failed:\n{geomprop_run.stderr}")
+    gw, gh, geomprop_values = read_pfm_rgb(geomprop_aov)
+    visible_geomprops = [
+        geomprop_values[i : i + 3]
+        for i in range(0, len(geomprop_values), 3)
+        if max(geomprop_values[i : i + 3]) > 0.05
+    ]
+    if (gw, gh) != (64, 64) or len(visible_geomprops) < 32:
+        raise RuntimeError("geompropvalue AOV did not sample the generated mesh primvar")
+    if len({tuple(round(c, 2) for c in pixel) for pixel in visible_geomprops}) < 8:
+        raise RuntimeError("geompropvalue AOV did not interpolate vertex primvar values")
+    instanced_geomprops = [
+        pixel
+        for pixel in visible_geomprops
+        if all(abs(pixel[c] - (0.123, 0.456, 0.789)[c]) < 1.0e-5 for c in range(3))
+    ]
+    if len(instanced_geomprops) < 8:
+        raise RuntimeError("geompropvalue AOV did not sample the PointInstancer prototype primvar")
+    analytic_geomprops = [
+        pixel
+        for pixel in visible_geomprops
+        if all(abs(pixel[c] - (0.81, 0.27, 0.53)[c]) < 1.0e-5 for c in range(3))
+    ]
+    if len(analytic_geomprops) < 8:
+        raise RuntimeError("geompropvalue AOV did not sample an analytic Sphere primvar")
+    geomprop_id_aov = out_dir / "geomprop-integer.pfm"
+    geomprop_id_run = subprocess.run(
+        [
+            exe,
+            "--mtlx",
+            str(geomprop_source),
+            str(geomprop_id_aov),
+            "--mtlx-material",
+            "GeomPropMaterial",
+            "--aov",
+            "mtlxNode:TestGeomId",
+            "-w",
+            "64",
+            "-height",
+            "64",
+            "-subdiv",
+            "1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if geomprop_id_run.returncode:
+        raise RuntimeError(f"integer geompropvalue render failed:\n{geomprop_id_run.stderr}")
+    iw, ih, integer_values = read_pfm_rgb(geomprop_id_aov)
+    visible_ids = [
+        integer_values[i]
+        for i in range(0, len(integer_values), 3)
+        if abs(integer_values[i] - 42.0) < 1.0e-5
+    ]
+    if (iw, ih) != (64, 64) or len(visible_ids) < 32:
+        raise RuntimeError("integer geompropvalue AOV did not read constant USD primvars")
+    geomprop_uniform_aov = out_dir / "geomprop-uniform.pfm"
+    geomprop_uniform_run = subprocess.run(
+        [
+            exe,
+            "--mtlx",
+            str(geomprop_source),
+            str(geomprop_uniform_aov),
+            "--mtlx-material",
+            "GeomPropMaterial",
+            "--aov",
+            "mtlxNode:TestGeomUniform",
+            "-w",
+            "64",
+            "-height",
+            "64",
+            "-subdiv",
+            "1",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if geomprop_uniform_run.returncode:
+        raise RuntimeError(
+            f"uniform geompropvalue render failed:\n{geomprop_uniform_run.stderr}"
+        )
+    fw, fh, uniform_values = read_pfm_rgb(geomprop_uniform_aov)
+    uniform_samples = [
+        uniform_values[i]
+        for i in range(0, len(uniform_values), 3)
+        if abs(uniform_values[i] - 0.65) < 1.0e-5
+        or abs(uniform_values[i] - 0.35) < 1.0e-5
+    ]
+    if (fw, fh) != (64, 64) or len(uniform_samples) < 32:
+        raise RuntimeError("uniform geompropvalue did not replicate source-face values")
+
     texture_path = out_dir / "gradient.png"
     gradient = bytearray()
     for y in range(16):
         for x in range(16):
             gradient.extend((x * 17, y * 17, 255 - x * 17, 255))
     write_png_rgba(texture_path, 16, 16, gradient)
+    ap1_texture = out_dir / "ap1.png"
+    write_png_rgba(ap1_texture, 1, 1, bytearray((128, 64, 32, 255)))
+    ap1_source = out_dir / "ap1-texture.mtlx"
+    ap1_source.write_text(
+        '''<?xml version="1.0"?>
+<materialx version="1.39" colorspace="lin_ap1_scene">
+  <image name="Ap1Image" type="color3">
+    <input name="file" type="filename" value="ap1.png" />
+  </image>
+  <image name="Rec709Image" type="color3">
+    <input name="file" type="filename" value="ap1.png" colorspace="lin_rec709_scene" />
+  </image>
+  <surface_unlit name="Ap1Emission" type="surfaceshader">
+    <input name="emission" type="float" value="1" />
+    <input name="emission_color" type="color3" nodename="Ap1Image" />
+  </surface_unlit>
+  <surface_unlit name="Rec709Emission" type="surfaceshader">
+    <input name="emission" type="float" value="1" />
+    <input name="emission_color" type="color3" nodename="Rec709Image" />
+  </surface_unlit>
+  <surfacematerial name="Ap1Material" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Ap1Emission" />
+  </surfacematerial>
+  <surfacematerial name="Rec709Material" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Rec709Emission" />
+  </surfacematerial>
+</materialx>
+''',
+        encoding="utf-8",
+    )
+    for material, node, expected, label in (
+        ("Ap1Material", "Ap1Image", (0.687, 0.219, 0.100), "inherited AP1"),
+        ("Rec709Material", "Rec709Image", (128 / 255, 64 / 255, 32 / 255),
+         "overridden Rec.709"),
+    ):
+        color_aov = out_dir / f"{label.split()[0].lower()}-aov.pfm"
+        color_render = subprocess.run(
+            [exe, "--mtlx", str(ap1_source), str(color_aov), "--mtlx-material",
+             material, "--aov", f"mtlxNode:{node}", "-w", "64", "-height", "64"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if color_render.returncode:
+            raise RuntimeError(
+                f"MaterialX {label} texture render failed:\n{color_render.stderr}"
+            )
+        _, _, color_values = read_pfm_rgb(color_aov)
+        center = ((64 // 2) * 64 + 64 // 2) * 3
+        actual = color_values[center : center + 3]
+        if any(abs(value - reference) > 0.015
+               for value, reference in zip(actual, expected)):
+            raise RuntimeError(
+                f"MaterialX {label} texture conversion differs: {actual}"
+            )
+
     texture_source = out_dir / "texture-emission.mtlx"
     texture_source.write_text(
         '''<?xml version="1.0"?>

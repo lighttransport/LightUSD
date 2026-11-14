@@ -134,6 +134,7 @@ void TransferParams(const ColorSpaceDesc &space, float *k0, float *phi) {
 }
 
 float ToLinear(const ColorSpaceDesc &space, float value) {
+  if (space.clamp_negative && value < 0.0f) return 0.0f;
   const float sign = value < 0.0f ? -1.0f : 1.0f;
   const float v = std::fabs(value);
   float k0 = 0.0f, phi = 1.0f;
@@ -144,6 +145,7 @@ float ToLinear(const ColorSpaceDesc &space, float value) {
 }
 
 float FromLinear(const ColorSpaceDesc &space, float value) {
+  if (space.clamp_negative && value < 0.0f) return 0.0f;
   const float sign = value < 0.0f ? -1.0f : 1.0f;
   const float v = std::fabs(value);
   float k0 = 0.0f, phi = 1.0f;
@@ -213,6 +215,12 @@ bool MakeColorSpaceFromChromaticities(
 
 bool GetBuiltinColorSpace(const std::string &token, ColorSpaceDesc *out) {
   if (!out) return false;
+  if (token == "rec709_display") {
+    if (!GetBuiltinColorSpace("g24_rec709_scene", out)) return false;
+    out->name = "rec709_display";
+    out->clamp_negative = true;
+    return true;
+  }
   const std::string name = CanonicalizeToken(token);
   if (name == "lin_ciexyzd65_scene") {
     *out = ColorSpaceDesc{};

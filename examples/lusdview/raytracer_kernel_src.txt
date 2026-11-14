@@ -80,8 +80,22 @@ __device__ float wrapCoord(float x, int mode){
 __device__ float srgbToLinear(float x){
   return x<=0.04045f ? x*(1.f/12.92f) : powf((x+0.055f)*(1.f/1.055f),2.4f);
 }
+__device__ float mtlxCorrectTransfer1(float x,int correction){
+  if(correction==0)return x;
+  if((correction>=1&&correction<=5)||correction==11){
+    float a=fabsf(x);
+    x=copysignf(a<=0.0031308f?12.92f*a:1.055f*powf(a,1.f/2.4f)-0.055f,x);
+    if(correction==1)return x;
+  }
+  int transfer=correction>=11?6:(correction>=6?correction-5:correction);
+  float a=fabsf(x),y;
+  if(transfer==1)y=a<=0.04045f?a/12.92f:powf((a+0.055f)/1.055f,2.4f);
+  else if(transfer==6)y=x>0.f?powf(a,2.4f):0.f;
+  else {float gamma=transfer==2?2.2f:(transfer==3?1.8f:(transfer==4?2.4f:(563.f/256.f)));y=powf(a,gamma);}
+  return copysignf(y,x);
+}
 __device__ F4 sampleTexLevel(const unsigned char* texels, TexDesc td,
-                             float u, float v){
+                             float u, float v, int transferCorrection=0){
   float su=wrapCoord(u,td.wrapS)*(td.width-1);
   float sv=wrapCoord(v,td.wrapT)*(td.height-1);
   int x0=(int)floorf(su), y0=(int)floorf(sv);
@@ -102,13 +116,18 @@ __device__ F4 sampleTexLevel(const unsigned char* texels, TexDesc td,
     c01.x=srgbToLinear(c01.x); c01.y=srgbToLinear(c01.y); c01.z=srgbToLinear(c01.z);
     c11.x=srgbToLinear(c11.x); c11.y=srgbToLinear(c11.y); c11.z=srgbToLinear(c11.z);
   }
+  c00.x=mtlxCorrectTransfer1(c00.x,transferCorrection); c00.y=mtlxCorrectTransfer1(c00.y,transferCorrection); c00.z=mtlxCorrectTransfer1(c00.z,transferCorrection);
+  c10.x=mtlxCorrectTransfer1(c10.x,transferCorrection); c10.y=mtlxCorrectTransfer1(c10.y,transferCorrection); c10.z=mtlxCorrectTransfer1(c10.z,transferCorrection);
+  c01.x=mtlxCorrectTransfer1(c01.x,transferCorrection); c01.y=mtlxCorrectTransfer1(c01.y,transferCorrection); c01.z=mtlxCorrectTransfer1(c01.z,transferCorrection);
+  c11.x=mtlxCorrectTransfer1(c11.x,transferCorrection); c11.y=mtlxCorrectTransfer1(c11.y,transferCorrection); c11.z=mtlxCorrectTransfer1(c11.z,transferCorrection);
   F4 a=mk4(c00.x+(c10.x-c00.x)*tx,c00.y+(c10.y-c00.y)*tx,c00.z+(c10.z-c00.z)*tx,c00.w+(c10.w-c00.w)*tx);
   F4 b=mk4(c01.x+(c11.x-c01.x)*tx,c01.y+(c11.y-c01.y)*tx,c01.z+(c11.z-c01.z)*tx,c01.w+(c11.w-c01.w)*tx);
   return mk4(a.x+(b.x-a.x)*ty,a.y+(b.y-a.y)*ty,a.z+(b.z-a.z)*ty,a.w+(b.w-a.w)*ty);
 }
 __device__ F4 sampleTexRGBAFallbackLod(const unsigned char* texels,
                                       const TexDesc* tex, int numTex, int id,
-                                      float u, float v, float lod, F4 missing){
+                                      float u, float v, float lod, F4 missing,
+                                      int transferCorrection=0){
   if (!texels || !tex || id<0 || id>=numTex) return missing;
   TexDesc td=tex[id];
   int baseId=id;
@@ -127,7 +146,7 @@ __device__ F4 sampleTexRGBAFallbackLod(const unsigned char* texels,
   int id1=l1==0?baseId:td.firstMip+l1-1;
   TexDesc t0=l0==0?td:tex[id0];
   TexDesc t1=l1==0?td:tex[id1];
-  F4 a=sampleTexLevel(texels,t0,u,v), b=sampleTexLevel(texels,t1,u,v);
+  F4 a=sampleTexLevel(texels,t0,u,v,transferCorrection), b=sampleTexLevel(texels,t1,u,v,transferCorrection);
   float f=cl-floorf(cl);
   return mk4(a.x+(b.x-a.x)*f,a.y+(b.y-a.y)*f,a.z+(b.z-a.z)*f,a.w+(b.w-a.w)*f);
 }
@@ -148,6 +167,10 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
                                     const TexDesc* tex, int numTex, int id,
                                     float u, float v, unsigned int face,
                                     float lod, F4 missing);
+__device__ F4 sampleMaterialTextureGraph(const unsigned char* texels,
+                                         const TexDesc* tex, int numTex, int id,
+                                         float u, float v, unsigned int face,
+                                         int transferCorrection, F4 missing);
 __device__ F4 mtlxBlackbody(float kelvin){float temperature=fminf(fmaxf(kelvin,800.f),25000.f),t=1000.f/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.f?-0.2661239f*t3-0.2343580f*t2+0.8776956f*t+0.179910f:-3.0258469f*t3+2.1070379f*t2+0.2226347f*t+0.240390f,x2=x*x,x3=x2*x,y=temperature<2222.f?-1.1063814f*x3-1.34811020f*x2+2.18555832f*x-0.20219683f:(temperature<4000.f?-0.9549476f*x3-1.37418593f*x2+2.09137015f*x-0.16748867f:3.0817580f*x3-5.87338670f*x2+3.75112997f*x-0.37001483f);if(y<=0.f)return mk4(1,1,1,1);float X=x/y,Z=(1.f-x-y)/y;return mk4(fmaxf(3.2406f*X-1.5372f-.4986f*Z,0.f),fmaxf(-.9689f*X+1.8758f+.0415f*Z,0.f),fmaxf(.0557f*X-.2040f+1.057f*Z,0.f),1.f);}
 
 // Compact MaterialX graph interpreter shared by CUDA and HIP. Graph blocks
@@ -224,10 +247,18 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         else if (uvInput==2) { gu=c.x; gv=c.y; }
         gu=gu*graph[p+17]+graph[p+19];
         gv=gv*graph[p+18]+graph[p+20];
-        values[i]=tex>=0 ? sampleMaterialTexture(texels,textures,numTextures,
+        const int transferCorrection=(int)floorf(graph[p+13]+0.5f);
+        values[i]=tex>=0 ? sampleMaterialTextureGraph(texels,textures,numTextures,
                                                   tex,gu,gv,(unsigned int)face,
-                                                  0.f,mk4(1.f,1.f,1.f,1.f))
+                                                  transferCorrection,mk4(1.f,1.f,1.f,1.f))
                          : fallback;
+        const int colorMode=(int)floorf(graph[p+12]+0.5f);
+        const float cr=values[i].x,cg=values[i].y,cb=values[i].z;
+        if(colorMode==1){values[i].x=1.70505f*cr-.62179f*cg-.08326f*cb;values[i].y=-.13026f*cr+1.14080f*cg-.01054f*cb;values[i].z=-.02400f*cr-.12897f*cg+1.15297f*cb;}
+        else if(colorMode==2){values[i].x=2.52169f*cr-1.13413f*cg-.38756f*cb;values[i].y=-.27648f*cr+1.37272f*cg-.09624f*cb;values[i].z=-.01538f*cr-.15298f*cg+1.16836f*cb;}
+        else if(colorMode==3){values[i].x=1.66049f*cr-.58764f*cg-.07285f*cb;values[i].y=-.12455f*cr+1.13290f*cg-.00835f*cb;values[i].z=-.01815f*cr-.10058f*cg+1.11873f*cb;}
+        else if(colorMode==4){values[i].x=1.22494f*cr-.22494f*cg;values[i].y=-.04206f*cr+1.04206f*cg;values[i].z=-.01964f*cr-.07864f*cg+1.09828f*cb;}
+        else if(colorMode==5){values[i].x=1.39835536f*cr;values[i].y=-.39835569f*cr+cg-.04292889f*cb;values[i].z=1.04292905f*cb;}
       }
       else if (op==3) {
         F3 n=norm3(mk(a.x*2.f-1.f,a.y*2.f-1.f,a.z*2.f-1.f));
@@ -392,6 +423,20 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
   }
   return sampleTexRGBAFallbackLod(texels, tex, numTex, id, u, v, lod,
                                   missing);
+}
+__device__ F4 sampleMaterialTextureGraph(const unsigned char* texels,
+                                         const TexDesc* tex, int numTex, int id,
+                                         float u, float v, unsigned int face,
+                                         int transferCorrection, F4 missing) {
+  if (tex && id >= 0 && id < numTex && tex[id].isPtex) {
+    F4 value = samplePtexRGBA(texels, tex, numTex, id, u, v, face, 0.f);
+    value.x=mtlxCorrectTransfer1(value.x,transferCorrection);
+    value.y=mtlxCorrectTransfer1(value.y,transferCorrection);
+    value.z=mtlxCorrectTransfer1(value.z,transferCorrection);
+    return value;
+  }
+  return sampleTexRGBAFallbackLod(texels, tex, numTex, id, u, v, 0.f,
+                                  missing, transferCorrection);
 }
 __device__ float textureLod(const TexDesc* tex, int numTex, int id,
                             float u, float v, float uvFootprint){

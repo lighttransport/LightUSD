@@ -26,6 +26,9 @@ struct ColorSpaceDesc {
                          0.0f, 0.0f, 1.0f};
   float gamma = 1.0f;
   float linear_bias = 0.0f;
+  // cmlib rec709_display: decode is pow(max(in, 0), gamma); negatives clamp
+  // to zero instead of mirroring like signed gamma.
+  bool clamp_negative = false;
   ColorSpaceKind kind = ColorSpaceKind::Unknown;
 };
 

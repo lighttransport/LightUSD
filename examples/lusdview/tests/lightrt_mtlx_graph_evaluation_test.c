@@ -452,7 +452,7 @@ int main(void) {
     mtlx_free(override_doc);
   }
 
-  /* A nonzero UV set cannot be represented by the current single-UV context. */
+  /* A nonzero UV set is represented by the indexed texcoord callback. */
   {
     const char *unsupported_xml =
         "<materialx version=\"1.39\">"
@@ -461,12 +461,12 @@ int main(void) {
         "<noise3d name=\"first\" type=\"float\"/><noise2d name=\"n\" type=\"float\"/>"
         "<output name=\"out\" type=\"float\" nodename=\"n\"/>"
         "</nodegraph></materialx>";
-    MtlxDoc *unsupported_doc = mtlx_load_string(unsupported_xml);
-    if (unsupported_doc) {
-      fprintf(stderr, "unsupported geometry default was accepted\n");
+    MtlxDoc *indexed_doc = mtlx_load_string(unsupported_xml);
+    if (!indexed_doc) {
+      fprintf(stderr, "indexed geometry default was rejected\n");
       ok = 0;
-      mtlx_free(unsupported_doc);
     }
+    mtlx_free(indexed_doc);
     const char *authored_xml =
         "<materialx version=\"1.39\">"
         "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"1\"/>"

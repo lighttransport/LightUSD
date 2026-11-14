@@ -133,6 +133,37 @@ vec3 linearToSrgb(vec3 c) {
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 
+vec3 mtlxCorrectSampleTransfer(vec3 c, int correction) {
+  if (correction == 0) return c;
+  for (int i = 0; i < 3; ++i) {
+    float x = c[i];
+    if (correction <= 5 || correction == 11) {
+      if (correction == 1) {
+        float a = abs(x);
+        c[i] = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                    : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+        continue;
+      }
+      float a = abs(x);
+      x = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                   : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+    }
+    int transfer = correction >= 11 ? 6 : (correction >= 6 ? correction - 5 : correction);
+    float a = abs(x), y;
+    if (transfer == 1)
+      y = a <= 0.04045 ? a / 12.92 : pow((a + 0.055) / 1.055, 2.4);
+    else if (transfer == 6)
+      y = x > 0.0 ? pow(a, 2.4) : 0.0;  // cmlib rec709_display clamps negatives
+    else {
+      float gamma = transfer == 2 ? 2.2 : transfer == 3 ? 1.8
+                    : transfer == 4 ? 2.4 : 563.0 / 256.0;
+      y = pow(a, gamma);
+    }
+    c[i] = sign(x) * y;
+  }
+  return c;
+}
+
 // Slab-method ray/AABB test with a current-best-t early-out, matching
 // raytrace.comp's pointBoxHit convention.
 bool boxHit(vec3 bmin, vec3 bmax, vec3 o, vec3 inv, float best) {
@@ -428,9 +459,61 @@ vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
              mix(swTexel(td, p0.x, p1.y), swTexel(td, p1.x, p1.y), f.x), f.y);
 }
 
+vec4 swSampleGraphTexture(int id, vec2 uv, uint face, vec4 missing,
+                          int correction) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return missing;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return missing;
+    td = texDescs[tileId];
+    uv = fract(uv);
+  }
+  if (td.width <= 0 || td.height <= 0) return missing;
+  if (td.isPtex != 0 && td.imageSlot >= 0 &&
+      td.imageSlot < LUSDVIEW_RT_PTEXTURE_IMAGE_CAP) {
+    vec4 value = swSampleTexture(id, uv, vec2(0.0), vec2(0.0), face, missing);
+    value.rgb = mtlxCorrectSampleTransfer(value.rgb, correction);
+    return value;
+  }
+  vec2 p = vec2(swWrap(uv.x, td.wrapS), swWrap(uv.y, td.wrapT)) *
+           vec2(td.width - 1, td.height - 1);
+  ivec2 p0 = ivec2(clamp(floor(p), vec2(0.0), vec2(td.width - 1, td.height - 1)));
+  ivec2 p1 = min(p0 + ivec2(1), ivec2(td.width - 1, td.height - 1));
+  vec2 f = fract(p);
+  vec4 c00 = swTexel(td, p0.x, p0.y), c10 = swTexel(td, p1.x, p0.y);
+  vec4 c01 = swTexel(td, p0.x, p1.y), c11 = swTexel(td, p1.x, p1.y);
+  c00.rgb = mtlxCorrectSampleTransfer(c00.rgb, correction);
+  c10.rgb = mtlxCorrectSampleTransfer(c10.rgb, correction);
+  c01.rgb = mtlxCorrectSampleTransfer(c01.rgb, correction);
+  c11.rgb = mtlxCorrectSampleTransfer(c11.rgb, correction);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
 // Bounded interpreter for the same compact MaterialX IR used by the
 // ray-query path. Fixed-point passes resolve forward references while keeping
 // malformed graphs bounded and deterministic.
+vec3 mtlxColorPrimariesToRec709(vec3 c, int mode) {
+  if (mode == 1) return mat3(1.70505, -0.13026, -0.02400,
+                            -0.62179, 1.14080, -0.12897,
+                            -0.08326, -0.01054, 1.15297) * c;
+  if (mode == 2) return mat3(2.52169, -0.27648, -0.01538,
+                            -1.13413, 1.37272, -0.15298,
+                            -0.38756, -0.09624, 1.16836) * c;
+  if (mode == 3) return mat3(1.66049, -0.12455, -0.01815,
+                            -0.58764, 1.13290, -0.10058,
+                            -0.07285, -0.00835, 1.11873) * c;
+  if (mode == 4) return mat3(1.22494, -0.04206, -0.01964,
+                            -0.22494, 1.04206, -0.07864,
+                             0.0,      0.0,      1.09828) * c;
+  if (mode == 5) return mat3(1.39835536, 0.0, -0.0,
+                            -0.39835569, 1.0, -0.04292889,
+                             0.0, -0.0, 1.04292905) * c;
+  return c;
+}
 #if LUSDVIEW_SW_DISABLE_MTLX
 vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
   return vec4(0.0);
@@ -482,8 +565,14 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
           break;
         }
       }
-      else if (op == 1 || op == 2) v[i] = tex >= 0
-          ? swSampleTexture(tex, graphUv, vec2(0.0), vec2(0.0), face, value) : value;
+      else if (op == 1 || op == 2) {
+        int transfer = int(floor(graphRows[p + 13u] + 0.5));
+        value = tex >= 0 ? swSampleGraphTexture(tex, graphUv, face, value, transfer)
+                         : value;
+        value.rgb = mtlxColorPrimariesToRec709(
+            value.rgb, int(floor(graphRows[p + 12u] + 0.5)));
+        v[i] = value;
+      }
       else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
       else if (op == 4) v[i] = av + bv;
       else if (op == 5) v[i] = av - bv;
@@ -524,7 +613,8 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
         v[i] = vec4(l, l, l, av.w);
       } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
       else if (op == 21)
-        v[i] = vec4(graphRows[p + 14u] > 0.5 ? uv1 : uv0, 0.0, 1.0);
+        v[i] = vec4((c >= 0 ? cv.x == 1.0 : graphRows[p + 14u] > 0.5)
+                        ? uv1 : uv0, 0.0, 1.0);
       else if (op == 22) v[i] = floor(av);
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);

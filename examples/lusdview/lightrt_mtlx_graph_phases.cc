@@ -396,6 +396,26 @@ bool PackMaterialXGraphRuntimePhase(
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
         const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if ((cat == "texcoord" || cat == "texcoord0" ||
+             cat == "texcoord1") && inputName == "index") {
+          const std::string source = JsonString(input, "nodename");
+          if (!source.empty()) {
+            const auto found = nodeIds.find(source);
+            if (found == nodeIds.end()) {
+              if (err) *err = "Unresolved MaterialX texcoord index input: " + source;
+              return false;
+            }
+            out.input[2] = found->second;
+          }
+          if (valueIt != input.end() && valueIt->is_number())
+            out.value[2][0] = valueIt->get<float>();
+          const int authoredIndex = valueIt != input.end() && valueIt->is_number()
+                                        ? valueIt->get<int>() : 0;
+          out.value[2][2] =
+              (cat == "texcoord1" || (cat == "texcoord" && authoredIndex == 1))
+                  ? 1.0f : 0.0f;
+          continue;
+        }
         const bool conditional = cat == "ifgreater" || cat == "ifgreatereq" ||
                                  cat == "ifgreaterequal" || cat == "ifequal";
         if (((cat == "splitlr" || cat == "splittb") &&
@@ -441,7 +461,13 @@ bool PackMaterialXGraphRuntimePhase(
         }
         if (inputName == "file" || inputType == "filename") {
           out.imagePath = JsonString(input, "value");
+          out.colorSpaceToken = JsonString(input, "colorspace");
           if (!out.imagePath.empty()) graph.hasImages = true;
+          continue;
+        }
+        if ((cat == "image" || cat == "tiledimage" ||
+             cat == "hextiledimage") && inputName == "colorspace") {
+          out.colorSpaceToken = JsonString(input, "value");
           continue;
         }
         // Tiled-image graphs commonly author a local UV scale/offset on the

@@ -787,7 +787,8 @@ bool ReadMeshFloatAttribute(const ::lightusd::UsdPrim& prim,
                             const std::string& name,
                             const ::lightusd::EvalOptions& options,
                             size_t components, size_t point_count,
-                            size_t corner_count, MeshFloatAttribute* out) {
+                            size_t corner_count, MeshFloatAttribute* out,
+                            size_t face_count) {
   if (!out || !components) return false;
   out->components = components;
   out->interpolation.clear();
@@ -805,6 +806,7 @@ bool ReadMeshFloatAttribute(const ::lightusd::UsdPrim& prim,
                                               : out->indices.size();
     out->interpolation = count == point_count    ? "vertex"
                          : count == corner_count ? "faceVarying"
+                         : face_count > 1 && count == face_count ? "uniform"
                          : count == 1            ? "constant"
                                                  : "";
   }

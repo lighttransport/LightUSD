@@ -195,20 +195,27 @@ WrapMode ParseWrapMode(const std::string& token) {
 }
 
 ColorSpace ParseColorSpace(const std::string& token) {
-  if (token == "raw") return ColorSpace::Raw;
+  if (token == "raw" || token == "Raw" || token == "none" ||
+      token == "data") return ColorSpace::Raw;
   if (token == "linear" || token == "Linear" || token == "lin_srgb" ||
-      token == "lin_rec709" || token == "scene-linear Rec.709-sRGB") {
+      token == "lin_rec709" || token == "lin_rec709_scene" ||
+      token == "scene-linear Rec.709-sRGB") {
     return ColorSpace::Linear;
   }
-  if (token == "sRGB" || token == "srgb" || token == "srgb_texture") {
+  if (token == "sRGB" || token == "srgb" || token == "srgb_texture" ||
+      token == "srgb_rec709_scene") {
     return ColorSpace::sRGB;
   }
-  if (token == "acescg" || token == "ACEScg") return ColorSpace::ACEScg;
+  if (token == "acescg" || token == "ACEScg" || token == "lin_ap1" ||
+      token == "lin_ap1_scene") return ColorSpace::ACEScg;
   if (token == "rec709" || token == "Rec709") return ColorSpace::Rec709;
   if (token == "rec2020" || token == "Rec2020" ||
-      token == "lin_rec2020") return ColorSpace::Rec2020;
+      token == "lin_rec2020" || token == "lin_rec2020_scene") {
+    return ColorSpace::Rec2020;
+  }
   if (token == "displayP3" || token == "DisplayP3" ||
-      token == "lin_displayp3" || token == "srgb_displayp3") {
+      token == "lin_displayp3" || token == "lin_p3d65_scene" ||
+      token == "srgb_displayp3" || token == "srgb_p3d65_scene") {
     return ColorSpace::DisplayP3;
   }
   return ColorSpace::Unknown;

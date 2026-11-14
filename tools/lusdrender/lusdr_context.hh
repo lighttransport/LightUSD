@@ -33,6 +33,9 @@ struct RenderContext {
   std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   std::vector<float> tri_uvs1;  // second UV set, parallel to tri_uvs; or empty
+  std::vector<MtlxGeomPropRequest> mtlx_geomprop_requests;
+  std::vector<float> tri_geomprops;
+  ByteVec tri_geomprops_valid;
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
   std::vector<float> tri_normals;  // 9 floats/tri (per-corner normals); empty if none
   std::vector<VolumeData> volumes;  // UsdVol volumes (OpenVDB) for raymarching
@@ -275,7 +278,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            float *primary_hit_t = nullptr,
            std::atomic<bool>* diagnostic_exhausted = nullptr,
            uint64_t path_seed = 0,
-           std::atomic<bool>* materialx_error = nullptr);
+           std::atomic<bool>* materialx_error = nullptr,
+           const std::vector<MtlxGeomPropRequest>* geomprop_requests = nullptr,
+           const std::vector<float>* tri_geomprops = nullptr,
+           const ByteVec* tri_geomprops_valid = nullptr);
 
 uint8_t ToSRGB8(float linear, bool srgb_display_transform);
 
@@ -304,7 +310,10 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats = nullptr,
                             const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
-                            const std::vector<BackPlateImage> *backplates = nullptr);
+                            const std::vector<BackPlateImage> *backplates = nullptr,
+                            const std::vector<MtlxGeomPropRequest>* geomprop_requests = nullptr,
+                            const std::vector<float>* tri_geomprops = nullptr,
+                            const ByteVec* tri_geomprops_valid = nullptr);
 
 bool LoadProgress(float progress, void *);
 

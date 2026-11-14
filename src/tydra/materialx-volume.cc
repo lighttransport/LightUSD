@@ -3,11 +3,15 @@
 #include "materialx.hh"
 #include "core/mtlx-dom.hh"
 #include "core/security-policy.hh"
+#include "core/color-transform.hh"
 #include "resolver/asset-resolver.hh"
+#include "texture-cache.hh"
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 extern "C" {
@@ -19,6 +23,28 @@ extern "C" {
 namespace lightusd {
 namespace tydra {
 namespace {
+
+void TransformMtlxVolumeFileColor(void*, const char* token, float rgb[3]) {
+  if (!token || !rgb) return;
+  thread_local std::unordered_map<std::string, color::ColorTransform> transforms;
+  const auto cached = transforms.find(token);
+  if (cached != transforms.end()) {
+    color::TransformRGB(cached->second, rgb);
+    return;
+  }
+  color::ColorSpaceDesc source, destination;
+  if (!color::GetBuiltinColorSpace(token, &source) ||
+      !color::GetBuiltinColorSpace("lin_rec709_scene", &destination))
+    return;
+  color::ColorTransform transform;
+  if (!color::BuildColorTransform(source, destination, &transform)) return;
+  if (transforms.size() < 64) {
+    const auto inserted = transforms.emplace(token, transform);
+    color::TransformRGB(inserted.first->second, rgb);
+  } else {
+    color::TransformRGB(transform, rgb);
+  }
+}
 
 struct MtlxVolumeAssetReader {
   AssetResolver default_resolver;
@@ -145,6 +171,7 @@ bool MtlxConverter::EvaluateVolumeMaterial(const std::string& mtlx_content,
 struct MtlxVolumeEvaluator::Impl {
   std::unique_ptr<MtlxDoc, decltype(&mtlx_free)> doc{nullptr, &mtlx_free};
   std::unique_ptr<TextureCache, decltype(&texcache_free)> cache{nullptr, &texcache_free};
+  std::vector<MaterialXMipChain> mip_chains;
   MtlxVolumeAssetReader reader;
   std::vector<::MtlxValue> memo;
   std::vector<char> done;
@@ -213,10 +240,60 @@ std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
       options_.volume_texture_resolver->GetConfig().allow_parent_paths;
   texcache_set_reader(cache.get(), &ReadMtlxVolumeTexture, &reader,
                       options_.volume_texture_max_decoded_bytes);
-  texcache_set_auto_mips(cache.get(), options_.volume_texture_mipmaps);
   impl->node = doc->mats[material].volume_node;
   impl->memo.resize(static_cast<size_t>(doc->nnode));
   impl->done.resize(static_cast<size_t>(doc->nnode));
+  if (options_.volume_texture_mipmaps) {
+    texcache_preload(cache.get(), doc.get());
+    if (texcache_had_load_failure(cache.get()) || texcache_limit_exceeded(cache.get())) {
+      error_ = reader.error.empty() ? "Failed to preload MaterialX volume textures"
+                                    : reader.error;
+      return nullptr;
+    }
+    const size_t base_bytes = texcache_decoded_bytes(cache.get());
+    const size_t max_bytes = options_.volume_texture_max_decoded_bytes;
+    if (max_bytes && base_bytes >= max_bytes && texcache_count(cache.get())) {
+      error_ = "MaterialX volume textures leave no room for mipmaps within the decoded-byte limit";
+      return nullptr;
+    }
+    TextureDecodeOptions decode_options;
+    decode_options.budget_bytes = max_bytes ? max_bytes - base_bytes : 0;
+    TextureDecoder decoder(std::move(decode_options));
+    impl->mip_chains.reserve(static_cast<size_t>(texcache_count(cache.get())));
+    for (int i = 0; i < texcache_count(cache.get()); ++i) {
+      const unsigned char* pixels = nullptr;
+      int width = 0, height = 0, channels = 0, srgb = 0;
+      if (!texcache_image_view(cache.get(), i, &pixels, &width, &height,
+                               &channels, &srgb)) {
+        error_ = "Failed to access a MaterialX volume texture";
+        return nullptr;
+      }
+      DecodedImageView image;
+      image.width = static_cast<uint32_t>(width);
+      image.height = static_cast<uint32_t>(height);
+      image.channels = static_cast<uint8_t>(channels);
+      image.pixels = pixels;
+      image.value_count = static_cast<size_t>(width) *
+                          static_cast<size_t>(height) *
+                          static_cast<size_t>(channels);
+      MaterialXMipChain chain;
+      if (!decoder.BuildMaterialXMips(image, srgb != 0, &chain)) {
+        error_ = "Failed to build MaterialX volume mipmaps within the decoded-byte limit";
+        return nullptr;
+      }
+      std::vector<MtlxTextureMipView> views;
+      views.reserve(chain.levels.size());
+      for (const MaterialXMipLevel& level : chain.levels)
+        views.push_back({static_cast<int>(level.width),
+                         static_cast<int>(level.height), level.rgba.data()});
+      if (!texcache_attach_mips(cache.get(), i, views.data(),
+                                static_cast<int>(views.size()))) {
+        error_ = "Failed to attach MaterialX volume mipmaps";
+        return nullptr;
+      }
+      impl->mip_chains.push_back(std::move(chain));
+    }
+  }
   return std::unique_ptr<MtlxVolumeEvaluator>(new MtlxVolumeEvaluator(std::move(impl)));
 }
 
@@ -267,6 +344,7 @@ bool MtlxVolumeEvaluator::Evaluate(const MtlxVolumeContext& input,
   }
   context.doc = impl_->doc.get();
   context.tex = impl_->cache.get();
+  context.color_transform = &TransformMtlxVolumeFileColor;
   for (size_t i = 0; i < 2; ++i) {
     context.uv[i] = input.uv[i];
     context.uv_dx[i] = input.uv_dx[i];

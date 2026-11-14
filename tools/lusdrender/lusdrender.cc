@@ -181,16 +181,77 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
     generated->path.clear();
     return false;
   }
+  const bool needs_indexed_uv =
+      lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(opt.mtlx_runtime.get(), 1);
+  std::vector<lusdview::MaterialXGeomPropValue> geomprop_requests;
+  lusdview::MaterialXSurfaceRuntimeGeomPropRequests(opt.mtlx_runtime.get(),
+                                                    &geomprop_requests);
+  const bool needs_geomprop_mesh = !geomprop_requests.empty();
   out << "#usda 1.0\n(\n    defaultPrim = \"World\"\n"
          "    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\n"
-         "def Xform \"World\" {\n"
-         "    def Sphere \"MaterialSphere\" (\n"
-         "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
-         "    ) {\n"
-         "        double radius = 1\n"
-      << (opt.path_trace ? "        uniform bool doubleSided = true\n" : "")
-      << "        rel material:binding = </World/Material>\n"
-         "    }\n"
+         "def Xform \"World\" {\n";
+  if (needs_indexed_uv || needs_geomprop_mesh) {
+    out << "    def Mesh \"MaterialMesh\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        point3f[] points = [(-1, -1, 0), (1, -1, 0), "
+           "(1, 1, 0), (-1, 1, 0)]\n"
+           "        int[] faceVertexCounts = [4]\n"
+           "        int[] faceVertexIndices = [0, 1, 2, 3]\n"
+           "        texCoord2f[] primvars:st = [(0.1, 0.2), (0.1, 0.2), "
+           "(0.1, 0.2), (0.1, 0.2)] (interpolation = \"vertex\")\n"
+           "        texCoord2f[] primvars:st1 = [(0.75, 0.25), (0.75, 0.25), "
+           "(0.75, 0.25), (0.75, 0.25)] (interpolation = \"vertex\")\n"
+           "        color3f[] primvars:mtlxTestColor = [(1, 0, 0), (0, 1, 0), "
+           "(0, 0, 1), (1, 1, 1)] (interpolation = \"faceVarying\")\n"
+           "        int[] primvars:mtlxTestColor:indices = [0, 2, 1, 3]\n"
+           "        int[] primvars:mtlxTestId = [11, 42] (interpolation = \"constant\")\n"
+           "        int[] primvars:mtlxTestId:indices = [1]\n"
+           "        float[] primvars:mtlxTestUniform = [0.65] (interpolation = \"uniform\")\n"
+           "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  } else {
+    out << "    def Sphere \"MaterialSphere\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        double radius = 1\n"
+        << (opt.path_trace ? "        uniform bool doubleSided = true\n" : "")
+        << "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  }
+  if (needs_geomprop_mesh) {
+    out << "    def PointInstancer \"GeomPropInstances\" {\n"
+           "        rel prototypes = [</World/GeomPropInstances/Prototype>]\n"
+           "        int[] protoIndices = [0, 0]\n"
+           "        point3f[] positions = [(-1.5, 0, 0), (1.5, 0, 0)]\n"
+           "        def Mesh \"Prototype\" (\n"
+           "            prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "        ) {\n"
+           "            point3f[] points = [(-0.45, -0.45, 0), (0.45, -0.45, 0), "
+           "(0.45, 0.45, 0), (-0.45, 0.45, 0)]\n"
+           "            int[] faceVertexCounts = [4]\n"
+           "            int[] faceVertexIndices = [0, 1, 2, 3]\n"
+           "            color3f[] primvars:mtlxTestColor = [(0.123, 0.456, 0.789), "
+           "(0.123, 0.456, 0.789), (0.123, 0.456, 0.789), "
+           "(0.123, 0.456, 0.789)] (interpolation = \"vertex\")\n"
+           "            int[] primvars:mtlxTestId = [11, 42] (interpolation = \"constant\")\n"
+           "            int[] primvars:mtlxTestId:indices = [1]\n"
+           "            float[] primvars:mtlxTestUniform = [0.35] (interpolation = \"uniform\")\n"
+           "            rel material:binding = </World/Material>\n"
+           "        }\n"
+           "    }\n";
+    out << "    def Sphere \"GeomPropSphere\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        double radius = 0.5\n"
+           "        double3 xformOp:translate = (0, 0, 1.5)\n"
+           "        uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
+           "        color3f[] primvars:mtlxTestColor = [(0.81, 0.27, 0.53)] "
+           "(interpolation = \"constant\")\n"
+           "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  }
+  out <<
          "    def Material \"Material\" {\n"
          "        token outputs:surface.connect = </World/Material/Surface.outputs:surface>\n"
          "        def Shader \"Surface\" {\n"

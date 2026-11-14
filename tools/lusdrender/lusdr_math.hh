@@ -69,9 +69,13 @@ struct Vec3 {
 struct MaterialXHitContext {
   bool has_uv{false};
   bool has_uv_derivatives{false};
+  bool has_uv1{false};
   float uv[2]{0.0f, 0.0f};
   float uv_dx[2]{0.0f, 0.0f};
   float uv_dy[2]{0.0f, 0.0f};
+  float uv1[2]{0.0f, 0.0f};
+  float uv1_dx[2]{0.0f, 0.0f};
+  float uv1_dy[2]{0.0f, 0.0f};
   Vec3 dpdu{1.0f, 0.0f, 0.0f};
   Vec3 dpdv{0.0f, 1.0f, 0.0f};
 };
