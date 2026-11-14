@@ -1054,6 +1054,52 @@ struct DrawTextureCPU {
   std::vector<light3d::Image> mipImages;
 };
 
+// Build a derived LDR texture whose pixels already carry an authored MaterialX
+// image colorspace transfer: the source is decoded the way the descriptor
+// samples it, corrected by `correction` (MaterialXGraphTransferCorrection) and
+// re-encoded as sRGB so the ordinary descriptor path (hardware sampler, mip
+// chain generated from `image`) filters in the override's space. Returns false
+// when the source cannot be converted (non-RGBA8 payloads, UDIM, Ptex, final
+// compressed, or larger than `maxBytes`); callers keep the per-sample fallback.
+inline bool MaterialXBuildTransferOverrideTexture(const DrawTextureCPU& src,
+                                                  int correction,
+                                                  size_t maxBytes,
+                                                  DrawTextureCPU* out) {
+  if (!out || correction == 0 || src.isUdim || src.compressedFinal ||
+      src.ptexMipLevels > 1 || src.image.width <= 0 || src.image.height <= 0 ||
+      src.image.channels != 4) {
+    return false;
+  }
+  const size_t count = static_cast<size_t>(src.image.width) *
+                       static_cast<size_t>(src.image.height);
+  if (src.image.data.size() != count * 4u || count * 4u > maxBytes) return false;
+  auto decode = [](float x) {
+    return x <= 0.04045f ? x / 12.92f : std::pow((x + 0.055f) / 1.055f, 2.4f);
+  };
+  auto encode = [](float x) {
+    x = std::min(1.0f, std::max(0.0f, x));
+    return x <= 0.0031308f ? 12.92f * x
+                           : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+  };
+  *out = src;
+  out->mipImages.clear();
+  out->srgb = true;
+  out->assetIdentifier = src.assetIdentifier + "#cs" + std::to_string(correction);
+  for (size_t i = 0; i < count; ++i) {
+    float rgb[3];
+    for (int c = 0; c < 3; ++c) {
+      const float raw = src.image.data[i * 4u + static_cast<size_t>(c)] / 255.0f;
+      rgb[c] = src.srgb ? decode(raw) : raw;
+    }
+    MaterialXGraphCorrectSampleTransfer(rgb, correction);
+    for (int c = 0; c < 3; ++c) {
+      out->image.data[i * 4u + static_cast<size_t>(c)] =
+          static_cast<uint8_t>(encode(rgb[c]) * 255.0f + 0.5f);
+    }
+  }
+  return true;
+}
+
 // A UsdVol volume (OpenVDB) as a dense scalar (density) grid, for GPU 3D-texture
 // raymarching. `data` is the dense float grid (x-contiguous), `world` maps the
 // object-space box [aabbMin, aabbMax] into world space.

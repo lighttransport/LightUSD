@@ -2326,12 +2326,45 @@ int main() {
   directColorTexture.srgb = false;
   directColorScene.textures.push_back(std::move(directColorTexture));
   lusdview::BakeMaterialXGraphTextures(&directColorGraphMat, &directColorScene);
-  if (directColorGraphMat.materialXGraph.nodes[0].textureId != 0 ||
+  // An explicit transfer override now gets a derived sRGB-encoded texture so
+  // mips are filtered in the override's space; the node samples it directly.
+  if (directColorGraphMat.materialXGraph.nodes[0].textureId != 1 ||
       directColorGraphMat.materialXGraph.nodes[0]
-              .colorSpaceTransferCorrection != 6) {
+              .colorSpaceTransferCorrection != 0 ||
+      directColorScene.textures.size() != 2 ||
+      !directColorScene.textures[1].srgb) {
     std::fprintf(stderr,
                  "MaterialX image colorspace transfer override was not retained\n");
     return 1;
+  }
+  {
+    // Linear-sampled raw 128 is sRGB-decoded by the override (code 6), then
+    // re-encoded: the derived texel must round-trip to ~128.
+    const int derived = directColorScene.textures[1].image.data[0];
+    if (std::abs(derived - 128) > 1) {
+      std::fprintf(stderr, "derived override texel %d\n", derived);
+      return 1;
+    }
+    // Override-space reference: raw 200 sampled linearly, authored g24 rec709
+    // (code 9) decodes to 0.784^2.4 = 0.5605 linear -> sRGB 196.
+    lusdview::DrawTextureCPU src, dst;
+    src.image.width = 2; src.image.height = 1; src.image.channels = 4;
+    src.image.data = {200, 200, 200, 255, 0, 0, 0, 255};
+    src.srgb = false;
+    const int code = lusdview::MaterialXGraphTransferCorrection("g24_rec709_scene", false);
+    if (!lusdview::MaterialXBuildTransferOverrideTexture(src, code, 1u << 20, &dst) ||
+        std::abs(static_cast<int>(dst.image.data[0]) - 196) > 1 ||
+        dst.image.data[3] != 255 || dst.image.data[4] != 0 || !dst.srgb) {
+      std::fprintf(stderr, "override-space texture conversion failed\n");
+      return 1;
+    }
+    // Budget cap and unsupported payloads fall back to per-sample correction.
+    lusdview::DrawTextureCPU capped;
+    if (lusdview::MaterialXBuildTransferOverrideTexture(src, code, 4u, &capped) ||
+        lusdview::MaterialXBuildTransferOverrideTexture(src, 0, 1u << 20, &capped)) {
+      std::fprintf(stderr, "override texture cap not honored\n");
+      return 1;
+    }
   }
 
   lusdview::DrawMaterialCPU fixedIdGraphMat;

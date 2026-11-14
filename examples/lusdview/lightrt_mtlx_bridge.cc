@@ -1793,6 +1793,7 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
   for (int route : {0, 4, 7, 10, 12, 14, 17, 22, 41, 42})
     markSrgb(mat->materialXGraph.output[route]);
 
+  std::map<std::pair<int, int>, int> overrideTextures;
   for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
        ++nodeIndex) {
     MaterialXGraphNodeCPU& node = mat->materialXGraph.nodes[nodeIndex];
@@ -1864,6 +1865,30 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
           scene->textures[static_cast<size_t>(node.textureId)].srgb;
       node.colorSpaceTransferCorrection = MaterialXGraphTransferCorrection(
           node.colorSpaceToken, sampledSrgb);
+      // Mips must be filtered in the override's space, so a texture with an
+      // explicit transfer override gets a derived sRGB-encoded copy built once
+      // per (source, correction); its chain is generated like any other
+      // texture. Oversized or non-RGBA8 sources keep the per-sample fallback.
+      if (node.colorSpaceTransferCorrection != 0) {
+        const auto key = std::make_pair(node.textureId,
+                                        node.colorSpaceTransferCorrection);
+        auto cached = overrideTextures.find(key);
+        if (cached == overrideTextures.end()) {
+          DrawTextureCPU derived;
+          int derivedId = -1;
+          if (MaterialXBuildTransferOverrideTexture(
+                  scene->textures[static_cast<size_t>(node.textureId)],
+                  node.colorSpaceTransferCorrection, 64u << 20, &derived)) {
+            derivedId = static_cast<int>(scene->textures.size());
+            scene->textures.push_back(std::move(derived));
+          }
+          cached = overrideTextures.emplace(key, derivedId).first;
+        }
+        if (cached->second >= 0) {
+          node.textureId = cached->second;
+          node.colorSpaceTransferCorrection = 0;
+        }
+      }
     }
     if (node.textureId >= 0 &&
         static_cast<size_t>(node.textureId) < scene->textures.size()) {
