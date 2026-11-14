@@ -1375,6 +1375,22 @@ void UpgradeMtlxLegacyAttributes(MtlxElem *elem, bool from_122) {
     UpgradeMtlxLegacyAttributes(&child, from_122);
 }
 
+// 1.23 -> 1.24: document-level `assign` children become `materialassign`.
+// 1.25 -> 1.26: the `color` child of a `constant` becomes `value`.
+void UpgradeMtlxAssignAndConstant(MtlxElem *elem, bool from_123, bool from_125) {
+  if (!elem) return;
+  if (from_123 && elem->tag == "materialx") {
+    for (MtlxElem &child : elem->children)
+      if (child.tag == "assign") child.tag = "materialassign";
+  }
+  if (from_125 && elem->tag == "constant") {
+    for (MtlxElem &child : elem->children)
+      if (child.Name() == "color") child.SetAttr("name", "value");
+  }
+  for (MtlxElem &child : elem->children)
+    UpgradeMtlxAssignAndConstant(&child, from_123, from_125);
+}
+
 // 1.35 -> 1.36 (reference Document::upgradeVersion): every element typed
 // "filename" gets its value rewritten with the %UDIM / %UVTILE token
 // substitutions. The reference assigns the attribute even when the element has
@@ -1467,20 +1483,26 @@ void UpgradeMtlxVersionImpl(MtlxElem *root) {
   if (!root || root->tag != "materialx") return;
   uint64_t major = 0, minor = 0;
   if (!ParseMtlxVersion(root->AttrOr("version"), &major, &minor) ||
-      major != 1 || (minor != 22 && minor != 25 && minor != 36 && minor != 37 &&
-                     minor != 38)) {
+      major != 1 ||
+      (minor != 22 && minor != 23 && minor != 24 && minor != 25 &&
+       minor != 26 && minor != 34 && minor != 35 && minor != 36 &&
+       minor != 37 && minor != 38)) {
     return;
   }
-  if (minor == 22) {
+  // 1.22 .. 1.35: the reference applies a ladder of steps (1.22 -> 1.23 -> ...
+  // -> 1.36). The shader/opgraph conversions (the 1.26 -> 1.34 step) run for
+  // every start at or below 1.26, the attribute renames for starts at or below
+  // 1.34 (vector -> vector3 only from 1.22), and the filename-token rewrite for
+  // every start at or below 1.35.
+  const uint64_t start = minor;
+  if (start <= 25)
+    UpgradeMtlxAssignAndConstant(root, start <= 23, true);
+  if (start <= 26) {
     UpgradeMtlxLegacyOpgraphs(root);
     UpgradeMtlxLegacyShaderFormat(root);
-    UpgradeMtlxLegacyAttributes(root, true);
-    UpgradeMtlxFilenameTokens(root);
-    minor = 36;
   }
-  if (minor == 25) {
-    UpgradeMtlxLegacyShaderFormat(root);
-    UpgradeMtlxLegacyAttributes(root, false);
+  if (start <= 34) UpgradeMtlxLegacyAttributes(root, start == 22);
+  if (start <= 35) {
     UpgradeMtlxFilenameTokens(root);
     minor = 36;
   }

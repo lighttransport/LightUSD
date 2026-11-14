@@ -1085,7 +1085,7 @@ bool IsMtlxNodeElem(const MtlxElem &e) {
       "lookgroup",   "collection",  "geominfo",       "propertyset",
       "variantset",  "targetdef",   "attributedef",   "backdrop",
       "xi:include",  "comment",     "newline",        "input",
-      "output",      "token"};
+      "output",      "token",       "materialassign"};
   for (const char *t : kNonNode) {
     if (e.tag == t) return false;
   }
