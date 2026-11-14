@@ -728,10 +728,13 @@ def Xform "Scene"
       CHECK(mat != nullptr, "mtlx material prim composed");
       if (mat) {
         CHECK(mat->type_name() == "Material", "composed prim is a Material");
+        // The .mtlx layer loader upgrades legacy documents (1.38 here) to the
+        // current version before building the prims, so the composed value is
+        // the upgraded 1.39, not the authored 1.38.
         const Value* version = mat->property_value("config:mtlx:version");
         CHECK(version && version->as_string() &&
-                  *version->as_string() == "1.38",
-              "config:mtlx:version composed from the document");
+                  *version->as_string() == "1.39",
+              "config:mtlx:version composed from the (upgraded) document");
         const std::vector<Path>* surface =
             mat->relationship("mtlx:surface:source");
         CHECK(surface && surface->size() == 1 &&

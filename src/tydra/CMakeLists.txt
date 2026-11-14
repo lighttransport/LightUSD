@@ -167,6 +167,11 @@ if(NOT EMSCRIPTEN AND NOT TARGET lusdpreview)
       target_link_libraries(lightusd_preview_images PUBLIC lightusd_textools)
     endif()
     target_link_libraries(lusdpreview PRIVATE lightusd_preview_images)
+    # texture-cache.cc (in tydra) decodes and resizes images, so every consumer of
+    # the standalone tydra archive needs these symbols, not just lusdpreview.
+    target_link_libraries(tydra PUBLIC "$<BUILD_INTERFACE:lightusd_preview_images>")
+    # liblightusd_c.so links tydra, so the image archive must be PIC.
+    set_target_properties(lightusd_preview_images PROPERTIES POSITION_INDEPENDENT_CODE ON)
   endif()
   set_target_properties(lusdpreview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
   if(LIGHTUSD_BUILD_TESTS)

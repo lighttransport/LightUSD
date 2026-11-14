@@ -575,3 +575,6 @@ MUJOCO_LOG.TXT
 
 # Meson subproject lock generated during configuration
 /subprojects/.wraplock
+
+# Output of tests/tydra/test_tydra.cc (forwarded anchor), written to the cwd
+/tydra_forwarded_anchor_test/

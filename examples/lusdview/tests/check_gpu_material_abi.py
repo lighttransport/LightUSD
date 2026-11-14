@@ -186,7 +186,7 @@ for label, graph_shader in (
             f"{label} MaterialX dot component width")
     if label != "Vulkan raster":
         require(graph_shader,
-                r"op\s*==\s*21\)\s*v\[i\]\s*=\s*vec4\(graphRows\[p \+ 14u\] > 0\.5 \? uv1 : uv0, 0\.0, 1\.0\)",
+                r"op\s*==\s*21\)\s*v\[i\]\s*=\s*vec4\(\(c >= 0 \? cv\.x == 1\.0 : graphRows\[p \+ 14u\] > 0\.5\)\s*\? uv1 : uv0, 0\.0, 1\.0\)",
                 f"{label} MaterialX texcoord set")
     require(graph_shader,
             r"op\s*==\s*136\)\s*v\[i\]\s*=\s*mix\(sign\(av\) \* pow\(abs\(av\), bv\), vec4\(0\.0\),\s*equal\(av, vec4\(0\.0\)\)\)",
