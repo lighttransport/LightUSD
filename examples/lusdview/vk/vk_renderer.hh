@@ -1538,6 +1538,10 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
   bool rtUsesFullShader_{true};
+  // True while the hardware ray-query pipeline is the interactive-only variant
+  // (built with LUSDVIEW_RT_INTERACTIVE_ONLY, i.e. without the production path
+  // tracer). Entering path tracing must swap it for the full/fast shader.
+  bool rtUsesInteractiveShader_{false};
   bool rtUsesProceduralMaterialX_{false};
   size_t materialXShaderMaxSourceBytes_{129u * 1024u};
   int materialXShaderCompileTimeoutSec_{30};
