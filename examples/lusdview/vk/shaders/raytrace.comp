@@ -2067,15 +2067,19 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   vec4 bt = sampleRtMaterialTexture(matTexIds[tb], buv, uint(max(prim, 0)),
                                     rtTextureLod(matTexIds[tb], buv, 0.0),
                                     vec4(1.0));
-  s.base *= bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
-                           matTexParams[pb + 38u]) +
-            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
-                 matTexParams[pb + 42u]);
+  vec3 baseTexFactor = bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                                     matTexParams[pb + 38u]) +
+                       vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                            matTexParams[pb + 42u]);
+  s.base *= baseTexFactor;
   s.metallic = clamp(mat(mid, 1u).x, 0.0, 1.0);
   s.roughness = clamp(mat(mid, 1u).y, 0.02, 1.0);
   s.emission = max(mat(mid, 2u).rgb, vec3(0.0));
   if (lrt(mid, 12u).w > 0.5) {
-    s.base *= lrt(mid, 0u).rgb * lrt(mid, 0u).w;
+    // The canonical OpenPBR record already carries the authored base colour,
+    // which the CPU also mirrors into mat(mid, 0); multiplying the two squared
+    // it (issues/lightusd/07). Use the record's colour times the texture factor.
+    s.base = max(lrt(mid, 0u).rgb, vec3(0.0)) * lrt(mid, 0u).w * baseTexFactor;
     s.specularColor = max(lrt(mid, 1u).rgb, vec3(0.0));
     s.specularWeight = clamp(lrt(mid, 1u).w, 0.0, 1.0);
     s.transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
@@ -2242,7 +2246,10 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
                               ? lrt(mid, 9u).w : mat(mid, 0u).a;
   if (resolvedMode > 1.5 && s.ior > 1.01 && authoredOpacity < 0.999)
     s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
-  s.base *= ii.tint.rgb;
+  // The instance tint (display colour fallback) applies only to material-less
+  // hits (see the early return above), as in the compute-BVH and HIP path
+  // tracers. Multiplying it into a bound material's base colour darkened
+  // ray-query path tracing by the default 0.8 tint (issues/lightusd/06).
 }
 
 vec3 ptCosineDirection(vec3 n, inout uint seed) {

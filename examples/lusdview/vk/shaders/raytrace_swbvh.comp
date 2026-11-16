@@ -1334,10 +1334,11 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
   vec2 buv = swPtUv(mid, 0, uv0, uv1);
   vec4 bt = swSampleTexture(matTexIds[tb], buv, vec2(0.0), vec2(0.0),
                             uint(max(faceIds[tri], 0)), vec4(1.0));
-  s.base *= bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
-                           matTexParams[pb + 38u]) +
-            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
-                 matTexParams[pb + 42u]);
+  vec3 baseTexFactor = bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                                     matTexParams[pb + 38u]) +
+                       vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                            matTexParams[pb + 42u]);
+  s.base *= baseTexFactor;
   s.metallic = clamp(mat(mid, 1u).x, 0.0, 1.0);
   s.roughness = clamp(mat(mid, 1u).y, 0.02, 1.0);
   s.emission = max(mat(mid, 2u).rgb, vec3(0.0));
@@ -1365,7 +1366,10 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
     s.emission *= et.rgb;
   }
   if (lrt(mid, 12u).w > 0.5) {
-    s.base *= max(lrt(mid, 0u).rgb, vec3(0.0)) * lrt(mid, 0u).w;
+    // The canonical OpenPBR record already carries the authored base colour,
+    // which the CPU also mirrors into mat(mid, 0); multiplying the two squared
+    // it (issues/lightusd/07). Use the record's colour times the texture factor.
+    s.base = max(lrt(mid, 0u).rgb, vec3(0.0)) * lrt(mid, 0u).w * baseTexFactor;
     s.specularColor = max(lrt(mid, 1u).rgb, vec3(0.0));
     s.specularWeight = clamp(lrt(mid, 1u).w, 0.0, 1.0);
     s.transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
