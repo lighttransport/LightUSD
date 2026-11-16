@@ -1082,8 +1082,18 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
        glossyP*ptGgxDirectionPdf(n,v,l,s.rough,s.anisotropy,s.anisotropyRotation)+
        coatP*ptGgxDirectionPdf(coatN,v,l,s.coatRoughness,s.coatAnisotropy,s.coatRotation);
   float sheenShape=(.5f+.5f*s.sheenRoughness)*powf(1.f-nl,5.f)*.31830988618f;
-  F3 diffuse=mk((1.f-F.x)*diffuseC.x*.31830988618f,(1.f-F.y)*diffuseC.y*.31830988618f,(1.f-F.z)*diffuseC.z*.31830988618f);return add(add(diffuse,scale(sheenC,sheenShape)),
-             add(scale(F,gs),scale(cF,cs)));
+  /* Energy-conserving layering (see materialx-conformance issues/lightusd/04):
+   * the diffuse base sits under the specular layer, attenuated by 1 - F(view);
+   * the sheen attenuates what lies below it by its directional albedo;
+   * the coat attenuates the whole base by 1 - coatWeight F_coat(view). */
+  F3 Fv=fresnelSchlick(nv,f0);
+  float sheenAlb=(.5f+.5f*s.sheenRoughness)*(1.f/21.f);
+  F3 sheenAtt=mk(1.f-fminf(sheenC.x*sheenAlb,1.f),1.f-fminf(sheenC.y*sheenAlb,1.f),1.f-fminf(sheenC.z*sheenAlb,1.f));
+  F3 diffuse=mk((1.f-Fv.x)*sheenAtt.x*diffuseC.x*.31830988618f,(1.f-Fv.y)*sheenAtt.y*diffuseC.y*.31830988618f,(1.f-Fv.z)*sheenAtt.z*diffuseC.z*.31830988618f);
+  F3 cFv=scale(fresnelSchlick(cnv,coatF0),coatWeight);
+  F3 base=add(add(diffuse,scale(sheenC,sheenShape)),scale(F,gs));
+  base=mk(base.x*(1.f-cFv.x),base.y*(1.f-cFv.y),base.z*(1.f-cFv.z));
+  return add(base,scale(cF,cs));
 }
 __device__ F3 ptSampleHg(F3 forward,float g,unsigned& seed){
   g=fminf(fmaxf(g,-.95f),.95f);float u=rndf(seed),cosTheta;

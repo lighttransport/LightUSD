@@ -2361,8 +2361,17 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
             s.n, v, l, s.roughness, s.anisotropy, s.anisotropyRotation) +
         coatProbability * ptGgxDirectionPdf(
             s.coatN, v, l, s.coatRoughness, s.coatAnisotropy, s.coatRotation);
-  return (vec3(1.0) - F) * diffuseCoefficient / 3.14159265359 +
-         sheen + glossy + coat;
+  // Energy-conserving layering (materialx-conformance issues/lightusd/04): the
+  // diffuse base sits under the specular layer (1 - F(view)); the sheen attenuates
+  // what lies below it by its directional albedo; the coat attenuates the whole
+  // base by 1 - coatWeight F_coat(view).
+  vec3 Fv = fresnelSchlick(nv, f0);
+  float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
+  vec3 sheenAtt = vec3(1.0) - min(sheenCoefficient * sheenAlb, vec3(1.0));
+  vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseCoefficient /
+                  3.14159265359 + sheen + glossy;
+  vec3 coatFv = fresnelSchlick(coatNv, coatF0) * coatWeight;
+  return base * (vec3(1.0) - coatFv) + coat;
 }
 
 vec3 ptSampleHg(vec3 forward, float g, inout uint seed) {
