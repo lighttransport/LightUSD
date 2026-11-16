@@ -23,6 +23,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <set>
 #include <limits>
 
 namespace lightusd {
@@ -639,6 +640,41 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
   lb.end_prim();
 }
 
+// Nodegraphs and top-level nodes reachable from `roots` through input
+// `nodegraph`/`nodename` references (worklist; documents may share graphs).
+void CollectMtlxReachable(const mtlx::MtlxDocument &doc,
+                          std::initializer_list<mtlx::MtlxNodePtr> roots,
+                          std::set<std::string> *graphs,
+                          std::set<std::string> *nodes) {
+  // (inputs, at document scope): inside a nodegraph `nodename` names a
+  // sibling of that graph, not a top-level node.
+  std::vector<std::pair<const std::vector<mtlx::MtlxInputPtr> *, bool>> work;
+  for (const auto &r : roots)
+    if (r) work.push_back({&r->GetInputs(), true});
+  while (!work.empty()) {
+    const auto item = work.back();
+    work.pop_back();
+    for (const auto &in : *item.first) {
+      if (!in) continue;
+      const std::string &g = in->GetNodeGraph();
+      if (!g.empty()) {
+        if (!graphs->insert(g).second) continue;
+        for (const auto &graph : doc.GetNodeGraphs()) {
+          if (!graph || graph->GetName() != g) continue;
+          // interface inputs live in the enclosing (document) scope
+          work.push_back({&graph->GetInputs(), true});
+          for (const auto &n : graph->GetNodes())
+            if (n) work.push_back({&n->GetInputs(), false});
+        }
+      } else if (item.second && !in->GetNodeName().empty()) {
+        mtlx::MtlxNodePtr top = doc.FindNode(in->GetNodeName());
+        if (top && nodes->insert(in->GetNodeName()).second)
+          work.push_back({&top->GetInputs(), true});
+      }
+    }
+  }
+}
+
 mtlx::MtlxNodePtr FindMtlxNode(const mtlx::MtlxDocument &doc,
                                const std::string &name) {
   if (name.empty()) return nullptr;
@@ -748,8 +784,25 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
       // subtree. This preserves image/normal/utility nodes and lets the next
       // shader evaluator follow the same connections as the source MaterialX
       // document after USD composition.
+      // Only what this material reaches: emitting every nodegraph of the
+      // document into every material multiplied the layer by the material
+      // count. Top-level nodes reached through `nodename` are emitted here
+      // too, since the shader's connections target <material>/<node>.
+      std::set<std::string> graphs, nodes;
+      CollectMtlxReachable(doc, {surface, displacement, volume}, &graphs,
+                           &nodes);
+      for (const auto &node : doc.GetNodes()) {
+        if (!node || node == surface || node == displacement ||
+            node == volume || !nodes.count(node->GetName())) {
+          continue;
+        }
+        EmitMtlxNodePrim(lb, *node, nullptr, material_prefix, material_prefix);
+      }
       for (const auto &graph : doc.GetNodeGraphs()) {
-        if (!graph || graph->GetName().empty()) continue;
+        if (!graph || graph->GetName().empty() ||
+            !graphs.count(graph->GetName())) {
+          continue;
+        }
         const std::string graph_prefix =
             material_prefix + "/" + graph->GetName();
         EmitMtlxNodeGraphPrim(lb, *graph, graph_prefix, material_prefix);

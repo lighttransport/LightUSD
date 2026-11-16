@@ -638,6 +638,56 @@ static void test_scheme_and_anonymous_assets() {
 }
 
 
+// Each referenced Material carries only the nodegraphs / top-level nodes its
+// shaders reach (not every graph of the document), and a top-level node
+// reached via `nodename` is present so the connection resolves.
+static void test_mtlx_material_scoping() {
+  std::cout << "[.mtlx per-material scoping]\n";
+  static const char* kDoc = R"(<?xml version="1.0"?>
+<materialx version="1.39">
+  <nodegraph name="NG_A">
+    <constant name="k" type="color3"><input name="value" type="color3" value="1, 0, 0" /></constant>
+    <output name="o" type="color3" nodename="k" />
+  </nodegraph>
+  <nodegraph name="NG_B">
+    <constant name="k" type="color3"><input name="value" type="color3" value="0, 1, 0" /></constant>
+    <output name="o" type="color3" nodename="k" />
+  </nodegraph>
+  <constant name="top" type="float"><input name="value" type="float" value="0.5" /></constant>
+  <standard_surface name="SR_A" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_A" output="o" />
+    <input name="specular_roughness" type="float" nodename="top" />
+  </standard_surface>
+  <standard_surface name="SR_B" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG_B" output="o" />
+  </standard_surface>
+  <surfacematerial name="MA" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_A" />
+  </surfacematerial>
+  <surfacematerial name="MB" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_B" />
+  </surfacematerial>
+</materialx>
+)";
+  std::string warn, err;
+  auto layer = pcp::LoadLayerFromMtlxMemory(
+      "scope.mtlx", reinterpret_cast<const uint8_t*>(kDoc), std::strlen(kDoc),
+      &warn, &err);
+  CHECK(layer != nullptr, ("mtlx layer loads: " + err).c_str());
+  if (!layer) return;
+  layer->build_path_index();
+  auto has = [&](const char* p) { return layer->prim_at_path(p) != nullptr; };
+  CHECK(has("/MaterialX/Materials/MA/NG_A"), "MA carries NG_A");
+  CHECK(!has("/MaterialX/Materials/MA/NG_B"), "MA does not carry NG_B");
+  CHECK(has("/MaterialX/Materials/MB/NG_B"), "MB carries NG_B");
+  CHECK(!has("/MaterialX/Materials/MB/NG_A"), "MB does not carry NG_A");
+  CHECK(has("/MaterialX/Materials/MA/top"),
+        "top-level node reached via nodename is inside MA");
+  CHECK(!has("/MaterialX/Materials/MB/top"), "MB does not carry top");
+  CHECK(has("/MaterialX/NodeGraphs/NG_A") && has("/MaterialX/NodeGraphs/NG_B"),
+        "canonical /MaterialX/NodeGraphs keeps every graph");
+}
+
 // MaterialX `fileprefix` is scoped: the nearest enclosing value is
 // prepended to `type="filename"` inputs only, and an inner one replaces an
 // outer one (MaterialX.Specification.md "File Prefixes").
@@ -890,6 +940,7 @@ int main() {
   test_scheme_and_anonymous_assets();
   test_mtlx_reference_composition();
   test_mtlx_fileprefix();
+  test_mtlx_material_scoping();
   test_resolver_layer_loader_usda_dep();
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/1);
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/4);
