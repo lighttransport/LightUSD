@@ -1711,8 +1711,17 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
                              s.anisotropyRotation) +
         coatP * swPtGgxPdf(s.coatN, v, l, s.coatRoughness,
                            s.coatAnisotropy, s.coatRotation);
-  return (vec3(1.0) - F) * diffuseC / 3.14159265359 +
-         sheen + F * glossy + coat;
+  // Energy-conserving layering (materialx-conformance issues/lightusd/04), as in
+  // raytrace.comp ptEvaluateReflection: diffuse under the specular layer
+  // (1 - F(view)), sheen attenuates the diffuse by its albedo, the coat
+  // attenuates the whole base by 1 - coatWeight F_coat(view).
+  vec3 Fv = swPtFresnel(nv, f0);
+  float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
+  vec3 sheenAtt = vec3(1.0) - min(sheenC * sheenAlb, vec3(1.0));
+  vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
+              sheen + F * glossy;
+  vec3 coatFv = swPtFresnel(cnv, coatF0) * s.coatWeight;
+  return base * (vec3(1.0) - coatFv) + coat;
 }
 
 vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,
