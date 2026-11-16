@@ -18,7 +18,8 @@ if(NOT TARGET lightusd_obj_import)
     "${_lusd_import_root}/tydra/asset-import/reader.cc"
     "${_lusd_import_root}/tydra/asset-import/obj.cc"
     "${_lusd_import_root}/external/tinyobjloader-c/tiny_obj_c.c"
-    "${_lusd_import_root}/external/tinyobjloader-c/tobj_tess.c")
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_tess.c"
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_mtlx.c")
   lightusd_configure_import_target(lightusd_obj_import "${_lusd_import_root}")
 endif()
 if(NOT LIGHTUSD_ASSET_IMPORT_OBJ_ONLY AND NOT TARGET lightusd_asset_import)

@@ -122,6 +122,137 @@ void RetainAssets(tydra::import_asset::Result& result, Layer* layer) {
   if (!retained->by_identifier.empty())
     layer->meta().imported_assets = std::move(retained);
 }
+// MaterialX value type -> (USD type name, TypeId, value). False if the type
+// has no scalar/vector USD mapping here (arrays, matrices).
+bool MtlxValue(const Json& in, std::string* usd_type, tn::TypeId* id,
+               tn::Value* value) {
+  const std::string ty = JsonString(in, "type");
+  const Json& v = in["value"];
+  auto f = [&](size_t i) {
+    return v.is_array() && i < v.size() ? v[i].get<float>() : 0.0f;
+  };
+  const size_t n = v.is_array() ? v.size() : 0;
+  if (ty == "float" && n == 1) {
+    *usd_type = "float"; *id = tn::TypeId::Float; *value = tn::Value(f(0));
+  } else if (ty == "integer" && n == 1) {
+    *usd_type = "int"; *id = tn::TypeId::Int;
+    *value = tn::Value(static_cast<int32_t>(v[0].get<double>()));
+  } else if (ty == "boolean" && v.is_boolean()) {
+    *usd_type = "bool"; *id = tn::TypeId::Bool; *value = tn::Value(v.get<bool>());
+  } else if (ty == "color3" && n == 3) {
+    *usd_type = "color3f"; *id = tn::TypeId::Color3f;
+    *value = tn::Value::MakeColor3f(f(0), f(1), f(2));
+  } else if (ty == "color4" && n == 4) {
+    *usd_type = "color4f"; *id = tn::TypeId::Color4f;
+    *value = tn::Value::MakeColor4f(f(0), f(1), f(2), f(3));
+  } else if (ty == "vector2" && n == 2) {
+    *usd_type = "float2"; *id = tn::TypeId::Float2;
+    *value = tn::Value::MakeFloat2(f(0), f(1));
+  } else if (ty == "vector3" && n == 3) {
+    *usd_type = "float3"; *id = tn::TypeId::Float3;
+    *value = tn::Value::MakeFloat3(f(0), f(1), f(2));
+  } else if (ty == "vector4" && n == 4) {
+    *usd_type = "float4"; *id = tn::TypeId::Float4;
+    *value = tn::Value::MakeFloat4(f(0), f(1), f(2), f(3));
+  } else if (ty == "string" && v.is_string()) {
+    *usd_type = "string"; *id = tn::TypeId::String;
+    *value = tn::Value(v.get<std::string>());
+  } else if (ty == "filename" && v.is_string()) {
+    *usd_type = "asset"; *id = tn::TypeId::AssetPath;
+    *value = tn::Value::MakeAssetPath(v.get<std::string>());
+  } else {
+    return false;
+  }
+  return true;
+}
+
+std::string MtlxUsdType(const std::string& ty, tn::TypeId* id) {
+  static const struct { const char* mx; const char* usd; tn::TypeId id; } k[] = {
+      {"float", "float", tn::TypeId::Float},       {"integer", "int", tn::TypeId::Int},
+      {"boolean", "bool", tn::TypeId::Bool},       {"color3", "color3f", tn::TypeId::Color3f},
+      {"color4", "color4f", tn::TypeId::Color4f},  {"vector2", "float2", tn::TypeId::Float2},
+      {"vector3", "float3", tn::TypeId::Float3},   {"vector4", "float4", tn::TypeId::Float4},
+      {"string", "string", tn::TypeId::String},    {"filename", "asset", tn::TypeId::AssetPath}};
+  for (const auto& e : k)
+    if (ty == e.mx) { *id = e.id; return e.usd; }
+  *id = tn::TypeId::Token;
+  return {};
+}
+
+// UsdShade MaterialX network from the MaterialX-in-MTL graph built by the OBJ
+// importer: <Material>/MtlxSurface (ND_<category>_surfaceshader) fed by
+// <Material>/NodeGraphs (ND_<category>_<type> shaders + o_<node> outputs).
+// Defining a prim may grow the layer's prim storage, so PrimSpec pointers are
+// re-acquired by path (scope->Add on an existing path returns it) after every
+// definition instead of being held across them.
+void AddMtlxNetwork(Scope* scope, const std::string& name,
+                    const std::string& mat_path, const Json& x) {
+  if (tn::PrimSpec* mat = scope->Add(name, "Material")) {
+    API(mat, "MaterialXConfigAPI");
+    Set(mat, "config:mtlx:version", tn::Value(JsonString(x, "version", "1.39")), "string");
+  }
+  const Json& surf = x["surface"];
+  const std::string ng_path = mat_path + "/NodeGraphs";
+  auto author_inputs = [&](tn::PrimSpec* p, const Json& inputs, bool into_surface) {
+    for (const auto& in : inputs) {
+      const std::string prop = "inputs:" + JsonString(in, "name");
+      tn::TypeId id;
+      if (in["node"].is_string()) {
+        const std::string src = in["node"].get<std::string>();
+        std::string usd = MtlxUsdType(JsonString(in, "type"), &id);
+        if (usd.empty()) continue;
+        Connect(p, prop, id, usd,
+                into_surface ? ng_path + ".outputs:o_" + src
+                             : ng_path + "/" + src + ".outputs:out");
+        continue;
+      }
+      std::string usd;
+      tn::Value v;
+      if (!MtlxValue(in, &usd, &id, &v)) continue;
+      Set(p, prop, std::move(v), usd);
+      // MaterialX: a filename input without a colorspace is not converted
+      // (USD's "auto" would decode 8-bit images as sRGB).
+      std::string cs = JsonString(in, "colorSpace");
+      if (cs.empty() && JsonString(in, "type") == "filename") cs = "lin_rec709";
+      if (!cs.empty()) {
+        auto& meta = p->ensure_property_meta(prop);
+        meta.colorSpace = cs;
+        meta.authored |= tn::PropMeta::kColorSpace;
+      }
+    }
+  };
+  if (x["nodes"].is_array() && x["nodes"].size()) {
+    if (!scope->Add(name + "/NodeGraphs", "NodeGraph")) return;
+    for (const auto& nd : x["nodes"]) {
+      const std::string n = JsonString(nd, "name"), ty = JsonString(nd, "type");
+      tn::PrimSpec* sh = scope->Add(name + "/NodeGraphs/" + n, "Shader");
+      if (!sh) continue;
+      SetToken(sh, "info:id", "ND_" + JsonString(nd, "category") + "_" + ty, true);
+      author_inputs(sh, nd["inputs"], false);
+      tn::TypeId id;
+      const std::string usd = MtlxUsdType(ty, &id);
+      if (!usd.empty()) Declare(sh, "outputs:out", id, usd);
+    }
+    tn::PrimSpec* ng = scope->Add(name + "/NodeGraphs", "NodeGraph");
+    for (const auto& in : surf["inputs"])
+      if (ng && in["node"].is_string()) {
+        const std::string src = in["node"].get<std::string>();
+        tn::TypeId id;
+        const std::string usd = MtlxUsdType(JsonString(in, "type"), &id);
+        if (!usd.empty())
+          Connect(ng, "outputs:o_" + src, id, usd, ng_path + "/" + src + ".outputs:out");
+      }
+  }
+  tn::PrimSpec* ss = scope->Add(name + "/MtlxSurface", "Shader");
+  if (!ss) return;
+  SetToken(ss, "info:id", "ND_" + JsonString(surf, "category") + "_surfaceshader", true);
+  author_inputs(ss, surf["inputs"], true);
+  Declare(ss, "outputs:surface", tn::TypeId::Token, "token");
+  if (tn::PrimSpec* mat = scope->Add(name, "Material"))
+    Connect(mat, "outputs:mtlx:surface", tn::TypeId::Token, "token",
+            mat_path + "/MtlxSurface.outputs:surface");
+}
+
 void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
                          const Json& m, size_t index) {
   const std::string name = Sanitize(
@@ -132,6 +263,9 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
   if (!mat) return;
   Connect(mat, "outputs:surface", tn::TypeId::Token, "token",
           mat_path + "/PreviewSurface.outputs:surface");
+  // The MaterialX network (if any) is authored first; `mat` is not used after
+  // this point because defining prims may move it.
+  if (m["mtlx"].is_object()) AddMtlxNetwork(scope, name, mat_path, m["mtlx"]);
 
   const std::vector<float> rgba = JsonFloats(m, "rgba");
   const std::string tex_file = JsonString(m, "texture");
@@ -281,8 +415,12 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   }
   // PrimSpec pointers remain live while their shaders/subsets are emitted.
   size_t prim_count = 5;
-  for (const auto& material : payload["materials"])
+  for (const auto& material : payload["materials"]) {
     prim_count += 5 + material["maps"].size() * 3;
+    // MaterialX-in-MTL: NodeGraphs + MtlxSurface + one Shader per node.
+    if (material["mtlx"].is_object())
+      prim_count += 2 + material["mtlx"]["nodes"].size();
+  }
   for (const auto& mesh : obj.meshes) {
     std::set<int32_t> bindings;
     for (int32_t id : mesh.materials)

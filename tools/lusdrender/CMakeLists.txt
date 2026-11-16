@@ -760,6 +760,30 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-cpu-preview-opacity PROPERTIES
                          TIMEOUT 60 LABELS "lusdrender;cpu;material;regression")
 
+    # MaterialX-in-MTL (tinyobjloader mtlx-mtl.md): .mtlx -> mtl lines ->
+    # tobj_mtlx -> .mtlx renders pixel-identically, and the OBJ importer's
+    # UsdShade network renders like the .mtlx bound through a USD reference.
+    add_executable(lusdr_mtlx_mtl_dump
+                   ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/mtlx_dump.c
+                   ${PROJECT_SOURCE_DIR}/src/external/tinyobjloader-c/tobj_mtlx.c)
+    target_include_directories(lusdr_mtlx_mtl_dump PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(
+      NAME tool-lusdrender-mtlx-mtl
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/run_mtlx_mtl.py --usd
+              --lusdrender "$<TARGET_FILE:lusdrender>"
+              --mtlx-dump "$<TARGET_FILE:lusdr_mtlx_mtl_dump>"
+              --mtlx2mtl ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/mtlx2mtl.py
+              --size 48 --samples 1
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_copper.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_brass_tiled.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_greysphere_calibration.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_wood_tiled.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/UsdPreviewSurface/usd_preview_surface_gold.mtlx
+              ${PROJECT_SOURCE_DIR}/web/demo/public/assets/mtlx/open_pbr_red_metal.mtlx)
+    set_tests_properties(tool-lusdrender-mtlx-mtl PROPERTIES
+                         TIMEOUT 300 LABELS "lusdrender;cpu;materialx;mtlx;obj")
+
     add_test(
       NAME tool-lusdrender-materialx-cpu-graph
       COMMAND ${LUSDR_PYTHON}

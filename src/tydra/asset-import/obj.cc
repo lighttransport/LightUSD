@@ -11,6 +11,7 @@
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/tinyobjloader-c/tiny_obj_c.h"
+#include "external/tinyobjloader-c/tobj_mtlx.h"
 #include "import.hh"
 
 namespace lightusd {
@@ -368,6 +369,83 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
       if (!reader.Unsupported("MTL contains shading features outside UsdPreviewSurface",
               "obj.shading_unsupported", "obj.shading", materials.anchors[info.source],
               0, std::move(data), "json")) { if (err) *err = reader.failure; return false; }
+    }
+    if (m.num_mtlx_lines) {
+      // MaterialX-in-MTL (tinyobjloader mtlx-mtl.md): emit the node graph for
+      // the USD MaterialX network; an ill-formed graph keeps the classic keys.
+      tobj_mtlx_doc doc;
+      if (tobj_mtlx_parse_lines(name.c_str(), m.mtlx_lines, m.num_mtlx_lines, &doc)) {
+        if (err) *err = "out of memory parsing MaterialX-in-MTL";
+        return false;
+      }
+      const tobj_mtlx_material& x = doc.materials[0];
+      if (!x.ok) {
+        std::string why = x.num_errors ? x.errors[0] : "graph is not well-formed";
+        reader.Warn("MTL material '" + name + "': MaterialX-in-MTL ignored (" + why + ")",
+                    "obj.mtlx_invalid", materials.anchors[info.source]);
+      } else {
+        const std::string& anchor = materials.anchors[info.source];
+        auto inputs_of = [&](const char* node) {
+          Json ins = Json::array();
+          for (size_t i = 0; i < x.num_inputs; i++) {
+            const tobj_mtlx_input& in = x.inputs[i];
+            if (std::strcmp(in.node, node)) continue;
+            bool connected = false;
+            for (size_t c = 0; c < x.num_conns && !connected; c++)
+              connected = !std::strcmp(x.conns[c].dst, node) && !std::strcmp(x.conns[c].port, in.port);
+            if (connected) continue;
+            Json j{{"name", in.port}, {"type", in.type}};
+            if (!std::strcmp(in.type, "filename")) {
+              AssetBytes bytes;
+              std::string resolved, why;
+              if (!reader.ReadTexture(in.value, anchor, &bytes, &resolved, &why)) {
+                reader.Warn("Texture: " + why, "import.texture_unresolved", anchor);
+                resolved = in.value;
+              }
+              j["value"] = resolved;
+            } else if (!std::strcmp(in.type, "string")) {
+              j["value"] = in.value;
+            } else if (!std::strcmp(in.type, "boolean")) {
+              j["value"] = std::string(in.value) == "true";
+            } else {
+              Json nums = Json::array();
+              for (const char* p = in.value; *p;) {
+                char* e = nullptr;
+                double v = std::strtod(p, &e);
+                if (e == p) break;
+                nums.push_back(v);
+                p = e;
+                while (*p == ',' || *p == ' ') p++;
+              }
+              j["value"] = std::move(nums);
+            }
+            for (size_t c = 0; c < x.num_colorspaces; c++)
+              if (!std::strcmp(x.colorspaces[c].node, node) &&
+                  !std::strcmp(x.colorspaces[c].port, in.port))
+                j["colorSpace"] = x.colorspaces[c].colorspace;
+            ins.push_back(std::move(j));
+          }
+          for (size_t c = 0; c < x.num_conns; c++)
+            if (!std::strcmp(x.conns[c].dst, node)) {
+              const char* src_ty = "";
+              for (size_t n = 0; n < x.num_nodes; n++)
+                if (!std::strcmp(x.nodes[n].name, x.conns[c].src)) src_ty = x.nodes[n].type;
+              ins.push_back(Json{{"name", x.conns[c].port}, {"type", src_ty},
+                                 {"node", x.conns[c].src}});
+            }
+          return ins;
+        };
+        Json nodes = Json::array();
+        for (size_t n = 0; n < x.num_nodes; n++)
+          nodes.push_back(Json{{"name", x.nodes[n].name}, {"category", x.nodes[n].category},
+                               {"type", x.nodes[n].type}, {"inputs", inputs_of(x.nodes[n].name)}});
+        mat["mtlx"] = Json{
+            {"version", x.num_versions ? x.versions[0] : "1.39"},
+            {"surface", Json{{"name", x.surface[0]}, {"category", x.surface[1]},
+                             {"inputs", inputs_of(x.surface[0])}}},
+            {"nodes", std::move(nodes)}};
+      }
+      tobj_mtlx_free(&doc);
     }
     mat["maps"] = std::move(maps);
     obj->materials.push_back(std::move(mat));
