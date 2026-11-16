@@ -638,6 +638,69 @@ static void test_scheme_and_anonymous_assets() {
 }
 
 
+// MaterialX `fileprefix` is scoped: the nearest enclosing value is
+// prepended to `type="filename"` inputs only, and an inner one replaces an
+// outer one (MaterialX.Specification.md "File Prefixes").
+static void test_mtlx_fileprefix() {
+  std::cout << "[.mtlx fileprefix]\n";
+  static const char* kDoc = R"(<?xml version="1.0"?>
+<materialx version="1.39" fileprefix="doc/">
+  <nodegraph name="NG" fileprefix="graph/">
+    <image name="a" type="color3">
+      <input name="file" type="filename" value="a.png" />
+    </image>
+    <image name="b" type="color3">
+      <input name="file" type="filename" value="b.png" fileprefix="input/" />
+      <input name="uaddressmode" type="string" value="clamp" />
+    </image>
+    <output name="oa" type="color3" nodename="a" />
+    <output name="ob" type="color3" nodename="b" />
+  </nodegraph>
+  <image name="c" type="color3">
+    <input name="file" type="filename" value="c.png" />
+  </image>
+  <standard_surface name="SR" type="surfaceshader">
+    <input name="base_color" type="color3" nodegraph="NG" output="oa" />
+    <input name="coat_color" type="color3" nodegraph="NG" output="ob" />
+    <input name="specular_color" type="color3" nodename="c" />
+  </standard_surface>
+  <surfacematerial name="M" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR" />
+  </surfacematerial>
+</materialx>
+)";
+  std::string warn, err;
+  auto layer = pcp::LoadLayerFromMtlxMemory(
+      "fp.mtlx", reinterpret_cast<const uint8_t*>(kDoc), std::strlen(kDoc),
+      &warn, &err);
+  CHECK(layer != nullptr, ("mtlx layer loads: " + err).c_str());
+  if (!layer) return;
+  layer->build_path_index();
+  auto asset = [&](const std::string& prim) -> std::string {
+    const PrimSpec* p = layer->prim_at_path(prim);
+    const Value* v = p ? p->property_value("inputs:file") : nullptr;
+    return v ? std::string(v->as_asset_path()) : std::string("<none>");
+  };
+  auto str = [&](const std::string& prim, const char* prop) -> std::string {
+    const PrimSpec* p = layer->prim_at_path(prim);
+    const Value* v = p ? p->property_value(prop) : nullptr;
+    if (!v) return "<none>";
+    if (auto t = v->as_string()) return std::string(t);
+    if (auto t = v->as_token()) return std::string(t);
+    return "<other>";
+  };
+  CHECK(asset("/MaterialX/Materials/M/NG/a") == "graph/a.png",
+        "nodegraph fileprefix replaces the document one");
+  CHECK(asset("/MaterialX/Materials/M/NG/b") == "input/b.png",
+        "input fileprefix replaces enclosing ones");
+  CHECK(str("/MaterialX/Materials/M/NG/b", "inputs:uaddressmode") == "clamp",
+        "non-filename inputs are not prefixed");
+  CHECK(asset("/MaterialX/Materials/M/c") == "doc/c.png" ||
+            asset("/MaterialX/NodeGraphs/c") == "doc/c.png" ||
+            asset("/MaterialX/Shaders/c") == "doc/c.png",
+        "document fileprefix applies to top-level nodes");
+}
+
 // External MaterialX: a reference to @mat.mtlx@</MaterialX/...> composes a
 // skeletal /MaterialX layer synthesized from the XML document.
 static void test_mtlx_reference_composition() {
@@ -826,6 +889,7 @@ int main() {
   test_recursive_resolution_and_identifiers();
   test_scheme_and_anonymous_assets();
   test_mtlx_reference_composition();
+  test_mtlx_fileprefix();
   test_resolver_layer_loader_usda_dep();
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/1);
   test_resolver_layer_loader_usda_dep(/*pcp_threads=*/4);

@@ -90,8 +90,8 @@ def DistantLight "Sun"
 
 def flat_textures(d, mtl_text, ref_root):
     """Copy every texture into d/tex and point both documents at tex/<name>
-    (the OBJ importer only reads assets below the .obj directory, and LightUSD's
-    .mtlx layer reader does not apply fileprefix)."""
+    (the OBJ importer only reads assets below the .obj directory; fileprefix
+    is baked so both documents name the same copied file)."""
     tex = d / "tex"
     tex.mkdir(exist_ok=True)
 

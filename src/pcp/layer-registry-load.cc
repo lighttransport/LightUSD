@@ -597,7 +597,11 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
     Value value =
         input->GetType() == "filename" &&
                 input->GetValue().type == mtlx::MtlxValue::TYPE_STRING
-            ? Value::MakeAssetPath(input->GetValue().string_val)
+            // MaterialX: the nearest enclosing `fileprefix` is prepended to
+            // filename inputs only (scoped attributes are inherited onto
+            // every element at parse time, see InheritMtlxAttributes).
+            ? Value::MakeAssetPath(input->GetFilePrefix() +
+                                   input->GetValue().string_val)
             : MtlxValueToCoreValue(input->GetValue());
     if (!value.is_empty()) {
       const std::string property = "inputs:" + input->GetName();
