@@ -67,6 +67,7 @@
 
 extern "C" {
 #include "lightrt_c_tri.h"
+#include "verified_math.h"
 }
 
 #ifdef LIGHTUSD_WITH_QJS
@@ -1682,6 +1683,13 @@ int main(int argc, char **argv) {
   Options opt;
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
+  }
+  if (opt.verified_math && !mtlx_verified_math_enable(1)) {
+    std::cerr << "--verified-math requires binary32, nearest/even and gradual underflow.\n";
+    return EXIT_FAILURE;
+  }
+  if (opt.verified_math) {
+    std::cerr << "MaterialX graph math: strict binary32 sine/cosine\n";
   }
   if (scenePreview.enabled && !opt.volume_mtlx_file.empty()) {
     std::cerr << "MaterialX volume looks cannot be combined with scene-preview conversion.\n";

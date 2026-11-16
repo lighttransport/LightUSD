@@ -98,6 +98,7 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " input.usd output.png [options]\n\n"
       << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
+      << "  --verified-math       Strict modeled graph sine/cosine (CPU --mtlx).\n"
       << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
       << "  --volume-mtlx FILE --volume-mtlx-look NAME  Apply a MaterialX look to CPU volumes.\n"
       << "  -h, -help              Show this help.\n"
@@ -415,6 +416,9 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v || !*v) return false;
       opt->mtlx_material = v;
+    }
+    OPT_MATCH(a == "--verified-math") {
+      opt->verified_math = true;
     }
     OPT_MATCH(a == "--mtlx-mipmaps") {
       opt->mtlx_mipmaps = true;
@@ -1214,6 +1218,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   // input is required there; an output positional is optional.
   const bool output_optional =
       opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
+  if (opt->verified_math && opt->mtlx_file.empty()) {
+    std::cerr << "--verified-math requires the CPU --mtlx graph evaluator.\n";
+    return false;
+  }
   if (opt->mtlx_file.empty() && !opt->mtlx_material.empty()) {
     std::cerr << "--mtlx-material requires --mtlx.\n";
     return false;

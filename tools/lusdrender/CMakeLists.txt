@@ -101,6 +101,31 @@ if(NOT TARGET lightusd_gpu_rt_common)
   endif()
 endif()
 
+# Fixed binary32 schedules for opt-in graph math and conservative-energy
+# helpers compile separately from renderer fast-math/SIMD settings.
+add_library(lightusd_verified_graph_math STATIC
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_float.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_math.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_eval.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_bounds.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_ranges.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_fixed.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_normal.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_direction.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_vndf.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_local_geometry.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_single_power.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/passive_film.c)
+target_include_directories(lightusd_verified_graph_math PUBLIC
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+target_compile_features(lightusd_verified_graph_math PRIVATE c_std_11)
+if(MSVC)
+  target_compile_options(lightusd_verified_graph_math PRIVATE /fp:strict)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(lightusd_verified_graph_math PRIVATE
+    -fno-fast-math -frounding-math -ffp-contract=off)
+endif()
+
 add_library(lightrt_c STATIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.h
@@ -219,6 +244,7 @@ endif()
 
 target_link_libraries(lusdrender
   lightusd_preview_images
+  lightusd_verified_graph_math
   lightrt_c
 )
 

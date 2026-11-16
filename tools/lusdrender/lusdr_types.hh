@@ -827,6 +827,7 @@ struct Options {
   UdimMode udim_mode{UdimMode::Sparse};  // -udim; sparse is the large-scene default
   // MaterialX validation entry point. Kept at the end to preserve offsets of
   // the existing Options fields used by other renderer translation units.
+  bool verified_math{false};
   std::string mtlx_file;
   std::string mtlx_material;
   std::string volume_mtlx_file;

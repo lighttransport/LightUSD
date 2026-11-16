@@ -5,6 +5,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+static MtlxSinCosBackend graph_sincos_backend;
+
+void mtlx_eval_set_sincos_backend(MtlxSinCosBackend backend) {
+    graph_sincos_backend = backend;
+}
+
+static float graph_sin(float input) {
+    if (!graph_sincos_backend) return sinf(input);
+    float s, c;
+    return graph_sincos_backend(input, &s, &c) ? s : NAN;
+}
+static float graph_cos(float input) {
+    if (!graph_sincos_backend) return cosf(input);
+    float s, c;
+    return graph_sincos_backend(input, &s, &c) ? c : NAN;
+}
+
 /* ---- MtlxValue helpers ------------------------------------------------- */
 
 static MtlxValue mv_zero(MtlxType t) { MtlxValue v; memset(&v, 0, sizeof(v)); v.type = t; return v; }
@@ -55,8 +72,8 @@ static float f_pow(float a, float b) { return powf(maxf(a, 0.0f), b); }
 static float f_safepow(float a, float b) { float p = powf(fabsf(a), b); return a < 0.0f ? -p : (a > 0.0f ? p : 0.0f); }
 static float f_mod(float a, float b) { return b != 0.0f ? a - b * floorf(a / b) : 0.0f; }
 static float f_atan2(float a, float b) { return atan2f(a, b); }
-static float u_sin(float a) { return sinf(a); }
-static float u_cos(float a) { return cosf(a); }
+static float u_sin(float a) { return graph_sin(a); }
+static float u_cos(float a) { return graph_cos(a); }
 static float u_tan(float a) { return tanf(a); }
 static float u_asin(float a) { return asinf(clampf(a, -1, 1)); }
 static float u_acos(float a) { return acosf(clampf(a, -1, 1)); }
@@ -616,14 +633,14 @@ static MtlxValue eval_flake_output(ShadeContext *ctx,const MtlxNode *n,
     for(int i=-1;i<=1;i++)for(int j=-1;j<=1;j++)for(int k=-1;k<=1;k++){
         int x=bx+i,y=by+j,z=bz+k;v3 q=v3_make(p.x-x-.5f,p.y-y-.5f,p.z-z-.5f);if(v3_dot(q,q)>=diameter*diameter*3)continue;
         if((float)mx_hash_int3(x,y,z)/(float)0xffffffffu>probability)continue;float candidate=mx_cell_vec3(x,y,z,3,1).x;if(candidate<priority)continue;
-        v3 rot=mx_cell_vec3(x,y,z,0,0);float theta=2*(float)MTLX_PI*rot.x,phi=2*(float)MTLX_PI*rot.y,zz=2*rot.z,rr=sqrtf(zz),vx=sinf(phi)*rr,vy=cosf(phi)*rr,vz=sqrtf(2-zz),s=sinf(theta),c=cosf(theta),sx=vx*c-vy*s,sy=vx*s+vy*c;
+        v3 rot=mx_cell_vec3(x,y,z,0,0);float theta=2*(float)MTLX_PI*rot.x,phi=2*(float)MTLX_PI*rot.y,zz=2*rot.z,rr=sqrtf(zz),vx=graph_sin(phi)*rr,vy=graph_cos(phi)*rr,vz=sqrtf(2-zz),s=graph_sin(theta),c=graph_cos(theta),sx=vx*c-vy*s,sy=vx*s+vy*c;
         v3 qr=v3_make((vx*sx-c)*q.x+(vy*sx+s)*q.y+vz*sx*q.z,(vx*sy-s)*q.x+(vy*sy-c)*q.y+vz*sy*q.z,vx*vz*q.x+vy*vz*q.y+(1-zz)*q.z);
         if(fabsf(qr.x)<=diameter&&fabsf(qr.y)<=diameter&&fabsf(qr.z)<=diameter){priority=candidate;cx=x;cy=y;cz=z;}
     }
     if(priority<=0){if(!strcmp(output,"flakenormal"))return mv_vec3(normal);return mv_float(0);}
     v3 noise=mx_cell_vec3(cx,cy,cz,2,1);if(!strcmp(output,"id")){MtlxValue q=mv_zero(MV_INT);q.v[0]=floorf(noise.z*16777215);return q;}if(!strcmp(output,"rand"))return mv_float(noise.z);if(!strcmp(output,"presence"))return mv_float(priority);
     float phi=2*(float)MTLX_PI*noise.x,tan_theta=rv.v[0]*rv.v[0]*sqrtf(noise.y)/sqrtf(fmaxf(1-noise.y,1e-8f)),sin_theta=tan_theta/sqrtf(1+tan_theta*tan_theta),cos_theta=sqrtf(fmaxf(1-sin_theta*sin_theta,0));
-    return mv_vec3(v3_normalize(v3_add(v3_add(v3_scale(tangent,cosf(phi)*sin_theta),v3_scale(bitangent,sinf(phi)*sin_theta)),v3_scale(normal,cos_theta))));
+    return mv_vec3(v3_normalize(v3_add(v3_add(v3_scale(tangent,graph_cos(phi)*sin_theta),v3_scale(bitangent,graph_sin(phi)*sin_theta)),v3_scale(normal,cos_theta))));
 }
 
 static MtlxValue eval_image(ShadeContext *ctx, const MtlxNode *n) {
@@ -895,7 +912,7 @@ static MtlxValue eval_hextiledimage(ShadeContext *ctx, const MtlxNode *n) {
         float offx = orr.v[0] + (orr.v[1] - orr.v[0]) * (rx * offset);
         float offy = orr.v[0] + (orr.v[1] - orr.v[0]) * (ry * offset);
         float dx = coord_x - ctrx, dy = coord_y - ctry;
-        float cr = cosf(rot), srn = sinf(rot);
+        float cr = graph_cos(rot), srn = graph_sin(rot);
         local_cr[i] = cr; local_srn[i] = srn; local_sc[i] = sc;
         cx[i] = (dx * cr - dy * srn) / sc + ctrx + offx;
         cy[i] = (dx * srn + dy * cr) / sc + ctry + offy;
@@ -1137,7 +1154,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
             MtlxValue rot = in_or(ctx, n, "rotate", mv_float(0));
             MtlxValue order = in_or(ctx, n, "operationorder", mv_float(0));
             float x = tc.v[0] - piv.v[0], y = tc.v[1] - piv.v[1];
-            float ang = rot.v[0] * (MTLX_PI / 180.0f), cs = cosf(ang), sn = sinf(ang);
+            float ang = rot.v[0] * (MTLX_PI / 180.0f), cs = graph_cos(ang), sn = graph_sin(ang);
             float sx = scl.v[0] != 0.0f ? scl.v[0] : 1.0f;
             float sy = scl.v[1] != 0.0f ? scl.v[1] : 1.0f;
             if (order.v[0] < 1.0f) {
@@ -1275,7 +1292,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_WORLEYNOISE2D: { MtlxValue tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])),j=in_or(ctx,n,"jitter",mv_float(1)),s=in_or(ctx,n,"style",mv_float(0));r=worley_value(v3_make(tc.v[0],tc.v[1],0),0,j.v[0],(int)s.v[0],n->type);break; }
         case OP_WORLEYNOISE3D: { MtlxValue pos=in_or(ctx,n,"position",mv_vec3(ctx->P)),j=in_or(ctx,n,"jitter",mv_float(1)),s=in_or(ctx,n,"style",mv_float(0));r=worley_value(mv_as_v3(&pos),1,j.v[0],(int)s.v[0],n->type);break; }
         case OP_UNIFIEDNOISE2D:
-        case OP_UNIFIEDNOISE3D: { int d3=classify(n->category)==OP_UNIFIEDNOISE3D;MtlxValue coord=in_or(ctx,n,d3?"position":"texcoord",d3?mv_vec3(ctx->P):mv_vec2(ctx->uv[0],ctx->uv[1]));MtlxValue freq=in_or(ctx,n,"freq",d3?mv_vec3(v3_make(1,1,1)):mv_vec2(1,1)),off=in_or(ctx,n,"offset",d3?mv_vec3(v3_make(0,0,0)):mv_vec2(0,0)),jit=in_or(ctx,n,"jitter",mv_float(1)),kind=in_or(ctx,n,"type",mv_float(0)),style=in_or(ctx,n,"style",mv_float(0));v3 p=v3_make(coord.v[0]*freq.v[0]+off.v[0],coord.v[1]*freq.v[1]+off.v[1],d3?coord.v[2]*freq.v[2]+off.v[2]:0);float angle=(jit.v[0]-1)*90000.0f,rad=angle*(float)MTLX_PI/180.0f,cs=cosf(rad),sn=sinf(rad);v3 jp;if(d3){v3 axis=v3_normalize(v3_make(.1f,1,0));float dot=v3_dot(axis,p);jp=v3_add(v3_add(v3_scale(p,cs),v3_scale(v3_cross(axis,p),sn)),v3_scale(axis,dot*(1-cs)));}else jp=v3_make(p.x*cs-p.y*sn,p.x*sn+p.y*cs,0);float q=0;switch((int)kind.v[0]){case 1:q=d3?cellnoise(jp):(float)mx_hash_int2((int)floorf(jp.x),(int)floorf(jp.y))/(float)0xffffffffu;break;case 2:q=worley_value(p,d3,jit.v[0],(int)style.v[0],MV_FLOAT).v[0];break;case 3:{MtlxValue oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(.5f));v3 fp=d3?jp:v3_make(p.x,p.y,angle);q=fractal(fp,(int)oc.v[0],lac.v[0],dim.v[0]);break;}default:q=.5f*(d3?vnoise(jp):vnoise2(jp.x,jp.y,-1))+.5f;break;}MtlxValue lo=in_or(ctx,n,"outmin",mv_float(0)),hi=in_or(ctx,n,"outmax",mv_float(1)),cl=in_or(ctx,n,"clampoutput",mv_float(1));q=lo.v[0]+q*(hi.v[0]-lo.v[0]);if(cl.v[0]!=0)q=clampf(q,fminf(lo.v[0],hi.v[0]),fmaxf(lo.v[0],hi.v[0]));r=mv_float(q);break; }
+        case OP_UNIFIEDNOISE3D: { int d3=classify(n->category)==OP_UNIFIEDNOISE3D;MtlxValue coord=in_or(ctx,n,d3?"position":"texcoord",d3?mv_vec3(ctx->P):mv_vec2(ctx->uv[0],ctx->uv[1]));MtlxValue freq=in_or(ctx,n,"freq",d3?mv_vec3(v3_make(1,1,1)):mv_vec2(1,1)),off=in_or(ctx,n,"offset",d3?mv_vec3(v3_make(0,0,0)):mv_vec2(0,0)),jit=in_or(ctx,n,"jitter",mv_float(1)),kind=in_or(ctx,n,"type",mv_float(0)),style=in_or(ctx,n,"style",mv_float(0));v3 p=v3_make(coord.v[0]*freq.v[0]+off.v[0],coord.v[1]*freq.v[1]+off.v[1],d3?coord.v[2]*freq.v[2]+off.v[2]:0);float angle=(jit.v[0]-1)*90000.0f,rad=angle*(float)MTLX_PI/180.0f,cs=graph_cos(rad),sn=graph_sin(rad);v3 jp;if(d3){v3 axis=v3_normalize(v3_make(.1f,1,0));float dot=v3_dot(axis,p);jp=v3_add(v3_add(v3_scale(p,cs),v3_scale(v3_cross(axis,p),sn)),v3_scale(axis,dot*(1-cs)));}else jp=v3_make(p.x*cs-p.y*sn,p.x*sn+p.y*cs,0);float q=0;switch((int)kind.v[0]){case 1:q=d3?cellnoise(jp):(float)mx_hash_int2((int)floorf(jp.x),(int)floorf(jp.y))/(float)0xffffffffu;break;case 2:q=worley_value(p,d3,jit.v[0],(int)style.v[0],MV_FLOAT).v[0];break;case 3:{MtlxValue oc=in_or(ctx,n,"octaves",mv_float(3)),lac=in_or(ctx,n,"lacunarity",mv_float(2)),dim=in_or(ctx,n,"diminish",mv_float(.5f));v3 fp=d3?jp:v3_make(p.x,p.y,angle);q=fractal(fp,(int)oc.v[0],lac.v[0],dim.v[0]);break;}default:q=.5f*(d3?vnoise(jp):vnoise2(jp.x,jp.y,-1))+.5f;break;}MtlxValue lo=in_or(ctx,n,"outmin",mv_float(0)),hi=in_or(ctx,n,"outmax",mv_float(1)),cl=in_or(ctx,n,"clampoutput",mv_float(1));q=lo.v[0]+q*(hi.v[0]-lo.v[0]);if(cl.v[0]!=0)q=clampf(q,fminf(lo.v[0],hi.v[0]),fmaxf(lo.v[0],hi.v[0]));r=mv_float(q);break; }
         case OP_RAMPLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[0],0,1); int nc=ncomp_of(&l); r=l; for(int i=0;i<nc;i++) r.v[i]=l.v[i]*(1-t)+rr.v[i]*t; break; }
         case OP_RAMPTB: { MtlxValue tval=in_or(ctx,n,"valuet",mv_zero(n->type)),bval=in_or(ctx,n,"valueb",mv_zero(n->type)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); float t=clampf(tc.v[1],0,1); int nc=ncomp_of(&tval); r=tval; for(int i=0;i<nc;i++) r.v[i]=bval.v[i]*(1-t)+tval.v[i]*t; break; }
         case OP_SPLITLR: { MtlxValue l=in_or(ctx,n,"valuel",mv_zero(n->type)),rr=in_or(ctx,n,"valuer",mv_zero(n->type)),ct=in_or(ctx,n,"center",mv_float(0.5f)),tc=in_or(ctx,n,"texcoord",mv_vec2(ctx->uv[0],ctx->uv[1])); r=(tc.v[0]<ct.v[0])?l:rr; break; }
@@ -1309,7 +1326,7 @@ static MtlxValue eval_node(ShadeContext *ctx, int node_id) {
         case OP_SWITCH: { MtlxValue w=in_or(ctx,n,"which",mv_float(0)); int k=(int)floorf(mv_as_float(&w)); if(k<0)k=0; if(k>9)k=9; char nm[8]; snprintf(nm,sizeof(nm),"in%d",k+1); r=in_or(ctx,n,nm,mv_zero(n->type)); break; }
         case OP_DOT: r=in_or(ctx,n,"in",mv_zero(n->type)); break;
         case OP_ONEMINUS: { a=in_or(ctx,n,"in",mv_zero(n->type)); int nc=ncomp_of(&a); r=a; for(int i=0;i<nc;i++) r.v[i]=1.0f-a.v[i]; break; }
-        case OP_ROTATE2D: { a=in_or(ctx,n,"in",mv_vec2(0,0)); MtlxValue am=in_or(ctx,n,"amount",mv_float(0)); float ang=am.v[0]*(MTLX_PI/180.0f),cs=cosf(ang),sn=sinf(ang); r=mv_vec2(a.v[0]*cs-a.v[1]*sn, a.v[0]*sn+a.v[1]*cs); break; } /* "Positive values rotate counter-clockwise" (StandardNodes rotate2d); the reference mx_rotate_vector2 turns the other way */
+        case OP_ROTATE2D: { a=in_or(ctx,n,"in",mv_vec2(0,0)); MtlxValue am=in_or(ctx,n,"amount",mv_float(0)); float ang=am.v[0]*(MTLX_PI/180.0f),cs=graph_cos(ang),sn=graph_sin(ang); r=mv_vec2(a.v[0]*cs-a.v[1]*sn, a.v[0]*sn+a.v[1]*cs); break; } /* "Positive values rotate counter-clockwise" (StandardNodes rotate2d); the reference mx_rotate_vector2 turns the other way */
         case OP_DISTANCE: { a=in_or(ctx,n,"in1",mv_zero(MV_VEC3));b=in_or(ctx,n,"in2",mv_zero(MV_VEC3));int nc=ncomp_of(&a);float l2=0;for(int i=0;i<nc;i++){float dlt=a.v[i]-b.v[i];l2+=dlt*dlt;}r=mv_float(sqrtf(l2));break; }
         case OP_REFLECT: { a=in_or(ctx,n,"in",mv_zero(MV_VEC3));b=in_or(ctx,n,"normal",mv_vec3(v3_make(0,0,1)));v3 av=mv_as_v3(&a),bv=mv_as_v3(&b);r=mv_vec3(v3_sub(av,v3_scale(bv,2*v3_dot(av,bv))));break; }
         case OP_REFRACT: { a=in_or(ctx,n,"in",mv_zero(MV_VEC3));b=in_or(ctx,n,"normal",mv_vec3(v3_make(0,0,1)));MtlxValue et=in_or(ctx,n,"ior",mv_float(1));v3 av=mv_as_v3(&a),bv=mv_as_v3(&b);float d=v3_dot(av,bv),e=et.v[0],k=1-e*e*(1-d*d);r=mv_vec3(k<0?v3_make(0,0,0):v3_sub(v3_scale(av,e),v3_scale(bv,e*d+sqrtf(k))));break; }
@@ -1411,8 +1428,8 @@ static v3 eval_edf(ShadeContext *ctx, const MtlxNode *n, int depth) {
         // MaterialX specifies full cone angles, so convert their half angles
         // to cosine boundaries. Reversed/equal bounds use a hard cutoff;
         // strictly wider outer cones use Hermite smoothstep in cosine space.
-        const float inner_cos = cosf(inner * (3.14159265358979323846f / 360.0f));
-        const float outer_cos = cosf(outer * (3.14159265358979323846f / 360.0f));
+        const float inner_cos = graph_cos(inner * (3.14159265358979323846f / 360.0f));
+        const float outer_cos = graph_cos(outer * (3.14159265358979323846f / 360.0f));
         float falloff;
         if (outer <= inner) {
             falloff = cosine >= inner_cos ? 1.0f : 0.0f;
@@ -2259,7 +2276,7 @@ int mtlx_eval_surface(ShadeContext *ctx, int surface_node, OpenPBRParams *out) {
             const float rotation =
                 in_float(ctx, n, "specular_rotation", 0.0f) * 2.0f * (float)MTLX_PI;
             if (rotation != 0.0f) {
-                const float c = cosf(rotation), s = sinf(rotation);
+                const float c = graph_cos(rotation), s = graph_sin(rotation);
                 tangent = v3_add(
                     v3_add(v3_scale(tangent, c),
                            v3_scale(v3_cross(normal, tangent), s)),

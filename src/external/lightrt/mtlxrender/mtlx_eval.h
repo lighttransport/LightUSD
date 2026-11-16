@@ -188,6 +188,14 @@ typedef struct {
     char      *memo_done;
 } ShadeContext;
 
+/* Process-wide graph sine/cosine backend. Configure before starting shading
+ * threads; NULL restores the reference libm path. A backend must return zero
+ * on an unsupported environment, which propagates NaN rather than falling back.
+ * Only graph sine/cosine are selected here; inverse trig and BSDF math retain
+ * their documented implementations. */
+typedef int (*MtlxSinCosBackend)(float input, float *sine, float *cosine);
+void mtlx_eval_set_sincos_backend(MtlxSinCosBackend backend);
+
 /* Set sane OpenPBR defaults. */
 void openpbr_defaults(OpenPBRParams *p);
 
