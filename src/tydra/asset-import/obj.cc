@@ -427,10 +427,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
           }
           for (size_t c = 0; c < x.num_conns; c++)
             if (!std::strcmp(x.conns[c].dst, node)) {
-              const char* src_ty = "";
-              for (size_t n = 0; n < x.num_nodes; n++)
-                if (!std::strcmp(x.nodes[n].name, x.conns[c].src)) src_ty = x.nodes[n].type;
-              ins.push_back(Json{{"name", x.conns[c].port}, {"type", src_ty},
+              ins.push_back(Json{{"name", x.conns[c].port}, {"type", x.conns[c].type},
                                  {"node", x.conns[c].src}});
             }
           return ins;

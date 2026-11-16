@@ -62,7 +62,7 @@ Local MTL leniency: a negative `Ns` (written by Blender's exporter, e.g.
 accepts any value.
 
 Local MaterialX-in-MTL: tobj_mtlx.{c,h} copied verbatim from tinyobjloader
-branch mtl-materialx (9eef5ec), the reference implementation of the Lean spec
+branch mtl-materialx (58e6bf8; connections are `@node` input values), the reference implementation of the Lean spec
 in tinyobjloader formal/Mtlx. The loader hunk (mat_mtlx pending lines,
 finalize_mtlx, tobj_material.mtlx_lines/num_mtlx_lines) is ported by hand
 onto this patched copy, grouping pending lines in one linear pass. The OBJ
