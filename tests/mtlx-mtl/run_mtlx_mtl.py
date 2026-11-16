@@ -138,9 +138,16 @@ def usd_case(args, d, src, mtl_text, materials):
     for name in materials:
         stem = re.sub(r"[^A-Za-z0-9_]", "_", name)
         renders, unsupported, textures = {}, False, {}
+        # One material per .mtl so the mesh's single GeomSubset is
+        # material_0 (the subset name follows the material's index).
+        for src_mtl in ("ext", "classic"):
+            text = (d / f"{src_mtl}.mtl").read_text()
+            blocks = re.split(r"(?m)^(?=newmtl )", text)
+            one = [b for b in blocks if b.startswith(f"newmtl {name}\n")]
+            (d / f"{stem}_{src_mtl}.mtl").write_text(one[0] if one else "")
         for kind in ("ext", "classic", "ref"):
             obj = d / f"{stem}_{kind}.obj"
-            write_sphere(obj, "classic.mtl" if kind != "ext" else "ext.mtl", name)
+            write_sphere(obj, f"{stem}_{'ext' if kind == 'ext' else 'classic'}.mtl", name)
             usda = d / f"{stem}_{kind}.usda"
             text = '#usda 1.0\n(\n    defaultPrim = "W"\n)\n'
             text += f'def Xform "W" (\n    references = @{obj.name}@\n)\n{{\n}}\n' + LIGHT
