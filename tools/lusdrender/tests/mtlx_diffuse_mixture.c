@@ -597,7 +597,11 @@ static int openpbr_transmission_ior_checks(void) {
       float nl=fabsf(sample.wi.z), lv=sqrtf(a2+(1-a2)*nv*nv);
       float ll=sqrtf(a2+(1-a2)*nl*nl);
       float g2=2*nv*nl/(nv*ll+nl*lv), g1=2*nv/(nv+lv);
-      float expected=(1-fresnel)*g2/(g1*pg);
+      /* From inside OpenPBR glass the base specular lobe also gets the glass
+       * branch's probability (interior_glass_rebalance), so the glass branch is
+       * selected with pg/(1+pg) there. */
+      float pg_side=side ? pg/(1.0f+pg) : pg;
+      float expected=(1-fresnel)*g2/(g1*pg_side);
       if(!isfinite(sample.throughput.x) || fabsf(sample.throughput.x-expected)>2e-4f) {
         fprintf(stderr,"FAIL: rough transmission weight side=%d got=%g expected=%g\n",side,sample.throughput.x,expected); return 0;
       }

@@ -68,6 +68,9 @@
 extern "C" {
 #include "lightrt_c_tri.h"
 #include "verified_math.h"
+
+// Vendored LightRT mtlxrender BSDF (bsdf.c): --energy-mode switch.
+extern "C" void bsdf_set_energy_mode(int mode);
 }
 
 #ifdef LIGHTUSD_WITH_QJS
@@ -1691,6 +1694,7 @@ int main(int argc, char **argv) {
   if (opt.verified_math) {
     std::cerr << "MaterialX graph math: strict binary32 sine/cosine\n";
   }
+  bsdf_set_energy_mode(opt.energy_mode);
   if (scenePreview.enabled && !opt.volume_mtlx_file.empty()) {
     std::cerr << "MaterialX volume looks cannot be combined with scene-preview conversion.\n";
     return EXIT_FAILURE;

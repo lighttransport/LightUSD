@@ -482,6 +482,102 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  # Verified binary32 special values versus MtlxSpec/Binary32Special.lean.
+  add_executable(lusdrender-mtlx-vf-special tests/mtlx_vf_special.c)
+  target_link_libraries(lusdrender-mtlx-vf-special PRIVATE lightusd_verified_graph_math)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-vf-special PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-vf-special
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-vf-special>)
+  set_tests_properties(tool-lusdrender-mtlx-vf-special PROPERTIES
+    TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "lusdrender;cpu;materialx")
+
+  # --energy-mode conservative: certified glass R/T scale never creates energy.
+  add_executable(lusdrender-mtlx-cert-energy
+    tests/mtlx_cert_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-cert-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-cert-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-cert-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-cert-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-cert-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-cert-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-cert-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-cert-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  # Measured binary32 lobe-evaluation error behind the conservative-mode reserve.
+  add_executable(lusdrender-mtlx-f32-lobe-error
+    tests/mtlx_f32_lobe_error.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-f32-lobe-error PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-f32-lobe-error PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-f32-lobe-error PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-f32-lobe-error PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-f32-lobe-error PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-f32-lobe-error
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-f32-lobe-error>)
+  set_tests_properties(tool-lusdrender-mtlx-f32-lobe-error PROPERTIES
+    TIMEOUT 120 LABELS "lusdrender;cpu;materialx")
+
+  # --energy-mode conservative creates no energy for any swept material (sampler estimate).
+  add_executable(lusdrender-mtlx-conservative-sweep
+    tests/mtlx_conservative_sweep.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-conservative-sweep PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-conservative-sweep PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-conservative-sweep PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-conservative-sweep PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-conservative-sweep PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-conservative-sweep
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-conservative-sweep>)
+  set_tests_properties(tool-lusdrender-mtlx-conservative-sweep PROPERTIES
+    TIMEOUT 600 LABELS "lusdrender;cpu;material;materialx")
+
+  # Partially transmissive OpenPBR seen from inside: diffuse respects TIR reflection.
+  add_executable(lusdrender-mtlx-interior-energy
+    tests/mtlx_interior_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-interior-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-interior-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-interior-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-interior-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-interior-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-interior-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-interior-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-interior-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  # Thin film on glass: transmission uses 1 - the film Fresnel (no energy creation).
+  add_executable(lusdrender-mtlx-film-energy
+    tests/mtlx_film_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-film-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-film-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-film-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-film-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-film-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-film-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-film-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-film-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
   add_executable(lusdrender-mtlx-conductor-mixture
     tests/mtlx_conductor_mixture.c tests/mtlx_texture_stub.c
     ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c

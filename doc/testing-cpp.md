@@ -1724,6 +1724,18 @@ the lobe limit, literal and connected RGB weights, opaque diffuse layer
 throughput, dielectric/generalized Schlick reflection-layer throughput and
 independent reflection lobes (including films), mixed lobes, RGB weights,
 sampling, and overflow. Transmission composition remains approximate;
+Its rough-transmission checks use the side-dependent glass selection probability
+`pg/(1+pg)` from inside OpenPBR glass (`interior_glass_rebalance`).
+`tool-lusdrender-mtlx-cert-energy` integrates OpenPBR glass reflection plus
+transmission in `--energy-mode reference` and `conservative`. Conservative must
+stay `<= 1` (the certified table `cert_albedo_table.h`, from
+materialx-conformance `scripts/certify-albedo.py`), recover energy inside its
+domain, and leave out-of-domain materials unchanged.
+`tool-lusdrender-mtlx-film-energy` checks that a thin film on glass does not
+create energy: transmission uses one minus the film Fresnel.
+`tool-lusdrender-mtlx-vf-special` replays the special values (NaN,
+infinities, signed zeros, flags) of the verified binary32 operations against
+`MtlxSpec/Binary32Special.lean`.
 `tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
 and opaque diffuse, sheen and conductor layers through the rendered CPU path,
 and verifies that

@@ -99,6 +99,8 @@ void PrintUsage(const char *prog) {
       << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
       << "  --verified-math       Strict modeled graph sine/cosine (CPU --mtlx).\n"
+      << "  --energy-mode M       reference (default) | conservative (certified glass R/T\n"
+      << "                        scale; CPU MaterialX BSDF).\n"
       << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
       << "  --volume-mtlx FILE --volume-mtlx-look NAME  Apply a MaterialX look to CPU volumes.\n"
       << "  -h, -help              Show this help.\n"
@@ -419,6 +421,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     }
     OPT_MATCH(a == "--verified-math") {
       opt->verified_math = true;
+    }
+    OPT_MATCH(a == "--energy-mode") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "reference") opt->energy_mode = 0;
+      else if (std::string(v) == "conservative") opt->energy_mode = 1;
+      else {
+        std::cerr << "invalid --energy-mode: " << v << " (reference|conservative)\n";
+        return false;
+      }
     }
     OPT_MATCH(a == "--mtlx-mipmaps") {
       opt->mtlx_mipmaps = true;

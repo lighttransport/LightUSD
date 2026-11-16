@@ -835,6 +835,8 @@ struct Options {
   bool mtlx_mipmaps{false};
   std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
   std::string mtlx_aov_node;
+  // --energy-mode: 0 reference (default), 1 conservative certified glass R/T scale.
+  int energy_mode{0};
 };
 
 struct DirectShape {

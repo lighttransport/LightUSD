@@ -1,4 +1,5 @@
 #include "bsdf.h"
+#include <pthread.h>
 
 #include <math.h>
 #include <stddef.h>
@@ -51,6 +52,16 @@ static double materialx_conductor_fresnel(double cosine, double n, double k) {
     double rs = (t1-t2)/(t1+t2);
     double rp = rs*(t3-t4)/(t3+t4);
     return 0.5*(rp+rs);
+}
+
+/* --energy-mode: 0 reference (MaterialX fitted GGX energy compensation), 1 conservative.
+ * Conservative mode never applies the fitted factor 1 + favg (1 - Ess)/Ess: the fit
+ * underestimates near-mirror albedo at grazing view, so the factor creates up to 8.9%
+ * energy (issues/materialx/03). Plain single scatter is <= 1 per interface; certified
+ * glass uses the shared scale below instead. */
+static int g_energy_mode = 0;
+static double fitted_ggx_comp(double favg, double ess) {
+    return g_energy_mode == 1 ? 1.0 : 1.0 + favg * (1.0 - ess) / ess;
 }
 
 static double materialx_ggx_directional_terms(double x, double y, double *a_out, double *b_out) {
@@ -107,7 +118,7 @@ static v3 conductor_response(v3 eta, v3 extinction, float alpha_x,
         double f0=use_film ? film0c[i] : materialx_conductor_fresnel(1.0,n[i],k[i]);
         double f=use_film ? filmc[i] : materialx_conductor_fresnel(vdoth,n[i],k[i]);
         double favg=f0+(1.0-f0)/21.0;
-        double compensation=1.0+favg*(1.0-ess)/ess;
+        double compensation=fitted_ggx_comp(favg,ess);
         result[i]=(float)(D*G*f*compensation/(4.0*v*l));
     }
     return v3_make(result[0],result[1],result[2]);
@@ -485,9 +496,12 @@ v3 bsdf_materialx_specular_fresnel(const MtlxSpecularLobe *lobe, float cosine) {
     return v3_is_finite(result) ? result : v3_splat(0.0f);
 }
 
-/* MaterialX dielectric / generalized-Schlick GGX response for one closure. */
-static v3 specular_closure_response(const MtlxSpecularLobe *lobe, float nv, float nl,
-                                    float hx, float hy, float hz, float vh) {
+/* MaterialX dielectric / generalized-Schlick GGX response for one closure.
+ * comp_override < 0 uses the fitted MaterialX energy compensation; otherwise that
+ * constant (per view) factor replaces it (used by --energy-mode conservative). */
+static v3 specular_closure_response_ex(const MtlxSpecularLobe *lobe, float nv, float nl,
+                                       float hx, float hy, float hz, float vh,
+                                       double comp_override) {
     const MtlxConductorLobe *frame=&lobe->frame;
     if (!(nv>0.0f && nl>0.0f) || !isfinite(nv) || !isfinite(nl) ||
         !isfinite(hx) || !isfinite(hy) || !isfinite(hz) || !isfinite(vh) ||
@@ -518,11 +532,16 @@ static v3 specular_closure_response(const MtlxSpecularLobe *lobe, float nv, floa
     float result[3];
     for(int j=0;j<3;j++) {
         double favg=f0c[j]+(f90c[j]-f0c[j])/21.0;
-        double comp=1.0+favg*(1.0-ess)/ess;
+        double comp=comp_override>=0.0 ? comp_override : fitted_ggx_comp(favg,ess);
         double t=lobe->model==MTLX_SPECULAR_DIELECTRIC ? fmax(0.0,tint[j]) : 1.0;
         result[j]=(float)(D*G*fc[j]*comp*t/(4.0*v*l));
     }
     return v3_make(result[0],result[1],result[2]);
+}
+
+static v3 specular_closure_response(const MtlxSpecularLobe *lobe, float nv, float nl,
+                                    float hx, float hy, float hz, float vh) {
+    return specular_closure_response_ex(lobe, nv, nl, hx, hy, hz, vh, -1.0);
 }
 
 /* OpenPBR Surface graph coat-relative IOR and effective roughness. */
@@ -771,6 +790,8 @@ static v3 sample_conductor_vndf(v3 view, float ax, float ay, float u1, float u2)
 }
 
 
+static float interior_reflection_albedo(float mu, float alpha, float eta);
+
 /* OpenPBR coat and base-darkening throughput at the view direction. */
 static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
                                      float *out_comp, v3 *out_coat_atten) {
@@ -782,6 +803,13 @@ static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
             double favg=L->coat_f0+(1.0-L->coat_f0)/21.0;
             comp=(float)(1.0+favg*(1.0-ess)/ess);
             coat_fr=(float)(L->coat_w*(a*L->coat_f0+b)*comp);
+            if (g_energy_mode == 1) {
+                /* conservative: attenuate the base by at least the coat lobe's sampled
+                 * directional albedo (the fit underestimates it near grazing). */
+                float rc = interior_reflection_albedo(clampf(ndotv, 0.0f, 1.0f), L->coat_alpha,
+                                                      1.0f / maxf(L->coat_ior, 1.0001f));
+                coat_fr = fmaxf(coat_fr, L->coat_w * rc);
+            }
         }
     }
     v3 coat_atten = v3_scale(v3_lerp(v3_splat(1.0f), L->coat_color, L->coat_w),
@@ -805,6 +833,59 @@ static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
  * reflection lobe), so handing it the sum makes it count both lobes twice. Sheen
  * is grouped with the specular half: it is a directional grazing lobe, not part
  * of the cosine-distributed diffuse response. */
+/* --energy-mode conservative: certified single-scatter dielectric compensation.
+ *
+ * cert_albedo_table.h holds binary32 upper bounds E_up of the exact single-scatter
+ * interface albedo E = R + T (ideal reflection + refraction, exact dielectric Fresnel,
+ * isotropic GGX, height-correlated Smith) over closed (mu, alpha, eta) cells, produced by
+ * materialx-conformance/scripts/certify-albedo.py.  In the certified domain both the
+ * reflection and the transmission lobe are scaled by the same s = 1/(E_up + reserve)
+ * instead of the fitted MaterialX factor, so s R + s T <= s E_up < 1: the interface never
+ * creates energy.  Outside the domain the material is rendered exactly as in reference
+ * mode and nothing is claimed.  The reserve covers binary32 evaluation of the lobes; it is
+ * an estimate, not a proved bound (see doc/validation/certified-albedo.md). */
+#include "cert_albedo_table.h"
+void bsdf_set_energy_mode(int mode) { g_energy_mode = mode; }
+int bsdf_energy_mode(void) { return g_energy_mode; }
+#define CERT_ALBEDO_RESERVE 1.0e-3
+#define CERT_LOOKUP_EPS 1.0e-5
+
+static int cert_glass_domain(const Layers *L) {
+    return g_energy_mode == 1 && L->openpbr_base && L->base_metalness == 0.0f &&
+           L->glass_w == 1.0f && L->tf_weight == 0.0f && L->base_specular_weight == 1.0f &&
+           L->coat_w == 0.0f && L->sheen_w == 0.0f && L->sheen_lobe_count == 0 &&
+           L->specular_lobe_count == 0 && L->conductor_lobe_count == 0;
+}
+
+/* Max of E_up over every cell that may contain the exact (mu, alpha, eta) given the
+ * binary32 rounding of the inputs (+-CERT_LOOKUP_EPS).  Returns 1 when uncertified. */
+static double cert_albedo_upper(float mu, float alpha, float eta) {
+    if (!(mu > 0.0f && mu <= 1.0f && alpha > 0.0f && alpha <= 1.0f && isfinite(eta))) return 1.0;
+    int e = -1;
+    for (int k = 0; k < CERT_ALBEDO_ETA_COUNT; ++k)
+        if (fabs((double)eta - cert_albedo_eta[k]) <= CERT_ALBEDO_ETA_HALFWIDTH - CERT_LOOKUP_EPS) e = k;
+    if (e < 0) return 1.0;
+    double m0 = ((double)mu - CERT_LOOKUP_EPS) * CERT_ALBEDO_MU, m1 = ((double)mu + CERT_LOOKUP_EPS) * CERT_ALBEDO_MU;
+    double a0 = ((double)alpha - CERT_LOOKUP_EPS) * CERT_ALBEDO_ALPHA, a1 = ((double)alpha + CERT_LOOKUP_EPS) * CERT_ALBEDO_ALPHA;
+    int i0 = (int)floor(m0), i1 = (int)floor(m1), j0 = (int)floor(a0), j1 = (int)floor(a1);
+    if (i0 < 0 || j0 < 0) return 1.0;
+    if (i1 >= CERT_ALBEDO_MU) i1 = CERT_ALBEDO_MU - 1;
+    if (j1 >= CERT_ALBEDO_ALPHA) j1 = CERT_ALBEDO_ALPHA - 1;
+    double up = 0.0;
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i)
+            up = fmax(up, (double)cert_albedo_upper_tab[e][j][i]);
+    return up;
+}
+
+/* Shared R/T scale for the certified domain, or -1 when the domain does not apply. */
+static double cert_dielectric_scale(const Layers *L, float nv, float eta) {
+    if (!cert_glass_domain(L)) return -1.0;
+    double up = cert_albedo_upper(nv, L->alpha, eta);
+    if (up >= 1.0) return 1.0;           /* uncertified cell: single scatter, no compensation */
+    return 1.0 / fmin(1.0, up + CERT_ALBEDO_RESERVE);
+}
+
 static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                                 v3 *out_diff, v3 *out_spec) {
     float NdotL = v3_dot(N, wi), NdotV = v3_dot(N, wo);
@@ -851,8 +932,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
     /* Approximate the top interface's view-directional throughput. The
      * reference layer applies this once to its underlying response. */
     const v3 one = v3_splat(1.0f);
-    const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->diffuse_F0,
-                                                    L->diffuse_F90);
+    const v3 diffuse_fresnel_view = fresnel_schlick(NdotV, L->diffuse_F0, L->diffuse_F90);
     v3 diffuse_fresnel_attenuation = v3_sub(one, diffuse_fresnel_view);
     if (L->openpbr_base) {
         double a,b,ess=materialx_ggx_directional_terms(NdotV,L->alpha,&a,&b);
@@ -866,6 +946,28 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
                 v3 favg_film=v3_add(film0,v3_scale(v3_sub(one,film0),1.0f/21.0f));
                 v3 film_comp=v3_add(one,v3_scale(favg_film,(float)((1.0-ess)/ess)));
                 albedo=v3_lerp(albedo,v3_scale(film_comp,(float)(a*f0+b)),L->tf_weight);
+            }
+            /* From inside glass (reciprocal interface IOR < 1) the reflection lobe
+             * includes total internal reflection, which the F0-based fit cannot
+             * represent: past the critical angle nearly all energy is reflected,
+             * and an unattenuated diffuse lobe underneath created up to 40% energy
+             * (white base, transmission 0.5). Use at least the exact view Fresnel. */
+            if (g_energy_mode == 1 && L->base_ior >= 1.0f) {
+                /* conservative: at least the specular lobe's sampled directional albedo */
+                float rs = interior_reflection_albedo(clampf(NdotV, 0.0f, 1.0f), L->alpha,
+                                                      1.0f / maxf(L->base_ior, 1.0001f));
+                albedo = v3_make(fmaxf(albedo.x, rs), fmaxf(albedo.y, rs), fmaxf(albedo.z, rs));
+            }
+            if (L->base_ior < 1.0f && L->glass_w > 0.0f) {
+                /* Rough interior reflection also reflects totally on tilted
+                 * microfacets below the critical angle: use the lobe's sampled
+                 * directional albedo (times the same fitted factor `comp` the lobe
+                 * applies), and at least the exact view Fresnel. */
+                float ri = interior_reflection_albedo(clampf(NdotV, 0.0f, 1.0f), L->alpha,
+                                                      1.0f / L->base_ior);
+                float fv = fresnel_dielectric(clampf(NdotV, 0.0f, 1.0f), 1.0f / L->base_ior);
+                float r = fminf(1.0f, fmaxf(fv, ri * (float)comp));
+                albedo = v3_make(fmaxf(albedo.x, r), fmaxf(albedo.y, r), fmaxf(albedo.z, r));
             }
             diffuse_fresnel_attenuation=v3_sub(one,albedo);
         }
@@ -937,7 +1039,9 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         float hx = sqrtf(maxf(0.0f,1.0f-NdotH*NdotH));
         v3 dielectric = v3_splat(0.0f), metal = v3_splat(0.0f);
         if (L->base_metalness < 1.0f) {
-            dielectric = specular_closure_response(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH);
+            /* conservative mode: certified shared R/T scale replaces the fitted factor */
+            double cert_s = cert_dielectric_scale(L, NdotV, 1.0f / L->base_ior);
+            dielectric = specular_closure_response_ex(&lobe,NdotV,NdotL,hx,0.0f,NdotH,VdotH,cert_s);
             if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f) {
                 lobe.frame.thinfilm_thickness = L->tf_thickness;
                 lobe.frame.thinfilm_ior = L->tf_ior;
@@ -1023,7 +1127,8 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
         float Fc = L->coat_w * fresnel_schlick_s(VdotH, L->coat_f0);
         if (L->openpbr && isfinite(L->coat_ior) && L->coat_ior>0.0f)
             Fc = (float)(L->coat_w * materialx_conductor_fresnel(VdotH,L->coat_ior,0.0));
-        coat = v3_splat(fuzz_throughput * Fc * Dc * Gc * coat_comp / (4.0f * NdotV * NdotL));
+        coat = v3_splat(fuzz_throughput * Fc * Dc * Gc * (g_energy_mode == 1 ? 1.0f : coat_comp) /
+                        (4.0f * NdotV * NdotL));
     }
 
     float pdf_diff = NdotL * MTLX_INV_PI;
@@ -1069,6 +1174,109 @@ static v3 eval_reflection(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf) {
     return eval_reflection_split(L, N, wo, wi, pdf, (v3 *)0, (v3 *)0);
 }
 
+/* Optional energy compensation of rough dielectric transmission. A single-scatter microfacet
+ * interface loses the energy of paths that scatter between microfacets (up to about half at
+ * roughness 1). Turquin-style compensation scales the transmitted lobe by 1/E, E being the
+ * interface's single-scatter albedo (reflection + transmission) for the view cosine, roughness
+ * and relative IOR. For exact nonnegative R,T with 0 < E = R + T <= 1,
+ * R + T/E <= 1. The sampled/interpolated table below is not a certified
+ * enclosure of that exact E, so this diagnostic option has no global energy
+ * guarantee. Off by default (the OpenPBR specification does not require it).
+ * The albedo is tabulated on first use for each IOR, under a lock, by VNDF sampling. */
+static int g_ms_dielectric = 0;
+void bsdf_set_dielectric_multiscatter(int enable) { g_ms_dielectric = enable != 0; }
+
+#define MS_TAB_MU 16
+#define MS_TAB_ALPHA 16
+#define MS_TAB_CACHE 64
+typedef struct { int key; float albedo[MS_TAB_ALPHA][MS_TAB_MU]; } MsTable;
+static MsTable g_ms_tables[MS_TAB_CACHE];
+static int g_ms_table_count = 0;
+static pthread_mutex_t g_ms_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static float ms_interface_albedo_sample(float mu, float alpha, float eta, int n, int reflect_only) {
+    pcg32 rng; pcg32_seed(&rng, 0x5eed, 7);
+    v3 wo = v3_make(sqrtf(fmaxf(0.0f, 1.0f - mu * mu)), 0.0f, mu);
+    double sum = 0.0;
+    for (int i = 0; i < n; ++i) {
+        v3 m = sample_conductor_vndf(wo, alpha, alpha, pcg32_f(&rng), pcg32_f(&rng));
+        float cosi = clampf(v3_dot(m, wo), 0.0f, 1.0f);
+        float fr = fresnel_dielectric(cosi, eta);
+        float a2 = alpha * alpha;
+        float root = sqrtf(a2 + (1.0f - a2) * mu * mu);
+        float g1 = 2.0f * mu / (mu + root);
+        v3 wr = v3_sub(v3_scale(m, 2.0f * cosi), wo);
+        if (wr.z > 0.0f && g1 > 0.0f) sum += fr * ggx_G(mu, wr.z, alpha) / g1;
+        float sint2 = eta * eta * (1.0f - cosi * cosi);
+        if (!reflect_only && sint2 < 1.0f && g1 > 0.0f) {
+            float cost = sqrtf(fmaxf(0.0f, 1.0f - sint2));
+            v3 wt = v3_normalize(v3_sub(v3_scale(m, eta * cosi - cost), v3_scale(wo, eta)));
+            if (wt.z < 0.0f) sum += (1.0f - fr) * ggx_G(mu, -wt.z, alpha) / g1;
+        }
+    }
+    return (float)(sum / n);
+}
+
+/* Tabulated sampled albedo (uncertified), cached per relative IOR under a lock.
+ * reflect_only = 0: interface R + T (--ms-dielectric); 1: reflection lobe only. */
+static MsTable g_ri_tables[MS_TAB_CACHE];
+static int g_ri_table_count = 0;
+static float sampled_albedo_table(float mu, float alpha, float eta, int reflect_only) {
+    MsTable *tabs = reflect_only ? g_ri_tables : g_ms_tables;
+    int *count = reflect_only ? &g_ri_table_count : &g_ms_table_count;
+    int key = (int)lrintf(eta * 1000.0f);
+    pthread_mutex_lock(&g_ms_lock);
+    MsTable *t = NULL;
+    for (int i = 0; i < *count; ++i)
+        if (tabs[i].key == key) { t = &tabs[i]; break; }
+    if (!t) {
+        if (*count < MS_TAB_CACHE) t = &tabs[(*count)++];
+        else t = &tabs[key & (MS_TAB_CACHE - 1)];   /* evict deterministically */
+        t->key = key;
+        float e = (float)key / 1000.0f;
+        for (int j = 0; j < MS_TAB_ALPHA; ++j)
+            for (int i = 0; i < MS_TAB_MU; ++i)
+                t->albedo[j][i] = ms_interface_albedo_sample(
+                    fmaxf(0.02f, ((float)i + 0.5f) / MS_TAB_MU),
+                    fmaxf(0.02f, (float)j / (MS_TAB_ALPHA - 1)), e, 384, reflect_only);
+    }
+    float fm = clampf(mu * MS_TAB_MU - 0.5f, 0.0f, MS_TAB_MU - 1.001f);
+    float fa = clampf(alpha * (MS_TAB_ALPHA - 1), 0.0f, MS_TAB_ALPHA - 1.001f);
+    int i0 = (int)fm, j0 = (int)fa;
+    float tm = fm - i0, ta = fa - j0;
+    float v = (1 - ta) * ((1 - tm) * t->albedo[j0][i0] + tm * t->albedo[j0][i0 + 1]) +
+              ta * ((1 - tm) * t->albedo[j0 + 1][i0] + tm * t->albedo[j0 + 1][i0 + 1]);
+    pthread_mutex_unlock(&g_ms_lock);
+    return v;
+}
+
+static float ms_dielectric_albedo(float mu, float alpha, float eta) {
+    return clampf(sampled_albedo_table(mu, alpha, eta, 0), 0.05f, 1.0f);
+}
+
+/* Directional albedo of the interior dielectric reflection lobe (includes TIR). */
+static float interior_reflection_albedo(float mu, float alpha, float eta) {
+    return clampf(sampled_albedo_table(mu, alpha, eta, 1), 0.0f, 1.0f);
+}
+
+/* With an OpenPBR thin film the base reflection uses lerp(F, F_airy, tf_weight)
+ * (eval_reflection_split, substrate index 1/eta for this side). Transmission must use
+ * 1 minus the same Fresnel, or R + T != 1. Returns the per-channel factor
+ * (1 - F_film) / (1 - F_plain) to apply to a transmission weight that already
+ * contains (1 - F_plain); (1,1,1) without a film. */
+static v3 film_transmission_ratio(const Layers *L, float cosi, float eta, float f_plain) {
+#ifdef BSDF_TEST_PRE_FILM_FIX /* tests/film_energy.c: reproduce the old behaviour */
+    (void)L; (void)cosi; (void)eta; (void)f_plain; return v3_splat(1.0f);
+#endif
+    if (!(L->openpbr_base && L->tf_weight > 0.0f && L->tf_thickness > 0.0f)) return v3_splat(1.0f);
+    if (!(f_plain < 1.0f)) return v3_splat(0.0f);
+    v3 fa = fresnel_airy(cosi, 1.0f / eta, L->tf_thickness, L->tf_ior);
+    v3 f = v3_lerp(v3_splat(f_plain), fa, L->tf_weight);
+    float inv = 1.0f / (1.0f - f_plain);
+    return v3_make(maxf(0.0f, 1.0f - f.x) * inv, maxf(0.0f, 1.0f - f.y) * inv,
+                   maxf(0.0f, 1.0f - f.z) * inv);
+}
+
 /* OpenPBR rough transmission, using the visible-normal density and the
  * refraction half-vector Jacobian. eta is incident/transmitted IOR. */
 static v3 eval_rough_transmission(const OpenPBRParams *p, const Layers *L,
@@ -1095,11 +1303,30 @@ static v3 eval_rough_transmission(const OpenPBRParams *p, const Layers *L,
     if (!(*pdf > 0.0f) || !isfinite(*pdf)) { *pdf = 0.0f; return v3_splat(0.0f); }
     float mask = ggx_G(nv, nl, L->alpha)/g1;
     float factor = mask * L->glass_w * (1.0f-fresnel) * density * jacobian / nl;
+    if (g_ms_dielectric) factor /= ms_dielectric_albedo(nv, L->alpha, eta);
+    { double cert_s = cert_dielectric_scale(L, nv, eta); if (cert_s > 0.0) factor = (float)(factor * cert_s); }
     v3 tint = p->transmission_depth > 0.0f ? v3_splat(1.0f) : p->transmission_color;
+    tint = v3_mul(tint, film_transmission_ratio(L, oh, eta, fresnel));
     tint = v3_mul(tint, coat_substrate_attenuation(L, nv, NULL, NULL));
     if (L->sheen_lobe_count == 0 && L->sheen_w > 0.0f)
         tint = v3_scale(tint, 1.0f-L->sheen_w*bsdf_zeltner_sheen_albedo(nv,L->sheen_alpha));
     return v3_scale(tint, factor);
+}
+
+/* Inside OpenPBR glass the interface reflects through the base specular lobe (the
+ * glass branch is transmission-only). Past the critical angle that reflection
+ * carries nearly all the energy, but the F0-based selection probability (~0.08)
+ * makes each internal bounce weigh ~1/0.08: unbiased but heavy-tailed (white furnace
+ * pixels up to 32 at roughness 0.7). From inside, give the base specular lobe the
+ * glass branch's probability as well. Applied identically in sampling and
+ * evaluation, so MIS pdfs stay consistent; entering rays are unchanged. */
+static void interior_glass_rebalance(Layers *L, int entering) {
+    /* Rough glass only: for smooth glass the rare-sample tail is mild, while the
+     * extra interior reflection samples triple the noise of depth-limited renders
+     * (MaterialXView comparison, pt-max-depth 2). */
+    if (entering || !L->openpbr_base || !(L->glass_w > 0.0f) || !(L->alpha > 0.01f)) return;
+    float add = L->pg, n = 1.0f + add;
+    L->pd /= n; L->ps = (L->ps + add) / n; L->pc /= n; L->pg /= n; L->pm /= n;
 }
 
 int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *out) {
@@ -1111,6 +1338,7 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
     int entering = v3_dot(Nn, wo) > 0.0f;
     v3 N = face_forward(Nn, wo);
     Layers L = extract(p);
+    interior_glass_rebalance(&L, entering);
     v3 T, B; onb(N, &T, &B);
     float u = pcg32_f(rng), u1 = pcg32_f(rng), u2 = pcg32_f(rng);
 
@@ -1175,6 +1403,8 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
         }
         out->throughput = v3_scale(out->throughput,
             masking * L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
+        if (refracted && transmission_only)
+            out->throughput = v3_mul(out->throughput, film_transmission_ratio(&L, cosi, eta, Fr));
         if (L.openpbr_base) {
             float nv = v3_dot(N,wo);
             out->throughput = v3_mul(out->throughput,
@@ -1189,6 +1419,11 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
             float pdf;
             (void)eval_rough_transmission(p, &L, N, wo, wi, eta, &pdf);
             if (!(pdf > 0.0f)) return 0;
+            if (g_ms_dielectric)
+                out->throughput = v3_scale(out->throughput,
+                    1.0f / ms_dielectric_albedo(v3_dot(N, wo), L.alpha, eta));
+            { double cert_s = cert_dielectric_scale(&L, v3_dot(N, wo), eta);
+              if (cert_s > 0.0) out->throughput = v3_scale(out->throughput, (float)cert_s); }
             out->pdf = pdf;
             out->specular = 0;
         }
@@ -1287,6 +1522,7 @@ v3 bsdf_eval(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, float *pdf_out) {
     v3 N = face_forward(outward, wo);
     Layers L = extract(p);
     int entering = v3_dot(outward, wo) > 0.0f;
+    interior_glass_rebalance(&L, entering);
     if (v3_dot(N, wi) < 0.0f) {
         float eta = entering ? 1.0f / L.base_ior : L.base_ior;
         return eval_rough_transmission(p, &L, N, wo, wi, eta, pdf_out);
@@ -1301,6 +1537,7 @@ v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 Ns, v3 wo, v3 wi, v3 *out_diffuse,
     v3 N = face_forward(outward, wo);
     Layers L = extract(p);
     int entering = v3_dot(outward, wo) > 0.0f;
+    interior_glass_rebalance(&L, entering);
     if (v3_dot(N, wi) < 0.0f) {
         float eta = entering ? 1.0f / L.base_ior : L.base_ior;
         v3 transmitted = eval_rough_transmission(p, &L, N, wo, wi, eta, pdf_out);
