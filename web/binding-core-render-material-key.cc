@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-core-render.hh"
+#include "core/color-transform.hh"
+#include "schema/color-space.hh"
 #include "binding-core-scene.hh"
 #include "layer/prim-spec.hh"
 #include "layer/asset-anchor.hh"
@@ -70,6 +72,26 @@ RenderStream::TextureMeta RenderStream::texMeta_(const std::string &connPath) {
     read_tokenish("inputs:wrapS", &meta.wrap_s);
     read_tokenish("inputs:wrapT", &meta.wrap_t);
     meta.is_udim = isUdimPath_(meta.path);
+    // Source-to-display transform, as the RenderSceneConverter records it on
+    // RenderTexture (custom ColorSpaceDefinitionAPI spaces are stage-local, so
+    // they must be resolved here, against the texture prim).
+    {
+      std::string source_space = meta.source_color_space;
+      if (source_space.empty() || source_space == "auto")
+        source_space = "srgb_rec709_scene";
+      lightusd::color::ColorTransform source_to_display;
+      if (lightusd::color_management::BuildColorTransform(tex, source_space, "lin_rec709_scene",
+                                                          &source_to_display)) {
+        meta.color_transform_valid = true;
+        meta.color_transform_bypass = source_to_display.bypass;
+        meta.source_color_is_data =
+            source_to_display.source.kind == lightusd::color::ColorSpaceKind::Data;
+        meta.source_gamma = source_to_display.source.gamma;
+        meta.source_linear_bias = source_to_display.source.linear_bias;
+        std::copy(source_to_display.matrix, source_to_display.matrix + 9,
+                  meta.source_to_display_linear.begin());
+      }
+    }
     return meta;
   }
 

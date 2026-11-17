@@ -1,9 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-core-render.hh"
+#include "core/color-transform.hh"
+#include "schema/color-space.hh"
 #include "schema/usd-shade.hh"
 namespace lightusd {
 namespace web_core {
+namespace {
+
+// The PreviewSurface fast path below decodes constants without the
+// RenderSceneConverter. Apply the same color management the converter does
+// (ConvertShaderColorToWorking): an unconnected color constant is converted
+// from its authored (or inherited / default) colorSpace into the scene's
+// working color space, so both paths store identical values.
+void PreviewColorToWorking(const lightusd::UsdPrim &shader, const char *attr,
+                           const std::string &working_space, float rgb[3]) {
+  if (const lightusd::PrimSpec *spec = shader.GetPrimSpec()) {
+    const std::vector<lightusd::Path> *conn = spec->connection(attr);
+    if (conn && !conn->empty()) return;  // textured / connected: not a constant
+  }
+  std::string source;
+  if (!lightusd::color_management::ComputeColorSpaceName(shader, attr, &source)) return;
+  lightusd::color::ColorTransform transform;
+  if (!lightusd::color_management::BuildColorTransform(
+          shader, source, working_space.empty() ? "lin_rec709_scene" : working_space,
+          &transform))
+    return;
+  lightusd::color::TransformRGB(transform, rgb);
+}
+
+}  // namespace
+
 int32_t RenderStream::materialIdForBoundPrim_(
     const lightusd::UsdPrim& prim) {
   return registerMaterial_(lightusd::GetBoundMaterial(stage_, prim));
@@ -141,6 +168,15 @@ RenderStream::MaterialRecord RenderStream::materialRecordForPrim_(
         rec.emissive[0] = ps.emissive_color[0];
         rec.emissive[1] = ps.emissive_color[1];
         rec.emissive[2] = ps.emissive_color[2];
+        // The working space comes from the stage (render_scene_ may not be
+        // populated yet when materials are registered).
+        lightusd::color_management::RenderingColorConfig color_config;
+        (void)lightusd::color_management::ResolveRenderingColorConfig(
+            stage_, render_settings_path_, &color_config);
+        PreviewColorToWorking(shader, "inputs:diffuseColor", color_config.working_space,
+                              rec.base_color);
+        PreviewColorToWorking(shader, "inputs:emissiveColor", color_config.working_space,
+                              rec.emissive);
         rec.opacity_threshold = ps.opacity_threshold > 0.0f
                                     ? ps.opacity_threshold
                                     : -1.0f;
