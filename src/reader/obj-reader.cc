@@ -665,6 +665,17 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
     if (UsdSidecarPrim(in.anim, in.anim_bytes, in.anim_name, "SkelAnimation", &keep, &path, why)) {
       *anim_ref = "@" + in.anim + "@<" + path + ">";
       *anim_layer = keep->meta();
+      // The animation applies in the OBJ's skeleton space (skel-obj.md):
+      // transforms above it in the sidecar are not applied.
+      for (size_t k = path.rfind('/'); k != std::string::npos && k > 0; k = path.rfind('/', k - 1)) {
+        const uint32_t id = keep->index_at_path(path.substr(0, k));
+        const PrimSpec* p = id == UINT32_MAX ? nullptr : keep->prim(id);
+        if (p && p->property_value("xformOpOrder")) {
+          *why += "skel_anim '" + in.anim + "': the transform of " + path.substr(0, k) +
+                  " is not applied (sidecar animations are in the OBJ's skeleton space)\n";
+          break;
+        }
+      }
     }
     return true;
   }
