@@ -267,7 +267,14 @@ endif()
 
 # Test executables check with assert(); keep it active in Release builds
 # (NDEBUG would silently turn every check into a no-op).
+# Directories are visited once: the legacy product re-adds this source tree
+# as a subdirectory, which made the walk recurse forever.
 function(lightusd_keep_test_asserts dir)
+  get_property(_visited GLOBAL PROPERTY LIGHTUSD_KEEP_TEST_ASSERTS_VISITED)
+  if("${dir}" IN_LIST _visited)
+    return()
+  endif()
+  set_property(GLOBAL APPEND PROPERTY LIGHTUSD_KEEP_TEST_ASSERTS_VISITED "${dir}")
   get_property(_targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
   foreach(_t IN LISTS _targets)
     get_target_property(_type ${_t} TYPE)

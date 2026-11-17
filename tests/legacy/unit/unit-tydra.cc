@@ -21,7 +21,6 @@
 #include "io-util.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
-#include "core/mtlx-dom.hh"
 #include "value-clip-utils.hh"
 #include "lightusd.hh"
 #include "tydra/openpbr-params.hh"
