@@ -287,6 +287,17 @@ struct Mesh {
   std::vector<int32_t> normal_indices, uv_indices;
   std::vector<float> joint_weights;
   int32_t influences = 0;
+  // Subdivision tags (tinyobjloader subd-obj.md), accepted by tobj_subd.
+  // Indices refer to this mesh's points and faces. Scalars are -1 when the
+  // tag is absent; `subd` is false for a mesh without (accepted) tags.
+  struct Subd {
+    bool subd = false;
+    int scheme = -1, interp_boundary = -1, fvar_interp_boundary = -1;
+    int crease_method = -1, smooth_triangles = -1;
+    std::vector<int32_t> crease_indices, corner_indices, hole_indices;
+    std::vector<float> crease_sharpnesses, corner_sharpnesses;
+    std::vector<std::string> unknown;  // canonical lines of unknown tags
+  } subd;
 };
 // MuJoCo's analytic SDF plugins (mujoco.sdf.torus, bowl, gear, nut, bolt),
 // meshed as MuJoCo's compiler meshes a plugin mesh asset. `config` holds the

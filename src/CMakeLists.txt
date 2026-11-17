@@ -1473,6 +1473,18 @@ if(LIGHTUSD_BUILD_TESTS)
         add_executable(test_obj_reader ../tests/core/test_obj_reader.cc)
         target_link_libraries(test_obj_reader PRIVATE lightusd_core)
         add_test(NAME core_test_obj_reader COMMAND test_obj_reader)
+        # OBJ subdivision tags vs OpenSubdiv (skipped unless OSD_ROOT is set).
+        add_executable(obj_subd_dump ../tests/obj-subd/obj_subd_dump.cc)
+        target_link_libraries(obj_subd_dump PRIVATE tydra lightusd_core)
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME tool-obj-subd-osd
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-subd/run_osd_cross.py
+                        $<TARGET_FILE:obj_subd_dump> ${CMAKE_CURRENT_SOURCE_DIR}
+                        ${CMAKE_CURRENT_BINARY_DIR}/obj-subd-osd)
+            set_tests_properties(tool-obj-subd-osd PROPERTIES SKIP_RETURN_CODE 77
+                LABELS "obj;subd" TIMEOUT 600)
+        endif()
         add_executable(test_obj_large ../tests/core/test_obj_large.cc)
         target_link_libraries(test_obj_large PRIVATE lightusd_core)
         add_test(NAME core_test_obj_large COMMAND test_obj_large)

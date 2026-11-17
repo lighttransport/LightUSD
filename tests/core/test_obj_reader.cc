@@ -113,5 +113,62 @@ int main() {
     REQUIRE(id("/World/Materials/m/MtlxSurface") ==
            "ND_open_pbr_surface_surfaceshader");
   }
+  {
+    // Subdivision tags (tinyobjloader subd-obj.md) -> UsdGeomMesh attributes.
+    // Tag vertex numbers are 0-based over the file; mesh `b` uses vertices 4..7,
+    // which become its points 0..3.
+    const std::string src =
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+        "g a\nf 1 2 3 4\n"
+        "t interpolateboundary 1/0/0 1\nt crease 2/1/0 0 1 2.5\nt hole 1/0/0 0\n"
+        "g b\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\nf 5 6 7 8\n"
+        "t scheme 0/0/1 bilinear\nt corner 1/1/0 6 12\nt creasemethod 0/0/1 chaikin\n"
+        "t mytag 0/0/1 x\n"
+        "g bad\nf 1 2 3\nt crease 2/1/0 0 3 1\n";
+    lightusd::tydra::import_asset::Options sopt;
+    std::string swarn, serr;
+    auto sl = LoadOBJLayerFromMemory("memory:s.obj", reinterpret_cast<const uint8_t*>(src.data()),
+                                     src.size(), sopt, &swarn, &serr);
+    REQUIRE(sl);
+    auto prop = [&](const char* mesh, const char* name) -> const Value* {
+      auto* p = sl->prim_at_path(std::string("/World/Links/Geometry/") + mesh);
+      return p ? p->property_value(name) : nullptr;
+    };
+    auto tok = [&](const char* mesh, const char* name) {
+      const Value* v = prop(mesh, name);
+      return v && v->as_token() ? std::string(*v->as_token()) : std::string();
+    };
+    auto ints = [&](const char* mesh, const char* name) {
+      std::vector<int32_t> out;
+      if (const Value* v = prop(mesh, name))
+        for (int32_t x : v->as_int_array()) out.push_back(x);
+      return out;
+    };
+    auto floats = [&](const char* mesh, const char* name) {
+      std::vector<float> out;
+      if (const Value* v = prop(mesh, name))
+        for (float x : v->as_float_array()) out.push_back(x);
+      return out;
+    };
+    REQUIRE(tok("a", "subdivisionScheme") == "catmullClark");
+    REQUIRE(tok("a", "interpolateBoundary") == "edgeAndCorner");
+    // absent facevarying tag: OpenSubdiv OBJ default "all"
+    REQUIRE(tok("a", "faceVaryingLinearInterpolation") == "all");
+    REQUIRE((ints("a", "creaseIndices") == std::vector<int32_t>{0, 1}));
+    REQUIRE((ints("a", "creaseLengths") == std::vector<int32_t>{2}));
+    REQUIRE((floats("a", "creaseSharpnesses") == std::vector<float>{2.5f}));
+    REQUIRE((ints("a", "holeIndices") == std::vector<int32_t>{0}));
+    REQUIRE(tok("b", "subdivisionScheme") == "bilinear");
+    // absent boundary tag: OpenSubdiv OBJ default "edgeOnly"
+    REQUIRE(tok("b", "interpolateBoundary") == "edgeOnly");
+    REQUIRE((ints("b", "cornerIndices") == std::vector<int32_t>{2}));  // file vertex 6
+    REQUIRE((floats("b", "cornerSharpnesses") == std::vector<float>{10.0f}));  // clamped
+    REQUIRE(tok("b", "obj:subd:creaseMethod") == "chaikin");
+    REQUIRE(prop("b", "obj:subd:unknownTags") != nullptr);
+    // rejected tags (0-3 is not an edge of the triangle): polygon mesh + warning
+    REQUIRE(tok("bad", "subdivisionScheme") == "none");
+    REQUIRE(prop("bad", "creaseIndices") == nullptr);
+    REQUIRE(swarn.find("subdivision tags of 'bad' rejected") != std::string::npos);
+  }
   std::cout << "OBJ reader, C11 skin weights and mixed primitives passed\n";
 }

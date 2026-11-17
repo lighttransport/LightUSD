@@ -91,6 +91,72 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
     mesh_view.face_vertex_indices = indices.data();
     mesh_view.num_face_vertex_indices = static_cast<uint32_t>(indices.size());
 
+    // Authored subdivision tags (UsdGeomMesh). Without them tsd uses its
+    // defaults (USD's: edgeAndCorner, cornersPlus1, uniform, catmullClark).
+    std::string tag;
+    if (GetPropToken(prim, "interpolateBoundary", &tag)) {
+      subdiv_options.boundary =
+          tag == "none"       ? ::lightusd::tsd::BoundaryInterpolation::None
+          : tag == "edgeOnly" ? ::lightusd::tsd::BoundaryInterpolation::EdgeOnly
+                              : ::lightusd::tsd::BoundaryInterpolation::EdgeAndCorner;
+    }
+    if (GetPropToken(prim, "triangleSubdivisionRule", &tag) && tag == "smooth") {
+      subdiv_options.triangle_subdivision = ::lightusd::tsd::TriangleSubdivision::Smooth;
+    }
+    // Not a UsdGeomMesh attribute: the OBJ importer's custom
+    // obj:subd:creaseMethod (OpenSubdiv's creasing method).
+    if (GetPropToken(prim, "obj:subd:creaseMethod", &tag) && tag == "chaikin") {
+      subdiv_options.creasing = ::lightusd::tsd::CreasingMethod::Chaikin;
+    }
+    ::lightusd::tsd::FVarLinearInterpolation fvar_interp =
+        ::lightusd::tsd::FVarLinearInterpolation::CornersPlus1;
+    if (GetPropToken(prim, "faceVaryingLinearInterpolation", &tag)) {
+      using F = ::lightusd::tsd::FVarLinearInterpolation;
+      fvar_interp = tag == "none"           ? F::None
+                    : tag == "cornersOnly"  ? F::CornersOnly
+                    : tag == "cornersPlus2" ? F::CornersPlus2
+                    : tag == "boundaries"   ? F::Boundaries
+                    : tag == "all"          ? F::All
+                                            : F::CornersPlus1;
+    }
+    auto read_ints = [&](const char* name, std::vector<int32_t>* v) {
+      ValueArrayRead<int32_t> a;
+      if (ReadIntArray(prim, name, config_.time_code, &a))
+        for (int32_t x : a) v->push_back(x);
+    };
+    auto read_floats = [&](const char* name, std::vector<float>* v) {
+      ValueArrayRead<float> a;
+      if (ReadFloatArray(prim, name, config_.time_code, &a))
+        for (float x : a) v->push_back(x);
+    };
+    std::vector<int32_t> crease_indices, crease_lengths, corner_indices, hole_indices;
+    std::vector<float> crease_sharpnesses, corner_sharpnesses;
+    read_ints("creaseIndices", &crease_indices);
+    read_ints("creaseLengths", &crease_lengths);
+    read_floats("creaseSharpnesses", &crease_sharpnesses);
+    read_ints("cornerIndices", &corner_indices);
+    read_floats("cornerSharpnesses", &corner_sharpnesses);
+    if (!crease_lengths.empty() && !crease_sharpnesses.empty()) {
+      mesh_view.crease_indices = crease_indices.data();
+      mesh_view.num_crease_indices = static_cast<uint32_t>(crease_indices.size());
+      mesh_view.crease_lengths = crease_lengths.data();
+      mesh_view.num_crease_lengths = static_cast<uint32_t>(crease_lengths.size());
+      mesh_view.crease_sharpnesses = crease_sharpnesses.data();
+      mesh_view.num_crease_sharpnesses = static_cast<uint32_t>(crease_sharpnesses.size());
+    }
+    if (!corner_indices.empty() && corner_indices.size() == corner_sharpnesses.size()) {
+      mesh_view.corner_indices = corner_indices.data();
+      mesh_view.num_corners = static_cast<uint32_t>(corner_indices.size());
+      mesh_view.corner_sharpnesses = corner_sharpnesses.data();
+    }
+    // holeIndices (already in sanitized face numbering): tsd drops hole faces
+    // from the refined output.
+    for (uint32_t h : out->hole_faces) hole_indices.push_back(static_cast<int32_t>(h));
+    if (!hole_indices.empty()) {
+      mesh_view.hole_indices = hole_indices.data();
+      mesh_view.num_holes = static_cast<uint32_t>(hole_indices.size());
+    }
+
     struct RefinedChannel {
       FloatChunked* data;
       Interpolation* interpolation;
@@ -131,6 +197,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
         view.num_values = static_cast<uint32_t>(channel_values[i].size() /
                                                 channels[i].stride);
         view.stride = channels[i].stride;
+        view.interpolation = fvar_interp;
         fvar.push_back(view);
         fvar_channel.push_back(i);
       } else {
@@ -153,6 +220,8 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
         &subdivision_error);
     if (result == ::lightusd::tsd::Result::Success) {
       out->subdivision_face_source = std::move(refined.face_source);
+      // tsd removed the hole faces; the refined faces have new numbers.
+      out->hole_faces.clear();
       // Uniform primvars are one value per authored face. They are not vertex
       // or face-varying subdivision channels, but every refined child face
       // must inherit its level-0 face's value. Leaving the original short

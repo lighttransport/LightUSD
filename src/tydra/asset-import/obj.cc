@@ -12,6 +12,7 @@
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/tinyobjloader-c/tiny_obj_c.h"
 #include "external/tinyobjloader-c/tobj_mtlx.h"
+#include "external/tinyobjloader-c/tobj_subd.h"
 #include "import.hh"
 
 namespace lightusd {
@@ -544,6 +545,31 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     if (!shape.mesh.num_faces) continue;
     Mesh mesh;
     mesh.name = shape.name && *shape.name ? shape.name : "mesh";
+    // Subdivision tags are checked against the faces as written (this import
+    // does not triangulate). An accepted mesh keeps shared points (compact
+    // topology), which the tags' vertex numbers refer to.
+    tobj_subd sd;
+    std::memset(&sd, 0, sizeof(sd));
+    struct SubdGuard {
+      tobj_subd* s;
+      ~SubdGuard() { tobj_subd_free(s); }
+    } sd_guard{&sd};
+    bool use_subd = false;
+    if (shape.mesh.num_tag_lines) {
+      std::vector<int> vi(shape.mesh.num_indices);
+      for (size_t i = 0; i < vi.size(); ++i) vi[i] = shape.mesh.indices[i].vertex_index;
+      if (tobj_subd_parse_lines(shape.mesh.tag_lines, shape.mesh.num_tag_lines,
+                                shape.mesh.num_face_vertices, shape.mesh.num_faces, vi.data(),
+                                &sd) != 0) {
+        if (err) *err = "OBJ subdivision tags: out of memory";
+        return false;
+      }
+      use_subd = sd.ok != 0;
+      if (!use_subd)
+        reader.Warn("OBJ subdivision tags of '" + mesh.name + "' rejected (" +
+                        (sd.num_errors ? sd.errors[0] : "invalid") + "); mesh is not subdivided",
+                    "obj.subd_invalid", source);
+    }
     size_t off = 0;
     bool uv_complete = true;
     // Corner dedup on (vertex, normal, uv, smoothing group, face): open
@@ -597,7 +623,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     mesh.materials.reserve(shape.mesh.num_faces);
     if (a.texcoords.count) mesh.uvs.reserve(initial_points * 2);
     if (a.colors.count) mesh.colors.reserve(initial_points * 3);
-    if (reader.obj_indexed) {
+    if (reader.obj_indexed || use_subd) {
       // Compact topology: points are the shape's source vertices (first-use
       // order); normals and UVs are face-varying tables with per-corner
       // indices, so positions and per-vertex skin weights are not split.
@@ -667,6 +693,31 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
         off += count;
       }
       if (!uv_complete) mesh.uv_indices.clear();
+      if (use_subd) {
+        // File-global vertex numbers -> this mesh's points (all are used by
+        // the mesh's faces, which tobj_subd checked).
+        auto& d = mesh.subd;
+        d.subd = true;
+        d.scheme = sd.scheme;
+        d.interp_boundary = sd.interp_boundary;
+        d.fvar_interp_boundary = sd.fvar_interp_boundary;
+        d.crease_method = sd.crease_method;
+        d.smooth_triangles = sd.smooth_triangles;
+        for (size_t i = 0; i < sd.num_creases; ++i) {
+          d.crease_indices.push_back(point_of[sd.creases[i].v0]);
+          d.crease_indices.push_back(point_of[sd.creases[i].v1]);
+          d.crease_sharpnesses.push_back(
+              static_cast<float>(std::min(tobj_subd_sharpness(sd.creases[i].sharpness), 10.0)));
+        }
+        for (size_t i = 0; i < sd.num_corners; ++i) {
+          d.corner_indices.push_back(point_of[sd.corners[i].v]);
+          d.corner_sharpnesses.push_back(
+              static_cast<float>(std::min(tobj_subd_sharpness(sd.corners[i].sharpness), 10.0)));
+        }
+        for (size_t i = 0; i < sd.num_holes; ++i)
+          d.hole_indices.push_back(static_cast<int32_t>(sd.holes[i]));
+        for (size_t i = 0; i < sd.num_unknown; ++i) d.unknown.emplace_back(sd.unknown[i]);
+      }
     } else
     {
     for (size_t f = 0; f < shape.mesh.num_faces; f++) {

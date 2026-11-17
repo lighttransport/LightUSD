@@ -68,3 +68,12 @@ finalize_mtlx, tobj_material.mtlx_lines/num_mtlx_lines) is ported by hand
 onto this patched copy, grouping pending lines in one linear pass. The OBJ
 importer turns accepted graphs into a UsdShade MaterialX network; covered by
 tool-lusdrender-mtlx-mtl (tests/mtlx-mtl/run_mtlx_mtl.py).
+
+Local subdivision tags: tobj_subd.{c,h} copied verbatim from tinyobjloader
+branch subd-ext (c495aab; reference implementation of the Lean spec in
+tinyobjloader formal/Subd, subd-obj.md). The loader hunk (`t` lines kept per
+shape in tobj_mesh.tag_lines and parsed into tobj_mesh.tags; handle_t, t_lines,
+t_tags) is applied from that commit onto this patched copy. The OBJ importer
+checks each shape's tags against its untriangulated faces and authors the
+UsdGeomMesh subdivision attributes; covered by test_obj_reader and
+tool-obj-subd-osd (tests/obj-subd, LightUSD vs OpenSubdiv).

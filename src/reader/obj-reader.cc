@@ -104,6 +104,55 @@ void Interpolation(PrimSpec* p, const std::string& name,
   m.elementSize = elements;
   m.authored |= PropMeta::kInterpolation | PropMeta::kElementSize;
 }
+// Subdivision tags (tinyobjloader subd-obj.md) -> UsdGeomMesh. Tag values use
+// OpenSubdiv's OBJ numbering (interpolateboundary 1 = edge and corner, 2 = edge
+// only). A mesh without accepted tags stays a polygon mesh ("none").
+void AuthorSubd(PrimSpec* p, const tydra::import_asset::Mesh::Subd& s) {
+  if (!s.subd) {
+    SetToken(p, "subdivisionScheme", "none", true);
+    return;
+  }
+  static const char* const kScheme[] = {"catmullClark", "loop", "bilinear"};
+  static const char* const kBoundary[] = {"none", "edgeAndCorner", "edgeOnly"};
+  static const char* const kFvar[] = {"none", "cornersOnly", "cornersPlus1",
+                                      "cornersPlus2", "boundaries", "all"};
+  static const char* const kTri[] = {"catmullClark", "smooth"};
+  SetToken(p, "subdivisionScheme", kScheme[s.scheme < 0 ? 0 : s.scheme], true);
+  // Absent tags take OpenSubdiv's OBJ-reader defaults (edge only, all), which
+  // differ from USD's (edgeAndCorner, cornersPlus1): always author them.
+  SetToken(p, "interpolateBoundary", kBoundary[s.interp_boundary < 0 ? 2 : s.interp_boundary]);
+  SetToken(p, "faceVaryingLinearInterpolation",
+           kFvar[s.fvar_interp_boundary < 0 ? 5 : s.fvar_interp_boundary]);
+  if (s.smooth_triangles >= 0)
+    SetToken(p, "triangleSubdivisionRule", kTri[s.smooth_triangles]);
+  if (!s.crease_indices.empty()) {
+    Set(p, "creaseIndices", Value::MakeIntArray(s.crease_indices), "int[]");
+    Set(p, "creaseLengths",
+        Value::MakeIntArray(std::vector<int32_t>(s.crease_sharpnesses.size(), 2)), "int[]");
+    Set(p, "creaseSharpnesses", Value::MakeFloatArray(s.crease_sharpnesses), "float[]");
+  }
+  if (!s.corner_indices.empty()) {
+    Set(p, "cornerIndices", Value::MakeIntArray(s.corner_indices), "int[]");
+    Set(p, "cornerSharpnesses", Value::MakeFloatArray(s.corner_sharpnesses), "float[]");
+  }
+  if (!s.hole_indices.empty())
+    Set(p, "holeIndices", Value::MakeIntArray(s.hole_indices), "int[]");
+  // UsdGeomMesh has no creasing-method attribute (an OpenSubdiv option) and no
+  // place for unknown tags: keep them as custom attributes.
+  if (s.crease_method >= 0) {
+    p->upsert_property("obj:subd:creaseMethod",
+                       Value::MakeToken(s.crease_method == 1 ? "chaikin" : "uniform"),
+                       PropSlot::kFlagCustom);
+    p->set_property_type_name("obj:subd:creaseMethod", "token");
+  }
+  if (!s.unknown.empty()) {
+    p->upsert_property("obj:subd:unknownTags",
+                       Value::MakeStringLikeArray(s.unknown, TypeId::String),
+                       PropSlot::kFlagCustom);
+    p->set_property_type_name("obj:subd:unknownTags", "string[]");
+  }
+}
+
 struct Scope {
   Layer* layer;
   PrimSpec* Add(const std::string& name, const std::string& type) {
@@ -536,7 +585,7 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
         Value::MakeFloatCompArray(std::move(extent), TypeId::Float3, 3),
         "float3[]");
     if (type == "Mesh") {
-      SetToken(p, "subdivisionScheme", "none", true);
+      AuthorSubd(p, g.subd);
       Set(p, "faceVertexCounts",
           Value::MakeIntArray(g.counts), "int[]");
       Set(p, "faceVertexIndices", Value::MakeIntArray(g.indices),
