@@ -201,8 +201,11 @@ option(LIGHTUSD_ENABLE_NLOHMANN_JSON_COMPAT
 option(LIGHTUSD_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(LIGHTUSD_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
-option(LIGHTUSD_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
-        OFF)
+# usdFbx (an OpenFBX stub) was retired: .fbx layers are read through ufbx
+# (LIGHTUSD_WITH_UFBX, src/reader/fbx-reader.cc).
+if(LIGHTUSD_WITH_USDFBX)
+  message(WARNING "LIGHTUSD_WITH_USDFBX is retired and ignored; FBX import uses ufbx (LIGHTUSD_WITH_UFBX)")
+endif()
 option(LIGHTUSD_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
 option(LIGHTUSD_WITH_USDVOL
@@ -903,14 +906,6 @@ if(LIGHTUSD_WITH_JSON)
   list(APPEND LIGHTUSD_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
 endif()
 
-if(LIGHTUSD_WITH_USDFBX)
-  list(APPEND LIGHTUSD_SOURCES
-    ${PROJECT_SOURCE_DIR}/src/legacy/usdFbx.cc
-  )
-  list(APPEND LIGHTUSD_DEP_SOURCES
-       ${PROJECT_SOURCE_DIR}/src/external/OpenFBX/src/ofbx.cpp)
-endif()
-
 if(LIGHTUSD_WITH_USDOBJ)
   # usdObj uses the shared C11 asset importer.
 endif()
@@ -1473,11 +1468,6 @@ endif()
 #                             PRIVATE "LIGHTUSD_USE_USDMTLX")
 #endif()
 #
-#if(LIGHTUSD_WITH_USDFBX)
-#  target_compile_definitions(lightusd_object
-#                             PRIVATE "LIGHTUSD_USE_USDFBX")
-#endif()
-#
 #if(LIGHTUSD_WITH_USDOBJ)
 #  target_compile_definitions(lightusd_object
 #                             PRIVATE "LIGHTUSD_USE_USDOBJ")
@@ -1742,11 +1732,6 @@ foreach(LIGHTUSD_LIB_TARGET ${LIGHTUSD_LIBS})
   if(LIGHTUSD_WITH_USDMTLX)
     target_compile_definitions(${LIGHTUSD_LIB_TARGET}
                                PRIVATE "LIGHTUSD_USE_USDMTLX")
-  endif()
-
-  if(LIGHTUSD_WITH_USDFBX)
-    target_compile_definitions(${LIGHTUSD_LIB_TARGET}
-                               PRIVATE "LIGHTUSD_USE_USDFBX")
   endif()
 
   if(LIGHTUSD_WITH_USDOBJ)
