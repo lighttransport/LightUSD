@@ -118,7 +118,7 @@ def write(name, skeleton):
 
 # rig.obj: names and hierarchy here; bind, rest and animation from rig.fbx
 write("rig.obj", [f"skel_joint {b.name} {b.parent.name if b.parent else '-'}" for b in bones] +
-      ["skel_lib rig.fbx", "skel_anim rig.fbx bend"])
+      ["skel_lib rig.fbx", "skel_anim rig.fbx Scene"])  # the FBX take Blender writes for the active action
 # rig_inline.obj: self-contained static skeleton. A change of world axes maps a
 # joint's world transform W to C W; parent-relative transforms are unchanged.
 inline = []

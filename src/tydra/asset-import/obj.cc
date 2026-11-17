@@ -13,6 +13,7 @@
 #include "external/tinyobjloader-c/tiny_obj_c.h"
 #include "external/tinyobjloader-c/tobj_mtlx.h"
 #include "external/tinyobjloader-c/tobj_subd.h"
+#include "external/tinyobjloader-c/tobj_skel.h"
 #include "import.hh"
 
 namespace lightusd {
@@ -263,6 +264,61 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     }
     if (!influence_count)
       reader.Warn("OBJ vw records have no influences; omitted skin binding", "obj.empty_skin_weights", source);
+  }
+  // Skeleton lines (skel-obj.md): checked against the vw joint ids; sidecar
+  // files are read here and parsed by the layer reader.
+  if (a.num_skel_lines) {
+    long max_id = -1;
+    for (size_t i = 0; i < a.num_skin_weights; ++i)
+      for (size_t k = 0; k < a.skin_weights[i].num_weights; ++k)
+        max_id = std::max<long>(max_id, a.skin_weights[i].weights[k].joint_id);
+    tobj_skel sk;
+    if (tobj_skel_parse_lines(a.skel_lines, a.num_skel_lines, max_id, &sk) != 0) {
+      if (err) *err = "OBJ skeleton: out of memory";
+      return false;
+    }
+    struct SkelGuard {
+      tobj_skel* s;
+      ~SkelGuard() { tobj_skel_free(s); }
+    } skel_guard{&sk};
+    if (!sk.ok) {
+      reader.Warn(std::string("OBJ skeleton rejected (") +
+                      (sk.num_errors ? sk.errors[0] : "invalid") + "); skin weights kept",
+                  "obj.skel_invalid", source);
+    } else {
+      auto& s = obj->skel;
+      s.present = true;
+      for (size_t j = 0; j < sk.num_joints; ++j) {
+        const tobj_skel_joint& jt = sk.joints[j];
+        s.names.emplace_back(jt.name);
+        s.parents.push_back(static_cast<int>(jt.parent));
+        std::vector<double> bind, rest;
+        for (int k = 0; jt.bind && k < 16; ++k) bind.push_back(tobj_skel_number(jt.bind[k]));
+        for (int k = 0; jt.rest && k < 16; ++k) rest.push_back(tobj_skel_number(jt.rest[k]));
+        s.bind.push_back(std::move(bind));
+        s.rest.push_back(std::move(rest));
+      }
+      auto read = [&](const char* name, std::vector<uint8_t>* bytes) {
+        std::string resolved, why;
+        if (!reader.Read(name, source, bytes, &resolved, &why)) {
+          reader.Warn(std::string("OBJ skeleton sidecar '") + name + "' not read: " + why,
+                      "obj.skel_sidecar_unresolved", source);
+          return false;
+        }
+        return true;
+      };
+      if (sk.lib) {
+        s.lib = sk.lib;
+        if (sk.lib_skeleton) s.lib_skeleton = sk.lib_skeleton;
+        read(sk.lib, &s.lib_bytes);
+      }
+      if (sk.anim) {
+        s.anim = sk.anim;
+        if (sk.anim_name) s.anim_name = sk.anim_name;
+        if (s.anim == s.lib && !s.lib_bytes.empty()) s.anim_bytes = s.lib_bytes;
+        else read(sk.anim, &s.anim_bytes);
+      }
+    }
   }
   auto skin = [&](Mesh* mesh) {
     if (!influence_count) return true;

@@ -182,6 +182,11 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
   }
   // Defining the animation prim may have moved prim storage: look up again.
   p = layer->prim_mutable(skel_id);
+  // skel:animationSource is a SkelBindingAPI property: OpenUSD resolves it only
+  // when the API is applied to the Skeleton.
+  p->meta().apiSchemas().push_back("SkelBindingAPI");
+  p->meta().apiSchemasQualifier() = "prepend";
+  p->meta().setApiSchemasAuthored();
   p->set_relationship_targets("skel:animationSource", {Path(anim_path)});
   auto& meta = layer->meta();
   meta.timeCodesPerSecond = anim->fps;

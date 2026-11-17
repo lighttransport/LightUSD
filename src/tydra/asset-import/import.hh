@@ -312,6 +312,18 @@ struct OBJ {
   // and the file has no polygon primitives. MuJoCo hulls such mesh assets.
   std::vector<float> vertices;
   Json materials = Json::array();
+  // Skeleton for the vw skin weights (tinyobjloader skel-obj.md), accepted by
+  // tobj_skel. Joint i is vw joint id i. Matrices are 16 doubles, row-major,
+  // translation in the last row; empty when not given inline. A sidecar's
+  // bytes are read here (budgeted, through the importer's asset hooks).
+  struct Skel {
+    bool present = false;
+    std::vector<std::string> names;
+    std::vector<int> parents;
+    std::vector<std::vector<double>> bind, rest;
+    std::string lib, lib_skeleton, anim, anim_name;  // as written
+    std::vector<uint8_t> lib_bytes, anim_bytes;
+  } skel;
 };
 template <class T>
 Json Array(const std::vector<T>& values) {

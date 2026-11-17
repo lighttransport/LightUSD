@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "obj-reader.hh"
+#include "reader/skel-author.hh"
+#if defined(LIGHTUSD_WITH_UFBX)
+#include "reader/fbx-reader.hh"
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -499,9 +503,121 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
   Declare(tex, "outputs:rgb", tn::TypeId::Float3, "float3");
 }
 
+// Skeleton lines + sidecar -> UsdSkel data. Inline matrices win; missing bind
+// and rest transforms come from an .fbx sidecar (joints matched by name), and
+// rest transforms otherwise from the bind pose. The animation is the sidecar
+// take, reordered to the OBJ joints (joints it lacks keep their rest pose).
+// Warnings go to `why` also on success.
+bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* out,
+                      skel::Animation* anim, bool* has_anim, std::string* why) {
+  const size_t n = in.names.size();
+  out->names = in.names;
+  out->parent = in.parents;
+  out->bind.assign(n, skel::Identity());
+  out->rest.assign(n, skel::Identity());
+  *has_anim = false;
+  auto mat = [](const std::vector<double>& v) {
+    skel::Mat m{};
+    for (size_t k = 0; k < 16; ++k) m[k] = v[k];
+    return m;
+  };
+  auto ends_fbx = [](const std::string& p) {
+    return p.size() >= 4 && (p.compare(p.size() - 4, 4, ".fbx") == 0 ||
+                             p.compare(p.size() - 4, 4, ".FBX") == 0);
+  };
+  std::map<std::string, size_t> lib_joint;
+  skel::Skeleton lib;
+#if defined(LIGHTUSD_WITH_UFBX)
+  if (!in.lib_bytes.empty()) {
+    if (!ends_fbx(in.lib)) {
+      *why += "skel_lib '" + in.lib + "': only .fbx sidecars are supported\n";
+    } else {
+      FBXScene fbx;
+      std::string w, e;
+      if (ReadFBXScene(in.lib_bytes.data(), in.lib_bytes.size(), "", false, &fbx, &w, &e)) {
+        lib = fbx.skeleton;
+        for (size_t i = 0; i < lib.names.size(); ++i) lib_joint.emplace(lib.names[i], i);
+      } else {
+        *why += "skel_lib '" + in.lib + "': " + e + "\n";
+      }
+      *why += w;
+    }
+  }
+#else
+  if (!in.lib_bytes.empty()) *why += "skel_lib: FBX support (ufbx) is not built in\n";
+#endif
+  bool rest_missing = false;
+  for (size_t j = 0; j < n; ++j) {
+    auto it = lib_joint.find(in.names[j]);
+    if (in.bind[j].size() == 16) {
+      out->bind[j] = mat(in.bind[j]);
+    } else if (it != lib_joint.end()) {
+      out->bind[j] = lib.bind[it->second];
+    } else {
+      *why = "joint '" + in.names[j] + "' has no bind transform (inline or in the sidecar)";
+      return false;
+    }
+    if (in.rest[j].size() == 16) out->rest[j] = mat(in.rest[j]);
+    else if (it != lib_joint.end()) out->rest[j] = lib.rest[it->second];
+    else rest_missing = true;
+  }
+  if (rest_missing)  // rest = bind relative to the parent's bind
+    for (size_t j = 0; j < n; ++j) {
+      if (in.rest[j].size() == 16 || lib_joint.count(in.names[j])) continue;
+      skel::Mat inv;
+      out->rest[j] = out->parent[j] < 0 || !skel::Invert(out->bind[size_t(out->parent[j])], &inv)
+                         ? out->bind[j]
+                         : skel::Mul(out->bind[j], inv);
+    }
+#if defined(LIGHTUSD_WITH_UFBX)
+  if (!in.anim_bytes.empty()) {
+    if (!ends_fbx(in.anim)) {
+      *why += "skel_anim '" + in.anim + "': only .fbx sidecars are supported\n";
+      return true;
+    }
+    FBXScene fbx;
+    std::string w, e;
+    if (!ReadFBXScene(in.anim_bytes.data(), in.anim_bytes.size(), in.anim_name, false, &fbx, &w,
+                      &e) ||
+        !fbx.has_animation) {
+      *why += "skel_anim '" + in.anim + "': " + (e.empty() ? "no animation" : e) + "\n" + w;
+      return true;
+    }
+    *why += w;
+    std::map<std::string, size_t> src;
+    for (size_t i = 0; i < fbx.skeleton.names.size(); ++i) src.emplace(fbx.skeleton.names[i], i);
+    *anim = skel::Animation{};
+    anim->name = fbx.animation.name;
+    anim->fps = fbx.animation.fps;
+    anim->times = fbx.animation.times;
+    for (size_t k = 0; k < anim->times.size(); ++k) {
+      std::vector<float> t(3 * n), r(4 * n), s(3 * n);
+      for (size_t j = 0; j < n; ++j) {
+        auto it = src.find(in.names[j]);
+        if (it != src.end()) {
+          const size_t i = it->second;
+          for (int c = 0; c < 3; ++c) t[3 * j + c] = fbx.animation.translations[k][3 * i + c];
+          for (int c = 0; c < 4; ++c) r[4 * j + c] = fbx.animation.rotations[k][4 * i + c];
+          for (int c = 0; c < 3; ++c) s[3 * j + c] = fbx.animation.scales[k][3 * i + c];
+        } else {
+          skel::Decompose(out->rest[j], &t[3 * j], &r[4 * j], &s[3 * j]);
+        }
+      }
+      anim->translations.push_back(std::move(t));
+      anim->rotations.push_back(std::move(r));
+      anim->scales.push_back(std::move(s));
+    }
+    *has_anim = true;
+  }
+#else
+  if (!in.anim_bytes.empty()) *why += "skel_anim: FBX support (ufbx) is not built in\n";
+#endif
+  return true;
+}
+
 }  // namespace
 static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
-    const Json& payload, Layer* layer, std::string* err) {
+    const Json& payload, Layer* layer, std::string* err, std::string* warn = nullptr) {
   if (!layer) {
     if (err) *err = "Null OBJ layer";
     return false;
@@ -520,11 +636,22 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
       if (id >= 0 && size_t(id) < payload["materials"].size()) bindings.insert(id);
     prim_count += 1 + bindings.size();
   }
+  prim_count += 2;  // Skeleton + SkelAnimation
   if (prim_count >= UINT32_MAX) {
     if (err) *err = "OBJ prim count limit exceeded";
     return false;
   }
   layer->reserve(prim_count);
+  // Skeleton lines (skel-obj.md) with their sidecar, before any prim exists.
+  skel::Skeleton skeleton;
+  skel::Animation animation;
+  bool has_skeleton = false, has_animation = false;
+  if (obj.skel.present) {
+    std::string why;
+    has_skeleton = BuildOBJSkeleton(obj.skel, &skeleton, &animation, &has_animation, &why);
+    if (!has_skeleton && warn) *warn += "OBJ skeleton dropped: " + why + "\n";
+    else if (warn) *warn += why;
+  }
   layer->meta().defaultPrim = "World";
   layer->meta().upAxis = JsonString(payload, "upAxis", "Z");
   layer->meta().upAxis_set = true;
@@ -534,7 +661,7 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
         Value(payload["unsupported"].dump()));
     layer->meta().customLayerData_set = true;
   }
-  PrimSpec* world = Define(layer, "/World", "Xform");
+  PrimSpec* world = Define(layer, "/World", has_skeleton ? "SkelRoot" : "Xform");
   // Non-legacy profiles state the units explicitly (OBJ carries none; USD's
   // fallback would be centimeters) and mark the asset root as a component.
   if (JsonString(payload, "profile", "legacy") != "legacy") {
@@ -544,6 +671,10 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   }
   Define(layer, "/World/Links", "Xform");
   Define(layer, "/World/Links/Geometry", "Xform");
+  const std::string skel_path = "/World/Skel";
+  if (has_skeleton &&
+      !skel::AuthorSkeleton(layer, skel_path, skeleton, has_animation ? &animation : nullptr, err))
+    return false;
   Scope scope{layer};
   UniqueNames materials, names;
   std::set<std::string> used_materials;
@@ -655,6 +786,17 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
         return false;
       }
       API(p, "SkelBindingAPI");
+      if (has_skeleton) {
+        // Bound to the skeleton: UsdSkel expects normalized weights.
+        const size_t inf = size_t(influences);
+        for (size_t v = 0; v < num_points; ++v) {
+          float sum = 0.0f;
+          for (size_t k = 0; k < inf; ++k) sum += weights[v * inf + k];
+          if (sum > 0.0f)
+            for (size_t k = 0; k < inf; ++k) weights[v * inf + k] /= sum;
+        }
+        p->set_relationship_targets("skel:skeleton", {Path(skel_path)});
+      }
       Set(p, "primvars:skel:jointIndices",
           Value::MakeIntArray(std::move(ids)), "int[]");
       Set(p, "primvars:skel:jointWeights",
@@ -727,7 +869,7 @@ std::shared_ptr<Layer> LoadOBJLayerFromMemory(
           std::string_view(size ? reinterpret_cast<const char*>(data) : "", size),
           source, effective, &obj, &result, err)) return nullptr;
   auto layer = std::make_shared<Layer>();
-  if (!ConvertOBJSceneToLayer(obj, result.payload, layer.get(), err)) return nullptr;
+  if (!ConvertOBJSceneToLayer(obj, result.payload, layer.get(), err, warn)) return nullptr;
   RetainAssets(result, layer.get());
   if (warn) *warn += result.warnings;
   session.Succeed();

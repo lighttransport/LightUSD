@@ -1501,6 +1501,23 @@ if(LIGHTUSD_BUILD_TESTS)
                         /W/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
                         1e-4 1 6 12 18 24)
             set_tests_properties(tool-fbx-skin-ufbx PROPERTIES LABELS "fbx;skel")
+            # OBJ skel_joint names + skel_lib/skel_anim FBX sidecar (skel-obj.md).
+            add_test(NAME tool-obj-skin-ufbx
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/obj_scene.usda
+                        /W/Links/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
+                        1e-4 1 6 12 18 24)
+            # OBJ inline skeleton: the rest pose leaves the mesh at its bind points.
+            add_test(NAME tool-obj-skin-inline-rest
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/inline_scene.usda
+                        /W/Links/Geometry/body - 1e-5 0)
+            # LightUSD vs OpenUSD UsdSkel (skipped without OPENUSD_ROOT).
+            add_test(NAME tool-skel-skin-pxr
+                COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/run_pxr_skin.sh
+                        $<TARGET_FILE:lusdcat> $<TARGET_FILE:skin_compare>
+                        ${CMAKE_CURRENT_BINARY_DIR}/obj-skel-pxr)
+            set_tests_properties(tool-skel-skin-pxr PROPERTIES SKIP_RETURN_CODE 77)
+            set_tests_properties(tool-obj-skin-ufbx tool-obj-skin-inline-rest tool-skel-skin-pxr
+                PROPERTIES LABELS "obj;skel")
         endif()
         add_executable(test_obj_large ../tests/core/test_obj_large.cc)
         target_link_libraries(test_obj_large PRIVATE lightusd_core)

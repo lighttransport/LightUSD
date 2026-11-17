@@ -35,7 +35,38 @@ double MaxNearest(const std::vector<float>& a, const std::vector<float>& b) {
 }
 }  // namespace
 
+// --dump SCENE TIME: `<prim path> <float count> x y z ...` per skinned mesh, the
+// native dump of tools/view_control/skinning_compare.py (pxr UsdSkel.Cache).
+static int Dump(const char* scene, double time) {
+  lightusd::Stage stage;
+  std::string warn, err;
+  if (!lightusd::LoadUSDComposed(scene, &stage, &warn, &err)) {
+    std::fprintf(stderr, "load failed: %s\n", err.c_str());
+    return 1;
+  }
+  std::vector<lightusd::UsdPrim> todo = stage.GetRootPrims();
+  while (!todo.empty()) {
+    lightusd::UsdPrim prim = todo.back();
+    todo.pop_back();
+    for (const auto& c : prim.GetChildren()) todo.push_back(c);
+    if (prim.GetTypeName() != "Mesh") continue;
+    lightusd::tydra::ValueArrayRead<float> points;
+    if (!lightusd::tydra::ReadFloatArray(prim, "points", time, &points)) continue;
+    std::vector<float> got;
+    if (!lightusd::tydra::EvaluateSkinnedPoints(stage, prim, time, points, &got, &err)) {
+      std::fprintf(stderr, "skinning failed: %s\n", err.c_str());
+      return 1;
+    }
+    if (got.empty()) continue;  // not skinned
+    std::printf("%s %zu", prim.GetPath().str().c_str(), got.size());
+    for (float v : got) std::printf(" %.9g", v);
+    std::printf("\n");
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc == 4 && std::string(argv[1]) == "--dump") return Dump(argv[2], std::atof(argv[3]));
   if (argc < 6) {
     std::fprintf(stderr, "usage: skin_compare SCENE MESH_PRIM FBX TOL FRAME...\n");
     return 2;
@@ -52,7 +83,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "no prim %s\n", argv[2]);
     return 1;
   }
-  std::ifstream f(argv[3], std::ios::binary);
+  // FBX "-": no reference animation; the skeleton's rest pose must leave the
+  // mesh at its bind points (a self-consistent inline skeleton).
+  const bool rest_mode = std::string(argv[3]) == "-";
+  std::ifstream f(rest_mode ? "/dev/null" : argv[3], std::ios::binary);
   std::stringstream ss;
   ss << f.rdbuf();
   const std::string bytes = ss.str();
@@ -61,12 +95,13 @@ int main(int argc, char** argv) {
   opts.target_unit_meters = 1.0;
   opts.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
   ufbx_error uerr;
-  ufbx_scene* scene = ufbx_load_memory(bytes.data(), bytes.size(), &opts, &uerr);
-  if (!scene || !scene->anim_stacks.count) {
+  ufbx_scene* scene =
+      rest_mode ? nullptr : ufbx_load_memory(bytes.data(), bytes.size(), &opts, &uerr);
+  if (!rest_mode && (!scene || !scene->anim_stacks.count)) {
     std::fprintf(stderr, "ufbx: cannot load %s or no animation\n", argv[3]);
     return 1;
   }
-  const double fps = scene->settings.frames_per_second;
+  const double fps = scene ? scene->settings.frames_per_second : 24.0;
   int fails = 0;
   for (int a = 5; a < argc; ++a) {
     const double frame = std::atof(argv[a]);
@@ -81,9 +116,11 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "LightUSD skinning failed: %s\n", err.c_str());
       return 1;
     }
-    ufbx_scene* ev =
-        ufbx_evaluate_scene(scene, scene->anim_stacks.data[0]->anim, frame / fps, nullptr, &uerr);
+    ufbx_scene* ev = rest_mode ? nullptr
+                               : ufbx_evaluate_scene(scene, scene->anim_stacks.data[0]->anim,
+                                                     frame / fps, nullptr, &uerr);
     std::vector<float> want;
+    if (rest_mode) want.assign(points.begin(), points.end());
     for (size_t i = 0; ev && i < ev->nodes.count; ++i) {
       const ufbx_node* node = ev->nodes.data[i];
       if (!node->mesh || !node->mesh->skin_deformers.count) continue;
@@ -114,11 +151,12 @@ int main(int argc, char** argv) {
                     got[i + 1], got[i + 2], want[i], want[i + 1], want[i + 2], points[i],
                     points[i + 1], points[i + 2]);
     const double d = std::max(MaxNearest(got, want), MaxNearest(want, got));
-    const bool ok = got.size() == want.size() && d <= tol;
+    // point counts may differ (the OBJ import may split vertices per face)
+    const bool ok = d <= tol;
     std::printf("%s frame %g: %zu/%zu points, max distance %.2e\n", ok ? "ok  " : "FAIL", frame,
                 got.size() / 3, want.size() / 3, d);
     fails += !ok;
   }
-  ufbx_free_scene(scene);
+  if (scene) ufbx_free_scene(scene);
   return fails ? 1 : 0;
 }

@@ -482,6 +482,14 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
     TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
 
+  # Skinned OBJ (skeleton lines + FBX animation sidecar) at two time codes.
+  if(LIGHTUSD_WITH_UFBX)
+    add_test(NAME tool-lusdrender-obj-skel
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/obj-skel/render_smoke.py
+              $<TARGET_FILE:lusdrender> ${CMAKE_CURRENT_BINARY_DIR}/obj-skel-render)
+    set_tests_properties(tool-lusdrender-obj-skel PROPERTIES TIMEOUT 120 LABELS "lusdrender;obj;skel")
+  endif()
+
   # Verified binary32 special values versus MtlxSpec/Binary32Special.lean.
   add_executable(lusdrender-mtlx-vf-special tests/mtlx_vf_special.c)
   target_link_libraries(lusdrender-mtlx-vf-special PRIVATE lightusd_verified_graph_math)
