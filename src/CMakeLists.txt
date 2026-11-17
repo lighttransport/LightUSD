@@ -157,6 +157,7 @@ set(LIGHTUSD_CORE_SOURCES
     mtlx-xml-parser.cc
     core/mtlx-dom.cc
     core/mtlx-resolve.cc
+    core/mtlx-file.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -969,6 +970,12 @@ if(LIGHTUSD_BUILD_TESTS)
     )
     target_link_libraries(mtlx_oracle_dump PRIVATE lightusd_core)
     set_target_properties(mtlx_oracle_dump PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_executable(mtlx_c_dump
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/mtlx_c_dump.cc
+    )
+    target_link_libraries(mtlx_c_dump PRIVATE lightusd_core)
+    set_target_properties(mtlx_c_dump PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
