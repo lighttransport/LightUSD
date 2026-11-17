@@ -8,6 +8,9 @@
 #if defined(LIGHTUSD_WITH_USDOBJ)
 #include "reader/obj-reader.hh"
 #endif
+#if defined(LIGHTUSD_WITH_UFBX)
+#include "reader/fbx-reader.hh"
+#endif
 #include "core-util.hh"
 #include "safe-file-size.hh"
 
@@ -45,6 +48,12 @@ tydra::import_asset::Options OBJOptions(const LayerLoadOptions& options) {
 bool IsOBJIdentifier(const std::string& key) {
   std::string package, entry;
   return EndsWithNoCase(AssetResolver::ParsePackagePath(key, &package, &entry) ? entry : key, ".obj");
+}
+#endif
+#if defined(LIGHTUSD_WITH_UFBX)
+bool IsFBXIdentifier(const std::string& key) {
+  std::string package, entry;
+  return EndsWithNoCase(AssetResolver::ParsePackagePath(key, &package, &entry) ? entry : key, ".fbx");
 }
 #endif
 
@@ -395,6 +404,10 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (ext == "obj")
     return LoadOBJLayerFromFile(resolved_path, OBJOptions(options), warn, err);
+#endif
+#if defined(LIGHTUSD_WITH_UFBX)
+  if (ext == "fbx")
+    return LoadFBXLayerFromFile(resolved_path, OBJOptions(options), warn, err);
 #endif
 
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
@@ -920,6 +933,10 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (IsOBJIdentifier(key))
     return LoadOBJLayerFromMemory(key, data, size, OBJOptions(options), warn, err);
 #endif
+#if defined(LIGHTUSD_WITH_UFBX)
+  if (IsFBXIdentifier(key))
+    return LoadFBXLayerFromMemory(key, data, size, OBJOptions(options), warn, err);
+#endif
 
   LoadOptions lopts;
   lopts.parse_options = MakeUSDAParseOptions(options);
@@ -939,6 +956,11 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   }
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (IsOBJIdentifier(key))
+    return LoadLayerFromMemory(key, reinterpret_cast<const uint8_t*>(data.data()),
+                                data.size(), warn, err, options);
+#endif
+#if defined(LIGHTUSD_WITH_UFBX)
+  if (IsFBXIdentifier(key))
     return LoadLayerFromMemory(key, reinterpret_cast<const uint8_t*>(data.data()),
                                 data.size(), warn, err, options);
 #endif

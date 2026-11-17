@@ -355,9 +355,15 @@ if(LIGHTUSD_WITH_USDOBJ)
     set(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY ON)
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/lightusd-asset-import.cmake")
     unset(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY)
-    target_sources(lightusd_core PRIVATE reader/obj-reader.cc)
+    target_sources(lightusd_core PRIVATE reader/obj-reader.cc reader/skel-author.cc)
     target_link_libraries(lightusd_core PUBLIC lightusd_obj_import)
     target_compile_definitions(lightusd_core PUBLIC LIGHTUSD_WITH_USDOBJ)
+    # FBX layers and OBJ skel_lib/skel_anim sidecars through ufbx (MIT/PD).
+    option(LIGHTUSD_WITH_UFBX "Import FBX layers using ufbx" ON)
+    if(LIGHTUSD_WITH_UFBX)
+        target_sources(lightusd_core PRIVATE reader/fbx-reader.cc external/ufbx/ufbx.c)
+        target_compile_definitions(lightusd_core PUBLIC LIGHTUSD_WITH_UFBX)
+    endif()
 endif()
 if(LIGHTUSD_USE_PCH)
   target_precompile_headers(lightusd_core PRIVATE
@@ -1484,6 +1490,17 @@ if(LIGHTUSD_BUILD_TESTS)
                         ${CMAKE_CURRENT_BINARY_DIR}/obj-subd-osd)
             set_tests_properties(tool-obj-subd-osd PROPERTIES SKIP_RETURN_CODE 77
                 LABELS "obj;subd" TIMEOUT 600)
+        endif()
+        if(LIGHTUSD_WITH_UFBX)
+            # Skinning of FBX layers (and OBJ + FBX sidecar) vs ufbx's own skinning.
+            add_executable(skin_compare ../tests/obj-skel/skin_compare.cc)
+            target_link_libraries(skin_compare PRIVATE tydra lightusd_core)
+            target_include_directories(skin_compare PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            add_test(NAME tool-fbx-skin-ufbx
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/fbx_scene.usda
+                        /W/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
+                        1e-4 1 6 12 18 24)
+            set_tests_properties(tool-fbx-skin-ufbx PROPERTIES LABELS "fbx;skel")
         endif()
         add_executable(test_obj_large ../tests/core/test_obj_large.cc)
         target_link_libraries(test_obj_large PRIVATE lightusd_core)
