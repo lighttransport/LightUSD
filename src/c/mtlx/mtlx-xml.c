@@ -494,6 +494,10 @@ typedef struct tokenizer {
   const char *data;
   size_t size, pos;
   int in_tag;
+  /* An attribute could not be parsed and no input was consumed: the former
+   * C++ tokenizer returned the same empty token forever (infinite loop). The
+   * C port stops tokenizing instead; parse_memory reports the error. */
+  int fatal;
   lu_mtlx_sb tag_name; /* current_tag_name_ */
 } tokenizer;
 
@@ -693,6 +697,7 @@ static int tk_parse_text(tokenizer *t, token *tok) {
 
 /* XMLTokenizer::NextToken */
 static int tk_next_token(tokenizer *t, token *tok) {
+  if (t->fatal) return 0;
   for (;;) {
     token_reset(tok);
     if (t->pos >= t->size) {
@@ -700,7 +705,12 @@ static int tk_next_token(tokenizer *t, token *tok) {
       return 1;
     }
     if (t->in_tag) {
+      const size_t before = t->pos;
       if (tk_parse_attribute(t, tok)) return 1;
+      if (t->in_tag && t->pos == before) {
+        t->fatal = 1;
+        return 0;
+      }
       tok->type = TK_TEXT;
       lu_mtlx_sb_clear(&tok->value);
       return 1;
@@ -976,6 +986,12 @@ static int parse_memory(doc_parser *d, const char *data, size_t size) {
       lu_mtlx_sb_set(&d->error, "No root element found");
       return 0;
     }
+  }
+  if (d->tk.fatal) {
+    lu_mtlx_sb_set(&d->error, "Malformed attribute in <");
+    lu_mtlx_sb_puts(&d->error, lu_mtlx_sb_str(&d->tk.tag_name));
+    lu_mtlx_sb_puts(&d->error, ">");
+    return 0;
   }
   if (!have_root) {
     lu_mtlx_sb_set(&d->error, "Failed to parse root element");

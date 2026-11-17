@@ -235,15 +235,18 @@ int Forked(F fn) {
   return 2;
 }
 
-// The class parser loops forever on some malformed tags (exactly as the C++
-// one does); fuzz cases run forked and both sides must agree on hanging.
+// The C++ class parser loops forever on some malformed tags (an attribute it
+// cannot parse is retried without consuming input). The C port reports
+// "Malformed attribute in <tag>" instead: where the C++ hangs, the C side must
+// terminate with that error. Fuzz cases run forked under a timer.
 void CompareClassForked(const std::string &xml, const std::string &label) {
   const int r = Forked([&] { return ClassOutcomeCpp(xml) == ClassOutcomeC(xml); });
   if (r == 2) {
     g_hangs++;
     const int a = Forked([&] { ClassOutcomeCpp(xml); return true; });
-    const int b = Forked([&] { ClassOutcomeC(xml); return true; });
-    Check(a == b, "class parser hang agreement " + label);
+    const int b = Forked(
+        [&] { return ClassOutcomeC(xml).rfind("ERR:Malformed attribute in <", 0) == 0; });
+    Check(a == 2 && b == 0, "class parser: C++ hang -> C error " + label);
     return;
   }
   Check(r == 0, "class parser (forked) " + label + ": " + Short(xml));
@@ -734,7 +737,7 @@ int main(int argc, char **argv) {
   IncludeSuite();
   ValueSuite(rng);
 
-  std::printf("mtlx_cdiff_parse: %zu checks, %zu failures (%zu class-parser inputs hang in both)\n",
+  std::printf("mtlx_cdiff_parse: %zu checks, %zu failures (%zu inputs hang the C++ class parser; C reports an error)\n",
               g_checks, g_fail, g_hangs);
   return g_fail ? 1 : 0;
 }
