@@ -837,6 +837,7 @@ struct Options {
   std::string mtlx_aov_node;
   // --energy-mode: 0 reference (default), 1 conservative certified glass R/T scale.
   int energy_mode{0};
+  bool layering_graph{false};  // --layering graph (bsdf_set_layering_graph)
 };
 
 struct DirectShape {

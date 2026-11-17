@@ -101,6 +101,9 @@ void PrintUsage(const char *prog) {
       << "  --verified-math       Strict modeled graph sine/cosine (CPU --mtlx).\n"
       << "  --energy-mode M       reference (default) | conservative (certified glass R/T\n"
       << "                        scale; CPU MaterialX BSDF).\n"
+      << "  --layering L          physical (default) | graph: the OpenPBR graph's layer\n"
+      << "                        throughput on transmission (double Fresnel; diagnostic\n"
+      << "                        for comparison with OSL/MaterialX; CPU MaterialX BSDF).\n"
       << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
       << "  --volume-mtlx FILE --volume-mtlx-look NAME  Apply a MaterialX look to CPU volumes.\n"
       << "  -h, -help              Show this help.\n"
@@ -429,6 +432,16 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       else if (std::string(v) == "conservative") opt->energy_mode = 1;
       else {
         std::cerr << "invalid --energy-mode: " << v << " (reference|conservative)\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "--layering") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "physical") opt->layering_graph = false;
+      else if (std::string(v) == "graph") opt->layering_graph = true;
+      else {
+        std::cerr << "invalid --layering: " << v << " (physical|graph)\n";
         return false;
       }
     }

@@ -71,6 +71,7 @@ extern "C" {
 
 // Vendored LightRT mtlxrender BSDF (bsdf.c): --energy-mode switch.
 extern "C" void bsdf_set_energy_mode(int mode);
+extern "C" void bsdf_set_layering_graph(int on);
 }
 
 #ifdef LIGHTUSD_WITH_QJS
@@ -1704,6 +1705,11 @@ int main(int argc, char **argv) {
     std::cerr << "MaterialX graph math: strict binary32 sine/cosine\n";
   }
   bsdf_set_energy_mode(opt.energy_mode);
+  if (opt.layering_graph && opt.energy_mode == 1) {
+    std::cerr << "--layering graph (diagnostic) cannot be combined with --energy-mode conservative.\n";
+    return EXIT_FAILURE;
+  }
+  bsdf_set_layering_graph(opt.layering_graph ? 1 : 0);
   if (scenePreview.enabled && !opt.volume_mtlx_file.empty()) {
     std::cerr << "MaterialX volume looks cannot be combined with scene-preview conversion.\n";
     return EXIT_FAILURE;

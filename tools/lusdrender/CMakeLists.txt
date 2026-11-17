@@ -510,6 +510,23 @@ if(LIGHTUSD_BUILD_TESTS)
   set_tests_properties(tool-lusdrender-mtlx-cert-energy PROPERTIES
     TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
 
+  # --layering graph diagnostic: transmission-only scaling, physical default unchanged.
+  add_executable(lusdrender-mtlx-layering-graph
+    tests/mtlx_layering_graph.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-layering-graph PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-layering-graph PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-layering-graph PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-layering-graph PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-layering-graph PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-layering-graph
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-layering-graph>)
+  set_tests_properties(tool-lusdrender-mtlx-layering-graph PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
   # Measured binary32 lobe-evaluation error behind the conservative-mode reserve.
   add_executable(lusdrender-mtlx-f32-lobe-error
     tests/mtlx_f32_lobe_error.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
