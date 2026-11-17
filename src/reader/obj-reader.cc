@@ -180,6 +180,50 @@ std::string MtlxUsdType(const std::string& ty, tn::TypeId* id) {
 }
 
 // UsdShade MaterialX network from the MaterialX-in-MTL graph built by the OBJ
+
+// MaterialX stdlib nodedefs (generated table shared with lightrt/mtlx-dom).
+struct StdNodeDef { const char *name, *node, *out; int first, count; };
+struct StdInput { const char *name, *type; };
+static const StdNodeDef kStdNodeDefs[] = {
+#define MTLX_STD_NODEDEF(nm, node, out, first, count) {nm, node, out, first, count},
+#define MTLX_STD_INPUT(nm, ty, hd, dv, gp)
+#include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
+#undef MTLX_STD_INPUT
+#undef MTLX_STD_NODEDEF
+};
+static const StdInput kStdInputs[] = {
+#define MTLX_STD_NODEDEF(nm, node, out, first, count)
+#define MTLX_STD_INPUT(nm, ty, hd, dv, gp) {nm, ty},
+#include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
+#undef MTLX_STD_INPUT
+#undef MTLX_STD_NODEDEF
+};
+
+// Nodedef id for a node: the stdlib definition of `category` with output
+// `type` whose inputs agree with the authored input types (first in library
+// order on ties, e.g. ND_multiply_color3 over ND_multiply_color3FA unless
+// `in2` is a float). Falls back to ND_<category>_<type> for nodes outside
+// the stdlib.
+std::string MtlxNodeDefId(const std::string& category, const std::string& type,
+                          const Json& inputs) {
+  const StdNodeDef* best = nullptr;
+  for (const StdNodeDef& d : kStdNodeDefs) {
+    if (category != d.node || type != d.out) continue;
+    bool ok = true;
+    for (const auto& in : inputs) {
+      const std::string n = JsonString(in, "name"), t = JsonString(in, "type");
+      for (int k = 0; k < d.count; ++k) {
+        const StdInput& si = kStdInputs[d.first + k];
+        if (n == si.name) { ok = t == si.type; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) { best = &d; break; }
+    if (!best) best = &d;  // type-mismatched candidate beats a guessed id
+  }
+  return best ? best->name : "ND_" + category + "_" + type;
+}
+
 // importer: <Material>/MtlxSurface (ND_<category>_surfaceshader) fed by
 // <Material>/NodeGraphs (ND_<category>_<type> shaders + o_<node> outputs).
 // Defining a prim may grow the layer's prim storage, so PrimSpec pointers are
@@ -227,7 +271,7 @@ void AddMtlxNetwork(Scope* scope, const std::string& name,
       const std::string n = JsonString(nd, "name"), ty = JsonString(nd, "type");
       tn::PrimSpec* sh = scope->Add(name + "/NodeGraphs/" + n, "Shader");
       if (!sh) continue;
-      SetToken(sh, "info:id", "ND_" + JsonString(nd, "category") + "_" + ty, true);
+      SetToken(sh, "info:id", MtlxNodeDefId(JsonString(nd, "category"), ty, nd["inputs"]), true);
       author_inputs(sh, nd["inputs"], false);
       tn::TypeId id;
       const std::string usd = MtlxUsdType(ty, &id);
