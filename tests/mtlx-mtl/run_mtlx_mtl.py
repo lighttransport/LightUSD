@@ -131,7 +131,7 @@ def usd_case(args, d, src, mtl_text, materials):
     mtl_text = flat_textures(d, mtl_text, tree.getroot())
     tree.write(d / "ref_flat.mtlx")
     classic = "\n".join(l for l in mtl_text.splitlines()
-                        if not l.startswith(("mtlx_", "connectmtl"))) + "\n"
+                        if not l.startswith("mtlx_")) + "\n"
     (d / "ext.mtl").write_text(mtl_text)
     (d / "classic.mtl").write_text(classic)
     results = []
