@@ -32,6 +32,8 @@ notes are removed rather than archived; find them in Git history.
 - [openusd-schema-compatibility.md](openusd-schema-compatibility.md) — OpenUSD
   schema compatibility baseline.
 - [usdobj.md](usdobj.md) — Wavefront OBJ support (`usdObj`).
+- [usdfbx.md](usdfbx.md) — FBX import through ufbx (meshes, skins, skeletons,
+  animation, blend shapes).
 - [import-report.md](import-report.md) — Native import reports and policies.
 - [physics-query.md](physics-query.md) — Typed physics snapshots.
 - [physics-validation.md](physics-validation.md) — Structured physics validation.
