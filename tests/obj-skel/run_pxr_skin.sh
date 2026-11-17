@@ -16,7 +16,7 @@ mkdir -p "$WORK"
 export SKIN_COMPARE PYTHONPATH="$OPENUSD_ROOT/lib/python${PYTHONPATH:+:$PYTHONPATH}"
 export LD_LIBRARY_PATH="$OPENUSD_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fail=0
-for s in fbx_scene obj_scene; do
+for s in fbx_scene obj_scene usd_sidecar_scene; do
   "$LUSDCAT" -f "$HERE/$s.usda" > "$WORK/$s.flat.usda"
   for t in 1 6 12 18 24; do
     if ! "${OPENUSD_PYTHON:-python3}" "$ROOT/tools/view_control/skinning_compare.py" \

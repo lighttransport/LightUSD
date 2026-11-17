@@ -1517,6 +1517,12 @@ if(LIGHTUSD_BUILD_TESTS)
                 COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/obj_scene.usda
                         /W/Links/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
                         1e-4 1 6 12 18 24)
+            # OBJ skeleton + animation from a USD sidecar (skel_lib/skel_anim .usda).
+            add_test(NAME tool-obj-skin-usd-sidecar
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/usd_sidecar_scene.usda
+                        /W/Links/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
+                        1e-4 1 6 12 18 24)
+            set_tests_properties(tool-obj-skin-usd-sidecar PROPERTIES LABELS "obj;skel")
             # OBJ inline skeleton: the rest pose leaves the mesh at its bind points.
             add_test(NAME tool-obj-skin-inline-rest
                 COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/inline_scene.usda

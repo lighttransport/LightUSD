@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "obj-reader.hh"
 #include "reader/skel-author.hh"
+#include "pcp/layer-registry.hh"
 #if defined(LIGHTUSD_WITH_UFBX)
 #include "reader/fbx-reader.hh"
 #endif
@@ -503,13 +504,101 @@ void AddMaterialFromJson(Scope* scope, std::set<std::string>* used,
   Declare(tex, "outputs:rgb", tn::TypeId::Float3, "float3");
 }
 
+// Lower-case extension of a sidecar path ("fbx", "usda", ...).
+std::string SidecarExt(const std::string& p) {
+  const size_t dot = p.rfind('.');
+  std::string e = dot == std::string::npos ? std::string() : p.substr(dot + 1);
+  for (char& c : e) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return e;
+}
+bool IsUsdSidecar(const std::string& p) {
+  const std::string e = SidecarExt(p);
+  return e == "usd" || e == "usda" || e == "usdc" || e == "usdz";
+}
+
+// A USD sidecar layer and its prim of `type`: the given prim path, else the
+// first prim of that type in the layer.
+const PrimSpec* UsdSidecarPrim(const std::string& file, const std::vector<uint8_t>& bytes,
+                               const std::string& prim_path, const char* type,
+                               std::shared_ptr<Layer>* keep, std::string* path_out,
+                               std::string* why) {
+  pcp::LayerLoadOptions opts;
+  opts.usdc_lazy_arrays = false;
+  std::string w, e;
+  *keep = pcp::LoadLayerFromMemory(file, bytes.data(), bytes.size(), &w, &e, opts);
+  if (!*keep) {
+    *why += "'" + file + "': " + e + "\n";
+    return nullptr;
+  }
+  const Layer& l = **keep;
+  if (!prim_path.empty()) {
+    const uint32_t id = l.index_at_path(prim_path);
+    const PrimSpec* p = id == UINT32_MAX ? nullptr : l.prim(id);
+    if (!p || p->type_name() != type) {
+      *why += "'" + file + "': no " + type + " at " + prim_path + "\n";
+      return nullptr;
+    }
+    *path_out = prim_path;
+    return p;
+  }
+  for (size_t i = 0; i < l.prim_count(); ++i) {
+    const PrimSpec* p = l.prim(uint32_t(i));
+    if (p && p->type_name() == type) {
+      *path_out = p->path().str();
+      return p;
+    }
+  }
+  *why += "'" + file + "': no " + type + " prim\n";
+  return nullptr;
+}
+
+// Skeleton of a USD sidecar: joint names are the last components of `joints`.
+bool UsdSidecarSkeleton(const std::string& file, const std::vector<uint8_t>& bytes,
+                        const std::string& prim_path, skel::Skeleton* out, std::string* why) {
+  std::shared_ptr<Layer> keep;
+  std::string path;
+  const PrimSpec* p = UsdSidecarPrim(file, bytes, prim_path, "Skeleton", &keep, &path, why);
+  if (!p) return false;
+  const Value* joints = p->property_value("joints");
+  auto toks = joints ? joints->as_token_array() : decltype(joints->as_token_array()){};
+  if (!toks) {
+    *why += "'" + file + "': Skeleton " + path + " has no joints\n";
+    return false;
+  }
+  const size_t n = toks->size();
+  auto mats = [&](const char* name, std::vector<skel::Mat>* m) {
+    const Value* v = p->property_value(name);
+    auto d = v ? v->as_double_array() : decltype(v->as_double_array()){};
+    if (!d || d->size() != 16 * n) return false;
+    m->resize(n);
+    for (size_t j = 0; j < n; ++j)
+      for (size_t k = 0; k < 16; ++k) (*m)[j][k] = (*d)[16 * j + k];
+    return true;
+  };
+  if (!mats("bindTransforms", &out->bind)) {
+    *why += "'" + file + "': Skeleton " + path + " has no valid bindTransforms\n";
+    return false;
+  }
+  if (!mats("restTransforms", &out->rest)) out->rest.clear();  // derived later
+  out->names.clear();
+  for (size_t j = 0; j < n; ++j) {
+    const std::string jp((*toks)[j]);
+    out->names.push_back(jp.substr(jp.rfind('/') + 1));
+  }
+  return true;
+}
+
 // Skeleton lines + sidecar -> UsdSkel data. Inline matrices win; missing bind
-// and rest transforms come from an .fbx sidecar (joints matched by name), and
-// rest transforms otherwise from the bind pose. The animation is the sidecar
-// take, reordered to the OBJ joints (joints it lacks keep their rest pose).
-// Warnings go to `why` also on success.
+// and rest transforms come from the sidecar (.fbx, or a USD Skeleton; joints
+// matched by name), and rest transforms otherwise from the bind pose. An .fbx
+// animation is sampled and reordered to the OBJ joints (joints it lacks keep
+// their rest pose). A USD animation is referenced instead (`anim_ref`, an
+// `@file@</prim>` arc; joints are matched by path, so the OBJ hierarchy must
+// give the sidecar's joint paths), with the sidecar's time codes in
+// `anim_layer`. Warnings go to `why` also on success.
 bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* out,
-                      skel::Animation* anim, bool* has_anim, std::string* why) {
+                      skel::Animation* anim, bool* has_anim, std::string* anim_ref,
+                      LayerMeta* anim_layer, std::string* why) {
   const size_t n = in.names.size();
   out->names = in.names;
   out->parent = in.parents;
@@ -521,17 +610,14 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
     for (size_t k = 0; k < 16; ++k) m[k] = v[k];
     return m;
   };
-  auto ends_fbx = [](const std::string& p) {
-    return p.size() >= 4 && (p.compare(p.size() - 4, 4, ".fbx") == 0 ||
-                             p.compare(p.size() - 4, 4, ".FBX") == 0);
-  };
   std::map<std::string, size_t> lib_joint;
   skel::Skeleton lib;
-#if defined(LIGHTUSD_WITH_UFBX)
   if (!in.lib_bytes.empty()) {
-    if (!ends_fbx(in.lib)) {
-      *why += "skel_lib '" + in.lib + "': only .fbx sidecars are supported\n";
-    } else {
+    if (IsUsdSidecar(in.lib)) {
+      if (UsdSidecarSkeleton(in.lib, in.lib_bytes, in.lib_skeleton, &lib, why))
+        for (size_t i = 0; i < lib.names.size(); ++i) lib_joint.emplace(lib.names[i], i);
+    } else if (SidecarExt(in.lib) == "fbx") {
+#if defined(LIGHTUSD_WITH_UFBX)
       FBXScene fbx;
       std::string w, e;
       if (ReadFBXScene(in.lib_bytes.data(), in.lib_bytes.size(), "", false, &fbx, &w, &e)) {
@@ -541,11 +627,13 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
         *why += "skel_lib '" + in.lib + "': " + e + "\n";
       }
       *why += w;
+#else
+      *why += "skel_lib: FBX support (ufbx) is not built in\n";
+#endif
+    } else {
+      *why += "skel_lib '" + in.lib + "': only .fbx and USD sidecars are supported\n";
     }
   }
-#else
-  if (!in.lib_bytes.empty()) *why += "skel_lib: FBX support (ufbx) is not built in\n";
-#endif
   bool rest_missing = false;
   for (size_t j = 0; j < n; ++j) {
     auto it = lib_joint.find(in.names[j]);
@@ -554,63 +642,72 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
     } else if (it != lib_joint.end()) {
       out->bind[j] = lib.bind[it->second];
     } else {
-      *why = "joint '" + in.names[j] + "' has no bind transform (inline or in the sidecar)";
+      *why += "joint '" + in.names[j] + "' has no bind transform (inline or in the sidecar)";
       return false;
     }
     if (in.rest[j].size() == 16) out->rest[j] = mat(in.rest[j]);
-    else if (it != lib_joint.end()) out->rest[j] = lib.rest[it->second];
+    else if (it != lib_joint.end() && !lib.rest.empty()) out->rest[j] = lib.rest[it->second];
     else rest_missing = true;
   }
   if (rest_missing)  // rest = bind relative to the parent's bind
     for (size_t j = 0; j < n; ++j) {
-      if (in.rest[j].size() == 16 || lib_joint.count(in.names[j])) continue;
+      if (in.rest[j].size() == 16 || (lib_joint.count(in.names[j]) && !lib.rest.empty()))
+        continue;
       skel::Mat inv;
       out->rest[j] = out->parent[j] < 0 || !skel::Invert(out->bind[size_t(out->parent[j])], &inv)
                          ? out->bind[j]
                          : skel::Mul(out->bind[j], inv);
     }
-#if defined(LIGHTUSD_WITH_UFBX)
-  if (!in.anim_bytes.empty()) {
-    if (!ends_fbx(in.anim)) {
-      *why += "skel_anim '" + in.anim + "': only .fbx sidecars are supported\n";
-      return true;
+  if (in.anim_bytes.empty()) return true;
+  if (IsUsdSidecar(in.anim)) {
+    std::shared_ptr<Layer> keep;
+    std::string path;
+    if (UsdSidecarPrim(in.anim, in.anim_bytes, in.anim_name, "SkelAnimation", &keep, &path, why)) {
+      *anim_ref = "@" + in.anim + "@<" + path + ">";
+      *anim_layer = keep->meta();
     }
-    FBXScene fbx;
-    std::string w, e;
-    if (!ReadFBXScene(in.anim_bytes.data(), in.anim_bytes.size(), in.anim_name, false, &fbx, &w,
-                      &e) ||
-        !fbx.has_animation) {
-      *why += "skel_anim '" + in.anim + "': " + (e.empty() ? "no animation" : e) + "\n" + w;
-      return true;
-    }
-    *why += w;
-    std::map<std::string, size_t> src;
-    for (size_t i = 0; i < fbx.skeleton.names.size(); ++i) src.emplace(fbx.skeleton.names[i], i);
-    *anim = skel::Animation{};
-    anim->name = fbx.animation.name;
-    anim->fps = fbx.animation.fps;
-    anim->times = fbx.animation.times;
-    for (size_t k = 0; k < anim->times.size(); ++k) {
-      std::vector<float> t(3 * n), r(4 * n), s(3 * n);
-      for (size_t j = 0; j < n; ++j) {
-        auto it = src.find(in.names[j]);
-        if (it != src.end()) {
-          const size_t i = it->second;
-          for (int c = 0; c < 3; ++c) t[3 * j + c] = fbx.animation.translations[k][3 * i + c];
-          for (int c = 0; c < 4; ++c) r[4 * j + c] = fbx.animation.rotations[k][4 * i + c];
-          for (int c = 0; c < 3; ++c) s[3 * j + c] = fbx.animation.scales[k][3 * i + c];
-        } else {
-          skel::Decompose(out->rest[j], &t[3 * j], &r[4 * j], &s[3 * j]);
-        }
-      }
-      anim->translations.push_back(std::move(t));
-      anim->rotations.push_back(std::move(r));
-      anim->scales.push_back(std::move(s));
-    }
-    *has_anim = true;
+    return true;
   }
+  if (SidecarExt(in.anim) != "fbx") {
+    *why += "skel_anim '" + in.anim + "': only .fbx and USD sidecars are supported\n";
+    return true;
+  }
+#if defined(LIGHTUSD_WITH_UFBX)
+  FBXScene fbx;
+  std::string w, e;
+  if (!ReadFBXScene(in.anim_bytes.data(), in.anim_bytes.size(), in.anim_name, false, &fbx, &w,
+                    &e) ||
+      !fbx.has_animation) {
+    *why += "skel_anim '" + in.anim + "': " + (e.empty() ? "no animation" : e) + "\n" + w;
+    return true;
+  }
+  *why += w;
+  std::map<std::string, size_t> src;
+  for (size_t i = 0; i < fbx.skeleton.names.size(); ++i) src.emplace(fbx.skeleton.names[i], i);
+  *anim = skel::Animation{};
+  anim->name = fbx.animation.name;
+  anim->fps = fbx.animation.fps;
+  anim->times = fbx.animation.times;
+  for (size_t k = 0; k < anim->times.size(); ++k) {
+    std::vector<float> t(3 * n), r(4 * n), s(3 * n);
+    for (size_t j = 0; j < n; ++j) {
+      auto it = src.find(in.names[j]);
+      if (it != src.end()) {
+        const size_t i = it->second;
+        for (int c = 0; c < 3; ++c) t[3 * j + c] = fbx.animation.translations[k][3 * i + c];
+        for (int c = 0; c < 4; ++c) r[4 * j + c] = fbx.animation.rotations[k][4 * i + c];
+        for (int c = 0; c < 3; ++c) s[3 * j + c] = fbx.animation.scales[k][3 * i + c];
+      } else {
+        skel::Decompose(out->rest[j], &t[3 * j], &r[4 * j], &s[3 * j]);
+      }
+    }
+    anim->translations.push_back(std::move(t));
+    anim->rotations.push_back(std::move(r));
+    anim->scales.push_back(std::move(s));
+  }
+  *has_anim = true;
 #else
-  if (!in.anim_bytes.empty()) *why += "skel_anim: FBX support (ufbx) is not built in\n";
+  *why += "skel_anim: FBX support (ufbx) is not built in\n";
 #endif
   return true;
 }
@@ -646,9 +743,12 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   skel::Skeleton skeleton;
   skel::Animation animation;
   bool has_skeleton = false, has_animation = false;
+  std::string anim_ref;  // USD sidecar animation: a reference arc
+  LayerMeta anim_layer;
   if (obj.skel.present) {
     std::string why;
-    has_skeleton = BuildOBJSkeleton(obj.skel, &skeleton, &animation, &has_animation, &why);
+    has_skeleton = BuildOBJSkeleton(obj.skel, &skeleton, &animation, &has_animation, &anim_ref,
+                                    &anim_layer, &why);
     if (!has_skeleton && warn) *warn += "OBJ skeleton dropped: " + why + "\n";
     else if (warn) *warn += why;
   }
@@ -675,6 +775,30 @@ static bool ConvertOBJSceneToLayer(tydra::import_asset::OBJ& obj,
   if (has_skeleton &&
       !skel::AuthorSkeleton(layer, skel_path, skeleton, has_animation ? &animation : nullptr, err))
     return false;
+  if (has_skeleton && !anim_ref.empty()) {
+    const std::string anim_path = skel_path + "/Anim";
+    PrimSpec* a = Define(layer, anim_path, "SkelAnimation");
+    if (!a) {
+      if (err) *err = "Cannot define OBJ SkelAnimation";
+      return false;
+    }
+    a->meta().references.push_back(anim_ref);
+    PrimSpec* sk = layer->prim_at_path_mutable(skel_path);
+    sk->meta().apiSchemas().push_back("SkelBindingAPI");
+    sk->meta().apiSchemasQualifier() = "prepend";
+    sk->meta().setApiSchemasAuthored();
+    sk->set_relationship_targets("skel:animationSource", {Path(anim_path)});
+    auto& m = layer->meta();
+    if (anim_layer.timeCodesPerSecond_set) {
+      m.timeCodesPerSecond = anim_layer.timeCodesPerSecond;
+      m.timeCodesPerSecond_set = true;
+    }
+    if (anim_layer.startTimeCode_set && anim_layer.endTimeCode_set) {
+      m.startTimeCode = anim_layer.startTimeCode;
+      m.endTimeCode = anim_layer.endTimeCode;
+      m.startTimeCode_set = m.endTimeCode_set = true;
+    }
+  }
   Scope scope{layer};
   UniqueNames materials, names;
   std::set<std::string> used_materials;

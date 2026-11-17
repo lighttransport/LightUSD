@@ -1,0 +1,14 @@
+#usda 1.0
+(
+    defaultPrim = "W"
+    upAxis = "Y"
+    metersPerUnit = 1
+    timeCodesPerSecond = 24
+)
+
+# OBJ whose skeleton + animation come from a USD sidecar (rig_skel.usda) (tests/obj-skel).
+def SkelRoot "W" (
+    references = @rig_usd.obj@
+)
+{
+}
