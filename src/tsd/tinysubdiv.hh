@@ -323,6 +323,58 @@ Result ComputeLimitNormals(const MeshView &base_mesh, const Options &options,
                            const RefinedMesh &refined,
                            std::vector<float> *out_normals, std::string *err);
 
+// ---------------------------------------------------------------------------
+// Adaptive (selective) bilinear refinement.
+//
+// Quadtree-style refinement driven by a caller predicate: each round the
+// caller sees the faces created in the previous round (the "frontier") and
+// marks which of them to split; marked faces are replaced by their level-1
+// bilinear children (computed with Refine, Scheme::Bilinear, on the marked
+// subset only). Unmarked frontier faces are final. The result is the set of
+// leaf faces; neighbouring leaves may differ in level (T-junctions), which is
+// intended: the output is a partition of the base faces, not a watertight
+// surface. Typical use is adaptive partitioning of a 2D parameter domain
+// (positions are the parameters, z = 0), e.g. branch-and-bound over cells.
+//
+// Children of an axis-aligned rectangle are its four quadrants; with dyadic
+// base coordinates the child coordinates are exact in binary32 down to
+// kMaxAdaptiveLevel levels.
+// ---------------------------------------------------------------------------
+
+constexpr int32_t kMaxAdaptiveLevel = 20;
+
+struct AdaptiveMesh {
+  std::vector<float> points;  // xyz interleaved (unreferenced points removed)
+  std::vector<uint32_t> face_vertex_counts;
+  std::vector<uint32_t> face_vertex_indices;
+  std::vector<uint32_t> face_offsets;  // per face: start in face_vertex_indices
+  std::vector<uint32_t> face_source;   // per leaf face -> base face id
+  std::vector<uint8_t> face_level;     // per leaf face: refinement depth
+  // Per leaf face: index of its parent within the frontier of the round that
+  // split it (i.e. relative to first_face of that round); UINT32_MAX for
+  // base faces. Lets a mark callback carry per-face data to the children.
+  std::vector<uint32_t> face_parent;
+};
+
+// Called once per round with the frontier faces [first_face, first_face +
+// num_faces) of `mesh` (face_offsets is valid). Set refine[i] != 0 to split
+// face first_face + i. Return false to abort (RefineAdaptive then returns
+// Result::InvalidArgument with `mesh` left as of this round).
+typedef bool (*AdaptiveMarkFn)(void *user, int32_t level,
+                               const AdaptiveMesh &mesh, uint32_t first_face,
+                               uint32_t num_faces, uint8_t *refine);
+
+struct AdaptiveOptions {
+  int32_t max_level = 8;          // 0..kMaxAdaptiveLevel
+  uint32_t max_faces = 1u << 22;  // leaf-count cap -> Result::LimitExceeded
+  ParallelForFn parallel_for = nullptr;
+  void *parallel_for_user = nullptr;
+};
+
+Result RefineAdaptive(const MeshView &base_mesh, const AdaptiveOptions &options,
+                      AdaptiveMarkFn mark, void *mark_user, AdaptiveMesh *out,
+                      std::string *err);
+
 }  // namespace tsd
 }  // namespace lightusd
 

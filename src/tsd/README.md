@@ -36,6 +36,13 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
   an intentional divergence from OpenSubdiv, which tolerates it.
 - Optional threading through an injected `parallel_for` callback with
   bit-identical results.
+- **Adaptive bilinear refinement** (`RefineAdaptive`): quadtree-style,
+  predicate-driven. Each round a callback sees the faces created in the
+  previous round and marks which to split; marked faces are replaced by their
+  bilinear children (T-junctions between levels are intended). Leaves record
+  base face, depth and parent (to carry per-face data down). Used to partition
+  2D parameter domains, e.g. branch-and-bound certification in
+  materialx-conformance `tools/gpu/certify_albedo_gpu.hip`.
 
 ## Files
 
@@ -53,6 +60,7 @@ C++17 in a C-ish style: POD input views, no exceptions, no RTTI.
 | `tsd-refine.cc` | per-level driver (`Refine`) |
 | `tsd-stream.cc` | streaming driver (`RefineStream`): bounded-memory emission |
 | `tsd-limit.cc` | limit positions/normals |
+| `tsd-adaptive.cc` | adaptive (selective) bilinear refinement (`RefineAdaptive`) |
 | `tsd-lightusd.{hh,cc}` | `GeomMesh` adapter (the only lightusd-typed file); refines UV/display/tangent primvars, skin weights and blendshape offsets in lockstep with geometry |
 
 ## Testing

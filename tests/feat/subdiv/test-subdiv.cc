@@ -2586,6 +2586,106 @@ void test_stream_blocked_normals() {
   }
 }
 
+// ---- Adaptive bilinear refinement -------------------------------------
+
+struct AdaptiveProbe {
+  float px, py;     // refine faces containing this point
+  int rounds = 0;
+  bool abort_at_2 = false;
+  uint32_t last_split = UINT32_MAX;
+  int bad_parent = 0;
+};
+
+bool AdaptiveMarkContains(void *user, int32_t level,
+                          const lightusd::tsd::AdaptiveMesh &m, uint32_t first,
+                          uint32_t n, uint8_t *refine) {
+  AdaptiveProbe *p = static_cast<AdaptiveProbe *>(user);
+  p->rounds++;
+  if (p->abort_at_2 && level == 2) return false;
+  // Children point back at the single face split in the previous round.
+  for (uint32_t i = 0; i < n; ++i)
+    if (level > 0 && m.face_parent[first + i] != p->last_split) p->bad_parent++;
+  p->last_split = UINT32_MAX;
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t f = first + i, o = m.face_offsets[f];
+    float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+    for (uint32_t k = 0; k < m.face_vertex_counts[f]; ++k) {
+      const float *q = &m.points[size_t(m.face_vertex_indices[o + k]) * 3];
+      x0 = std::min(x0, q[0]); x1 = std::max(x1, q[0]);
+      y0 = std::min(y0, q[1]); y1 = std::max(y1, q[1]);
+    }
+    refine[i] = (p->px >= x0 && p->px < x1 && p->py >= y0 && p->py < y1);
+    if (refine[i]) p->last_split = i;
+  }
+  return true;
+}
+
+void test_adaptive_bilinear_quadtree() {
+  using namespace lightusd::tsd;
+  // Two unit quads side by side: [0,1]x[0,1] and [1,2]x[0,1].
+  const float pts[] = {0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 1, 0, 1, 1, 0, 2, 1, 0};
+  const uint32_t counts[] = {4, 4};
+  const uint32_t fvi[] = {0, 1, 4, 3, 1, 2, 5, 4};
+  MeshView v;
+  v.points = pts; v.num_points = 6;
+  v.face_vertex_counts = counts; v.num_faces = 2;
+  v.face_vertex_indices = fvi; v.num_face_vertex_indices = 8;
+  AdaptiveOptions ao;
+  ao.max_level = 6;
+  AdaptiveProbe probe{0.3f, 0.7f};
+  AdaptiveMesh m;
+  std::string err;
+  CHECK_MSG(RefineAdaptive(v, ao, AdaptiveMarkContains, &probe, &m, &err) ==
+                Result::Success, err);
+  // One split per level along the probe path: 2 + 3*6 leaves.
+  CHECK(m.face_vertex_counts.size() == 20);
+  CHECK(probe.rounds == 7);
+  CHECK(probe.bad_parent == 0);
+  double area[2] = {0, 0};
+  int deepest = 0, contains = 0;
+  for (size_t f = 0; f < m.face_vertex_counts.size(); ++f) {
+    CHECK(m.face_vertex_counts[f] == 4);
+    float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+    for (uint32_t k = 0; k < 4; ++k) {
+      const float *q = &m.points[size_t(m.face_vertex_indices[m.face_offsets[f] + k]) * 3];
+      x0 = std::min(x0, q[0]); x1 = std::max(x1, q[0]);
+      y0 = std::min(y0, q[1]); y1 = std::max(y1, q[1]);
+    }
+    CHECK(m.face_source[f] < 2);
+    CHECK(x0 >= float(m.face_source[f]) && x1 <= float(m.face_source[f] + 1));
+    // Dyadic: each leaf is exactly 2^-level on a side.
+    CHECK(x1 - x0 == std::ldexp(1.0f, -m.face_level[f]));
+    CHECK(y1 - y0 == std::ldexp(1.0f, -m.face_level[f]));
+    area[m.face_source[f]] += double(x1 - x0) * double(y1 - y0);
+    if (m.face_level[f] == 6) {
+      deepest++;
+      contains += (probe.px >= x0 && probe.px < x1 && probe.py >= y0 && probe.py < y1);
+    }
+  }
+  CHECK(area[0] == 1.0 && area[1] == 1.0);  // leaves partition each base face
+  CHECK(deepest == 4 && contains == 1);
+  // Every point is referenced (compacted).
+  std::vector<char> used(m.points.size() / 3, 0);
+  for (uint32_t i : m.face_vertex_indices) used[i] = 1;
+  CHECK(std::count(used.begin(), used.end(), 0) == 0);
+
+  // Cap and abort paths.
+  ao.max_faces = 10;
+  AdaptiveProbe p2{0.3f, 0.7f};
+  CHECK(RefineAdaptive(v, ao, AdaptiveMarkContains, &p2, &m, &err) ==
+        Result::LimitExceeded);
+  ao.max_faces = 1u << 20;
+  AdaptiveProbe p3{0.3f, 0.7f};
+  p3.abort_at_2 = true;
+  CHECK(RefineAdaptive(v, ao, AdaptiveMarkContains, &p3, &m, &err) ==
+        Result::InvalidArgument);
+  CHECK(RefineAdaptive(v, ao, nullptr, nullptr, &m, &err) ==
+        Result::InvalidArgument);
+  ao.max_level = kMaxAdaptiveLevel + 1;
+  CHECK(RefineAdaptive(v, ao, AdaptiveMarkContains, &p2, &m, &err) ==
+        Result::InvalidArgument);
+}
+
 }  // namespace
 
 int main() {
@@ -2606,6 +2706,7 @@ int main() {
 
   // Refinement: analytic
   TEST(test_bilinear_quad_level1_exact);
+  TEST(test_adaptive_bilinear_quadtree);
   TEST(test_catmark_cube_level1_smooth_vertex);
   TEST(test_infinite_corner_pinned);
   TEST(test_infinite_crease_midpoints);
