@@ -46,7 +46,7 @@
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "io-util.hh"
-#include "core/mtlx-dom.hh"
+#include "c/lightusd-mtlx.h"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/render-data.hh"
 #include "usdVol.hh"  // OpenVDB (.vdb) loader for the `core` volume path
@@ -110,19 +110,35 @@ struct GeneratedMtlxScene {
 bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
                               std::string *error) {
   if (!generated || opt.mtlx_file.empty()) return false;
-  lightusd::mtlx::MtlxDocument resolved_document;
-  if (!resolved_document.ParseFromFile(opt.mtlx_file)) {
-    if (error) *error = "MaterialX resolution failed: " +
-                        resolved_document.GetError();
+  std::unique_ptr<lu_mtlx_document, decltype(&lu_mtlx_document_destroy)> resolved_document(
+      lu_mtlx_document_create(), &lu_mtlx_document_destroy);
+  if (!resolved_document ||
+      !lu_mtlx_document_parse_file(resolved_document.get(), opt.mtlx_file.c_str())) {
+    if (error)
+      *error = std::string("MaterialX resolution failed: ") +
+               (resolved_document ? lu_mtlx_document_error(resolved_document.get())
+                                  : "out of memory");
     return false;
   }
-  std::vector<std::string> graph_order;
-  std::string graph_error;
-  if (!resolved_document.ResolveNodeGraphs(&graph_order, &graph_error)) {
-    if (error) *error = "MaterialX graph validation failed: " + graph_error;
-    return false;
+  {
+    char **graph_order = nullptr;
+    size_t graph_count = 0;
+    char *graph_error = nullptr;
+    const int graphs_ok = lu_mtlx_document_resolve_graphs(
+        resolved_document.get(), nullptr, &graph_order, &graph_count, &graph_error);
+    const std::string graph_message = graph_error ? graph_error : "";
+    std::free(graph_error);
+    lu_mtlx_free_strings(graph_order, graph_count);
+    if (!graphs_ok) {
+      if (error) *error = "MaterialX graph validation failed: " + graph_message;
+      return false;
+    }
   }
-  const std::string xml_text = resolved_document.GetResolvedXML();
+  std::string xml_text;
+  if (char *xml = lu_mtlx_document_resolved_xml(resolved_document.get())) {
+    xml_text = xml;
+    std::free(xml);
+  }
   if (xml_text.empty()) {
     if (error) *error = "MaterialX resolution produced an empty document";
     return false;

@@ -15,7 +15,10 @@
 #include <vector>
 
 #include "core/minijson.hh"
-#include "core/mtlx-dom.hh"
+#include <cstdlib>
+#include <memory>
+
+#include "c/lightusd-mtlx.h"
 #include "image-loader.hh"
 #include "ptex_atlas.hh"   // lusdview::BuildPtexAtlas (Ptex face atlas)
 #include "ptx-loader.hh"
@@ -7835,15 +7838,23 @@ bool RefreshVolumesCore(RenderContext &ctx, double time) {
                        &volume_density_bytes, sparse_cpu, volume_cache,
                        !ctx.opt.volume_mtlx_file.empty());
   if (!ctx.opt.volume_mtlx_file.empty()) {
-    lightusd::mtlx::MtlxDocument document;
-    if (!document.ParseFromFile(ctx.opt.volume_mtlx_file)) {
-      std::cerr << "MaterialX volume document failed: " << document.GetError() << "\n";
+    std::unique_ptr<lu_mtlx_document, decltype(&lu_mtlx_document_destroy)> document(
+        lu_mtlx_document_create(), &lu_mtlx_document_destroy);
+    if (!document ||
+        !lu_mtlx_document_parse_file(document.get(), ctx.opt.volume_mtlx_file.c_str())) {
+      std::cerr << "MaterialX volume document failed: "
+                << (document ? lu_mtlx_document_error(document.get()) : "out of memory") << "\n";
       return false;
+    }
+    std::string resolved_xml;
+    if (char *xml = lu_mtlx_document_resolved_xml(document.get())) {
+      resolved_xml = xml;
+      std::free(xml);
     }
     lightusd::tydra::RenderScene scene;
     for (const VolumeData& volume : ctx.volumes) scene.volumes.push_back(volume.materialx_volume);
     lightusd::tydra::MtlxConverter converter;
-    if (!converter.ApplyLookToRenderScene(document.GetResolvedXML(), ctx.opt.volume_mtlx_look,
+    if (!converter.ApplyLookToRenderScene(resolved_xml, ctx.opt.volume_mtlx_look,
                                           &scene, ctx.opt.volume_mtlx_file)) {
       std::cerr << "MaterialX volume look failed: " << converter.GetError() << "\n";
       return false;

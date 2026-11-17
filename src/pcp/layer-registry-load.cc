@@ -19,7 +19,7 @@
 #include "reader/usda-reader.hh"
 #include "reader/usdc-reader.hh"
 #include "reader/usdz-reader.hh"
-#include "core/mtlx-dom.hh"
+#include "c/lightusd-mtlx.h"
 #include "external/filesystem/include/ghc/filesystem.hpp"
 
 #include <algorithm>
@@ -546,17 +546,33 @@ bool LooksLikeMtlxXML(const uint8_t *data, size_t size) {
 
 namespace {
 
-Value MtlxValueToCoreValue(const mtlx::MtlxValue &v) {
+using MtlxElemPtr = const lu_mtlx_elem *;
+
+// Attribute of a MaterialX element ("" when absent).
+std::string MtlxGet(MtlxElemPtr e, const char *key) { return lu_mtlx_elem_get(e, key); }
+
+// Typed value of an <input> (see lu_mtlx_input_value).
+struct MtlxInputValue {
+  lu_mtlx_value v{};
+  explicit MtlxInputValue(MtlxElemPtr input) {
+    if (!lu_mtlx_input_value(input, &v)) v.type = LU_MTLX_VALUE_NONE;
+  }
+  ~MtlxInputValue() { lu_mtlx_value_free(&v); }
+  MtlxInputValue(const MtlxInputValue &) = delete;
+  MtlxInputValue &operator=(const MtlxInputValue &) = delete;
+};
+
+Value MtlxValueToCoreValue(const lu_mtlx_value &v) {
   switch (v.type) {
-    case mtlx::MtlxValue::TYPE_BOOL: return Value(v.bool_val);
-    case mtlx::MtlxValue::TYPE_INT: return Value(static_cast<int32_t>(v.int_val));
-    case mtlx::MtlxValue::TYPE_FLOAT: return Value(v.float_val);
-    case mtlx::MtlxValue::TYPE_STRING: return Value::MakeToken(v.string_val);
-    case mtlx::MtlxValue::TYPE_FLOAT_VECTOR: {
-      const std::vector<float> &f = v.float_vec;
-      if (f.size() == 2) return Value::MakeFloat2(f[0], f[1]);
-      if (f.size() == 3) return Value::MakeFloat3(f[0], f[1], f[2]);
-      if (f.size() == 4) return Value::MakeFloat4(f[0], f[1], f[2], f[3]);
+    case LU_MTLX_VALUE_BOOL: return Value(v.b != 0);
+    case LU_MTLX_VALUE_INT: return Value(static_cast<int32_t>(v.i));
+    case LU_MTLX_VALUE_FLOAT: return Value(v.f);
+    case LU_MTLX_VALUE_STRING: return Value::MakeToken(v.s);
+    case LU_MTLX_VALUE_FLOATS: {
+      const float *f = v.floats;
+      if (v.nfloats == 2) return Value::MakeFloat2(f[0], f[1]);
+      if (v.nfloats == 3) return Value::MakeFloat3(f[0], f[1], f[2]);
+      if (v.nfloats == 4) return Value::MakeFloat4(f[0], f[1], f[2], f[3]);
       return Value();
     }
     default: return Value();
@@ -596,50 +612,53 @@ void DeclareMtlxConnectionProperty(LayerBuilder &lb,
   prim->set_property_type_name(name, mapped.second);
 }
 
-void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
+void EmitMtlxNodePrim(LayerBuilder &lb, MtlxElemPtr node,
                       const char *forced_info_id,
                       const std::string &node_prefix = std::string(),
                       const std::string &nodegraph_prefix = std::string()) {
-  lb.begin_prim(node.GetName().empty() ? std::string("node") : node.GetName(),
-                "Shader");
-  const char *info_id = forced_info_id ? forced_info_id
-                                       : MtlxShaderInfoId(node.GetCategory());
-  lb.add_property("info:id", Value::MakeToken(
-      info_id ? std::string(info_id) : node.GetCategory()));
-  for (const mtlx::MtlxInputPtr &input : node.GetInputs()) {
-    if (!input) continue;
+  const std::string name = MtlxGet(node, "name");
+  const std::string category = lu_mtlx_elem_category(node);
+  lb.begin_prim(name.empty() ? std::string("node") : name, "Shader");
+  const char *info_id = forced_info_id ? forced_info_id : MtlxShaderInfoId(category);
+  lb.add_property("info:id", Value::MakeToken(info_id ? std::string(info_id) : category));
+  const size_t ninputs = lu_mtlx_elem_count(node, LU_MTLX_CHILD_INPUTS);
+  for (size_t i = 0; i < ninputs; ++i) {
+    MtlxElemPtr input = lu_mtlx_elem_at(node, LU_MTLX_CHILD_INPUTS, i);
+    const std::string input_name = MtlxGet(input, "name");
+    const std::string input_type = MtlxGet(input, "type");
+    const MtlxInputValue input_value(input);
     Value value =
-        input->GetType() == "filename" &&
-                input->GetValue().type == mtlx::MtlxValue::TYPE_STRING
+        input_type == "filename" && input_value.v.type == LU_MTLX_VALUE_STRING
             // MaterialX: the nearest enclosing `fileprefix` is prepended to
             // filename inputs only (scoped attributes are inherited onto
-            // every element at parse time, see InheritMtlxAttributes).
-            ? Value::MakeAssetPath(input->GetFilePrefix() +
-                                   input->GetValue().string_val)
-            : MtlxValueToCoreValue(input->GetValue());
+            // every element at parse time, see lu_mtlx_inherit_attributes).
+            ? Value::MakeAssetPath(MtlxGet(input, "fileprefix") + input_value.v.s)
+            : MtlxValueToCoreValue(input_value.v);
     if (!value.is_empty()) {
-      const std::string property = "inputs:" + input->GetName();
+      const std::string property = "inputs:" + input_name;
       lb.add_property(property, std::move(value));
-      if (!input->GetColorSpace().empty()) {
+      const std::string colorspace = MtlxGet(input, "colorspace");
+      if (!colorspace.empty()) {
         if (PrimSpec *prim = lb.current()) {
           PropMeta &meta = prim->ensure_property_meta(property);
-          meta.colorSpace = input->GetColorSpace();
+          meta.colorSpace = colorspace;
           meta.authored |= PropMeta::kColorSpace;
         }
       }
     }
     {
+      const std::string nodename = MtlxGet(input, "nodename");
+      const std::string nodegraph = MtlxGet(input, "nodegraph");
       std::string target;
-      if (!node_prefix.empty() && !input->GetNodeName().empty()) {
-        target = node_prefix + "/" + input->GetNodeName();
-      } else if (!nodegraph_prefix.empty() &&
-                 !input->GetNodeGraph().empty()) {
-        target = nodegraph_prefix + "/" + input->GetNodeGraph();
+      if (!node_prefix.empty() && !nodename.empty()) {
+        target = node_prefix + "/" + nodename;
+      } else if (!nodegraph_prefix.empty() && !nodegraph.empty()) {
+        target = nodegraph_prefix + "/" + nodegraph;
       }
       if (!target.empty()) {
-        const std::string &output = input->GetOutput();
-        const std::string property = "inputs:" + input->GetName();
-        DeclareMtlxConnectionProperty(lb, property, input->GetType());
+        const std::string output = MtlxGet(input, "output");
+        const std::string property = "inputs:" + input_name;
+        DeclareMtlxConnectionProperty(lb, property, input_type);
         lb.add_connection(property,
                           Path(target + (output.empty()
                                              ? ".outputs:out"
@@ -647,81 +666,79 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
       }
     }
   }
-  if (!node.GetType().empty()) {
-    lb.add_property("outputs:out", Value::MakeToken(node.GetType()));
+  const std::string type = MtlxGet(node, "type");
+  if (!type.empty()) {
+    lb.add_property("outputs:out", Value::MakeToken(type));
   }
   lb.end_prim();
 }
 
 // Nodegraphs and top-level nodes reachable from `roots` through input
 // `nodegraph`/`nodename` references (worklist; documents may share graphs).
-void CollectMtlxReachable(const mtlx::MtlxDocument &doc,
-                          std::initializer_list<mtlx::MtlxNodePtr> roots,
+void CollectMtlxReachable(const lu_mtlx_document *doc,
+                          std::initializer_list<MtlxElemPtr> roots,
                           std::set<std::string> *graphs,
                           std::set<std::string> *nodes) {
-  // (inputs, at document scope): inside a nodegraph `nodename` names a
-  // sibling of that graph, not a top-level node.
-  std::vector<std::pair<const std::vector<mtlx::MtlxInputPtr> *, bool>> work;
-  for (const auto &r : roots)
-    if (r) work.push_back({&r->GetInputs(), true});
+  // (element whose <input>s to visit, at document scope): inside a nodegraph
+  // `nodename` names a sibling of that graph, not a top-level node.
+  std::vector<std::pair<MtlxElemPtr, bool>> work;
+  for (MtlxElemPtr r : roots)
+    if (r) work.push_back({r, true});
   while (!work.empty()) {
     const auto item = work.back();
     work.pop_back();
-    for (const auto &in : *item.first) {
-      if (!in) continue;
-      const std::string &g = in->GetNodeGraph();
+    const size_t ninputs = lu_mtlx_elem_count(item.first, LU_MTLX_CHILD_INPUTS);
+    for (size_t i = 0; i < ninputs; ++i) {
+      MtlxElemPtr in = lu_mtlx_elem_at(item.first, LU_MTLX_CHILD_INPUTS, i);
+      const std::string g = MtlxGet(in, "nodegraph");
+      const std::string nodename = MtlxGet(in, "nodename");
       if (!g.empty()) {
         if (!graphs->insert(g).second) continue;
-        for (const auto &graph : doc.GetNodeGraphs()) {
-          if (!graph || graph->GetName() != g) continue;
+        const size_t ngraphs = lu_mtlx_document_count(doc, LU_MTLX_NODEGRAPHS);
+        for (size_t k = 0; k < ngraphs; ++k) {
+          MtlxElemPtr graph = lu_mtlx_document_at(doc, LU_MTLX_NODEGRAPHS, k);
+          if (MtlxGet(graph, "name") != g) continue;
           // interface inputs live in the enclosing (document) scope
-          work.push_back({&graph->GetInputs(), true});
-          for (const auto &n : graph->GetNodes())
-            if (n) work.push_back({&n->GetInputs(), false});
+          work.push_back({graph, true});
+          const size_t nnodes = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_GRAPH_NODES);
+          for (size_t n = 0; n < nnodes; ++n)
+            work.push_back({lu_mtlx_elem_at(graph, LU_MTLX_CHILD_GRAPH_NODES, n), false});
         }
-      } else if (item.second && !in->GetNodeName().empty()) {
-        mtlx::MtlxNodePtr top = doc.FindNode(in->GetNodeName());
-        if (top && nodes->insert(in->GetNodeName()).second)
-          work.push_back({&top->GetInputs(), true});
+      } else if (item.second && !nodename.empty()) {
+        MtlxElemPtr top = lu_mtlx_document_find(doc, LU_MTLX_NODES, nodename.c_str());
+        if (top && nodes->insert(nodename).second) work.push_back({top, true});
       }
     }
   }
 }
 
-mtlx::MtlxNodePtr FindMtlxNode(const mtlx::MtlxDocument &doc,
-                               const std::string &name) {
+// A node by name: top-level nodes, then the nodes of every nodegraph.
+MtlxElemPtr FindMtlxNode(const lu_mtlx_document *doc, const std::string &name) {
   if (name.empty()) return nullptr;
-  mtlx::MtlxNodePtr node = doc.FindNode(name);
-  if (node) return node;
-  for (const auto &graph : doc.GetNodeGraphs()) {
-    if (!graph) continue;
-    node = graph->GetNode(name);
-    if (node) return node;
-  }
-  return nullptr;
+  return lu_mtlx_document_find(doc, LU_MTLX_NODES, name.c_str());
 }
 
-void EmitMtlxNodeGraphPrim(LayerBuilder &lb,
-                           const mtlx::MtlxNodeGraph &graph,
+void EmitMtlxNodeGraphPrim(LayerBuilder &lb, MtlxElemPtr graph,
                            const std::string &graph_path,
                            const std::string &nodegraph_prefix) {
-  lb.begin_prim(graph.GetName(), "NodeGraph");
-  for (const auto &node : graph.GetNodes()) {
-    if (!node || node->GetName().empty()) continue;
-    EmitMtlxNodePrim(lb, *node, nullptr, graph_path, nodegraph_prefix);
+  lb.begin_prim(MtlxGet(graph, "name"), "NodeGraph");
+  const size_t nnodes = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_GRAPH_NODES);
+  for (size_t i = 0; i < nnodes; ++i) {
+    MtlxElemPtr node = lu_mtlx_elem_at(graph, LU_MTLX_CHILD_GRAPH_NODES, i);
+    if (MtlxGet(node, "name").empty()) continue;
+    EmitMtlxNodePrim(lb, node, nullptr, graph_path, nodegraph_prefix);
   }
-  for (const auto &output : graph.GetOutputs()) {
-    if (!output || output->GetName().empty() ||
-        output->GetNodeName().empty()) {
-      continue;
-    }
+  const size_t noutputs = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_OUTPUTS);
+  for (size_t i = 0; i < noutputs; ++i) {
+    MtlxElemPtr output = lu_mtlx_elem_at(graph, LU_MTLX_CHILD_OUTPUTS, i);
+    const std::string output_name = MtlxGet(output, "name");
+    const std::string nodename = MtlxGet(output, "nodename");
+    if (output_name.empty() || nodename.empty()) continue;
+    const std::string out = MtlxGet(output, "output");
     const std::string output_target =
-        graph_path + "/" + output->GetNodeName() +
-        (output->GetOutput().empty()
-             ? ".outputs:out"
-             : ".outputs:" + output->GetOutput());
-    const std::string property = "outputs:" + output->GetName();
-    DeclareMtlxConnectionProperty(lb, property, output->GetType());
+        graph_path + "/" + nodename + (out.empty() ? ".outputs:out" : ".outputs:" + out);
+    const std::string property = "outputs:" + output_name;
+    DeclareMtlxConnectionProperty(lb, property, MtlxGet(output, "type"));
     lb.add_connection(property, Path(output_target));
   }
   lb.end_prim();
@@ -733,20 +750,25 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
                                                const uint8_t *data,
                                                size_t size, std::string *warn,
                                                std::string *err) {
-  mtlx::MtlxDocument doc;
-  if (!doc.ParseFromXML(
-          std::string(reinterpret_cast<const char *>(data), size), key)) {
+  std::unique_ptr<lu_mtlx_document, decltype(&lu_mtlx_document_destroy)> doc_owner(
+      lu_mtlx_document_create(), &lu_mtlx_document_destroy);
+  const lu_mtlx_document *doc = doc_owner.get();
+  if (!doc_owner ||
+      !lu_mtlx_document_parse_anchored(doc_owner.get(), reinterpret_cast<const char *>(data),
+                                       size, key.c_str())) {
     if (err) {
+      const std::string error = doc_owner ? lu_mtlx_document_error(doc) : "out of memory";
       *err += "Failed to parse MaterialX layer: " + key +
-              (doc.GetError().empty() ? std::string()
-                                      : " : " + doc.GetError()) +
-              "\n";
+              (error.empty() ? std::string() : " : " + error) + "\n";
     }
     return nullptr;
   }
-  if (warn && !doc.GetWarning().empty()) {
-    *warn += "MaterialX layer " + key + ": " + doc.GetWarning() + "\n";
+  const std::string doc_warning = lu_mtlx_document_warning(doc);
+  if (warn && !doc_warning.empty()) {
+    *warn += "MaterialX layer " + key + ": " + doc_warning + "\n";
   }
+  const std::string doc_version = lu_mtlx_document_version(doc);
+  const std::string doc_colorspace = lu_mtlx_document_colorspace(doc);
 
   auto layer = std::make_shared<Layer>();
   LayerBuilder lb(*layer);
@@ -754,17 +776,25 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
   lb.begin_prim("MaterialX", "");
 
   lb.begin_prim("Materials", "");
-  for (const mtlx::MtlxMaterialPtr &mat : doc.GetMaterials()) {
-    if (!mat || mat->GetName().empty()) continue;
-    lb.begin_prim(mat->GetName(), "Material");
+  const size_t nmaterials = lu_mtlx_document_count(doc, LU_MTLX_MATERIALS);
+  for (size_t mi = 0; mi < nmaterials; ++mi) {
+    MtlxElemPtr mat = lu_mtlx_document_at(doc, LU_MTLX_MATERIALS, mi);
+    const std::string mat_name = MtlxGet(mat, "name");
+    if (mat_name.empty()) continue;
+    lu_mtlx_material_refs refs;
+    lu_mtlx_material_refs_get(mat, &refs);
+    const std::string surface_name = refs.surface;
+    const std::string displacement_name = refs.displacement;
+    const std::string volume_name = refs.volume;
+    lb.begin_prim(mat_name, "Material");
     if (PrimSpec *prim = lb.current()) {
       prim->meta().apiSchemas().push_back("MaterialXConfigAPI");
     }
-    if (!doc.GetVersion().empty()) {
-      lb.add_property("config:mtlx:version", Value(doc.GetVersion()));
+    if (!doc_version.empty()) {
+      lb.add_property("config:mtlx:version", Value(doc_version));
     }
-    if (!doc.GetColorSpace().empty()) {
-      lb.add_property("config:mtlx:colorspace", Value(doc.GetColorSpace()));
+    if (!doc_colorspace.empty()) {
+      lb.add_property("config:mtlx:colorspace", Value(doc_colorspace));
     }
     // A USD reference to /MaterialX/Materials/<name> only brings that
     // material subtree into the host layer. Keep the terminal surface shader
@@ -772,26 +802,19 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
     // (/MaterialX/Shaders and /MaterialX/NodeGraphs) are useful for flattened
     // layers but are outside the reference target and therefore cannot be
     // relied on by a composed external MaterialX asset.
-    const std::string material_prefix =
-        "/MaterialX/Materials/" + mat->GetName();
-    const mtlx::MtlxNodePtr surface =
-        FindMtlxNode(doc, mat->GetSurfaceShader());
-    const mtlx::MtlxNodePtr displacement =
-        FindMtlxNode(doc, mat->GetDisplacementShader());
-    const mtlx::MtlxNodePtr volume =
-        FindMtlxNode(doc, mat->GetVolumeShader());
+    const std::string material_prefix = "/MaterialX/Materials/" + mat_name;
+    MtlxElemPtr surface = FindMtlxNode(doc, surface_name);
+    MtlxElemPtr displacement = FindMtlxNode(doc, displacement_name);
+    MtlxElemPtr volume = FindMtlxNode(doc, volume_name);
     if (surface || displacement || volume) {
       if (surface) {
-        EmitMtlxNodePrim(lb, *surface, nullptr, material_prefix,
-                         material_prefix);
+        EmitMtlxNodePrim(lb, surface, nullptr, material_prefix, material_prefix);
       }
       if (displacement && displacement != surface) {
-        EmitMtlxNodePrim(lb, *displacement, nullptr, material_prefix,
-                         material_prefix);
+        EmitMtlxNodePrim(lb, displacement, nullptr, material_prefix, material_prefix);
       }
       if (volume && volume != surface && volume != displacement) {
-        EmitMtlxNodePrim(lb, *volume, nullptr, material_prefix,
-                         material_prefix);
+        EmitMtlxNodePrim(lb, volume, nullptr, material_prefix, material_prefix);
       }
       // Keep the graph and its output routing inside the referenced Material
       // subtree. This preserves image/normal/utility nodes and lets the next
@@ -804,63 +827,61 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
       std::set<std::string> graphs, nodes;
       CollectMtlxReachable(doc, {surface, displacement, volume}, &graphs,
                            &nodes);
-      for (const auto &node : doc.GetNodes()) {
-        if (!node || node == surface || node == displacement ||
-            node == volume || !nodes.count(node->GetName())) {
+      const size_t nnodes = lu_mtlx_document_count(doc, LU_MTLX_NODES);
+      for (size_t ni = 0; ni < nnodes; ++ni) {
+        MtlxElemPtr node = lu_mtlx_document_at(doc, LU_MTLX_NODES, ni);
+        if (node == surface || node == displacement || node == volume ||
+            !nodes.count(MtlxGet(node, "name"))) {
           continue;
         }
-        EmitMtlxNodePrim(lb, *node, nullptr, material_prefix, material_prefix);
+        EmitMtlxNodePrim(lb, node, nullptr, material_prefix, material_prefix);
       }
-      for (const auto &graph : doc.GetNodeGraphs()) {
-        if (!graph || graph->GetName().empty() ||
-            !graphs.count(graph->GetName())) {
-          continue;
-        }
-        const std::string graph_prefix =
-            material_prefix + "/" + graph->GetName();
-        EmitMtlxNodeGraphPrim(lb, *graph, graph_prefix, material_prefix);
+      const size_t ngraphs = lu_mtlx_document_count(doc, LU_MTLX_NODEGRAPHS);
+      for (size_t gi = 0; gi < ngraphs; ++gi) {
+        MtlxElemPtr graph = lu_mtlx_document_at(doc, LU_MTLX_NODEGRAPHS, gi);
+        const std::string graph_name = MtlxGet(graph, "name");
+        if (graph_name.empty() || !graphs.count(graph_name)) continue;
+        EmitMtlxNodeGraphPrim(lb, graph, material_prefix + "/" + graph_name, material_prefix);
       }
     }
-    if (!mat->GetSurfaceShader().empty()) {
-      lb.add_relationship(
-          "mtlx:surface:source",
-          Path(surface ? material_prefix + "/" + mat->GetSurfaceShader()
-                       : "/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+    if (!surface_name.empty()) {
+      lb.add_relationship("mtlx:surface:source",
+                          Path(surface ? material_prefix + "/" + surface_name
+                                       : "/MaterialX/Shaders/" + surface_name));
     }
-    if (!mat->GetDisplacementShader().empty()) {
-      lb.add_relationship(
-          "mtlx:displacement:source",
-          Path(displacement
-                   ? material_prefix + "/" + mat->GetDisplacementShader()
-                   : "/MaterialX/Shaders/" + mat->GetDisplacementShader()));
+    if (!displacement_name.empty()) {
+      lb.add_relationship("mtlx:displacement:source",
+                          Path(displacement ? material_prefix + "/" + displacement_name
+                                            : "/MaterialX/Shaders/" + displacement_name));
     }
-    if (!mat->GetVolumeShader().empty()) {
-      lb.add_relationship(
-          "mtlx:volume:source",
-          Path(volume ? material_prefix + "/" + mat->GetVolumeShader()
-                      : "/MaterialX/Shaders/" + mat->GetVolumeShader()));
+    if (!volume_name.empty()) {
+      lb.add_relationship("mtlx:volume:source",
+                          Path(volume ? material_prefix + "/" + volume_name
+                                      : "/MaterialX/Shaders/" + volume_name));
     }
     lb.end_prim();
   }
   lb.end_prim();  // Materials
 
   lb.begin_prim("Shaders", "");
-  for (const mtlx::MtlxNodePtr &node : doc.GetNodes()) {
-    if (!node || node->GetName().empty()) continue;
+  const size_t ntop = lu_mtlx_document_count(doc, LU_MTLX_NODES);
+  for (size_t ni = 0; ni < ntop; ++ni) {
+    MtlxElemPtr node = lu_mtlx_document_at(doc, LU_MTLX_NODES, ni);
+    if (MtlxGet(node, "name").empty()) continue;
     // surfacematerial nodes are represented under /MaterialX/Materials.
-    if (node->GetCategory() == "surfacematerial") continue;
-    EmitMtlxNodePrim(lb, *node, nullptr, "/MaterialX/Shaders",
-                     "/MaterialX/NodeGraphs");
+    if (std::string(lu_mtlx_elem_category(node)) == "surfacematerial") continue;
+    EmitMtlxNodePrim(lb, node, nullptr, "/MaterialX/Shaders", "/MaterialX/NodeGraphs");
   }
   lb.end_prim();  // Shaders
 
-  if (!doc.GetNodeGraphs().empty()) {
+  const size_t nallgraphs = lu_mtlx_document_count(doc, LU_MTLX_NODEGRAPHS);
+  if (nallgraphs) {
     lb.begin_prim("NodeGraphs", "");
-    for (const mtlx::MtlxNodeGraphPtr &graph : doc.GetNodeGraphs()) {
-      if (!graph || graph->GetName().empty()) continue;
-      const std::string graph_path =
-          "/MaterialX/NodeGraphs/" + graph->GetName();
-      EmitMtlxNodeGraphPrim(lb, *graph, graph_path,
+    for (size_t gi = 0; gi < nallgraphs; ++gi) {
+      MtlxElemPtr graph = lu_mtlx_document_at(doc, LU_MTLX_NODEGRAPHS, gi);
+      const std::string graph_name = MtlxGet(graph, "name");
+      if (graph_name.empty()) continue;
+      EmitMtlxNodeGraphPrim(lb, graph, "/MaterialX/NodeGraphs/" + graph_name,
                             "/MaterialX/NodeGraphs");
     }
     lb.end_prim();  // NodeGraphs

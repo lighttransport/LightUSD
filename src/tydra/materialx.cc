@@ -6,7 +6,7 @@
 #include "core/native-io.hh"
 #include "materialx.hh"
 #include "render-converter.hh"
-#include "core/mtlx-dom.hh"
+#include "c/lightusd-mtlx.h"
 #include "schema/usd-shade.hh"
 #include <cmath>
 #include <algorithm>
@@ -109,40 +109,112 @@ struct MtlxEvalValue {
   MtlxTextureData texture;
 };
 
-MtlxNodeInfo BuildNodeInfo(const mtlx::MtlxNodePtr& node) {
+// ---- MaterialX document access (C API, c/lightusd-mtlx.h) ----
+
+using MtlxElemPtr = const lu_mtlx_elem*;
+
+struct MtlxDocDeleter {
+  void operator()(lu_mtlx_document* d) const { lu_mtlx_document_destroy(d); }
+};
+using MtlxDocPtr = std::unique_ptr<lu_mtlx_document, MtlxDocDeleter>;
+
+// Parse `content` (XIncludes resolved relative to `anchor_path` when given).
+MtlxDocPtr ParseMtlxDocument(const std::string& content, const std::string& anchor_path,
+                             std::string* error) {
+  MtlxDocPtr doc(lu_mtlx_document_create());
+  if (!doc) {
+    *error = "out of memory";
+    return nullptr;
+  }
+  const bool ok =
+      anchor_path.empty()
+          ? lu_mtlx_document_parse(doc.get(), content.data(), content.size())
+          : lu_mtlx_document_parse_anchored(doc.get(), content.data(), content.size(),
+                                            anchor_path.c_str());
+  if (!ok) {
+    *error = lu_mtlx_document_error(doc.get());
+    return nullptr;
+  }
+  return doc;
+}
+
+std::string MtlxGet(MtlxElemPtr e, const char* key) {
+  return e ? std::string(lu_mtlx_elem_get(e, key)) : std::string();
+}
+
+std::vector<MtlxElemPtr> MtlxChildren(MtlxElemPtr e, lu_mtlx_children which) {
+  std::vector<MtlxElemPtr> out;
+  if (!e) return out;
+  const size_t n = lu_mtlx_elem_count(e, which);
+  out.reserve(n);
+  for (size_t i = 0; i < n; ++i) out.push_back(lu_mtlx_elem_at(e, which, i));
+  return out;
+}
+
+std::vector<MtlxElemPtr> MtlxDocElements(const lu_mtlx_document* doc, lu_mtlx_class cls) {
+  std::vector<MtlxElemPtr> out;
+  const size_t n = lu_mtlx_document_count(doc, cls);
+  out.reserve(n);
+  for (size_t i = 0; i < n; ++i) out.push_back(lu_mtlx_document_at(doc, cls, i));
+  return out;
+}
+
+MtlxElemPtr MtlxInput(MtlxElemPtr node, const char* name) {
+  return node ? lu_mtlx_elem_find(node, LU_MTLX_CHILD_INPUTS, name) : nullptr;
+}
+
+// Typed value of an <input> (lu_mtlx_input_value) as C++ values.
+struct MtlxInputValue {
+  lu_mtlx_value_type type = LU_MTLX_VALUE_NONE;
+  float f = 0.0f;
+  std::vector<float> floats;
+  std::string s;
+};
+
+MtlxInputValue GetMtlxInputValue(MtlxElemPtr input) {
+  MtlxInputValue out;
+  lu_mtlx_value v;
+  if (!input || !lu_mtlx_input_value(input, &v)) return out;
+  out.type = v.type;
+  out.f = v.f;
+  if (v.type == LU_MTLX_VALUE_FLOATS) out.floats.assign(v.floats, v.floats + v.nfloats);
+  if (v.type == LU_MTLX_VALUE_STRING) out.s = v.s;
+  lu_mtlx_value_free(&v);
+  return out;
+}
+
+// Record an input's value and node/graph connection into a node info.
+void AddInputToNodeInfo(MtlxElemPtr input, bool graph_connections, MtlxNodeInfo* info) {
+  const std::string input_name = MtlxGet(input, "name");
+  const MtlxInputValue value = GetMtlxInputValue(input);
+  if (value.type == LU_MTLX_VALUE_FLOAT) {
+    info->input_floats[input_name] = value.f;
+  } else if (value.type == LU_MTLX_VALUE_FLOATS) {
+    info->input_vectors[input_name] = value.floats;
+  } else if (value.type == LU_MTLX_VALUE_STRING) {
+    info->input_strings[input_name] = value.s;
+  }
+  const std::string nodename = MtlxGet(input, "nodename");
+  const std::string nodegraph = MtlxGet(input, "nodegraph");
+  const std::string output = MtlxGet(input, "output");
+  if (!nodename.empty()) {
+    info->input_connections[input_name] = output.empty() ? nodename : nodename + "." + output;
+  } else if (graph_connections && !nodegraph.empty()) {
+    info->input_connections[input_name] = output.empty() ? nodegraph : nodegraph + "." + output;
+  }
+}
+
+MtlxNodeInfo BuildNodeInfo(MtlxElemPtr node) {
   MtlxNodeInfo info;
   if (!node) return info;
 
-  info.name = node->GetName();
-  info.category = node->GetCategory();
-  info.type = node->GetType();
-  info.colorspace = node->GetColorSpace();
+  info.name = MtlxGet(node, "name");
+  info.category = lu_mtlx_elem_category(node);
+  info.type = MtlxGet(node, "type");
+  info.colorspace = MtlxGet(node, "colorspace");
 
-  for (const auto& input : node->GetInputs()) {
-    const std::string input_name = input->GetName();
-    const auto& value = input->GetValue();
-    if (value.type == mtlx::MtlxValue::TYPE_FLOAT) {
-      info.input_floats[input_name] = value.float_val;
-    } else if (value.type == mtlx::MtlxValue::TYPE_FLOAT_VECTOR) {
-      info.input_vectors[input_name] = value.float_vec;
-    } else if (value.type == mtlx::MtlxValue::TYPE_STRING) {
-      info.input_strings[input_name] = value.string_val;
-    }
-
-    if (!input->GetNodeName().empty()) {
-      std::string conn = input->GetNodeName();
-      if (!input->GetOutput().empty()) {
-        conn += "." + input->GetOutput();
-      }
-      info.input_connections[input_name] = conn;
-    } else if (!input->GetNodeGraph().empty()) {
-      std::string conn = input->GetNodeGraph();
-      if (!input->GetOutput().empty()) {
-        conn += "." + input->GetOutput();
-      }
-      info.input_connections[input_name] = conn;
-    }
-  }
+  for (MtlxElemPtr input : MtlxChildren(node, LU_MTLX_CHILD_INPUTS))
+    AddInputToNodeInfo(input, true, &info);
 
   return info;
 }
@@ -183,19 +255,19 @@ bool TextureDataFromNodeInfo(const MtlxNodeInfo& info, MtlxTextureData* out) {
   return !out->file.empty();
 }
 
-MtlxEvalValue ValueFromInput(const mtlx::MtlxInputPtr& input) {
+MtlxEvalValue ValueFromInput(MtlxElemPtr input) {
   MtlxEvalValue out;
   if (!input) return out;
 
-  const auto& value = input->GetValue();
-  if (value.type == mtlx::MtlxValue::TYPE_FLOAT) {
+  const MtlxInputValue value = GetMtlxInputValue(input);
+  if (value.type == LU_MTLX_VALUE_FLOAT) {
     out.valid = true;
-    out.scalar = value.float_val;
-    out.vector = {value.float_val, value.float_val, value.float_val};
-  } else if (value.type == mtlx::MtlxValue::TYPE_FLOAT_VECTOR) {
+    out.scalar = value.f;
+    out.vector = {value.f, value.f, value.f};
+  } else if (value.type == LU_MTLX_VALUE_FLOATS) {
     out.valid = true;
-    out.vector = value.float_vec;
-    out.scalar = value.float_vec.empty() ? 0.0f : value.float_vec[0];
+    out.vector = value.floats;
+    out.scalar = value.floats.empty() ? 0.0f : value.floats[0];
   }
   return out;
 }
@@ -227,18 +299,18 @@ MtlxEvalValue BinaryOp(const MtlxEvalValue& a,
   return out;
 }
 
-mtlx::MtlxNodePtr ResolveNodeGraphOutput(const mtlx::MtlxDocument& doc,
-                                         const std::string& nodegraph_name,
-                                         const std::string& output_name,
-                                         std::string* source_output) {
-  mtlx::MtlxNodeGraphPtr graph = doc.FindNodeGraph(nodegraph_name);
+MtlxElemPtr ResolveNodeGraphOutput(const lu_mtlx_document* doc,
+                                   const std::string& nodegraph_name,
+                                   const std::string& output_name,
+                                   std::string* source_output) {
+  MtlxElemPtr graph = lu_mtlx_document_find(doc, LU_MTLX_NODEGRAPHS, nodegraph_name.c_str());
   if (!graph) return nullptr;
 
-  for (const auto& output : graph->GetOutputs()) {
-    if (!output) continue;
-    if (!output_name.empty() && output->GetName() != output_name) continue;
-    if (source_output) *source_output = output->GetOutput();
-    return graph->GetNode(output->GetNodeName());
+  for (MtlxElemPtr output : MtlxChildren(graph, LU_MTLX_CHILD_OUTPUTS)) {
+    if (!output_name.empty() && MtlxGet(output, "name") != output_name) continue;
+    if (source_output) *source_output = MtlxGet(output, "output");
+    return lu_mtlx_elem_find(graph, LU_MTLX_CHILD_GRAPH_NODES,
+                             MtlxGet(output, "nodename").c_str());
   }
 
   return nullptr;
@@ -259,13 +331,13 @@ bool SplitMtlxConnection(const std::string& conn,
   return !node_or_graph->empty();
 }
 
-MtlxEvalValue EvalMtlxNode(const mtlx::MtlxDocument& doc,
-                           const mtlx::MtlxNodePtr& node,
+MtlxEvalValue EvalMtlxNode(const lu_mtlx_document* doc,
+                           MtlxElemPtr node,
                            const std::string& output_name,
                            std::set<std::string>* visiting,
                            int depth);
 
-MtlxEvalValue EvalMtlxConnection(const mtlx::MtlxDocument& doc,
+MtlxEvalValue EvalMtlxConnection(const lu_mtlx_document* doc,
                                  const std::string& conn,
                                  std::set<std::string>* visiting,
                                  int depth) {
@@ -276,7 +348,7 @@ MtlxEvalValue EvalMtlxConnection(const mtlx::MtlxDocument& doc,
   std::string output_name;
   if (!SplitMtlxConnection(conn, &node_name, &output_name)) return out;
 
-  mtlx::MtlxNodePtr node = doc.FindNode(node_name);
+  MtlxElemPtr node = lu_mtlx_document_find(doc, LU_MTLX_NODES, node_name.c_str());
   if (!node) {
     std::string source_output;
     node = ResolveNodeGraphOutput(doc, node_name, output_name, &source_output);
@@ -285,53 +357,54 @@ MtlxEvalValue EvalMtlxConnection(const mtlx::MtlxDocument& doc,
   return EvalMtlxNode(doc, node, output_name, visiting, depth + 1);
 }
 
-MtlxEvalValue EvalInputOrConnection(const mtlx::MtlxDocument& doc,
-                                    const mtlx::MtlxInputPtr& input,
+MtlxEvalValue EvalInputOrConnection(const lu_mtlx_document* doc,
+                                    MtlxElemPtr input,
                                     std::set<std::string>* visiting,
                                     int depth) {
   if (!input) return MtlxEvalValue{};
-  if (!input->GetNodeName().empty()) {
-    std::string conn = input->GetNodeName();
-    if (!input->GetOutput().empty()) conn += "." + input->GetOutput();
-    return EvalMtlxConnection(doc, conn, visiting, depth + 1);
+  const std::string nodename = MtlxGet(input, "nodename");
+  const std::string nodegraph = MtlxGet(input, "nodegraph");
+  const std::string output = MtlxGet(input, "output");
+  if (!nodename.empty()) {
+    return EvalMtlxConnection(doc, output.empty() ? nodename : nodename + "." + output,
+                              visiting, depth + 1);
   }
-  if (!input->GetNodeGraph().empty()) {
-    std::string conn = input->GetNodeGraph();
-    if (!input->GetOutput().empty()) conn += "." + input->GetOutput();
-    return EvalMtlxConnection(doc, conn, visiting, depth + 1);
+  if (!nodegraph.empty()) {
+    return EvalMtlxConnection(doc, output.empty() ? nodegraph : nodegraph + "." + output,
+                              visiting, depth + 1);
   }
   return ValueFromInput(input);
 }
 
-MtlxEvalValue EvalMtlxNode(const mtlx::MtlxDocument& doc,
-                           const mtlx::MtlxNodePtr& node,
+MtlxEvalValue EvalMtlxNode(const lu_mtlx_document* doc,
+                           MtlxElemPtr node,
                            const std::string& output_name,
                            std::set<std::string>* visiting,
                            int depth) {
   MtlxEvalValue out;
   if (!node || !visiting || depth > 16) return out;
 
-  const std::string key = node->GetName() + "." + output_name;
+  const std::string key = MtlxGet(node, "name") + "." + output_name;
   if (visiting->count(key)) return out;
   visiting->insert(key);
 
-  const std::string category = node->GetCategory();
+  const std::string category = lu_mtlx_elem_category(node);
   if (category == "image" || category == "tiledimage") {
     MtlxNodeInfo info = BuildNodeInfo(node);
     out.valid = true;
     out.is_texture = true;
     TextureDataFromNodeInfo(info, &out.texture);
   } else if (category == "constant") {
-    out = EvalInputOrConnection(doc, node->GetInput("value"), visiting, depth + 1);
+    out = EvalInputOrConnection(doc, MtlxInput(node, "value"), visiting, depth + 1);
   } else if (category == "add" || category == "subtract" ||
              category == "multiply" || category == "divide") {
-    MtlxEvalValue a = EvalInputOrConnection(doc, node->GetInput("in1"), visiting, depth + 1);
-    MtlxEvalValue b = EvalInputOrConnection(doc, node->GetInput("in2"), visiting, depth + 1);
+    MtlxEvalValue a = EvalInputOrConnection(doc, MtlxInput(node, "in1"), visiting, depth + 1);
+    MtlxEvalValue b = EvalInputOrConnection(doc, MtlxInput(node, "in2"), visiting, depth + 1);
     out = BinaryOp(a, b, category);
   } else if (category == "mix") {
-    MtlxEvalValue a = EvalInputOrConnection(doc, node->GetInput("fg"), visiting, depth + 1);
-    MtlxEvalValue b = EvalInputOrConnection(doc, node->GetInput("bg"), visiting, depth + 1);
-    MtlxEvalValue mix = EvalInputOrConnection(doc, node->GetInput("mix"), visiting, depth + 1);
+    MtlxEvalValue a = EvalInputOrConnection(doc, MtlxInput(node, "fg"), visiting, depth + 1);
+    MtlxEvalValue b = EvalInputOrConnection(doc, MtlxInput(node, "bg"), visiting, depth + 1);
+    MtlxEvalValue mix = EvalInputOrConnection(doc, MtlxInput(node, "mix"), visiting, depth + 1);
     if (a.valid && b.valid && mix.valid && !a.is_texture && !b.is_texture) {
       out.valid = true;
       out.vector.resize(3, 0.0f);
@@ -343,9 +416,9 @@ MtlxEvalValue EvalMtlxNode(const mtlx::MtlxDocument& doc,
       out.scalar = out.vector[0];
     }
   } else {
-    mtlx::MtlxInputPtr value = node->GetInput("value");
-    if (!value) value = node->GetInput("out");
-    if (!value) value = node->GetInput("in");
+    MtlxElemPtr value = MtlxInput(node, "value");
+    if (!value) value = MtlxInput(node, "out");
+    if (!value) value = MtlxInput(node, "in");
     out = EvalInputOrConnection(doc, value, visiting, depth + 1);
   }
 
@@ -384,46 +457,46 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
   }
 
   // Parse MaterialX document
-  mtlx::MtlxDocument doc;
-  const bool parsed = anchor_path.empty()
-                          ? doc.ParseFromXML(mtlx_content)
-                          : doc.ParseFromXML(mtlx_content, anchor_path);
-  if (!parsed) {
-    error_ = "Failed to parse MaterialX: " + doc.GetError();
+  std::string parse_error;
+  const MtlxDocPtr doc_owner = ParseMtlxDocument(mtlx_content, anchor_path, &parse_error);
+  if (!doc_owner) {
+    error_ = "Failed to parse MaterialX: " + parse_error;
     return false;
   }
+  const lu_mtlx_document* doc = doc_owner.get();
 
   // Find the target material
-  mtlx::MtlxMaterialPtr mat;
+  MtlxElemPtr mat = nullptr;
   if (material_name.empty()) {
     // Use first material
-    const auto& materials = doc.GetMaterials();
-    if (materials.empty()) {
+    if (!lu_mtlx_document_count(doc, LU_MTLX_MATERIALS)) {
       error_ = "No materials found in MaterialX document";
       return false;
     }
-    mat = materials[0];
+    mat = lu_mtlx_document_at(doc, LU_MTLX_MATERIALS, 0);
   } else {
-    mat = doc.FindMaterial(material_name);
+    mat = lu_mtlx_document_find(doc, LU_MTLX_MATERIALS, material_name.c_str());
     if (!mat) {
       error_ = "Material not found: " + material_name;
       return false;
     }
   }
 
-  out->name = mat->GetName();
+  out->name = MtlxGet(mat, "name");
+  lu_mtlx_material_refs refs;
+  lu_mtlx_material_refs_get(mat, &refs);
 
   // Find surface shader node
-  std::string surface_shader = mat->GetSurfaceShader();
-  if (surface_shader.empty() && !mat->GetSurfaceNodeGraph().empty()) {
-    const auto graph = doc.FindNodeGraph(mat->GetSurfaceNodeGraph());
+  std::string surface_shader = refs.surface;
+  const std::string surface_graph = refs.surface_graph;
+  if (surface_shader.empty() && !surface_graph.empty()) {
+    MtlxElemPtr graph = lu_mtlx_document_find(doc, LU_MTLX_NODEGRAPHS, surface_graph.c_str());
     if (graph) {
-      const std::string outputName = mat->GetSurfaceOutput().empty()
-                                         ? "out"
-                                         : mat->GetSurfaceOutput();
-      for (const auto& output : graph->GetOutputs()) {
-        if (output && output->GetName() == outputName) {
-          surface_shader = output->GetNodeName();
+      const std::string surface_output = refs.surface_output;
+      const std::string outputName = surface_output.empty() ? "out" : surface_output;
+      for (MtlxElemPtr output : MtlxChildren(graph, LU_MTLX_CHILD_OUTPUTS)) {
+        if (MtlxGet(output, "name") == outputName) {
+          surface_shader = MtlxGet(output, "nodename");
           break;
         }
       }
@@ -434,15 +507,8 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
     return false;
   }
 
-  // Look up the shader node
-  mtlx::MtlxNodePtr shader_node = doc.FindNode(surface_shader);
-  if (!shader_node) {
-    // Try finding in node graphs
-    for (const auto& ng : doc.GetNodeGraphs()) {
-      shader_node = ng->GetNode(surface_shader);
-      if (shader_node) break;
-    }
-  }
+  // Look up the shader node (top-level nodes, then nodegraph nodes)
+  MtlxElemPtr shader_node = lu_mtlx_document_find(doc, LU_MTLX_NODES, surface_shader.c_str());
 
   if (!shader_node) {
     error_ = "Surface shader node not found: " + surface_shader;
@@ -450,7 +516,7 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
   }
 
   // Get shader category
-  std::string category = shader_node->GetCategory();
+  std::string category = lu_mtlx_elem_category(shader_node);
 
   // Convert based on shader category
   if (category == "standard_surface") {
@@ -458,11 +524,11 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
     MtlxNodeInfo node_info = BuildNodeInfo(shader_node);
     std::map<std::string, MtlxTextureData> textures;
 
-    for (const auto& input : shader_node->GetInputs()) {
-      if (!input->GetNodeName().empty() || !input->GetNodeGraph().empty()) {
+    for (MtlxElemPtr input : MtlxChildren(shader_node, LU_MTLX_CHILD_INPUTS)) {
+      if (!MtlxGet(input, "nodename").empty() || !MtlxGet(input, "nodegraph").empty()) {
         std::set<std::string> visiting;
         MtlxEvalValue value = EvalInputOrConnection(doc, input, &visiting, 0);
-        ApplyEvalToNodeInfoInput(input->GetName(), value, &node_info, &textures);
+        ApplyEvalToNodeInfoInput(MtlxGet(input, "name"), value, &node_info, &textures);
       }
     }
 
@@ -484,11 +550,12 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
     MtlxPreviewSurfaceData ps_data;
     std::map<std::string, MtlxTextureData> textures;
 
-    for (const auto& input : shader_node->GetInputs()) {
-      std::string input_name = input->GetName();
-      const auto& value = input->GetValue();
+    for (MtlxElemPtr input : MtlxChildren(shader_node, LU_MTLX_CHILD_INPUTS)) {
+      std::string input_name = MtlxGet(input, "name");
+      const MtlxInputValue value = GetMtlxInputValue(input);
+      const std::string input_nodename = MtlxGet(input, "nodename");
       MtlxEvalValue eval_value;
-      if (!input->GetNodeName().empty() || !input->GetNodeGraph().empty()) {
+      if (!input_nodename.empty() || !MtlxGet(input, "nodegraph").empty()) {
         std::set<std::string> visiting;
         eval_value = EvalInputOrConnection(doc, input, &visiting, 0);
         if (eval_value.is_texture) {
@@ -501,36 +568,35 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
           ps_data.diffuse_color[0] = ComponentOr(eval_value, 0, ps_data.diffuse_color[0]);
           ps_data.diffuse_color[1] = ComponentOr(eval_value, 1, ps_data.diffuse_color[1]);
           ps_data.diffuse_color[2] = ComponentOr(eval_value, 2, ps_data.diffuse_color[2]);
-        } else if (value.type == mtlx::MtlxValue::TYPE_FLOAT_VECTOR &&
-                   value.float_vec.size() >= 3) {
-          ps_data.diffuse_color[0] = value.float_vec[0];
-          ps_data.diffuse_color[1] = value.float_vec[1];
-          ps_data.diffuse_color[2] = value.float_vec[2];
+        } else if (value.type == LU_MTLX_VALUE_FLOATS && value.floats.size() >= 3) {
+          ps_data.diffuse_color[0] = value.floats[0];
+          ps_data.diffuse_color[1] = value.floats[1];
+          ps_data.diffuse_color[2] = value.floats[2];
         }
       } else if (input_name == "metallic") {
         if (eval_value.valid && !eval_value.is_texture) ps_data.metallic = eval_value.scalar;
-        else if (value.type == mtlx::MtlxValue::TYPE_FLOAT) ps_data.metallic = value.float_val;
+        else if (value.type == LU_MTLX_VALUE_FLOAT) ps_data.metallic = value.f;
       } else if (input_name == "roughness") {
         if (eval_value.valid && !eval_value.is_texture) ps_data.roughness = eval_value.scalar;
-        else if (value.type == mtlx::MtlxValue::TYPE_FLOAT) ps_data.roughness = value.float_val;
+        else if (value.type == LU_MTLX_VALUE_FLOAT) ps_data.roughness = value.f;
       } else if (input_name == "opacity") {
         if (eval_value.valid && !eval_value.is_texture) ps_data.opacity = eval_value.scalar;
-        else if (value.type == mtlx::MtlxValue::TYPE_FLOAT) ps_data.opacity = value.float_val;
+        else if (value.type == LU_MTLX_VALUE_FLOAT) ps_data.opacity = value.f;
       } else if (input_name == "ior") {
         if (eval_value.valid && !eval_value.is_texture) ps_data.ior = eval_value.scalar;
-        else if (value.type == mtlx::MtlxValue::TYPE_FLOAT) ps_data.ior = value.float_val;
+        else if (value.type == LU_MTLX_VALUE_FLOAT) ps_data.ior = value.f;
       }
 
       // Texture connections
-      if (!input->GetNodeName().empty()) {
+      if (!input_nodename.empty()) {
         if (input_name == "diffuseColor") {
-          ps_data.diffuse_texture = input->GetNodeName();
+          ps_data.diffuse_texture = input_nodename;
         } else if (input_name == "normal") {
-          ps_data.normal_texture = input->GetNodeName();
+          ps_data.normal_texture = input_nodename;
         } else if (input_name == "metallic") {
-          ps_data.metallic_texture = input->GetNodeName();
+          ps_data.metallic_texture = input_nodename;
         } else if (input_name == "roughness") {
-          ps_data.roughness_texture = input->GetNodeName();
+          ps_data.roughness_texture = input_nodename;
         }
       }
     }
@@ -557,13 +623,27 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
     error_ = "Output scene is null";
     return false;
   }
-  mtlx::MtlxDocument doc;
-  if (!(anchor_path.empty() ? doc.ParseFromXML(mtlx_content)
-                            : doc.ParseFromXML(mtlx_content, anchor_path))) {
-    error_ = "Failed to parse MaterialX: " + doc.GetError();
+  std::string parse_error;
+  const MtlxDocPtr doc_owner = ParseMtlxDocument(mtlx_content, anchor_path, &parse_error);
+  if (!doc_owner) {
+    error_ = "Failed to parse MaterialX: " + parse_error;
     return false;
   }
-  if (!doc.FindLook(look_name)) {
+  const lu_mtlx_document* doc = doc_owner.get();
+  // Material assignments of the look for a geometry path (first = strongest).
+  const auto assignments = [&](const std::string& path, std::vector<MtlxElemPtr>* materials) {
+    lu_mtlx_assignment* found = nullptr;
+    size_t count = 0;
+    char* resolve_error = nullptr;
+    const int ok = lu_mtlx_document_assignments(doc, look_name.c_str(), path.c_str(), &found,
+                                                &count, &resolve_error);
+    if (!ok) error_ = resolve_error ? resolve_error : "";
+    std::free(resolve_error);
+    for (size_t i = 0; ok && i < count; ++i) materials->push_back(found[i].material);
+    std::free(found);
+    return ok != 0;
+  };
+  if (!lu_mtlx_document_find(doc, LU_MTLX_LOOKS, look_name.c_str())) {
     error_ = "MaterialX look not found: " + look_name;
     return false;
   }
@@ -578,15 +658,10 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   std::shared_ptr<const std::string> resolved_volume_xml;
   const auto collect = [&](const std::string& path, int32_t* material_id,
                            size_t* selected) {
-    std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
-    std::string resolve_error;
-    if (!doc.GetMaterialAssignmentsForGeometry(look_name, path, &matches,
-                                                &resolve_error)) {
-      error_ = resolve_error;
-      return false;
-    }
+    std::vector<MtlxElemPtr> matches;
+    if (!assignments(path, &matches)) return false;
     if (matches.empty()) return true;
-    const std::string& name = matches.front().material->GetName();
+    const std::string name = MtlxGet(matches.front(), "name");
     auto found = material_indices.find(name);
     if (found == material_indices.end()) {
       RenderMaterial material;
@@ -616,24 +691,25 @@ bool MtlxConverter::ApplyLookToRenderScene(const std::string& mtlx_content,
   for (RenderCurves& curves : scene->curves)
     if (!collect(curves.prim_path, &curves.material_id, nullptr)) return false;
   for (RenderVolume& volume : scene->volumes) {
-    std::vector<mtlx::MtlxResolvedMaterialAssignment> matches;
-    std::string resolve_error;
-    if (!doc.GetMaterialAssignmentsForGeometry(look_name, volume.prim_path,
-                                                &matches, &resolve_error)) {
-      error_ = resolve_error;
-      return false;
-    }
+    std::vector<MtlxElemPtr> matches;
+    if (!assignments(volume.prim_path, &matches)) return false;
     if (matches.empty()) continue;
-    const auto& material = matches.front().material;
-    const std::string& name = material->GetName();
+    MtlxElemPtr material = matches.front();
+    const std::string name = MtlxGet(material, "name");
     auto found = volume_materials.find(name);
     if (found == volume_materials.end()) {
-      if (material->GetVolumeShader().empty() && material->GetVolumeNodeGraph().empty()) {
+      lu_mtlx_material_refs volume_refs;
+      lu_mtlx_material_refs_get(material, &volume_refs);
+      if (!volume_refs.volume[0] && !volume_refs.volume_graph[0]) {
         error_ = "MaterialX volume assignment has no volume shader: " + volume.prim_path;
         return false;
       }
       if (!resolved_volume_xml)
-        resolved_volume_xml = std::make_shared<const std::string>(doc.GetResolvedXML());
+      {
+        char* xml = lu_mtlx_document_resolved_xml(doc);
+        resolved_volume_xml = std::make_shared<const std::string>(xml ? xml : "");
+        std::free(xml);
+      }
       if (!CreateVolumeEvaluator(*resolved_volume_xml, name, anchor_path)) {
         error_ = "Invalid MaterialX volume assignment for " + volume.prim_path + ": " + error_;
         return false;
@@ -805,53 +881,41 @@ bool MtlxConverter::ParseMtlx(const std::string& mtlx_content,
     return false;
   }
 
-  mtlx::MtlxDocument doc;
-  if (!doc.ParseFromXML(mtlx_content)) {
-    error_ = "Failed to parse MaterialX: " + doc.GetError();
+  std::string parse_error;
+  const MtlxDocPtr doc_owner = ParseMtlxDocument(mtlx_content, std::string(), &parse_error);
+  if (!doc_owner) {
+    error_ = "Failed to parse MaterialX: " + parse_error;
     return false;
   }
+  const lu_mtlx_document* doc = doc_owner.get();
 
   // Build the document's node list ONCE and share it with every material; it
   // does not vary per material (see MtlxMaterialInfo::shared_nodes).
   auto shared_nodes = std::make_shared<std::vector<MtlxNodeInfo>>();
   {
-    shared_nodes->reserve(doc.GetNodes().size());
-    for (const auto& node : doc.GetNodes()) {
+    const std::vector<MtlxElemPtr> nodes = MtlxDocElements(doc, LU_MTLX_NODES);
+    shared_nodes->reserve(nodes.size());
+    for (MtlxElemPtr node : nodes) {
       MtlxNodeInfo node_info;
-      node_info.name = node->GetName();
-      node_info.category = node->GetCategory();
-      node_info.type = node->GetType();
-
-      for (const auto& input : node->GetInputs()) {
-        const auto& value = input->GetValue();
-        if (value.type == mtlx::MtlxValue::TYPE_FLOAT) {
-          node_info.input_floats[input->GetName()] = value.float_val;
-        } else if (value.type == mtlx::MtlxValue::TYPE_FLOAT_VECTOR) {
-          node_info.input_vectors[input->GetName()] = value.float_vec;
-        } else if (value.type == mtlx::MtlxValue::TYPE_STRING) {
-          node_info.input_strings[input->GetName()] = value.string_val;
-        }
-
-        if (!input->GetNodeName().empty()) {
-          std::string conn = input->GetNodeName();
-          if (!input->GetOutput().empty()) {
-            conn += "." + input->GetOutput();
-          }
-          node_info.input_connections[input->GetName()] = conn;
-        }
-      }
-
+      node_info.name = MtlxGet(node, "name");
+      node_info.category = lu_mtlx_elem_category(node);
+      node_info.type = MtlxGet(node, "type");
+      for (MtlxElemPtr input : MtlxChildren(node, LU_MTLX_CHILD_INPUTS))
+        AddInputToNodeInfo(input, false, &node_info);
       shared_nodes->push_back(std::move(node_info));
     }
   }
 
-  materials->reserve(doc.GetMaterials().size());
-  for (const auto& mat : doc.GetMaterials()) {
+  const std::vector<MtlxElemPtr> mats = MtlxDocElements(doc, LU_MTLX_MATERIALS);
+  materials->reserve(mats.size());
+  for (MtlxElemPtr mat : mats) {
+    lu_mtlx_material_refs refs;
+    lu_mtlx_material_refs_get(mat, &refs);
     MtlxMaterialInfo info;
-    info.name = mat->GetName();
-    info.surface_shader = mat->GetSurfaceShader();
-    info.displacement_shader = mat->GetDisplacementShader();
-    info.volume_shader = mat->GetVolumeShader();
+    info.name = MtlxGet(mat, "name");
+    info.surface_shader = refs.surface;
+    info.displacement_shader = refs.displacement;
+    info.volume_shader = refs.volume;
     info.shared_nodes = shared_nodes;
     materials->push_back(std::move(info));
   }

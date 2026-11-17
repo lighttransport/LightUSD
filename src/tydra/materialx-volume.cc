@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Sample MaterialX volume graphs using the shared evaluator.
 #include "materialx.hh"
-#include "core/mtlx-dom.hh"
+#include <cstdlib>
+#include <memory>
+
+#include "c/lightusd-mtlx.h"
 #include "core/security-policy.hh"
 #include "core/color-transform.hh"
 #include "resolver/asset-resolver.hh"
@@ -200,13 +203,22 @@ std::unique_ptr<MtlxVolumeEvaluator> MtlxConverter::CreateVolumeEvaluator(
     const std::string& mtlx_content, const std::string& material_name,
     const std::string& anchor_path) {
   error_.clear();
-  mtlx::MtlxDocument parsed;
-  if (!(anchor_path.empty() ? parsed.ParseFromXML(mtlx_content)
-                            : parsed.ParseFromXML(mtlx_content, anchor_path))) {
-    error_ = "Failed to parse MaterialX: " + parsed.GetError();
+  std::unique_ptr<lu_mtlx_document, decltype(&lu_mtlx_document_destroy)> parsed(
+      lu_mtlx_document_create(), &lu_mtlx_document_destroy);
+  if (!parsed ||
+      !(anchor_path.empty()
+            ? lu_mtlx_document_parse(parsed.get(), mtlx_content.data(), mtlx_content.size())
+            : lu_mtlx_document_parse_anchored(parsed.get(), mtlx_content.data(),
+                                              mtlx_content.size(), anchor_path.c_str()))) {
+    error_ = std::string("Failed to parse MaterialX: ") +
+             (parsed ? lu_mtlx_document_error(parsed.get()) : "out of memory");
     return nullptr;
   }
-  const std::string resolved = parsed.GetResolvedXML();
+  std::string resolved;
+  if (char *xml = lu_mtlx_document_resolved_xml(parsed.get())) {
+    resolved = xml;
+    std::free(xml);
+  }
   auto impl = std::unique_ptr<MtlxVolumeEvaluator::Impl>(new MtlxVolumeEvaluator::Impl);
   impl->doc.reset(mtlx_load_string(resolved.c_str()));
   auto& doc = impl->doc;
