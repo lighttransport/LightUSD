@@ -120,6 +120,13 @@ class MaterialXSurfaceRuntime;
 bool MaterialXSurfaceRuntimeNeedsTexcoordIndex(
     const MaterialXSurfaceRuntime* runtime, int index);
 
+// Category of the selected surface shader node.
+std::string MaterialXSurfaceRuntimeSurfaceCategory(
+    const MaterialXSurfaceRuntime* runtime);
+// True when the evaluator has a dedicated model for `category`. Other
+// categories are shaded with the standard_surface fallback.
+bool IsMaterialXSurfaceCategorySupported(const std::string& category);
+
 enum class MaterialXGeomPropType : uint8_t {
   Float,
   Integer,

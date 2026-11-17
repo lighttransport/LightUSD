@@ -57,6 +57,24 @@ def main():
     if "rt meshes: 1" not in run.stderr or "domelight: 1" not in run.stderr:
         raise RuntimeError(f"validation scene is missing its sphere or environment:\n{run.stderr}")
 
+    if "is not supported by the LightRT evaluator" in run.stderr:
+        raise RuntimeError(f"standard_surface reported as unsupported:\n{run.stderr}")
+
+    unknown_source = out_dir / "unknown-surface.mtlx"
+    unknown_source.write_text(
+        '<?xml version="1.0"?>\n<materialx version="1.39">\n'
+        '  <nodedef name="ND_my_surface" node="my_surface">'
+        '<output name="out" type="surfaceshader"/></nodedef>\n'
+        '  <my_surface name="SR" type="surfaceshader"/>\n'
+        '  <surfacematerial name="M" type="material"><input name="surfaceshader" '
+        'type="surfaceshader" nodename="SR"/></surfacematerial>\n</materialx>\n')
+    unknown = subprocess.run(
+        [exe, "--mtlx", str(unknown_source), str(out_dir / "unknown-surface.png")],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if "surface shader category 'my_surface' is not supported" not in unknown.stderr:
+        raise RuntimeError(f"unknown surface category was not reported:\n{unknown.stderr}")
+
     width, height, rgba = read_png_rgba(image)
     if (width, height) != (512, 512):
         raise RuntimeError(f"unexpected validation image dimensions {(width, height)}")

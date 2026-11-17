@@ -1286,6 +1286,22 @@ class MaterialXSurfaceRuntime {
   std::vector<tydra::MaterialXMipChain> mipChains;
 };
 
+std::string MaterialXSurfaceRuntimeSurfaceCategory(
+    const MaterialXSurfaceRuntime* runtime) {
+  if (!runtime || !runtime->doc || runtime->surfaceNode < 0 ||
+      runtime->surfaceNode >= runtime->doc->nnode)
+    return {};
+  const char* c = runtime->doc->nodes[runtime->surfaceNode].category;
+  return c ? c : "";
+}
+
+bool IsMaterialXSurfaceCategorySupported(const std::string& c) {
+  // Must match the surface dispatch in mtlx_eval.c (mtlx_eval_surface).
+  return c == "surface" || c == "surface_unlit" || c == "open_pbr_surface" ||
+         c == "gltf_pbr" || c == "UsdPreviewSurface" ||
+         c == "disney_principled" || c == "standard_surface";
+}
+
 bool MaterialXSurfaceRuntimeNeedsTexcoordIndex(
     const MaterialXSurfaceRuntime* runtime, int index) {
   if (!runtime || !runtime->doc || index < 0) return false;

@@ -144,6 +144,15 @@ bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
                         runtime_error;
     return false;
   }
+  {
+    const std::string category =
+        lusdview::MaterialXSurfaceRuntimeSurfaceCategory(opt.mtlx_runtime.get());
+    if (!lusdview::IsMaterialXSurfaceCategorySupported(category)) {
+      std::cerr << "warning: MaterialX surface shader category '" << category
+                << "' is not supported by the LightRT evaluator; shading it "
+                   "as standard_surface.\n";
+    }
+  }
   if (opt.aov == CaptureAov::MaterialXNode) {
     lusdview::MaterialXSurfaceContext context;
     lusdview::MaterialXNodeValue value;
