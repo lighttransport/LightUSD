@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """LightUSD blend shapes + skinning vs OpenUSD's UsdSkel.BakeSkinning.
 
   pxr_bake_compare.py FLAT.usda SKIN_DUMP TIME...

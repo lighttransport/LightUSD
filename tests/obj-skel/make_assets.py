@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Generate the skinned test assets (run with Blender 5.x, headless):
 
   blender -b --factory-startup --python tests/obj-skel/make_assets.py -- OUTDIR

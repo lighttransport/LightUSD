@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """lusdrender smoke test of a skinned OBJ (skeleton + FBX animation sidecar).
 
   render_smoke.py LUSDRENDER WORKDIR

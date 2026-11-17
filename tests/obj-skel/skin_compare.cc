@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // skin_compare SCENE MESH_PRIM FBX TOL FRAME...
 //
 // Deformed points of MESH_PRIM in SCENE as LightUSD evaluates them (UsdSkel

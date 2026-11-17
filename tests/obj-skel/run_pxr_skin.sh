@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Skinning of the imported FBX and OBJ (+ FBX sidecar) scenes, LightUSD vs
 # OpenUSD's UsdSkel (tools/view_control/skinning_compare.py), and blend shapes
 # + skinning vs UsdSkel.BakeSkinning (pxr_bake_compare.py).
