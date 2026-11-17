@@ -4,23 +4,124 @@ LightUSD provides MaterialX integration including parsing `.mtlx` files, color s
 
 ## Source Files
 
+Current (core) MaterialX path:
+
 | File | Description |
 |------|-------------|
-| `src/usdShade.hh` | MaterialXConfigAPI, OpenPBRSurface, UsdPreviewSurface, Material structs |
-| `src/usdMtlx.{hh,cc}` | MtlxOpenPBRSurface, MtlxAutodeskStandardSurface, MtlxUsdPreviewSurface; USD<->mtlx graph conversion |
-| `src/usdMtlx-write.cc` | `.mtlx` writer |
-| `src/color-space.{hh,cc}` | ColorSpace enum and token/utility functions |
-| `src/image-util.{hh,cc}` | Color space conversion functions |
-| `src/mtlx-dom.{hh,cc}` | MaterialX document object model |
-| `src/mtlx-xml-parser.{hh,cc}`, `src/mtlx-xml-tokenizer.{hh,cc}` | MaterialX XML parser/tokenizer |
-| `src/mtlx-simple-parser.{hh,cc}` | Simplified MaterialX parser |
-| `src/mtlx-usd-adapter.hh` | USD-MaterialX integration |
-| `src/prim-reconstruct-shader.cc` | Shader/Material/NodeGraph reconstruction (OpenPBRSurface, MtlxAutodeskStandardSurface, UsdPreviewSurface) |
-| `src/tydra/render-data-shader.hh` | OpenPBRSurfaceShader, PreviewSurfaceShader, RenderMaterial structs |
-| `src/tydra/render-data-material.cc` | ConvertMaterial / OpenPBR + UsdPreviewSurface shader conversion |
-| `src/tydra/render-data-material-mtlx.cc` | MaterialX NodeGraph traversal (`ExtractMtlxNodeGraphInfo`) |
-| `src/tydra/materialx-to-json.{hh,cc}` | MaterialX to JSON conversion |
+| `src/c/lightusd-mtlx.h` | Public C11 API for MaterialX documents (see [MaterialX documents](#materialx-documents-c11-core)) |
+| `src/c/mtlx/*.c`, `src/c/mtlx/mtlx-internal.h` | The C11 core: XML parsers, values, scoped attributes, XInclude, version upgrade, nodedef library, graph resolution/flattening, canonical dump, document layer |
+| `src/core/mtlx-file.cc` | File front ends: XInclude loading through the asset resolver and security policy, file reading |
+| `src/pcp/layer-registry-load.cc` | `.mtlx` layers: synthesizes `/MaterialX` (Materials, Shaders, NodeGraphs) from a document |
+| `src/tydra/materialx.cc`, `src/tydra/materialx-volume.cc` | Tydra `MtlxConverter`: materials, looks, volume evaluators |
+| `src/external/lightrt/mtlxrender/` | Renderer-side MaterialX evaluation (vendored LightRT); `mtlx_stdlib_defs.inc` is the generated standard-library nodedef table |
+| `tests/core/lmtlxinfo.cc` | Canonical resolved-document dump of a file (`lmtlxinfo [--upgrade] [--lib FILE]... FILE`) |
 | `web/js/src/lightusd/LightUSDMaterialX.js` | JS OpenPBR to Three.js conversion |
+
+Legacy (`LIGHTUSD_BUILD_LEGACY`, off by default):
+
+| File | Description |
+|------|-------------|
+| `src/legacy/usdShade.hh` | MaterialXConfigAPI, OpenPBRSurface, UsdPreviewSurface, Material structs |
+| `src/legacy/usdMtlx.{hh,cc}`, `src/legacy/usdMtlx-write.cc` | USD<->mtlx graph conversion, `.mtlx` writer |
+| `src/legacy/color-space.{hh,cc}`, `src/legacy/image-util.{hh,cc}` | ColorSpace enum, color space conversion functions |
+| `src/legacy/mtlx-xml-parser.{hh,cc}`, `src/legacy/mtlx-xml-tokenizer.{hh,cc}`, `src/legacy/mtlx-simple-parser.{hh,cc}`, `src/legacy/mtlx-usd-adapter.hh` | The former class-based XML parser, used only by the legacy pugixml-style adapter |
+| `src/legacy/prim-reconstruct-shader.cc` | Shader/Material/NodeGraph reconstruction |
+| `src/legacy/tydra/render-data-*.{hh,cc}` | Legacy Tydra shader structs and material conversion (`ExtractMtlxNodeGraphInfo`) |
+| `src/legacy/tydra/materialx-to-json.{hh,cc}` | MaterialX `<nodegraph>` element (C API) to JSON |
+
+## MaterialX documents (C11 core)
+
+`.mtlx` documents are parsed by a C11 core in `src/c/mtlx/`, used through
+`src/c/lightusd-mtlx.h`. It replaced the former C++ `MtlxDocument` classes
+(`src/core/mtlx-{dom,resolve}`); its output is byte-identical to them (see
+Verification below), except that malformed attributes such as `<a x=1/>` are
+now an error ("Malformed attribute in <a>") where the old class parser looped
+forever.
+
+```c
+#include "c/lightusd-mtlx.h"
+
+lu_mtlx_document *doc = lu_mtlx_document_create();
+if (!lu_mtlx_document_parse_file(doc, "material.mtlx")) {
+  fprintf(stderr, "%s\n", lu_mtlx_document_error(doc));
+}
+for (size_t i = 0; i < lu_mtlx_document_count(doc, LU_MTLX_MATERIALS); ++i) {
+  const lu_mtlx_elem *m = lu_mtlx_document_at(doc, LU_MTLX_MATERIALS, i);
+  lu_mtlx_material_refs refs;
+  lu_mtlx_material_refs_get(m, &refs);  /* surface / displacement / volume */
+  const lu_mtlx_elem *shader = lu_mtlx_document_find(doc, LU_MTLX_NODES, refs.surface);
+  for (size_t k = 0; shader && k < lu_mtlx_elem_count(shader, LU_MTLX_CHILD_INPUTS); ++k) {
+    const lu_mtlx_elem *in = lu_mtlx_elem_at(shader, LU_MTLX_CHILD_INPUTS, k);
+    lu_mtlx_value v;
+    if (lu_mtlx_input_value(in, &v)) { /* v.type, v.f, v.floats, v.s, ... */ lu_mtlx_value_free(&v); }
+  }
+}
+lu_mtlx_document_destroy(doc);
+```
+
+**Parsing.** `lu_mtlx_document_parse` reads an in-memory document without
+XInclude resolution (unknown versions are reported by
+`lu_mtlx_document_warning`). `lu_mtlx_document_parse_with_loader` resolves
+XIncludes through a caller callback; `lu_mtlx_document_parse_anchored` and
+`lu_mtlx_document_parse_file` resolve them relative to a path through
+LightUSD's asset resolver and security policy. Every parse then:
+
+1. expands XIncludes (included definitions first; the first element of a name
+   wins; library `fileprefix`/`geomprefix`/`colorspace`/`namespace` are
+   distributed onto children),
+2. upgrades the document to MaterialX 1.39 (1.22 onwards: channels/swizzle,
+   shaderref, thin film, interface names, geominfo, the 1.23-1.36 steps of the
+   reference implementation),
+3. inherits scoped attributes (`colorspace`, `fileprefix`, `geomprefix`,
+   `namespace`) onto every element,
+4. applies nodedef defaults (document and standard-library nodedefs) to
+   unconnected node inputs.
+
+**Elements.** The document is an element tree (tag, attributes, children).
+Classes follow the MaterialX document layout: *nodes* (top-level elements other
+than nodegraph / look / collection / surfacematerial / volumematerial / typedef
+/ geominfo), *nodegraphs* (their inputs, outputs and nodes), *materials*,
+*looks* (their `<materialassign>` children) and *collections*. Attribute getters
+return `""` for an absent attribute. `lu_mtlx_document_resolved_xml` serializes
+the processed document.
+
+**Graphs, units, looks.** `lu_mtlx_document_resolve_graphs` validates every
+nodegraph against the document's, an optional external library's and the
+standard nodedefs, and returns a dependency-first order.
+`lu_mtlx_document_flatten_graph` inlines graph-implemented nodes (bounded by
+`max_expansions`; the document is unchanged on failure).
+`lu_mtlx_document_convert_to_unit` converts `unit`/`unittype` inputs as
+MaterialX's `UnitConverterRegistry::convertToUnit`.
+`lu_mtlx_document_assignments` resolves a look (and inherited looks) for a
+geometry path through `geom` selectors and collections.
+
+**Layout.** One translation unit per concern, each small (the former single
+`mtlx-dom.cc` did not finish compiling under GCC 15 with ASan/UBSan; the
+largest C TU now compiles in about 3 s):
+
+| TU | Contents |
+|----|----------|
+| `mtlx-core.c` | strings, string vectors, element tree, scopes |
+| `mtlx-xml.c` | XML parser, class-parser front end, resolved-XML writer |
+| `mtlx-value.c` | names, types, value parsing/lexing, float formatting |
+| `mtlx-scope.c`, `mtlx-include.c` | scoped attributes, filenames, XInclude |
+| `mtlx-upgrade-{legacy,channels,shader}.c` | version upgrade, attribute inheritance |
+| `mtlx-stdlib.c`, `mtlx-library.c` | standard-library tables (static data), nodedef library and resolution, nodedef defaults |
+| `mtlx-resolve.c`, `mtlx-flatten.c`, `mtlx-dump.c` | graph validation, flattening, canonical dump |
+| `mtlx-doc.c`, `mtlx-units.c`, `mtlx-assign.c` | document layer, unit conversion, look assignments |
+
+Tree walks use explicit stacks; there is no global mutable state (the
+standard library is static tables read in place).
+
+**Verification.** During the port, each TU was compared with the C++ it
+replaced by differential harnesses (22,762 upgrade checks; 601,140 parser,
+value, scope and include checks; 473,461 library, resolve, flatten and dump
+checks), and the complete API was compared on 110 documents (repository
+`.mtlx` files, materialx-conformance fixtures, Lean vector documents): all
+byte-identical. Ongoing coverage: `core_test_mtlx_lean_vectors` (vectors
+generated by the Lean model of MaterialX 1.39), the `tool-lusdrender-mtlx-*`
+renders, `lusdchecker_materialx*`, and the `fuzz_mtlx_xml_parser` fuzz target
+(tests/fuzzer).
 
 ## Supported Shader Types
 
@@ -446,7 +547,7 @@ def Material "OpenPBRMaterial" {
 
 ### Completed
 
-- MaterialX XML parsing. `MaterialXParser::ValidateVersion()` accepts v1.36/1.37/1.38; newer versions parse with a warning.
+- MaterialX documents in C11 (`src/c/lightusd-mtlx.h`): XML parsing, XInclude, version upgrade from 1.22 to 1.39, scoped attributes, nodedef defaults, nodegraph validation and flattening, unit conversion, looks / material assignments / collections
 - Color space conversions (all MaterialX spaces; see table above)
 - MaterialXConfigAPI struct and `config:mtlx:*` attributes
 - OpenPBRSurface, MtlxAutodeskStandardSurface, UsdPreviewSurface shader structs
@@ -465,9 +566,7 @@ def Material "OpenPBRMaterial" {
 
 ### Not Yet Implemented
 
-- MaterialX `<xi:include>` / standard-library resolution
-- Geometry assignments and collections
-- Unit system support
+- Variants and variant assignments
 
 ## References
 

@@ -4666,7 +4666,7 @@ default with a matching document `geompropdef` creates a connected geometry
 node, preserving its `space` and `index` and sharing repeated uses; MaterialX
 1.39.5 confirms the UV and world-space examples. Missing,
 ambiguous or incompatible definitions fail without changing the output.
-The regression also calls `MtlxDocument::FlattenNodeGraph` on parsed documents,
+The regression also calls `lu_mtlx_document_flatten_graph` (formerly `MtlxDocument::FlattenNodeGraph`) on parsed documents,
 including external nodedefs and matching inherited scope, and checks that
 expansion-limit, differing-scope, token-scope and missing geometry-definition
 failures leave the document unchanged. Authored nodedef geometry-property
