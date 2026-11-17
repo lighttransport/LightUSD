@@ -151,12 +151,8 @@ set(LIGHTUSD_CORE_SOURCES
     diff/layer-diff-output.cc
 
     # PCP-style lazy composition cache (native to core)
-    # MaterialX XML stack (dependency-free): layer-registry synthesizes
-    # /MaterialX layers from referenced .mtlx documents.
-    mtlx-xml-tokenizer.cc
-    mtlx-xml-parser.cc
-    core/mtlx-dom.cc
-    core/mtlx-resolve.cc
+    # MaterialX: the C11 core (c/mtlx/*.c, globbed below) parses documents;
+    # layer-registry synthesizes /MaterialX layers from referenced .mtlx files.
     core/mtlx-file.cc
     pcp/load-rules.cc
     pcp/cache.cc
@@ -962,20 +958,6 @@ if(LIGHTUSD_BUILD_TESTS)
     )
     target_link_libraries(lmtlxinfo PRIVATE lightusd_core)
     set_target_properties(lmtlxinfo PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-
-    # Transitional oracle for the C11 MaterialX rewrite (tests/core/run_mtlx_diff.py).
-    add_executable(mtlx_oracle_dump
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/mtlx_oracle_dump.cc
-    )
-    target_link_libraries(mtlx_oracle_dump PRIVATE lightusd_core)
-    set_target_properties(mtlx_oracle_dump PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-    add_executable(mtlx_c_dump
-        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/mtlx_c_dump.cc
-    )
-    target_link_libraries(mtlx_c_dump PRIVATE lightusd_core)
-    set_target_properties(mtlx_c_dump PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).

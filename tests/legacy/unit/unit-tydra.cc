@@ -4,6 +4,7 @@
 
 #define TEST_NO_MAIN
 #include "acutest.h"
+#include "c/lightusd-mtlx.h"
 
 #include "unit-tydra.h"
 
@@ -2349,37 +2350,22 @@ void tydra_material_binding_validation_test(void) {
   }
 
   {
-    lightusd::legacy::mtlx::MtlxNodeGraph dom_graph;
-    dom_graph.SetName("NG_dom_interface");
-
-    auto tint = std::make_shared<lightusd::legacy::mtlx::MtlxInput>();
-    tint->SetName("tint");
-    tint->SetType("color3");
-    tint->SetValue(lightusd::legacy::mtlx::MtlxValue(std::vector<float>{0.25f, 0.5f, 0.75f}));
-    dom_graph.AddInput(tint);
-
-    auto multiply = std::make_shared<lightusd::legacy::mtlx::MtlxNode>();
-    multiply->SetName("mul");
-    multiply->SetCategory("multiply");
-    multiply->SetType("color3");
-    auto in1 = std::make_shared<lightusd::legacy::mtlx::MtlxInput>();
-    in1->SetName("in1");
-    in1->SetType("color3");
-    in1->SetInterfaceName("tint");
-    in1->SetChannels("rgb");
-    multiply->AddInput(in1);
-    auto in2 = std::make_shared<lightusd::legacy::mtlx::MtlxInput>();
-    in2->SetName("in2");
-    in2->SetType("color3");
-    in2->SetValue(lightusd::legacy::mtlx::MtlxValue(std::vector<float>{2.0f, 0.5f, 0.25f}));
-    multiply->AddInput(in2);
-    dom_graph.AddNode(multiply);
-
-    auto out = std::make_shared<lightusd::legacy::mtlx::MtlxOutput>();
-    out->SetName("out");
-    out->SetType("color3");
-    out->SetNodeName("mul");
-    dom_graph.AddOutput(out);
+    // The same graph as a MaterialX document, read through the C11 core.
+    static const char kGraph[] =
+        "<materialx version=\"1.39\">"
+        "<nodegraph name=\"NG_dom_interface\">"
+        "<input name=\"tint\" type=\"color3\" value=\"0.25, 0.5, 0.75\"/>"
+        "<multiply name=\"mul\" type=\"color3\">"
+        "<input name=\"in1\" type=\"color3\" interfacename=\"tint\" channels=\"rgb\"/>"
+        "<input name=\"in2\" type=\"color3\" value=\"2.0, 0.5, 0.25\"/>"
+        "</multiply>"
+        "<output name=\"out\" type=\"color3\" nodename=\"mul\"/>"
+        "</nodegraph></materialx>";
+    lu_mtlx_document *doc = lu_mtlx_document_create();
+    TEST_CHECK(doc && lu_mtlx_document_parse(doc, kGraph, sizeof(kGraph) - 1));
+    const lu_mtlx_elem *dom_graph =
+        doc ? lu_mtlx_document_find(doc, LU_MTLX_NODEGRAPHS, "NG_dom_interface") : nullptr;
+    TEST_CHECK(dom_graph != nullptr);
 
     std::string json;
     std::string conv_err;
@@ -2393,6 +2379,7 @@ void tydra_material_binding_validation_test(void) {
                std::string::npos);
     TEST_CHECK(json.find("\"channels\": \"rgb\"") != std::string::npos);
     TEST_CHECK(json.find("\"nodename\": \"mul\"") != std::string::npos);
+    lu_mtlx_document_destroy(doc);
   }
 }
 

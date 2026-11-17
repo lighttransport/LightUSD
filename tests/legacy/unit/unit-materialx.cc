@@ -32,7 +32,7 @@
 #include "composition.hh"
 #include "usdMtlx.hh"
 #include "asset-resolution.hh"
-#include "mtlx-xml-parser.hh"
+#include "legacy/mtlx-xml-parser.hh"
 #include "value-types.hh"
 #include "lightusd.hh"
 #include "math-util.inc"

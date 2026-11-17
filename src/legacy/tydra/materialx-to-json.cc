@@ -9,7 +9,9 @@
 #include <sstream>
 #include <cstdio>
 
-#include "core/mtlx-dom.hh"
+#include <cstdlib>
+
+#include "c/lightusd-mtlx.h"
 #include "core/prim.hh"
 #include "stage.hh"
 #include "usdShade.hh"  // For NodeGraph, Shader, ShaderNode
@@ -83,96 +85,80 @@ std::string StringVectorToJsonArray(const std::vector<std::string> &vec) {
 }
 
 // Helper: Convert MaterialX value to JSON value string
-static std::string MtlxValueToJsonValue(const mtlx::MtlxValue &value) {
+// JSON value of a MaterialX <input> value (lu_mtlx_input_value).
+static std::string MtlxValueToJsonValue(const lu_mtlx_value &value) {
   switch (value.type) {
-    case mtlx::MtlxValue::TYPE_NONE:
+    case LU_MTLX_VALUE_NONE:
       return "null";
-
-    case mtlx::MtlxValue::TYPE_FLOAT:
-      return std::to_string(value.float_val);
-
-    case mtlx::MtlxValue::TYPE_INT:
-      return std::to_string(value.int_val);
-
-    case mtlx::MtlxValue::TYPE_BOOL:
-      return value.bool_val ? "true" : "false";
-
-    case mtlx::MtlxValue::TYPE_STRING:
-      return "\"" + EscapeJsonString(value.string_val) + "\"";
-
-    case mtlx::MtlxValue::TYPE_FLOAT_VECTOR:
-      return FloatVectorToJsonArray(value.float_vec);
-
-    case mtlx::MtlxValue::TYPE_INT_VECTOR:
-      return IntVectorToJsonArray(value.int_vec);
-
-    case mtlx::MtlxValue::TYPE_STRING_VECTOR:
-      return StringVectorToJsonArray(value.string_vec);
+    case LU_MTLX_VALUE_FLOAT:
+      return std::to_string(value.f);
+    case LU_MTLX_VALUE_INT:
+      return std::to_string(value.i);
+    case LU_MTLX_VALUE_BOOL:
+      return value.b ? "true" : "false";
+    case LU_MTLX_VALUE_STRING:
+      return "\"" + EscapeJsonString(value.s) + "\"";
+    case LU_MTLX_VALUE_FLOATS:
+      return FloatVectorToJsonArray(std::vector<float>(value.floats, value.floats + value.nfloats));
+    case LU_MTLX_VALUE_INTS:
+      return IntVectorToJsonArray(std::vector<int>(value.ints, value.ints + value.nints));
   }
-
-  // Unreachable, but needed for some compilers
   return "null";
 }
 
-static void EmitMtlxDomInputJson(std::stringstream &ss,
-                                 const mtlx::MtlxInput &input,
+static std::string MtlxAttr(const lu_mtlx_elem *e, const char *key) {
+  return lu_mtlx_elem_get(e, key);
+}
+
+static void EmitMtlxDomInputJson(std::stringstream &ss, const lu_mtlx_elem *input,
                                  const std::string &indent) {
   ss << indent << "{\n";
-  ss << indent << "  \"name\": \"" << EscapeJsonString(input.GetName())
-     << "\",\n";
-  ss << indent << "  \"type\": \"" << EscapeJsonString(input.GetType())
-     << "\"";
+  ss << indent << "  \"name\": \"" << EscapeJsonString(MtlxAttr(input, "name")) << "\",\n";
+  ss << indent << "  \"type\": \"" << EscapeJsonString(MtlxAttr(input, "type")) << "\"";
 
-  if (!input.GetNodeName().empty()) {
-    ss << ",\n";
-    ss << indent << "  \"nodename\": \""
-       << EscapeJsonString(input.GetNodeName()) << "\"";
-    if (!input.GetOutput().empty()) {
-      ss << ",\n";
-      ss << indent << "  \"output\": \""
-         << EscapeJsonString(input.GetOutput()) << "\"";
-    }
-  } else if (!input.GetNodeGraph().empty()) {
-    ss << ",\n";
-    ss << indent << "  \"nodegraph\": \""
-       << EscapeJsonString(input.GetNodeGraph()) << "\"";
-    if (!input.GetOutput().empty()) {
-      ss << ",\n";
-      ss << indent << "  \"output\": \""
-         << EscapeJsonString(input.GetOutput()) << "\"";
-    }
-  } else if (!input.GetInterfaceName().empty()) {
-    ss << ",\n";
-    ss << indent << "  \"interfacename\": \""
-       << EscapeJsonString(input.GetInterfaceName()) << "\"";
-  } else if (input.GetValue().type != mtlx::MtlxValue::TYPE_NONE) {
-    ss << ",\n";
-    ss << indent << "  \"value\": " << MtlxValueToJsonValue(input.GetValue());
-  }
-
-  const std::string colorspace = input.GetColorSpace();
-  if (!colorspace.empty() && colorspace != colorspace::kLinRec709Scene) {
-    ss << ",\n";
-    ss << indent << "  \"colorspace\": \"" << EscapeJsonString(colorspace)
+  const std::string nodename = MtlxAttr(input, "nodename");
+  const std::string nodegraph = MtlxAttr(input, "nodegraph");
+  const std::string output = MtlxAttr(input, "output");
+  const std::string interfacename = MtlxAttr(input, "interfacename");
+  lu_mtlx_value value;
+  if (!lu_mtlx_input_value(input, &value)) value.type = LU_MTLX_VALUE_NONE;
+  if (!nodename.empty()) {
+    ss << ",\n" << indent << "  \"nodename\": \"" << EscapeJsonString(nodename) << "\"";
+    if (!output.empty())
+      ss << ",\n" << indent << "  \"output\": \"" << EscapeJsonString(output) << "\"";
+  } else if (!nodegraph.empty()) {
+    ss << ",\n" << indent << "  \"nodegraph\": \"" << EscapeJsonString(nodegraph) << "\"";
+    if (!output.empty())
+      ss << ",\n" << indent << "  \"output\": \"" << EscapeJsonString(output) << "\"";
+  } else if (!interfacename.empty()) {
+    ss << ",\n" << indent << "  \"interfacename\": \"" << EscapeJsonString(interfacename)
        << "\"";
+  } else if (value.type != LU_MTLX_VALUE_NONE) {
+    ss << ",\n" << indent << "  \"value\": " << MtlxValueToJsonValue(value);
   }
-  if (!input.GetChannels().empty()) {
-    ss << ",\n";
-    ss << indent << "  \"channels\": \""
-       << EscapeJsonString(input.GetChannels()) << "\"";
+  lu_mtlx_value_free(&value);
+
+  const std::string colorspace = MtlxAttr(input, "colorspace");
+  if (!colorspace.empty() && colorspace != colorspace::kLinRec709Scene) {
+    ss << ",\n" << indent << "  \"colorspace\": \"" << EscapeJsonString(colorspace) << "\"";
+  }
+  const std::string channels = MtlxAttr(input, "channels");
+  if (!channels.empty()) {
+    ss << ",\n" << indent << "  \"channels\": \"" << EscapeJsonString(channels) << "\"";
   }
 
   ss << "\n" << indent << "}";
 }
 
-// Convert MaterialX DOM NodeGraph to JSON
-bool ConvertMtlxNodeGraphToJson(
-    const mtlx::MtlxNodeGraph &nodegraph,
-    std::string *json_str,
-    std::string *err) {
-
+// Convert a MaterialX <nodegraph> element (c/lightusd-mtlx.h) to JSON
+bool ConvertMtlxNodeGraphToJson(const lu_mtlx_elem *nodegraph, std::string *json_str,
+                                std::string *err) {
   if (!json_str) {
     if (err) *err = "json_str is nullptr";
+    return false;
+  }
+  if (!nodegraph) {
+    if (err) *err = "nodegraph is nullptr";
     return false;
   }
 
@@ -180,61 +166,53 @@ bool ConvertMtlxNodeGraphToJson(
   ss << "{\n";
   ss << "  \"version\": \"1.39\",\n"; // MaterialX version (Blender 4.5+ compatible)
   ss << "  \"nodegraph\": {\n";
-  ss << "    \"name\": \"" << EscapeJsonString(nodegraph.GetName()) << "\",\n";
+  ss << "    \"name\": \"" << EscapeJsonString(MtlxAttr(nodegraph, "name")) << "\",\n";
 
   // Serialize nodegraph interface inputs.
   ss << "    \"inputs\": [\n";
-  const auto &graph_inputs = nodegraph.GetInputs();
-  for (size_t i = 0; i < graph_inputs.size(); i++) {
+  const size_t ninputs = lu_mtlx_elem_count(nodegraph, LU_MTLX_CHILD_INPUTS);
+  for (size_t i = 0; i < ninputs; i++) {
     if (i > 0) ss << ",\n";
-    EmitMtlxDomInputJson(ss, *graph_inputs[i], "      ");
+    EmitMtlxDomInputJson(ss, lu_mtlx_elem_at(nodegraph, LU_MTLX_CHILD_INPUTS, i), "      ");
   }
   ss << "\n    ],\n";
 
   // Serialize nodes
   ss << "    \"nodes\": [\n";
-  const auto &nodes = nodegraph.GetNodes();
-  for (size_t i = 0; i < nodes.size(); i++) {
-    const auto &node = nodes[i];
+  const size_t nnodes = lu_mtlx_elem_count(nodegraph, LU_MTLX_CHILD_GRAPH_NODES);
+  for (size_t i = 0; i < nnodes; i++) {
+    const lu_mtlx_elem *node = lu_mtlx_elem_at(nodegraph, LU_MTLX_CHILD_GRAPH_NODES, i);
     if (i > 0) ss << ",\n";
-
     ss << "      {\n";
-    ss << "        \"name\": \"" << EscapeJsonString(node->GetName()) << "\",\n";
-    ss << "        \"category\": \"" << EscapeJsonString(node->GetCategory()) << "\",\n";
-    ss << "        \"type\": \"" << EscapeJsonString(node->GetType()) << "\",\n";
-
-    // Serialize inputs
+    ss << "        \"name\": \"" << EscapeJsonString(MtlxAttr(node, "name")) << "\",\n";
+    ss << "        \"category\": \"" << EscapeJsonString(lu_mtlx_elem_category(node)) << "\",\n";
+    ss << "        \"type\": \"" << EscapeJsonString(MtlxAttr(node, "type")) << "\",\n";
     ss << "        \"inputs\": [\n";
-    const auto &inputs = node->GetInputs();
-    for (size_t j = 0; j < inputs.size(); j++) {
-      const auto &input = inputs[j];
+    const size_t node_inputs = lu_mtlx_elem_count(node, LU_MTLX_CHILD_INPUTS);
+    for (size_t j = 0; j < node_inputs; j++) {
       if (j > 0) ss << ",\n";
-      EmitMtlxDomInputJson(ss, *input, "          ");
+      EmitMtlxDomInputJson(ss, lu_mtlx_elem_at(node, LU_MTLX_CHILD_INPUTS, j), "          ");
     }
     ss << "\n        ]";
-
     ss << "\n      }";
   }
   ss << "\n    ],\n";
 
   // Serialize nodegraph outputs
   ss << "    \"outputs\": [\n";
-  const auto &outputs = nodegraph.GetOutputs();
-  for (size_t i = 0; i < outputs.size(); i++) {
-    const auto &output = outputs[i];
+  const size_t noutputs = lu_mtlx_elem_count(nodegraph, LU_MTLX_CHILD_OUTPUTS);
+  for (size_t i = 0; i < noutputs; i++) {
+    const lu_mtlx_elem *output = lu_mtlx_elem_at(nodegraph, LU_MTLX_CHILD_OUTPUTS, i);
     if (i > 0) ss << ",\n";
-
     ss << "      {\n";
-    ss << "        \"name\": \"" << EscapeJsonString(output->GetName()) << "\",\n";
-    ss << "        \"type\": \"" << EscapeJsonString(output->GetType()) << "\"";
-
-    // Connection from node
-    if (!output->GetNodeName().empty()) {
+    ss << "        \"name\": \"" << EscapeJsonString(MtlxAttr(output, "name")) << "\",\n";
+    ss << "        \"type\": \"" << EscapeJsonString(MtlxAttr(output, "type")) << "\"";
+    const std::string nodename = MtlxAttr(output, "nodename");
+    if (!nodename.empty()) {
       ss << ",\n";
-      ss << "        \"nodename\": \"" << EscapeJsonString(output->GetNodeName()) << "\",\n";
-      ss << "        \"output\": \"" << EscapeJsonString(output->GetOutput()) << "\"";
+      ss << "        \"nodename\": \"" << EscapeJsonString(nodename) << "\",\n";
+      ss << "        \"output\": \"" << EscapeJsonString(MtlxAttr(output, "output")) << "\"";
     }
-
     ss << "\n      }";
   }
   ss << "\n    ]\n";

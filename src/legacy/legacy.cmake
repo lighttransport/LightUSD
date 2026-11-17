@@ -583,8 +583,8 @@ set(LIGHTUSD_SOURCES
     ${PROJECT_SOURCE_DIR}/src/legacy/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
-    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
-    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/mtlx-xml-tokenizer.cc
+    ${PROJECT_SOURCE_DIR}/src/legacy/mtlx-xml-parser.cc
     ${PROJECT_SOURCE_DIR}/src/core/mtlx-dom.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/legacy/usdMtlx.cc

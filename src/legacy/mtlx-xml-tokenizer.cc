@@ -443,8 +443,18 @@ bool XMLTokenizer::NextToken(Token& token) {
 
   // If we're inside a tag, parse attributes
   if (in_tag_) {
+    const size_t before = position_;
     if (ParseAttribute(token)) {
       return true;
+    }
+    // An attribute that could not be parsed without consuming input would be
+    // retried forever (e.g. `<a x=1/>`): report a tokenizer error instead.
+    if (in_tag_ && position_ == before) {
+      in_tag_ = false;
+      position_ = size_;
+      token.type = TokenType::Error;
+      token.value = "Malformed attribute in <" + current_tag_name_ + ">";
+      return false;
     }
     // ParseAttribute returns false when a non-self-closing start tag consumes
     // its closing '>'. Return an empty text sentinel so callers that are

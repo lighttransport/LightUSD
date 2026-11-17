@@ -40,12 +40,6 @@ namespace legacy {}
 // a second (incomplete) `lightusd::legacy::...` type of the same name.
 namespace io { struct MMapFileHandle; }
 namespace minijson { class Value; }
-namespace mtlx {
-class MtlxNodeGraph;
-class MtlxNode;
-class MtlxInput;
-class MtlxOutput;
-}  // namespace mtlx
 namespace tydra { namespace import_asset { struct Options; } }
 
 LIGHTUSD_LEGACY_BRIDGE_NS(mcp)

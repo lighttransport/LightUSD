@@ -44,7 +44,7 @@
 #include "../../../src/tydra/urdf-to-usd.hh"
 #include "../../../src/pcp/cache.hh"
 #include "load-usd.hh"
-#include "core/mtlx-resolve.hh"
+#include "c/mtlx/mtlx-internal.h"
 #include "reader/usda-reader.hh"
 #include "schema/geom-mesh.hh"
 #include "schema/geom-point-instancer.hh"
@@ -249,7 +249,39 @@ void TestMtlxColorSpaceAliases() {
 }
 
 namespace {
-using namespace lightusd::mtlx;
+// A parsed MaterialX element (C11 core, c/mtlx/mtlx-internal.h) as plain C++
+// values, for reading the generated Lean vectors.
+struct MtlxElem {
+  std::string tag;
+  std::vector<std::pair<std::string, std::string>> attrs;
+  std::vector<MtlxElem> children;
+  std::string AttrOr(const std::string& key, const std::string& fallback = "") const {
+    for (const auto& kv : attrs)
+      if (kv.first == key) return kv.second;
+    return fallback;
+  }
+};
+
+MtlxElem FromCElem(const lu_mtlx_elem& e) {
+  MtlxElem out;
+  out.tag = e.tag;
+  for (size_t i = 0; i < e.nattrs; ++i) out.attrs.emplace_back(e.attrs[i].key, e.attrs[i].value);
+  for (size_t i = 0; i < e.nchildren; ++i) out.children.push_back(FromCElem(e.children[i]));
+  return out;
+}
+
+bool ParseMtlxXml(const std::string& xml, MtlxElem* root, std::string* err) {
+  lu_mtlx_elem e;
+  lu_mtlx_elem_init(&e);
+  lu_mtlx_sb sb;
+  lu_mtlx_sb_init(&sb);
+  const bool ok = lu_mtlx_parse_xml(xml.data(), xml.size(), &e, &sb);
+  if (ok) *root = FromCElem(e);
+  else *err = lu_mtlx_sb_str(&sb);
+  lu_mtlx_elem_free(&e);
+  lu_mtlx_sb_free(&sb);
+  return ok;
+}
 
 struct LeanMtlxEvalApproxVector {
   int id;
@@ -302,9 +334,12 @@ std::string MtlxValueForUsda(const std::string& type,
     return value == "0" || value == "0.000000" || value == "false"
                ? "false" : "true";
   }
-  MtlxTypedValue parsed;
-  if (!ParseMtlxValue(type, value, &parsed)) return {};
-  if (MtlxTypeArity(type) <= 1) return value;
+  lu_mtlx_typed_value parsed;
+  lu_mtlx_typed_value_init(&parsed);
+  const bool parsed_ok = lu_mtlx_parse_value(type.c_str(), value.c_str(), &parsed);
+  lu_mtlx_typed_value_free(&parsed);
+  if (!parsed_ok) return {};
+  if (lu_mtlx_type_arity(type.c_str()) <= 1) return value;
   return "(" + value + ")";
 }
 

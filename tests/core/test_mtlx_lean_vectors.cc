@@ -6,20 +6,537 @@
 // The expected values in tests/core/generated/lean-mtlx/*.inc are computed by
 // the Lean 4 formalization of MaterialX 1.39 in the materialx-conformance
 // repository (`lake exe mtlxspec-gen` in verif/lean). Each section replays one
-// vector table against src/core/mtlx-resolve. The tables are COMMITTED; this
-// binary is self-contained and never skips.
+// vector table against the C11 MaterialX core (src/c/mtlx). The tables are
+// COMMITTED; this binary is self-contained and never skips.
+//
+// The core is exercised through its public document API (c/lightusd-mtlx.h)
+// and its internal element-tree / library / graph functions
+// (c/mtlx/mtlx-internal.h). The small value types below (Elem, Library,
+// Document, ElemRef, ...) are test-local RAII conveniences over that C API so
+// the cases can be written as value trees; every operation is performed by the
+// C core.
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "core/mtlx-dom.hh"
-#include "core/mtlx-resolve.hh"
+#include "c/lightusd-mtlx.h"
+#include "c/mtlx/mtlx-internal.h"
 #include "pcp/layer-registry.hh"
 
-using namespace lightusd::mtlx;
+namespace {
+
+// ---- C string builder / string vector helpers ------------------------------
+
+struct Sb {
+  lu_mtlx_sb b;
+  Sb() { lu_mtlx_sb_init(&b); }
+  explicit Sb(const std::string &s) {
+    lu_mtlx_sb_init(&b);
+    lu_mtlx_sb_put(&b, s.data(), s.size());
+  }
+  ~Sb() { lu_mtlx_sb_free(&b); }
+  Sb(const Sb &) = delete;
+  Sb &operator=(const Sb &) = delete;
+  std::string str() const { return lu_mtlx_sb_str(&b); }
+};
+
+struct Strv {
+  lu_mtlx_strv s;
+  Strv() { lu_mtlx_strv_init(&s); }
+  explicit Strv(const std::vector<std::string> &v) {
+    lu_mtlx_strv_init(&s);
+    for (const std::string &x : v) lu_mtlx_strv_push(&s, x.c_str());
+  }
+  ~Strv() { lu_mtlx_strv_free(&s); }
+  Strv(const Strv &) = delete;
+  Strv &operator=(const Strv &) = delete;
+  std::vector<std::string> vec() const {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < s.n; i++) out.push_back(s.v[i]);
+    return out;
+  }
+};
+
+// ---- element value tree (converted to/from lu_mtlx_elem) -------------------
+
+struct Elem {
+  std::string tag;
+  std::vector<std::pair<std::string, std::string>> attrs;  // document order
+  std::vector<Elem> children;
+
+  const std::string *Attr(const std::string &key) const {
+    for (const auto &a : attrs)
+      if (a.first == key) return &a.second;
+    return nullptr;
+  }
+  std::string AttrOr(const std::string &key,
+                     const std::string &fallback = std::string()) const {
+    const std::string *v = Attr(key);
+    return v ? *v : fallback;
+  }
+  std::string Name() const { return AttrOr("name"); }
+  void SetAttr(const std::string &key, const std::string &value) {
+    std::vector<std::pair<std::string, std::string>> kept;
+    for (auto &a : attrs)
+      if (a.first != key) kept.push_back(std::move(a));
+    kept.emplace_back(key, value);
+    attrs = std::move(kept);
+  }
+};
+
+// `d` uninitialised.
+static void ToC(const Elem &s, lu_mtlx_elem *d) {
+  lu_mtlx_elem_init(d);
+  lu_mtlx_elem_set_tag(d, s.tag.c_str());
+  for (const auto &a : s.attrs) lu_mtlx_attr_append(d, a.first.c_str(), a.second.c_str());
+  for (const Elem &c : s.children) {
+    lu_mtlx_elem cc;
+    ToC(c, &cc);
+    lu_mtlx_child_push(d, &cc);
+  }
+}
+
+static Elem FromC(const lu_mtlx_elem *s) {
+  Elem d;
+  d.tag = s->tag ? s->tag : "";
+  for (size_t i = 0; i < s->nattrs; i++)
+    d.attrs.emplace_back(s->attrs[i].key, s->attrs[i].value);
+  for (size_t i = 0; i < s->nchildren; i++) d.children.push_back(FromC(&s->children[i]));
+  return d;
+}
+
+struct CElem {
+  lu_mtlx_elem e;
+  CElem() { lu_mtlx_elem_init(&e); }
+  explicit CElem(const Elem &s) { ToC(s, &e); }
+  ~CElem() { lu_mtlx_elem_free(&e); }
+  CElem(const CElem &) = delete;
+  CElem &operator=(const CElem &) = delete;
+};
+
+// A graph argument that is a child of the document argument is passed as the
+// corresponding child of the converted document (same identity as before).
+struct DocGraph {
+  CElem doc;
+  CElem own;
+  const lu_mtlx_elem *graph = nullptr;
+  DocGraph(const Elem &document, const Elem &g) : doc(document) {
+    for (size_t i = 0; i < document.children.size(); i++) {
+      if (&document.children[i] == &g) {
+        graph = &doc.e.children[i];
+        return;
+      }
+    }
+    lu_mtlx_elem_free(&own.e);
+    ToC(g, &own.e);
+    graph = &own.e;
+  }
+};
+
+// An empty enclosing scope (every caller of the graph/library functions in
+// this test passes `{}`).
+struct NoScope {};
+
+struct Scope {
+  lu_mtlx_scope s;
+  Scope() { lu_mtlx_scope_init(&s); }
+  ~Scope() { lu_mtlx_scope_free(&s); }
+  Scope(const Scope &) = delete;
+  Scope &operator=(const Scope &) = delete;
+};
+
+// ---- library ---------------------------------------------------------------
+
+struct Library {
+  lu_mtlx_library l;
+  Library() { lu_mtlx_library_init(&l); }
+  Library(const Library &o) {
+    lu_mtlx_library_init(&l);
+    lu_mtlx_library_add_library(&l, &o.l);
+  }
+  Library &operator=(const Library &o) {
+    if (this != &o) {
+      lu_mtlx_library_free(&l);
+      lu_mtlx_library_init(&l);
+      lu_mtlx_library_add_library(&l, &o.l);
+    }
+    return *this;
+  }
+  ~Library() { lu_mtlx_library_free(&l); }
+  void AddFrom(const Elem &root) {
+    CElem c(root);
+    lu_mtlx_library_add_from(&l, &c.e);
+  }
+  void AddLibrary(const Library &o) { lu_mtlx_library_add_library(&l, &o.l); }
+  void AddNodeDef(const Elem &e, NoScope) {
+    CElem c(e);
+    Scope outer;
+    lu_mtlx_library_add_nodedef(&l, &c.e, &outer.s);
+  }
+  const lu_mtlx_nodedef *ResolveStrict(const Elem &node) const {
+    CElem c(node);
+    Scope outer;
+    return lu_mtlx_library_resolve_strict(&l, &c.e, &outer.s);
+  }
+  const lu_mtlx_nodedef *ResolveReference(const Elem &node) const {
+    CElem c(node);
+    Scope outer;
+    return lu_mtlx_library_resolve_reference(&l, &c.e, &outer.s);
+  }
+  const lu_mtlx_nodedef *ResolveRough(const Elem &node) const {
+    CElem c(node);
+    Scope outer;
+    return lu_mtlx_library_resolve_rough(&l, &c.e, &outer.s);
+  }
+};
+
+// ---- element-tree functions of the core ------------------------------------
+
+static bool ParseMtlxXml(const std::string &xml, Elem *root, std::string *err) {
+  CElem c;
+  Sb e(*err);
+  const bool ok = lu_mtlx_parse_xml(xml.data(), xml.size(), &c.e, &e.b) != 0;
+  *err = e.str();
+  if (ok) *root = FromC(&c.e);
+  return ok;
+}
+
+struct ResolvedGraph {
+  std::vector<std::string> node_order;
+};
+
+static bool ResolveMtlxGraph(const Elem &document, const Elem &graph,
+                             const Library &library, NoScope,
+                             ResolvedGraph *resolved, std::string *err) {
+  DocGraph dg(document, graph);
+  Scope outer;
+  Strv order(resolved->node_order);
+  Sb e(*err);
+  const bool ok = lu_mtlx_resolve_graph(&dg.doc.e, dg.graph, &library.l, &outer.s,
+                                        &order.s, &e.b) != 0;
+  resolved->node_order = order.vec();
+  *err = e.str();
+  return ok;
+}
+
+static bool ResolveMtlxGraphs(const Elem &document, const Library &library,
+                              std::vector<std::string> *graph_order, std::string *err) {
+  CElem doc(document);
+  Strv order(*graph_order);
+  Sb e(*err);
+  const bool ok = lu_mtlx_resolve_graphs(&doc.e, &library.l, &order.s, &e.b) != 0;
+  *graph_order = order.vec();
+  *err = e.str();
+  return ok;
+}
+
+static bool FlattenMtlxGraphCall(const Elem &document, const Elem &graph,
+                                 const Library &library, NoScope,
+                                 const std::string &call_name, Elem *flattened,
+                                 std::string *err) {
+  DocGraph dg(document, graph);
+  Scope outer;
+  CElem out(*flattened);
+  Sb e(*err);
+  const bool ok = lu_mtlx_flatten_graph_call(&dg.doc.e, dg.graph, &library.l, &outer.s,
+                                             call_name.c_str(), &out.e, &e.b) != 0;
+  *flattened = FromC(&out.e);
+  *err = e.str();
+  return ok;
+}
+
+static bool FlattenMtlxGraph(const Elem &document, const Elem &graph,
+                             const Library &library, NoScope, size_t max_expansions,
+                             Elem *flattened, std::string *err) {
+  DocGraph dg(document, graph);
+  Scope outer;
+  CElem out(*flattened);
+  Sb e(*err);
+  const bool ok = lu_mtlx_flatten_graph(&dg.doc.e, dg.graph, &library.l, &outer.s,
+                                        max_expansions, &out.e, &e.b) != 0;
+  *flattened = FromC(&out.e);
+  *err = e.str();
+  return ok;
+}
+
+static std::string DumpMtlxDocument(const Library &lib, const Elem &root) {
+  CElem c(root);
+  Sb out;
+  lu_mtlx_dump_document(&lib.l, &c.e, &out.b);
+  return out.str();
+}
+
+using IncludeLoader = std::function<bool(const std::string &href, std::string *xml)>;
+
+static int IncludeLoaderThunk(void *user, const char *href, const char * /*including*/,
+                              char **xml, size_t *len) {
+  const IncludeLoader &loader = *static_cast<const IncludeLoader *>(user);
+  std::string text;
+  if (!loader(href, &text)) return 0;
+  char *buf = static_cast<char *>(std::malloc(text.size() + 1));
+  if (!buf) return 0;
+  std::memcpy(buf, text.data(), text.size());
+  buf[text.size()] = '\0';
+  *xml = buf;
+  *len = text.size();
+  return 1;
+}
+
+static bool ExpandMtlxIncludes(Elem *root, const IncludeLoader &loader, std::string *err) {
+  CElem c(*root);
+  Sb e(*err);
+  const bool ok = lu_mtlx_expand_includes(&c.e, IncludeLoaderThunk,
+                                          const_cast<IncludeLoader *>(&loader), &e.b) != 0;
+  *root = FromC(&c.e);
+  *err = e.str();
+  return ok;
+}
+
+// ---- typed values ----------------------------------------------------------
+
+struct TypedValue {
+  lu_mtlx_typed_value v;
+  TypedValue() { lu_mtlx_typed_value_init(&v); }
+  ~TypedValue() { lu_mtlx_typed_value_free(&v); }
+  TypedValue(const TypedValue &) = delete;
+  TypedValue &operator=(const TypedValue &) = delete;
+};
+
+// ---- documents (public API) ------------------------------------------------
+
+// The typed value of an <input> (lu_mtlx_input_value), owned.
+struct InputValue {
+  enum Type {
+    TYPE_NONE,
+    TYPE_BOOL,
+    TYPE_INT,
+    TYPE_FLOAT,
+    TYPE_STRING,
+    TYPE_FLOAT_VECTOR,
+    TYPE_INT_VECTOR
+  };
+  Type type = TYPE_NONE;
+  bool bool_val = false;
+  int int_val = 0;
+  float float_val = 0.0f;
+  std::string string_val;
+  std::vector<float> float_vec;
+  std::vector<int> int_vec;
+};
+
+// A borrowed element of a document (nullptr when absent).
+struct ElemRef {
+  const lu_mtlx_elem *e = nullptr;
+  ElemRef() = default;
+  ElemRef(std::nullptr_t) {}
+  explicit ElemRef(const lu_mtlx_elem *p) : e(p) {}
+  explicit operator bool() const { return e != nullptr; }
+  bool operator!() const { return e == nullptr; }
+  const ElemRef *operator->() const { return this; }
+
+  std::string Get(const char *key) const { return lu_mtlx_elem_get(e, key); }
+  std::string GetName() const { return Get("name"); }
+  std::string GetType() const { return Get("type"); }
+  std::string GetNodeDef() const { return Get("nodedef"); }
+  std::string GetCategory() const { return lu_mtlx_elem_category(e); }
+  std::string GetNodeName() const { return Get("nodename"); }
+  std::string GetNodeGraph() const { return Get("nodegraph"); }
+  std::string GetOutput() const { return Get("output"); }
+  std::string GetChannels() const { return Get("channels"); }
+  std::string GetUnit() const { return Get("unit"); }
+  std::string GetUnitType() const { return Get("unittype"); }
+  std::string GetColorSpace() const { return Get("colorspace"); }
+  std::string GetFilePrefix() const { return Get("fileprefix"); }
+  std::string GetGeom() const { return Get("geom"); }
+  std::string GetCollection() const { return Get("collection"); }
+  std::string GetMaterial() const { return Get("material"); }
+  std::string GetSurfaceShader() const {
+    lu_mtlx_material_refs refs;
+    lu_mtlx_material_refs_get(e, &refs);
+    return refs.surface ? refs.surface : "";
+  }
+
+  std::vector<ElemRef> List(lu_mtlx_children which) const {
+    std::vector<ElemRef> out;
+    const size_t n = lu_mtlx_elem_count(e, which);
+    for (size_t i = 0; i < n; i++) out.emplace_back(lu_mtlx_elem_at(e, which, i));
+    return out;
+  }
+  ElemRef Find(lu_mtlx_children which, const std::string &name) const {
+    return ElemRef(lu_mtlx_elem_find(e, which, name.c_str()));
+  }
+  ElemRef GetInput(const std::string &name) const { return Find(LU_MTLX_CHILD_INPUTS, name); }
+  std::vector<ElemRef> GetInputs() const { return List(LU_MTLX_CHILD_INPUTS); }
+  std::vector<ElemRef> GetOutputs() const { return List(LU_MTLX_CHILD_OUTPUTS); }
+  std::vector<ElemRef> GetNodes() const { return List(LU_MTLX_CHILD_GRAPH_NODES); }
+  ElemRef GetNode(const std::string &name) const { return Find(LU_MTLX_CHILD_GRAPH_NODES, name); }
+  std::vector<ElemRef> GetMaterialAssignments() const { return List(LU_MTLX_CHILD_ASSIGNMENTS); }
+  ElemRef GetMaterialAssignment(const std::string &name) const {
+    return Find(LU_MTLX_CHILD_ASSIGNMENTS, name);
+  }
+
+  InputValue GetValue() const {
+    InputValue out;
+    lu_mtlx_value v;
+    std::memset(&v, 0, sizeof(v));
+    if (!lu_mtlx_input_value(e, &v)) return out;
+    switch (v.type) {
+      case LU_MTLX_VALUE_NONE: break;
+      case LU_MTLX_VALUE_BOOL: out.type = InputValue::TYPE_BOOL; out.bool_val = v.b != 0; break;
+      case LU_MTLX_VALUE_INT: out.type = InputValue::TYPE_INT; out.int_val = v.i; break;
+      case LU_MTLX_VALUE_FLOAT: out.type = InputValue::TYPE_FLOAT; out.float_val = v.f; break;
+      case LU_MTLX_VALUE_STRING:
+        out.type = InputValue::TYPE_STRING;
+        out.string_val = v.s ? v.s : "";
+        break;
+      case LU_MTLX_VALUE_FLOATS:
+        out.type = InputValue::TYPE_FLOAT_VECTOR;
+        out.float_vec.assign(v.floats, v.floats + v.nfloats);
+        break;
+      case LU_MTLX_VALUE_INTS:
+        out.type = InputValue::TYPE_INT_VECTOR;
+        out.int_vec.assign(v.ints, v.ints + v.nints);
+        break;
+    }
+    lu_mtlx_value_free(&v);
+    return out;
+  }
+  bool GetValueAsInt(int &out) const {
+    const InputValue v = GetValue();
+    if (v.type != InputValue::TYPE_INT) return false;
+    out = v.int_val;
+    return true;
+  }
+  bool GetValueAsFloat(float &out) const {
+    const InputValue v = GetValue();
+    if (v.type != InputValue::TYPE_FLOAT) return false;
+    out = v.float_val;
+    return true;
+  }
+  bool GetValueAsString(std::string &out) const {
+    const InputValue v = GetValue();
+    if (v.type != InputValue::TYPE_STRING) return false;
+    out = v.string_val;
+    return true;
+  }
+  bool GetValueAsFloatVector(std::vector<float> &out) const {
+    const InputValue v = GetValue();
+    if (v.type != InputValue::TYPE_FLOAT_VECTOR) return false;
+    out = v.float_vec;
+    return true;
+  }
+};
+
+struct ResolvedAssignment {
+  ElemRef assignment;
+  ElemRef material;
+};
+
+static std::string TakeError(char *e) {
+  std::string s = e ? e : "";
+  std::free(e);
+  return s;
+}
+
+struct Document {
+  lu_mtlx_document *d;
+  Document() : d(lu_mtlx_document_create()) {}
+  ~Document() { lu_mtlx_document_destroy(d); }
+  Document(const Document &) = delete;
+  Document &operator=(const Document &) = delete;
+
+  bool ParseFromXML(const std::string &xml) {
+    return lu_mtlx_document_parse(d, xml.data(), xml.size()) != 0;
+  }
+  bool ParseFromXML(const std::string &xml, const std::string &anchor) {
+    return lu_mtlx_document_parse_anchored(d, xml.data(), xml.size(), anchor.c_str()) != 0;
+  }
+  bool ParseFromFile(const std::string &path) {
+    return lu_mtlx_document_parse_file(d, path.c_str()) != 0;
+  }
+  std::string GetResolvedXML() const { return TakeError(lu_mtlx_document_resolved_xml(d)); }
+  std::string GetError() const { return lu_mtlx_document_error(d); }
+  std::string GetVersion() const { return lu_mtlx_document_version(d); }
+
+  bool ResolveNodeGraphs(const lu_mtlx_library *lib, std::vector<std::string> *graph_order,
+                         std::string *err) const {
+    char **order = nullptr;
+    size_t count = 0;
+    char *error = nullptr;
+    const bool ok = lu_mtlx_document_resolve_graphs(d, lib, &order, &count, &error) != 0;
+    graph_order->clear();
+    for (size_t i = 0; i < count; i++) graph_order->push_back(order[i]);
+    lu_mtlx_free_strings(order, count);
+    *err = TakeError(error);
+    return ok;
+  }
+  bool ResolveNodeGraphs(std::vector<std::string> *graph_order, std::string *err) const {
+    return ResolveNodeGraphs(nullptr, graph_order, err);
+  }
+  bool ResolveNodeGraphs(const Library &lib, std::vector<std::string> *graph_order,
+                         std::string *err) const {
+    return ResolveNodeGraphs(&lib.l, graph_order, err);
+  }
+  bool FlattenNodeGraph(const std::string &graph, const lu_mtlx_library *lib,
+                        size_t max_expansions, std::string *err) {
+    char *error = nullptr;
+    const bool ok =
+        lu_mtlx_document_flatten_graph(d, graph.c_str(), lib, max_expansions, &error) != 0;
+    *err = TakeError(error);
+    return ok;
+  }
+  bool FlattenNodeGraph(const std::string &graph, size_t max_expansions, std::string *err) {
+    return FlattenNodeGraph(graph, nullptr, max_expansions, err);
+  }
+  bool FlattenNodeGraph(const std::string &graph, const Library &lib, size_t max_expansions,
+                        std::string *err) {
+    return FlattenNodeGraph(graph, &lib.l, max_expansions, err);
+  }
+  bool ConvertToUnit(const std::string &unit_type, const std::string &target_unit) {
+    return lu_mtlx_document_convert_to_unit(d, unit_type.c_str(), target_unit.c_str()) != 0;
+  }
+  bool GetMaterialAssignmentsForGeometry(const std::string &look, const std::string &geometry,
+                                         std::vector<ResolvedAssignment> *out,
+                                         std::string *err) const {
+    lu_mtlx_assignment *v = nullptr;
+    size_t n = 0;
+    char *error = nullptr;
+    const bool ok =
+        lu_mtlx_document_assignments(d, look.c_str(), geometry.c_str(), &v, &n, &error) != 0;
+    out->clear();
+    for (size_t i = 0; i < n; i++)
+      out->push_back({ElemRef(v[i].assignment), ElemRef(v[i].material)});
+    std::free(v);
+    *err = TakeError(error);
+    return ok;
+  }
+
+  std::vector<ElemRef> List(lu_mtlx_class cls) const {
+    std::vector<ElemRef> out;
+    const size_t n = lu_mtlx_document_count(d, cls);
+    for (size_t i = 0; i < n; i++) out.emplace_back(lu_mtlx_document_at(d, cls, i));
+    return out;
+  }
+  std::vector<ElemRef> GetNodes() const { return List(LU_MTLX_NODES); }
+  std::vector<ElemRef> GetNodeGraphs() const { return List(LU_MTLX_NODEGRAPHS); }
+  std::vector<ElemRef> GetMaterials() const { return List(LU_MTLX_MATERIALS); }
+  std::vector<ElemRef> GetLooks() const { return List(LU_MTLX_LOOKS); }
+  ElemRef Find(lu_mtlx_class cls, const std::string &name) const {
+    return ElemRef(lu_mtlx_document_find(d, cls, name.c_str()));
+  }
+  ElemRef FindNode(const std::string &name) const { return Find(LU_MTLX_NODES, name); }
+  ElemRef FindNodeGraph(const std::string &name) const { return Find(LU_MTLX_NODEGRAPHS, name); }
+  ElemRef FindMaterial(const std::string &name) const { return Find(LU_MTLX_MATERIALS, name); }
+  ElemRef FindLook(const std::string &name) const { return Find(LU_MTLX_LOOKS, name); }
+};
+
+}  // namespace
 
 static int g_fail = 0;
 static int g_checks = 0;
@@ -61,52 +578,52 @@ static bool Close(double a, double b) {
   return std::fabs(a - b) <= scale * 1e-15;
 }
 
-static const char *KindName(MtlxValueKind k) {
+static const char *KindName(lu_mtlx_value_kind k) {
   switch (k) {
-    case MtlxValueKind::None: return "none";
-    case MtlxValueKind::Int: return "int";
-    case MtlxValueKind::Bool: return "bool";
-    case MtlxValueKind::Num: return "num";
-    case MtlxValueKind::Agg: return "agg";
-    case MtlxValueKind::Str: return "str";
-    case MtlxValueKind::Ints: return "ints";
-    case MtlxValueKind::Nums: return "nums";
-    case MtlxValueKind::Strs: return "strs";
+    case LU_MTLX_V_NONE: return "none";
+    case LU_MTLX_V_INT: return "int";
+    case LU_MTLX_V_BOOL: return "bool";
+    case LU_MTLX_V_NUM: return "num";
+    case LU_MTLX_V_AGG: return "agg";
+    case LU_MTLX_V_STR: return "str";
+    case LU_MTLX_V_INTS: return "ints";
+    case LU_MTLX_V_NUMS: return "nums";
+    case LU_MTLX_V_STRS: return "strs";
   }
   return "?";
 }
 
-static bool PayloadMatches(const MtlxTypedValue &v, const std::string &payload) {
+static bool PayloadMatches(const lu_mtlx_typed_value &v, const std::string &payload) {
   switch (v.kind) {
-    case MtlxValueKind::None: return payload.empty();
-    case MtlxValueKind::Int: return std::to_string(v.i) == payload;
-    case MtlxValueKind::Bool: return payload == (v.b ? "true" : "false");
-    case MtlxValueKind::Num: return Close(v.num, Rat(payload));
-    case MtlxValueKind::Str: return v.str == payload;
-    case MtlxValueKind::Agg:
-    case MtlxValueKind::Nums: {
+    case LU_MTLX_V_NONE: return payload.empty();
+    case LU_MTLX_V_INT: return std::to_string(v.i) == payload;
+    case LU_MTLX_V_BOOL: return payload == (v.b ? "true" : "false");
+    case LU_MTLX_V_NUM: return Close(v.num, Rat(payload));
+    case LU_MTLX_V_STR: return std::string(v.str ? v.str : "") == payload;
+    case LU_MTLX_V_AGG:
+    case LU_MTLX_V_NUMS: {
       const std::vector<std::string> parts = Split(payload, ',');
-      if (parts.size() != v.nums.size()) return false;
+      if (parts.size() != v.nnums) return false;
       for (size_t i = 0; i < parts.size(); i++) {
         if (!Close(v.nums[i], Rat(parts[i]))) return false;
       }
       return true;
     }
-    case MtlxValueKind::Ints: {
+    case LU_MTLX_V_INTS: {
       const std::vector<std::string> parts = Split(payload, ',');
-      if (parts.size() != v.ints.size()) return false;
+      if (parts.size() != v.nints) return false;
       for (size_t i = 0; i < parts.size(); i++) {
         if (std::to_string(v.ints[i]) != parts[i]) return false;
       }
       return true;
     }
-    case MtlxValueKind::Strs: {
+    case LU_MTLX_V_STRS: {
       // The model's empty array and its one-empty-member array both print as
       // "", so compare through the same join.
       std::string joined;
-      for (size_t i = 0; i < v.strs.size(); i++) {
+      for (size_t i = 0; i < v.strs.n; i++) {
         if (i) joined.push_back('\037');
-        joined += v.strs[i];
+        joined += v.strs.v[i];
       }
       return joined == payload;
     }
@@ -116,8 +633,8 @@ static bool PayloadMatches(const MtlxTypedValue &v, const std::string &payload) 
 
 static void CheckName(int id, const char *text, int spec, int ref) {
   g_checks++;
-  if (IsValidMtlxName(text) != (spec != 0)) Fail("MTLX_NAME", id, "strict validity");
-  if (IsReferenceValidMtlxName(text) != (ref != 0)) {
+  if ((lu_mtlx_is_valid_name(text) != 0) != (spec != 0)) Fail("MTLX_NAME", id, "strict validity");
+  if ((lu_mtlx_is_reference_valid_name(text) != 0) != (ref != 0)) {
     Fail("MTLX_NAME", id, "reference validity");
   }
 }
@@ -125,8 +642,9 @@ static void CheckName(int id, const char *text, int spec, int ref) {
 static void CheckValue(int id, const char *type, const char *text, int ok,
                        const char *kind, const char *payload) {
   g_checks++;
-  MtlxTypedValue v;
-  const bool got = ParseMtlxValue(type, text, &v);
+  TypedValue tv;
+  const lu_mtlx_typed_value &v = tv.v;
+  const bool got = lu_mtlx_parse_value(type, text, &tv.v) != 0;
   if (got != (ok != 0)) {
     Fail("MTLX_VALUE", id, std::string("acceptance of [") + text + "] as " + type);
     return;
@@ -141,8 +659,9 @@ static void CheckValue(int id, const char *type, const char *text, int ok,
 
 static void CheckDefault(const char *type, const char *kind, const char *payload) {
   g_checks++;
-  MtlxTypedValue v;
-  if (!DefaultMtlxValue(type, &v)) {
+  TypedValue tv;
+  const lu_mtlx_typed_value &v = tv.v;
+  if (!lu_mtlx_default_value(type, &tv.v)) {
     Fail("MTLX_DEFAULT", 0, std::string("no default for ") + type);
     return;
   }
@@ -154,37 +673,42 @@ static void CheckDefault(const char *type, const char *kind, const char *payload
 static void CheckScope(int id, const char *xml, const char *path, int has_fn,
                        const char *fn, const char *cs) {
   g_checks++;
-  MtlxElem root;
-  std::string err;
-  if (!ParseMtlxXml(xml, &root, &err)) {
-    Fail("MTLX_SCOPE", id, "parse: " + err);
+  CElem root;
+  Sb err;
+  if (!lu_mtlx_parse_xml(xml, std::strlen(xml), &root.e, &err.b)) {
+    Fail("MTLX_SCOPE", id, "parse: " + err.str());
     return;
   }
-  MtlxScope chain = {&root};
+  // Outermost first while walking; the scope is innermost first.
+  std::vector<const lu_mtlx_elem *> walk = {&root.e};
   for (const std::string &name : Split(path, '/')) {
-    const MtlxElem *c = chain.front()->Child(name);
+    const lu_mtlx_elem *c = lu_mtlx_child_named(walk.back(), name.c_str());
     if (!c) {
       Fail("MTLX_SCOPE", id, "path " + name);
       return;
     }
-    chain.insert(chain.begin(), c);
+    walk.push_back(c);
   }
-  std::string got_fn;
-  const bool got = ResolvedMtlxFilename(chain, &got_fn);
+  Scope chain;
+  for (size_t i = walk.size(); i-- > 0;) lu_mtlx_scope_push(&chain.s, walk[i]);
+  Sb fn_sb;
+  const bool got = lu_mtlx_resolved_filename(&chain.s, &fn_sb.b) != 0;
+  const std::string got_fn = fn_sb.str();
   if (got != (has_fn != 0) || (got && got_fn != fn)) {
     Fail("MTLX_SCOPE", id, "filename [" + got_fn + "] != [" + fn + "]");
   }
-  std::string got_cs;
-  (void)ActiveMtlxColorSpace(chain, &got_cs);
+  Sb cs_sb;
+  (void)lu_mtlx_active_colorspace(&chain.s, &cs_sb.b);
+  const std::string got_cs = cs_sb.str();
   if (got_cs != cs) Fail("MTLX_SCOPE", id, "colorspace [" + got_cs + "] != [" + cs + "]");
 }
 
-static std::string Listing(const MtlxElem &root) {
+static std::string Listing(const Elem &root) {
   static const char *const kKeys[] = {"fileprefix", "geomprefix", "colorspace",
                                       "namespace"};
   std::string out;
   for (size_t i = 0; i < root.children.size(); i++) {
-    const MtlxElem &c = root.children[i];
+    const Elem &c = root.children[i];
     if (i) out.push_back(',');
     out += c.tag + ":" + c.Name() + "[";
     bool first = true;
@@ -204,7 +728,7 @@ static void CheckInclude(int id, const char *main_xml, const char *href_a,
                          const char *xml_a, const char *href_b,
                          const char *xml_b, int ok, const char *listing) {
   g_checks++;
-  MtlxElem root;
+  Elem root;
   std::string err;
   if (!ParseMtlxXml(main_xml, &root, &err)) {
     Fail("MTLX_INCLUDE", id, "parse: " + err);
@@ -234,10 +758,10 @@ static void CheckInclude(int id, const char *main_xml, const char *href_a,
   }
 }
 
-static MtlxLibrary g_resolve_lib;
+static Library g_resolve_lib;
 
 static void SetResolveLib(const char *xml) {
-  MtlxElem root;
+  Elem root;
   std::string err;
   if (!ParseMtlxXml(xml, &root, &err)) {
     Fail("MTLX_RESOLVE_LIB", 0, "parse: " + err);
@@ -249,35 +773,35 @@ static void SetResolveLib(const char *xml) {
 static void CheckResolve(int id, const char *node_xml, const char *strict,
                          const char *ref, const char *rough) {
   g_checks++;
-  MtlxElem node;
+  Elem node;
   std::string err;
   if (!ParseMtlxXml(node_xml, &node, &err)) {
     Fail("MTLX_RESOLVE", id, "parse: " + err);
     return;
   }
-  const MtlxNodeDefInfo *s = g_resolve_lib.ResolveStrict(node);
-  const MtlxNodeDefInfo *r = g_resolve_lib.ResolveReference(node);
-  if ((s ? s->name : std::string()) != strict) {
-    Fail("MTLX_RESOLVE", id, "strict [" + (s ? s->name : std::string()) + "]");
+  const lu_mtlx_nodedef *s = g_resolve_lib.ResolveStrict(node);
+  const lu_mtlx_nodedef *r = g_resolve_lib.ResolveReference(node);
+  if ((s ? std::string(s->name) : std::string()) != strict) {
+    Fail("MTLX_RESOLVE", id, "strict [" + (s ? std::string(s->name) : std::string()) + "]");
   }
-  if ((r ? r->name : std::string()) != ref) {
-    Fail("MTLX_RESOLVE", id, "reference [" + (r ? r->name : std::string()) + "]");
+  if ((r ? std::string(r->name) : std::string()) != ref) {
+    Fail("MTLX_RESOLVE", id, "reference [" + (r ? std::string(r->name) : std::string()) + "]");
   }
-  const MtlxNodeDefInfo *g = g_resolve_lib.ResolveRough(node);
-  if ((g ? g->name : std::string()) != rough) {
-    Fail("MTLX_RESOLVE", id, "rough [" + (g ? g->name : std::string()) + "]");
+  const lu_mtlx_nodedef *g = g_resolve_lib.ResolveRough(node);
+  if ((g ? std::string(g->name) : std::string()) != rough) {
+    Fail("MTLX_RESOLVE", id, "rough [" + (g ? std::string(g->name) : std::string()) + "]");
   }
 }
 
 static void CheckDump(int id, const char *xml, const char *dump) {
   g_checks++;
-  MtlxElem root;
+  Elem root;
   std::string err;
   if (!ParseMtlxXml(xml, &root, &err)) {
     Fail("MTLX_DUMP", id, "parse: " + err);
     return;
   }
-  MtlxLibrary lib;
+  Library lib;
   lib.AddFrom(root);
   const std::string got = DumpMtlxDocument(lib, root);
   if (got != dump) {
@@ -287,20 +811,20 @@ static void CheckDump(int id, const char *xml, const char *dump) {
 
 static void CheckTypedMtlxGraphResolution() {
   const auto elem = [](const std::string &tag, const std::string &name) {
-    MtlxElem value;
+    Elem value;
     value.tag = tag;
     if (!name.empty()) value.SetAttr("name", name);
     return value;
   };
-  const auto add_port = [&elem](MtlxElem *parent, const std::string &tag,
+  const auto add_port = [&elem](Elem *parent, const std::string &tag,
                                 const std::string &name,
                                 const std::string &type) {
-    MtlxElem port = elem(tag, name);
+    Elem port = elem(tag, name);
     port.SetAttr("type", type);
     parent->children.push_back(std::move(port));
   };
   g_checks++;
-  MtlxDocument look_document;
+  Document look_document;
   const std::string look_xml = R"(<materialx version="1.39">
   <look name="preview_look">
     <materialassign name="body" geom="/World/Body" material="paint"/>
@@ -308,10 +832,10 @@ static void CheckTypedMtlxGraphResolution() {
   </look>
 </materialx>)";
   const bool look_parsed = look_document.ParseFromXML(look_xml);
-  const MtlxLookPtr look = look_document.FindLook("preview_look");
-  const MtlxMaterialAssignmentPtr geometry_assignment =
+  const ElemRef look = look_document.FindLook("preview_look");
+  const ElemRef geometry_assignment =
       look ? look->GetMaterialAssignment("body") : nullptr;
-  const MtlxMaterialAssignmentPtr collection_assignment =
+  const ElemRef collection_assignment =
       look ? look->GetMaterialAssignment("set") : nullptr;
   if (!look_parsed || look_document.GetLooks().size() != 1 || !look ||
       look->GetMaterialAssignments().size() != 2 || !geometry_assignment ||
@@ -325,13 +849,13 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument unit_document;
+  Document unit_document;
   const bool unit_parsed = unit_document.ParseFromXML(
       R"(<materialx version="1.39"><constant name="distance" type="float">
       <input name="value" type="float" value="2.5" unit="centimeter" unittype="distance"/>
       </constant></materialx>)");
-  const MtlxNodePtr distance_node = unit_document.FindNode("distance");
-  const MtlxInputPtr distance_input =
+  const ElemRef distance_node = unit_document.FindNode("distance");
+  const ElemRef distance_input =
       distance_node ? distance_node->GetInput("value") : nullptr;
   if (!unit_parsed || !distance_input ||
       distance_input->GetUnit() != "centimeter" ||
@@ -341,7 +865,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument assignment_document;
+  Document assignment_document;
   const bool assignments_parsed = assignment_document.ParseFromXML(
       R"(<materialx version="1.39">
       <surfacematerial name="world_material"/>
@@ -357,7 +881,7 @@ static void CheckTypedMtlxGraphResolution() {
         <materialassign name="derived_assignment" geom="/World/Hero" material="hero_material"/>
       </look>
       </materialx>)");
-  std::vector<MtlxResolvedMaterialAssignment> resolved_assignments;
+  std::vector<ResolvedAssignment> resolved_assignments;
   std::string assignment_error;
   const bool hero_assignments_ok = assignments_parsed &&
       assignment_document.GetMaterialAssignmentsForGeometry(
@@ -392,7 +916,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument invalid_look_document;
+  Document invalid_look_document;
   const bool invalid_looks_parsed = invalid_look_document.ParseFromXML(
       R"(<materialx version="1.39">
       <surfacematerial name="paint"/>
@@ -420,7 +944,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument collection_cycle_document;
+  Document collection_cycle_document;
   const bool cycle_parsed = collection_cycle_document.ParseFromXML(
       R"(<materialx version="1.39">
       <surfacematerial name="paint"/>
@@ -442,7 +966,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument conversion_document;
+  Document conversion_document;
   const bool conversion_parsed = conversion_document.ParseFromXML(
       R"(<materialx version="1.39">
       <unittypedef name="distance"/>
@@ -465,16 +989,16 @@ static void CheckTypedMtlxGraphResolution() {
       </materialx>)");
   const bool conversion_ok =
       conversion_parsed && conversion_document.ConvertToUnit("distance", "meter");
-  const MtlxInputPtr converted_length = conversion_document.FindNode("length")
+  const ElemRef converted_length = conversion_document.FindNode("length")
       ? conversion_document.FindNode("length")->GetInput("value")
       : nullptr;
-  const MtlxNodeGraphPtr conversion_graph =
+  const ElemRef conversion_graph =
       conversion_document.FindNodeGraph("graph");
-  const MtlxNodePtr converted_position =
+  const ElemRef converted_position =
       conversion_graph ? conversion_graph->GetNode("position") : nullptr;
-  const MtlxInputPtr converted_position_value =
+  const ElemRef converted_position_value =
       converted_position ? converted_position->GetInput("value") : nullptr;
-  const MtlxInputPtr graph_interface = conversion_graph &&
+  const ElemRef graph_interface = conversion_graph &&
           !conversion_graph->GetInputs().empty()
       ? conversion_graph->GetInputs().front()
       : nullptr;
@@ -505,7 +1029,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument invalid_conversion_document;
+  Document invalid_conversion_document;
   const bool invalid_conversion_parsed =
       invalid_conversion_document.ParseFromXML(
           R"(<materialx version="1.39">
@@ -528,20 +1052,20 @@ static void CheckTypedMtlxGraphResolution() {
          "an unknown target unit changed the document or failed without an error");
   }
 
-  MtlxLibrary library;
-  MtlxElem constant_def = elem("nodedef", "ND_test_constant");
+  Library library;
+  Elem constant_def = elem("nodedef", "ND_test_constant");
   constant_def.SetAttr("node", "testconstant");
   constant_def.SetAttr("type", "float");
   add_port(&constant_def, "output", "out", "float");
   library.AddNodeDef(constant_def, {});
-  MtlxElem add_def = elem("nodedef", "ND_test_add");
+  Elem add_def = elem("nodedef", "ND_test_add");
   add_def.SetAttr("node", "testadd");
   add_def.SetAttr("type", "float");
   add_port(&add_def, "input", "in1", "float");
   add_port(&add_def, "input", "in2", "float");
   add_port(&add_def, "output", "out", "float");
   library.AddNodeDef(add_def, {});
-  MtlxElem graph_def = elem("nodedef", "ND_test_graph");
+  Elem graph_def = elem("nodedef", "ND_test_graph");
   graph_def.SetAttr("node", "testgraph");
   graph_def.SetAttr("type", "float");
   add_port(&graph_def, "input", "gain", "float");
@@ -549,49 +1073,49 @@ static void CheckTypedMtlxGraphResolution() {
   library.AddNodeDef(graph_def, {});
 
   const auto constant_node = [&elem](const std::string &name) {
-    MtlxElem node = elem("testconstant", name);
+    Elem node = elem("testconstant", name);
     node.SetAttr("type", "float");
     node.SetAttr("nodedef", "ND_test_constant");
     return node;
   };
   const auto add_node = [&elem](const std::string &name) {
-    MtlxElem node = elem("testadd", name);
+    Elem node = elem("testadd", name);
     node.SetAttr("type", "float");
     node.SetAttr("nodedef", "ND_test_add");
     return node;
   };
 
   // Inline a graph call whose interface is fed by an upstream node.
-  MtlxElem inline_doc = elem("materialx", "");
-  MtlxElem body = elem("nodegraph", "test_impl");
+  Elem inline_doc = elem("materialx", "");
+  Elem body = elem("nodegraph", "test_impl");
   body.SetAttr("nodedef", "ND_test_graph");
-  MtlxElem body_node = add_node("body_sum");
-  MtlxElem body_input = elem("input", "in1");
+  Elem body_node = add_node("body_sum");
+  Elem body_input = elem("input", "in1");
   body_input.SetAttr("type", "float");
   body_input.SetAttr("interfacename", "gain");
   body_node.children.push_back(body_input);
   body.children.push_back(body_node);
-  MtlxElem body_output = elem("output", "out");
+  Elem body_output = elem("output", "out");
   body_output.SetAttr("type", "float");
   body_output.SetAttr("nodename", "body_sum");
   body.children.push_back(body_output);
   inline_doc.children.push_back(body);
-  MtlxElem caller = elem("nodegraph", "caller");
+  Elem caller = elem("nodegraph", "caller");
   caller.children.push_back(constant_node("seed"));
-  MtlxElem call = elem("testgraph", "call");
+  Elem call = elem("testgraph", "call");
   call.SetAttr("type", "float");
   call.SetAttr("nodedef", "ND_test_graph");
-  MtlxElem call_input = elem("input", "gain");
+  Elem call_input = elem("input", "gain");
   call_input.SetAttr("type", "float");
   call_input.SetAttr("nodename", "seed");
   call.children.push_back(call_input);
   caller.children.push_back(call);
-  MtlxElem caller_output = elem("output", "out");
+  Elem caller_output = elem("output", "out");
   caller_output.SetAttr("type", "float");
   caller_output.SetAttr("nodename", "call");
   caller.children.push_back(caller_output);
   inline_doc.children.push_back(caller);
-  MtlxElem flattened;
+  Elem flattened;
   std::string inline_error;
   g_checks++;
   if (!FlattenMtlxGraphCall(inline_doc, caller, library, {}, "call",
@@ -603,7 +1127,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE", 0, inline_error.empty() ?
          "flattened graph connections differed" : inline_error);
   }
-  MtlxElem metadata_caller = caller;
+  Elem metadata_caller = caller;
   metadata_caller.children[1].children[0].SetAttr("unit", "meter");
   metadata_caller.children[1].children[0].SetAttr("unittype", "distance");
   g_checks++;
@@ -614,13 +1138,13 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_INPUT_METADATA", 0, inline_error.empty() ?
          "authored call input metadata was not transferred" : inline_error);
   }
-  MtlxLibrary default_library;
+  Library default_library;
   default_library.AddNodeDef(constant_def, {});
   default_library.AddNodeDef(add_def, {});
-  MtlxElem default_graph_def = graph_def;
+  Elem default_graph_def = graph_def;
   default_graph_def.children[0].SetAttr("value", "0.75");
   default_library.AddNodeDef(default_graph_def, {});
-  MtlxElem default_caller = caller;
+  Elem default_caller = caller;
   default_caller.children[1].children.clear();
   g_checks++;
   if (!FlattenMtlxGraphCall(inline_doc, default_caller, default_library, {},
@@ -630,12 +1154,12 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_DEFAULT", 0, inline_error.empty() ?
          "nodedef input default was not transferred" : inline_error);
   }
-  MtlxLibrary geomprop_library;
+  Library geomprop_library;
   geomprop_library.AddNodeDef(constant_def, {});
   geomprop_library.AddNodeDef(add_def, {});
   default_graph_def.children[0].SetAttr("defaultgeomprop", "Pworld");
   geomprop_library.AddNodeDef(default_graph_def, {});
-  MtlxElem geomprop_result = elem("nodegraph", "unchanged");
+  Elem geomprop_result = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraphCall(inline_doc, default_caller, geomprop_library, {},
                            "call", &geomprop_result, &inline_error) ||
@@ -644,12 +1168,12 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_DEFAULT_GEOMPROP", 0,
          "geometry-property default was silently replaced by a literal");
   }
-  MtlxElem geomprop_doc = inline_doc;
-  MtlxElem geomdef = elem("geompropdef", "Pworld");
+  Elem geomprop_doc = inline_doc;
+  Elem geomdef = elem("geompropdef", "Pworld");
   geomdef.SetAttr("type", "float");
   geomdef.SetAttr("geomprop", "testconstant");
   geomprop_doc.children.push_back(geomdef);
-  MtlxElem second_geom_input = body_input;
+  Elem second_geom_input = body_input;
   second_geom_input.SetAttr("name", "in2");
   geomprop_doc.children[0].children[0].children.push_back(second_geom_input);
   g_checks++;
@@ -664,9 +1188,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_GEOMPROP", 0, inline_error.empty() ?
          "geometry node was not generated and shared" : inline_error);
   }
-  MtlxElem external_geomdefs = elem("materialx", "");
+  Elem external_geomdefs = elem("materialx", "");
   external_geomdefs.children.push_back(geomdef);
-  MtlxLibrary direct_external_geomprop = geomprop_library;
+  Library direct_external_geomprop = geomprop_library;
   direct_external_geomprop.AddFrom(external_geomdefs);
   g_checks++;
   if (!FlattenMtlxGraphCall(inline_doc, default_caller, direct_external_geomprop, {},
@@ -676,13 +1200,13 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_EXTERNAL_GEOMPROP", 0, inline_error.empty() ?
          "geometry definition supplied by the library was not used" : inline_error);
   }
-  MtlxElem geometry_node_def = elem("nodedef", "ND_test_geometry");
+  Elem geometry_node_def = elem("nodedef", "ND_test_geometry");
   geometry_node_def.SetAttr("node", "testgeometry");
   geometry_node_def.SetAttr("type", "float");
   add_port(&geometry_node_def, "input", "space", "string");
   add_port(&geometry_node_def, "output", "out", "float");
   geomprop_library.AddNodeDef(geometry_node_def, {});
-  MtlxElem spatial_geomprop_doc = geomprop_doc;
+  Elem spatial_geomprop_doc = geomprop_doc;
   spatial_geomprop_doc.children.back().SetAttr("geomprop", "testgeometry");
   spatial_geomprop_doc.children.back().SetAttr("space", "world");
   g_checks++;
@@ -696,9 +1220,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_GEOMPROP_SPACE", 0, inline_error.empty() ?
          "geometry property space was not transferred" : inline_error);
   }
-  MtlxElem ambiguous_geomprop_doc = geomprop_doc;
+  Elem ambiguous_geomprop_doc = geomprop_doc;
   ambiguous_geomprop_doc.children.push_back(geomdef);
-  MtlxElem ambiguous_geomprop_result = elem("nodegraph", "unchanged");
+  Elem ambiguous_geomprop_result = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraphCall(ambiguous_geomprop_doc, default_caller, geomprop_library, {},
                            "call", &ambiguous_geomprop_result, &inline_error) ||
@@ -707,9 +1231,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_GEOMPROP_AMBIGUOUS", 0,
          "duplicate geometry definitions were accepted or changed the output");
   }
-  MtlxElem wrong_geomprop_doc = geomprop_doc;
+  Elem wrong_geomprop_doc = geomprop_doc;
   wrong_geomprop_doc.children.back().SetAttr("type", "vector3");
-  MtlxElem wrong_geomprop_result = elem("nodegraph", "unchanged");
+  Elem wrong_geomprop_result = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraphCall(wrong_geomprop_doc, default_caller, geomprop_library, {},
                            "call", &wrong_geomprop_result, &inline_error) ||
@@ -718,9 +1242,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_GEOMPROP_TYPE", 0,
          "mismatched geometry type was accepted or changed the output");
   }
-  MtlxElem downstream = caller;
-  MtlxElem consumer = add_node("consumer");
-  MtlxElem consumer_input = elem("input", "in1");
+  Elem downstream = caller;
+  Elem consumer = add_node("consumer");
+  Elem consumer_input = elem("input", "in1");
   consumer_input.SetAttr("type", "float");
   consumer_input.SetAttr("nodename", "call");
   consumer.children.push_back(consumer_input);
@@ -736,9 +1260,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_CONSUMER", 0, inline_error.empty() ?
          "downstream node was not rewired" : inline_error);
   }
-  MtlxElem literal_doc = inline_doc;
+  Elem literal_doc = inline_doc;
   literal_doc.children[0].children.erase(literal_doc.children[0].children.begin());
-  MtlxElem &inline_literal_output = literal_doc.children[0].children[0];
+  Elem &inline_literal_output = literal_doc.children[0].children[0];
   for (auto it = inline_literal_output.attrs.begin(); it != inline_literal_output.attrs.end(); ++it) {
     if (it->first == "nodename") { inline_literal_output.attrs.erase(it); break; }
   }
@@ -752,13 +1276,13 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_LITERAL", 0, inline_error.empty() ?
          "literal implementation output was not propagated" : inline_error);
   }
-  MtlxElem linked_doc = elem("materialx", "");
-  MtlxElem linked_body = body;
+  Elem linked_doc = elem("materialx", "");
+  Elem linked_body = body;
   for (auto it = linked_body.attrs.begin(); it != linked_body.attrs.end(); ++it) {
     if (it->first == "nodedef") { linked_body.attrs.erase(it); break; }
   }
   linked_doc.children.push_back(linked_body);
-  MtlxElem link = elem("implementation", "test_link");
+  Elem link = elem("implementation", "test_link");
   link.SetAttr("nodedef", "ND_test_graph");
   link.SetAttr("nodegraph", "test_impl");
   linked_doc.children.push_back(link);
@@ -771,25 +1295,25 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_LINKED", 0, inline_error.empty() ?
          "linked graph was not flattened" : inline_error);
   }
-  MtlxElem outer_def = elem("nodedef", "ND_test_outer");
+  Elem outer_def = elem("nodedef", "ND_test_outer");
   outer_def.SetAttr("node", "testouter");
   outer_def.SetAttr("type", "float");
   add_port(&outer_def, "input", "gain", "float");
   add_port(&outer_def, "output", "out", "float");
   library.AddNodeDef(outer_def, {});
-  MtlxElem outer_body = elem("nodegraph", "outer_impl");
+  Elem outer_body = elem("nodegraph", "outer_impl");
   outer_body.SetAttr("nodedef", "ND_test_outer");
-  MtlxElem inner_call = call;
+  Elem inner_call = call;
   inner_call.SetAttr("name", "inner");
   inner_call.children[0] = body_input;
   inner_call.children[0].SetAttr("name", "gain");
   outer_body.children.push_back(inner_call);
-  MtlxElem outer_output = body_output;
+  Elem outer_output = body_output;
   outer_output.SetAttr("nodename", "inner");
   outer_body.children.push_back(outer_output);
-  MtlxElem nested_doc = inline_doc;
+  Elem nested_doc = inline_doc;
   nested_doc.children.push_back(outer_body);
-  MtlxElem shader_impl = elem("implementation", "test_add_glsl");
+  Elem shader_impl = elem("implementation", "test_add_glsl");
   shader_impl.SetAttr("nodedef", "ND_test_add");
   shader_impl.SetAttr("target", "genglsl");
   shader_impl.SetAttr("file", "test.glsl");
@@ -797,7 +1321,7 @@ static void CheckTypedMtlxGraphResolution() {
   shader_impl.SetAttr("name", "test_add_mdl");
   shader_impl.SetAttr("target", "genmdl");
   nested_doc.children.push_back(shader_impl);
-  MtlxElem nested_caller = caller;
+  Elem nested_caller = caller;
   nested_caller.children[1].tag = "testouter";
   nested_caller.children[1].SetAttr("nodedef", "ND_test_outer");
   g_checks++;
@@ -810,17 +1334,17 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_NESTED", 0, inline_error.empty() ?
          "nested graph was not flattened" : inline_error);
   }
-  MtlxElem limited = elem("nodegraph", "unchanged");
+  Elem limited = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraph(nested_doc, nested_caller, library, {}, 1,
                        &limited, &inline_error) ||
       limited.Name() != "unchanged" || inline_error.find("limit") == std::string::npos) {
     Fail("MTLX_GRAPH_INLINE_LIMIT", 0, "expansion limit did not fail atomically");
   }
-  MtlxElem recursive_doc = inline_doc;
+  Elem recursive_doc = inline_doc;
   recursive_doc.children[0].children[0] = inner_call;
   recursive_doc.children[0].children[1].SetAttr("nodename", "inner");
-  MtlxElem recursive_result = elem("nodegraph", "unchanged");
+  Elem recursive_result = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraph(recursive_doc, caller, library, {}, 10,
                        &recursive_result, &inline_error) ||
@@ -829,11 +1353,11 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INLINE_RECURSIVE", 0,
          inline_error.empty() ? "recursive implementation was accepted" : inline_error);
   }
-  MtlxElem targeted = body;
+  Elem targeted = body;
   targeted.SetAttr("name", "targeted_impl");
   targeted.SetAttr("target", "genglsl");
   inline_doc.children.push_back(targeted);
-  MtlxElem sentinel = elem("nodegraph", "unchanged");
+  Elem sentinel = elem("nodegraph", "unchanged");
   g_checks++;
   if (FlattenMtlxGraphCall(inline_doc, caller, library, {}, "call",
                            &sentinel, &inline_error) ||
@@ -842,40 +1366,40 @@ static void CheckTypedMtlxGraphResolution() {
          "ambiguous implementation was accepted or output was modified");
   }
 
-  MtlxElem root = elem("materialx", "");
-  MtlxElem helper = elem("nodegraph", "helper");
+  Elem root = elem("materialx", "");
+  Elem helper = elem("nodegraph", "helper");
   helper.children.push_back(constant_node("source"));
-  MtlxElem helper_output = elem("output", "value");
+  Elem helper_output = elem("output", "value");
   helper_output.SetAttr("type", "float");
   helper_output.SetAttr("nodename", "source");
   helper.children.push_back(helper_output);
   root.children.push_back(helper);
 
-  MtlxElem graph = elem("nodegraph", "main");
+  Elem graph = elem("nodegraph", "main");
   graph.SetAttr("nodedef", "ND_test_graph");
-  MtlxElem graph_input = elem("input", "gain");
+  Elem graph_input = elem("input", "gain");
   graph_input.SetAttr("type", "float");
   graph.children.push_back(graph_input);
   graph.children.push_back(constant_node("seed"));
-  MtlxElem sum = add_node("sum");
-  MtlxElem from_nodegraph = elem("input", "in1");
+  Elem sum = add_node("sum");
+  Elem from_nodegraph = elem("input", "in1");
   from_nodegraph.SetAttr("type", "float");
   from_nodegraph.SetAttr("nodegraph", "helper");
   from_nodegraph.SetAttr("output", "value");
   sum.children.push_back(from_nodegraph);
-  MtlxElem from_interface = elem("input", "in2");
+  Elem from_interface = elem("input", "in2");
   from_interface.SetAttr("type", "float");
   from_interface.SetAttr("interfacename", "gain");
   sum.children.push_back(from_interface);
   graph.children.push_back(sum);
-  MtlxElem output = elem("output", "out");
+  Elem output = elem("output", "out");
   output.SetAttr("type", "float");
   output.SetAttr("nodename", "sum");
   graph.children.push_back(output);
   root.children.push_back(graph);
 
   g_checks++;
-  MtlxResolvedGraph resolved;
+  ResolvedGraph resolved;
   std::string error;
   if (!ResolveMtlxGraph(root, root.children[1], library, {}, &resolved, &error) ||
       resolved.node_order != std::vector<std::string>({"seed", "sum"})) {
@@ -891,8 +1415,8 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   // The reference permits a graph output to carry a literal value.
-  MtlxElem literal_root = root;
-  MtlxElem literal_output = elem("output", "value");
+  Elem literal_root = root;
+  Elem literal_output = elem("output", "value");
   literal_output.SetAttr("type", "float");
   literal_output.SetAttr("value", "0.25");
   literal_root.children[0].children[1] = literal_output;
@@ -907,7 +1431,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_LITERAL_OUTPUT_CONNECTION", 0,
          "reference-invalid connection to a literal graph output was accepted");
   }
-  MtlxElem invalid_literal_root = literal_root;
+  Elem invalid_literal_root = literal_root;
   invalid_literal_root.children[0].children[1].SetAttr("value", "not-a-float");
   g_checks++;
   if (ResolveMtlxGraph(invalid_literal_root, invalid_literal_root.children[0],
@@ -920,7 +1444,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_LITERAL_OUTPUT_CONNECTION_INVALID", 0,
          "connection to invalid graph output literal was accepted");
   }
-  MtlxElem wrong_literal_type = literal_root;
+  Elem wrong_literal_type = literal_root;
   wrong_literal_type.children[0].children[1].SetAttr("type", "integer");
   wrong_literal_type.children[0].children[1].SetAttr("value", "1");
   g_checks++;
@@ -930,8 +1454,8 @@ static void CheckTypedMtlxGraphResolution() {
          "connection to a differently typed literal output was accepted");
   }
 
-  MtlxElem empty_output_root = root;
-  MtlxElem empty_output = elem("output", "value");
+  Elem empty_output_root = root;
+  Elem empty_output = elem("output", "value");
   empty_output.SetAttr("type", "float");
   empty_output_root.children[0].children[1] = empty_output;
   g_checks++;
@@ -946,7 +1470,7 @@ static void CheckTypedMtlxGraphResolution() {
          "connection to an unconnected graph output was accepted");
   }
 
-  MtlxElem connected_bad_literal = root;
+  Elem connected_bad_literal = root;
   connected_bad_literal.children[0].children[1].SetAttr("value", "not-a-float");
   g_checks++;
   if (ResolveMtlxGraph(connected_bad_literal, connected_bad_literal.children[0],
@@ -960,14 +1484,14 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_CONNECTED_OUTPUT_BAD_VALUE_REFERENCE", 0,
          "connection to graph output with invalid literal was accepted");
   }
-  MtlxElem connected_with_value = root;
+  Elem connected_with_value = root;
   connected_with_value.children[0].children[1].SetAttr("value", "0.5");
   g_checks++;
   if (!ResolveMtlxGraph(connected_with_value, connected_with_value.children[0],
                         library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_CONNECTED_OUTPUT_VALUE", 0, error);
   }
-  MtlxElem connected_bad_interface = root;
+  Elem connected_bad_interface = root;
   connected_bad_interface.children[0].children[1].SetAttr("interfacename", "gain");
   g_checks++;
   if (ResolveMtlxGraph(connected_bad_interface, connected_bad_interface.children[0],
@@ -982,7 +1506,7 @@ static void CheckTypedMtlxGraphResolution() {
          "connection to graph output with interface binding was accepted");
   }
 
-  MtlxElem node_and_value = root;
+  Elem node_and_value = root;
   node_and_value.children[1].children[2].children[0] = elem("input", "in1");
   node_and_value.children[1].children[2].children[0].SetAttr("type", "float");
   node_and_value.children[1].children[2].children[0].SetAttr("nodename", "seed");
@@ -992,14 +1516,14 @@ static void CheckTypedMtlxGraphResolution() {
                        &resolved, &error)) {
     Fail("MTLX_GRAPH_INPUT_NODE_AND_VALUE", 0, "node input with two bindings was accepted");
   }
-  MtlxElem graph_and_value = root;
+  Elem graph_and_value = root;
   graph_and_value.children[1].children[2].children[0].SetAttr("value", "0.5");
   g_checks++;
   if (ResolveMtlxGraph(graph_and_value, graph_and_value.children[1], library, {},
                        &resolved, &error)) {
     Fail("MTLX_GRAPH_INPUT_GRAPH_AND_VALUE", 0, "graph input with two bindings was accepted");
   }
-  MtlxElem interface_and_value = root;
+  Elem interface_and_value = root;
   interface_and_value.children[1].children[2].children[1].SetAttr("value", "0.5");
   g_checks++;
   if (ResolveMtlxGraph(interface_and_value, interface_and_value.children[1],
@@ -1008,7 +1532,7 @@ static void CheckTypedMtlxGraphResolution() {
          "interface input with two bindings was accepted");
   }
 
-  MtlxElem empty_node_input = root;
+  Elem empty_node_input = root;
   empty_node_input.children[1].children[2].children[0] = elem("input", "in1");
   empty_node_input.children[1].children[2].children[0].SetAttr("type", "float");
   g_checks++;
@@ -1017,13 +1541,13 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INPUT_NO_BINDING", 0, "authored input without a binding was accepted");
   }
 
-  MtlxElem document_output_root = root;
+  Elem document_output_root = root;
   document_output_root.children.push_back(constant_node("global_source"));
-  MtlxElem document_output = elem("output", "global_output");
+  Elem document_output = elem("output", "global_output");
   document_output.SetAttr("type", "float");
   document_output.SetAttr("nodename", "global_source");
   document_output_root.children.push_back(document_output);
-  MtlxElem document_output_input = elem("input", "in1");
+  Elem document_output_input = elem("input", "in1");
   document_output_input.SetAttr("type", "float");
   document_output_input.SetAttr("output", "global_output");
   document_output_root.children[1].children[2].children[0] = document_output_input;
@@ -1032,21 +1556,21 @@ static void CheckTypedMtlxGraphResolution() {
                         library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT", 0, error);
   }
-  MtlxElem missing_document_output = document_output_root;
+  Elem missing_document_output = document_output_root;
   missing_document_output.children[1].children[2].children[0].SetAttr("output", "missing");
   g_checks++;
   if (ResolveMtlxGraph(missing_document_output, missing_document_output.children[1],
                        library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_MISSING", 0, "missing document output was accepted");
   }
-  MtlxElem bad_document_output_type = document_output_root;
+  Elem bad_document_output_type = document_output_root;
   bad_document_output_type.children.back().SetAttr("type", "integer");
   g_checks++;
   if (ResolveMtlxGraph(bad_document_output_type, bad_document_output_type.children[1],
                        library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_TYPE", 0, "wrong document output type was accepted");
   }
-  MtlxElem bad_document_output_node = document_output_root;
+  Elem bad_document_output_node = document_output_root;
   bad_document_output_node.children.back().SetAttr("nodename", "missing");
   g_checks++;
   if (ResolveMtlxGraph(bad_document_output_node, bad_document_output_node.children[1],
@@ -1054,7 +1578,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_NODE", 0, "missing document output source was accepted");
   }
 
-  MtlxElem bad_document_output_value = document_output_root;
+  Elem bad_document_output_value = document_output_root;
   bad_document_output_value.children.back().SetAttr("value", "not-a-float");
   g_checks++;
   if (ResolveMtlxGraph(bad_document_output_value, bad_document_output_value.children[1],
@@ -1062,14 +1586,14 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_DOCUMENT_OUTPUT_VALUE", 0, "invalid document output value was accepted");
   }
 
-  MtlxElem indirect_dependency = document_output_root;
-  MtlxElem global_add = add_node("global_source");
-  MtlxElem global_graph_input = elem("input", "in1");
+  Elem indirect_dependency = document_output_root;
+  Elem global_add = add_node("global_source");
+  Elem global_graph_input = elem("input", "in1");
   global_graph_input.SetAttr("type", "float");
   global_graph_input.SetAttr("nodegraph", "helper");
   global_graph_input.SetAttr("output", "value");
   global_add.children.push_back(global_graph_input);
-  MtlxElem global_value = elem("input", "in2");
+  Elem global_value = elem("input", "in2");
   global_value.SetAttr("type", "float");
   global_value.SetAttr("value", "1");
   global_add.children.push_back(global_value);
@@ -1081,9 +1605,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_DOCUMENT_OUTPUT_DEPENDENCY", 0,
          error.empty() ? "indirect document-output dependency was not ordered" : error);
   }
-  MtlxElem multi_hop_dependency = indirect_dependency;
-  MtlxElem bridge = add_node("bridge");
-  MtlxElem bridge_input = elem("input", "in1");
+  Elem multi_hop_dependency = indirect_dependency;
+  Elem bridge = add_node("bridge");
+  Elem bridge_input = elem("input", "in1");
   bridge_input.SetAttr("type", "float");
   bridge_input.SetAttr("nodename", "global_source");
   bridge.children.push_back(bridge_input);
@@ -1096,8 +1620,8 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_DOCUMENT_OUTPUT_MULTI_HOP", 0,
          error.empty() ? "multi-hop document dependency was not ordered" : error);
   }
-  MtlxElem shared_root_dependency = multi_hop_dependency;
-  MtlxElem bridge_second = bridge_input;
+  Elem shared_root_dependency = multi_hop_dependency;
+  Elem bridge_second = bridge_input;
   bridge_second.SetAttr("name", "in2");
   shared_root_dependency.children.back().children[1] = bridge_second;
   g_checks++;
@@ -1106,8 +1630,8 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_DOCUMENT_ROOT_SHARED_DEPENDENCY", 0,
          error.empty() ? "shared root dependency was treated as a cycle" : error);
   }
-  MtlxElem root_node_cycle = multi_hop_dependency;
-  MtlxElem root_cycle_input = elem("input", "in1");
+  Elem root_node_cycle = multi_hop_dependency;
+  Elem root_cycle_input = elem("input", "in1");
   root_cycle_input.SetAttr("type", "float");
   root_cycle_input.SetAttr("nodename", "bridge");
   root_node_cycle.children[2].children[0] = root_cycle_input;
@@ -1116,7 +1640,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_DOCUMENT_ROOT_NODE_CYCLE", 0,
          "cycle between document nodes was accepted");
   }
-  MtlxElem indirect_cycle = indirect_dependency;
+  Elem indirect_cycle = indirect_dependency;
   indirect_cycle.children[2].children[0].SetAttr("nodegraph", "main");
   indirect_cycle.children[2].children[0].SetAttr("output", "out");
   g_checks++;
@@ -1125,15 +1649,15 @@ static void CheckTypedMtlxGraphResolution() {
          "cycle through document output and root node was accepted");
   }
 
-  MtlxElem compound_main = elem("nodegraph", "main");
+  Elem compound_main = elem("nodegraph", "main");
   compound_main.children = root.children[1].children;
   compound_main.children[0].SetAttr("nodegraph", "helper");
   compound_main.children[0].SetAttr("output", "value");
-  MtlxElem local_value = elem("input", "in1");
+  Elem local_value = elem("input", "in1");
   local_value.SetAttr("type", "float");
   local_value.SetAttr("value", "1");
   compound_main.children[2].children[0] = local_value;
-  MtlxElem compound_root = elem("materialx", "");
+  Elem compound_root = elem("materialx", "");
   compound_root.children = {compound_main, root.children[0]};
   g_checks++;
   if (!ResolveMtlxGraphs(compound_root, library, &graph_order, &error) ||
@@ -1141,14 +1665,14 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_INTERFACE_DEPENDENCY", 0,
          error.empty() ? "compound graph input dependency was not ordered" : error);
   }
-  MtlxElem missing_compound_source = compound_root;
+  Elem missing_compound_source = compound_root;
   missing_compound_source.children[0].children[0].SetAttr("nodegraph", "missing");
   g_checks++;
   if (ResolveMtlxGraphs(missing_compound_source, library, &graph_order, &error)) {
     Fail("MTLX_GRAPHS_INTERFACE_MISSING_SOURCE", 0,
          "compound graph input with missing source was accepted");
   }
-  MtlxElem bad_compound_port = compound_root;
+  Elem bad_compound_port = compound_root;
   bad_compound_port.children[0].children[0].SetAttr("output", "missing");
   g_checks++;
   if (ResolveMtlxGraph(bad_compound_port, bad_compound_port.children[0], library,
@@ -1156,9 +1680,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_MISSING_OUTPUT", 0,
          "compound graph input with missing output was accepted");
   }
-  MtlxElem bad_compound_type = compound_root;
+  Elem bad_compound_type = compound_root;
   bad_compound_type.children[0].children[0].SetAttr("type", "integer");
-  MtlxElem independent_in2 = elem("input", "in2");
+  Elem independent_in2 = elem("input", "in2");
   independent_in2.SetAttr("type", "float");
   independent_in2.SetAttr("value", "1");
   bad_compound_type.children[0].children[2].children[1] = independent_in2;
@@ -1168,7 +1692,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_SOURCE_TYPE", 0,
          "compound graph input with incompatible source type was accepted");
   }
-  MtlxElem bad_compound_value = compound_root;
+  Elem bad_compound_value = compound_root;
   bad_compound_value.children[1].children[1].SetAttr("value", "not-a-float");
   g_checks++;
   if (ResolveMtlxGraph(bad_compound_value, bad_compound_value.children[0], library,
@@ -1177,7 +1701,7 @@ static void CheckTypedMtlxGraphResolution() {
          "compound graph input with invalid source output value was accepted");
   }
 
-  MtlxElem compound_input_with_value = compound_root;
+  Elem compound_input_with_value = compound_root;
   compound_input_with_value.children[0].children[0].SetAttr("value", "0.5");
   g_checks++;
   if (!ResolveMtlxGraph(compound_input_with_value, compound_input_with_value.children[0],
@@ -1192,8 +1716,8 @@ static void CheckTypedMtlxGraphResolution() {
          "compound graph input with invalid authored value was accepted");
   }
 
-  MtlxElem root_connected_compound = compound_root;
-  MtlxElem root_connected_input = elem("input", "gain");
+  Elem root_connected_compound = compound_root;
+  Elem root_connected_input = elem("input", "gain");
   root_connected_input.SetAttr("type", "float");
   root_connected_input.SetAttr("nodename", "global_source");
   root_connected_compound.children[0].children[0] = root_connected_input;
@@ -1204,7 +1728,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_INTERFACE_ROOT_DEPENDENCY", 0,
          error.empty() ? "root-node graph input dependency was not ordered" : error);
   }
-  MtlxElem root_connected_cycle = root_connected_compound;
+  Elem root_connected_cycle = root_connected_compound;
   root_connected_cycle.children.back().children[0].SetAttr("nodegraph", "main");
   root_connected_cycle.children.back().children[0].SetAttr("output", "out");
   g_checks++;
@@ -1212,14 +1736,14 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_INTERFACE_ROOT_CYCLE", 0,
          "cycle through graph input and root node was accepted");
   }
-  MtlxElem missing_graph_input_node = root_connected_compound;
+  Elem missing_graph_input_node = root_connected_compound;
   missing_graph_input_node.children[0].children[0].SetAttr("nodename", "missing");
   g_checks++;
   if (ResolveMtlxGraph(missing_graph_input_node, missing_graph_input_node.children[0],
                        library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_INTERFACE_ROOT_MISSING", 0, "missing graph input node was accepted");
   }
-  MtlxElem wrong_graph_input_node_type = root_connected_compound;
+  Elem wrong_graph_input_node_type = root_connected_compound;
   wrong_graph_input_node_type.children[0].children[0].SetAttr("type", "integer");
   wrong_graph_input_node_type.children[0].children[2].children[1] = independent_in2;
   g_checks++;
@@ -1228,9 +1752,9 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_ROOT_TYPE", 0, "incompatible graph input node was accepted");
   }
 
-  MtlxElem output_connected_compound = root_connected_compound;
+  Elem output_connected_compound = root_connected_compound;
   output_connected_compound.children.push_back(document_output);
-  MtlxElem output_connected_input = elem("input", "gain");
+  Elem output_connected_input = elem("input", "gain");
   output_connected_input.SetAttr("type", "float");
   output_connected_input.SetAttr("output", "global_output");
   output_connected_compound.children[0].children[0] = output_connected_input;
@@ -1240,7 +1764,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPHS_INTERFACE_DOCUMENT_OUTPUT", 0,
          error.empty() ? "document output dependency was not ordered" : error);
   }
-  MtlxElem output_connected_missing = output_connected_compound;
+  Elem output_connected_missing = output_connected_compound;
   output_connected_missing.children[0].children[0].SetAttr("output", "missing");
   g_checks++;
   if (ResolveMtlxGraph(output_connected_missing, output_connected_missing.children[0],
@@ -1248,7 +1772,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_DOCUMENT_OUTPUT_MISSING", 0,
          "missing document output was accepted");
   }
-  MtlxElem output_connected_wrong_type = output_connected_compound;
+  Elem output_connected_wrong_type = output_connected_compound;
   output_connected_wrong_type.children[0].children[0].SetAttr("type", "integer");
   output_connected_wrong_type.children[0].children[2].children[1] = independent_in2;
   g_checks++;
@@ -1257,7 +1781,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_INTERFACE_DOCUMENT_OUTPUT_TYPE", 0,
          "incompatible document output type was accepted");
   }
-  MtlxElem output_connected_cycle = output_connected_compound;
+  Elem output_connected_cycle = output_connected_compound;
   output_connected_cycle.children[2].children[0].SetAttr("nodegraph", "main");
   output_connected_cycle.children[2].children[0].SetAttr("output", "out");
   g_checks++;
@@ -1266,8 +1790,8 @@ static void CheckTypedMtlxGraphResolution() {
          "cycle through graph input and document output was accepted");
   }
 
-  MtlxElem compound_cycle = compound_root;
-  MtlxElem helper_input = elem("input", "cycle");
+  Elem compound_cycle = compound_root;
+  Elem helper_input = elem("input", "cycle");
   helper_input.SetAttr("type", "float");
   helper_input.SetAttr("nodegraph", "main");
   helper_input.SetAttr("output", "out");
@@ -1278,7 +1802,7 @@ static void CheckTypedMtlxGraphResolution() {
          "cycle through compound graph inputs was accepted");
   }
 
-  MtlxElem namespaced_root = root;
+  Elem namespaced_root = root;
   namespaced_root.SetAttr("namespace", "studio");
   namespaced_root.children[0].SetAttr("name", "studio:helper");
   namespaced_root.children[1].SetAttr("name", "studio:main");
@@ -1289,21 +1813,21 @@ static void CheckTypedMtlxGraphResolution() {
          error.empty() ? "namespaced nodegraph dependency differed" : error);
   }
 
-  MtlxElem wrong_type = root.children[1];
+  Elem wrong_type = root.children[1];
   wrong_type.children[2].children[0].SetAttr("type", "integer");
   g_checks++;
   if (ResolveMtlxGraph(root, wrong_type, library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_TYPE", 0, "mismatched input type was accepted");
   }
 
-  MtlxElem wrong_node_type = root.children[1];
+  Elem wrong_node_type = root.children[1];
   wrong_node_type.children[1].SetAttr("type", "integer");
   g_checks++;
   if (ResolveMtlxGraph(root, wrong_node_type, library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_NODE_TYPE", 0, "node type differing from its nodedef was accepted");
   }
 
-  MtlxElem wrong_category = root.children[1];
+  Elem wrong_category = root.children[1];
   wrong_category.children[1].tag = "otherconstant";
   g_checks++;
   if (ResolveMtlxGraph(root, wrong_category, library, {}, &resolved, &error)) {
@@ -1311,29 +1835,29 @@ static void CheckTypedMtlxGraphResolution() {
          "node category differing from its nodedef was accepted");
   }
 
-  MtlxElem missing_source = root.children[1];
+  Elem missing_source = root.children[1];
   missing_source.children[2].children[0].SetAttr("nodegraph", "missing");
   g_checks++;
   if (ResolveMtlxGraph(root, missing_source, library, {}, &resolved, &error)) {
     Fail("MTLX_GRAPH_SOURCE", 0, "missing nodegraph source was accepted");
   }
 
-  MtlxElem cyclic = elem("nodegraph", "cycle");
-  MtlxElem a = add_node("a");
-  MtlxElem a_in1 = elem("input", "in1");
+  Elem cyclic = elem("nodegraph", "cycle");
+  Elem a = add_node("a");
+  Elem a_in1 = elem("input", "in1");
   a_in1.SetAttr("type", "float");
   a_in1.SetAttr("nodename", "b");
   a.children.push_back(a_in1);
-  MtlxElem a_in2 = elem("input", "in2");
+  Elem a_in2 = elem("input", "in2");
   a_in2.SetAttr("type", "float");
   a_in2.SetAttr("value", "1");
   a.children.push_back(a_in2);
-  MtlxElem b = add_node("b");
-  MtlxElem b_in1 = elem("input", "in1");
+  Elem b = add_node("b");
+  Elem b_in1 = elem("input", "in1");
   b_in1.SetAttr("type", "float");
   b_in1.SetAttr("nodename", "a");
   b.children.push_back(b_in1);
-  MtlxElem b_in2 = elem("input", "in2");
+  Elem b_in2 = elem("input", "in2");
   b_in2.SetAttr("type", "float");
   b_in2.SetAttr("value", "1");
   b.children.push_back(b_in2);
@@ -1344,14 +1868,14 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_GRAPH_CYCLE", 0, "cyclic graph was accepted");
   }
 
-  MtlxElem graph_cycle = root;
-  MtlxElem helper_cycle_node = add_node("helper_cycle");
-  MtlxElem helper_cycle_input = elem("input", "in1");
+  Elem graph_cycle = root;
+  Elem helper_cycle_node = add_node("helper_cycle");
+  Elem helper_cycle_input = elem("input", "in1");
   helper_cycle_input.SetAttr("type", "float");
   helper_cycle_input.SetAttr("nodegraph", "main");
   helper_cycle_input.SetAttr("output", "out");
   helper_cycle_node.children.push_back(helper_cycle_input);
-  MtlxElem helper_cycle_value = elem("input", "in2");
+  Elem helper_cycle_value = elem("input", "in2");
   helper_cycle_value.SetAttr("type", "float");
   helper_cycle_value.SetAttr("value", "1");
   helper_cycle_node.children.push_back(helper_cycle_value);
@@ -1363,7 +1887,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument parsed_document;
+  Document parsed_document;
   const std::string graph_xml = R"(<materialx version="1.39">
   <nodegraph name="validated">
     <constant name="color" type="color3" nodedef="ND_constant_color3"/>
@@ -1392,7 +1916,7 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="call"/>
   </nodegraph>
 </materialx>)";
-  MtlxDocument flatten_document;
+  Document flatten_document;
   g_checks++;
   if (!flatten_document.ParseFromXML(flatten_xml)) {
     Fail("MTLX_DOCUMENT_FLATTEN_PARSE", 0, flatten_document.GetError());
@@ -1409,10 +1933,10 @@ static void CheckTypedMtlxGraphResolution() {
     if (!flatten_document.FlattenNodeGraph("caller", 1, &error)) {
       Fail("MTLX_DOCUMENT_FLATTEN", 0, error);
     } else {
-      const MtlxNodeGraphPtr flat_graph = flatten_document.FindNodeGraph("caller");
-      const MtlxNodePtr flat_inner = flat_graph && flat_graph->GetNodes().size() == 2
+      const ElemRef flat_graph = flatten_document.FindNodeGraph("caller");
+      const ElemRef flat_inner = flat_graph && flat_graph->GetNodes().size() == 2
                                          ? flat_graph->GetNodes()[1] : nullptr;
-      const MtlxInputPtr flat_input = flat_inner ? flat_inner->GetInput("in1") : nullptr;
+      const ElemRef flat_input = flat_inner ? flat_inner->GetInput("in1") : nullptr;
       if (!flat_graph || flat_graph->GetNode("call") || !flat_input ||
           flat_input->GetNodeName() != "seed" ||
           flat_graph->GetOutputs().size() != 1 ||
@@ -1434,15 +1958,15 @@ static void CheckTypedMtlxGraphResolution() {
   const size_t authored_pos = geomprop_xml.find(authored_input);
   if (authored_pos != std::string::npos)
     geomprop_xml.erase(authored_pos, authored_input.size());
-  MtlxDocument geomprop_document;
+  Document geomprop_document;
   g_checks++;
   if (default_pos == std::string::npos || authored_pos == std::string::npos ||
       !geomprop_document.ParseFromXML(geomprop_xml)) {
     Fail("MTLX_DOCUMENT_FLATTEN_GEOMPROP_SETUP", 0, geomprop_document.GetError());
   } else {
     const std::string before = geomprop_document.GetResolvedXML();
-    const MtlxNodeGraphPtr graph_with_call = geomprop_document.FindNodeGraph("caller");
-    const MtlxNodePtr geometry_call = graph_with_call ? graph_with_call->GetNode("call") : nullptr;
+    const ElemRef graph_with_call = geomprop_document.FindNodeGraph("caller");
+    const ElemRef geometry_call = graph_with_call ? graph_with_call->GetNode("call") : nullptr;
     g_checks++;
     if (!geometry_call || geometry_call->GetInput("gain") ||
         geomprop_document.FlattenNodeGraph("caller", 1, &error) ||
@@ -1457,7 +1981,7 @@ static void CheckTypedMtlxGraphResolution() {
   const size_t impl_pos = scoped_flatten_xml.find(impl_tag);
   if (impl_pos != std::string::npos)
     scoped_flatten_xml.replace(impl_pos, impl_tag.size(), impl_tag + " fileprefix=\"other/\"");
-  MtlxDocument scoped_flatten_document;
+  Document scoped_flatten_document;
   g_checks++;
   if (impl_pos == std::string::npos || !scoped_flatten_document.ParseFromXML(scoped_flatten_xml)) {
     Fail("MTLX_DOCUMENT_FLATTEN_SCOPE_SETUP", 0, scoped_flatten_document.GetError());
@@ -1476,7 +2000,7 @@ static void CheckTypedMtlxGraphResolution() {
   const size_t token_pos = token_flatten_xml.find(body_node_start);
   if (token_pos != std::string::npos)
     token_flatten_xml.insert(token_pos, "<token name=\"asset\" type=\"string\" value=\"example\"/>");
-  MtlxDocument token_flatten_document;
+  Document token_flatten_document;
   g_checks++;
   if (token_pos == std::string::npos || !token_flatten_document.ParseFromXML(token_flatten_xml)) {
     Fail("MTLX_DOCUMENT_FLATTEN_TOKEN_SETUP", 0, token_flatten_document.GetError());
@@ -1505,7 +2029,7 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="call"/>
   </nodegraph>
 </materialx>)";
-  MtlxDocument standard_geomprop_document;
+  Document standard_geomprop_document;
   g_checks++;
   if (!standard_geomprop_document.ParseFromXML(standard_geomprop_xml)) {
     Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_SETUP", 0, standard_geomprop_document.GetError());
@@ -1515,14 +2039,14 @@ static void CheckTypedMtlxGraphResolution() {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 0,
            error.empty() ? "standard UV default was not resolved" : error);
     } else {
-      const MtlxNodeGraphPtr flat = standard_geomprop_document.FindNodeGraph("image_caller");
-      const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
-      const MtlxNodePtr body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
-      const MtlxInputPtr uv = body ? body->GetInput("uv") : nullptr;
-      const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+      const ElemRef flat = standard_geomprop_document.FindNodeGraph("image_caller");
+      const ElemRef geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+      const ElemRef body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
+      const ElemRef uv = body ? body->GetInput("uv") : nullptr;
+      const ElemRef index = geom ? geom->GetInput("index") : nullptr;
       if (!geom || geom->GetCategory() != "texcoord" || !uv ||
           uv->GetNodeName() != geom->GetName() || !index ||
-          index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 0 ||
+          index->GetValue().type != InputValue::TYPE_INT || index->GetValue().int_val != 0 ||
           standard_geomprop_document.GetResolvedXML().find("<geompropdef") != std::string::npos) {
         Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP", 1,
              "standard UV node was incorrect or library definitions were written into the document");
@@ -1535,7 +2059,7 @@ static void CheckTypedMtlxGraphResolution() {
   if (image_impl_pos != std::string::npos)
     resolved_geomprop_xml.insert(image_impl_pos,
         "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"3\"/>");
-  MtlxDocument resolved_geomprop_document;
+  Document resolved_geomprop_document;
   g_checks++;
   if (image_impl_pos == std::string::npos ||
       !resolved_geomprop_document.ParseFromXML(resolved_geomprop_xml) ||
@@ -1543,54 +2067,54 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 0,
          error.empty() ? resolved_geomprop_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat_graph = resolved_geomprop_document.FindNodeGraph("image_caller");
-    const MtlxNodePtr flat_body = flat_graph && flat_graph->GetNodes().size() == 2
+    const ElemRef flat_graph = resolved_geomprop_document.FindNodeGraph("image_caller");
+    const ElemRef flat_body = flat_graph && flat_graph->GetNodes().size() == 2
                                       ? flat_graph->GetNodes()[0] : nullptr;
-    const MtlxNodePtr geom_node = flat_graph && flat_graph->GetNodes().size() == 2
+    const ElemRef geom_node = flat_graph && flat_graph->GetNodes().size() == 2
                                       ? flat_graph->GetNodes()[1] : nullptr;
-    const MtlxInputPtr uv = flat_body ? flat_body->GetInput("uv") : nullptr;
-    const MtlxInputPtr index = geom_node ? geom_node->GetInput("index") : nullptr;
+    const ElemRef uv = flat_body ? flat_body->GetInput("uv") : nullptr;
+    const ElemRef index = geom_node ? geom_node->GetInput("index") : nullptr;
     if (!uv || !geom_node || geom_node->GetCategory() != "texcoord" ||
         uv->GetNodeName() != geom_node->GetName() || !index ||
-        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 3) {
+        index->GetValue().type != InputValue::TYPE_INT || index->GetValue().int_val != 3) {
       Fail("MTLX_DOCUMENT_STDLIB_GEOMPROP_NODE", 1,
            "the document UV0 override did not supply texcoord index three");
     }
   }
-  MtlxElem external_uv_root = elem("materialx", "");
-  MtlxElem external_uv = elem("geompropdef", "UV0");
+  Elem external_uv_root = elem("materialx", "");
+  Elem external_uv = elem("geompropdef", "UV0");
   external_uv.SetAttr("type", "vector2");
   external_uv.SetAttr("geomprop", "texcoord");
   external_uv.SetAttr("index", "7");
   external_uv_root.children.push_back(external_uv);
-  MtlxLibrary source_geometry_library;
+  Library source_geometry_library;
   source_geometry_library.AddFrom(external_uv_root);
-  MtlxLibrary merged_geometry_library;
+  Library merged_geometry_library;
   merged_geometry_library.AddLibrary(source_geometry_library);
-  MtlxDocument external_uv_document;
+  Document external_uv_document;
   g_checks++;
   if (!external_uv_document.ParseFromXML(standard_geomprop_xml) ||
       !external_uv_document.FlattenNodeGraph("image_caller", merged_geometry_library, 1, &error)) {
     Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP", 0,
          error.empty() ? external_uv_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat = external_uv_document.FindNodeGraph("image_caller");
-    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
-    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
+    const ElemRef flat = external_uv_document.FindNodeGraph("image_caller");
+    const ElemRef geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const ElemRef index = geom ? geom->GetInput("index") : nullptr;
     if (!geom || geom->GetCategory() != "texcoord" || !index ||
-        index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 7 ||
+        index->GetValue().type != InputValue::TYPE_INT || index->GetValue().int_val != 7 ||
         external_uv_document.GetResolvedXML().find("<geompropdef") != std::string::npos) {
       Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP", 1,
            "external UV0 did not override the standard definition");
     }
   }
-  MtlxElem external_image_def = elem("nodedef", "ND_external_image");
+  Elem external_image_def = elem("nodedef", "ND_external_image");
   external_image_def.SetAttr("node", "externalimage");
   external_image_def.SetAttr("type", "float");
   add_port(&external_image_def, "input", "texcoord", "vector2");
   external_image_def.children[0].SetAttr("defaultgeomprop", "UV0");
   add_port(&external_image_def, "output", "out", "float");
-  MtlxLibrary combined_external_library = merged_geometry_library;
+  Library combined_external_library = merged_geometry_library;
   combined_external_library.AddNodeDef(external_image_def, {});
   const std::string external_image_xml = R"(<materialx version="1.39">
   <nodedef name="ND_test_uv" node="testuv" type="float">
@@ -1606,38 +2130,38 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="call"/>
   </nodegraph>
 </materialx>)";
-  MtlxDocument combined_external_document;
+  Document combined_external_document;
   g_checks++;
   if (!combined_external_document.ParseFromXML(external_image_xml) ||
       !combined_external_document.FlattenNodeGraph("caller", combined_external_library, 1, &error)) {
     Fail("MTLX_DOCUMENT_EXTERNAL_NODEDEF_GEOMPROP", 0,
          error.empty() ? combined_external_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat = combined_external_document.FindNodeGraph("caller");
-    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
-    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
-    if (!index || index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 7)
+    const ElemRef flat = combined_external_document.FindNodeGraph("caller");
+    const ElemRef geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const ElemRef index = geom ? geom->GetInput("index") : nullptr;
+    if (!index || index->GetValue().type != InputValue::TYPE_INT || index->GetValue().int_val != 7)
       Fail("MTLX_DOCUMENT_EXTERNAL_NODEDEF_GEOMPROP", 1,
            "external nodedef did not bind the external geometry definition");
   }
-  MtlxDocument document_override_external;
+  Document document_override_external;
   g_checks++;
   if (!document_override_external.ParseFromXML(resolved_geomprop_xml) ||
       !document_override_external.FlattenNodeGraph("image_caller", merged_geometry_library, 1, &error)) {
     Fail("MTLX_DOCUMENT_GEOMPROP_PRECEDENCE", 0,
          error.empty() ? document_override_external.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat = document_override_external.FindNodeGraph("image_caller");
-    const MtlxNodePtr geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
-    const MtlxInputPtr index = geom ? geom->GetInput("index") : nullptr;
-    if (!index || index->GetValue().type != MtlxValue::TYPE_INT || index->GetValue().int_val != 3) {
+    const ElemRef flat = document_override_external.FindNodeGraph("image_caller");
+    const ElemRef geom = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const ElemRef index = geom ? geom->GetInput("index") : nullptr;
+    if (!index || index->GetValue().type != InputValue::TYPE_INT || index->GetValue().int_val != 3) {
       Fail("MTLX_DOCUMENT_GEOMPROP_PRECEDENCE", 1,
            "document UV0 did not override the external definition");
     }
   }
-  MtlxLibrary ambiguous_geometry_library = merged_geometry_library;
+  Library ambiguous_geometry_library = merged_geometry_library;
   ambiguous_geometry_library.AddLibrary(source_geometry_library);
-  MtlxDocument ambiguous_external_document;
+  Document ambiguous_external_document;
   g_checks++;
   if (!ambiguous_external_document.ParseFromXML(standard_geomprop_xml)) {
     Fail("MTLX_DOCUMENT_EXTERNAL_GEOMPROP_AMBIGUOUS", 0, ambiguous_external_document.GetError());
@@ -1651,7 +2175,7 @@ static void CheckTypedMtlxGraphResolution() {
            "duplicate external definitions were accepted or changed the document");
     }
   }
-  MtlxDocument overriding_ambiguous_external;
+  Document overriding_ambiguous_external;
   g_checks++;
   if (!overriding_ambiguous_external.ParseFromXML(resolved_geomprop_xml) ||
       !overriding_ambiguous_external.FlattenNodeGraph("image_caller", ambiguous_geometry_library,
@@ -1666,7 +2190,7 @@ static void CheckTypedMtlxGraphResolution() {
     explicit_uv_xml.replace(image_call_pos, image_call.size(),
         "<image name=\"call\" type=\"float\" nodedef=\"ND_image_float\">"
         "<input name=\"texcoord\" type=\"vector2\" value=\"0,0\"/></image>");
-  MtlxDocument explicit_uv_document;
+  Document explicit_uv_document;
   g_checks++;
   if (image_call_pos == std::string::npos ||
       !explicit_uv_document.ParseFromXML(explicit_uv_xml) ||
@@ -1674,11 +2198,11 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_DOCUMENT_STDLIB_AUTHORED_UV", 0,
          error.empty() ? explicit_uv_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat_graph = explicit_uv_document.FindNodeGraph("image_caller");
-    const MtlxNodePtr flat_body = flat_graph && flat_graph->GetNodes().size() == 1
+    const ElemRef flat_graph = explicit_uv_document.FindNodeGraph("image_caller");
+    const ElemRef flat_body = flat_graph && flat_graph->GetNodes().size() == 1
                                       ? flat_graph->GetNodes()[0] : nullptr;
-    const MtlxInputPtr flat_uv = flat_body ? flat_body->GetInput("uv") : nullptr;
-    if (!flat_uv || flat_uv->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+    const ElemRef flat_uv = flat_body ? flat_body->GetInput("uv") : nullptr;
+    if (!flat_uv || flat_uv->GetValue().type != InputValue::TYPE_FLOAT_VECTOR ||
         flat_uv->GetValue().float_vec.size() != 2) {
       Fail("MTLX_DOCUMENT_STDLIB_AUTHORED_UV", 1, "authored UV was not preserved");
     }
@@ -1702,21 +2226,21 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="call"/>
   </nodegraph>
 </materialx>)";
-  MtlxDocument standard_position_document;
+  Document standard_position_document;
   g_checks++;
   if (!standard_position_document.ParseFromXML(standard_position_xml) ||
       !standard_position_document.FlattenNodeGraph("position_caller", 1, &error)) {
     Fail("MTLX_DOCUMENT_STDLIB_WORLD_POSITION", 0,
          error.empty() ? standard_position_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat = standard_position_document.FindNodeGraph("position_caller");
-    const MtlxNodePtr geometry = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
-    const MtlxNodePtr body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
-    const MtlxInputPtr input = body ? body->GetInput("position") : nullptr;
-    const MtlxInputPtr space = geometry ? geometry->GetInput("space") : nullptr;
+    const ElemRef flat = standard_position_document.FindNodeGraph("position_caller");
+    const ElemRef geometry = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[1] : nullptr;
+    const ElemRef body = flat && flat->GetNodes().size() == 2 ? flat->GetNodes()[0] : nullptr;
+    const ElemRef input = body ? body->GetInput("position") : nullptr;
+    const ElemRef space = geometry ? geometry->GetInput("space") : nullptr;
     if (!geometry || geometry->GetCategory() != "position" || !input ||
         input->GetNodeName() != geometry->GetName() || !space ||
-        space->GetValue().type != MtlxValue::TYPE_STRING ||
+        space->GetValue().type != InputValue::TYPE_STRING ||
         space->GetValue().string_val != "world") {
       Fail("MTLX_DOCUMENT_STDLIB_WORLD_POSITION", 1,
            "Pworld did not create a connected world-space position node");
@@ -1724,21 +2248,21 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument external_document;
-  MtlxLibrary external_library;
-  MtlxElem external_defs = elem("materialx", "");
-  MtlxElem external_constant = elem("nodedef", "ND_external_constant");
+  Document external_document;
+  Library external_library;
+  Elem external_defs = elem("materialx", "");
+  Elem external_constant = elem("nodedef", "ND_external_constant");
   external_constant.SetAttr("node", "externalconstant");
   external_constant.SetAttr("type", "float");
   add_port(&external_constant, "output", "out", "float");
   external_defs.children.push_back(external_constant);
-  MtlxElem external_passthrough = elem("nodedef", "ND_external_passthrough");
+  Elem external_passthrough = elem("nodedef", "ND_external_passthrough");
   external_passthrough.SetAttr("node", "externalpassthrough");
   external_passthrough.SetAttr("type", "float");
   add_port(&external_passthrough, "input", "gain", "float");
   add_port(&external_passthrough, "output", "out", "float");
   external_defs.children.push_back(external_passthrough);
-  MtlxElem external_color = elem("nodedef", "ND_external_color");
+  Elem external_color = elem("nodedef", "ND_external_color");
   external_color.SetAttr("node", "externalcolor");
   external_color.SetAttr("type", "color3");
   add_port(&external_color, "input", "value", "color3");
@@ -1775,7 +2299,7 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="call"/>
   </nodegraph>
 </materialx>)";
-  MtlxDocument external_flatten_document;
+  Document external_flatten_document;
   g_checks++;
   if (!external_flatten_document.ParseFromXML(external_flatten_xml) ||
       !external_flatten_document.FlattenNodeGraph("external_caller", external_library,
@@ -1783,7 +2307,7 @@ static void CheckTypedMtlxGraphResolution() {
     Fail("MTLX_DOCUMENT_FLATTEN_EXTERNAL_LIBRARY", 0,
          error.empty() ? external_flatten_document.GetError() : error);
   } else {
-    const MtlxNodeGraphPtr flat_graph = external_flatten_document.FindNodeGraph("external_caller");
+    const ElemRef flat_graph = external_flatten_document.FindNodeGraph("external_caller");
     if (!flat_graph || flat_graph->GetNode("call") || flat_graph->GetNodes().size() != 1 ||
         flat_graph->GetNodes()[0]->GetCategory() != "externalconstant") {
       Fail("MTLX_DOCUMENT_FLATTEN_EXTERNAL_LIBRARY", 1,
@@ -1792,7 +2316,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument legacy_document;
+  Document legacy_document;
   const std::string legacy_xml = R"(<materialx version="1.37">
   <nodegraph name="legacy">
     <diffuse_brdf name="diffuse" type="BSDF"/>
@@ -1814,7 +2338,7 @@ static void CheckTypedMtlxGraphResolution() {
     g_checks++;
     // 1.37 -> 1.38: a node named like a bound interface name is renamed
     // (mix -> mix2) and its consumers are redirected.
-    MtlxDocument document;
+    Document document;
     const std::string xml = R"(<materialx version="1.37">
   <nodedef name="ND_t" node="t"><input name="mix" type="float" value="0.5"/><output name="out" type="float"/></nodedef>
   <nodegraph name="NG_t" nodedef="ND_t">
@@ -1825,7 +2349,7 @@ static void CheckTypedMtlxGraphResolution() {
     <output name="out" type="float" nodename="mix"/>
   </nodegraph>
 </materialx>)";
-    MtlxNodeGraphPtr graph;
+    ElemRef graph;
     if (!document.ParseFromXML(xml) || !(graph = document.FindNodeGraph("NG_t")) ||
         graph->GetNode("mix") || !graph->GetNode("mix2")) {
       Fail("MTLX_UPGRADE_INTERFACE_NAME_RENAME", 0,
@@ -1833,7 +2357,7 @@ static void CheckTypedMtlxGraphResolution() {
     }
   }
   g_checks++;
-  MtlxDocument legacy_opgraph_document;
+  Document legacy_opgraph_document;
   const std::string legacy_opgraph_xml = R"(<materialx version="1.22">
   <opgraph name="legacy_graph">
     <constant name="base" type="float">
@@ -1852,16 +2376,16 @@ static void CheckTypedMtlxGraphResolution() {
 </materialx>)";
   const bool legacy_opgraph_parsed =
       legacy_opgraph_document.ParseFromXML(legacy_opgraph_xml);
-  const MtlxNodeGraphPtr legacy_opgraph =
+  const ElemRef legacy_opgraph =
       legacy_opgraph_document.FindNodeGraph("legacy_graph");
-  const MtlxNodePtr legacy_opgraph_constant =
+  const ElemRef legacy_opgraph_constant =
       legacy_opgraph ? legacy_opgraph->GetNode("base") : nullptr;
-  const MtlxInputPtr legacy_opgraph_value =
+  const ElemRef legacy_opgraph_value =
       legacy_opgraph_constant ? legacy_opgraph_constant->GetInput("value")
                               : nullptr;
-  const MtlxNodePtr legacy_shader =
+  const ElemRef legacy_shader =
       legacy_opgraph_document.FindNode("legacy_shader");
-  const MtlxMaterialPtr legacy_material =
+  const ElemRef legacy_material =
       legacy_opgraph_document.FindMaterial("legacy_material");
   float legacy_constant_value = 0.0f;
   if (!legacy_opgraph_parsed ||
@@ -1881,7 +2405,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument legacy_override_document;
+  Document legacy_override_document;
   const std::string legacy_override_xml = R"(<materialx version="1.25">
   <shader name="standard_surface" shadertype="surface" shaderprogram="standard_surface">
     <input name="base" type="float" value="1.0" publicname="base_public"/>
@@ -1909,7 +2433,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
 
   g_checks++;
-  MtlxDocument legacy_bsdf_document;
+  Document legacy_bsdf_document;
   const std::string legacy_bsdf_xml = R"(<materialx version="1.37">
   <nodegraph name="legacy_bsdf">
     <diffuse_brdf name="base" type="BSDF"/>
@@ -1922,7 +2446,7 @@ static void CheckTypedMtlxGraphResolution() {
     </conductor_brdf>
   </nodegraph>
 </materialx>)";
-  MtlxNodeGraphPtr legacy_bsdf_graph;
+  ElemRef legacy_bsdf_graph;
   if (!legacy_bsdf_document.ParseFromXML(legacy_bsdf_xml) ||
       !(legacy_bsdf_graph = legacy_bsdf_document.FindNodeGraph("legacy_bsdf")) ||
       !legacy_bsdf_graph->GetNode("coat") ||
@@ -1943,7 +2467,7 @@ static void CheckTypedMtlxGraphResolution() {
   // 1.39.5 Document::upgradeVersion for each source document version.
   auto check_atan2_upgrade = [](const char *version, float expected_inx,
                                 float expected_iny, const char *case_name) {
-    MtlxDocument document;
+    Document document;
     const std::string xml = std::string("<materialx version=\"") + version +
         "\"><nodegraph name=\"g\"><atan2 name=\"n\" type=\"float\">"
         "<input name=\"in1\" type=\"float\" value=\"1\"/>"
@@ -1953,11 +2477,11 @@ static void CheckTypedMtlxGraphResolution() {
       Fail(case_name, 0, document.GetError());
       return;
     }
-    const MtlxNodeGraphPtr graph = document.FindNodeGraph("g");
-    const MtlxNodePtr node = graph ? graph->GetNode("n") : nullptr;
+    const ElemRef graph = document.FindNodeGraph("g");
+    const ElemRef node = graph ? graph->GetNode("n") : nullptr;
     float inx = 0.0f, iny = 0.0f;
-    const MtlxInputPtr inx_input = node ? node->GetInput("inx") : nullptr;
-    const MtlxInputPtr iny_input = node ? node->GetInput("iny") : nullptr;
+    const ElemRef inx_input = node ? node->GetInput("inx") : nullptr;
+    const ElemRef iny_input = node ? node->GetInput("iny") : nullptr;
     if (!inx_input || !iny_input || node->GetInput("in1") ||
         node->GetInput("in2") || !inx_input->GetValueAsFloat(inx) ||
         !iny_input->GetValueAsFloat(iny) || inx != expected_inx ||
@@ -1972,7 +2496,7 @@ static void CheckTypedMtlxGraphResolution() {
   // channel bindings to this same separate2/combine2 graph.
   auto check_color2_swizzle = [](const char *version, const char *source_type,
                                  const char *channels, const char *case_name) {
-    MtlxDocument document;
+    Document document;
     const std::string xml = std::string("<materialx version=\"") + version +
         "\"><nodegraph name=\"NG\"><constant name=\"c\" type=\"" +
         source_type + "\"><input name=\"value\" type=\"" + source_type +
@@ -1985,15 +2509,15 @@ static void CheckTypedMtlxGraphResolution() {
       Fail(case_name, 0, document.GetError());
       return;
     }
-    const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-    const MtlxNodePtr source = graph ? graph->GetNode("c") : nullptr;
-    const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
-    const MtlxNodePtr separate = graph ? graph->GetNode("separate") : nullptr;
-    const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
-    const MtlxInputPtr convert_input = convert ? convert->GetInput("in") : nullptr;
-    const MtlxInputPtr separate_input = separate ? separate->GetInput("in") : nullptr;
-    const MtlxInputPtr combine_x = combine ? combine->GetInput("in1") : nullptr;
-    const MtlxInputPtr combine_y = combine ? combine->GetInput("in2") : nullptr;
+    const ElemRef graph = document.FindNodeGraph("NG");
+    const ElemRef source = graph ? graph->GetNode("c") : nullptr;
+    const ElemRef convert = graph ? graph->GetNode("v") : nullptr;
+    const ElemRef separate = graph ? graph->GetNode("separate") : nullptr;
+    const ElemRef combine = graph ? graph->GetNode("swizzle") : nullptr;
+    const ElemRef convert_input = convert ? convert->GetInput("in") : nullptr;
+    const ElemRef separate_input = separate ? separate->GetInput("in") : nullptr;
+    const ElemRef combine_x = combine ? combine->GetInput("in1") : nullptr;
+    const ElemRef combine_y = combine ? combine->GetInput("in2") : nullptr;
     if (!source || source->GetType() != "vector2" || !convert_input ||
         convert_input->GetNodeName() != "swizzle" ||
         !convert_input->GetChannels().empty() || !separate ||
@@ -2012,26 +2536,26 @@ static void CheckTypedMtlxGraphResolution() {
   check_color2_swizzle("1.38", "vector2", "xy",
                        "MTLX_VERSION_UPGRADE_CHANNELS_138");
 
-  auto parse_channel_case = [](const char *xml, MtlxDocument *document,
+  auto parse_channel_case = [](const char *xml, Document *document,
                                const char *case_name) {
     if (document->ParseFromXML(xml)) return true;
     Fail(case_name, 0, document->GetError());
     return false;
   };
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="c" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
       <convert name="v" type="float"><input name="in" type="float" nodename="c" channels="y"/></convert>
     </nodegraph></materialx>)";
     if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_EXTRACT")) {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr extract = graph ? graph->GetNode("swizzle") : nullptr;
-      const MtlxInputPtr extract_in = extract ? extract->GetInput("in") : nullptr;
-      const MtlxInputPtr index = extract ? extract->GetInput("index") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef extract = graph ? graph->GetNode("swizzle") : nullptr;
+      const ElemRef extract_in = extract ? extract->GetInput("in") : nullptr;
+      const ElemRef index = extract ? extract->GetInput("index") : nullptr;
       int index_value = -1;
-      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
-      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      const ElemRef convert = graph ? graph->GetNode("v") : nullptr;
+      const ElemRef convert_in = convert ? convert->GetInput("in") : nullptr;
       if (!extract || extract->GetCategory() != "extract" ||
           extract->GetType() != "float" || !extract_in ||
           extract_in->GetType() != "vector3" ||
@@ -2045,21 +2569,21 @@ static void CheckTypedMtlxGraphResolution() {
     }
   }
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="c" type="float"><input name="value" type="float" value="0.25"/></constant>
       <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="x0x"/></convert>
     </nodegraph></materialx>)";
     if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_SCALAR_BROADCAST")) {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
-      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
-      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef combine = graph ? graph->GetNode("swizzle") : nullptr;
+      const ElemRef convert = graph ? graph->GetNode("v") : nullptr;
+      const ElemRef convert_in = convert ? convert->GetInput("in") : nullptr;
       bool valid = combine && combine->GetCategory() == "combine3" &&
           convert_in && convert_in->GetNodeName() == "swizzle";
-      const MtlxInputPtr x1 = combine ? combine->GetInput("in1") : nullptr;
-      const MtlxInputPtr zero = combine ? combine->GetInput("in2") : nullptr;
-      const MtlxInputPtr x2 = combine ? combine->GetInput("in3") : nullptr;
+      const ElemRef x1 = combine ? combine->GetInput("in1") : nullptr;
+      const ElemRef zero = combine ? combine->GetInput("in2") : nullptr;
+      const ElemRef x2 = combine ? combine->GetInput("in3") : nullptr;
       float zero_value = -1.0f;
       valid = valid && x1 && x1->GetType() == "float" &&
           x1->GetNodeName() == "c" && x1->GetChannels().empty() && zero &&
@@ -2074,7 +2598,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="c" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
       <convert name="v" type="color3"><input name="in" type="color3" nodename="c" channels="rgb"/></convert>
@@ -2082,11 +2606,11 @@ static void CheckTypedMtlxGraphResolution() {
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_CHANNEL_CONVERT", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr swizzle = graph ? graph->GetNode("swizzle") : nullptr;
-      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
-      const MtlxInputPtr source = swizzle ? swizzle->GetInput("in") : nullptr;
-      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef swizzle = graph ? graph->GetNode("swizzle") : nullptr;
+      const ElemRef convert = graph ? graph->GetNode("v") : nullptr;
+      const ElemRef source = swizzle ? swizzle->GetInput("in") : nullptr;
+      const ElemRef convert_in = convert ? convert->GetInput("in") : nullptr;
       if (!swizzle || swizzle->GetCategory() != "convert" ||
           swizzle->GetType() != "color3" || !source ||
           source->GetType() != "vector3" || source->GetNodeName() != "c" ||
@@ -2099,18 +2623,18 @@ static void CheckTypedMtlxGraphResolution() {
     }
   }
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="c" type="vector2"><input name="value" type="vector2" value="0.25, 0.75"/></constant>
       <convert name="v" type="vector3"><input name="in" type="vector3" nodename="c" channels="x01"/></convert>
     </nodegraph></materialx>)";
     if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_CHANNEL_CONSTANTS")) {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr separate = graph ? graph->GetNode("separate") : nullptr;
-      const MtlxNodePtr combine = graph ? graph->GetNode("swizzle") : nullptr;
-      const MtlxInputPtr x = combine ? combine->GetInput("in1") : nullptr;
-      const MtlxInputPtr zero = combine ? combine->GetInput("in2") : nullptr;
-      const MtlxInputPtr one = combine ? combine->GetInput("in3") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef separate = graph ? graph->GetNode("separate") : nullptr;
+      const ElemRef combine = graph ? graph->GetNode("swizzle") : nullptr;
+      const ElemRef x = combine ? combine->GetInput("in1") : nullptr;
+      const ElemRef zero = combine ? combine->GetInput("in2") : nullptr;
+      const ElemRef one = combine ? combine->GetInput("in3") : nullptr;
       float zero_value = -1.0f, one_value = -1.0f;
       if (!separate || separate->GetCategory() != "separate2" || !combine ||
           combine->GetCategory() != "combine3" || !x ||
@@ -2123,16 +2647,16 @@ static void CheckTypedMtlxGraphResolution() {
     }
   }
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <convert name="v" type="vector2"><input name="in" type="vector2" value="0.2, 0.4" channels="01"/></convert>
     </nodegraph></materialx>)";
     if (parse_channel_case(xml, &document, "MTLX_VERSION_UPGRADE_CONSTANT_SWIZZLE")) {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr constant = graph ? graph->GetNode("swizzle") : nullptr;
-      const MtlxInputPtr value = constant ? constant->GetInput("value") : nullptr;
-      const MtlxNodePtr convert = graph ? graph->GetNode("v") : nullptr;
-      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef constant = graph ? graph->GetNode("swizzle") : nullptr;
+      const ElemRef value = constant ? constant->GetInput("value") : nullptr;
+      const ElemRef convert = graph ? graph->GetNode("v") : nullptr;
+      const ElemRef convert_in = convert ? convert->GetInput("in") : nullptr;
       std::vector<float> value_vec;
       if (!constant || constant->GetCategory() != "constant" ||
           constant->GetType() != "vector2" || !value ||
@@ -2147,18 +2671,18 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <subsurface_bsdf name="s" type="BSDF"><input name="radius" type="vector3" value="1, 2, 3"/></subsurface_bsdf>
     </nodegraph></materialx>)";
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_SUBSURFACE_RADIUS", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr subsurface = graph ? graph->GetNode("s") : nullptr;
-      const MtlxInputPtr radius = subsurface ? subsurface->GetInput("radius") : nullptr;
-      const MtlxNodePtr convert = graph ? graph->GetNode("convert") : nullptr;
-      const MtlxInputPtr convert_in = convert ? convert->GetInput("in") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef subsurface = graph ? graph->GetNode("s") : nullptr;
+      const ElemRef radius = subsurface ? subsurface->GetInput("radius") : nullptr;
+      const ElemRef convert = graph ? graph->GetNode("convert") : nullptr;
+      const ElemRef convert_in = convert ? convert->GetInput("in") : nullptr;
       std::vector<float> radius_value;
       if (!radius || radius->GetType() != "color3" ||
           radius->GetNodeName() != "convert" || !convert ||
@@ -2174,7 +2698,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <switch name="integer_switch" type="float"><input name="which" type="integer" value="5"/></switch>
       <switch name="float_switch" type="float"><input name="which" type="float" value="6.5"/></switch>
@@ -2183,10 +2707,10 @@ static void CheckTypedMtlxGraphResolution() {
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_SWITCH_RANGE", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr integer_switch = graph ? graph->GetNode("integer_switch") : nullptr;
-      const MtlxNodePtr float_switch = graph ? graph->GetNode("float_switch") : nullptr;
-      const MtlxNodePtr in_range = graph ? graph->GetNode("in_range") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef integer_switch = graph ? graph->GetNode("integer_switch") : nullptr;
+      const ElemRef float_switch = graph ? graph->GetNode("float_switch") : nullptr;
+      const ElemRef in_range = graph ? graph->GetNode("in_range") : nullptr;
       int integer_value = -1, in_range_value = -1;
       float float_value = -1.0f;
       if (!integer_switch || !integer_switch->GetInput("which") ||
@@ -2205,7 +2729,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <constant name="src" type="vector3"><input name="value" type="vector3" value="0.25, 0.5, 0.75"/></constant>
       <normalmap name="n" type="vector3" nodedef="ND_normalmap">
@@ -2216,15 +2740,15 @@ static void CheckTypedMtlxGraphResolution() {
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_NORMALMAP_OBJECT", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr normal = graph ? graph->GetNode("n") : nullptr;
-      const MtlxNodePtr multiply = graph ? graph->GetNode("multiply") : nullptr;
-      const MtlxNodePtr subtract = graph ? graph->GetNode("subtract") : nullptr;
-      const MtlxInputPtr normal_in = normal ? normal->GetInput("in") : nullptr;
-      const MtlxInputPtr multiply_in = multiply ? multiply->GetInput("in1") : nullptr;
-      const MtlxInputPtr multiply_factor = multiply ? multiply->GetInput("in2") : nullptr;
-      const MtlxInputPtr subtract_in = subtract ? subtract->GetInput("in1") : nullptr;
-      const MtlxInputPtr subtract_offset = subtract ? subtract->GetInput("in2") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef normal = graph ? graph->GetNode("n") : nullptr;
+      const ElemRef multiply = graph ? graph->GetNode("multiply") : nullptr;
+      const ElemRef subtract = graph ? graph->GetNode("subtract") : nullptr;
+      const ElemRef normal_in = normal ? normal->GetInput("in") : nullptr;
+      const ElemRef multiply_in = multiply ? multiply->GetInput("in1") : nullptr;
+      const ElemRef multiply_factor = multiply ? multiply->GetInput("in2") : nullptr;
+      const ElemRef subtract_in = subtract ? subtract->GetInput("in1") : nullptr;
+      const ElemRef subtract_offset = subtract ? subtract->GetInput("in2") : nullptr;
       float factor = 0.0f, offset = 0.0f;
       if (!normal || normal->GetCategory() != "normalize" ||
           normal->GetNodeDef() != "ND_normalize_vector3" ||
@@ -2244,7 +2768,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <normalmap name="n" type="vector3" nodedef="ND_normalmap">
         <input name="space" type="string" value="tangent"/>
@@ -2254,15 +2778,15 @@ static void CheckTypedMtlxGraphResolution() {
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_NORMALMAP_FRAME", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr normal = graph ? graph->GetNode("n") : nullptr;
-      const MtlxNodePtr cross = graph ? graph->GetNode("normalmap_cross") : nullptr;
-      const MtlxNodePtr tangent = graph ? graph->GetNode("normalmap_tangent") : nullptr;
-      const MtlxNodePtr normalize = graph ? graph->GetNode("normalmap_cross_norm") : nullptr;
-      const MtlxInputPtr in1 = cross ? cross->GetInput("in1") : nullptr;
-      const MtlxInputPtr in2 = cross ? cross->GetInput("in2") : nullptr;
-      const MtlxInputPtr space = tangent ? tangent->GetInput("space") : nullptr;
-      const MtlxInputPtr bitangent = normal ? normal->GetInput("bitangent") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef normal = graph ? graph->GetNode("n") : nullptr;
+      const ElemRef cross = graph ? graph->GetNode("normalmap_cross") : nullptr;
+      const ElemRef tangent = graph ? graph->GetNode("normalmap_tangent") : nullptr;
+      const ElemRef normalize = graph ? graph->GetNode("normalmap_cross_norm") : nullptr;
+      const ElemRef in1 = cross ? cross->GetInput("in1") : nullptr;
+      const ElemRef in2 = cross ? cross->GetInput("in2") : nullptr;
+      const ElemRef space = tangent ? tangent->GetInput("space") : nullptr;
+      const ElemRef bitangent = normal ? normal->GetInput("bitangent") : nullptr;
       std::string space_value;
       if (!normal || normal->GetNodeDef() != "ND_normalmap_float" ||
           normal->GetInput("space") || !cross ||
@@ -2280,7 +2804,7 @@ static void CheckTypedMtlxGraphResolution() {
   }
   g_checks++;
   {
-    MtlxDocument document;
+    Document document;
     const char *xml = R"(<materialx version="1.38"><nodegraph name="NG">
       <thin_film_bsdf name="film" type="BSDF">
         <input name="thickness" type="float" value="400"/>
@@ -2296,13 +2820,13 @@ static void CheckTypedMtlxGraphResolution() {
     if (!document.ParseFromXML(xml)) {
       Fail("MTLX_VERSION_UPGRADE_THIN_FILM_LAYER", 0, document.GetError());
     } else {
-      const MtlxNodeGraphPtr graph = document.FindNodeGraph("NG");
-      const MtlxNodePtr coat = graph ? graph->GetNode("coat") : nullptr;
-      const MtlxNodePtr transmission = graph ? graph->GetNode("transmission") : nullptr;
-      const MtlxInputPtr thickness = coat ? coat->GetInput("thinfilm_thickness") : nullptr;
-      const MtlxInputPtr ior = coat ? coat->GetInput("thinfilm_ior") : nullptr;
+      const ElemRef graph = document.FindNodeGraph("NG");
+      const ElemRef coat = graph ? graph->GetNode("coat") : nullptr;
+      const ElemRef transmission = graph ? graph->GetNode("transmission") : nullptr;
+      const ElemRef thickness = coat ? coat->GetInput("thinfilm_thickness") : nullptr;
+      const ElemRef ior = coat ? coat->GetInput("thinfilm_ior") : nullptr;
       float thickness_value = 0.0f, ior_value = 0.0f;
-      const auto &outputs = graph ? graph->GetOutputs() : std::vector<MtlxOutputPtr>();
+      const auto &outputs = graph ? graph->GetOutputs() : std::vector<ElemRef>();
       if (!graph || graph->GetNode("film") || graph->GetNode("coated") ||
           graph->GetNode("transmission_layer") || !coat || !thickness ||
           !thickness->GetValueAsFloat(thickness_value) ||
@@ -2321,19 +2845,19 @@ static void CheckTypedMtlxGraphResolution() {
 
 static void CheckMtlxDocumentXInclude() {
   g_checks++;
-  MtlxDocument doc;
+  Document doc;
   if (!doc.ParseFromFile("tests/fixtures/mtlx-xinclude/main.mtlx")) {
     Fail("MTLX_DOCUMENT_INCLUDE", 0, doc.GetError());
     return;
   }
-  const MtlxNodePtr node = doc.FindNode("included_constant");
+  const ElemRef node = doc.FindNode("included_constant");
   if (!node) {
     Fail("MTLX_DOCUMENT_INCLUDE", 0,
          "node from a nested relative XInclude was not parsed");
     return;
   }
-  const MtlxInputPtr input = node->GetInput("value");
-  if (!input || input->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+  const ElemRef input = node->GetInput("value");
+  if (!input || input->GetValue().type != InputValue::TYPE_FLOAT_VECTOR ||
       input->GetValue().float_vec.size() != 3 ||
       std::fabs(input->GetValue().float_vec[0] - 0.25f) > 1.0e-6f ||
       std::fabs(input->GetValue().float_vec[1] - 0.5f) > 1.0e-6f ||
@@ -2355,7 +2879,7 @@ static void CheckMtlxDocumentXInclude() {
   }
 
   g_checks++;
-  MtlxDocument unsafe;
+  Document unsafe;
   const std::string unsafe_xml =
       "<materialx version=\"1.39\" "
       "xmlns:xi=\"http://www.w3.org/2001/XInclude\">"
@@ -2367,7 +2891,7 @@ static void CheckMtlxDocumentXInclude() {
   }
 
   g_checks++;
-  MtlxDocument defaults;
+  Document defaults;
   const std::string defaults_xml = R"(<materialx version="1.39">
   <nodedef name="ND_base" node="defaulted" type="color3">
     <input name="value" type="color3" value="0.1, 0.2, 0.3"/>
@@ -2382,11 +2906,11 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_NODEDEF_DEFAULT", 0, defaults.GetError());
     return;
   }
-  const MtlxNodePtr defaulted_node = defaults.FindNode("defaulted_node");
-  const MtlxInputPtr defaulted_value =
+  const ElemRef defaulted_node = defaults.FindNode("defaulted_node");
+  const ElemRef defaulted_value =
       defaulted_node ? defaulted_node->GetInput("value") : nullptr;
   if (!defaulted_value ||
-      defaulted_value->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+      defaulted_value->GetValue().type != InputValue::TYPE_FLOAT_VECTOR ||
       defaulted_value->GetValue().float_vec.size() != 3 ||
       std::fabs(defaulted_value->GetValue().float_vec[0] - 0.1f) > 1.0e-6f ||
       std::fabs(defaulted_value->GetValue().float_vec[1] - 0.2f) > 1.0e-6f ||
@@ -2394,17 +2918,17 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_NODEDEF_DEFAULT", 0,
          "nodedef default input was not added to the node instance");
   }
-  const MtlxNodePtr wired_node = defaults.FindNode("wired_node");
-  const MtlxInputPtr wired_value =
+  const ElemRef wired_node = defaults.FindNode("wired_node");
+  const ElemRef wired_value =
       wired_node ? wired_node->GetInput("value") : nullptr;
   if (!wired_value || wired_value->GetNodeName() != "wire" ||
-      wired_value->GetValue().type != MtlxValue::TYPE_NONE) {
+      wired_value->GetValue().type != InputValue::TYPE_NONE) {
     Fail("MTLX_DOCUMENT_NODEDEF_BINDING", 0,
          "nodedef default overwrote an authored node connection");
   }
 
   g_checks++;
-  MtlxDocument scoped;
+  Document scoped;
   const std::string scoped_xml = R"(<materialx version="1.39"
       colorspace="lin_rec709" fileprefix="textures/">
   <image name="inherited_image" type="color3">
@@ -2418,11 +2942,11 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_SCOPED_ATTRIBUTES", 0, scoped.GetError());
     return;
   }
-  const MtlxNodePtr inherited_image = scoped.FindNode("inherited_image");
-  const MtlxInputPtr inherited_file =
+  const ElemRef inherited_image = scoped.FindNode("inherited_image");
+  const ElemRef inherited_file =
       inherited_image ? inherited_image->GetInput("file") : nullptr;
-  const MtlxNodePtr overridden_image = scoped.FindNode("overridden_image");
-  const MtlxInputPtr overridden_file =
+  const ElemRef overridden_image = scoped.FindNode("overridden_image");
+  const ElemRef overridden_file =
       overridden_image ? overridden_image->GetInput("file") : nullptr;
   if (!inherited_file || inherited_file->GetColorSpace() != "lin_rec709" ||
       inherited_file->GetFilePrefix() != "textures/" || !overridden_file ||
@@ -2433,7 +2957,7 @@ static void CheckMtlxDocumentXInclude() {
   }
 
   g_checks++;
-  MtlxDocument standard_defaults;
+  Document standard_defaults;
   const std::string standard_defaults_xml = R"(<materialx version="1.39">
   <constant name="standard_default" type="color3"/>
 </materialx>)";
@@ -2441,12 +2965,12 @@ static void CheckMtlxDocumentXInclude() {
     Fail("MTLX_DOCUMENT_STDLIB_DEFAULT", 0, standard_defaults.GetError());
     return;
   }
-  const MtlxNodePtr standard_default =
+  const ElemRef standard_default =
       standard_defaults.FindNode("standard_default");
-  const MtlxInputPtr standard_value =
+  const ElemRef standard_value =
       standard_default ? standard_default->GetInput("value") : nullptr;
   if (!standard_value ||
-      standard_value->GetValue().type != MtlxValue::TYPE_FLOAT_VECTOR ||
+      standard_value->GetValue().type != InputValue::TYPE_FLOAT_VECTOR ||
       standard_value->GetValue().float_vec.size() != 3 ||
       std::fabs(standard_value->GetValue().float_vec[0]) > 1.0e-6f ||
       std::fabs(standard_value->GetValue().float_vec[1]) > 1.0e-6f ||

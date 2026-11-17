@@ -14,6 +14,7 @@
 
 #include "nonstd/expected.hpp"
 #include "value-types.hh"  // For value::float2
+#include "c/lightusd-mtlx.h"
 
 namespace lightusd { namespace legacy {
 
@@ -22,8 +23,7 @@ class Prim;
 class Stage;
 class Path;
 
-// mtlx::Mtlx{NodeGraph,Node,Input,Output} are shared (core/mtlx-dom.hh);
-// forward-declared in legacy-namespace.hh.
+// MaterialX elements come from the C11 core (c/lightusd-mtlx.h).
 
 namespace tydra {
 
@@ -111,13 +111,13 @@ bool ConvertShaderWithNodeGraphToJson(
 /// Convert MaterialX DOM NodeGraph to JSON string
 /// For use with MaterialX DOM (mtlx-dom.hh) structures
 ///
-/// @param[in] nodegraph MaterialX DOM NodeGraph object
+/// @param[in] nodegraph MaterialX <nodegraph> element (c/lightusd-mtlx.h)
 /// @param[out] json_str Output JSON string
 /// @param[out] err Error message if conversion fails
 /// @return true on success, false on failure
 ///
 bool ConvertMtlxNodeGraphToJson(
-    const mtlx::MtlxNodeGraph &nodegraph,
+    const lu_mtlx_elem *nodegraph,
     std::string *json_str,
     std::string *err = nullptr);
 
