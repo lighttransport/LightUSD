@@ -123,8 +123,14 @@ int lu_mtlx_scope_with(lu_mtlx_scope *out, const lu_mtlx_elem *e, const lu_mtlx_
 /* ParseMtlxXml. `root` must be initialised; replaced on success. */
 int lu_mtlx_parse_xml(const char *xml, size_t len, lu_mtlx_elem *root, lu_mtlx_sb *err);
 /* The resolved-XML writer of MtlxDocument::GetResolvedXML (the element tree
- * re-serialised through the XMLNode conversion of mtlx-dom.cc). */
+ * re-serialised through the XMLNode conversion of mtlx-dom.cc): prolog +
+ * AppendXmlNode(MtlxElemToXMLNode(root)). Appends to `out`. */
 int lu_mtlx_write_xml(const lu_mtlx_elem *root, lu_mtlx_sb *out);
+
+/* XMLNodeToMtlxElem(MtlxElemToXMLNode(e)) of mtlx-dom.cc: the tree as the
+ * C++ MtlxDocument stores it (XMLNode attribute container semantics:
+ * ordering and duplicate-key resolution exactly as XMLNode does). In place. */
+int lu_mtlx_xmlnode_normalize(lu_mtlx_elem *root);
 
 /* The class parser (src/mtlx-xml-parser.cc MaterialXParser) front end used by
  * the in-memory MtlxDocument::ParseFromXML(string): same element tree, plus
@@ -158,6 +164,8 @@ int lu_mtlx_is_reference_valid_name(const char *name);
 size_t lu_mtlx_type_arity(const char *type);
 size_t lu_mtlx_array_stride(const char *type);
 int lu_mtlx_is_builtin_type(const char *type);
+/* parse_value / default_value: `out` must be initialised; it is reset first
+ * (like `*out = MtlxTypedValue()`). lex_value replaces out's contents. */
 int lu_mtlx_parse_value(const char *type, const char *text, lu_mtlx_typed_value *out);
 int lu_mtlx_default_value(const char *type, lu_mtlx_typed_value *out);
 int lu_mtlx_lex_value(const char *type, const char *text, lu_mtlx_sb *out);
@@ -168,11 +176,14 @@ int lu_mtlx_trim(const char *s, lu_mtlx_sb *out);
 int lu_mtlx_split_on(char sep, const char *s, lu_mtlx_strv *out);
 int lu_mtlx_parse_int_token(const char *s, int64_t *out);
 int lu_mtlx_parse_float_token(const char *s, double *out);
-/* "%.9g"-equivalent of std::ostream << float with max_digits10, classic locale. */
+/* "%.9g"-equivalent of std::ostream << float with max_digits10, classic locale
+ * (FormatMtlxFloat). Appends to `out`. */
 int lu_mtlx_format_float(float v, lu_mtlx_sb *out);
 
 /* ---- scoped attributes, version, includes (mtlx-scope.c, mtlx-include.c) */
 
+/* scoped_attr: *out is borrowed from the chain. active_colorspace and
+ * resolved_filename replace out's contents; out may be NULL. */
 int lu_mtlx_scoped_attr(const char *key, const lu_mtlx_scope *chain, const char **out);
 int lu_mtlx_active_colorspace(const lu_mtlx_scope *chain, lu_mtlx_sb *out);
 int lu_mtlx_resolved_filename(const lu_mtlx_scope *chain, lu_mtlx_sb *out);
@@ -183,6 +194,7 @@ int lu_mtlx_parse_version(const char *text, uint64_t *major, uint64_t *minor);  
 typedef int (*lu_mtlx_include_loader)(void *user, const char *href,
                                       const char *including_href, char **xml,
                                       size_t *len);
+/* On failure *root is left empty (the C++ code leaves it moved-from). */
 int lu_mtlx_expand_includes(lu_mtlx_elem *root, lu_mtlx_include_loader loader,
                             void *user, lu_mtlx_sb *err);
 
