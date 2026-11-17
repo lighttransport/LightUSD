@@ -1656,61 +1656,101 @@ void ApplyMtlxNodeDefDefaults(MtlxElem *elem, const MtlxLibrary &library,
     ApplyMtlxNodeDefDefaults(&child, library, child_scope);
 }
 
-const std::vector<MtlxElem> &StandardMtlxNodeDefs() {
-  static const std::vector<MtlxElem> defs = [] {
-    std::vector<MtlxElem> result;
+// The stdlib tables are static POD data (X-macro rows); the elements are built
+// by a short loop at first use. Expanding the ~2900 rows into element-building
+// code inside one function made that function enormous (GCC 15 with ASan/UBSan
+// did not finish compiling it).
+struct StdNodeDefRow {
+  const char *name, *node, *out_type;
+  unsigned first, count;
+};
+struct StdInputRow {
+  const char *name, *type;
+  int has_default;
+  const char *default_value, *geomprop;
+};
+struct StdGeomPropRow {
+  const char *name, *type, *geomprop;
+  int has_space;
+  const char *space;
+  int has_index;
+  const char *index;
+};
+
 #define MTLX_STD_NODEDEF(name, node, output_type, first_input, input_count) \
-    do {                                                                      \
-      MtlxElem def;                                                           \
-      def.tag = "nodedef";                                                   \
-      def.SetAttr("name", name);                                             \
-      def.SetAttr("node", node);                                             \
-      def.SetAttr("type", output_type);                                      \
-      MtlxElem output;                                                        \
-      output.tag = "output";                                                 \
-      output.SetAttr("name", "out");                                        \
-      output.SetAttr("type", output_type);                                   \
-      def.children.push_back(std::move(output));                             \
-      result.push_back(std::move(def));                                       \
-    } while (false);
-#define MTLX_STD_INPUT(name, type, has_default, default_value, geomprop)      \
-    do {                                                                      \
-      MtlxElem input;                                                         \
-      input.tag = "input";                                                   \
-      input.SetAttr("name", name);                                           \
-      input.SetAttr("type", type);                                           \
-      if (has_default)                                                       \
-        input.SetAttr("value", default_value);                              \
-      if (geomprop[0])                                                       \
-        input.SetAttr("defaultgeomprop", geomprop);                          \
-      result.back().children.push_back(std::move(input));                     \
-    } while (false);
+  {name, node, output_type, first_input, input_count},
+#define MTLX_STD_INPUT(name, type, has_default, default_value, geomprop)
+const StdNodeDefRow kStdNodeDefRows[] = {
 #include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
-#undef MTLX_STD_INPUT
+};
 #undef MTLX_STD_NODEDEF
-    return result;
-  }();
+#undef MTLX_STD_INPUT
+#define MTLX_STD_NODEDEF(name, node, output_type, first_input, input_count)
+#define MTLX_STD_INPUT(name, type, has_default, default_value, geomprop) \
+  {name, type, has_default, default_value, geomprop},
+const StdInputRow kStdInputRows[] = {
+#include "../external/lightrt/mtlxrender/mtlx_stdlib_defs.inc"
+};
+#undef MTLX_STD_NODEDEF
+#undef MTLX_STD_INPUT
+#define MTLX_STD_GEOMPROPDEF(nm, ty, category, has_space, space, has_index, index) \
+  {nm, ty, category, has_space, space, has_index, index},
+const StdGeomPropRow kStdGeomPropRows[] = {
+#include "core/generated/mtlx-stdlib-geomprops.inc"
+};
+#undef MTLX_STD_GEOMPROPDEF
+
+std::vector<MtlxElem> BuildStandardMtlxNodeDefs() {
+  std::vector<MtlxElem> result;
+  result.reserve(sizeof(kStdNodeDefRows) / sizeof(kStdNodeDefRows[0]));
+  for (const StdNodeDefRow &row : kStdNodeDefRows) {
+    MtlxElem def;
+    def.tag = "nodedef";
+    def.SetAttr("name", row.name);
+    def.SetAttr("node", row.node);
+    def.SetAttr("type", row.out_type);
+    MtlxElem output;
+    output.tag = "output";
+    output.SetAttr("name", "out");
+    output.SetAttr("type", row.out_type);
+    def.children.push_back(std::move(output));
+    for (unsigned k = 0; k < row.count; ++k) {
+      const StdInputRow &in = kStdInputRows[row.first + k];
+      MtlxElem input;
+      input.tag = "input";
+      input.SetAttr("name", in.name);
+      input.SetAttr("type", in.type);
+      if (in.has_default) input.SetAttr("value", in.default_value);
+      if (in.geomprop[0]) input.SetAttr("defaultgeomprop", in.geomprop);
+      def.children.push_back(std::move(input));
+    }
+    result.push_back(std::move(def));
+  }
+  return result;
+}
+
+std::vector<MtlxElem> BuildStandardMtlxGeomPropDefs() {
+  std::vector<MtlxElem> result;
+  for (const StdGeomPropRow &row : kStdGeomPropRows) {
+    MtlxElem def;
+    def.tag = "geompropdef";
+    def.SetAttr("name", row.name);
+    def.SetAttr("type", row.type);
+    def.SetAttr("geomprop", row.geomprop);
+    if (row.has_space) def.SetAttr("space", row.space);
+    if (row.has_index) def.SetAttr("index", row.index);
+    result.push_back(std::move(def));
+  }
+  return result;
+}
+
+const std::vector<MtlxElem> &StandardMtlxNodeDefs() {
+  static const std::vector<MtlxElem> defs = BuildStandardMtlxNodeDefs();
   return defs;
 }
 
 const std::vector<MtlxElem> &StandardMtlxGeomPropDefs() {
-  static const std::vector<MtlxElem> defs = [] {
-    std::vector<MtlxElem> result;
-#define MTLX_STD_GEOMPROPDEF(nm, ty, category, has_space, space, has_index, index) \
-    do {                                                                           \
-      MtlxElem def;                                                                \
-      def.tag = "geompropdef";                                                      \
-      def.SetAttr("name", nm);                                                     \
-      def.SetAttr("type", ty);                                                     \
-      def.SetAttr("geomprop", category);                                           \
-      if (has_space) def.SetAttr("space", space);                                  \
-      if (has_index) def.SetAttr("index", index);                                  \
-      result.push_back(std::move(def));                                             \
-    } while (false);
-#include "core/generated/mtlx-stdlib-geomprops.inc"
-#undef MTLX_STD_GEOMPROPDEF
-    return result;
-  }();
+  static const std::vector<MtlxElem> defs = BuildStandardMtlxGeomPropDefs();
   return defs;
 }
 
