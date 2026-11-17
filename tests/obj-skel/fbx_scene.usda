@@ -1,0 +1,14 @@
+#usda 1.0
+(
+    defaultPrim = "W"
+    upAxis = "Y"
+    metersPerUnit = 1
+    timeCodesPerSecond = 24
+)
+
+# The FBX layer's skinned mesh under a SkelRoot (tests/obj-skel).
+def SkelRoot "W" (
+    references = @rig.fbx@
+)
+{
+}
