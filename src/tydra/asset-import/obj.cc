@@ -288,6 +288,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     } else {
       auto& s = obj->skel;
       s.present = true;
+      s.max_memory = reader.options.max_memory;
       for (size_t j = 0; j < sk.num_joints; ++j) {
         const tobj_skel_joint& jt = sk.joints[j];
         s.names.emplace_back(jt.name);

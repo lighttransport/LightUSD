@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "skel-author.hh"
 
+#include <cctype>
 #include <cmath>
+#include <set>
 #include <map>
 
 #include "c/lightusd-core-c.h"  // lu_float_to_half
@@ -80,6 +82,15 @@ void Decompose(const Mat& m, float t[3], float q[4], float s[3]) {
     s[i] = static_cast<float>(len);
     for (int j = 0; j < 3; ++j) r[i][j] = len > 0 ? m[i * 4 + j] / len : (i == j ? 1 : 0);
   }
+  // A mirrored transform (negative determinant) is a reflection, not a
+  // rotation: move the reflection into a negative x scale.
+  const double det = r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) -
+                     r[0][1] * (r[1][0] * r[2][2] - r[1][2] * r[2][0]) +
+                     r[0][2] * (r[1][0] * r[2][1] - r[1][1] * r[2][0]);
+  if (det < 0) {
+    s[0] = -s[0];
+    for (int j = 0; j < 3; ++j) r[0][j] = -r[0][j];
+  }
   // Row-vector rotation matrix R (v' = v R) is the transpose of the column
   // form; quaternion from the column form M = R^T.
   const double m00 = r[0][0], m11 = r[1][1], m22 = r[2][2];
@@ -120,12 +131,13 @@ void Decompose(const Mat& m, float t[3], float q[4], float s[3]) {
 
 std::vector<std::string> JointPaths(const Skeleton& s) {
   std::vector<std::string> paths(s.names.size());
-  std::map<std::pair<int, std::string>, int> used;  // (parent, name) -> count
+  std::set<std::pair<int, std::string>> used;  // (parent, name), unique among siblings
   for (size_t i = 0; i < s.names.size(); ++i) {
     const int p = s.parent[i];
-    std::string name = Identifier(s.names[i]);
-    int& n = used[{p, name}];
-    if (n++) name += "_" + std::to_string(n);
+    const std::string base = Identifier(s.names[i]);
+    std::string name = base;
+    for (int k = 2; used.count({p, name}); ++k) name = base + "_" + std::to_string(k);
+    used.insert({p, name});
     paths[i] = p >= 0 ? paths[size_t(p)] + "/" + name : name;
   }
   return paths;
@@ -182,6 +194,13 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
       Set(a, "blendShapeWeights", Value::MakeFloatArray(std::move(w)), "float[]");
     }
   }
+  for (size_t k = 0; k < anim->times.size() && n; ++k)
+    if (anim->translations.size() != anim->times.size() || anim->rotations.size() != anim->times.size() ||
+        anim->scales.size() != anim->times.size() || anim->translations[k].size() != 3 * n ||
+        anim->rotations[k].size() != 4 * n || anim->scales[k].size() != 3 * n) {
+      if (err) *err = "joint animation arrays have the wrong size";
+      return false;
+    }
   if (!n || anim->times.empty()) {  // no joint channels to sample
     p = layer->prim_mutable(skel_id);
     p->meta().apiSchemas().push_back("SkelBindingAPI");

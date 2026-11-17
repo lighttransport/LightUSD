@@ -323,6 +323,7 @@ struct OBJ {
     std::vector<std::vector<double>> bind, rest;
     std::string lib, lib_skeleton, anim, anim_name;  // as written
     std::vector<uint8_t> lib_bytes, anim_bytes;
+    size_t max_memory = SIZE_MAX;  // budget for decoding the sidecars
   } skel;
 };
 template <class T>

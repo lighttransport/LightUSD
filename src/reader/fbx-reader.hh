@@ -3,6 +3,7 @@
 // FBX import through ufbx (src/external/ufbx): meshes, skin clusters,
 // skeleton and animation -> UsdGeom/UsdSkel layers. Also reads the skeleton
 // and animation of an OBJ's skel_lib/skel_anim sidecar (skel-obj.md).
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -36,9 +37,10 @@ struct FBXScene {
 // Parse FBX bytes (Y-up, meters). `take` selects an animation stack by name
 // (empty: the first one). `with_meshes` = false reads only the skeleton and
 // animation. `max_frames` bounds the sampled animation.
+// `max_memory` bounds ufbx's allocations and the sampled/converted arrays.
 bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take,
                   bool with_meshes, FBXScene* out, std::string* warn, std::string* err,
-                  size_t max_frames = 100000);
+                  size_t max_frames = 100000, size_t max_memory = SIZE_MAX);
 
 std::shared_ptr<Layer> LoadFBXLayerFromMemory(const std::string& source, const uint8_t* data,
                                               size_t size,

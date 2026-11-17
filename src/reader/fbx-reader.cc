@@ -2,6 +2,7 @@
 #include "fbx-reader.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
@@ -68,9 +69,22 @@ std::string Identifier(const std::string& s) {
 }  // namespace
 
 bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, bool with_meshes,
-                  FBXScene* out, std::string* warn, std::string* err, size_t max_frames) {
+                  FBXScene* out, std::string* warn, std::string* err, size_t max_frames,
+                  size_t max_memory) {
   *out = FBXScene{};
+  // Converted arrays are charged against `max_memory` before they are built.
+  size_t charged = 0;
+  auto charge = [&](double bytes) {
+    if (!(bytes >= 0) || bytes > double(max_memory - charged)) {
+      if (err) *err = "FBX: memory limit exceeded";
+      return false;
+    }
+    charged += size_t(bytes);
+    return true;
+  };
   ufbx_load_opts opts = {};
+  opts.temp_allocator.memory_limit = max_memory;
+  opts.result_allocator.memory_limit = max_memory;
   opts.target_axes = ufbx_axes_right_handed_y_up;
   opts.target_unit_meters = 1.0;
   opts.space_conversion = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
@@ -180,6 +194,7 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
       uint32_t inf = 0;
       for (size_t v = 0; v < mesh->vertices.count && v < skin->vertices.count; ++v)
         inf = std::max(inf, skin->vertices.data[v].num_weights);
+      if (!charge(2.0 * 8.0 * double(mesh->vertices.count) * inf)) return false;
       m.influences = static_cast<int32_t>(inf);
       m.joint_indices.assign(mesh->vertices.count * inf, 0);
       m.joint_weights.assign(mesh->vertices.count * inf, 0.0f);
@@ -213,8 +228,11 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
         std::set<uint32_t> verts;
         for (size_t k = 0; k < ch->keyframes.count; ++k) {
           const ufbx_blend_shape* sh = ch->keyframes.data[k].shape;
-          for (size_t o = 0; o < sh->num_offsets; ++o) verts.insert(sh->offset_vertices.data[o]);
+          for (size_t o = 0; o < sh->num_offsets; ++o)
+            if (sh->offset_vertices.data[o] < mesh->vertices.count)
+              verts.insert(sh->offset_vertices.data[o]);
         }
+        if (!charge(12.0 * double(verts.size()) * double(ch->keyframes.count))) return false;
         skel::BlendShape b;
         b.name = Str(ch->name);
         b.point_indices.assign(verts.begin(), verts.end());
@@ -295,11 +313,15 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
     const double fps = scene->settings.frames_per_second > 0 ? scene->settings.frames_per_second : 24.0;
     const double f0 = std::round(stack_sel->time_begin * fps);
     const double f1 = std::round(stack_sel->time_end * fps);
-    size_t frames = f1 >= f0 ? size_t(f1 - f0) + 1 : 0;
-    if (frames > max_frames) {
-      if (warn) *warn += "FBX: animation truncated to " + std::to_string(max_frames) + " frames\n";
-      frames = max_frames;
-    }
+    // Each frame evaluates the whole scene: bound frames by the scene size too.
+    const double nodes = double(std::max<size_t>(scene->nodes.count, 1));
+    const double limit = std::min(double(max_frames), std::max(1.0, 2e8 / nodes));
+    const double span = std::isfinite(f0) && std::isfinite(f1) && f1 >= f0 ? f1 - f0 + 1 : 0;
+    size_t frames = span < limit ? size_t(span) : size_t(limit);
+    if (span > limit && warn)
+      *warn += "FBX: animation truncated to " + std::to_string(frames) + " frames\n";
+    if (!charge(double(frames) * (40.0 * double(nj) + 4.0 * double(blend_channels.size()))))
+      return false;
     out->animation.name = Str(stack_sel->name);
     out->animation.fps = fps;
     for (size_t k = 0; k < frames; ++k) {
@@ -349,7 +371,8 @@ std::shared_ptr<Layer> LoadFBXLayerFromMemory(const std::string& source, const u
   }
   FBXScene fbx;
   std::string w;
-  if (!ReadFBXScene(data, size, "", true, &fbx, &w, err)) return nullptr;
+  if (!ReadFBXScene(data, size, "", true, &fbx, &w, err, 100000, options.max_memory))
+    return nullptr;
   if (warn) *warn += w;
   auto layer = std::make_shared<Layer>();
   layer->meta().defaultPrim = "World";

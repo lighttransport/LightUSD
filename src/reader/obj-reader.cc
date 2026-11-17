@@ -620,7 +620,8 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
 #if defined(LIGHTUSD_WITH_UFBX)
       FBXScene fbx;
       std::string w, e;
-      if (ReadFBXScene(in.lib_bytes.data(), in.lib_bytes.size(), "", false, &fbx, &w, &e)) {
+      if (ReadFBXScene(in.lib_bytes.data(), in.lib_bytes.size(), "", false, &fbx, &w, &e, 100000,
+                       in.max_memory)) {
         lib = fbx.skeleton;
         for (size_t i = 0; i < lib.names.size(); ++i) lib_joint.emplace(lib.names[i], i);
       } else {
@@ -659,6 +660,10 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
                          : skel::Mul(out->bind[j], inv);
     }
   if (in.anim_bytes.empty()) return true;
+  if (IsUsdSidecar(in.anim) && in.anim.find('@') != std::string::npos) {
+    *why += "skel_anim '" + in.anim + "': '@' cannot appear in a USD asset path\n";
+    return true;
+  }
   if (IsUsdSidecar(in.anim)) {
     std::shared_ptr<Layer> keep;
     std::string path;
@@ -687,7 +692,7 @@ bool BuildOBJSkeleton(const tydra::import_asset::OBJ::Skel& in, skel::Skeleton* 
   FBXScene fbx;
   std::string w, e;
   if (!ReadFBXScene(in.anim_bytes.data(), in.anim_bytes.size(), in.anim_name, false, &fbx, &w,
-                    &e) ||
+                    &e, 100000, in.max_memory) ||
       !fbx.has_animation) {
     *why += "skel_anim '" + in.anim + "': " + (e.empty() ? "no animation" : e) + "\n" + w;
     return true;
