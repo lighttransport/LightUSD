@@ -1279,6 +1279,25 @@ static v3 film_transmission_ratio(const Layers *L, float cosi, float eta, float 
 
 /* OpenPBR rough transmission, using the visible-normal density and the
  * refraction half-vector Jacobian. eta is incident/transmitted IOR. */
+/* --layering graph: reproduce the OpenPBR MaterialX graph, which layers the T-mode
+ * dielectric_bsdf (already weighted by 1 - F per microfacet) under the R-mode top and so
+ * multiplies transmission again by the top's throughput 1 - weight E_R(view), with
+ * E_R = (a F0 + b) comp the fitted MaterialX directional albedo (issues/materialx/02).
+ * Default "physical" applies the Fresnel once. Diagnostic for like-for-like comparison
+ * with OSL / the MaterialX reference; not energy-certified. */
+static int g_layering_graph = 0;
+void bsdf_set_layering_graph(int on) { g_layering_graph = on; }
+int bsdf_layering_graph(void) { return g_layering_graph; }
+static float graph_layer_throughput(const Layers *L, float nv) {
+    if (!g_layering_graph || !L->openpbr_base || !(L->base_specular_weight > 0.0f)) return 1.0f;
+    double v = fmin(1.0, fmax(0.0, (double)nv)), alpha = fmin(1.0, fmax(1.0e-8, (double)L->alpha));
+    double a, b, ess = materialx_ggx_directional_terms(v, alpha, &a, &b);
+    double r = ((double)L->base_ior - 1.0) / ((double)L->base_ior + 1.0), f0 = r * r;
+    double comp = ess > 0.0 ? 1.0 + f0 * (1.0 - ess) / ess : 1.0;  /* MaterialX fit, any energy mode */
+    double t = 1.0 - (double)L->base_specular_weight * (a * f0 + b) * comp;
+    return (float)fmax(0.0, t);
+}
+
 static v3 eval_rough_transmission(const OpenPBRParams *p, const Layers *L,
                                  v3 N, v3 wo, v3 wi, float eta, float *pdf) {
     *pdf = 0.0f;
@@ -1303,6 +1322,7 @@ static v3 eval_rough_transmission(const OpenPBRParams *p, const Layers *L,
     if (!(*pdf > 0.0f) || !isfinite(*pdf)) { *pdf = 0.0f; return v3_splat(0.0f); }
     float mask = ggx_G(nv, nl, L->alpha)/g1;
     float factor = mask * L->glass_w * (1.0f-fresnel) * density * jacobian / nl;
+    factor *= graph_layer_throughput(L, nv);
     if (g_ms_dielectric) factor /= ms_dielectric_albedo(nv, L->alpha, eta);
     { double cert_s = cert_dielectric_scale(L, nv, eta); if (cert_s > 0.0) factor = (float)(factor * cert_s); }
     v3 tint = p->transmission_depth > 0.0f ? v3_splat(1.0f) : p->transmission_color;
@@ -1405,6 +1425,8 @@ int bsdf_sample(const OpenPBRParams *p, v3 Ns, v3 wo, pcg32 *rng, BsdfSample *ou
             masking * L.glass_w / L.pg * (transmission_only ? 1.0f-Fr : 1.0f));
         if (refracted && transmission_only)
             out->throughput = v3_mul(out->throughput, film_transmission_ratio(&L, cosi, eta, Fr));
+        if (refracted)
+            out->throughput = v3_scale(out->throughput, graph_layer_throughput(&L, v3_dot(N, wo)));
         if (L.openpbr_base) {
             float nv = v3_dot(N,wo);
             out->throughput = v3_mul(out->throughput,
