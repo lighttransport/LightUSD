@@ -1,8 +1,9 @@
 // skin_compare SCENE MESH_PRIM FBX TOL FRAME...
 //
-// Skinned points of MESH_PRIM in SCENE as LightUSD evaluates them (Tydra
-// EvaluateSkinnedPoints, UsdSkel) against ufbx's own skinning of FBX at the
-// same frames (sum of weight * cluster.geometry_to_world * vertex on the
+// Deformed points of MESH_PRIM in SCENE as LightUSD evaluates them (UsdSkel
+// blend shapes, then Tydra EvaluateSkinnedPoints) against ufbx's own
+// deformation of the FBX node of the same name at the same frames (blend
+// offsets, then sum of weight * cluster.geometry_to_world * vertex on the
 // evaluated scene). Point sets are compared by nearest neighbour in both
 // directions, so the mesh may come from the FBX itself or from an OBJ whose
 // skeleton/animation come from the FBX (skel_lib/skel_anim). Exits 1 when the
@@ -18,7 +19,9 @@
 #include "external/ufbx/ufbx.h"
 #include "load-usd.hh"
 #include "stage/stage.hh"
+#include "schema/usd-skel.hh"
 #include "tydra/render-extract.hh"
+#include "tydra/scene-access.hh"
 
 namespace {
 double MaxNearest(const std::vector<float>& a, const std::vector<float>& b) {
@@ -32,6 +35,74 @@ double MaxNearest(const std::vector<float>& a, const std::vector<float>& b) {
     worst = std::max(worst, std::sqrt(best));
   }
   return worst;
+}
+// UsdSkel blend shapes on `points` (UsdSkelBlendShapeQuery semantics): a
+// shape's weight w is piecewise linear over (0, base), (w_i, in-between i),
+// (1, full), extrapolated by the end segments. Weights come from the
+// skeleton's SkelAnimation (matched by token). Returns false on bad data.
+bool Morph(const lightusd::Stage& stage, const lightusd::UsdPrim& mesh, double time,
+           std::vector<float>* points) {
+  namespace n = lightusd;
+  const auto shapes = n::tydra::GetBlendShapes(mesh);
+  if (shapes.empty()) return true;
+  n::UsdPrim skel;
+  for (auto p = mesh; p.IsValid() && !skel.IsValid(); p = p.GetParent()) {
+    const auto* t = p.GetRelationship("skel:skeleton");
+    if (t && !t->empty()) skel = stage.GetPrimAtPath((*t)[0]);
+  }
+  if (!skel.IsValid()) return false;
+  const auto* src = skel.GetRelationship("skel:animationSource");
+  if (!src || src->empty()) return true;  // no weights: rest shape
+  n::SkelAnimationData anim;
+  if (!n::GetSkelAnimationDataAtTime(stage, stage.GetPrimAtPath((*src)[0]), &anim, time))
+    return false;
+  for (const auto& info : shapes) {
+    size_t k = 0;
+    while (k < anim.blendShapes.size() && anim.blendShapes[k] != info.name) ++k;
+    if (k >= anim.blendShapes.size() || k >= anim.blendShapeWeights.size()) continue;
+    const float w = anim.blendShapeWeights[k];
+    n::BlendShapeData bs;
+    if (!n::GetBlendShapeData(stage, stage.GetPrimAtPath(info.path), &bs)) return false;
+    std::vector<std::pair<float, const std::vector<float>*>> knots;  // weight -> offsets
+    const std::vector<float> zero(bs.offsets.size(), 0.0f);
+    knots.push_back({0.0f, &zero});
+    for (const auto& in : bs.inbetweens)
+      if (in.has_weight && in.offsets.size() == bs.offsets.size()) knots.push_back({in.weight, &in.offsets});
+    knots.push_back({1.0f, &bs.offsets});
+    size_t seg = 0;  // segment [seg, seg+1] containing w (end segments extrapolate)
+    while (seg + 2 < knots.size() && w > knots[seg + 1].first) ++seg;
+    const float w0 = knots[seg].first, w1 = knots[seg + 1].first;
+    const float u = w1 > w0 ? (w - w0) / (w1 - w0) : 0.0f;
+    const size_t np = bs.offsets.size() / 3;
+    for (size_t i = 0; i < np; ++i) {
+      const size_t v = bs.hasPointIndices ? size_t(bs.pointIndices[i]) : i;
+      if (3 * v + 2 >= points->size()) return false;
+      for (int c = 0; c < 3; ++c) {
+        const float a = (*knots[seg].second)[3 * i + c], b = (*knots[seg + 1].second)[3 * i + c];
+        (*points)[3 * v + c] += a + u * (b - a);
+      }
+    }
+  }
+  return true;
+}
+
+// Blend shapes, then skinning (unskinned meshes keep the morphed points).
+bool Deform(const lightusd::Stage& stage, const lightusd::UsdPrim& mesh, double time,
+            const lightusd::tydra::ValueArrayRead<float>& points, std::vector<float>* out,
+            std::string* err) {
+  std::vector<float> morphed(points.begin(), points.end());
+  if (!Morph(stage, mesh, time, &morphed)) {
+    *err = "invalid blend shapes";
+    return false;
+  }
+  if (!mesh.GetPropertyValue("primvars:skel:jointIndices")) {
+    *out = std::move(morphed);
+    return true;
+  }
+  lightusd::tydra::ValueArrayRead<float> m;
+  m.view.data = morphed.data();
+  m.view.size = morphed.size();
+  return lightusd::tydra::EvaluateSkinnedPoints(stage, mesh, time, m, out, err);
 }
 }  // namespace
 
@@ -50,10 +121,13 @@ static int Dump(const char* scene, double time) {
     todo.pop_back();
     for (const auto& c : prim.GetChildren()) todo.push_back(c);
     if (prim.GetTypeName() != "Mesh") continue;
+    if (!prim.GetPropertyValue("primvars:skel:jointIndices") &&
+        !prim.GetPropertyValue("skel:blendShapes"))
+      continue;  // not deformed
     lightusd::tydra::ValueArrayRead<float> points;
     if (!lightusd::tydra::ReadFloatArray(prim, "points", time, &points)) continue;
     std::vector<float> got;
-    if (!lightusd::tydra::EvaluateSkinnedPoints(stage, prim, time, points, &got, &err)) {
+    if (!Deform(stage, prim, time, points, &got, &err)) {
       std::fprintf(stderr, "skinning failed: %s\n", err.c_str());
       return 1;
     }
@@ -102,6 +176,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   const double fps = scene ? scene->settings.frames_per_second : 24.0;
+  const std::string prim_path = argv[2];
+  const std::string mesh_name = prim_path.substr(prim_path.rfind('/') + 1);
   int fails = 0;
   for (int a = 5; a < argc; ++a) {
     const double frame = std::atof(argv[a]);
@@ -111,8 +187,7 @@ int main(int argc, char** argv) {
       return 1;
     }
     std::vector<float> got;
-    if (!lightusd::tydra::EvaluateSkinnedPoints(stage, mesh, frame, points, &got, &err) ||
-        got.empty()) {
+    if (!Deform(stage, mesh, frame, points, &got, &err) || got.empty()) {
       std::fprintf(stderr, "LightUSD skinning failed: %s\n", err.c_str());
       return 1;
     }
@@ -123,17 +198,31 @@ int main(int argc, char** argv) {
     if (rest_mode) want.assign(points.begin(), points.end());
     for (size_t i = 0; ev && i < ev->nodes.count; ++i) {
       const ufbx_node* node = ev->nodes.data[i];
-      if (!node->mesh || !node->mesh->skin_deformers.count) continue;
+      if (!node->mesh || (!node->mesh->skin_deformers.count && !node->mesh->blend_deformers.count))
+        continue;
+      // only the FBX node named like the prim (scenes may hold several meshes)
+      if (std::string(node->name.data, node->name.length) != mesh_name) continue;
       const ufbx_mesh* m = node->mesh;
-      const ufbx_skin_deformer* skin = m->skin_deformers.data[0];
+      const ufbx_skin_deformer* skin = m->skin_deformers.count ? m->skin_deformers.data[0] : nullptr;
       for (size_t v = 0; v < m->vertices.count; ++v) {
+        // blend shapes (ufbx's FBX in-between interpolation), then skinning
+        ufbx_vec3 base = m->vertices.data[v];
+        for (size_t d = 0; d < m->blend_deformers.count; ++d) {
+          const ufbx_vec3 o = ufbx_get_blend_vertex_offset(m->blend_deformers.data[d], v);
+          base.x += o.x, base.y += o.y, base.z += o.z;
+        }
+        if (!skin) {
+          const ufbx_vec3 p = ufbx_transform_position(&node->geometry_to_world, base);
+          want.insert(want.end(), {float(p.x), float(p.y), float(p.z)});
+          continue;
+        }
         ufbx_vec3 acc = {0, 0, 0};
         double sum = 0;
         const ufbx_skin_vertex sv = skin->vertices.data[v];
         for (uint32_t k = 0; k < sv.num_weights; ++k) {
           const ufbx_skin_weight w = skin->weights.data[sv.weight_begin + k];
           const ufbx_vec3 p = ufbx_transform_position(
-              &skin->clusters.data[w.cluster_index]->geometry_to_world, m->vertices.data[v]);
+              &skin->clusters.data[w.cluster_index]->geometry_to_world, base);
           acc.x += w.weight * p.x;
           acc.y += w.weight * p.y;
           acc.z += w.weight * p.z;

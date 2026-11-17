@@ -34,14 +34,34 @@ struct Animation {
   std::vector<std::vector<float>> translations;  // per time: 3 * joints
   std::vector<std::vector<float>> rotations;     // per time: 4 * joints
   std::vector<std::vector<float>> scales;        // per time: 3 * joints
+  // Blend shape channels (SkelAnimation blendShapes / blendShapeWeights):
+  // weights per time, or `blend_default` when the weights are not animated.
+  std::vector<std::string> blend_shapes;
+  std::vector<std::vector<float>> blend_weights;  // per time: blend_shapes.size()
+  std::vector<float> blend_default;
+};
+
+// A UsdSkelBlendShape: offsets for `point_indices` (parallel, xyz), and
+// in-between shapes (same points) at weights in (0, 1).
+struct BlendShape {
+  std::string name;   // channel token in skel:blendShapes / SkelAnimation
+  std::string prim;   // child prim name (identifier) under the mesh
+  std::vector<int32_t> point_indices;
+  std::vector<float> offsets;
+  struct Inbetween {
+    std::string name;  // identifier
+    double weight = 0.5;
+    std::vector<float> offsets;
+  };
+  std::vector<Inbetween> inbetweens;
 };
 
 // USD joint paths ("a", "a/b", ...) from names and parents: names become
 // valid identifiers, made unique among siblings.
 std::vector<std::string> JointPaths(const Skeleton& s);
 
-// Define `skel_path` (Skeleton) and, with an animation, `skel_path/Anim`
-// (SkelAnimation) with skel:animationSource. Sets the layer's time codes
+// Define `skel_path` (Skeleton) and, with an animation (joint samples or blend
+// shape channels), `skel_path/Anim` (SkelAnimation) with skel:animationSource. Sets the layer's time codes
 // per second and range from the animation.
 bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& s,
                     const Animation* anim, std::string* err);
@@ -49,6 +69,11 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
 // Apply SkelBindingAPI to a mesh and point skel:skeleton at `skel_path`. Skin
 // weight primvars are authored by the caller.
 void BindMesh(PrimSpec* mesh, const std::string& skel_path);
+
+// BlendShape prims under `mesh_path`, plus the mesh's skel:blendShapes and
+// skel:blendShapeTargets (the mesh must also be bound with BindMesh).
+bool AuthorBlendShapes(Layer* layer, const std::string& mesh_path,
+                       const std::vector<BlendShape>& shapes, std::string* err);
 
 // Local transform -> (translation, real-first rotation, scale).
 void Decompose(const Mat& m, float t[3], float q[4], float s[3]);

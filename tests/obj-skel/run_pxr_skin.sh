@@ -1,6 +1,7 @@
 #!/bin/sh
 # Skinning of the imported FBX and OBJ (+ FBX sidecar) scenes, LightUSD vs
-# OpenUSD's UsdSkel (tools/view_control/skinning_compare.py).
+# OpenUSD's UsdSkel (tools/view_control/skinning_compare.py), and blend shapes
+# + skinning vs UsdSkel.BakeSkinning (pxr_bake_compare.py).
 #
 #   run_pxr_skin.sh LUSDCAT SKIN_COMPARE WORKDIR
 #
@@ -24,4 +25,11 @@ for s in fbx_scene obj_scene; do
     fi
   done
 done
+# blend shapes + skinning (FBX blend shape channels): UsdSkel.BakeSkinning
+"$LUSDCAT" -f "$HERE/blend_scene.usda" > "$WORK/blend_scene.flat.usda"
+"${OPENUSD_PYTHON:-python3}" "$HERE/pxr_bake_compare.py" "$WORK/blend_scene.flat.usda" \
+    "$HERE/skin_dump.sh" 1 6 12 18 24 || { echo "FAIL blend_scene"; fail=1; }
+# in-betweens, extrapolated weights, dense shapes (hand-written; not from FBX)
+"${OPENUSD_PYTHON:-python3}" "$HERE/pxr_bake_compare.py" "$HERE/inbetween_scene.usda" \
+    "$HERE/skin_dump.sh" 1 2 3 4 5 6 || { echo "FAIL inbetween_scene"; fail=1; }
 exit $fail

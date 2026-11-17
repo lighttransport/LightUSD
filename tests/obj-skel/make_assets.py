@@ -10,6 +10,9 @@ Writes into OUTDIR:
                   (skel_lib/skel_anim; tinyobjloader skel-obj.md)
   rig_inline.obj  the same, with a self-contained static skeleton (inline bind
                   and rest matrices, no sidecar)
+  rig_blend.fbx   rig.fbx plus blend shapes: on the column "bulge" (animated
+                  0 -> 1 -> 0) and "lean" (static 0.4), and an unskinned cube
+                  "box" with an animated shape key "puff"
 
 Coordinates: OBJ and FBX are Y-up. Blender is Z-up, so (x, y, z)_blender is
 written as (x, z, -y). Matrices are row-major with the translation in the last
@@ -130,4 +133,32 @@ for b in bones:
     local = C @ b.matrix_local if not b.parent else b.parent.matrix_local.inverted() @ b.matrix_local
     inline.append(f"skel_rest {b.name} {rows(local)}")
 write("rig_inline.obj", inline)
+# --- rig_blend.fbx: shape keys (FBX blend shape channels)
+mesh_ob.shape_key_add(name="Basis")
+bulge = mesh_ob.shape_key_add(name="bulge")
+lean = mesh_ob.shape_key_add(name="lean")
+for i, v in enumerate(mesh_ob.data.vertices):
+    z = v.co.z
+    f = max(0.0, 1.0 - abs(z - 1.5) / 1.0)  # around the middle
+    bulge.data[i].co = (v.co.x * (1 + 0.8 * f), v.co.y * (1 + 0.8 * f), z)
+    lean.data[i].co = (v.co.x + 0.3 * z / 3.0, v.co.y, z)
+lean.value = 0.4
+for frame, w in ((1, 0.0), (12, 1.0), (24, 0.0)):
+    bulge.value = w
+    bulge.keyframe_insert("value", frame=frame)
+bpy.ops.mesh.primitive_cube_add(size=0.5, location=(1.5, 0, 0.25))
+box = bpy.context.object
+box.name = box.data.name = "box"
+box.shape_key_add(name="Basis")
+puff = box.shape_key_add(name="puff")
+for i, v in enumerate(box.data.vertices):
+    puff.data[i].co = v.co * 1.6 if v.co.z > 0 else v.co
+for frame, w in ((1, 0.0), (12, 1.0), (24, 0.25)):
+    puff.value = w
+    puff.keyframe_insert("value", frame=frame)
+scene.frame_set(1)
+bpy.ops.export_scene.fbx(filepath=os.path.join(OUT, "rig_blend.fbx"), use_selection=False,
+                         add_leaf_bones=False, bake_anim=True, bake_anim_use_all_actions=False,
+                         bake_anim_use_nla_strips=False, axis_forward='-Z', axis_up='Y',
+                         apply_scale_options='FBX_SCALE_ALL', mesh_smooth_type='FACE')
 print("wrote", sorted(os.listdir(OUT)))

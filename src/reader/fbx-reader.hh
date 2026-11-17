@@ -21,6 +21,9 @@ struct FBXMesh {
   std::vector<int32_t> joint_indices;  // influences per point
   std::vector<float> joint_weights;
   int32_t influences = 0;
+  // Blend shape channels (ufbx blend deformers). `name` is the channel token
+  // (unique in the scene); offsets are in the world space of `points`.
+  std::vector<skel::BlendShape> blend_shapes;
 };
 
 struct FBXScene {

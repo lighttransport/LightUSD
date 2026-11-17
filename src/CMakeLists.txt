@@ -1501,6 +1501,17 @@ if(LIGHTUSD_BUILD_TESTS)
                         /W/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig.fbx
                         1e-4 1 6 12 18 24)
             set_tests_properties(tool-fbx-skin-ufbx PROPERTIES LABELS "fbx;skel")
+            # FBX blend shape channels (+ skinning; an unskinned blended cube) vs ufbx.
+            add_test(NAME tool-fbx-blend-ufbx-body
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/blend_scene.usda
+                        /W/Geometry/body ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig_blend.fbx
+                        1e-4 1 6 12 18 24)
+            add_test(NAME tool-fbx-blend-ufbx-box
+                COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/blend_scene.usda
+                        /W/Geometry/box ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/rig_blend.fbx
+                        1e-4 1 6 12 18 24)
+            set_tests_properties(tool-fbx-blend-ufbx-body tool-fbx-blend-ufbx-box
+                PROPERTIES LABELS "fbx;skel")
             # OBJ skel_joint names + skel_lib/skel_anim FBX sidecar (skel-obj.md).
             add_test(NAME tool-obj-skin-ufbx
                 COMMAND skin_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/obj_scene.usda

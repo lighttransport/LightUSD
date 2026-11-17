@@ -150,7 +150,7 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
   Set(p, "jointNames", Value::MakeTokenArray(s.names), "token[]", true);
   Set(p, "bindTransforms", Matrices(s.bind), "matrix4d[]", true);
   Set(p, "restTransforms", Matrices(s.rest), "matrix4d[]", true);
-  if (!anim || anim->times.empty()) return true;
+  if (!anim || (anim->times.empty() && anim->blend_shapes.empty())) return true;
 
   const std::string anim_path = skel_path + "/Anim";
   id = layer->define_prim_at_path(anim_path, "SkelAnimation");
@@ -160,10 +160,48 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
     return false;
   }
   Set(a, "joints", Value::MakeTokenArray(paths), "token[]", true);
+  const uint16_t ts = PropSlot::kFlagTimeSampled | PropSlot::kFlagArray;
+  if (!anim->blend_shapes.empty()) {
+    const size_t nb = anim->blend_shapes.size();
+    Set(a, "blendShapes", Value::MakeTokenArray(anim->blend_shapes), "token[]", true);
+    if (!anim->blend_weights.empty()) {
+      const PropNameId wid = GetPropNameTable().intern("blendShapeWeights");
+      a->add_property_slot(wid, TypeId::Float, ts);
+      a->set_property_type_name("blendShapeWeights", "float[]");
+      for (size_t k = 0; k < anim->times.size() && k < anim->blend_weights.size(); ++k) {
+        if (anim->blend_weights[k].size() != nb) {
+          if (err) *err = "blend shape weights have the wrong width";
+          return false;
+        }
+        a->add_time_sample(wid, anim->times[k],
+                           Value::MakeArrayFromRaw(TypeId::Float, anim->blend_weights[k].data(), nb));
+      }
+    } else {
+      std::vector<float> w = anim->blend_default;
+      w.resize(nb, 0.0f);
+      Set(a, "blendShapeWeights", Value::MakeFloatArray(std::move(w)), "float[]");
+    }
+  }
+  if (!n || anim->times.empty()) {  // no joint channels to sample
+    p = layer->prim_mutable(skel_id);
+    p->meta().apiSchemas().push_back("SkelBindingAPI");
+    p->meta().apiSchemasQualifier() = "prepend";
+    p->meta().setApiSchemasAuthored();
+    p->set_relationship_targets("skel:animationSource", {Path(anim_path)});
+    if (!anim->times.empty()) {
+      auto& meta = layer->meta();
+      meta.timeCodesPerSecond = anim->fps;
+      meta.timeCodesPerSecond_set = true;
+      meta.startTimeCode = anim->times.front();
+      meta.startTimeCode_set = true;
+      meta.endTimeCode = anim->times.back();
+      meta.endTimeCode_set = true;
+    }
+    return true;
+  }
   const PropNameId tid = GetPropNameTable().intern("translations");
   const PropNameId rid = GetPropNameTable().intern("rotations");
   const PropNameId sid = GetPropNameTable().intern("scales");
-  const uint16_t ts = PropSlot::kFlagTimeSampled | PropSlot::kFlagArray;
   a->add_property_slot(tid, TypeId::Float3, ts);
   a->add_property_slot(rid, TypeId::Quatf, ts);
   a->add_property_slot(sid, TypeId::Half3, ts);
@@ -195,6 +233,52 @@ bool AuthorSkeleton(Layer* layer, const std::string& skel_path, const Skeleton& 
   meta.startTimeCode_set = true;
   meta.endTimeCode = anim->times.back();
   meta.endTimeCode_set = true;
+  return true;
+}
+
+bool AuthorBlendShapes(Layer* layer, const std::string& mesh_path,
+                       const std::vector<BlendShape>& shapes, std::string* err) {
+  std::vector<std::string> tokens;
+  std::vector<Path> targets;
+  for (const BlendShape& b : shapes) {
+    const size_t np = b.point_indices.size();
+    if (b.offsets.size() != 3 * np) {
+      if (err) *err = "blend shape " + b.name + ": offsets do not match the point indices";
+      return false;
+    }
+    const std::string path = mesh_path + "/" + b.prim;
+    const auto id = layer->define_prim_at_path(path, "BlendShape");
+    PrimSpec* p = id == UINT32_MAX ? nullptr : layer->prim_mutable(id);
+    if (!p) {
+      if (err) *err = "cannot define BlendShape " + path;
+      return false;
+    }
+    Set(p, "offsets", Value::MakeFloatCompArray(b.offsets, TypeId::Vector3f, 3), "vector3f[]",
+        true);
+    Set(p, "pointIndices", Value::MakeIntArray(b.point_indices), "int[]", true);
+    for (const auto& in : b.inbetweens) {
+      if (in.offsets.size() != 3 * np) {
+        if (err) *err = "blend shape " + b.name + ": in-between size mismatch";
+        return false;
+      }
+      const std::string name = "inbetweens:" + in.name;
+      Set(p, name, Value::MakeFloatCompArray(in.offsets, TypeId::Vector3f, 3), "vector3f[]",
+          true);
+      PropMeta& meta = p->ensure_property_meta(name);
+      meta.weight = in.weight;
+      meta.authored |= PropMeta::kWeight;
+    }
+    tokens.push_back(b.name);
+    targets.emplace_back(path);
+  }
+  const auto mid = layer->index_at_path(mesh_path);
+  PrimSpec* m = mid == UINT32_MAX ? nullptr : layer->prim_mutable(mid);
+  if (!m) {
+    if (err) *err = "no mesh " + mesh_path;
+    return false;
+  }
+  Set(m, "skel:blendShapes", Value::MakeTokenArray(tokens), "token[]", true);
+  m->set_relationship_targets("skel:blendShapeTargets", targets);
   return true;
 }
 

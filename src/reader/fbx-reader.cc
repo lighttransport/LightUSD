@@ -122,6 +122,9 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
   out->skeleton.bind = rest_world;
   std::vector<char> bound(nj, 0);
 
+  std::vector<const ufbx_blend_channel*> blend_channels;  // parallel to animation.blend_shapes
+  std::vector<float> blend_default;
+  std::vector<double> blend_scale;
   // Meshes (and bind transforms from their skin clusters).
   for (size_t i = 0; i < scene->nodes.count; ++i) {
     const ufbx_node* node = scene->nodes.data[i];
@@ -197,7 +200,84 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
           for (uint32_t k = 0; k < inf; ++k) m.joint_weights[v * inf + k] /= sum;
       }
     }
+    // Blend shapes: one per channel; its full-weight keyframe is the shape
+    // and the others are in-betweens. All share the union of their points.
+    for (size_t d = 0; d < mesh->blend_deformers.count; ++d) {
+      const ufbx_blend_deformer* bd = mesh->blend_deformers.data[d];
+      for (size_t c = 0; c < bd->channels.count; ++c) {
+        const ufbx_blend_channel* ch = bd->channels.data[c];
+        if (!ch->keyframes.count) continue;
+        size_t full = 0;
+        for (size_t k = 1; k < ch->keyframes.count; ++k)
+          if (ch->keyframes.data[k].target_weight > ch->keyframes.data[full].target_weight) full = k;
+        std::set<uint32_t> verts;
+        for (size_t k = 0; k < ch->keyframes.count; ++k) {
+          const ufbx_blend_shape* sh = ch->keyframes.data[k].shape;
+          for (size_t o = 0; o < sh->num_offsets; ++o) verts.insert(sh->offset_vertices.data[o]);
+        }
+        skel::BlendShape b;
+        b.name = Str(ch->name);
+        b.point_indices.assign(verts.begin(), verts.end());
+        auto offsets = [&](const ufbx_blend_shape* sh) {
+          std::map<uint32_t, ufbx_vec3> by;
+          for (size_t o = 0; o < sh->num_offsets; ++o) {
+            ufbx_vec3 v = sh->position_offsets.data[o];
+            if (sh->offset_weights.count > o) {
+              const double w = sh->offset_weights.data[o];
+              v.x *= w, v.y *= w, v.z *= w;
+            }
+            by[sh->offset_vertices.data[o]] = v;
+          }
+          std::vector<float> out;
+          for (uint32_t v : b.point_indices) {
+            auto it = by.find(v);
+            const ufbx_vec3 o = it == by.end() ? ufbx_vec3{0, 0, 0}
+                                               : ufbx_transform_direction(&g2w, it->second);
+            out.insert(out.end(), {float(o.x), float(o.y), float(o.z)});
+          }
+          return out;
+        };
+        const double wfull = ch->keyframes.data[full].target_weight;
+        b.offsets = offsets(ch->keyframes.data[full].shape);
+        for (size_t k = 0; k < ch->keyframes.count; ++k) {
+          const ufbx_blend_keyframe& kf = ch->keyframes.data[k];
+          if (k == full || kf.target_weight <= 0 || wfull <= 0) continue;
+          skel::BlendShape::Inbetween in;
+          in.name = Identifier(Str(kf.shape->name).empty() ? "inbetween" : Str(kf.shape->name));
+          in.weight = kf.target_weight / wfull;
+          in.offsets = offsets(kf.shape);
+          for (auto& prev : b.inbetweens)
+            if (prev.name == in.name) in.name += "_" + std::to_string(k);
+          b.inbetweens.push_back(std::move(in));
+        }
+        if (wfull != 1.0 && warn)
+          *warn += "FBX: blend channel '" + b.name + "' full shape at weight " +
+                   std::to_string(wfull) + " (rescaled to 1)\n";
+        m.blend_shapes.push_back(std::move(b));
+        blend_channels.push_back(ch);
+        blend_default.push_back(float(ch->weight / (wfull > 0 ? wfull : 1.0)));
+        blend_scale.push_back(wfull > 0 ? wfull : 1.0);
+      }
+    }
     out->meshes.push_back(std::move(m));
+  }
+  // Channel tokens unique in the scene; prim names unique per mesh.
+  {
+    std::set<std::string> tokens;
+    for (FBXMesh& m : out->meshes) {
+      std::set<std::string> prims;
+      for (auto& b : m.blend_shapes) {
+        const std::string base = Identifier(b.name.empty() ? "shape" : b.name);
+        b.prim = base;
+        for (int k = 2; prims.count(b.prim); ++k) b.prim = base + "_" + std::to_string(k);
+        prims.insert(b.prim);
+        b.name = base;
+        for (int k = 2; tokens.count(b.name); ++k) b.name = base + "_" + std::to_string(k);
+        tokens.insert(b.name);
+        out->animation.blend_shapes.push_back(b.name);
+      }
+    }
+    out->animation.blend_default = blend_default;
   }
 
   // Animation: sample the chosen stack at the scene frame rate.
@@ -211,7 +291,7 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
   }
   if (!take.empty() && !stack_sel && warn)
     *warn += "FBX: animation '" + take + "' not found\n";
-  if (stack_sel && nj) {
+  if (stack_sel && (nj || !blend_channels.empty())) {
     const double fps = scene->settings.frames_per_second > 0 ? scene->settings.frames_per_second : 24.0;
     const double f0 = std::round(stack_sel->time_begin * fps);
     const double f1 = std::round(stack_sel->time_end * fps);
@@ -230,6 +310,13 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
         return false;
       }
       const std::vector<Mat> locals = Locals(JointWorlds(ev, joint_nodes), out->skeleton.parent);
+      if (!blend_channels.empty()) {
+        std::vector<float> w;
+        for (size_t c = 0; c < blend_channels.size(); ++c)
+          w.push_back(float(ev->blend_channels.data[blend_channels[c]->typed_id]->weight /
+                            blend_scale[c]));
+        out->animation.blend_weights.push_back(std::move(w));
+      }
       ufbx_free_scene(ev);
       std::vector<float> t(3 * nj), r(4 * nj), s(3 * nj);
       for (size_t j = 0; j < nj; ++j) skel::Decompose(locals[j], &t[3 * j], &r[4 * j], &s[3 * j]);
@@ -239,6 +326,15 @@ bool ReadFBXScene(const uint8_t* data, size_t size, const std::string& take, boo
       out->animation.scales.push_back(std::move(s));
     }
     out->has_animation = !out->animation.times.empty();
+  }
+  if (!out->has_animation && !blend_channels.empty()) {
+    // static channel weights: a SkelAnimation without samples
+    out->animation.times.clear();
+    out->animation.translations.clear();
+    out->animation.rotations.clear();
+    out->animation.scales.clear();
+    out->animation.blend_weights.clear();
+    out->has_animation = true;
   }
   return true;
 }
@@ -261,7 +357,10 @@ std::shared_ptr<Layer> LoadFBXLayerFromMemory(const std::string& source, const u
   layer->meta().upAxis_set = true;
   layer->meta().metersPerUnit = 1.0;
   layer->meta().metersPerUnit_set = true;
-  const bool skinned = !fbx.skeleton.names.empty();
+  bool blended = false;
+  for (const FBXMesh& m : fbx.meshes) blended |= !m.blend_shapes.empty();
+  // Blend shapes need a skeleton binding (UsdSkel), even with no joints.
+  const bool skinned = !fbx.skeleton.names.empty() || blended;
   if (!Define(layer.get(), "/World", skinned ? "SkelRoot" : "Xform")) {
     if (err) *err = "Cannot define /World";
     return nullptr;
@@ -306,6 +405,11 @@ std::shared_ptr<Layer> LoadFBXLayerFromMemory(const std::string& source, const u
       Set(p, "primvars:skel:jointWeights", Value::MakeFloatArray(m.joint_weights), "float[]");
       Interpolation(p, "primvars:skel:jointIndices", "vertex", m.influences);
       Interpolation(p, "primvars:skel:jointWeights", "vertex", m.influences);
+    }
+    if (!m.blend_shapes.empty()) {
+      skel::BindMesh(p, skel_path);
+      if (!skel::AuthorBlendShapes(layer.get(), "/World/Geometry/" + name, m.blend_shapes, err))
+        return nullptr;
     }
   }
   (void)source;
