@@ -958,6 +958,14 @@ if(LIGHTUSD_BUILD_TESTS)
     set_target_properties(lmtlxinfo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+    # Transitional oracle for the C11 MaterialX rewrite (tests/core/run_mtlx_diff.py).
+    add_executable(mtlx_oracle_dump
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/mtlx_oracle_dump.cc
+    )
+    target_link_libraries(mtlx_oracle_dump PRIVATE lightusd_core)
+    set_target_properties(mtlx_oracle_dump PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/test_crash_regressions.cc
