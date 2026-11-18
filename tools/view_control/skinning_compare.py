@@ -13,7 +13,10 @@ parser.add_argument("source");parser.add_argument("time",type=float);parser.add_
 args=parser.parse_args()
 source,time,output=args.source,args.time,args.output
 if not math.isfinite(time):parser.error("time must be finite")
-r=subprocess.run([args.native_dump,source,str(time)],capture_output=True,text=True,timeout=300)
+import os
+# Windows cannot exec a .sh wrapper: call the SKIN_COMPARE executable it wraps.
+dump_cmd=[os.environ["SKIN_COMPARE"],"--dump"] if os.name=="nt" and args.native_dump.endswith(".sh") and os.environ.get("SKIN_COMPARE") else [args.native_dump]
+r=subprocess.run(dump_cmd+[source,str(time)],capture_output=True,text=True,timeout=300)
 if r.returncode:raise RuntimeError(r.stderr)
 native={}
 for line in r.stdout.splitlines():

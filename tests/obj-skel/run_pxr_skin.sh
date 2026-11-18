@@ -14,7 +14,10 @@ LUSDCAT=$1; SKIN_COMPARE=$2; WORK=$3
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 mkdir -p "$WORK"
-export SKIN_COMPARE PYTHONPATH="$OPENUSD_ROOT/lib/python${PYTHONPATH:+:$PYTHONPATH}"
+export SKIN_COMPARE PYTHONPATH="$OPENUSD_ROOT/lib/python:$OPENUSD_ROOT/lib/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+# Windows-layout install: pxr loads its DLLs from PATH (or PXR_USD_WINDOWS_DLL_PATH).
+export PATH="$OPENUSD_ROOT/bin:$OPENUSD_ROOT/lib:$PATH"
+export PXR_USD_WINDOWS_DLL_PATH="$OPENUSD_ROOT/bin;$OPENUSD_ROOT/lib"
 export LD_LIBRARY_PATH="$OPENUSD_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fail=0
 for s in fbx_scene obj_scene usd_sidecar_scene; do
