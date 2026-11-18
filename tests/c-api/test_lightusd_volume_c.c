@@ -56,6 +56,19 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  {
+    /* A partial corpus (e.g. only utahteapot.vdb for the sparse-volume test)
+     * lacks the generated OpenVDB reference grids this test needs. */
+    char ref[MAX_USDA];
+    const int rn = snprintf(ref, sizeof(ref), "%s/reference/ref_float.vdb", root);
+    FILE* probe = (rn > 0 && (size_t)rn < sizeof(ref)) ? fopen(ref, "rb") : NULL;
+    if (!probe) {
+      printf("SKIP: reference grids not found under %s/reference\n", root);
+      return 0;
+    }
+    fclose(probe);
+  }
+
   char usda[MAX_USDA];
   const int n = snprintf(
       usda, sizeof(usda),
