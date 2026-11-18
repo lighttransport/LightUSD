@@ -60,6 +60,7 @@ static double materialx_conductor_fresnel(double cosine, double n, double k) {
  * energy (issues/materialx/03). Plain single scatter is <= 1 per interface; certified
  * glass uses the shared scale below instead. */
 static int g_energy_mode = 0;
+static MtlxFilmReflectanceFn g_conservative_film_fn = 0;
 static double fitted_ggx_comp(double favg, double ess) {
     return g_energy_mode == 1 ? 1.0 : 1.0 + favg * (1.0 - ess) / ess;
 }
@@ -359,6 +360,24 @@ static v3 fresnel_airy(float cosTheta, float ior_substrate, float tf_thickness_n
     I = v3_scale(I, 0.5f);
     v3 rgb = xyz_to_rgb_airy(I);
     return v3_make(clampf(rgb.x, 0.0f, 1.0f), clampf(rgb.y, 0.0f, 1.0f), clampf(rgb.z, 0.0f, 1.0f));
+}
+
+/* Conservative thin film: use the injected proved passive channel model when the
+ * renderer supplied it. A lossless dielectric substrate has zero extinction; the
+ * same splat-IOR / zero-extinction input is used for every call. On unsupported
+ * arithmetic the passive model fails closed (full reflection), which cannot create
+ * energy. Without a provider, behaviour is exactly the reference Airy path. */
+static v3 film_fresnel(float cosine, float substrate_ior, float thickness, float film_ior) {
+    if (g_energy_mode != 1 || !g_conservative_film_fn)
+        return fresnel_airy(cosine, substrate_ior, thickness, film_ior);
+    const float eta[3] = {substrate_ior, substrate_ior, substrate_ior};
+    const float extinction[3] = {0.0f, 0.0f, 0.0f};
+    float out[3];
+    if (!g_conservative_film_fn(cosine, eta, extinction, thickness, film_ior, out))
+        return v3_splat(1.0f);
+    return v3_make(clampf(out[0], 0.0f, 1.0f),
+                   clampf(out[1], 0.0f, 1.0f),
+                   clampf(out[2], 0.0f, 1.0f));
 }
 
 /* MaterialX conductor Airy model: each XYZ channel carries the phase and
@@ -847,6 +866,7 @@ static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
 #include "cert_albedo_table.h"
 void bsdf_set_energy_mode(int mode) { g_energy_mode = mode; }
 int bsdf_energy_mode(void) { return g_energy_mode; }
+void bsdf_set_conservative_film_fn(MtlxFilmReflectanceFn fn) { g_conservative_film_fn = fn; }
 #define CERT_ALBEDO_RESERVE 1.0e-3
 #define CERT_LOOKUP_EPS 1.0e-5
 
@@ -942,10 +962,16 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
             double comp=1.0+favg*(1.0-ess)/ess;
             v3 albedo=v3_splat((float)((a*f0+b)*comp));
             if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f) {
-                v3 film0=fresnel_airy(1.0f,L->base_ior,L->tf_thickness,L->tf_ior);
+                v3 film0=film_fresnel(1.0f,L->base_ior,L->tf_thickness,L->tf_ior);
                 v3 favg_film=v3_add(film0,v3_scale(v3_sub(one,film0),1.0f/21.0f));
                 v3 film_comp=v3_add(one,v3_scale(favg_film,(float)((1.0-ess)/ess)));
                 albedo=v3_lerp(albedo,v3_scale(film_comp,(float)(a*f0+b)),L->tf_weight);
+                /* In conservative mode the fitted film compensation must not turn
+                 * an attenuation into an energy gain. */
+                if (g_energy_mode == 1)
+                    albedo=v3_make(clampf(albedo.x,0.0f,1.0f),
+                                   clampf(albedo.y,0.0f,1.0f),
+                                   clampf(albedo.z,0.0f,1.0f));
             }
             /* From inside glass (reciprocal interface IOR < 1) the reflection lobe
              * includes total internal reflection, which the F0-based fit cannot
@@ -1027,7 +1053,7 @@ static v3 eval_reflection_split(const Layers *L, v3 N, v3 wo, v3 wi, float *pdf,
      * (blended by the film weight); the substrate index is the specular IOR. */
     v3 F = fresnel_schlick(VdotH, L->F0, L->F90);
     if (L->tf_weight > 0.0f && L->tf_thickness > 0.0f)
-        F = v3_lerp(F, fresnel_airy(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
+        F = v3_lerp(F, film_fresnel(VdotH, L->ior, L->tf_thickness, L->tf_ior), L->tf_weight);
     v3 spec = v3_mul(v3_scale(F, D * G / (4.0f * NdotV * NdotL)), base_atten);
     if (L->openpbr_base) {
         MtlxSpecularLobe lobe = {0};
@@ -1270,7 +1296,7 @@ static v3 film_transmission_ratio(const Layers *L, float cosi, float eta, float 
 #endif
     if (!(L->openpbr_base && L->tf_weight > 0.0f && L->tf_thickness > 0.0f)) return v3_splat(1.0f);
     if (!(f_plain < 1.0f)) return v3_splat(0.0f);
-    v3 fa = fresnel_airy(cosi, 1.0f / eta, L->tf_thickness, L->tf_ior);
+    v3 fa = film_fresnel(cosi, 1.0f / eta, L->tf_thickness, L->tf_ior);
     v3 f = v3_lerp(v3_splat(f_plain), fa, L->tf_weight);
     float inv = 1.0f / (1.0f - f_plain);
     return v3_make(maxf(0.0f, 1.0f - f.x) * inv, maxf(0.0f, 1.0f - f.y) * inv,

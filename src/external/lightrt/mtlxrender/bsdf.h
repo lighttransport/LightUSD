@@ -61,6 +61,15 @@ void bsdf_set_dielectric_multiscatter(int enable);
 /* 0 = reference (default), 1 = conservative certified dielectric compensation */
 void bsdf_set_energy_mode(int mode);
 int bsdf_energy_mode(void);
+
+/* Conservative-mode thin-film reflectance provider. The renderer injects the
+ * proved passive channel model (passive_film.h); when unset, film keeps the
+ * reference Airy behaviour. This keeps bsdf.c free of a link dependency on the
+ * strict-floating-point film source. */
+typedef int (*MtlxFilmReflectanceFn)(float cosTheta, const float eta[3],
+                                     const float extinction[3], float thickness_nm,
+                                     float film_ior, float out[3]);
+void bsdf_set_conservative_film_fn(MtlxFilmReflectanceFn fn);
 /* --layering physical (0, default) | graph (1): see graph_layer_throughput in bsdf.c. */
 void bsdf_set_layering_graph(int on);
 int bsdf_layering_graph(void);

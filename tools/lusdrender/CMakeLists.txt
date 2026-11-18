@@ -588,7 +588,8 @@ if(LIGHTUSD_BUILD_TESTS)
 
   # Thin film on glass: transmission uses 1 - the film Fresnel (no energy creation).
   add_executable(lusdrender-mtlx-film-energy
-    tests/mtlx_film_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+    tests/mtlx_film_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c
+    ${LUSDR_MTLX_BSDF_DIR}/passive_film.c)
   target_include_directories(lusdrender-mtlx-film-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
   target_compile_features(lusdrender-mtlx-film-energy PRIVATE c_std_11)
   target_compile_definitions(lusdrender-mtlx-film-energy PRIVATE _POSIX_C_SOURCE=200809L)

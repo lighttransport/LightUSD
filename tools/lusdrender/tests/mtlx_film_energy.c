@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "bsdf.h"
+#include "passive_film.h"
 
 static v3 albedo_rgb(const OpenPBRParams *p, v3 Ns, float view_cosine, int n) {
   const int n_mu = n, n_phi = 2 * n;
@@ -85,5 +86,35 @@ int main(void) {
       }
   }
   printf("max film albedo %.5f: %s\n", worst, fail ? "FAIL" : "ok");
+
+  /* Conservative mode injects the proved passive channel film model. The film
+   * Fresnel is then used consistently by reflection and transmission, so the
+   * lossless interface must not exceed unit albedo (no fitted compensation). */
+  bsdf_set_conservative_film_fn(mtlx_passive_film);
+  bsdf_set_energy_mode(1);
+  double worst_cons = 0.0;
+  for (int side = 0; side < 2; ++side) {
+    const v3 Ns = side ? v3_make(0, 0, -1) : v3_make(0, 0, 1);
+    for (size_t t = 0; t < sizeof thick / sizeof *thick; ++t)
+      for (size_t v = 0; v < sizeof views / sizeof *views; ++v) {
+        OpenPBRParams p;
+        glass(&p, 0.5f);
+        p.thin_film_weight = 1.0f;
+        p.thin_film_thickness = thick[t];
+        p.thin_film_ior = 1.3f;
+        const v3 cons = albedo_rgb(&p, Ns, views[v], 256);
+        const v3 half = albedo_rgb(&p, Ns, views[v], 128);
+        const float q = fmaxf(fabsf(cons.x - half.x),
+                        fmaxf(fabsf(cons.y - half.y), fabsf(cons.z - half.z)));
+        const float c[3] = {cons.x, cons.y, cons.z};
+        for (int k = 0; k < 3; ++k) {
+          worst_cons = fmax(worst_cons, c[k]);
+          if (c[k] > 1.0f + q) fail = 1;
+        }
+        printf("conservative %s t=%3.0f mu=%.1f albedo=(%.4f %.4f %.4f)\n",
+               side ? "exit " : "enter", thick[t], views[v], cons.x, cons.y, cons.z);
+      }
+  }
+  printf("max conservative film albedo %.5f: %s\n", worst_cons, fail ? "FAIL" : "ok");
   return fail;
 }

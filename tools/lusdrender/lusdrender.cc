@@ -72,6 +72,12 @@ extern "C" {
 // Vendored LightRT mtlxrender BSDF (bsdf.c): --energy-mode switch.
 extern "C" void bsdf_set_energy_mode(int mode);
 extern "C" void bsdf_set_layering_graph(int on);
+/* Conservative-mode thin film uses the proved passive channel model. */
+extern "C" int mtlx_passive_film(float cosTheta, const float eta[3],
+                                 const float extinction[3], float thickness_nm,
+                                 float film_ior, float out[3]);
+extern "C" void bsdf_set_conservative_film_fn(
+    int (*fn)(float, const float[3], const float[3], float, float, float[3]));
 }
 
 #ifdef LIGHTUSD_WITH_QJS
@@ -1721,6 +1727,11 @@ int main(int argc, char **argv) {
     std::cerr << "MaterialX graph math: strict binary32 sine/cosine\n";
   }
   bsdf_set_energy_mode(opt.energy_mode);
+  if (opt.energy_mode == 1) {
+    /* Only conservative mode selects the passive, proved per-channel film model;
+     * reference mode keeps the MaterialX CIE-fit Airy behaviour bit for bit. */
+    bsdf_set_conservative_film_fn(mtlx_passive_film);
+  }
   if (opt.layering_graph && opt.energy_mode == 1) {
     std::cerr << "--layering graph (diagnostic) cannot be combined with --energy-mode conservative.\n";
     return EXIT_FAILURE;
