@@ -6,6 +6,17 @@
 namespace lightusd {
 namespace pcp {
 
+namespace {
+// Cycle-guard key: the same layer spelled with '/' or the native separator
+// (Windows) must compare equal.
+std::string VisitKey(const std::string &id) {
+  std::string key = id;
+  for (char &c : key)
+    if (c == '\\') c = '/';
+  return key;
+}
+}  // namespace
+
 void Cache::Impl::AppendExpressionVarsFingerprint(ValueView vars,
                                               std::string *out) {
     auto d = vars.as_dictionary();
@@ -53,7 +64,7 @@ uint32_t Cache::Impl::InternLayerStack(
     st.identifier = identifier;
     st.cache_key = key;
     std::set<std::string> visiting;
-    visiting.insert(identifier);
+    visiting.insert(VisitKey(identifier));
     // Sublayer asset-path expressions evaluate against the STACK ROOT layer's
     // expressionVariables with the REFERENCING site's variables composed over
     // them (pxr: the root-most opinion wins; sublayers' own
@@ -342,7 +353,7 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
         if (options.error_when_asset_not_found) return false;
         continue;
       }
-      if (visiting && visiting->count(sub_id)) {
+      if (visiting && visiting->count(VisitKey(sub_id))) {
         // pxr warns and breaks the cycle, composing the rest — failing the
         // whole load here dropped otherwise-valid scenes.
         AddIssue(ErrorCode::SublayerCycle, sub_id,
@@ -368,13 +379,13 @@ bool Cache::Impl::AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer>
             std::isfinite(parent_tcps) && std::isfinite(sub_tcps)) {
           sub_cum = sub_cum.Compose(LayerOffset{0.0, parent_tcps / sub_tcps});
         }
-        if (visiting) visiting->insert(sub_id);
+        if (visiting) visiting->insert(VisitKey(sub_id));
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
                                      sub_cum, expr_vars, warn, err)) {
-          if (visiting) visiting->erase(sub_id);
+          if (visiting) visiting->erase(VisitKey(sub_id));
           return false;
         }
-        if (visiting) visiting->erase(sub_id);
+        if (visiting) visiting->erase(VisitKey(sub_id));
       } else {
         AddIssue(ErrorCode::InvalidAssetPath, sub_id,
                  "Failed to load sublayer: " + sub_id, warn);
