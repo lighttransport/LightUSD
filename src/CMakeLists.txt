@@ -43,6 +43,11 @@ unset(_lightusd_core_options)
 # This is defense in depth, not a substitute for the source-level bounds and
 # budget checks in the parsers.
 # ---------------------------------------------------------------------------
+if(MSVC)
+  # Sources contain UTF-8 (tests, comments); avoid code-page dependent decoding.
+  add_compile_options(/utf-8)
+endif()
+
 option(LIGHTUSD_HARDENING
        "Apply release hardening flags (stack protector, FORTIFY, RELRO, CFI) to the shipped core targets"
        ON)
@@ -2138,20 +2143,20 @@ if(LIGHTUSD_BUILD_TESTS AND TARGET lusdcat AND UNIX)
   # Crate-writer / layer round-trip pins (silently dropped or invented data).
   add_test(NAME core_scope_imageable_roundtrip
            COMMAND env ${_core_scripts_env}
-                   bash "${_core_scripts_root}/tests/run-scope-imageable-roundtrip.sh"
+                   ${LIGHTUSD_BASH_CMD} "${_core_scripts_root}/tests/run-scope-imageable-roundtrip.sh"
                    "$<TARGET_FILE:lusdcat>")
   set_tests_properties(core_scope_imageable_roundtrip PROPERTIES
                        SKIP_RETURN_CODE 77 LABELS "core;scripts")
   # Variant selection across a ref -> payload -> ref chain.
   add_test(NAME core_variant_chain
-           COMMAND bash "${_core_scripts_root}/tests/run-variant-chain.sh"
+           COMMAND ${LIGHTUSD_BASH_CMD} "${_core_scripts_root}/tests/run-variant-chain.sh"
                    "$<TARGET_FILE:lusdcat>" "${_core_scripts_root}")
   set_tests_properties(core_variant_chain PROPERTIES LABELS "core;scripts")
   # Our .usdc output read back by OpenUSD (needs a pinned OpenUSD usdcat).
   if(_core_scripts_env)
     add_test(NAME core_pxr_crate_fidelity
              COMMAND env "LUSDCAT_PATH=$<TARGET_FILE:lusdcat>" ${_core_scripts_env}
-                     bash "${_core_scripts_root}/tests/run-pxr-crate-fidelity.sh")
+                     ${LIGHTUSD_BASH_CMD} "${_core_scripts_root}/tests/run-pxr-crate-fidelity.sh")
     set_tests_properties(core_pxr_crate_fidelity PROPERTIES
                          LABELS "core;scripts;pxrdiff" TIMEOUT 900)
   endif()

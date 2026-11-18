@@ -30,7 +30,7 @@ set_target_properties(lusdzconvert PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_
 
 if(LIGHTUSD_BUILD_TESTS AND UNIX AND TARGET lusdcat)
   add_test(NAME core_lusdzconvert_regression
-           COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-lusdzconvert-regression.sh
+           COMMAND ${LIGHTUSD_BASH_CMD} ${PROJECT_SOURCE_DIR}/tests/run-lusdzconvert-regression.sh
                    $<TARGET_FILE:lusdzconvert> $<TARGET_FILE:lusdcat>
                    ${PROJECT_SOURCE_DIR})
   set_tests_properties(core_lusdzconvert_regression PROPERTIES LABELS "core")
@@ -38,7 +38,7 @@ endif()
 if(LIGHTUSD_BUILD_TESTS AND UNIX AND TARGET lusdcat)
   # The variant ref->payload->ref chain through the converter's flatten path.
   add_test(NAME core_lusdzconvert_variant_chain
-           COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
+           COMMAND ${LIGHTUSD_BASH_CMD} ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
                    $<TARGET_FILE:lusdcat> ${PROJECT_SOURCE_DIR}
                    $<TARGET_FILE:lusdzconvert>)
   set_tests_properties(core_lusdzconvert_variant_chain PROPERTIES LABELS "core")

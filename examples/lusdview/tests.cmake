@@ -18,7 +18,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-island-production-smoke
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-island-production-smoke.sh"
     )
   set_tests_properties(lusdview-island-production-smoke PROPERTIES
@@ -30,7 +30,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-progressive-checkpoints.sh"
     )
   set_tests_properties(lusdview-progressive-checkpoints PROPERTIES
@@ -41,7 +41,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-multitlas.sh"
     )
   set_tests_properties(lusdview-vk-multitlas PROPERTIES
@@ -52,7 +52,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_PTEX_GENERATOR=$<TARGET_FILE:lusdview_ptex_atlas_test>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-ptex-camera-demand.sh"
     )
   set_tests_properties(lusdview-ptex-camera-demand PROPERTIES
@@ -62,7 +62,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vk-render
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
     )
   set_tests_properties(lusdview-vk-render PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300)
@@ -83,7 +83,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-render.sh"
   )
   set_tests_properties(lusdview-vk-stacked-glass PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -93,7 +93,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vk-swbvh-render
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
     )
   set_tests_properties(lusdview-vk-swbvh-render PROPERTIES
@@ -105,7 +105,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-swbvh-render.sh"
   )
   set_tests_properties(lusdview-vk-swbvh-stacked-glass PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180
@@ -116,7 +116,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-texture-validation.sh"
     )
   set_tests_properties(lusdview-vk-texture-validation PROPERTIES
@@ -127,7 +127,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vk-mtlx-cold-fallback
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-mtlx-cold-fallback.sh"
   )
   set_tests_properties(lusdview-vk-mtlx-cold-fallback PROPERTIES
@@ -138,7 +138,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vk-authored-materials
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-authored-materials.sh"
     )
   set_tests_properties(lusdview-vk-authored-materials PROPERTIES
@@ -147,7 +147,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-raster-multilight
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-multilight.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -158,7 +158,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-raster-geometry-light
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-geometry-light.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -169,7 +169,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-rt-light-links
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-light-links.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -178,7 +178,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-raster-shadow-map
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-shadow-map.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -187,7 +187,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-raster-carrier-shadow
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-raster-carrier-shadow.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -198,7 +198,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-shadow-alpha-inst
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-shadow-alpha-inst.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-shadow-alpha-inst.sh"
     )
   set_tests_properties(lusdview-shadow-alpha-inst PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 60 LABELS "lusdview")
@@ -207,7 +207,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-aousd-conformance
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-aousd-conformance.sh"
     )
   set_tests_properties(lusdview-aousd-conformance PROPERTIES
@@ -225,7 +225,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
             # NVIDIA can need one additional cold shader-program compile for
             # a fixture variant not exercised by the global GL warm-up.
             "LUSDVIEW_GL_VK_TIMEOUT=120s"
-            bash
+            ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-vk-parity.sh"
     )
   set_tests_properties(lusdview-gl-vk-parity PROPERTIES
@@ -236,14 +236,14 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_PARITY_FRAMES=1" "LUSDVIEW_PARITY_SIZE=96x96"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backend-parity.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backend-parity.sh"
     )
   set_tests_properties(lusdview-backend-parity PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "lusdview")
 
   add_test(
     NAME lusdview-unsupported-realtime-lobes
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-unsupported-lobes.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -437,7 +437,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     if(TARGET lusdrender)
       add_test(
         NAME lusdview-lusdrender-parity
-        COMMAND bash
+        COMMAND ${LIGHTUSD_BASH_CMD}
                 ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-cross-tool-parity.sh
         )
       set_tests_properties(lusdview-lusdrender-parity PROPERTIES
@@ -581,7 +581,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       NAME lusdview-cuda-kernel-cache
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              bash
+              ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cuda-kernel-cache.sh"
       )
     set_tests_properties(lusdview-cuda-kernel-cache
@@ -591,7 +591,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       NAME lusdview-cuda-cache-cli
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              bash
+              ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cuda-cache-cli.sh"
       )
   else()
@@ -610,7 +610,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-material-binding-inheritance
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
     )
   set_tests_properties(lusdview-material-binding-inheritance
                        PROPERTIES SKIP_RETURN_CODE 77)
@@ -622,7 +622,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-degraded-material
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-degraded-material.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-degraded-material.sh"
     )
   set_tests_properties(lusdview-degraded-material
                        PROPERTIES SKIP_RETURN_CODE 77)
@@ -631,14 +631,14 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
   # input before renderer initialization, so this remains a headless test.
   add_test(
     NAME lusdview-cli-camera-options
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-camera-options.sh"
             "$<TARGET_FILE:lusdview>"
     )
 
   add_test(
     NAME lusdview-cli-path-trace-options
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-path-trace-options.sh"
             "$<TARGET_FILE:lusdview>"
     )
@@ -647,7 +647,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-cli-window-size
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cli-window-size.sh"
             "$<TARGET_FILE:lusdview>"
     )
@@ -656,7 +656,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-record-equivalence
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-record-equivalence.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -666,7 +666,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-clipping-planes
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-clipping-planes.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -676,7 +676,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-value-clip-carrier
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-value-clip-carrier.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -686,7 +686,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-dof-raster
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-raster.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -696,7 +696,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-shutter-contract
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-shutter-contract.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -706,7 +706,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-cpu
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cpu.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -716,7 +716,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-cuda
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-cuda.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -726,7 +726,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-hip
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-hip.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -736,7 +736,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-stereo-contract
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-stereo-contract.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -746,7 +746,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-raster-export
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -756,7 +756,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-raster-static
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-raster-export.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" vk static
   )
@@ -766,7 +766,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-motion-vulkan
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-motion-vulkan.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -788,7 +788,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-dof-cuda
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-cuda.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -798,7 +798,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-camera-dof-vulkan
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-camera-dof-vulkan.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -808,7 +808,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-area-light-cuda
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-area-light-cuda.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -818,7 +818,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-area-light-vulkan
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-area-light-vulkan.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
   )
@@ -828,7 +828,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-core-nonmesh-extraction
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-core-nonmesh-extraction.sh"
             "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -839,7 +839,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
   if(UNIX AND NOT APPLE)
     add_test(
       NAME lusdview-gl-nonmesh-render
-      COMMAND bash
+      COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-nonmesh-render.sh"
               "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -849,7 +849,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
     add_test(
       NAME lusdview-vk-nonmesh-render
-      COMMAND bash
+      COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-nonmesh-render.sh"
               "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -859,7 +859,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
     add_test(
       NAME lusdview-vk-gaussian-chunks
-      COMMAND bash
+      COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-gaussian-chunks.sh"
               "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -869,7 +869,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
     add_test(
       NAME lusdview-nonmesh-backend-parity
-      COMMAND bash
+      COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-nonmesh-backend-parity.sh"
               "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
     )
@@ -998,7 +998,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-backface-material
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backface-material.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-backface-material.sh"
     )
   set_tests_properties(lusdview-backface-material
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1011,7 +1011,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-double-sided
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-double-sided.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-double-sided.sh"
     )
   set_tests_properties(lusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1022,7 +1022,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-specular-workflow
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-specular-workflow.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-specular-workflow.sh"
     )
   set_tests_properties(lusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1032,7 +1032,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-opacity-material
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-opacity-material.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-opacity-material.sh"
     )
   set_tests_properties(lusdview-opacity-material PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 900)
@@ -1069,7 +1069,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
               "LUSDVIEW_SEMANTIC_UDIM=0"
               "LUSDVIEW_SEMANTIC_PACKAGE_PARITY=0"
               ${_semantic_timeout_env}
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
       )
     # 300 s was enough only while a failed backend probe let most cases be
     # skipped; a full GL run over every mode and family measures ~436 s.
@@ -1087,7 +1087,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_SEMANTIC_BACKENDS=gl"
             "LUSDVIEW_SEMANTIC_MODES=degenerate-normal degenerate-coat-normal"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
   )
   set_tests_properties(lusdview-texture-semantic-aov-gl-degenerate PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview"
@@ -1120,7 +1120,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
             "LUSDVIEW_SEMANTIC_FAMILIES=openpbr"
             "LUSDVIEW_SEMANTIC_MODES=albedo"
             ${_semantic_rt_timeout_env}
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-semantic-aov.sh"
     )
     set_tests_properties("${_test_name}" PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 600 LABELS "lusdview"
@@ -1131,7 +1131,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-light-record-equivalence
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-light-record-equivalence.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-light-record-equivalence.sh"
     )
   set_tests_properties(lusdview-light-record-equivalence PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1140,7 +1140,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-instancer-invisible-ids
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-instancer-invisible-ids.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-instancer-invisible-ids.sh"
     )
   set_tests_properties(lusdview-instancer-invisible-ids PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1149,7 +1149,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-tydra-pointinstancer
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-tydra-pointinstancer.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-tydra-pointinstancer.sh"
     )
   set_tests_properties(lusdview-tydra-pointinstancer PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1158,7 +1158,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-inst-morph-cull
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-inst-morph-cull.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-inst-morph-cull.sh"
     )
   set_tests_properties(lusdview-inst-morph-cull PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1171,7 +1171,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       NAME lusdview-dome-orientation
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-dome-orientation.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-dome-orientation.sh"
       )
     set_tests_properties(lusdview-dome-orientation PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 240)
@@ -1181,7 +1181,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-displacement-udim
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-displacement-udim.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-displacement-udim.sh"
     )
   set_tests_properties(lusdview-displacement-udim PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 600)
@@ -1190,7 +1190,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vk-displacement-isolation
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-displacement-isolation.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-displacement-isolation.sh"
     )
   set_tests_properties(lusdview-vk-displacement-isolation PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1202,7 +1202,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-rt-geomsubset-material
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-geomsubset-material.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-rt-geomsubset-material.sh"
     )
   set_tests_properties(lusdview-rt-geomsubset-material
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
@@ -1219,7 +1219,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-usdz-deferred-payload
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usdz-deferred-payload.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usdz-deferred-payload.sh"
     )
   set_tests_properties(lusdview-usdz-deferred-payload
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1235,7 +1235,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-incremental-topology
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-topology.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-topology.sh"
     )
   set_tests_properties(lusdview-incremental-topology
                        PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1244,7 +1244,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-incremental-layer-reload
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
     )
   set_tests_properties(lusdview-incremental-layer-reload
                        PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1256,7 +1256,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
               ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
               "BACKEND=gl"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-layer-reload.sh"
       )
     set_tests_properties(lusdview-incremental-layer-reload-gl
                          PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1266,7 +1266,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-incremental-texture
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
     )
   set_tests_properties(lusdview-incremental-texture
                        PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1278,7 +1278,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
               ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
               "BACKEND=gl"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-incremental-texture.sh"
       )
     set_tests_properties(lusdview-incremental-texture-gl
                          PROPERTIES LABELS "lusdview" SKIP_RETURN_CODE 77 TIMEOUT 90)
@@ -1291,7 +1291,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-transparency
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-transparency.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-transparency.sh"
     )
   set_tests_properties(lusdview-transparency PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -1302,7 +1302,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-vulkan-cold-start-auto
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-cold-start-auto.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-cold-start-auto.sh"
     )
   set_tests_properties(lusdview-vulkan-cold-start-auto
                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
@@ -1333,7 +1333,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_ROOT=${PROJECT_SOURCE_DIR}"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-oit-validation.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-oit-validation.sh"
     )
   set_tests_properties(lusdview-vk-oit-validation PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 150)
@@ -1344,7 +1344,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-rt-headless
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
     )
   set_tests_properties(lusdview-cpu-rt-headless PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180)
@@ -1357,7 +1357,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-normal-map
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-normal-map.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-normal-map.sh"
     )
   set_tests_properties(lusdview-cpu-normal-map PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1370,7 +1370,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-graph-tangent
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-graph-tangent.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-graph-tangent.sh"
     )
   set_tests_properties(lusdview-cpu-graph-tangent PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1383,7 +1383,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-uv-transform
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-uv-transform.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-uv-transform.sh"
     )
   set_tests_properties(lusdview-cpu-uv-transform PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1396,7 +1396,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-lane-uv-transform
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-lane-uv-transform.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-lane-uv-transform.sh"
     )
   set_tests_properties(lusdview-cpu-lane-uv-transform PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1413,7 +1413,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
               "LUSDRENDER=$<TARGET_FILE:lusdrender>"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-multi-uv.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-multi-uv.sh"
       )
     set_tests_properties(lusdview-cpu-multi-uv PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1426,7 +1426,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-authored-tangent
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-authored-tangent.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-authored-tangent.sh"
     )
   set_tests_properties(lusdview-cpu-authored-tangent PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1439,7 +1439,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-coat-normal
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-coat-normal.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-coat-normal.sh"
     )
   set_tests_properties(lusdview-cpu-coat-normal PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1458,7 +1458,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       NAME ${cpu_lane_test}
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/${cpu_lane_script}.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/${cpu_lane_script}.sh"
       )
     set_tests_properties(${cpu_lane_test} PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1472,7 +1472,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-ptex-element
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-element.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-element.sh"
     )
   set_tests_properties(lusdview-cpu-ptex-element PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 1800
@@ -1485,7 +1485,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-ptex-routing
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-routing.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-ptex-routing.sh"
     )
   set_tests_properties(lusdview-cpu-ptex-routing PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 300
@@ -1496,7 +1496,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-stacked-glass.usda"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
   )
   set_tests_properties(lusdview-cpu-rt-stacked-glass PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180
@@ -1507,7 +1507,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "ASSET=${PROJECT_SOURCE_DIR}/tests/usda/lusdview-unsupported-realtime-lobes.usda"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-headless.sh"
   )
   set_tests_properties(lusdview-cpu-rt-openpbr-lobes PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180
@@ -1517,7 +1517,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-cpu-rt-materialx-swizzle
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-materialx-swizzle.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-rt-materialx-swizzle.sh"
   )
   set_tests_properties(lusdview-cpu-rt-materialx-swizzle PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 180
@@ -1527,7 +1527,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-openchess-materials
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-materials.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-materials.sh"
     )
   set_tests_properties(lusdview-openchess-materials PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 240
@@ -1542,7 +1542,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-openchess-path-trace
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-path-trace.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-openchess-path-trace.sh"
     )
   set_tests_properties(lusdview-openchess-path-trace PROPERTIES
                        SKIP_RETURN_CODE 77 TIMEOUT 3600
@@ -1557,7 +1557,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-purpose-proxy-supersede
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-purpose-proxy-supersede.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-purpose-proxy-supersede.sh"
     )
   set_tests_properties(lusdview-purpose-proxy-supersede
                        PROPERTIES SKIP_RETURN_CODE 77)
@@ -1569,7 +1569,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     NAME lusdview-asset-path-anchoring
     COMMAND ${CMAKE_COMMAND} -E env
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-material-binding-inheritance.sh"
                  "${PROJECT_SOURCE_DIR}/models/nested-look-texture/root.usda"
     )
   set_tests_properties(lusdview-asset-path-anchoring
@@ -1598,7 +1598,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
             "LUSDVIEW=$<TARGET_FILE:lusdview>"
             "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_GOLDEN"
             "LUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch,unexpected_degradation,expectation_mismatch"
-            bash "${PROJECT_SOURCE_DIR}/tests/lusdview/run-usd-assets-batch.sh"
+            ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/tests/lusdview/run-usd-assets-batch.sh"
                  --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                  --golden-kind coverage
                  --golden "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/usd-assets-goldens.tsv"
@@ -1615,7 +1615,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
               "LUSDRENDER=$<TARGET_FILE:lusdrender>"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-no-renderable-tracking.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-no-renderable-tracking.sh"
       )
     set_tests_properties(lusdview-usd-assets-classification
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -1631,7 +1631,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
               "LUSDRENDER=$<TARGET_FILE:lusdrender>"
               "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_USD_ASSETS_BROAD"
               "LUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-render-smoke.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-render-smoke.sh"
                    --root "${LIGHTUSD_USD_ASSETS_ROOT}"
                    --profile usd-assets-broad
                    --require-profile-complete
@@ -1650,7 +1650,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
               "LUSDVIEW_USD_ASSETS_GATE=LUSDVIEW_RUN_USD_ASSETS_ANIMATION"
               "LUSDVIEW_USD_ASSETS_ALLOW_PARENT=1"
               "USD_ASSETS_ROOT=${LIGHTUSD_USD_ASSETS_ROOT}"
-              bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-animation-smoke.sh"
+              ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-animation-smoke.sh"
       )
     set_tests_properties(lusdview-usd-assets-animation-smoke PROPERTIES
                          SKIP_RETURN_CODE 77 TIMEOUT 3600
@@ -1659,7 +1659,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
 
   add_test(
     NAME lusdview-usd-assets-broad-profile
-    COMMAND bash
+    COMMAND ${LIGHTUSD_BASH_CMD}
             "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-usd-assets-broad-profile.sh"
     )
   set_tests_properties(lusdview-usd-assets-broad-profile PROPERTIES TIMEOUT 120)
@@ -1714,7 +1714,7 @@ if(LIGHTUSD_LUSDVIEW_NVIDIA_OFFLOAD AND UNIX AND NOT APPLE AND TARGET lusdview)
       NAME lusdview-nvidia-gl-warmup
       COMMAND ${CMAKE_COMMAND} -E env
               "LUSDVIEW=$<TARGET_FILE:lusdview>"
-              bash
+              ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-gl-warmup.sh")
     set_tests_properties(
       lusdview-nvidia-gl-warmup
@@ -1783,7 +1783,7 @@ endif()
 if(LUSDVIEW_ENABLE_MCP)
   add_test(NAME lusdview-core-physics-preview COMMAND ${CMAKE_COMMAND} -E env
     "LUSDVIEW=$<TARGET_FILE:lusdview>"
-    bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-physics-preview.sh")
+    ${LIGHTUSD_BASH_CMD} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-physics-preview.sh")
   set_tests_properties(lusdview-core-physics-preview PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "lusdview;core;physics")
 endif()

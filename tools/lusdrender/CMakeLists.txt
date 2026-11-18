@@ -930,7 +930,7 @@ if(LIGHTUSD_BUILD_TESTS)
   if(TARGET lusdrender AND LUSDR_BASH)
     add_test(
       NAME tool-lusdrender-gpu-render
-      COMMAND ${LUSDR_BASH}
+      COMMAND ${LIGHTUSD_BASH_CMD}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-gpu-render.sh
               "$<TARGET_FILE:lusdrender>")
     set_tests_properties(tool-lusdrender-gpu-render PROPERTIES
@@ -1007,7 +1007,7 @@ if(LIGHTUSD_BUILD_TESTS)
     foreach(t ${LUSDR_SHELL_TESTS})
       add_test(
         NAME tool-lusdrender-${t}
-        COMMAND ${LUSDR_BASH}
+        COMMAND ${LIGHTUSD_BASH_CMD}
                 ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-${t}.sh
                 "$<TARGET_FILE:lusdrender>"
       )
@@ -1027,7 +1027,7 @@ if(LIGHTUSD_BUILD_TESTS)
     # that don't. README.md already told people to run it by this ctest name.
     add_test(
       NAME tool-lusdrender-material-resolver
-      COMMAND ${LUSDR_BASH} ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-material-resolver.sh
+      COMMAND ${LIGHTUSD_BASH_CMD} ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-material-resolver.sh
     )
     set_tests_properties(tool-lusdrender-material-resolver
                          PROPERTIES SKIP_RETURN_CODE 77
@@ -1035,7 +1035,7 @@ if(LIGHTUSD_BUILD_TESTS)
 
     add_test(
       NAME tool-lusdrender-alpha-blend-sort-external
-      COMMAND ${LUSDR_BASH}
+      COMMAND ${LIGHTUSD_BASH_CMD}
               ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-alpha-blend-sort-external.sh
               "$<TARGET_FILE:lusdrender>"
     )
