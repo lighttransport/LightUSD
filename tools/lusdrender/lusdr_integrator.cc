@@ -2534,7 +2534,7 @@ static Vec3 CompositeMixedVolumes(
     const std::vector<FlatTri>& tris, const DirectScene* direct,
     const lrt_tlas* tlas, const std::vector<TriangleSceneChunk>* chunks,
     const Options& opt) {
-  float far = scene_hit;
+  float far_t = scene_hit;
   Vec3 result = background;
   // Surfaces first: fog in front is integrated over the nearest surface.
   for (const VolumeData& vd : vols) {
@@ -2543,13 +2543,13 @@ static Vec3 CompositeMixedVolumes(
     float a, b, hit;
     if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b) ||
         b <= std::max(a, 0.0f) ||
-        !TraceLevelSetSurface(vd, o, d, std::max(a, 0.0f), b, &hit) || hit >= far) continue;
+        !TraceLevelSetSurface(vd, o, d, std::max(a, 0.0f), b, &hit) || hit >= far_t) continue;
     const Vec3 p = Add(o, Mul(d, hit)), gradient = LevelSetObjectGradient(vd, p);
     Vec3 normal = Length(gradient) > 1.0e-8f ? TransformNormal(vd.inv_world, gradient)
                                                : Normalize(Mul(wdir, -1.0f));
     if (Dot(normal, wdir) > 0.0f) normal = Mul(normal, -1.0f);
     result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p), normal, lights, ambient);
-    far = hit;
+    far_t = hit;
   }
   std::vector<MixedVolumeInterval> intervals;
   std::vector<float> boundaries;
@@ -2559,7 +2559,7 @@ static Vec3 CompositeMixedVolumes(
     const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
     float a, b;
     if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b)) continue;
-    a = std::max(a, 0.0f); b = std::min(b, far);
+    a = std::max(a, 0.0f); b = std::min(b, far_t);
     if (b <= a) continue;
     const float speed = Length(d);
     const Vec3 extent = Sub(vd.bmax, vd.bmin);

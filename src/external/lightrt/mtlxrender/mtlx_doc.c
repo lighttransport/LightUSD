@@ -1,3 +1,6 @@
+#if defined(_MSC_VER) && !defined(strdup)
+#define strdup _strdup
+#endif
 #include "mtlx_doc.h"
 #include "mtlx_xml.h"
 

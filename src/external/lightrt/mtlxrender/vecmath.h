@@ -75,7 +75,7 @@ static inline uint32_t pcg32_next(pcg32 *r) {
     r->state = old * 6364136223846793005ULL + r->inc;
     uint32_t xorshifted = (uint32_t)(((old >> 18u) ^ old) >> 27u);
     uint32_t rot = (uint32_t)(old >> 59u);
-    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+    return (xorshifted >> rot) | (xorshifted << ((0u - rot) & 31u));
 }
 static inline void pcg32_seed(pcg32 *r, uint64_t seed, uint64_t seq) {
     r->state = 0u;
