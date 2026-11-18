@@ -46,7 +46,8 @@ std::unique_ptr<Layer> TakeLayer(LoadResult* result) {
 }
 
 std::string UsdaFixturePath(const std::string& filename) {
-  const std::string file_path(__FILE__);
+  std::string file_path(__FILE__);
+  std::replace(file_path.begin(), file_path.end(), '\\', '/');  // MSVC __FILE__ uses backslashes
   const std::string marker = "/tests/core/";
   const size_t pos = file_path.rfind(marker);
   assert(pos != std::string::npos);
@@ -54,7 +55,8 @@ std::string UsdaFixturePath(const std::string& filename) {
 }
 
 std::string CoreFixturePath(const std::string& filename) {
-  const std::string file_path(__FILE__);
+  std::string file_path(__FILE__);
+  std::replace(file_path.begin(), file_path.end(), '\\', '/');  // MSVC __FILE__ uses backslashes
   const size_t slash = file_path.rfind('/');
   assert(slash != std::string::npos);
   return file_path.substr(0, slash) + "/fixtures/" + filename;

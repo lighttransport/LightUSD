@@ -17,7 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <sys/stat.h>
+#include "../compat/posix_compat.h"
 #include <vector>
 
 #include "eval/attribute-eval.hh"

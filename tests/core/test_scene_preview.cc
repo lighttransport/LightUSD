@@ -583,7 +583,7 @@ def PointInstancer "Instances" {
         portable_light.GetPropertyValue("inputs:texture:file");
     Require(emission && emission->as_asset_path(),
             "preserve baked light texture");
-    const fs::path sidecar(emission->as_asset_path());
+    const fs::path sidecar{std::string(emission->as_asset_path())};
     Require(!sidecar.is_absolute() && sidecar.extension() == ".hdr",
             "relative linear HDR light sidecar");
     fs::remove(scratch / "light.ppm");

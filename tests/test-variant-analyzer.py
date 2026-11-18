@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Core authored variant analysis: nested variants, cap, JSON and Crate parity."""
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -12,7 +13,7 @@ def run(*args, ok=True):
     assert (result.returncode == 0) == ok, result.stderr
     return result.stdout
 with tempfile.TemporaryDirectory() as directory:
-    source = pathlib.Path(directory) / 'quoted"file.usda'
+    source = pathlib.Path(directory) / ('quoted"file.usda' if os.name != 'nt' else 'quoted_file.usda')
     source.write_text('''#usda 1.0
  def Xform "World" {
   variantSet "outer" = {

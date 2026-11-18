@@ -3,6 +3,9 @@
 //
 // LightUSD - Unit tests
 
+#include <algorithm>
+#include <filesystem>
+#include "../compat/posix_compat.h"
 #include <iostream>
 #include <fstream>
 #include <cassert>
@@ -51,7 +54,7 @@ static const std::string& CoreTestScratchDirectory() {
     char* created = ::mkdtemp(pattern);
     return created ? std::string(created) : std::string("/tmp");
 #else
-    return std::string("/tmp");
+    return lusd_abs("/tmp");
 #endif
   }();
   return directory;
@@ -70,7 +73,8 @@ constexpr bool kExpectUsdaLazyMmap = false;
 #endif
 
 std::string UsdaFixturePath(const std::string& filename) {
-  const std::string file_path(__FILE__);
+  std::string file_path(__FILE__);
+  std::replace(file_path.begin(), file_path.end(), '\\', '/');  // MSVC __FILE__ uses backslashes
   const std::string marker = "/tests/core/";
   const size_t pos = file_path.rfind(marker);
   assert(pos != std::string::npos);
@@ -1489,8 +1493,10 @@ def Mesh "M" {
 void test_stage_session_payloads_and_cancel() {
   std::cout << "Testing StageSession payload edits and cancellation..."
             << std::endl;
-  const char* root_path = "/tmp/lightusd_session_root.usda";
-  const char* payload_path = "/tmp/lightusd_session_payload.usda";
+  const std::string root_path_storage = lusd_abs("/tmp/lightusd_session_root.usda");
+  const char* root_path = root_path_storage.c_str();
+  const std::string payload_path_storage = lusd_abs("/tmp/lightusd_session_payload.usda");
+  const char* payload_path = payload_path_storage.c_str();
   {
     std::ofstream ofs(payload_path);
     ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 7\n}\n";
@@ -1533,7 +1539,7 @@ void test_stage_session_payloads_and_cancel() {
     std::ofstream ofs(payload_path);
     ofs << "#usda 1.0\ndef Xform \"Payload\" {\n  int loadedValue = 8\n}\n";
   }
-  StageEditResult reload = session.ReloadLayer(payload_path);
+  StageEditResult reload = session.ReloadLayer(std::filesystem::path(payload_path).make_preferred().string());
   assert(reload);
   assert(reload.changes.base_revision == before_reload.revision);
   assert(reload.changes.new_revision == before_reload.revision + 1);
@@ -1710,10 +1716,14 @@ def Mesh "FromSub" {
   assert(std::is_sorted(dependencies.begin(), dependencies.end()));
   assert(std::adjacent_find(dependencies.begin(), dependencies.end()) ==
          dependencies.end());
-  assert(std::find(dependencies.begin(), dependencies.end(), root_path) !=
-         dependencies.end());
-  assert(std::find(dependencies.begin(), dependencies.end(), sub_path) !=
-         dependencies.end());
+  assert(std::any_of(dependencies.begin(), dependencies.end(),
+                     [&](const std::string& d) {
+                       return lusd_slashes(d) == lusd_slashes(root_path);
+                     }));
+  assert(std::any_of(dependencies.begin(), dependencies.end(),
+                     [&](const std::string& d) {
+                       return lusd_slashes(d) == lusd_slashes(sub_path);
+                     }));
   session.ReleaseCompositionCache();
   assert(session.GetLayerDependencies() == dependencies);
 

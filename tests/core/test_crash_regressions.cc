@@ -13,9 +13,7 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include "../compat/posix_compat.h"
 #include <fstream>
 #include <string>
 #include <vector>

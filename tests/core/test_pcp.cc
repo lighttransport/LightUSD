@@ -17,8 +17,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include <unistd.h>
-#include <sys/stat.h>
+#include "../compat/posix_compat.h"
 
 #include "eval/attribute-eval.hh"
 #include "layer/asset-anchor.hh"
@@ -873,7 +872,7 @@ static void test_variant_option_payload_arc() {
 // boundary, not an asset-specific prim or property name.
 static void test_variant_content_payload_anchor() {
   std::cout << "test_variant_content_payload_anchor..." << std::endl;
-  if (::system("mkdir -p /tmp/core_variant_anchor/sub") != 0) { /* ignore */ }
+  if (lusd_mkdir_p("/tmp/core_variant_anchor/sub") != 0) { /* ignore */ }
   const std::string root = "/tmp/core_variant_anchor/root.usda";
   const std::string variants = "/tmp/core_variant_anchor/sub/variants.usda";
   const std::string payload = "/tmp/core_variant_anchor/sub/payload.usda";
@@ -3026,7 +3025,7 @@ static void test_nested_relative_reference() {
   //   nrr_root.usda                 -> refs nrr/Meshes/Sub/mesh.usda
   //   nrr/Meshes/Sub/mesh.usda      -> refs ../../Materials/mat.usda
   //   nrr/Materials/mat.usda        (defines the leaf Material type)
-  if (::system("mkdir -p /tmp/nrr/Meshes/Sub /tmp/nrr/Materials") != 0) { /* ignore */ }
+  if (lusd_mkdir_p("/tmp/nrr/Meshes/Sub /tmp/nrr/Materials") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/nrr/Materials/mat.usda");
     f << "#usda 1.0\ndef Material \"Mat\"\n{\n}\n"; }
   { std::ofstream f("/tmp/nrr/Meshes/Sub/mesh.usda");
@@ -3077,7 +3076,7 @@ static void test_sublayer_authored_reference_anchor() {
   // /tmp/sar/entry.usda            (root) -> sublayer a/b/mid.usda
   // /tmp/sar/a/b/mid.usda          -> /World/P references ../../target/asset.usda
   // /tmp/sar/target/asset.usda     def Mesh "Geom"
-  if (::system("mkdir -p /tmp/sar/a/b /tmp/sar/target") != 0) { /* ignore */ }
+  if (lusd_mkdir_p("/tmp/sar/a/b /tmp/sar/target") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/sar/target/asset.usda");
     f << "#usda 1.0\ndef Mesh \"Geom\" { custom int marker = 7 }\n"; }
   { std::ofstream f("/tmp/sar/a/b/mid.usda");
@@ -3121,7 +3120,7 @@ static void test_payload_policy_owner_anchor() {
   // /tmp/ppoa/root.usda      (strongest: over /World/P, no payload)
   // /tmp/ppoa/sub/weak.usda  (def /World/P, prepend payload = @./pay.usda@)
   // /tmp/ppoa/sub/pay.usda   (def Mesh "Pay" -- relative to sub/)
-  if (::system("mkdir -p /tmp/ppoa/sub") != 0) { /* ignore */ }
+  if (lusd_mkdir_p("/tmp/ppoa/sub") != 0) { /* ignore */ }
   { std::ofstream f("/tmp/ppoa/sub/pay.usda");
     f << "#usda 1.0\ndef Mesh \"Pay\" { custom int marker = 42 }\n"; }
   { std::ofstream f("/tmp/ppoa/sub/weak.usda");
@@ -3161,7 +3160,7 @@ static void test_payload_policy_owner_anchor() {
   // The policy saw the AUTHORING layer's anchor (sub/), not the root's.
   assert(!seen_anchors.empty() && "payload policy was never consulted");
   for (const std::string &anchor : seen_anchors) {
-    assert(anchor.find("/ppoa/sub") != std::string::npos &&
+    assert(lusd_slashes(anchor).find("/ppoa/sub") != std::string::npos &&
            "policy owner is not the payload's authoring spec (wrong anchor)");
   }
 
@@ -3525,7 +3524,7 @@ static void test_usdz_package_layers() {
 static void test_sublayer_cycle_and_depth() {
   std::cout << "test_sublayer_cycle_and_depth..." << std::endl;
 
-  const std::string cycle_root = "/tmp/core_pcp_cycle_root.usda";
+  const std::string cycle_root = lusd_abs("/tmp/core_pcp_cycle_root.usda");
   {
     std::ofstream f(cycle_root);
     f << "#usda 1.0\n"
@@ -3543,7 +3542,7 @@ static void test_sublayer_cycle_and_depth() {
   }
 
   AssetResolver resolver;
-  resolver.SetWorkingDirectory("/tmp");
+  resolver.SetWorkingDirectory(lusd_abs("/tmp"));
   std::string warn = "existing warning\n", err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root, {}, &warn);
   assert(warn.find("existing warning\n") == 0);
@@ -5383,7 +5382,7 @@ static void test_local_opinions_require_composition() {
 static void test_spec_lookup_filter_exactness() {
   std::cout << "test_spec_lookup_filter_exactness..." << std::endl;
   const std::string dir = "/tmp/core_spec_filter";
-  assert(::system(("mkdir -p " + dir).c_str()) == 0);
+  assert(lusd_mkdir_p(dir) == 0);
   constexpr int kRefChildren = 128;
   {
     std::ofstream f(dir + "/lib.usda");
@@ -5495,7 +5494,7 @@ static void test_inherited_clip_strength() {
   options.time = TimeQuery::Numeric(1.5);
   options.clip_stage_loader = [&](const std::string& asset, Stage* out,
                                   std::string*, std::string*) {
-    PCP_CHECK(asset == clip_path, "clip asset anchored at authoring layer");
+    PCP_CHECK(lusd_slashes(asset) == lusd_slashes(clip_path), "clip asset anchored at authoring layer");
     auto clip = LoadUSDAFromFile(asset);
     if (!clip.success) return false;
     *out = std::move(clip.stage);

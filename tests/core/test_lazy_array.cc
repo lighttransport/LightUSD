@@ -39,6 +39,13 @@
 #include "writer/value-printer.hh"
 #include "writer/usdc-writer.hh"
 
+// The crate reader memory-maps files on POSIX only (no Windows mapping yet).
+#ifdef _WIN32
+constexpr bool kCrateMmap = false;
+#else
+constexpr bool kCrateMmap = true;
+#endif
+
 using namespace lightusd;
 
 namespace {
@@ -570,7 +577,7 @@ int main() {
     const Value* composed_points = composed_prim.GetPropertyValue("points");
     assert(composed_points && composed_points->is_lazy());
     assert(composed_points->lazy_ref() && composed_points->lazy_ref()->source);
-    assert(composed_points->lazy_ref()->source->is_mmapped());
+    if (kCrateMmap) assert(composed_points->lazy_ref()->source->is_mmapped());
 
     compose_options.usdc_use_mmap = false;
     Stage composed_owned;
@@ -963,14 +970,15 @@ int main() {
     assert(mps);
     const Value* mpv = mps->property_value("points");
     assert(mpv && mpv->is_lazy());
-    assert(mpv->lazy_ref()->source->is_mmapped() &&
-           "default file load should be mmap-backed");
+    if (kCrateMmap)
+      assert(mpv->lazy_ref()->source->is_mmapped() &&
+             "default file load should be mmap-backed");
     auto mpa = mpv->as_float_array();
     assert(mpa && mpa->size() == points.size());
     for (size_t i = 0; i < points.size(); i++) assert((*mpa)[i] == points[i]);
     // The mapping must outlive the reader: a lazy value materialized after the
     // load (above) already proved the shared_ptr keeps the mapping alive.
-    assert(lm.source_was_mmap);
+    if (kCrateMmap) assert(lm.source_was_mmap);
     std::cout << "  file load is mmap-backed and materializes correctly"
               << std::endl;
 
@@ -986,9 +994,12 @@ int main() {
     assert(opv && opv->is_lazy());
     auto osrc = opv->lazy_ref()->source;
     assert(!osrc->is_mmapped() && "use_mmap=false must not alias the file");
-    assert(osrc->is_paged() && "untrusted path should keep a paged snapshot");
-    assert(!osrc->can_borrow() && "the anonymous parse copy must be released");
-    assert(osrc->base() == nullptr && "no retained anonymous parse buffer");
+    if (kCrateMmap)  // paged snapshots are POSIX-only for now
+      assert(osrc->is_paged() && "untrusted path should keep a paged snapshot");
+    if (kCrateMmap)  // paged snapshots are POSIX-only for now
+      assert(!osrc->can_borrow() && "the anonymous parse copy must be released");
+    if (kCrateMmap)  // paged snapshots are POSIX-only for now
+      assert(osrc->base() == nullptr && "no retained anonymous parse buffer");
     auto opa = opv->as_float_array();
     assert(opa && *opa == *mpa);
     // A second materialization after the first temporary is gone still works.
@@ -1050,7 +1061,7 @@ int main() {
     std::string mmap_err;
     assert(pipeline::FlattenUSDFileToUSDC(path, mmap_out, {}, &mmap_stats,
                                           &mmap_err));
-    assert(mmap_stats.input_was_mmap);
+    if (kCrateMmap) assert(mmap_stats.input_was_mmap);
     std::cout << "  file-path flatten reports mmap input attribution"
               << std::endl;
 

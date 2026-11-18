@@ -21,7 +21,7 @@
 #include "layer/layer.hh"
 #include "types/value.hh"
 
-#include <sys/resource.h>
+#include "../compat/posix_compat.h"
 
 #include <cstdio>
 #include <cstdlib>

@@ -10,8 +10,7 @@
 //   B. CompositionOptions::usdc_limits / LayerLoadOptions::usdc_limits reach
 //      every crate layer load made by pcp (a referenced .usdc and the root).
 
-#include <sys/stat.h>
-#include <unistd.h>
+#include "../compat/posix_compat.h"
 
 #include <cerrno>
 #include <cstdio>

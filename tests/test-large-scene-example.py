@@ -6,6 +6,13 @@ import subprocess
 import sys
 import tempfile
 
+
+def _relpath_or_abs(path):
+    try:
+        return os.path.relpath(path)
+    except ValueError:  # Windows: different drive than the cwd
+        return str(path)
+
 app=sys.argv[1]
 def run(file,*options,success=True):
     result=subprocess.run([app,str(file),*options],capture_output=True,text=True)
@@ -42,7 +49,7 @@ def Xform "World" {
         assert 'deferred payloads = 1' in text,text
         assert 'loaded 1/1, deferred now = 0' in text,text
         assert 'unloaded 1/1, deferred now = 1' in text,text
-    assert 'deferred payloads = 2' in run(os.path.relpath(root),'--mode=none')
+    assert 'deferred payloads = 2' in run(_relpath_or_abs(root),'--mode=none')
     if len(sys.argv)>2:
         crate=folder/'root.usdc'
         result=subprocess.run([sys.argv[2],'--rewrite-layer',str(root),'-o',str(crate)],capture_output=True,text=True)

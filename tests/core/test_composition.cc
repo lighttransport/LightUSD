@@ -461,7 +461,7 @@ static void test_variant_selection_over_reference() {
 static void test_many_variant_bearing_references() {
   std::cout << "[variants: many external references scale linearly]\n";
   constexpr size_t kInstances = 1024;
-  constexpr size_t kParts = 8;
+  static constexpr size_t kParts = 8;
 
   Layer root;
   for (size_t i = 0; i < kInstances; ++i) {

@@ -51,7 +51,7 @@ for name in sorted(set(paths)):
             or (name.split('/')[0] not in ROOTS and name not in ROOT_CONFIGS)
             or (path.suffix not in SUFFIXES and path.name not in {'CMakeLists.txt', 'Makefile'})):
         continue
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if RETIRED.search(line):
             errors.append(f'{name}:{number}: {line.strip()}')
 if errors:

@@ -20,7 +20,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
-#include <sys/stat.h>
+#include "../compat/posix_compat.h"
 
 #include "eval/attribute-eval.hh"
 #include "load-usd.hh"

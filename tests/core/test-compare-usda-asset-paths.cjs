@@ -8,7 +8,7 @@ const {
   resolveAssetPathForCompare,
 } = require('../compare-usda.js');
 
-const anchor = path.resolve('/tmp/lightusd-asset-anchor');
+const anchor = '/tmp/lightusd-asset-anchor';
 const relative = parseUsda(`#usda 1.0
 def Shader "S"
 {
@@ -26,14 +26,14 @@ def Shader "S"
 const absolute = parseUsda(`#usda 1.0
 def Shader "S"
 {
-    asset inputs:file = @${path.join(anchor, 'textures/a.png')}@
-    asset[] inputs:files = [@${path.join(anchor, 'textures/a.png')}@, @${path.join(anchor, 'pack/look.usdz')}[inside.usda]@]
+    asset inputs:file = @${path.posix.join(anchor, 'textures/a.png')}@
+    asset[] inputs:files = [@${path.posix.join(anchor, 'textures/a.png')}@, @${path.posix.join(anchor, 'pack/look.usdz')}[inside.usda]@]
     dictionary inputs:manifest = {
-        asset primary = @${path.join(anchor, 'textures/a.png')}@
+        asset primary = @${path.posix.join(anchor, 'textures/a.png')}@
     }
     asset inputs:animated.timeSamples = {
-        0: @${path.join(anchor, 'textures/a.png')}@,
-        1: @${path.join(anchor, 'textures/b.png')}@
+        0: @${path.posix.join(anchor, 'textures/a.png')}@,
+        1: @${path.posix.join(anchor, 'textures/b.png')}@
     }
 }
 `);
@@ -48,7 +48,7 @@ assert.deepEqual(compareUsda(relative, absolute, {
 
 assert.notDeepEqual(compareUsda(relative, absolute, {
   resolveAssetPaths: true,
-  assetPathBase1: path.join(anchor, 'different'),
+  assetPathBase1: path.posix.join(anchor, 'different'),
   assetPathBase2: anchor,
 }), [], 'different source-layer anchors must not compare equal');
 

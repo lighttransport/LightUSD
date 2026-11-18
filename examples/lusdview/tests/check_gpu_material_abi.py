@@ -12,23 +12,23 @@ def require(text: str, pattern: str, label: str) -> None:
 
 
 root = Path(sys.argv[1]).resolve()
-abi = (root / "examples/lusdview/gpu_material_abi.h").read_text()
-bridge = (root / "examples/lusdview/lightrt_mtlx_bridge.hh").read_text()
-kernel = (root / "examples/lusdview/raytracer_kernel_src.txt").read_text()
-cpu = (root / "examples/lusdview/cpu/cpu_raytracer.cc").read_text()
-shader = (root / "src/external/lightrt/vk/shaders/trace_materialx_path.comp").read_text()
-viewer_vk_shader = (root / "examples/lusdview/vk/shaders/raytrace.comp").read_text()
+abi = (root / "examples/lusdview/gpu_material_abi.h").read_text(encoding="utf-8")
+bridge = (root / "examples/lusdview/lightrt_mtlx_bridge.hh").read_text(encoding="utf-8")
+kernel = (root / "examples/lusdview/raytracer_kernel_src.txt").read_text(encoding="utf-8")
+cpu = (root / "examples/lusdview/cpu/cpu_raytracer.cc").read_text(encoding="utf-8")
+shader = (root / "src/external/lightrt/vk/shaders/trace_materialx_path.comp").read_text(encoding="utf-8")
+viewer_vk_shader = (root / "examples/lusdview/vk/shaders/raytrace.comp").read_text(encoding="utf-8")
 viewer_swrt_shader = (
     root / "examples/lusdview/vk/shaders/raytrace_swbvh.comp"
-).read_text()
-viewer_raster_shader = (root / "examples/lusdview/vk/shaders/mesh.frag").read_text()
+).read_text(encoding="utf-8")
+viewer_raster_shader = (root / "examples/lusdview/vk/shaders/mesh.frag").read_text(encoding="utf-8")
 viewer_environment_shader = (
     root / "examples/lusdview/vk/shaders/environment.frag"
-).read_text()
-viewer_vk_source = (root / "examples/lusdview/vk/vk_renderer.cc").read_text()
-openpbr = (root / "src/tydra/openpbr-params.hh").read_text()
-vk_header = (root / "src/external/lightrt/lightrt_c_vk.h").read_text()
-vk_source = (root / "src/external/lightrt/lightrt_c_vk.c").read_text()
+).read_text(encoding="utf-8")
+viewer_vk_source = (root / "examples/lusdview/vk/vk_renderer.cc").read_text(encoding="utf-8")
+openpbr = (root / "src/tydra/openpbr-params.hh").read_text(encoding="utf-8")
+vk_header = (root / "src/external/lightrt/lightrt_c_vk.h").read_text(encoding="utf-8")
+vk_source = (root / "src/external/lightrt/lightrt_c_vk.c").read_text(encoding="utf-8")
 
 values = {
     "LIGHTUSD_GPU_OPENPBR_FLOATS": 80,
