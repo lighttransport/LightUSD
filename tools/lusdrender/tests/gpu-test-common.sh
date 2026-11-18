@@ -9,6 +9,13 @@ lusdrender_test_render_failed() {
     echo 'SKIP: Vulkan backend or device unavailable'
     exit 77
   fi
+  # Opacity continuation tracing needs hardware ray query; devices without it
+  # (compute-only Vulkan) report this explicit capability message.
+  if [ "$backend" = vkr ] && [ "$status" -eq 1 ] &&
+     grep -q 'requires supported continuation tracing' "$log"; then
+    echo 'SKIP: hardware ray query unavailable (no continuation tracing)'
+    exit 77
+  fi
   echo "FAIL: renderer exited with status $status"
   exit 1
 }
