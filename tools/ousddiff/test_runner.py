@@ -114,6 +114,7 @@ class RunnerTests(unittest.TestCase):
             result = execute([sys.executable, '-c', 'import time; a=bytearray(80*1024*1024); time.sleep(5)'], directory, 5, max_rss_mib=40, reserve_mib=0)
             self.assertEqual(result['status'], 'resource_limit')
 
+    @unittest.skipUnless(Path('/proc/meminfo').exists(), 'Linux /proc supervisor')
     def test_gpu_counter_budget_and_unavailable_are_not_passes(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);counter=root/'vram';counter.write_text(str(2*1024**2))
@@ -132,7 +133,7 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'report.html'
             report({'cases': [{'id': '</script><script>alert(1)</script>', 'status': 'pass'}]}, path)
-            content = path.read_text()
+            content = path.read_text(encoding='utf-8')
             self.assertNotIn('</script><script>alert(1)', content)
             self.assertIn('\\u003c/script>', content)
             self.assertNotIn('fetch(', content)
