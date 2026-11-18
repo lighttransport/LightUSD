@@ -606,8 +606,13 @@ def PointInstancer "Instances" {
                                   options);
     const auto manifest =
         fs::path(lit.usd_path).parent_path() / "manifest.json";
-    std::ifstream old_manifest(manifest);
-    std::string contents((std::istreambuf_iterator<char>(old_manifest)), {});
+    std::string contents;
+    {
+      // Close before the upgrade: Windows cannot rename a directory that holds
+      // an open file.
+      std::ifstream old_manifest(manifest);
+      contents.assign((std::istreambuf_iterator<char>(old_manifest)), {});
+    }
     auto version = contents.find("\"lighting_version\": 2");
     Require(version != std::string::npos, "lighting cache version marker");
     contents.replace(version, std::string("\"lighting_version\": 2").size(),
