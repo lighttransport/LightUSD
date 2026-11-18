@@ -1536,7 +1536,7 @@ if(LIGHTUSD_BUILD_TESTS)
                         /W/Links/Geometry/body - 1e-5 0)
             # LightUSD vs OpenUSD UsdSkel (skipped without OPENUSD_ROOT).
             add_test(NAME tool-skel-skin-pxr
-                COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/run_pxr_skin.sh
+                COMMAND ${LIGHTUSD_BASH_CMD} ${CMAKE_CURRENT_SOURCE_DIR}/../tests/obj-skel/run_pxr_skin.sh
                         $<TARGET_FILE:lusdcat> $<TARGET_FILE:skin_compare>
                         ${CMAKE_CURRENT_BINARY_DIR}/obj-skel-pxr)
             set_tests_properties(tool-skel-skin-pxr PROPERTIES SKIP_RETURN_CODE 77)
