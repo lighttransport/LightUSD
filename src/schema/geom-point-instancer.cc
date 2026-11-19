@@ -4,6 +4,7 @@
 // LightUSD - UsdGeomPointInstancer Schema Implementation
 
 #include "geom-point-instancer.hh"
+#include "layer/layer.hh"
 #include "layer/prim-spec.hh"
 #include "layer/property-index.hh"
 
@@ -196,14 +197,17 @@ void ComposeTRS(const float* t, const float* q, const float* s, double out[16]) 
   const double xy = x * y, xz = x * z, yz = y * z;
   const double wx = w * x, wy = w * y, wz = w * z;
 
+  // Column-major (m[c * 4 + r], Gf/OpenGL memory layout, translation in
+  // 12..14): column c of the rotation scaled by s[c], so M = T * R * S for
+  // column vectors (UsdGeomPointInstancer: scale, then orient, then translate).
   out[0] = (1.0 - 2.0 * (yy + zz)) * sx;
-  out[1] = (2.0 * (xy - wz)) * sy;
-  out[2] = (2.0 * (xz + wy)) * sz;
-  out[4] = (2.0 * (xy + wz)) * sx;
+  out[1] = (2.0 * (xy + wz)) * sx;
+  out[2] = (2.0 * (xz - wy)) * sx;
+  out[4] = (2.0 * (xy - wz)) * sy;
   out[5] = (1.0 - 2.0 * (xx + zz)) * sy;
-  out[6] = (2.0 * (yz - wx)) * sz;
-  out[8] = (2.0 * (xz - wy)) * sx;
-  out[9] = (2.0 * (yz + wx)) * sy;
+  out[6] = (2.0 * (yz + wx)) * sy;
+  out[8] = (2.0 * (xz + wy)) * sz;
+  out[9] = (2.0 * (yz - wx)) * sz;
   out[10] = (1.0 - 2.0 * (xx + yy)) * sz;
   out[12] = tx;
   out[13] = ty;
@@ -396,6 +400,46 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   return true;
 }
 
+namespace {
+// Latest authored sample time <= `time` (the first sample before the range),
+// the "lower bracketing sample" UsdGeomPointInstancer motion starts from.
+bool LowerSampleTime(const UsdPrim& prim, PropNameId id, double time, double* out) {
+  if (!id.is_valid()) return false;
+  const auto* samples = prim.GetTimeSamples(id);
+  if (!samples || samples->empty()) return false;
+  double best = samples->front().first;
+  for (const auto& s : *samples) {
+    if (s.first <= time) best = s.first;
+  }
+  *out = best;
+  return true;
+}
+
+bool HasSampleAt(const UsdPrim& prim, PropNameId id, double t) {
+  if (!id.is_valid()) return false;
+  const auto* samples = prim.GetTimeSamples(id);
+  if (!samples) return false;
+  for (const auto& s : *samples) {
+    if (s.first == t) return true;
+  }
+  return false;
+}
+
+double TimeCodesPerSecond(const UsdPrim& prim) {
+  const Layer* layer = prim.GetLayer();
+  const double tcps = layer ? layer->effective_timeCodesPerSecond() : 24.0;
+  return (std::isfinite(tcps) && tcps > 0.0) ? tcps : 24.0;
+}
+
+// Hamilton product a * b, lanes (w, x, y, z).
+void QuatMul(const double a[4], const double b[4], double out[4]) {
+  out[0] = a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3];
+  out[1] = a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2];
+  out[2] = a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1];
+  out[3] = a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0];
+}
+}  // namespace
+
 std::vector<PointInstancerTransform>
 UsdGeomPointInstancer::ComputeInstanceTransforms(double time) const {
   std::vector<PointInstancerTransform> out;
@@ -403,24 +447,95 @@ UsdGeomPointInstancer::ComputeInstanceTransforms(double time) const {
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
   ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices);
+  const size_t n = proto_indices.size;
+  const double tcps = TimeCodesPerSecond(prim_);
+
+  // Positions: when velocities are authored at the lower bracketing position
+  // sample with a matching count, extrapolate from that sample
+  // (p0 + v * dt + a * dt^2 / 2, dt in seconds); otherwise interpolate.
+  const PropNameId velocity_id = GetPropNameTable().find("velocities");
+  const PropNameId acceleration_id = GetPropNameTable().find("accelerations");
+  double position_time = time;
+  bool use_velocities = false;
+  ArrayScratch<float> velocity_scratch, acceleration_scratch;
+  ArrayView<float> velocities, accelerations;
+  if (LowerSampleTime(prim_, kIdPositions(), time, &position_time) &&
+      HasSampleAt(prim_, velocity_id, position_time) &&
+      ReadFloatView(prim_, velocity_id, position_time, &velocity_scratch, &velocities) &&
+      velocities.size == n * 3) {
+    use_velocities = true;
+    if (!(HasSampleAt(prim_, acceleration_id, position_time) &&
+          ReadFloatView(prim_, acceleration_id, position_time, &acceleration_scratch,
+                        &accelerations) &&
+          accelerations.size == n * 3)) {
+      accelerations = ArrayView<float>();
+    }
+  } else {
+    position_time = time;
+  }
   ArrayScratch<float> position_scratch;
   ArrayView<float> positions;
-  ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions);
-  if (proto_indices.empty() || positions.size != proto_indices.size * 3) {
+  ReadFloatView(prim_, kIdPositions(), position_time, &position_scratch, &positions);
+  if (n == 0 || positions.size != n * 3) {
     return out;
+  }
+  const double position_dt = use_velocities ? (time - position_time) / tcps : 0.0;
+
+  // Orientations: the same rule with angularVelocities (degrees per second).
+  const PropNameId orientation_id = OrientationAttribute(prim_);
+  const PropNameId angular_id = GetPropNameTable().find("angularVelocities");
+  double orientation_time = time;
+  bool use_angular = false;
+  ArrayScratch<float> angular_scratch;
+  ArrayView<float> angular;
+  if (LowerSampleTime(prim_, orientation_id, time, &orientation_time) &&
+      HasSampleAt(prim_, angular_id, orientation_time) &&
+      ReadFloatView(prim_, angular_id, orientation_time, &angular_scratch, &angular) &&
+      angular.size == n * 3) {
+    use_angular = true;
+  } else {
+    orientation_time = time;
   }
   ArrayScratch<float> orientation_scratch;
   ArrayView<float> orientations;
-  ReadFloatView(prim_, OrientationAttribute(prim_), time, &orientation_scratch, &orientations);
+  ReadFloatView(prim_, orientation_id, orientation_time, &orientation_scratch, &orientations);
+  const double angular_dt = use_angular ? (time - orientation_time) / tcps : 0.0;
+
   ArrayScratch<float> scale_scratch;
   ArrayView<float> scales;
   ReadFloatView(prim_, kIdScales(), time, &scale_scratch, &scales);
-  const size_t n = proto_indices.size;
   out.resize(n);
   for (size_t i = 0; i < n; ++i) {
-    const float* t = positions.data + i * 3;
+    float t[3] = {positions.data[i * 3], positions.data[i * 3 + 1], positions.data[i * 3 + 2]};
+    if (use_velocities) {
+      for (int k = 0; k < 3; ++k) {
+        double p = static_cast<double>(t[k]) +
+                   static_cast<double>(velocities.data[i * 3 + k]) * position_dt;
+        if (!accelerations.empty()) {
+          p += 0.5 * static_cast<double>(accelerations.data[i * 3 + k]) *
+               position_dt * position_dt;
+        }
+        t[k] = static_cast<float>(p);
+      }
+    }
     const float* q =
         orientations.size == n * 4 ? orientations.data + i * 4 : nullptr;
+    float rotated[4];
+    if (q && use_angular) {
+      const double wx = angular.data[i * 3], wy = angular.data[i * 3 + 1],
+                   wz = angular.data[i * 3 + 2];
+      const double speed = std::sqrt(wx * wx + wy * wy + wz * wz);
+      if (speed > 0.0 && std::isfinite(speed)) {
+        const double half = 0.5 * (speed * angular_dt) * (3.14159265358979323846 / 180.0);
+        const double sn = std::sin(half) / speed;
+        const double delta[4] = {std::cos(half), wx * sn, wy * sn, wz * sn};
+        const double base[4] = {q[0], q[1], q[2], q[3]};
+        double r[4];
+        QuatMul(delta, base, r);  // orientation first, then the angular step
+        for (int k = 0; k < 4; ++k) rotated[k] = static_cast<float>(r[k]);
+        q = rotated;
+      }
+    }
     const float* s = scales.size == n * 3 ? scales.data + i * 3 : nullptr;
     ComposeTRS(t, q, s, out[i].matrix);
   }

@@ -383,6 +383,64 @@ def PointInstancer "Invalid" {
   PASS();
 }
 
+// Regression: ComposeTRS wrote the rotation*scale block row-major while
+// consumers (and Gf) read m[c * 4 + r], so instance rotations were inverted and
+// non-uniform scales hit the wrong axes. Also covers UsdGeomPointInstancer
+// motion: velocities/accelerations/angularVelocities extrapolate from the
+// lower bracketing sample (verified against OpenUSD by usdspec-conformance
+// tests/next/test-domain-geom-runtime.py).
+void test_point_instancer_layout_and_motion() {
+  TEST("PointInstancerLayoutAndMotion");
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+(
+    timeCodesPerSecond = 24
+)
+def Xform "Proto" {}
+def PointInstancer "Layout" {
+    rel prototypes = </Proto>
+    int[] protoIndices = [0]
+    point3f[] positions = [(-1,0,0.5)]
+    quath[] orientations = [(0,0,1,0)]
+    float3[] scales = [(2,0.5,1)]
+}
+def PointInstancer "Motion" {
+    rel prototypes = </Proto>
+    int[] protoIndices = [0]
+    point3f[] positions.timeSamples = {0: [(0,0,0)], 24: [(24,0,0)]}
+    vector3f[] velocities.timeSamples = {0: [(48,0,0)], 24: [(48,0,0)]}
+    vector3f[] accelerations.timeSamples = {0: [(0,-8,0)]}
+    quatf[] orientationsf.timeSamples = {0: [(1,0,0,0)]}
+    vector3f[] angularVelocities.timeSamples = {0: [(0,0,90)]}
+}
+)usd");
+  if (!loaded.success) { FAIL("failed to load instancer scene"); return; }
+  // 180 degrees about y, scale (2, 0.5, 1): Gf layout rows are S * R.
+  const auto layout =
+      UsdGeomPointInstancer(loaded.stage.GetPrimAtPath("/Layout")).ComputeInstanceTransforms();
+  const double want[16] = {-2,0,0,0, 0,0.5,0,0, 0,0,-1,0, -1,0,0.5,1};
+  if (layout.size() != 1) { FAIL("missing layout transform"); return; }
+  for (int k = 0; k < 16; ++k) {
+    if (std::fabs(layout[0].matrix[k] - want[k]) > 1e-9) {
+      FAIL("instance matrix is not in Gf layout");
+      return;
+    }
+  }
+  // t = 12: dt = 0.5 s from the t = 0 sample: x = 48 * 0.5 = 24 (not the
+  // interpolated 12), y = -8 * 0.25 / 2 = -1, and 45 degrees about z.
+  const auto motion =
+      UsdGeomPointInstancer(loaded.stage.GetPrimAtPath("/Motion")).ComputeInstanceTransforms(12.0);
+  const double c = std::sqrt(0.5);
+  if (motion.size() != 1 || std::fabs(motion[0].matrix[12] - 24.0) > 1e-5 ||
+      std::fabs(motion[0].matrix[13] + 1.0) > 1e-5 ||
+      std::fabs(motion[0].matrix[0] - c) > 1e-6 ||
+      std::fabs(motion[0].matrix[1] - c) > 1e-6 ||
+      std::fabs(motion[0].matrix[4] + c) > 1e-6) {
+    FAIL("velocity/angular velocity motion");
+    return;
+  }
+  PASS();
+}
+
 // Regression: GetPointsAtTimecode / GetTranslationAtTimecode (formerly
 // *AtTime) sampled held-only; they must interpolate between samples.
 void test_mesh_xform_timecode_interpolation() {
@@ -987,6 +1045,7 @@ int main() {
   test_point_instancer_schema();
   test_point_instancer_interpolation();
   test_point_instancer_orientation_precision();
+  test_point_instancer_layout_and_motion();
   test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();

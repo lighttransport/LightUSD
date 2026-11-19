@@ -995,6 +995,10 @@ endif()
 # `$<TARGET_FILE:lusdcat>`), hence the OR.
 # ---------------------------------------------------------------------------
 if((LIGHTUSD_BUILD_LUSDCAT OR LIGHTUSD_BUILD_TESTS) AND NOT TARGET lusdcat)
+    # Runtime geometry dump for the usdspec-conformance oracle (PointInstancer).
+    add_executable(geom_compare ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/geom_compare.cc)
+    target_link_libraries(geom_compare PRIVATE lightusd_core)
+    target_include_directories(geom_compare PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(lusdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../tests/core/lusdcat.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/explain.cc
