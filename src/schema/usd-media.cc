@@ -74,4 +74,21 @@ bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
+bool GetMediaDefaultThumbnail(const UsdPrim& prim, std::string* default_image) {
+  if (!default_image || !prim.IsValid() || !prim.HasAPI("AssetPreviewsAPI")) return false;
+  const auto& meta = prim.GetMeta();
+  if (!meta.assetInfoAuthored()) return false;
+  DictView dict = meta.assetInfo().as_dictionary();
+  for (const char* key : {"previews", "thumbnails", "default"}) {
+    if (!dict) return false;
+    dict = dict.find(key).as_dictionary();
+  }
+  if (!dict) return false;
+  const ValueView image = dict.find("defaultImage");
+  if (!image || image.type_id() != TypeId::AssetPath) return false;
+  const StringView path = image.as_asset_path();
+  default_image->assign(path.data(), path.size());
+  return true;
+}
+
 } // namespace lightusd

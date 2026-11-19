@@ -33,4 +33,9 @@ struct MediaAudioData {
 bool GetMediaAudioData(const Stage& stage, const UsdPrim& prim,
                         MediaAudioData* out);
 
+/// UsdMediaAssetPreviewsAPI::GetDefaultThumbnails: with the API applied,
+/// assetInfo["previews"]["thumbnails"]["default"]["defaultImage"] when it
+/// holds an asset path.
+bool GetMediaDefaultThumbnail(const UsdPrim& prim, std::string* default_image);
+
 } // namespace lightusd

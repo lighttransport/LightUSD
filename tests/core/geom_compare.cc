@@ -26,6 +26,7 @@
 #include "schema/physics-resolve.hh"
 #include "schema/usd-collection.hh"
 #include "schema/usd-lod.hh"
+#include "schema/usd-media.hh"
 #include "schema/usd-render.hh"
 #include "schema/usd-semantics.hh"
 #include "schema/usd-shade.hh"
@@ -332,6 +333,19 @@ int DumpLodScreen(const char* scene, const char* frustum_file) {
   return 0;
 }
 
+// `<path> <defaultImage or ->` for every prim (UsdMediaAssetPreviewsAPI).
+int DumpThumbnails(const char* scene) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    std::string image;
+    const bool ok = lightusd::GetMediaDefaultThumbnail(prim, &image);
+    std::printf("%s %s\n", prim.GetPath().str().c_str(), ok ? image.c_str() : "-");
+    return true;
+  });
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -371,6 +385,7 @@ int main(int argc, char** argv) {
     (void)argv[4];
     return DumpSemantics(argv[2], taxonomies, t0, t1);
   }
+  if (argc == 3 && std::string(argv[1]) == "--dump-thumbnails") return DumpThumbnails(argv[2]);
   if (argc == 4 && std::string(argv[1]) == "--dump-lod-screen") {
     return DumpLodScreen(argv[2], argv[3]);
   }
