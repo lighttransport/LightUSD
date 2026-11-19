@@ -54,6 +54,31 @@ struct RenderPassData {
   bool camera_visibility_include_root = true;
 };
 
+/// UsdRenderComputeSpec: each product starts from the settings' base
+/// attributes (all values incl. fallbacks) and overrides those it *authors*;
+/// the product camera's apertures are then conformed by
+/// aspectRatioConformPolicy; products without a resolvable Camera are
+/// skipped. Following the schema doc, the deprecated
+/// `instantaneousShutter` disables motion blur (OpenUSD 26.11 reads
+/// disableMotionBlur twice instead; usdspec-conformance issues/OpenUSD/16).
+struct RenderSpecProduct {
+  std::string path, camera;
+  int32_t resolution[2] = {2048, 1080};
+  float pixel_aspect_ratio = 1.0f;
+  std::string aspect_ratio_conform_policy = "expandAperture";
+  float aperture[2] = {0.0f, 0.0f};
+  float data_window_ndc[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+  bool disable_motion_blur = false;
+  bool disable_depth_of_field = false;
+  std::vector<std::string> render_vars;
+};
+struct RenderSpec {
+  std::string settings_path;
+  std::vector<std::string> included_purposes;
+  std::vector<RenderSpecProduct> products;
+};
+bool ComputeRenderSpec(const Stage& stage, const UsdPrim& settings, RenderSpec* out);
+
 bool IsRenderSettings(const UsdPrim& prim);
 bool IsRenderProduct(const UsdPrim& prim);
 bool IsRenderVar(const UsdPrim& prim);

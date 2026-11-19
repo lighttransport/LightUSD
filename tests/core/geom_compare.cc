@@ -24,6 +24,7 @@
 #include "schema/geom-boundable.hh"
 #include "schema/physics-resolve.hh"
 #include "schema/usd-collection.hh"
+#include "schema/usd-render.hh"
 #include "schema/usd-shade.hh"
 #include "schema/geom-point-instancer.hh"
 #include "stage/stage.hh"
@@ -214,6 +215,32 @@ int DumpVolumes(const char* scene, double time) {
   return 0;
 }
 
+// UsdRenderComputeSpec lines in the format of usdspec-conformance's C++
+// oracle (tests/next/oracle/render_spec.cc).
+int DumpRenderSpec(const char* scene) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    lightusd::RenderSpec spec;
+    if (!lightusd::ComputeRenderSpec(stage, prim, &spec)) return true;
+    std::printf("settings %s purposes", spec.settings_path.c_str());
+    for (const auto& t : spec.included_purposes) std::printf(" %s", t.c_str());
+    std::printf("\n");
+    for (const auto& p : spec.products) {
+      std::printf("product %s camera %s res %d %d par %.9g policy %s aperture %.9g %.9g "
+                  "dw %.9g %.9g %.9g %.9g mb %d dof %d vars",
+                  p.path.c_str(), p.camera.c_str(), p.resolution[0], p.resolution[1],
+                  p.pixel_aspect_ratio, p.aspect_ratio_conform_policy.c_str(), p.aperture[0],
+                  p.aperture[1], p.data_window_ndc[0], p.data_window_ndc[1], p.data_window_ndc[2],
+                  p.data_window_ndc[3], int(p.disable_motion_blur), int(p.disable_depth_of_field));
+      for (const auto& v : p.render_vars) std::printf(" %s", v.c_str());
+      std::printf("\n");
+    }
+    return true;
+  });
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -243,6 +270,9 @@ int main(int argc, char** argv) {
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-volume") {
     return DumpVolumes(argv[2], std::atof(argv[3]));
+  }
+  if (argc == 3 && std::string(argv[1]) == "--dump-render-spec") {
+    return DumpRenderSpec(argv[2]);
   }
   if (argc == 3 && std::string(argv[1]) == "--dump-physics") {
     return DumpPhysics(argv[2]);

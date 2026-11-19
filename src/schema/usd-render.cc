@@ -152,4 +152,109 @@ bool GetRenderPassData(const Stage& stage, const UsdPrim& prim,
   return true;
 }
 
+
+namespace {
+
+bool SpecAuthored(const UsdPrim& prim, const char* name) {
+  const PrimSpec* spec = prim.GetPrimSpec();
+  return spec && (spec->property(GetPropNameTable().find(name)) != nullptr ||
+                  prim.GetTimeSamples(GetPropNameTable().find(name)) != nullptr);
+}
+
+// _ReadSettingsBase: values from `prim`; when `only_authored`, only the
+// attributes the prim authors (composed opinion) override `pd`.
+void ReadSpecBase(const UsdPrim& prim, bool only_authored, RenderSpecProduct* pd) {
+  auto use = [&](const char* name) { return !only_authored || SpecAuthored(prim, name); };
+  if (const std::vector<Path>* t = prim.GetRelationship("camera")) {
+    if (!t->empty()) pd->camera = (*t)[0].str();
+  }
+  const Value* v = nullptr;
+  if (use("resolution") && (v = prim.GetPropertyValue("resolution"))) {
+    if (const int32_t* r = v->as_int2()) { pd->resolution[0] = r[0]; pd->resolution[1] = r[1]; }
+  }
+  if (use("pixelAspectRatio") && (v = prim.GetPropertyValue("pixelAspectRatio"))) {
+    if (const float* f = v->as_float()) pd->pixel_aspect_ratio = *f;
+  }
+  if (use("aspectRatioConformPolicy") && (v = prim.GetPropertyValue("aspectRatioConformPolicy"))) {
+    const StringView t = v->as_token();
+    if (t.size()) pd->aspect_ratio_conform_policy.assign(t.data(), t.size());
+  }
+  if (use("dataWindowNDC") && (v = prim.GetPropertyValue("dataWindowNDC"))) {
+    if (const float* f = v->as_float4()) for (int k = 0; k < 4; ++k) pd->data_window_ndc[k] = f[k];
+  }
+  if (use("disableMotionBlur") && (v = prim.GetPropertyValue("disableMotionBlur"))) {
+    if (const bool* b = v->as_bool()) pd->disable_motion_blur = *b;
+  }
+  if (use("instantaneousShutter") && (v = prim.GetPropertyValue("instantaneousShutter"))) {
+    if (const bool* b = v->as_bool(); b && *b) pd->disable_motion_blur = true;
+  }
+  if (use("disableDepthOfField") && (v = prim.GetPropertyValue("disableDepthOfField"))) {
+    if (const bool* b = v->as_bool()) pd->disable_depth_of_field = *b;
+  }
+}
+
+void ApplyConformPolicy(RenderSpecProduct* p) {
+  const float rx = float(p->resolution[0]), ry = float(p->resolution[1]);
+  float* size = p->aperture;
+  if (rx <= 0 || ry <= 0 || size[0] <= 0 || size[1] <= 0) return;
+  const float res_aspect = rx / ry;
+  const float image_aspect = p->pixel_aspect_ratio * res_aspect;
+  if (image_aspect <= 0) return;
+  const float aperture_aspect = size[0] / size[1];
+  const std::string& policy = p->aspect_ratio_conform_policy;
+  enum { kWidth, kHeight, kNone } adjust = kNone;
+  if (policy == "adjustPixelAspectRatio") {
+    p->pixel_aspect_ratio = aperture_aspect / res_aspect;
+  } else if (policy == "adjustApertureHeight") {
+    adjust = kHeight;
+  } else if (policy == "adjustApertureWidth") {
+    adjust = kWidth;
+  } else if (policy == "expandAperture") {
+    adjust = aperture_aspect > image_aspect ? kHeight : kWidth;
+  } else if (policy == "cropAperture") {
+    adjust = aperture_aspect > image_aspect ? kWidth : kHeight;
+  }
+  if (adjust == kWidth) size[0] = size[1] * image_aspect;
+  else if (adjust == kHeight) size[1] = size[0] / image_aspect;
+}
+
+}  // namespace
+
+bool ComputeRenderSpec(const Stage& stage, const UsdPrim& settings, RenderSpec* out) {
+  if (!out || !IsRenderSettings(settings)) return false;
+  *out = RenderSpec();
+  out->settings_path = settings.GetPath().str();
+  RenderSpecProduct base;
+  ReadSpecBase(settings, false, &base);
+  if (const std::vector<Path>* products = settings.GetRelationship("products")) {
+    for (const Path& path : *products) {
+      const UsdPrim product = stage.GetPrimAtPath(path);
+      if (!IsRenderProduct(product)) continue;
+      RenderSpecProduct p = base;
+      p.path = path.str();
+      ReadSpecBase(product, true, &p);
+      // A product without a resolvable Camera is skipped (UsdRenderComputeSpec).
+      const UsdPrim cam = p.camera.empty() ? UsdPrim() : stage.GetPrimAtPath(p.camera);
+      if (!cam.IsValid() || cam.GetTypeName() != "Camera") continue;
+      {
+        const Value* v = cam.GetPropertyValue("horizontalAperture");
+        if (v && v->as_float()) p.aperture[0] = *v->as_float();
+        v = cam.GetPropertyValue("verticalAperture");
+        if (v && v->as_float()) p.aperture[1] = *v->as_float();
+      }
+      ApplyConformPolicy(&p);
+      if (const std::vector<Path>* vars = product.GetRelationship("orderedVars")) {
+        for (const Path& var : *vars)
+          if (IsRenderVar(stage.GetPrimAtPath(var))) p.render_vars.push_back(var.str());
+      }
+      out->products.push_back(std::move(p));
+    }
+  }
+  if (const Value* v = settings.GetPropertyValue("includedPurposes")) {
+    if (auto tokens = v->as_token_array())
+      for (const auto& t : *tokens) out->included_purposes.emplace_back(t);
+  }
+  return true;
+}
+
 }  // namespace lightusd

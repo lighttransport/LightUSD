@@ -4,6 +4,7 @@
 #include "schema/geom-mesh.hh"
 #include "schema/geom-boundable.hh"
 #include "schema/physics-resolve.hh"
+#include "schema/usd-render.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/color-space.hh"
@@ -526,6 +527,39 @@ def PhysicsCollisionGroup "G" {
       r.joints[0].body0 != "/On" || r.collision_groups.size() != 1 ||
       r.collision_groups[0].invert_filtered_groups) {
     FAIL("unexpected resolved physics");
+    return;
+  }
+  PASS();
+}
+
+// UsdRenderComputeSpec parity (usdspec-conformance test-domain-render-runtime).
+void test_compute_render_spec() {
+  TEST("ComputeRenderSpec");
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+def Camera "Cam" {
+    float horizontalAperture = 36
+    float verticalAperture = 12
+}
+def RenderSettings "S" {
+    rel camera = </Cam>
+    int2 resolution = (800, 600)
+    bool instantaneousShutter = 1
+    rel products = [</P>, </NoCam>]
+}
+def RenderProduct "P" {
+    uniform token aspectRatioConformPolicy = "adjustApertureWidth"
+}
+def RenderProduct "NoCam" {
+    rel camera = </Missing>
+}
+)usd");
+  if (!loaded.success) { FAIL("failed to load render scene"); return; }
+  RenderSpec spec;
+  if (!ComputeRenderSpec(loaded.stage, loaded.stage.GetPrimAtPath("/S"), &spec) ||
+      spec.products.size() != 1 || spec.products[0].resolution[0] != 800 ||
+      std::fabs(spec.products[0].aperture[0] - 16.0f) > 1e-4f ||
+      !spec.products[0].disable_motion_blur) {
+    FAIL("unexpected render spec");
     return;
   }
   PASS();
@@ -1138,6 +1172,7 @@ int main() {
   test_point_instancer_layout_and_motion();
   test_compute_extent();
   test_resolve_physics();
+  test_compute_render_spec();
   test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();
