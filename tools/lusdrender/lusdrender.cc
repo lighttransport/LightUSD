@@ -97,6 +97,7 @@ extern "C" {
 #include "lusdr_rt_lod.hh"
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 #include "lusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
+#include "lusdr_gsplat_cycles.hh"
 #endif
 
 
@@ -1962,6 +1963,61 @@ int main(int argc, char **argv) {
       opt.rt_preview = true;  // default the LOD render to the CPU rtPreview path
     }
     PrepareLodStream(&opt, &lod_wrapper);
+  }
+
+  // --gsplat-kernel cycles: CPU reference render of a splat scene with the
+  // Blender Cycles kernel. Scenes without splats fall through unchanged.
+  if (opt.gsplat_cycles) {
+    if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda)
+      std::cerr << "WARN: --gsplat-kernel cycles renders on the CPU; the GPU "
+                   "backend flag is ignored for the splat scene.\n";
+    lightusd::Stage stage;
+    lightusd::ValueClipStageLoader clip_stage_loader;
+    std::string warn, err;
+    if (!LoadCoreStageBudgeted(opt, &stage, &warn, &err, &clip_stage_loader)) {
+      if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+      std::cerr << "Failed to load USD: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+    GSplatCyclesScene splats;
+    if (BuildGSplatCyclesScene(stage, opt.timecode, &splats)) {
+      const std::string up = stage.GetUpAxis();
+      const lusdr::Axis usd_up = up == "Z"   ? lusdr::Axis::Z
+                                 : up == "X" ? lusdr::Axis::X
+                                             : lusdr::Axis::Y;
+      CameraFrame camera;
+      const int cam_width = opt.width > 0 ? opt.width : 960;
+      int out_height = opt.height;
+      Options auto_opt = opt;
+      auto_opt.camera.clear();
+      auto_opt.width = cam_width;
+      float cam_aspect = 16.0f / 9.0f;
+      if (!opt.camera.empty() &&
+          FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera,
+                              &cam_aspect)) {
+        if (out_height <= 0)
+          out_height = std::max(
+              1, int(std::lround(std::min(32768.0, double(cam_width) /
+                                                       double(cam_aspect)))));
+      } else if (opt.camera.empty() && opt.autoframe) {
+        camera = MakeUsdRecordCamera(splats.bounds, usd_up, cam_width,
+                                     &out_height);
+      } else {
+        if (!opt.camera.empty())
+          std::cerr << "WARN: camera not found: " << opt.camera
+                    << ". Using auto-fit.\n";
+        if (out_height <= 0) out_height = 540;
+        camera = MakeCameraFrame(auto_opt, splats.bounds, out_height, usd_up);
+      }
+      Options render_opt = opt;
+      render_opt.width = cam_width;
+      return RenderGSplatCycles(render_opt, splats, camera, out_height)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
+    }
+    std::cerr << "WARN: --gsplat-kernel cycles: no Gaussian splats found; "
+                 "using the default renderer.\n";
   }
 
   // Every CPU render uses the core streaming path.

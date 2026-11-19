@@ -156,6 +156,37 @@ json Statistics(const ScenePreviewResult& r) {
   return j;
 }
 }  // namespace
+bool ParseScenePreviewPreset(const std::string& name,
+                             ScenePreviewPreset* out) {
+  if (name == "fast") *out = ScenePreviewPreset::Fast;
+  else if (name == "standard") *out = ScenePreviewPreset::Standard;
+  else if (name == "quality") *out = ScenePreviewPreset::Quality;
+  else return false;
+  return true;
+}
+void ApplyScenePreviewPreset(ScenePreviewPreset preset,
+                             ScenePreviewOptions* o) {
+  switch (preset) {
+    case ScenePreviewPreset::Fast:
+      o->source_index = false;
+      o->texture_max_edge = 128;
+      o->compose_pipeline = true;
+      o->batch_prims = 400000;  // fewer batches; composer default size
+      break;
+    case ScenePreviewPreset::Standard:
+      o->source_index = true;
+      o->texture_max_edge = 512;
+      o->texture_budget_bytes = uint64_t(256) << 20;
+      o->batch_prims = 100000;
+      break;
+    case ScenePreviewPreset::Quality:
+      o->source_index = true;
+      o->texture_max_edge = 2048;
+      o->texture_budget_bytes = uint64_t(1) << 30;
+      o->batch_prims = 100000;
+      break;
+  }
+}
 const char* ScenePreviewKindName(ScenePreviewKind kind) {
   switch (kind) {
     case ScenePreviewKind::Gaussian:
@@ -489,9 +520,10 @@ ScenePreviewResult ConvertScenePreview(
       }
 
     } else {
-      build.source_capture = true;
+      build.source_capture = options.source_index;
       build.source_directory = work / "source-index";
-      fs::create_directories(build.source_directory, ec);
+      if (build.source_capture)
+        fs::create_directories(build.source_directory, ec);
       if (ec) {
         result.error = "cannot create source geometry index";
         return finish();
@@ -505,7 +537,7 @@ ScenePreviewResult ConvertScenePreview(
       ::lightusd::pcp::BatchedComposeOptions batches;
       batches.target_batch_prims = options.batch_prims;
       batches.roots_per_batch = options.batch_roots;
-      batches.pipeline = false;
+      batches.pipeline = options.compose_pipeline;
       ::lightusd::pcp::BatchedComposer composer;
       if (!build.check("open", 0) ||
           !composer.Open(source, resolver, compose, batches, &result.warning,
@@ -536,8 +568,10 @@ ScenePreviewResult ConvertScenePreview(
               &result.warning, &result.error))
         return finish();
       if (!build.flush_geometry() || !build.finish_placements() ||
-          !build.flush_geometry() || !build.source_save_index())
+          !build.flush_geometry() ||
+          (build.source_capture && !build.source_save_index()))
         return finish();
+      if (build.source_capture) {
       json indexed_outputs = json::array();
       for (fs::directory_iterator it(build.source_directory, ec), end;
            !ec && it != end; it.increment(ec)) {
@@ -578,6 +612,7 @@ ScenePreviewResult ConvertScenePreview(
           return finish();
         }
       }
+      }  // build.source_capture
       build.source_capture = false;
     }
   }

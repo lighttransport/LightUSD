@@ -326,6 +326,14 @@ python3 examples/lusdview/render-motion.py \
     sample per pixel with flat Lambertian + hard-shadow shading. Headless
     `--cpu-rt --screenshot` renders a one-shot CPU image, matching the CUDA/HIP
     capture workflow and making the CPU path usable in display-free tests.
+  - **Gaussian splat kernel** (`--gsplat-kernel disc|cycles`, default `disc`).
+    `cycles` traces `ParticleField3DGaussianSplat` prims with the Blender 5.3
+    Cycles kernel (`src/tydra/gsplat-kernel.hh`): full 3D ellipsoids, a
+    stochastic opacity test, and SH emission up to degree 3, composited with
+    mesh hits by depth. Only the CPU tracer implements it, so the flag selects
+    `--cpu-rt`. It is noisy at one sample; use `--rt-samples N` to average.
+    `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
+    convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive

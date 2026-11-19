@@ -17,6 +17,7 @@
 #include "rt_camera.hh"
 #include "rt_scene_build.hh"  // HostScene, BuildHostScene, BuildProgress
 #include "ptex-sample.hh"     // streamed per-face PTex pages
+#include "tydra/gsplat-tracer.hh"  // Cycles splat kernel (--gsplat-kernel cycles)
 
 typedef struct lrt_tri_scene lrt_tri_scene;  // src/external/lightrt/lightrt_c_tri.h
 typedef struct lrt_tlas lrt_tlas;
@@ -36,6 +37,13 @@ class CpuRayTracer {
   // with CudaRayTracer/HipRayTracer so App's dispatch code is uniform.
   bool init(std::string* /*err*/) { return true; }
   void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
+  // --gsplat-kernel cycles: trace Gaussian carriers (which must carry
+  // LoadOptions::gaussianKernelData) with the Blender Cycles kernel instead
+  // of triangle surflets. `srgb` treats SH radiance as sRGB-encoded.
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
 
   // Flatten `scene` (BuildHostScene) and build a BVH over the result. Replaces
   // any previously built scene. See CudaRayTracer::build for the parameter
@@ -97,6 +105,9 @@ class CpuRayTracer {
   void freeScene();
 
   HostScene hs_;             // retained (unlike CUDA/HIP, which discard it after device upload)
+  lightusd::gsplat::GSplatTracer gsplats_;
+  bool gsplatCycles_{false};
+  bool gsplatSrgb_{false};
   // lightrt_c has no instance/TLAS traversal API. These are the expanded
   // world-space hit attributes corresponding one-to-one with scene_ triangles.
   std::vector<float> cpuTris_, cpuNrms_, cpuUv_, cpuUv1_, cpuTan_, cpuBin_;

@@ -725,6 +725,12 @@ struct Options {
   int threads{0};
   int subdivision_level{0};
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
+  // Gaussian splat kernel: false = analytic disc (default), true = the
+  // Blender Cycles 3D ellipsoid with stochastic opacity (CPU reference).
+  bool gsplat_cycles{false};
+  // Treat splat SH radiance as sRGB-encoded (Blender convention). USD
+  // specifies linear radiance, so this is off by default.
+  bool gsplat_srgb{false};
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
   int stream_http{0};     // -streamHttp <port>: WebSocket browser stream server

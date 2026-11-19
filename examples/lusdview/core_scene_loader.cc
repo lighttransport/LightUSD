@@ -8076,6 +8076,17 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
                                    ? opts.pointChunkSamples
                                    : size_t(64) * 1024;
       const size_t shStride = (haveSh && sh.size() >= n * 3) ? sh.size() / n : 0;
+      // Cycles kernel data: SH only when the stride is a whole (d+1)^2 RGB set.
+      const bool kernelData = opts.gaussianKernelData &&
+                              rec.type_name != "ParticleField";
+      int kernelShDegree = 0;
+      size_t kernelShFloats = 0;
+      for (int d = 3; d >= 0 && kernelData && shStride; --d)
+        if (shStride >= size_t((d + 1) * (d + 1) * 3)) {
+          kernelShDegree = d;
+          kernelShFloats = size_t((d + 1) * (d + 1) * 3);
+          break;
+        }
       const bool haveQ = haveOrientations && orientations.size() >= n * 4;
       double world[16];
       if (!ReadPublicWorldTransform(stage_owner.get(), rec.path, time, world)) {
@@ -8092,6 +8103,7 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
         dp.materialId = resolveMaterialPath(rec.material_path, std::string(),
                                             std::string());
         dp.gaussian = true;
+        dp.gaussianShDegree = kernelShDegree;
         dp.colorsInterpolation = 1;   // vertex/per-point
         dp.opacitiesInterpolation = 1;
         dp.points.reserve((last - first) * 3);
@@ -8135,6 +8147,15 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           dp.ellipseNormals.insert(
               dp.ellipseNormals.end(),
               {float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2])});
+          if (kernelData) {
+            dp.gaussianScales.insert(dp.gaussianScales.end(), {sx, sy, sz});
+            dp.gaussianRotations.insert(dp.gaussianRotations.end(),
+                                        {q.real, q.imag[0], q.imag[1], q.imag[2]});
+            if (kernelShFloats != 0)
+              dp.gaussianSh.insert(dp.gaussianSh.end(),
+                                   sh.begin() + i * shStride,
+                                   sh.begin() + i * shStride + kernelShFloats);
+          }
           if (shStride != 0 && i * shStride + 2 < sh.size()) {
             const float* c = sh.begin() + i * shStride;
             dp.colors.insert(dp.colors.end(), {

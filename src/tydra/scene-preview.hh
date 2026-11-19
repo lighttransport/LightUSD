@@ -54,6 +54,12 @@ struct ScenePreviewOptions {
   size_t batch_roots = 0;  // deterministic small-batch qualification
   std::string cache_directory;
   bool refresh = false;
+  // Write the per-prototype source triangle index used by camera-driven
+  // source refinement. Disabling it (fast preset) roughly halves cold
+  // conversion; later refinement then re-composes the source.
+  bool source_index = true;
+  // Overlap batch composition with sampling (one extra composed batch alive).
+  bool compose_pipeline = false;
   ::lightusd::pcp::CompositionOptions composition;
   // False cancels. Called at bounded composition/sampling/output boundaries.
   std::function<bool(const std::string&, uint64_t)> progress;
@@ -88,6 +94,19 @@ struct ScenePreviewResult {
 };
 
 const char* ScenePreviewKindName(ScenePreviewKind kind);
+
+// Conversion quality presets (lusdpreview --preset, apps --preview-preset).
+//  fast:     skip the source refinement index, 128 px texture samples,
+//            400K-prim batches with composition overlapped with sampling
+//            (large-scene preview).
+//  standard: library defaults (index on, 512 px).
+//  quality:  index on, 2048 px texture samples, 1 GiB texture budget.
+// Sampling density stays budget-driven in every preset; use
+// --preview-resolution / --preview-budget-mib to change it.
+enum class ScenePreviewPreset { Fast, Standard, Quality };
+bool ParseScenePreviewPreset(const std::string& name, ScenePreviewPreset* out);
+void ApplyScenePreviewPreset(ScenePreviewPreset preset,
+                             ScenePreviewOptions* options);
 bool ParseScenePreviewKind(const std::string& text, ScenePreviewKind* kind);
 // Quarter of installed VRAM, reduced under memory pressure. Zero capacity
 // (CPU-only conversion) selects the portable 2 GiB preview ceiling.

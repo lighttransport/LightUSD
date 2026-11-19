@@ -1274,6 +1274,13 @@ struct DrawPointsCPU {
   std::vector<float> ellipseRadii;
   std::vector<float> ellipseNormals;
   std::vector<float> ellipseMajorAxes;
+  // Full 3D Gaussian data (LoadOptions::gaussianKernelData), parallel to
+  // points: linear sigmas xyz, quaternion (w,x,y,z), and
+  // (gaussianShDegree+1)^2 RGB SH coefficients per point.
+  std::vector<float> gaussianScales;
+  std::vector<float> gaussianRotations;
+  std::vector<float> gaussianSh;
+  int gaussianShDegree{0};
   int colorsInterpolation{0};
   int opacitiesInterpolation{0};
   int materialId{-1};

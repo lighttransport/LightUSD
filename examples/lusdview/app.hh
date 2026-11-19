@@ -255,6 +255,9 @@ class App
   // same shape as --hip/--cuda. Headless + --screenshot: a one-shot trace (no
   // device-async upload step needed, so it's simpler than CUDA/HIP's path).
   void setCpuRt(bool on) { cpuRt_ = on; }
+  void setGsplatKernel(bool cycles, bool srgb) {
+    cpuTracer_.setGsplatKernel(cycles, srgb);
+  }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   void setPathTraceSettings(PathTraceSettings settings) {

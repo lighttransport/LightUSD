@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "cpu_raytracer.hh"
+#include "log.hh"
 
 #include <algorithm>
 #include <array>
@@ -197,10 +198,52 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
                          const float* viewProj16) {
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
+  gsplats_.Clear();
+  if (gsplatCycles_) {
+    size_t missing = 0;
+    for (const DrawPointsCPU& src : scene.points) {
+      if (!src.gaussian) continue;
+      const size_t n = src.points.size() / 3;
+      if (src.gaussianScales.size() < n * 3 ||
+          src.gaussianRotations.size() < n * 4) {
+        missing += n;
+        continue;
+      }
+      // DrawPointsCPU::world is column-major local-to-world.
+      const double linear[9] = {src.world[0], src.world[4], src.world[8],
+                                src.world[1], src.world[5], src.world[9],
+                                src.world[2], src.world[6], src.world[10]};
+      const double translation[3] = {src.world[12], src.world[13],
+                                     src.world[14]};
+      const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                            size_t(src.gaussianShDegree + 1) * 3;
+      const bool sh = src.gaussianSh.size() >= n * coeffs;
+      const bool perPointOpacity = src.opacities.size() >= n;
+      std::vector<float> constOpacity;
+      if (!perPointOpacity)
+        constOpacity.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
+      gsplats_.AddField(linear, translation, n, src.points.data(),
+                        src.gaussianRotations.data(), src.gaussianScales.data(),
+                        perPointOpacity ? src.opacities.data()
+                                        : constOpacity.data(),
+                        src.gaussianShDegree,
+                        sh ? src.gaussianSh.data() : nullptr);
+    }
+    gsplats_.Build();
+    LOGI("CPU RT: Cycles gsplat kernel, %zu splat(s), %zu BVH node(s)%s",
+         gsplats_.size(), gsplats_.node_count(),
+         missing ? " (some carriers lacked kernel data and were skipped)" : "");
+  }
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
-                      purposeVisibleMask, /*nativePointCarriers=*/false)) {
-    return false;
+                      purposeVisibleMask, /*nativePointCarriers=*/false,
+                      /*skipGaussianPoints=*/gsplatCycles_)) {
+    if (gsplats_.empty()) return false;
+    // Splat-only scene: no triangles to flatten, trace splats alone.
+    hs_ = HostScene();
+    if (err) err->clear();
+    truncated_ = false;
+    return true;
   }
   truncated_ = hs_.truncated;
   // One streamed source per packed PTex table entry. The loader's coarse atlas
@@ -1665,7 +1708,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                float sampleX, float sampleY, float pixelAngle,
                                const RtCameraLens* lens,
                                std::vector<uint8_t>* rgba, std::string* err) {
-  if (!tlas_ || w < 1 || h < 1) {
+  if ((!tlas_ && gsplats_.empty()) || w < 1 || h < 1) {
     if (err) *err = "no instance TLAS / invalid size";
     return false;
   }
@@ -2291,6 +2334,44 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         const bool flatHit = Intersect(ray, &hit.t, &hit.u, &hit.v, &hitInst,
                                        &hitSrc);
         if (flatHit) hit.prim_id = static_cast<uint32_t>(hitSrc);
+        if (!gsplats_.empty()) {
+          namespace gs = lightusd::gsplat;
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          const uint32_t seed =
+              (static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+               static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+              sx * 0x85ebca77u ^ sy * 0xc2b2ae3du;
+          gs::GSplatTracer::Hit splatHit;
+          const gs::Vec3 ro = {rayOrg[0], rayOrg[1], rayOrg[2]};
+          const gs::Vec3 rd = {dir[0], dir[1], dir[2]};
+          if (gsplats_.Trace(ro, rd, ray.tmin, flatHit ? hit.t : ray.tmax, seed,
+                             &splatHit)) {
+            const gs::Vec3 c = gsplats_.Radiance(
+                splatHit, rd,
+                gsplatSrgb_ ? gs::GSplatColorSpace::SRGB
+                            : gs::GSplatColorSpace::Linear);
+            // Same viewport encode as shaded surfaces (tonemap + sRGB).
+            const auto encode = [&](float value) {
+              value = std::max(value * (renderMode == 0 ? exposureMul : 1.0f),
+                               0.0f);
+              if (renderMode != 0) return std::min(value, 1.0f);
+              value = std::clamp(
+                  value * (2.51f * value + 0.03f) /
+                      (value * (2.43f * value + 0.59f) + 0.14f),
+                  0.0f, 1.0f);
+              return value <= 0.0031308f
+                         ? value * 12.92f
+                         : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+            };
+            px[0] = static_cast<uint8_t>(encode(c.x) * 255.0f);
+            px[1] = static_cast<uint8_t>(encode(c.y) * 255.0f);
+            px[2] = static_cast<uint8_t>(encode(c.z) * 255.0f);
+            px[3] = 255;
+            continue;
+          }
+        }
         if (!flatHit) {
           const auto environment = cpuEnvironment(dir);
           const auto encode = [](float value) {

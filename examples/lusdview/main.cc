@@ -343,6 +343,7 @@ int main(int argc, char** argv) {
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
+  bool gsplatCycles = false, gsplatSrgb = false;  // --gsplat-kernel/-colorspace
   int rtSamples = 1;          // --rt-samples: AA supersamples for RT paths
   bool wantPathTrace = false;
   lusdview::PathTraceSettings pathTraceSettings;
@@ -1116,6 +1117,20 @@ int main(int argc, char** argv) {
       wantHip = true;
     } if (std::strcmp(argv[i], "--cpu-rt") == 0) {
       wantCpuRt = true;
+    } if (std::strcmp(argv[i], "--gsplat-kernel") == 0 && i + 1 < argc) {
+      const std::string k = argv[++i];
+      if (k != "cycles" && k != "disc") {
+        LOGE("--gsplat-kernel expects disc|cycles");
+        return 1;
+      }
+      gsplatCycles = k == "cycles";
+    } if (std::strcmp(argv[i], "--gsplat-colorspace") == 0 && i + 1 < argc) {
+      const std::string k = argv[++i];
+      if (k != "linear" && k != "srgb") {
+        LOGE("--gsplat-colorspace expects linear|srgb");
+        return 1;
+      }
+      gsplatSrgb = k == "srgb";
     } if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
       rtSamples = std::atoi(argv[++i]);
       if (rtSamples < 1) rtSamples = 1;
@@ -2000,6 +2015,7 @@ int main(int argc, char** argv) {
   // screenshots are complete.
   {
     lusdview::LoadOptions lo;
+    lo.gaussianKernelData = gsplatCycles;
     if (rasterQualityHigh && !materialPurposeExplicit) materialPurpose = "full";
     if (rasterQualityHigh && !domeIblExplicit) textureOptions.domeIbl = 2;
     lo.materialPurpose = materialPurpose;
@@ -2210,7 +2226,15 @@ int main(int argc, char** argv) {
   app.setCudaRtBackend(cudaRtBackend);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
+  if (gsplatCycles && !wantCpuRt) {
+    // The Cycles splat kernel is implemented in the CPU ray tracer only.
+    LOGW("--gsplat-kernel cycles: using the CPU ray tracer (--cpu-rt)");
+    wantCpuRt = true;
+    wantCuda = false;
+    wantHip = false;
+  }
   app.setCpuRt(wantCpuRt);
+  app.setGsplatKernel(gsplatCycles, gsplatSrgb);
   app.setRtSamples(rtSamples);
   app.setPathTraceSettings(pathTraceSettings);
   app.setLinearOutput(linearOutput);

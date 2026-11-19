@@ -858,6 +858,16 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                     LABELS "lusdview")
 
     add_test(
+      NAME lusdview-cpu-gsplat-cycles
+      COMMAND ${LIGHTUSD_BASH_CMD}
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-gsplat-cycles.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-cpu-gsplat-cycles
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;cpu;gsplat")
+
+    add_test(
       NAME lusdview-vk-gaussian-chunks
       COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-gaussian-chunks.sh"

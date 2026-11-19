@@ -37,6 +37,17 @@ int main(int argc, char** argv) {
     *n = value;
     return true;
   };
+  // Presets apply first so explicit options override them in any order.
+  for (int i = 1; i + 1 < argc; ++i)
+    if (std::string(argv[i]) == "--preset") {
+      ScenePreviewPreset preset;
+      if (!ParseScenePreviewPreset(argv[i + 1], &preset)) {
+        std::fprintf(stderr, "unknown --preset: %s (fast|standard|quality)\n",
+                     argv[i + 1]);
+        return 2;
+      }
+      ApplyScenePreviewPreset(preset, &options);
+    }
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--help" || a == "-h") {
@@ -51,7 +62,8 @@ int main(int argc, char** argv) {
           "--progress --lod\n  --preview-compute auto|cpu|vulkan|cuda\n  "
           "--volume-no-surface\n  --preview-native-host\n  "
           "--preview-vulkan-library FILE\n  --preview-cuda-driver-library FILE\n  "
-          "--preview-cuda-compiler-library FILE");
+          "--preview-cuda-compiler-library FILE\n  --preset fast|standard|quality "
+          "(default standard)");
       return 0;
     }
     if (a == "--volume-no-surface") {
@@ -104,7 +116,9 @@ int main(int argc, char** argv) {
       }
       const std::string value = argv[++i];
       uint64_t n = 0;
-      if (a == "--kind") {
+      if (a == "--preset") {
+        // Applied before parsing.
+      } else if (a == "--kind") {
         if (!ParseScenePreviewKind(value, &options.kind)) return 2;
       } else if (a == "--preview-cache-dir")
         options.cache_directory = value;

@@ -147,6 +147,10 @@ void PrintUsage(const char *prog) {
       << "  -hideDefault           Hide default-purpose geometry.\n"
       << "  -timecode <value>      USD timecode to evaluate.\n"
       << "  -samples <N>           Deterministic supersamples per pixel (default 1).\n"
+      << "  --gsplat-kernel disc|cycles  Gaussian splat kernel (default disc).\n"
+      << "      cycles: Blender Cycles 3D ellipsoid + stochastic opacity, CPU;\n"
+      << "      -samples sets samples per pixel (16 if left at 1).\n"
+      << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
@@ -956,6 +960,26 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         opt->subdivision_level = 3;
       } else {
         std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatKernel" || a == "--gsplat-kernel") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "cycles") opt->gsplat_cycles = true;
+      else if (k == "disc") opt->gsplat_cycles = false;
+      else {
+        std::cerr << "Invalid --gsplat-kernel. Expected disc|cycles.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatColorspace" || a == "--gsplat-colorspace") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "srgb") opt->gsplat_srgb = true;
+      else if (k == "linear") opt->gsplat_srgb = false;
+      else {
+        std::cerr << "Invalid --gsplat-colorspace. Expected linear|srgb.\n";
         return false;
       }
     }

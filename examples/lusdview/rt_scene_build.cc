@@ -1134,7 +1134,8 @@ size_t RtProxyTriangleLimit() {
 
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact,
-                                                  size_t maxTriangles, bool tessellateAnalytic) {
+                                                  size_t maxTriangles, bool tessellateAnalytic,
+                                                  bool skipGaussianPoints) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
@@ -1146,6 +1147,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
     return true;
   };
   for (const DrawPointsCPU& src : scene.points) {
+    if (skipGaussianPoints && src.gaussian) continue;
     const size_t pointCount = src.points.size() / 3;
     const bool native_gaussian =
         src.gaussian && src.ellipseRadii.size() >= pointCount * 2 &&
@@ -1434,7 +1436,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress, RefitMap* refitOut,
                     size_t textureBudgetBytes,
                     const std::vector<uint8_t>* meshVisible,
-                    uint32_t purposeVisibleMask, bool nativePointCarriers) {
+                    uint32_t purposeVisibleMask, bool nativePointCarriers,
+                    bool skipGaussianPoints) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1468,6 +1471,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // carrier stores local-space radii and axes; bake only the affine placement
   // here so CUDA/HIP RT does not expand disk/oval point clouds into triangles.
   if (nativePointCarriers) for (const DrawPointsCPU& src : scene.points) {
+    if (skipGaussianPoints && src.gaussian) continue;
     const size_t n = src.points.size() / 3;
     const bool gaussian =
         src.gaussian && src.ellipseRadii.size() >= n * 2 &&
@@ -1697,7 +1701,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   if (!compactNonMeshProxies)
     nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, !nativePointCarriers,
                                               nativePointCarriers ? 0 : maxTris,
-                                              !nativePointCarriers);
+                                              !nativePointCarriers,
+                                              skipGaussianPoints);
   if (compactNonMeshProxies) {
     LOGI("RT geometry: compact analytic point/curve carriers enabled "
          "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);

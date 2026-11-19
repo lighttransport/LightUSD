@@ -197,6 +197,7 @@ add_executable(lusdrender
   lusdr_scene.cc
   lusdr_rt_lod.cc
   lusdr_gpu_common.cc
+  lusdr_gsplat_cycles.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
   lusdr_hip.cc
@@ -322,6 +323,7 @@ set(LUSDRENDER_CXX_SOURCES
   lusdr_scene.cc
   lusdr_rt_lod.cc
   lusdr_gpu_common.cc
+  lusdr_gsplat_cycles.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
   lusdr_hip.cc
@@ -740,6 +742,29 @@ if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_WITH_QJS)
       set(LUSDR_SPARSE_QJS_ARG --with-qjs)
     endif()
+    # Blender Cycles Gaussian splat kernel port (--gsplat-kernel cycles).
+    # The compare test skips (77) unless LIGHTUSD_BLENDER names Blender 5.3+.
+    add_test(NAME tool-lusdrender-gsplat-cycles-smoke
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" smoke)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-smoke PROPERTIES
+                         TIMEOUT 120 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat")
+    add_test(NAME tool-lusdrender-gsplat-blender-roundtrip
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" roundtrip)
+    set_tests_properties(tool-lusdrender-gsplat-blender-roundtrip PROPERTIES
+                         TIMEOUT 900 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-cycles-blender
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" compare)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-blender PROPERTIES
+                         TIMEOUT 600 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
     add_test(
       NAME tool-lusdrender-sparse-volume-cpu
       COMMAND ${LUSDR_PYTHON}

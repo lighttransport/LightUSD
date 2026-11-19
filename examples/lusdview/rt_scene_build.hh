@@ -168,7 +168,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact = false,
                                                   size_t maxTriangles = 0,
-                                                  bool tessellateAnalytic = false);
+                                                  bool tessellateAnalytic = false,
+                                                  bool skipGaussianPoints = false);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -270,7 +271,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     size_t textureBudgetBytes = 0,
                     const std::vector<uint8_t>* meshVisible = nullptr,
                     uint32_t purposeVisibleMask = 0x3u,
-                    bool nativePointCarriers = true);
+                    bool nativePointCarriers = true,
+                    // Leave Gaussian carriers out (traced separately by the
+                    // Cycles splat kernel, --gsplat-kernel cycles).
+                    bool skipGaussianPoints = false);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the

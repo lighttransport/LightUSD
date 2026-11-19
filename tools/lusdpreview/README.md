@@ -377,6 +377,37 @@ It checks near/far automatic selection and budget accounting on CPU, Vulkan and
 CUDA for every representation, and compares refined finest captures against
 captures with LOD disabled.
 
+## Conversion presets
+
+`lusdpreview --preset fast|standard|quality` (`--preview-preset` in lusdview
+and lusdrender) sets defaults that later explicit options override, whatever
+their position on the command line:
+
+| Preset | Source refinement index | Texture samples | Batches | Notes |
+|---|---|---|---|---|
+| fast | off | 128 px | 400K prims, composition overlapped with sampling | camera-driven refinement re-composes the source later |
+| standard (default) | on | 512 px, 256 MiB | 100K prims | previous behaviour |
+| quality | on | 2048 px, 1 GiB | 100K prims | |
+
+Sampling density stays budget-driven in every preset. Without the index or a
+refinement region, mesh sampling runs on up to 8 worker threads. Results are
+emitted in traversal order, so output is deterministic (byte-identical across
+runs).
+
+Cold conversions on a 32-thread host (default 2048 MiB budget):
+
+| Scene | Preset | Wall | Peak RSS | Splats |
+|---|---|---:|---:|---:|
+| Caldera `hotel_01.usd` (composed; 109K prims, 24K meshes) | fast | 8.5–8.8 s | 1.2 GiB | 775,598 |
+| Caldera `hotel_01.usd` | standard | 20.8 s | 0.86 GiB | 773,351 |
+| Caldera `hotel_01.usd` | quality | 18.9 s | 0.87 GiB | 773,351 |
+| ALab `_merged_ALab/entry.usda` | fast | 58 s | 3.8 GiB | 1,478,233 |
+| Moana `island.usda` (30.9M instances) | fast | 31.8 min | 4.6 GiB | 478,894 |
+| Caldera `caldera.usda` (authored proxy district LODs) | fast | 7.4 s | 2.4 GiB | 233,557 |
+
+The island is dominated by per-instance prototype replay, which is still
+serial.
+
 ## Qualification result
 
 A full 45-district Caldera source was qualified on a nominal 32 GB host with an

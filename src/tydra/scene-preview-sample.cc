@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <atomic>
+#include <thread>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -202,7 +204,7 @@ bool Build::insert(const Sample& s, bool filter_region) {
       return false;
     }
     cell_size *= 2;
-    std::unordered_map<Key, Accum, KeyHash> coarse;
+    CellMap coarse;
     coarse.reserve(cells.size() / 2);
     for (const auto& item : cells) {
       const Key key = Cell(item.second.representative, cell_size);
@@ -582,6 +584,9 @@ std::array<float, 4> Build::shade(const std::string& path,
                       t.source_color_space != "linear" &&
                       (!t.color_transform_valid || t.source_gamma != 1.f);
     const std::string key = file + (srgb ? ":srgb" : ":linear");
+    std::shared_ptr<DecodedImage> held;
+    {
+    std::lock_guard<std::mutex> lock(shade_mutex);
     if (failed_images.count(key)) return out;
     auto image = images.find(key);
     if (image == images.end()) {
@@ -606,7 +611,9 @@ std::array<float, 4> Build::shade(const std::string& path,
       dependencies.insert(file);
       image = images.emplace(key, std::move(decoded)).first;
     }
-    const auto& img = *image->second;
+    held = image->second;
+    }  // shade_mutex
+    const auto& img = *held;
     if (img.empty()) return out;
     auto wrap = [](double q, WrapMode mode) {
       if (mode == WrapMode::Repeat) return q - std::floor(q);
@@ -689,13 +696,18 @@ std::array<float, 4> Build::shade(const std::string& path,
 bool Build::mesh(
     const usd::Stage& stage, const usd::UsdPrim& prim, const double* world,
     const std::vector<std::pair<std::string, std::array<double, 16>>>&
-        ancestors) {
+        ancestors,
+    RenderSceneConverter* conv, MeshJobOut* out) {
   RenderMesh geometry;
-  converter.SetTimeCode(opts.time_code);
-  if (!converter.ConvertRenderableMesh(stage, prim, &geometry)) return true;
+  RenderSceneConverter& cv = conv ? *conv : converter;
+  cv.SetTimeCode(opts.time_code);
+  if (!cv.ConvertRenderableMesh(stage, prim, &geometry)) return true;
   if (geometry.points.empty() || geometry.triangulated_indices.empty())
     return true;
-  ++result.source_meshes;
+  if (out)
+    ++out->meshes;
+  else
+    ++result.source_meshes;
   if (source_capture || (opts.region_enabled && !ancestors.empty())) {
     if (!source_mesh(stage, prim, geometry, world, ancestors)) return false;
     for (const auto& ancestor : ancestors)
@@ -756,7 +768,8 @@ bool Build::mesh(
                     .triangulated_face_vertex_indices[ti * 3 +
                                                       static_cast<size_t>(c)];
       if (vi[c] >= geometry.point_count()) {
-        result.error = "preview triangulation index out of bounds";
+        (out ? out->error : result.error) =
+            "preview triangulation index out of bounds";
         return false;
       }
       for (int k = 0; k < 3; ++k)
@@ -970,16 +983,83 @@ bool Build::mesh(
         s.opacity = color[3] * alpha;
         s.radius = static_cast<float>(
             std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5);
-        if (opts.region_enabled) {
+        if (out) {
+          out->samples.push_back(transform(s));
+        } else if (opts.region_enabled) {
           if (!insert(transform(s))) return false;
         } else if (!emit(transform(s), ancestors))
           return false;
       }
     }  // clipped triangle patches
+    if (out) continue;  // workers report progress via drain_meshes
     ++triangle_count;
-    if ((triangle_count & 4095) == 0 && !check("sample", triangle_count))
+    if ((triangle_count & 4095) == 0 &&
+        !check("sample", triangle_count))
       return false;
   }
+  return true;
+}
+
+bool Build::parallel_meshes() {
+  // Paths that write spills/GPU queues or adapt cell_size per mesh stay serial.
+  if (source_capture || opts.region_enabled || cell_size <= 0) return false;
+  return !geometry_backend();
+}
+
+bool Build::drain_meshes(const usd::Stage& stage) {
+  if (mesh_jobs.empty() && pending_flushes.empty()) return true;
+  const auto* layer = stage.GetRootLayer();
+  const auto& prims = layer->prims();
+  const size_t n = mesh_jobs.size();
+  std::vector<MeshJobOut> outs(n);
+  size_t threads = 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  threads = std::max(1u, std::thread::hardware_concurrency());
+  threads = std::max(size_t(1), std::min({threads, size_t(8), (n + 3) / 4}));
+#endif
+  while (worker_converters.size() < threads)
+    worker_converters.push_back(std::make_unique<RenderSceneConverter>());
+  std::atomic<size_t> next{0};
+  auto work = [&](size_t w) {
+    for (size_t j; (j = next.fetch_add(1)) < n;) {
+      const MeshJob& job = mesh_jobs[j];
+      usd::UsdPrim prim(&prims[job.prim], layer, job.prim);
+      mesh(stage, prim, job.world.data(), job.ancestors,
+           worker_converters[w].get(), &outs[j]);
+      if (!outs[j].error.empty()) {
+        next.store(n);  // stop early; the serial pass reports in order
+        return;
+      }
+    }
+  };
+  if (threads == 1) {
+    work(0);
+  } else {
+    std::vector<std::thread> pool;
+    for (size_t w = 1; w < threads; ++w) pool.emplace_back(work, w);
+    work(0);
+    for (auto& t : pool) t.join();
+  }
+  // Emit in traversal order so output matches the serial path's ordering.
+  for (size_t j = 0; j < n; ++j) {
+    result.source_meshes += outs[j].meshes;
+    if (!outs[j].error.empty()) {
+      result.error = outs[j].error;
+      mesh_jobs.clear();
+      return false;
+    }
+    for (const Sample& sample : outs[j].samples)
+      if (!emit(sample, mesh_jobs[j].ancestors)) return false;
+    std::vector<Sample>().swap(outs[j].samples);
+    triangle_count += 64;  // coarse progress for the cancel callback
+    if ((j & 63) == 63 && !check("sample", triangle_count)) return false;
+  }
+  mesh_jobs.clear();
+  for (const auto& name : pending_flushes) {
+    if (!flush_prototype(name)) return false;
+    prototype_buffers.erase(name);
+  }
+  pending_flushes.clear();
   return true;
 }
 
@@ -1006,14 +1086,22 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
   const auto* layer = stage.GetRootLayer();
   const auto& prims = layer->prims();
   std::vector<std::pair<std::string, std::array<double, 16>>> ancestors;
+  mesh_jobs.clear();
+  const bool parallel = parallel_meshes();
+  if (!result.error.empty()) return false;
   for (size_t i = 0; i < prims.size(); ++i) {
     if (i < batch.repeated.size() && batch.repeated[i]) continue;
     usd::UsdPrim prim(&prims[i], layer, static_cast<uint32_t>(i));
     const std::string path = prim.GetPath().str();
     ++result.source_prims;
     while (!ancestors.empty() && !Prefix(path, ancestors.back().first)) {
-      if (!flush_prototype(ancestors.back().first)) return false;
-      prototype_buffers.erase(ancestors.back().first);
+      if (parallel) {
+        // Deferred jobs may still emit into this prototype; flush after them.
+        pending_flushes.push_back(ancestors.back().first);
+      } else {
+        if (!flush_prototype(ancestors.back().first)) return false;
+        prototype_buffers.erase(ancestors.back().first);
+      }
       ancestors.pop_back();
     }
     const auto& type = prim.GetTypeName();
@@ -1031,6 +1119,11 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
     if (!Visible(prim, opts.time_code)) continue;
     auto world = Identity();
     usd::ComputeWorldTransform(stage, prim, world.data(), opts.time_code);
+    if (renderable && !native_instance && !proto_root && parallel) {
+      mesh_jobs.push_back({static_cast<uint32_t>(i), world, ancestors});
+      if (mesh_jobs.size() >= 4096 && !drain_meshes(stage)) return false;
+      continue;
+    }
     if (proto_root && !native_instance) {
       auto inv = Identity();
       if (!Inverse(world.data(), inv.data())) {
@@ -1074,6 +1167,7 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
     }
     if ((i & 4095) == 0 && !check("compose", result.source_prims)) return false;
   }
+  if (!drain_meshes(stage)) return false;
   if (!flush_geometry()) return false;
   for (const auto& pending : prototype_buffers)
     if (!flush_prototype(pending.first)) return false;
