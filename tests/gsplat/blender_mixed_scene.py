@@ -38,8 +38,11 @@ ap.add_argument("--black", action="store_true",
 ap.add_argument("--motion", action="store_true",
                 help="animate the splat object; render frame 1 with Cycles "
                      "motion blur (shutter 0.5, centred)")
+ap.add_argument("--camera-motion", action="store_true",
+                help="animate the camera (also enables motion blur)")
 a = ap.parse_args(argv)
 SHUTTER = 0.5
+BLUR = a.motion or a.camera_motion
 os.makedirs(a.out, exist_ok=True)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -137,6 +140,23 @@ cam.location = (2.6, -3.4, 2.4)
 scene.collection.objects.link(cam)
 cam.rotation_euler = (Vector((0, 0, 0.35)) - cam.location).to_track_quat("-Z", "Y").to_euler()
 scene.camera = cam
+if a.camera_motion:
+    cl, cr = cam.location.copy(), cam.rotation_euler.copy()
+    for frame, sgn in ((0, -1.0), (1, 0.0), (2, 1.0)):
+        cam.location = cl + Vector((1.6, 0.8, 0.4)) * sgn
+        cam.rotation_euler = (cr[0] + 0.16 * sgn, cr[1], cr[2] + 0.4 * sgn)
+        cam.keyframe_insert("location", frame=frame)
+        cam.keyframe_insert("rotation_euler", frame=frame)
+    act = cam.animation_data.action
+    curves = list(getattr(act, "fcurves", []) or [])
+    for layer in getattr(act, "layers", []):
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                curves += list(bag.fcurves)
+    for fc in curves:
+        for kp in fc.keyframe_points:
+            kp.interpolation = "LINEAR"
+    scene.frame_set(1)
 bpy.context.view_layer.update()
 
 
@@ -149,7 +169,7 @@ def usd_matrix(m):  # Blender column-vector -> USD row-vector (transpose)
 f3 = lambda v: "(%r, %r, %r)" % tuple(v)
 with open(os.path.join(a.out, "mixed.usda"), "w") as f:
     f.write('#usda 1.0\n(\n    defaultPrim = "World"\n    metersPerUnit = 1\n'
-            + ('    startTimeCode = 0\n    endTimeCode = 2\n' if a.motion else '')
+            + ('    startTimeCode = 0\n    endTimeCode = 2\n' if BLUR else '')
             + '    upAxis = "Z"\n)\n\ndef Xform "World"\n{\n')
     cam_block = ('    def Camera "Cam"\n    {\n'
                  "        float focalLength = %r\n        float horizontalAperture = %r\n"
@@ -159,7 +179,19 @@ with open(os.path.join(a.out, "mixed.usda"), "w") as f:
                  (cam_data.lens, cam_data.sensor_width,
                   cam_data.sensor_width * a.height / a.width,
                   usd_matrix(cam.matrix_world)))
-    if a.motion:
+    if a.camera_motion:
+        cs = []
+        for j in range(17):
+            sub = -SHUTTER / 2 + SHUTTER * j / 16.0
+            fr = int(math.floor(1 + sub))
+            scene.frame_set(fr, subframe=(1 + sub) - fr)
+            cs.append("%r: %s" % (1 + sub, usd_matrix(cam.matrix_world)))
+        scene.frame_set(1)
+        cam_block = cam_block.replace(
+            "        matrix4d xformOp:transform = %s\n" % usd_matrix(cam.matrix_world),
+            "        matrix4d xformOp:transform.timeSamples = {\n            %s\n        }\n"
+            % ",\n            ".join(cs), 1)
+    if BLUR:
         cam_block = cam_block.replace(
             "        float2 clippingRange",
             "        double shutter:open = %r\n        double shutter:close = %r\n"
@@ -225,8 +257,9 @@ scene.cycles.samples = a.spp
 scene.cycles.use_denoising = False
 scene.cycles.filter_width = 0.01
 scene.cycles.max_bounces = 0
-if a.motion:
+if BLUR:
     scene.render.use_motion_blur = True
+    cam.cycles.motion_steps = 4
     scene.render.motion_blur_shutter = SHUTTER
     scene.render.motion_blur_position = "CENTER"
     if n:

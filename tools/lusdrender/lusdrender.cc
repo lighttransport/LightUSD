@@ -2019,10 +2019,15 @@ int main(int argc, char **argv) {
           times[k] = opt.timecode + double(camera.shutter_open) +
                      double(camera.shutter_close - camera.shutter_open) *
                          double(k) / double(times.size() - 1);
-        if (BuildGSplatCyclesMotion(stage, times, &splats) && opt.stats)
+        const bool splat_motion = BuildGSplatCyclesMotion(stage, times, &splats);
+        const bool cam_motion = BuildCameraMotion(stage, opt.camera, times, &splats);
+        if ((splat_motion || cam_motion) && opt.stats)
           std::cerr << "Cycles gsplat motion blur: shutter ["
                     << camera.shutter_open << ", " << camera.shutter_close
-                    << "] frames, " << times.size() << " steps\n";
+                    << "] frames, " << times.size() << " steps"
+                    << (splat_motion ? ", splats" : "")
+                    << (!splats.motion_dc.empty() ? ", colour" : "")
+                    << (cam_motion ? ", camera" : "") << "\n";
       }
       Options render_opt = opt;
       render_opt.width = cam_width;

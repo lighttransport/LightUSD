@@ -2388,6 +2388,36 @@ bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out) 
   if (out->count == 0 || out->count == out->center->skipped()) return false;
   out->nkeys = uint32_t(K);
   out->keys.resize(size_t(K) * out->count);
+  // Animated DC colour keys (splat order = carrier order, keep_all).
+  if (K > 1) {
+    bool any = false;
+    std::vector<float> dc(size_t(K) * out->count * 3, 0.0f);
+    size_t base = 0;
+    for (const DrawPointsCPU& src : points) {
+      if (!HasGsplatKernelData(src)) continue;
+      const size_t n = src.points.size() / 3;
+      const bool have = src.gaussianMotionKeys == K &&
+                        src.gaussianMotionDc.size() == n * size_t(K) * 3;
+      const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                            size_t(src.gaussianShDegree + 1) * 3;
+      for (size_t i = 0; i < n; ++i)
+        for (int k = 0; k < K; ++k)
+          for (int c = 0; c < 3; ++c) {
+            float v;
+            if (have) {
+              v = src.gaussianMotionDc[(i * size_t(K) + size_t(k)) * 3 + c];
+            } else {
+              v = src.gaussianSh.size() >= n * coeffs ? src.gaussianSh[i * coeffs + c] : 0.0f;
+            }
+            dc[((size_t(k) * out->count) + base + i) * 3 + c] = v;
+            const float center = src.gaussianSh.size() >= n * coeffs
+                                     ? src.gaussianSh[i * coeffs + c] : 0.0f;
+            if (v != center) any = true;
+          }
+      base += n;
+    }
+    if (any && base == out->count) out->dc.swap(dc);
+  }
   for (int k = 0; k < K; ++k) {
     lightusd::gsplat::GSplatTracer tk;
     if (K > 1)
@@ -2418,12 +2448,16 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
   const uint32_t K = gk.nkeys;
   out->nkeys = K;
   const size_t nf = tracer.field_count();
-  out->shData.assign(nf * 12, 0.f);
+  const size_t fieldBase = 4;
+  out->shData.assign(fieldBase + nf * 12, 0.f);
   for (size_t f = 0; f < nf; ++f)
-    std::memcpy(&out->shData[f * 12], tracer.field_linv(f), 9 * sizeof(float));
+    std::memcpy(&out->shData[fieldBase + f * 12], tracer.field_linv(f),
+                9 * sizeof(float));
   const size_t shBase = out->shData.size();
   out->shData.insert(out->shData.end(), tracer.sh_data().begin(),
                      tracer.sh_data().end());
+  // DC keys are indexed by GPU record order (BVH leaf order), filled below.
+  std::vector<float> dcRecords;
   const size_t nchunks = lrt_gsplat_scene_chunk_count(scene);
   for (size_t c = 0; c < nchunks; ++c) {
     const uint32_t* nodes;
@@ -2436,6 +2470,10 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
     out->nodes.insert(out->nodes.end(), nodes, nodes + size_t(nn) * 8);
     for (uint32_t i = 0; i < ns * K; ++i) {
       const lrt_gsplat& g = sp[i];
+      if (!gk.dc.empty() && i % K == 0)
+        for (uint32_t k = 0; k < K; ++k)
+          for (int c = 0; c < 3; ++c)
+            dcRecords.push_back(gk.dc[(size_t(k) * gk.count + g.id) * 3 + c]);
       const uint32_t f = tracer.field_of(g.id);
       const uint32_t shOff = uint32_t(shBase + tracer.sh_offset(g.id));
       const uint32_t meta = uint32_t(tracer.field_degree(f) & 3) |
@@ -2448,6 +2486,13 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
     }
   }
   lrt_gsplat_scene_free(scene);
+  uint32_t dcBase = 0;
+  if (!dcRecords.empty()) {
+    dcBase = uint32_t(out->shData.size());
+    out->shData.insert(out->shData.end(), dcRecords.begin(), dcRecords.end());
+  }
+  const uint32_t header[4] = {dcBase, 0u, uint32_t(fieldBase), 0u};
+  std::memcpy(out->shData.data(), header, sizeof(header));
   out->splatCount = uint32_t(out->splats.size() / (16 * K));
   out->nodeCount = uint32_t(out->nodes.size() / 8);
   out->chunkCount = uint32_t(out->chunks.size() / 2);

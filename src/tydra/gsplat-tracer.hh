@@ -223,6 +223,18 @@ class GSplatTracer {
     return GSplatRadiance(f.sh_degree, &sh_[sh_of_[hit.index]],
                           MulA(f.linv, rd), cs);
   }
+  // As Radiance with the DC (band 0) RGB replaced, e.g. by the colour
+  // interpolated at the ray's shutter time (Cycles motion radiance_base).
+  Vec3 Radiance(const Hit& hit, Vec3 rd, GSplatColorSpace cs,
+                const float dc[3]) const {
+    const Field& f = fields_[field_of_[hit.index]];
+    float c[48];
+    const size_t n = size_t(f.sh_degree + 1) * (f.sh_degree + 1) * 3;
+    const float* src = &sh_[sh_of_[hit.index]];
+    for (size_t i = 0; i < n && i < 48; ++i) c[i] = src[i];
+    c[0] = dc[0]; c[1] = dc[1]; c[2] = dc[2];
+    return GSplatRadiance(f.sh_degree, c, MulA(f.linv, rd), cs);
+  }
 
  private:
   void PushPlaceholder(uint32_t field_index) {

@@ -882,6 +882,35 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;gsplat"
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
+      # Camera motion blur (app shutter segments). Vulkan is left out: its
+      # segment camera currently over-blurs splats (~25% wider than Cycles).
+      foreach(_gs_mixed pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-mixed-cammotion-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed} cammotion)
+        set_tests_properties(lusdview-gsplat-mixed-cammotion-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      # Splat-only Blender variants (SH degrees, transforms, ortho, motion,
+      # camera motion, animated colour) through the viewer's path tracer.
+      if(TARGET lusdrender)
+        foreach(_gs_lv vk hip)
+          add_test(
+            NAME lusdview-gsplat-blender-variants-${_gs_lv}
+            COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                    "${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py"
+                    "$<TARGET_FILE:lusdrender>" variants
+                    --lusdview "$<TARGET_FILE:lusdview>" --lusdview-backend ${_gs_lv})
+          set_tests_properties(lusdview-gsplat-blender-variants-${_gs_lv}
+                               PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3600
+                                          LABELS "lusdview;gsplat;blender"
+                                          RESOURCE_LOCK lusdview_gpu)
+        endforeach()
+      endif()
       # Motion blur (animated splats, camera shutter) on the path tracers.
       foreach(_gs_mixed pt-vk pt-hip pt-cuda cpu)
         add_test(

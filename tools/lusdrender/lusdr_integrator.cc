@@ -15,6 +15,7 @@
 
 #include "image-writer.hh"
 #include "lusdr_context.hh"
+#include "lusdr_gsplat_cycles.hh"
 #include "tydra/materialx.hh"
 #include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
@@ -810,10 +811,18 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
       lightusd::gsplat::GSplatTracer::Hit th;
       th.t = h.t;
       th.index = h.prim_id;
-      const lightusd::gsplat::Vec3 c = direct->gsplat_tracer->Radiance(
-          th, {ray_dir.x, ray_dir.y, ray_dir.z},
-          direct->gsplat_srgb ? lightusd::gsplat::GSplatColorSpace::SRGB
-                              : lightusd::gsplat::GSplatColorSpace::Linear);
+      const auto cs = direct->gsplat_srgb ? lightusd::gsplat::GSplatColorSpace::SRGB
+                                          : lightusd::gsplat::GSplatColorSpace::Linear;
+      lightusd::gsplat::Vec3 c;
+      if (direct->gsplat_dc) {
+        float dcv[3];
+        GSplatDcAt(*direct->gsplat_dc, direct->gsplat_nkeys,
+                   direct->gsplat_tracer->size(), h.prim_id, g_gsplat_ray_time, dcv);
+        c = direct->gsplat_tracer->Radiance(th, {ray_dir.x, ray_dir.y, ray_dir.z},
+                                            cs, dcv);
+      } else {
+        c = direct->gsplat_tracer->Radiance(th, {ray_dir.x, ray_dir.y, ray_dir.z}, cs);
+      }
       best->t = h.t;
       best->n = Normalize(Mul(ray_dir, -1.0f));
       best->base_color = Vec3{0.0f, 0.0f, 0.0f};
@@ -3227,25 +3236,9 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           PixelJitter(s, spp, &jx, &jy);
           float fx = (float(x) + jx) / float(img.width);
           float fy = (float(y) + jy) / float(img.height);
-          Vec3 org;
-          Vec3 dir;
-          MakeRay(camera, aspect, fx, fy, &org, &dir);
-          // One-pixel ray differentials for texture footprint / mip LOD
-          // (origin + dir cover both pinhole and ortho cameras).
-          RayDiff rd;
-          MakeRay(camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
-                  &rd.dx);
-          MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
-                  &rd.dy);
-          rd.valid = true;
-          CameraFrame ray_camera=camera;
-          if (!camera.ortho) {
-            const float cosine=std::max(1.0e-6f,Dot(camera.forward,dir));
-            ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
-          }
-          float primary_hit_t = ray_camera.zfar;
           if (direct && direct->gsplat_motion) {
-            // Stratified shutter time per pixel (Cramer-Patterson rotation).
+            // Stratified shutter time per pixel (Cramer-Patterson rotation);
+            // it drives the camera and every splat along this sample's path.
             uint32_t hpx = (uint32_t(y) * uint32_t(img.width) + uint32_t(x)) *
                            0x9e3779b1u;
             hpx ^= hpx >> 16;
@@ -3255,6 +3248,27 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                              float(hpx >> 8) * (1.0f / 16777216.0f);
             g_gsplat_ray_time = tm - std::floor(tm);
           }
+          const CameraFrame sample_camera =
+              direct && direct->camera_keys.size() > 1
+                  ? LerpCameraFrame(direct->camera_keys, g_gsplat_ray_time)
+                  : camera;
+          Vec3 org;
+          Vec3 dir;
+          MakeRay(sample_camera, aspect, fx, fy, &org, &dir);
+          // One-pixel ray differentials for texture footprint / mip LOD
+          // (origin + dir cover both pinhole and ortho cameras).
+          RayDiff rd;
+          MakeRay(sample_camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
+                  &rd.dx);
+          MakeRay(sample_camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
+                  &rd.dy);
+          rd.valid = true;
+          CameraFrame ray_camera=sample_camera;
+          if (!sample_camera.ortho) {
+            const float cosine=std::max(1.0e-6f,Dot(sample_camera.forward,dir));
+            ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
+          }
+          float primary_hit_t = ray_camera.zfar;
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, ray_camera, opt,
                             org, dir, textures, tri_uvs, tri_uvs1, tlas, blas,
                             instances, rd, 0, tri_colors, tri_normals,

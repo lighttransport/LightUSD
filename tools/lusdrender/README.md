@@ -501,8 +501,18 @@ sample, and its shadow and bounce rays, at the sample's shutter time.
 gives visibility 1.00x and emission 1.04x Blender's noise floor; without blur
 it fails at 1.81x.
 
-Not yet covered: camera motion; SH/DC colour motion (the render-time colour
-is used).
+Camera motion blur: the camera is sampled at the same shutter keys, and each
+ray is generated from the interpolated camera. This applies to splat-only and
+mixed scenes; in mixed scenes the camera blurs even without splats. Blender
+5.3 `cammotion`: 1.02x the noise floor (1.42x without blur). Mixed scene with
+a moving camera: visibility 1.00x and emission 1.04x (3.6x without blur).
+
+Animated colour: per-key DC (SH band 0) colour, as Cycles' radiance_base
+motion, is interpolated at the hit's shutter time. Higher SH bands stay at
+the render time, as in Cycles. Blender `colourmotion` (Geometry Nodes moving
+and recolouring every splat): 1.00x the floor, 1.46x without colour
+interpolation. Cycles only interpolates radiance_base for deforming splats;
+here it is interpolated whenever the colour is animated.
 
 ## Validated benchmark — Activision Caldera maps
 

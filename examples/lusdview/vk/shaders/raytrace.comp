@@ -2048,7 +2048,7 @@ vec3 cyclesSplatRadiance(int id, vec3 d) {
   uint shOff = floatBitsToUint(gsS[s + 14u]);
   uint meta = floatBitsToUint(gsS[s + 15u]);
   uint deg = meta & 3u, field = meta >> 8u;
-  uint f = field * 12u;
+  uint f = floatBitsToUint(gsF[2]) + field * 12u;  // header: field base
   vec3 v = vec3(gsF[f] * d.x + gsF[f + 1u] * d.y + gsF[f + 2u] * d.z,
                 gsF[f + 3u] * d.x + gsF[f + 4u] * d.y + gsF[f + 5u] * d.z,
                 gsF[f + 6u] * d.x + gsF[f + 7u] * d.y + gsF[f + 8u] * d.z);
@@ -2082,6 +2082,20 @@ vec3 cyclesSplatRadiance(int id, vec3 d) {
   for (uint i = 0u; i < nb; ++i)
     c += vec3(gsF[shOff + i * 3u], gsF[shOff + i * 3u + 1u],
               gsF[shOff + i * 3u + 2u]) * bs[i];
+  // Animated DC colour (Cycles motion radiance_base): swap band 0 for the
+  // colour interpolated at this sample's shutter time.
+  uint dcBase = floatBitsToUint(gsF[0]);
+  uint K = gsKeyCount();
+  if (dcBase != 0u && K > 1u) {
+    float fk = clamp(g_gsTime, 0.0, 1.0) * float(K - 1u);
+    uint st = min(uint(fk), K - 2u);
+    float tk = fk - float(st);
+    uint d0 = dcBase + (uint(id) * K + st) * 3u;
+    vec3 dc = mix(vec3(gsF[d0], gsF[d0 + 1u], gsF[d0 + 2u]),
+                  vec3(gsF[d0 + 3u], gsF[d0 + 4u], gsF[d0 + 5u]), tk);
+    vec3 dc0 = vec3(gsF[shOff], gsF[shOff + 1u], gsF[shOff + 2u]);
+    c += (dc - dc0) * bs[0];
+  }
   if ((meta & 4u) != 0u)
     return vec3(gsSrgbToLinear(c.x), gsSrgbToLinear(c.y), gsSrgbToLinear(c.z));
   return max(c, vec3(0.0));
@@ -3196,10 +3210,17 @@ void main() {
                         : vec2(0.0);
   // Motion-blurred splats: stratified shutter time (Halton base 5 over the
   // accumulated frames, Cramer-Patterson rotated per pixel).
-  if (gsplatCyclesMode() && gsKeyCount() > 1u)
-    g_gsTime = fract(halton(fi + 1u, 5u) +
-                     float(hashU(uint(px.y) * uint(size.x) + uint(px.x)) >> 8u) *
-                         (1.0 / 16777216.0));
+  // When the app renders the shutter in segments (camera/mesh motion,
+  // --pt-motion-segments), context.z/.w give this segment's centre and width
+  // so splats move in step with the camera.
+  if (gsplatCyclesMode() && gsKeyCount() > 1u) {
+    float jit = fract(halton(fi + 1u, 5u) +
+                      float(hashU(uint(px.y) * uint(size.x) + uint(px.x)) >> 8u) *
+                          (1.0 / 16777216.0));
+    g_gsTime = pc.context.z >= 0.0
+                   ? clamp(pc.context.z + (jit - 0.5) * pc.context.w, 0.0, 1.0)
+                   : jit;
+  }
   vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);

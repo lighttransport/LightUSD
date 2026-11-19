@@ -1454,13 +1454,13 @@ __device__ float gsSrgbToLinear(float c) {
                       : powf((c + 0.055f) * (1.f / 1.055f), 2.4f);
 }
 __device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d,
-                         int chunkPacked = 0) {
+                         int chunkPacked = 0, float time = 0.5f) {
   const unsigned K = (unsigned)chunkPacked >> 24 > 1u ? (unsigned)chunkPacked >> 24 : 1u;
   const float* g = S + (size_t)id * K * 16u;
   const unsigned shOff = __float_as_uint(g[14]);
   const unsigned meta = __float_as_uint(g[15]);
   const unsigned deg = meta & 3u;
-  const float* L = F + (size_t)(meta >> 8u) * 12u;
+  const float* L = F + __float_as_uint(F[2]) + (size_t)(meta >> 8u) * 12u;
   F3 v = mk(L[0]*d.x + L[1]*d.y + L[2]*d.z, L[3]*d.x + L[4]*d.y + L[5]*d.z,
             L[6]*d.x + L[7]*d.y + L[8]*d.z);
   const float l = sqrtf(dot3(v, v));
@@ -1485,6 +1485,17 @@ __device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d,
   const float* c = F + shOff;
   for (unsigned i = 0u; i < nb; ++i) {
     r += c[i*3] * bs[i]; gg += c[i*3+1] * bs[i]; bb += c[i*3+2] * bs[i];
+  }
+  // Animated DC colour at the sample's shutter time (Cycles radiance_base).
+  const unsigned dcBase = __float_as_uint(F[0]);
+  if (dcBase != 0u && K > 1u) {
+    const float fk = fminf(fmaxf(time, 0.f), 1.f) * (float)(K - 1u);
+    unsigned st = (unsigned)fk; if (st > K - 2u) st = K - 2u;
+    const float tk = fk - (float)st;
+    const float* d0 = F + dcBase + ((size_t)id * K + st) * 3u;
+    r += (d0[0] + (d0[3] - d0[0]) * tk - c[0]) * bs[0];
+    gg += (d0[1] + (d0[4] - d0[1]) * tk - c[1]) * bs[0];
+    bb += (d0[2] + (d0[5] - d0[2]) * tk - c[2]) * bs[0];
   }
   if (meta & 4u) return mk(gsSrgbToLinear(r), gsSrgbToLinear(gg), gsSrgbToLinear(bb));
   return mk(fmaxf(r, 0.f), fmaxf(gg, 0.f), fmaxf(bb, 0.f));
@@ -1537,7 +1548,7 @@ __device__ F3 productionPath(
     float t=traverseCutout(tlas,insts,blas,tris,ro,rd,gsId>=0?gsT:1e30f,&tri,&bu,&bv,&ii,
       cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,
       texels,textures,numTextures,uvs,uvs1,-1,false);
-    if((tri<0||ii<0)&&gsId>=0){L=add(L,ptMul(beta,gsRadiance(gsS,gsF,gsId,rd,gsChunks)));break;}
+    if((tri<0||ii<0)&&gsId>=0){L=add(L,ptMul(beta,gsRadiance(gsS,gsF,gsId,rd,gsChunks,gsTime)));break;}
     if(tri<0||ii<0){
       if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear,texels,textures,numTextures)),mis));}
       break;
@@ -2038,6 +2049,13 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     while(si>0u){ f*=0.2f; r+=f*(float)(si%5u); si/=5u; }
     r+=(float)(hashU((unsigned)(py*W+px))>>8)*(1.f/16777216.f);
     gsTime=r-floorf(r);
+    // Shutter segment (camera/mesh motion rendered per segment by the app):
+    // context[3] = 4*segments + centre.
+    if (cam.context[3]>=0.f){
+      const float S=floorf(cam.context[3]*0.25f);
+      const float c=cam.context[3]-4.f*S;
+      gsTime=fminf(fmaxf(c+(gsTime-0.5f)/fmaxf(S,1.f),0.f),1.f);
+    }
   }
   // Sub-pixel jitter for supersampled AA rides the spare sceneMin.w/sceneExtent.w
   // lanes (0 for the 1-spp / center-sample case, so unchanged then).
@@ -3034,7 +3052,7 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
   if (pointHit >= 0 && cyclesSplats) {
     // Cycles' default splat shader is pure emission.
     if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
-    else outc = gsRadiance(pointCenters, pointMajor, pointHit, d, pointChunkCount);
+    else outc = gsRadiance(pointCenters, pointMajor, pointHit, d, pointChunkCount, gsTime);
   } else if (pointHit >= 0) {
     F3 N = norm3(mk(pointNormals[pointHit*3], pointNormals[pointHit*3+1],
                     pointNormals[pointHit*3+2]));

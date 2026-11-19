@@ -301,8 +301,10 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
 //            count == 0 => inner node, children first and first + 1 (chunk
 //            local); leaf splats first..first+count-1 (chunk local)
 //   chunks : {nodeFirst, splatFirst} per BVH chunk
-//   shData : per field 12 floats (row-major inverse linear part, padded),
-//            then the SH coefficients
+//   shData : 4-word header {dcBase, 0, fieldBase, 0} (uint bits),
+//            per field 12 floats from fieldBase (row-major inverse linear
+//            part, padded), the SH coefficients, then (dcBase != 0) animated
+//            DC colour keys at dcBase + (splat * nkeys + key) * 3
 struct GsplatGpuData {
   std::vector<float> splats;
   std::vector<uint32_t> nodes;
@@ -326,6 +328,9 @@ struct GsplatKeys {
   std::vector<lrt_gsplat> keys;
   uint32_t nkeys = 1;
   size_t count = 0;
+  // Animated DC colour (Cycles motion radiance_base): key-major
+  // nkeys * count * 3; empty = render-time colour.
+  std::vector<float> dc;
   size_t skipped = 0;
 };
 bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out);

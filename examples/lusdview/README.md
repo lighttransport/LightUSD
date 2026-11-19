@@ -356,6 +356,17 @@ python3 examples/lusdview/render-motion.py \
     (`tests/usda/gsplat-mixed-motion-*.usda`, use `--time 1`), the path tracer
     matches Blender's 10x10 block maps at 0.0032 (0.0116 without blur) on
     Vulkan and HIP.
+    Animated splat colour (per-key DC colour) is interpolated at each
+    sample's shutter time on every tracer. Camera motion (and mesh motion)
+    is rendered by the app in shutter segments (`--pt-motion-segments`, default
+    16 with Cycles splats); splats are interpolated within each segment so they
+    stay in step with the camera. Blender splat-only variants through
+    `--path-trace`: 1.20-1.24x the noise floor, including motion, camera motion
+    and animated colour (`tests/gsplat/check_cycles_compare.py variants
+    --lusdview`). Known issue: Vulkan's segment camera over-blurs splats
+    (~25% wider than Cycles); HIP matches. `--background black|white` sets
+    the viewport/RT environment colour, now also honoured by the CPU, CUDA and
+    HIP tracers.
     `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
     convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build

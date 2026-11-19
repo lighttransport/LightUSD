@@ -2302,6 +2302,23 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           }
         }
 
+        // Cycles splat motion blur: this sample's shutter time (shared by
+        // its shadow rays), inside the app's shutter segment when set.
+        g_cpuGsplatTime = 0.5f;
+        if (!gsplats_.empty() && gsplats_.motion()) {
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          uint32_t th = ((static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+                          static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+                         sx * 0x85ebca77u ^ sy * 0xc2b2ae3du) ^ 0x6b43a9b5u;
+          th ^= th >> 16; th *= 0x85ebca6bu; th ^= th >> 13; th *= 0xc2b2ae35u;
+          th ^= th >> 16;
+          g_cpuGsplatTime = float(th >> 8) * (1.0f / 16777216.0f);
+          if (gsSegCenter_ >= 0.0f)
+            g_cpuGsplatTime = std::clamp(
+                gsSegCenter_ + (g_cpuGsplatTime - 0.5f) * gsSegWidth_, 0.0f, 1.0f);
+        }
         lrt_ray ray{};
         ray.org[0] = rayOrg[0]; ray.org[1] = rayOrg[1]; ray.org[2] = rayOrg[2];
         ray.dir[0] = dir[0]; ray.dir[1] = dir[1]; ray.dir[2] = dir[2];
@@ -2326,20 +2343,13 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           gs::GSplatTracer::Hit splatHit;
           const gs::Vec3 ro = {rayOrg[0], rayOrg[1], rayOrg[2]};
           const gs::Vec3 rd = {dir[0], dir[1], dir[2]};
-          // Shutter time of this sample, also used by its shadow rays.
-          g_cpuGsplatTime = 0.5f;
-          if (gsplats_.motion()) {
-            uint32_t th = seed ^ 0x6b43a9b5u;
-            th ^= th >> 16; th *= 0x85ebca6bu; th ^= th >> 13; th *= 0xc2b2ae35u;
-            th ^= th >> 16;
-            g_cpuGsplatTime = float(th >> 8) * (1.0f / 16777216.0f);
-          }
           if (gsplats_.Trace(ro, rd, ray.tmin, flatHit ? hit.t : ray.tmax, seed,
                              &splatHit, g_cpuGsplatTime)) {
             const gs::Vec3 c = gsplats_.Radiance(
                 splatHit, rd,
                 gsplatSrgb_ ? gs::GSplatColorSpace::SRGB
-                            : gs::GSplatColorSpace::Linear);
+                            : gs::GSplatColorSpace::Linear,
+                g_cpuGsplatTime);
             // Same viewport encode as shaded surfaces (tonemap + sRGB).
             const auto encode = [&](float value) {
               value = std::max(value * (renderMode == 0 ? exposureMul : 1.0f),

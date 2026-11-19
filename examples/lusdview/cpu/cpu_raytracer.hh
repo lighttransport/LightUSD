@@ -8,6 +8,7 @@
 // retaining the deliberately simple CPU fallback.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -128,11 +129,32 @@ class CpuRayTracer {
     }
     lightusd::gsplat::Vec3 Radiance(const lightusd::gsplat::GSplatTracer::Hit& h,
                                     lightusd::gsplat::Vec3 rd,
-                                    lightusd::gsplat::GSplatColorSpace cs) const {
-      return keys.center->Radiance(h, rd, cs);
+                                    lightusd::gsplat::GSplatColorSpace cs,
+                                    float time) const {
+      if (keys.dc.empty() || keys.nkeys < 2) return keys.center->Radiance(h, rd, cs);
+      // Animated DC colour interpolated at the sample's shutter time.
+      const uint32_t K = keys.nkeys;
+      float f = std::min(std::max(time, 0.0f), 1.0f) * float(K - 1);
+      const uint32_t st = std::min(uint32_t(f), K - 2);
+      const float t = f - float(st);
+      float dc[3];
+      for (int c = 0; c < 3; ++c)
+        dc[c] = keys.dc[(size_t(st) * keys.count + h.index) * 3 + c] * (1.0f - t) +
+                keys.dc[(size_t(st + 1) * keys.count + h.index) * 3 + c] * t;
+      return keys.center->Radiance(h, rd, cs, dc);
     }
   };
   CyclesSplats gsplats_;
+  // App shutter segment (normalized centre, width); centre < 0 = whole shutter.
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};
+
+ public:
+  void setGsplatShutterSegment(float center, float width) {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
+
+ private:
   bool gsplatCycles_{false};
   bool gsplatSrgb_{false};
   // lightrt_c has no instance/TLAS traversal API. These are the expanded

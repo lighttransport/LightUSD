@@ -399,6 +399,7 @@ int main(int argc, char** argv) {
   bool useCoreLoader = true;              // core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
+  std::string backgroundPreset;            // --background black|white
   bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--core)
@@ -710,6 +711,12 @@ int main(int argc, char** argv) {
       LOGW("--legacy-load was removed; every scene uses the core loader");
     } if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
+    } if (std::strcmp(argv[i], "--background") == 0 && i + 1 < argc) {
+      backgroundPreset = argv[++i];
+      if (backgroundPreset != "black" && backgroundPreset != "white") {
+        LOGE("--background expects black|white");
+        return 1;
+      }
     } if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
     } if (std::strcmp(argv[i], "--no-skeleton") == 0) {
@@ -1362,6 +1369,7 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --background black|white  Viewport background / RT environment colour.\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
           "  --envmap PATH  Override authored DomeLights with an HDR/EXR/image.\n"
@@ -1790,6 +1798,10 @@ int main(int argc, char** argv) {
     if (ptMaxDepth) pathTraceSettings.maxDepth = *ptMaxDepth;
     if (ptRrDepth) pathTraceSettings.russianRouletteDepth = *ptRrDepth;
     if (ptMotionSegments) pathTraceSettings.motionSegments = *ptMotionSegments;
+    // Cycles splats: the app renders camera/mesh motion in shutter segments
+    // (splats are interpolated within each). Two segments ghost visibly, so
+    // default to 16 when the user did not choose.
+    else if (gsplatCycles) pathTraceSettings.motionSegments = 16;
     if (ptSeed) pathTraceSettings.seed = *ptSeed;
     if (ptMaxSssEvents)
       pathTraceSettings.maxSubsurfaceEvents = *ptMaxSssEvents;
@@ -2197,6 +2209,7 @@ int main(int argc, char** argv) {
     app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
+  if (!backgroundPreset.empty()) app.setBackgroundPreset(backgroundPreset == "white");
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);

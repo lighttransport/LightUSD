@@ -195,6 +195,7 @@ class App
   void setUseCoreLoader(bool on) { useCoreLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
+  void setBackgroundPreset(bool white) { gui_.setBackgroundPreset(white); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setVirtualHumanProfile(bool on) {
     virtualHumanProfile_ = on;
@@ -255,6 +256,7 @@ class App
   // same shape as --hip/--cuda. Headless + --screenshot: a one-shot trace (no
   // device-async upload step needed, so it's simpler than CUDA/HIP's path).
   void setCpuRt(bool on) { cpuRt_ = on; }
+  void setGsplatSegment(double frameTime, double sampleTime, uint32_t count);
   void setGsplatKernel(bool cycles, bool srgb) {
     gsplatCycles_ = cycles;
     gsplatSrgb_ = srgb;

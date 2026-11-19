@@ -70,6 +70,9 @@ def main():
     ap.add_argument("mode", choices=["smoke", "compare", "roundtrip", "variants"])
     ap.add_argument("--spp", type=int, default=256)
     ap.add_argument("--backend", choices=["cpu", "vk", "hip"], default="cpu")
+    ap.add_argument("--lusdview", default="",
+                    help="variants: also check this lusdview binary's path tracer")
+    ap.add_argument("--lusdview-backend", choices=["vk", "hip", "cuda"], default="vk")
     a = ap.parse_args()
     if a.backend != "cpu":
         BACKEND.append("-" + a.backend)
@@ -96,7 +99,7 @@ def main():
     if a.mode == "roundtrip":
         return roundtrip(a.lusdrender, blender, a.spp)
     if a.mode == "variants":
-        return variants(a.lusdrender, blender, a.spp)
+        return variants(a.lusdrender, blender, a.spp, a.lusdview, a.lusdview_backend)
     with tempfile.TemporaryDirectory(prefix="gsplat-cycles-") as d:
         run([sys.executable, "-I", os.path.join(HERE, "make_cycles_fixture.py"),
              d, "--count", "120", "--seed", "5", "--degree", "3"])
@@ -192,10 +195,36 @@ VARIANTS = [
     ("world", ["--world", "0.20,0.35,0.60"], ["-bg", "0.20,0.35,0.60"]),
     # Animated object, Cycles motion blur (shutter 0.5, centred on frame 1).
     ("motion", ["--motion"], ["-timecode", "1"]),
+    # Animated camera; animated DC colour + opacity (Geometry Nodes).
+    ("cammotion", ["--camera-motion"], ["-timecode", "1"]),
+    ("colourmotion", ["--colour-motion"], ["-timecode", "1"]),
 ]
 
 
-def variants(lusdrender, blender, spp):
+def lusdview_render(lusdview, backend, usda, out, spp, time):
+    """lusdview path tracer (direct light, no denoise) at Blender's frame."""
+    cmd = [lusdview, "--headless", "--no-grid", "--background", "black",
+           "--size", "%dx%d" % (W, H), "--path-trace"]
+    if backend != "vk":
+        cmd += ["--" + backend]
+    cmd += ["--pt-samples", str(spp), "--pt-max-depth", "2", "--pt-denoise", "off",
+            "--pt-firefly-clamp", "0", "--gsplat-kernel", "cycles",
+            "--gsplat-colorspace", "srgb", "--camera", "/World/Cam",
+            "--screenshot", out + ".ppm", "--linear-output", out]
+    if time is not None:
+        cmd += ["--time", time]
+    env = dict(os.environ, LUSDVIEW_RT_ALLOW_COLD_COMPILE="1")
+    r = subprocess.run(cmd + [usda], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, env=env)
+    log = r.stdout
+    marker = {"vk": "Vulkan RT: Cycles gsplat", "hip": "HIP Cycles gsplat",
+              "cuda": "CUDA Cycles gsplat"}[backend]
+    if r.returncode != 0 or marker not in log or not os.path.exists(out):
+        return False
+    return True
+
+
+def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk"):
     ok = True
     for name, bargs, largs in VARIANTS:
         with tempfile.TemporaryDirectory(prefix="gsplat-variant-") as d:
@@ -208,10 +237,20 @@ def variants(lusdrender, blender, spp):
                 ["--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",
                  "-camera", "/World/Cam", "-width", str(W), "-height", str(H),
                  "-samples", str(spp)] + largs)
+            cands = [out]
+            lv_out = os.path.join(d, "lusdview.exr")
+            if lusdview and "-bg" not in largs:
+                t = largs[largs.index("-timecode") + 1] if "-timecode" in largs else None
+                if lusdview_render(lusdview, lv_backend, os.path.join(d, "splats.usda"),
+                                   lv_out, spp, t):
+                    cands.append(lv_out)
+                else:
+                    print("SKIP: lusdview %s did not run the Cycles splat kernel" % lv_backend)
+                    return 77
             log = run([blender, "-b", "--factory-startup", "--python",
                        os.path.join(HERE, "blender_compare_exr.py"), "--",
                        os.path.join(d, "ref_seed0.exr"),
-                       os.path.join(d, "ref_seed7.exr"), out])
+                       os.path.join(d, "ref_seed7.exr")] + cands)
             rows = {}
             for line in log.splitlines():
                 if line.startswith("CMP "):
@@ -225,6 +264,15 @@ def variants(lusdrender, blender, spp):
             print("%-11s MAE %.5f (floor %.5f, %.2fx)  mean ratio %s  %s" %
                   (name, mae, floor, mae / max(floor, 1e-12),
                    ["%.4f" % r for r in ratio], "ok" if good else "FAIL"))
+            if "lusdview.exr" in rows:
+                # The viewer's path tracer is a little noisier (shutter
+                # segments, its own sampler): allow 1.3x the floor.
+                mae, ratio = rows["lusdview.exr"]
+                good = mae <= 1.3 * floor and all(abs(r - 1) <= 0.01 for r in ratio)
+                ok = ok and good
+                print("%-11s lusdview %s MAE %.5f (%.2fx)  mean ratio %s  %s" %
+                      ("", lv_backend, mae, mae / max(floor, 1e-12),
+                       ["%.4f" % r for r in ratio], "ok" if good else "FAIL"))
     return 0 if ok else 1
 
 

@@ -291,6 +291,7 @@ class Gui {
   void setBackgroundPreset(bool white) {
     clearColor_[0] = clearColor_[1] = clearColor_[2] = white ? 1.0f : 0.0f;
   }
+  const float* clearColorRgb() const { return clearColor_; }
   const char* backgroundPreset() const {
     if (clearColor_[0] == 0 && clearColor_[1] == 0 && clearColor_[2] == 0) return "black";
     if (clearColor_[0] == 1 && clearColor_[1] == 1 && clearColor_[2] == 1) return "white";

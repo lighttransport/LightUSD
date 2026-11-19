@@ -109,7 +109,8 @@ bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
   if (times.size() < 2 || n == 0) return false;
   const auto &center = scene->tracer.splats();
   std::vector<lrt_gsplat> keys(times.size() * n);
-  bool moves = false;
+  std::vector<float> dc(times.size() * n * 3);
+  bool moves = false, recolours = false;
   for (size_t k = 0; k < times.size(); ++k) {
     gs::GSplatTracer tk;
     CollectGSplatFields(stage, times[k], &tk, nullptr, nullptr);
@@ -120,6 +121,12 @@ bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
     for (size_t i = 0; i < n; ++i) {
       const gs::GSplatWorld &g = aligned ? tk.splats()[i] : center[i];
       keys[k * n + i] = ToLrt(g, uint32_t(i));
+      const float *cdc = &scene->tracer.sh_data()[scene->tracer.sh_offset(i)];
+      const float *kdc = aligned ? &tk.sh_data()[tk.sh_offset(i)] : cdc;
+      for (int c = 0; c < 3; ++c) {
+        dc[(k * n + i) * 3 + c] = kdc[c];
+        if (kdc[c] != cdc[c]) recolours = true;
+      }
       const gs::GSplatWorld &c = center[i];
       if (g.mu.x != c.mu.x || g.mu.y != c.mu.y || g.mu.z != c.mu.z ||
           g.radius != c.radius || g.opacity != c.opacity ||
@@ -127,9 +134,59 @@ bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
         moves = true;
     }
   }
-  if (!moves) return false;
+  if (!moves && !recolours) return false;
   scene->motion_keys.swap(keys);
   scene->motion_nkeys = uint32_t(times.size());
+  if (recolours) scene->motion_dc.swap(dc);
+  return true;
+}
+
+void GSplatDcAt(const std::vector<float> &dc, uint32_t nkeys, size_t n,
+                size_t i, float tau, float out[3]) {
+  float f = std::min(std::max(tau, 0.0f), 1.0f) * float(nkeys - 1);
+  uint32_t step = std::min(uint32_t(f), nkeys - 2);
+  const float t = f - float(step);
+  for (int c = 0; c < 3; ++c)
+    out[c] = dc[(step * n + i) * 3 + c] * (1.0f - t) +
+             dc[((step + 1) * n + i) * 3 + c] * t;
+}
+
+CameraFrame LerpCameraFrame(const std::vector<CameraFrame> &keys, float tau) {
+  if (keys.size() < 2) return keys.empty() ? CameraFrame() : keys[0];
+  const uint32_t K = uint32_t(keys.size());
+  float f = std::min(std::max(tau, 0.0f), 1.0f) * float(K - 1);
+  uint32_t step = std::min(uint32_t(f), K - 2);
+  const float t = f - float(step);
+  const CameraFrame &a = keys[step], &b = keys[step + 1];
+  CameraFrame c = a;
+  auto lerp = [&](const Vec3 &x, const Vec3 &y) {
+    return Vec3{x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t, x.z + (y.z - x.z) * t};
+  };
+  c.origin = lerp(a.origin, b.origin);
+  c.forward = Normalize(lerp(a.forward, b.forward));
+  c.up = Normalize(lerp(a.up, b.up));
+  c.right = Normalize(lerp(a.right, b.right));
+  return c;
+}
+
+bool BuildCameraMotion(const lightusd::Stage &stage, const std::string &camera,
+                       const std::vector<double> &times, GSplatCyclesScene *scene) {
+  if (camera.empty() || times.size() < 2) return false;
+  std::vector<CameraFrame> keys(times.size());
+  bool moves = false;
+  for (size_t k = 0; k < times.size(); ++k) {
+    float aspect = 1.0f;
+    if (!FindCoreCameraFrame(stage, camera, times[k], &keys[k], &aspect))
+      return false;
+    const CameraFrame &a = keys[0], &b = keys[k];
+    if (a.origin.x != b.origin.x || a.origin.y != b.origin.y ||
+        a.origin.z != b.origin.z || a.forward.x != b.forward.x ||
+        a.forward.y != b.forward.y || a.forward.z != b.forward.z ||
+        a.up.x != b.up.x || a.up.y != b.up.y || a.up.z != b.up.z)
+      moves = true;
+  }
+  if (!moves) return false;
+  scene->camera_keys.swap(keys);
   return true;
 }
 
@@ -137,20 +194,27 @@ bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
                                 bool srgb, DirectScene *direct,
                                 const std::string &camera, int motion_steps) {
   auto scene = std::make_shared<GSplatCyclesScene>();
-  if (!BuildGSplatCyclesScene(stage, time, scene.get())) return false;
-  // Camera shutter -> motion keys (same sampling as the splat-only renderer).
+  // Shutter keys (same sampling as the splat-only renderer). The camera is
+  // blurred even when the stage has no splats.
+  std::vector<double> times;
   CameraFrame frame;
   float aspect = 1.0f;
   if (motion_steps > 1 && !camera.empty() &&
       FindCoreCameraFrame(stage, camera, time, &frame, &aspect) &&
       frame.shutter_close > frame.shutter_open) {
-    std::vector<double> times(static_cast<size_t>(motion_steps));
+    times.resize(static_cast<size_t>(motion_steps));
     for (size_t k = 0; k < times.size(); ++k)
       times[k] = time + double(frame.shutter_open) +
                  double(frame.shutter_close - frame.shutter_open) * double(k) /
                      double(times.size() - 1);
-    BuildGSplatCyclesMotion(stage, times, scene.get());
+    if (BuildCameraMotion(stage, camera, times, scene.get())) {
+      direct->camera_keys = scene->camera_keys;
+      direct->gsplat_motion = true;
+      std::cerr << "Cycles camera motion blur: " << times.size() << " keys\n";
+    }
   }
+  if (!BuildGSplatCyclesScene(stage, time, scene.get())) return false;
+  if (!times.empty()) BuildGSplatCyclesMotion(stage, times, scene.get());
   const auto &src = scene->tracer.splats();
   const uint32_t nkeys = scene->motion_nkeys;
   std::vector<lrt_gsplat> splats;
@@ -167,10 +231,15 @@ bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
   // Share the tracer (SH + per-field transforms) owned by the scene object.
   direct->gsplat_tracer = std::shared_ptr<gs::GSplatTracer>(scene, &scene->tracer);
   direct->gsplat_srgb = srgb;
-  direct->gsplat_motion = nkeys > 1;
+  direct->gsplat_nkeys = nkeys;
+  if (!scene->motion_dc.empty())
+    direct->gsplat_dc = std::shared_ptr<const std::vector<float>>(scene, &scene->motion_dc);
+  direct->gsplat_motion = nkeys > 1 || direct->gsplat_dc || direct->camera_keys.size() > 1;
   std::cerr << "Cycles gsplat kernel (mixed scene, CPU integrator): "
             << src.size() << " splat(s)";
   if (nkeys > 1) std::cerr << ", " << nkeys << " motion keys";
+  if (direct->gsplat_dc) std::cerr << ", animated colour";
+  if (direct->camera_keys.size() > 1) std::cerr << ", camera motion";
   std::cerr << "\n";
   return true;
 }
@@ -360,6 +429,9 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
   const int rows = std::max(1, int(backend.batch() / (uint32_t(w) * uint32_t(spp))));
   std::vector<lrt_ray> rays;
   std::vector<float> times;
+  // Ray times are needed for moving splats, animated colour or a moving camera.
+  const bool timed = backend.motion() || !scene.motion_dc.empty() ||
+                     scene.camera_keys.size() > 1;
   std::vector<lrt_hit> hits;
   const unsigned nt = std::max(1u, std::thread::hardware_concurrency());
   auto parallel_rows = [&](int y0, int y1, auto &&fn) {
@@ -376,17 +448,34 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
     const int y1 = std::min(h, y0 + rows);
     const size_t base = size_t(y0) * size_t(w) * size_t(spp);
     rays.resize(size_t(y1 - y0) * size_t(w) * size_t(spp));
-    if (backend.motion()) times.resize(rays.size());
+    if (timed) times.resize(rays.size());
     parallel_rows(y0, y1, [&](int y) {
       for (int x = 0; x < w; ++x)
         for (int s = 0; s < spp; ++s) {
           float jx, jy;
           PixelJitter(s, spp, &jx, &jy);
+          float tau = 0.5f;
+          if (timed) {
+            // Stratified shutter time per pixel (Cramer-Patterson rotation).
+            const uint32_t px = uint32_t(y) * uint32_t(w) + uint32_t(x);
+            uint32_t h = px * 0x9e3779b1u;
+            h ^= h >> 16;
+            h *= 0x85ebca6bu;
+            h ^= h >> 13;
+            const float rot = float(h >> 8) * (1.f / 16777216.f);
+            const float tm = (float(s) + 0.5f) / float(spp) + rot;
+            tau = tm - std::floor(tm);
+            times[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +
+                  size_t(s) - base] = tau;
+          }
+          const CameraFrame cam = scene.camera_keys.size() > 1
+                                      ? LerpCameraFrame(scene.camera_keys, tau)
+                                      : camera;
           Vec3 org, dir;
-          MakeRay(camera, aspect, (float(x) + jx) / float(w),
+          MakeRay(cam, aspect, (float(x) + jx) / float(w),
                   (float(y) + jy) / float(h), &org, &dir);
           const float cosine =
-              camera.ortho ? 1.f : std::max(1e-6f, Dot(camera.forward, dir));
+              cam.ortho ? 1.f : std::max(1e-6f, Dot(cam.forward, dir));
           lrt_ray &r = rays[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +
                             size_t(s) - base];
           r.org[0] = org.x;
@@ -395,23 +484,11 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
           r.dir[0] = dir.x;
           r.dir[1] = dir.y;
           r.dir[2] = dir.z;
-          r.tmin = camera.znear / cosine;
-          r.tmax = camera.zfar / cosine;
-          if (backend.motion()) {
-            // Stratified shutter time per pixel (Cramer-Patterson rotation).
-            const uint32_t px = uint32_t(y) * uint32_t(w) + uint32_t(x);
-            uint32_t h = px * 0x9e3779b1u;
-            h ^= h >> 16;
-            h *= 0x85ebca6bu;
-            h ^= h >> 13;
-            const float rot = float(h >> 8) * (1.f / 16777216.f);
-            float tm = (float(s) + 0.5f) / float(spp) + rot;
-            times[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +
-                  size_t(s) - base] = tm - std::floor(tm);
-          }
+          r.tmin = cam.znear / cosine;
+          r.tmax = cam.zfar / cosine;
         }
     });
-    if (!backend.Trace(rays, backend.motion() ? times.data() : nullptr,
+    if (!backend.Trace(rays, timed ? times.data() : nullptr,
                        uint32_t(base), &hits))
       return false;
     parallel_rows(y0, y1, [&](int y) {
@@ -425,8 +502,16 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
             gs::GSplatTracer::Hit th;
             th.t = hit.t;
             th.index = hit.prim_id;
-            sum = gs::Add(sum, scene.tracer.Radiance(
-                                   th, {r.dir[0], r.dir[1], r.dir[2]}, cs));
+            if (!scene.motion_dc.empty()) {
+              float dcv[3];
+              GSplatDcAt(scene.motion_dc, scene.motion_nkeys, scene.tracer.size(),
+                         hit.prim_id, times[r0 + size_t(s)], dcv);
+              sum = gs::Add(sum, scene.tracer.Radiance(
+                                     th, {r.dir[0], r.dir[1], r.dir[2]}, cs, dcv));
+            } else {
+              sum = gs::Add(sum, scene.tracer.Radiance(
+                                     th, {r.dir[0], r.dir[1], r.dir[2]}, cs));
+            }
           } else {
             sum = gs::Add(sum, {opt.bg.x, opt.bg.y, opt.bg.z});
           }

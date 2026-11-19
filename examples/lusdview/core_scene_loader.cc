@@ -8119,8 +8119,8 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
       }
       // Motion keys across the camera shutter (Cycles motion steps).
       struct MotionKey {
-        PublicFloatArray pos, scl, rot, opa;
-        bool haveRot = false, haveOpa = false;
+        PublicFloatArray pos, scl, rot, opa, sh;
+        bool haveRot = false, haveOpa = false, haveSh = false;
         float world[16];
       };
       std::vector<MotionKey> mkeys;
@@ -8147,6 +8147,10 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           mk.haveOpa = haveOpacities && mk.opa.open(stage_owner.get(), tk, rec.path,
                                                     field.opacities_property) &&
                        mk.opa.size() == opacities.size();
+          mk.haveSh = kernelShFloats != 0 &&
+                      mk.sh.open(stage_owner.get(), tk, rec.path,
+                                 field.spherical_harmonics_property) &&
+                      mk.sh.size() == sh.size();
           if (!ok) {
             LOGW("GaussianSplat '%s': splat count changes across the shutter; "
                  "no motion blur", rec.path.c_str());
@@ -8230,6 +8234,12 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
               dp.gaussianMotionOpacities.push_back(
                   mk.haveOpa ? (mk.opa.size() > 1 ? mk.opa.begin()[i] : mk.opa.begin()[0])
                              : opacity);
+              const float *dcs = mk.haveSh ? mk.sh.begin() + i * shStride
+                                           : (kernelShFloats ? sh.begin() + i * shStride
+                                                             : nullptr);
+              dp.gaussianMotionDc.insert(dp.gaussianMotionDc.end(),
+                                         {dcs ? dcs[0] : 0.0f, dcs ? dcs[1] : 0.0f,
+                                          dcs ? dcs[2] : 0.0f});
             }
           }
           if (kernelData) {

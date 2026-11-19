@@ -815,6 +815,13 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-gsplat-blender-mixed-motion PROPERTIES
                          TIMEOUT 1800 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-blender-mixed-camera-motion
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+              "$<TARGET_FILE:lusdrender>" --camera-motion)
+    set_tests_properties(tool-lusdrender-gsplat-blender-mixed-camera-motion PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
     # The same checks through the LightRT Vulkan / HIP splat kernels (skip
     # when the backend has no device).
     foreach(_gs_backend vk hip)

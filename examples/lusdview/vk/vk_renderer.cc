@@ -13829,6 +13829,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
   pc.context[0] = materialXTime_;
   pc.context[1] = materialXFrame_;
+  pc.context[2] = gsSegCenter_;  // Cycles splat shutter segment (centre, width)
+  pc.context[3] = gsSegWidth_;
   pc.pointParams[0] = rtPointCount_;
   pc.pointParams[1] = rtPointNodeCount_ | (rtGsplatCycles_ ? 0x80000000u : 0u);
   pc.pointParams[2] = rtPointChunkCount_ |

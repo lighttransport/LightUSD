@@ -679,6 +679,11 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.context[0] = sceneTime;
   cam.context[1] = sceneFrame;
   cam.context[2] = previewAlbedo_?1.0f:0.0f;
+  // Cycles splat shutter segment: 4 * segments + centre (-1 = whole shutter).
+  cam.context[3] = gsSegCenter_ >= 0.0f
+                       ? 4.0f * std::round(1.0f / std::max(gsSegWidth_, 1e-3f)) +
+                             std::min(gsSegCenter_, 0.999f)
+                       : -1.0f;
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }

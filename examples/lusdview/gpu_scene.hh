@@ -1290,6 +1290,7 @@ struct DrawPointsCPU {
   std::vector<float> gaussianMotionScales;
   std::vector<float> gaussianMotionOpacities;
   std::vector<float> gaussianMotionWorld;
+  std::vector<float> gaussianMotionDc;  // DC (SH band 0) RGB per key, 3 floats
   int colorsInterpolation{0};
   int opacitiesInterpolation{0};
   int materialId{-1};

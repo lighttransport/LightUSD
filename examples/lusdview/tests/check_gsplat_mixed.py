@@ -15,7 +15,8 @@ direct light): scene-linear EXRs must reproduce Blender 5.3's
   emission   E = full - black on the plane          (Cycles 0.06014)
 where E includes the plane lit by splat emission through the BSDF bounce.
 
-With "motion" the animated fixtures (tests/usda/gsplat-mixed-motion-*.usda,
+With "motion" (animated splats) or "cammotion" (animated camera) the animated
+fixtures (tests/usda/gsplat-mixed-motion-*.usda,
 camera shutter 0.5 frames) are used. Path-trace backends then also compare
 10x10-pixel block maps of V and E with Blender's
 (tests/gsplat/mixed_scene_blocks.json); a static render of the motion scene
@@ -98,7 +99,9 @@ def read_ppm(path):
 
 def main():
     lusdview, root, backend = sys.argv[1], sys.argv[2], sys.argv[3]
-    motion = len(sys.argv) > 4 and sys.argv[4] == "motion"
+    # "" (static), "motion" (animated splats) or "cammotion" (animated camera)
+    variant = sys.argv[4] if len(sys.argv) > 4 else ""
+    motion = variant in ("motion", "cammotion")
     pt = backend.startswith("pt-")
     dev = backend[3:] if pt else backend
     flags = {"cpu": ["--cpu-rt", "--rt-samples", "32"],
@@ -133,7 +136,7 @@ def main():
                 raise SystemExit("FAIL: lusdview render %s" % name)
             return r.stdout, out
         src = lambda n: os.path.join(
-            root, "tests/usda/gsplat-mixed-%s%s.usda" % ("motion-" if motion else "", n))
+            root, "tests/usda/gsplat-mixed-%s%s.usda" % (variant + "-" if variant else "", n))
         if pt:
             imgs = {}
             for n in ("black", "full", "plain"):  # splat scene first: skip early
@@ -147,14 +150,14 @@ def main():
             E = (imgs["full"] - imgs["black"])[mask].mean()
             print("%s: visibility %.4f (Cycles %.4f), plane emission %.5f "
                   "(Cycles %.5f)" % (backend, V, CYCLES_V, E, CYCLES_E_PLANE))
-            if abs(V - CYCLES_V) > 0.015:
+            if not variant and abs(V - CYCLES_V) > 0.015:
                 return "FAIL: visibility differs from Cycles"
-            if abs(E - CYCLES_E_PLANE) > 0.05 * CYCLES_E_PLANE:
+            if not variant and abs(E - CYCLES_E_PLANE) > 0.05 * CYCLES_E_PLANE:
                 return "FAIL: splat emission (incl. bounce light) differs from Cycles"
             # Spatial check against Blender's block maps (motion blur shape).
             import json
             ref = json.load(open(os.path.join(root, "tests/gsplat/mixed_scene_blocks.json")))
-            ref = ref["motion" if motion else "static"]
+            ref = ref[variant or "static"]
             Vp = np.where(mask, (imgs["black"] / np.maximum(imgs["plain"], 1e-6)).mean(2), np.nan)
             Ep = np.where(mask, (imgs["full"] - imgs["black"]).mean(2), np.nan)
             def blocks(x, B=10):
@@ -167,9 +170,19 @@ def main():
                         row.append(None if np.isnan(t).mean() > 0.5 else float(np.nanmean(t)))
                     out.append(row)
                 return out
+            # Only blocks entirely on the lit plane: its blurred outline is
+            # mesh (camera) motion blur, which the app samples in shutter
+            # segments; this check is about the splats.
+            fullmask = np.where(mask, 1.0, np.nan)
+            full = [[(None if np.isnan(fullmask[by * 10:(by + 1) * 10,
+                                                bx * 10:(bx + 1) * 10]).any() else 1.0)
+                     for bx in range(fullmask.shape[1] // 10)]
+                    for by in range(fullmask.shape[0] // 10)]
             def mad(a, b):
-                v = [abs(p - q) for ra, rb in zip(a, b) for p, q in zip(ra, rb)
-                     if p is not None and q is not None]
+                v = [abs(p - q) for ra, rb, rf in zip(a, b, full)
+                     for p, q, f in zip(ra, rb, rf)
+                     if p is not None and q is not None and f is not None and
+                     not np.isnan(f)]
                 return sum(v) / max(len(v), 1)
             dV, dE = mad(blocks(Vp), ref["V"]), mad(blocks(Ep), ref["E"])
             print("%s: block MAD vs Cycles  V %.4f  E %.5f" % (backend, dV, dE))

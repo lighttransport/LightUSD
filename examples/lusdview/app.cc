@@ -360,6 +360,23 @@ InteractiveCameraSample MakeInteractiveCameraSample(
 
 }  // anonymous namespace
 
+// --gsplat-kernel cycles: tell every RT backend which shutter segment the
+// next render covers, so motion-blurred splats move in step with the
+// segment's camera/mesh pose (count <= 1 or a closed shutter = whole shutter).
+void App::setGsplatSegment(double frameTime, double sampleTime, uint32_t count) {
+  float center = -1.0f, width = 1.0f;
+  if (gsplatCycles_ && count > 1 && cameraShutter_.enabled() &&
+      cameraShutter_.width() > 0.0) {
+    center = static_cast<float>((sampleTime - (frameTime + cameraShutter_.open)) /
+                                cameraShutter_.width());
+    width = 1.0f / static_cast<float>(count);
+  }
+  cpuTracer_.setGsplatShutterSegment(center, width);
+  cudaTracer_.setGsplatShutterSegment(center, width);
+  hipTracer_.setGsplatShutterSegment(center, width);
+  if (renderer_) renderer_->setGsplatShutterSegment(center, width);
+}
+
 std::vector<int> App::selectedTextureSlots() const {
   std::vector<int> slots;
   const int meshIndex = gui_.selectedMeshIndex();
@@ -6084,7 +6101,8 @@ bool App::renderHipViewport() {
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -6155,6 +6173,7 @@ bool App::renderHipViewport() {
       camera_, cameraLens_, draw_, coreStageSnapshot_.get(), cameraName_,
       animTime_, cameraShutter_, pathTrace_.motionSegments,
       pathTrace_.enabled ? hipPathAccum_.samples : 0u);
+  setGsplatSegment(animTime_, hipCameraSample.time, pathTrace_.motionSegments);
   OrbitCamera hipTraceCamera = hipCameraSample.camera;
   hipTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 hipTracePv =
@@ -6217,6 +6236,7 @@ bool App::renderHipViewport() {
               camera_, cameraLens_, draw_, coreStageSnapshot_.get(),
               cameraName_, animTime_, cameraShutter_,
               pathTrace_.motionSegments, hipPathAccum_.samples);
+      setGsplatSegment(animTime_, asyncCameraSample.time, pathTrace_.motionSegments);
       OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
       asyncTraceCamera.setAspect(static_cast<float>(w) /
                                  static_cast<float>(h));
@@ -6405,7 +6425,8 @@ bool App::renderCudaViewport() {
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -6468,6 +6489,7 @@ bool App::renderCudaViewport() {
       camera_, cameraLens_, draw_, coreStageSnapshot_.get(), cameraName_,
       animTime_, cameraShutter_, pathTrace_.motionSegments,
       pathTrace_.enabled ? accum.samples : 0u);
+  setGsplatSegment(animTime_, cudaCameraSample.time, pathTrace_.motionSegments);
   OrbitCamera cudaTraceCamera = cudaCameraSample.camera;
   cudaTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 cudaTracePv =
@@ -6525,6 +6547,7 @@ bool App::renderCudaViewport() {
               camera_, cameraLens_, draw_, coreStageSnapshot_.get(),
               cameraName_, animTime_, cameraShutter_,
               pathTrace_.motionSegments, accum.samples);
+      setGsplatSegment(animTime_, asyncCameraSample.time, pathTrace_.motionSegments);
       OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
       asyncTraceCamera.setAspect(static_cast<float>(w) /
                                  static_cast<float>(h));
@@ -6684,7 +6707,8 @@ bool App::renderCpuViewport() {
   const float camPos[3] = {eye.x, eye.y, eye.z};
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -8215,6 +8239,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       const uint32_t segment = accum.nextSegment % accum.segmentCount;
       const double sampleTime = vulkanRtMotion.sampleTime(segment);
+      setGsplatSegment(vulkanRtMotion.frameTime, sampleTime, accum.segmentCount);
       CoreCameraPose samplePose;
       if (FindCameraPoseAtTime(
               coreStageSnapshot_.get(),
@@ -8232,6 +8257,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       vulkanRtMotionFrame = true;
     } else {
       vulkanRtMotionAccum_.reset();
+      setGsplatSegment(0.0, 0.0, 0);
       gui_.setRtTemporalAccumulation(false, false);
     }
 
@@ -9008,7 +9034,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -9031,6 +9058,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < cudaMotionSamples;
            ++sampleIndex) {
         const double sampleTime = cudaMotion.sampleTime(sampleIndex);
+        setGsplatSegment(cudaMotion.frameTime, sampleTime, cudaMotionSamples);
         if (sampleIndex > 0) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
@@ -9212,7 +9240,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -9235,6 +9264,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < hipMotionSamples;
            ++sampleIndex) {
         const double sampleTime = hipMotion.sampleTime(sampleIndex);
+        setGsplatSegment(hipMotion.frameTime, sampleTime, hipMotionSamples);
         if (sampleIndex > 0) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
@@ -9377,7 +9407,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0};
@@ -9410,6 +9441,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < motionSamples;
            ++sampleIndex) {
         const double sampleTime = cpuMotion.sampleTime(sampleIndex);
+        setGsplatSegment(cpuMotion.frameTime, sampleTime, motionSamples);
         if (coreStageSnapshot_) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);

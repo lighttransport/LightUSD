@@ -21,7 +21,25 @@ struct GSplatCyclesScene {
   // across the shutter (empty / 1 = static).
   std::vector<lrt_gsplat> motion_keys;
   uint32_t motion_nkeys = 1;
+  // Animated colour: DC (SH band 0) RGB per key, key-major
+  // (motion_nkeys * tracer.size() * 3); empty = render-time colour.
+  std::vector<float> motion_dc;
+  // Camera motion blur: camera frames at the motion_nkeys shutter times
+  // (empty = static camera).
+  std::vector<CameraFrame> camera_keys;
 };
+
+// DC colour of splat i at shutter time tau (motion_dc must be non-empty).
+void GSplatDcAt(const std::vector<float> &dc, uint32_t nkeys, size_t n,
+                size_t i, float tau, float out[3]);
+
+// Camera at shutter time tau: origin interpolated linearly, basis by
+// normalized linear interpolation (keys at even spacing over [0,1]).
+CameraFrame LerpCameraFrame(const std::vector<CameraFrame> &keys, float tau);
+
+// Samples the camera at `times`; fills scene->camera_keys when it moves.
+bool BuildCameraMotion(const lightusd::Stage &stage, const std::string &camera,
+                       const std::vector<double> &times, GSplatCyclesScene *scene);
 
 // Collects every ParticleField3DGaussianSplat (and ParticleField with a
 // gaussianEllipsoid kernel) in world space and builds the splat BVH.
@@ -31,9 +49,9 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
 
 // Samples the splats at `times` (shutter open .. close, ascending) into
 // scene->motion_keys, like Cycles' motion steps: position, orientation, scale,
-// opacity and the object transform are evaluated per step. Fields whose splat
-// count changes across the shutter stay static. Returns false if no splat
-// moves (scene left static).
+// opacity, DC colour and the object transform are evaluated per step. Fields
+// whose splat count changes across the shutter stay static. Returns false if
+// no splat moves or changes colour (scene left static).
 bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
                              const std::vector<double> &times,
                              GSplatCyclesScene *scene);

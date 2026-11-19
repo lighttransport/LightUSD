@@ -53,6 +53,10 @@ class VulkanRenderer final : public Renderer {
     gsplatCycles_ = cycles;
     gsplatSrgb_ = srgb;
   }
+  void setGsplatShutterSegment(float center, float width) override {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -1472,6 +1476,7 @@ class VulkanRenderer final : public Renderer {
   // --gsplat-kernel cycles: the point buffers hold the LightRT splat encoding.
   bool gsplatCycles_{false}, gsplatSrgb_{false}, rtGsplatCycles_{false};
   uint32_t rtGsplatKeys_{1};  // motion keys per splat in the point buffers
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};  // app shutter segment
   // True when analytic Gaussian point buffers do not fit the current Vulkan
   // residency budget; raster camera-facing splat quads remain available.
   bool gaussianRtDisabled_{false};
