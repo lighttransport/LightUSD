@@ -562,7 +562,15 @@ struct MtlxInputValue {
   MtlxInputValue &operator=(const MtlxInputValue &) = delete;
 };
 
-Value MtlxValueToCoreValue(const lu_mtlx_value &v) {
+Value MtlxValueToCoreValue(const lu_mtlx_value &v, const std::string &mtlx_type = std::string()) {
+  // Type float tuples by the MaterialX port type (UsdMtlx: color3 ->
+  // color3f, vector3 -> vector3f, ...), not just by arity.
+  if (v.type == LU_MTLX_VALUE_FLOATS) {
+    const float *f = v.floats;
+    if (mtlx_type == "color3" && v.nfloats == 3) return Value::MakeColor3f(f[0], f[1], f[2]);
+    if (mtlx_type == "color4" && v.nfloats == 4) return Value::MakeColor4f(f[0], f[1], f[2], f[3]);
+    if (mtlx_type == "vector3" && v.nfloats == 3) return Value::MakeVector3f(f[0], f[1], f[2]);
+  }
   switch (v.type) {
     case LU_MTLX_VALUE_BOOL: return Value(v.b != 0);
     case LU_MTLX_VALUE_INT: return Value(static_cast<int32_t>(v.i));
@@ -612,10 +620,23 @@ void DeclareMtlxConnectionProperty(LayerBuilder &lb,
   prim->set_property_type_name(name, mapped.second);
 }
 
+// Declares a typed, value-less output port (UsdMtlx: `color3f outputs:out`,
+// `token outputs:out` for shader-semantic types).
+void DeclareMtlxOutput(LayerBuilder &lb, const std::string &name, const std::string &mtlx_type) {
+  PrimSpec *prim = lb.current();
+  if (!prim) return;
+  const PropNameId name_id = GetPropNameTable().intern(name);
+  if (prim->property(name_id)) return;
+  const auto mapped = MtlxConnectionType(mtlx_type);
+  prim->add_property_slot(name_id, mapped.first, 0);
+  prim->set_property_type_name(name, mapped.second);
+}
+
 void EmitMtlxNodePrim(LayerBuilder &lb, MtlxElemPtr node,
                       const char *forced_info_id,
                       const std::string &node_prefix = std::string(),
-                      const std::string &nodegraph_prefix = std::string()) {
+                      const std::string &nodegraph_prefix = std::string(),
+                      const std::string &interface_owner = std::string()) {
   const std::string name = MtlxGet(node, "name");
   const std::string category = lu_mtlx_elem_category(node);
   lb.begin_prim(name.empty() ? std::string("node") : name, "Shader");
@@ -633,7 +654,7 @@ void EmitMtlxNodePrim(LayerBuilder &lb, MtlxElemPtr node,
             // filename inputs only (scoped attributes are inherited onto
             // every element at parse time, see lu_mtlx_inherit_attributes).
             ? Value::MakeAssetPath(MtlxGet(input, "fileprefix") + input_value.v.s)
-            : MtlxValueToCoreValue(input_value.v);
+            : MtlxValueToCoreValue(input_value.v, input_type);
     if (!value.is_empty()) {
       const std::string property = "inputs:" + input_name;
       lb.add_property(property, std::move(value));
@@ -663,13 +684,20 @@ void EmitMtlxNodePrim(LayerBuilder &lb, MtlxElemPtr node,
                           Path(target + (output.empty()
                                              ? ".outputs:out"
                                              : ".outputs:" + output)));
+      } else {
+        // `interfacename` binds the input to the enclosing nodegraph's
+        // interface input (UsdMtlx: <graph>.inputs:<interfacename>).
+        const std::string iface = MtlxGet(input, "interfacename");
+        if (!iface.empty() && !interface_owner.empty()) {
+          const std::string property = "inputs:" + input_name;
+          DeclareMtlxConnectionProperty(lb, property, input_type);
+          lb.add_connection(property, Path(interface_owner + ".inputs:" + iface));
+        }
       }
     }
   }
   const std::string type = MtlxGet(node, "type");
-  if (!type.empty()) {
-    lb.add_property("outputs:out", Value::MakeToken(type));
-  }
+  if (!type.empty()) DeclareMtlxOutput(lb, "outputs:out", type);
   lb.end_prim();
 }
 
@@ -722,11 +750,29 @@ void EmitMtlxNodeGraphPrim(LayerBuilder &lb, MtlxElemPtr graph,
                            const std::string &graph_path,
                            const std::string &nodegraph_prefix) {
   lb.begin_prim(MtlxGet(graph, "name"), "NodeGraph");
+  // Interface inputs (nodegraph-level <input>s) with their typed defaults.
+  const size_t ninterface = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_INPUTS);
+  for (size_t i = 0; i < ninterface; ++i) {
+    MtlxElemPtr input = lu_mtlx_elem_at(graph, LU_MTLX_CHILD_INPUTS, i);
+    const std::string input_name = MtlxGet(input, "name");
+    if (input_name.empty()) continue;
+    const std::string input_type = MtlxGet(input, "type");
+    const MtlxInputValue input_value(input);
+    Value value =
+        input_type == "filename" && input_value.v.type == LU_MTLX_VALUE_STRING
+            ? Value::MakeAssetPath(MtlxGet(input, "fileprefix") + input_value.v.s)
+            : MtlxValueToCoreValue(input_value.v, input_type);
+    if (!value.is_empty()) {
+      lb.add_property("inputs:" + input_name, std::move(value));
+    } else {
+      DeclareMtlxOutput(lb, "inputs:" + input_name, input_type);
+    }
+  }
   const size_t nnodes = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_GRAPH_NODES);
   for (size_t i = 0; i < nnodes; ++i) {
     MtlxElemPtr node = lu_mtlx_elem_at(graph, LU_MTLX_CHILD_GRAPH_NODES, i);
     if (MtlxGet(node, "name").empty()) continue;
-    EmitMtlxNodePrim(lb, node, nullptr, graph_path, nodegraph_prefix);
+    EmitMtlxNodePrim(lb, node, nullptr, graph_path, nodegraph_prefix, graph_path);
   }
   const size_t noutputs = lu_mtlx_elem_count(graph, LU_MTLX_CHILD_OUTPUTS);
   for (size_t i = 0; i < noutputs; ++i) {
@@ -767,6 +813,8 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
   if (warn && !doc_warning.empty()) {
     *warn += "MaterialX layer " + key + ": " + doc_warning + "\n";
   }
+  // The upgraded version, as UsdMtlx reports it (MaterialX upgrades documents
+  // to the library version on read).
   const std::string doc_version = lu_mtlx_document_version(doc);
   const std::string doc_colorspace = lu_mtlx_document_colorspace(doc);
 
@@ -843,6 +891,22 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
         if (graph_name.empty() || !graphs.count(graph_name)) continue;
         EmitMtlxNodeGraphPrim(lb, graph, material_prefix + "/" + graph_name, material_prefix);
       }
+    }
+    // UsdMtlx terminals: outputs:mtlx:<terminal> connects to the shader.
+    if (surface) {
+      DeclareMtlxConnectionProperty(lb, "outputs:mtlx:surface", "surfaceshader");
+      lb.add_connection("outputs:mtlx:surface",
+                        Path(material_prefix + "/" + surface_name + ".outputs:out"));
+    }
+    if (displacement) {
+      DeclareMtlxConnectionProperty(lb, "outputs:mtlx:displacement", "displacementshader");
+      lb.add_connection("outputs:mtlx:displacement",
+                        Path(material_prefix + "/" + displacement_name + ".outputs:out"));
+    }
+    if (volume) {
+      DeclareMtlxConnectionProperty(lb, "outputs:mtlx:volume", "volumeshader");
+      lb.add_connection("outputs:mtlx:volume",
+                        Path(material_prefix + "/" + volume_name + ".outputs:out"));
     }
     if (!surface_name.empty()) {
       lb.add_relationship("mtlx:surface:source",
