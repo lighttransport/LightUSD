@@ -105,7 +105,34 @@ class CpuRayTracer {
   void freeScene();
 
   HostScene hs_;             // retained (unlike CUDA/HIP, which discard it after device upload)
-  lightusd::gsplat::GSplatTracer gsplats_;
+  // --gsplat-kernel cycles: LightRT splat scene (motion keys across the camera
+  // shutter) + the render-time tracer for SH radiance.
+  struct CyclesSplats {
+    GsplatKeys keys;
+    std::shared_ptr<lrt_gsplat_scene> scene;
+    void Clear() { keys = GsplatKeys(); scene.reset(); }
+    bool empty() const { return !scene; }
+    size_t size() const { return keys.count; }
+    bool motion() const { return keys.nkeys > 1; }
+    bool Trace(lightusd::gsplat::Vec3 ro, lightusd::gsplat::Vec3 rd, float tmin,
+               float tmax, uint32_t seed,
+               lightusd::gsplat::GSplatTracer::Hit* hit, float time) const {
+      lrt_ray r{};
+      r.org[0] = ro.x; r.org[1] = ro.y; r.org[2] = ro.z; r.tmin = tmin;
+      r.dir[0] = rd.x; r.dir[1] = rd.y; r.dir[2] = rd.z; r.tmax = tmax;
+      lrt_hit h;
+      if (!lrt_gsplat_intersect1_time(scene.get(), &r, time, seed, &h)) return false;
+      hit->t = h.t;
+      hit->index = h.prim_id;
+      return true;
+    }
+    lightusd::gsplat::Vec3 Radiance(const lightusd::gsplat::GSplatTracer::Hit& h,
+                                    lightusd::gsplat::Vec3 rd,
+                                    lightusd::gsplat::GSplatColorSpace cs) const {
+      return keys.center->Radiance(h, rd, cs);
+    }
+  };
+  CyclesSplats gsplats_;
   bool gsplatCycles_{false};
   bool gsplatSrgb_{false};
   // lightrt_c has no instance/TLAS traversal API. These are the expanded

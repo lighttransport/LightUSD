@@ -18,6 +18,10 @@
 
 namespace lusdview {
 
+// Shutter time of the camera sample being traced on this thread (Cycles
+// motion-blurred splats; shadow rays reuse it).
+static thread_local float g_cpuGsplatTime = 0.5f;
+
 namespace {
 inline void TransformPoint(const float m[12], const float p[3], float out[3]);
 inline void TransformNormal(const float m[12], const float p[3], float out[3]);
@@ -199,40 +203,16 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
   gsplats_.Clear();
-  if (gsplatCycles_) {
-    size_t missing = 0;
-    for (const DrawPointsCPU& src : scene.points) {
-      if (!src.gaussian) continue;
-      const size_t n = src.points.size() / 3;
-      if (src.gaussianScales.size() < n * 3 ||
-          src.gaussianRotations.size() < n * 4) {
-        missing += n;
-        continue;
-      }
-      // DrawPointsCPU::world is column-major local-to-world.
-      const double linear[9] = {src.world[0], src.world[4], src.world[8],
-                                src.world[1], src.world[5], src.world[9],
-                                src.world[2], src.world[6], src.world[10]};
-      const double translation[3] = {src.world[12], src.world[13],
-                                     src.world[14]};
-      const size_t coeffs = size_t(src.gaussianShDegree + 1) *
-                            size_t(src.gaussianShDegree + 1) * 3;
-      const bool sh = src.gaussianSh.size() >= n * coeffs;
-      const bool perPointOpacity = src.opacities.size() >= n;
-      std::vector<float> constOpacity;
-      if (!perPointOpacity)
-        constOpacity.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
-      gsplats_.AddField(linear, translation, n, src.points.data(),
-                        src.gaussianRotations.data(), src.gaussianScales.data(),
-                        perPointOpacity ? src.opacities.data()
-                                        : constOpacity.data(),
-                        src.gaussianShDegree,
-                        sh ? src.gaussianSh.data() : nullptr);
-    }
-    gsplats_.Build();
-    LOGI("CPU RT: Cycles gsplat kernel, %zu splat(s), %zu BVH node(s)%s",
-         gsplats_.size(), gsplats_.node_count(),
-         missing ? " (some carriers lacked kernel data and were skipped)" : "");
+  if (gsplatCycles_ && BuildGsplatKeys(scene.points, &gsplats_.keys)) {
+    lrt_result lerr = LRT_RESULT_OK;
+    lrt_gsplat_scene* ls = lrt_gsplat_scene_build_motion(
+        gsplats_.keys.keys.data(), gsplats_.keys.count, gsplats_.keys.nkeys,
+        nullptr, &lerr);
+    if (ls) gsplats_.scene.reset(ls, lrt_gsplat_scene_free);
+    LOGI("CPU RT: Cycles gsplat kernel, %zu splat(s), %u motion key(s)%s",
+         gsplats_.size(), gsplats_.keys.nkeys,
+         gsplats_.keys.skipped ? " (some carriers lacked kernel data and were skipped)"
+                               : "");
   }
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
@@ -2346,8 +2326,16 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           gs::GSplatTracer::Hit splatHit;
           const gs::Vec3 ro = {rayOrg[0], rayOrg[1], rayOrg[2]};
           const gs::Vec3 rd = {dir[0], dir[1], dir[2]};
+          // Shutter time of this sample, also used by its shadow rays.
+          g_cpuGsplatTime = 0.5f;
+          if (gsplats_.motion()) {
+            uint32_t th = seed ^ 0x6b43a9b5u;
+            th ^= th >> 16; th *= 0x85ebca6bu; th ^= th >> 13; th *= 0xc2b2ae35u;
+            th ^= th >> 16;
+            g_cpuGsplatTime = float(th >> 8) * (1.0f / 16777216.0f);
+          }
           if (gsplats_.Trace(ro, rd, ray.tmin, flatHit ? hit.t : ray.tmax, seed,
-                             &splatHit)) {
+                             &splatHit, g_cpuGsplatTime)) {
             const gs::Vec3 c = gsplats_.Radiance(
                 splatHit, rd,
                 gsplatSrgb_ ? gs::GSplatColorSpace::SRGB
@@ -2980,7 +2968,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 if (gsplats_.Trace({shadowRay.org[0], shadowRay.org[1],
                                     shadowRay.org[2]},
                                    {L[0], L[1], L[2]}, 1e-4f, maxShadowT, seed,
-                                   &sh))
+                                   &sh, g_cpuGsplatTime))
                   shadow = 0.0f;
               }
             }

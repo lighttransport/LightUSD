@@ -134,33 +134,44 @@ bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
 }
 
 bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
-                                bool srgb, DirectScene *direct) {
+                                bool srgb, DirectScene *direct,
+                                const std::string &camera, int motion_steps) {
   auto scene = std::make_shared<GSplatCyclesScene>();
   if (!BuildGSplatCyclesScene(stage, time, scene.get())) return false;
-  const auto &src = scene->tracer.splats();
-  std::vector<lrt_gsplat> splats(src.size());
-  for (size_t i = 0; i < src.size(); ++i) {
-    const gs::GSplatWorld &g = src[i];
-    lrt_gsplat &d = splats[i];
-    d.mu[0] = g.mu.x;
-    d.mu[1] = g.mu.y;
-    d.mu[2] = g.mu.z;
-    d.opacity = g.opacity;
-    std::memcpy(d.a, g.a, sizeof(d.a));
-    d.radius = g.radius;
-    d.id = uint32_t(i);
-    d.pad = 0;
+  // Camera shutter -> motion keys (same sampling as the splat-only renderer).
+  CameraFrame frame;
+  float aspect = 1.0f;
+  if (motion_steps > 1 && !camera.empty() &&
+      FindCoreCameraFrame(stage, camera, time, &frame, &aspect) &&
+      frame.shutter_close > frame.shutter_open) {
+    std::vector<double> times(static_cast<size_t>(motion_steps));
+    for (size_t k = 0; k < times.size(); ++k)
+      times[k] = time + double(frame.shutter_open) +
+                 double(frame.shutter_close - frame.shutter_open) * double(k) /
+                     double(times.size() - 1);
+    BuildGSplatCyclesMotion(stage, times, scene.get());
   }
+  const auto &src = scene->tracer.splats();
+  const uint32_t nkeys = scene->motion_nkeys;
+  std::vector<lrt_gsplat> splats;
+  if (nkeys == 1) {
+    splats.resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) splats[i] = ToLrt(src[i], uint32_t(i));
+  }
+  const std::vector<lrt_gsplat> &keys = nkeys > 1 ? scene->motion_keys : splats;
   lrt_result err = LRT_RESULT_OK;
-  lrt_gsplat_scene *ls =
-      lrt_gsplat_scene_build(splats.data(), splats.size(), nullptr, &err);
+  lrt_gsplat_scene *ls = lrt_gsplat_scene_build_motion(keys.data(), src.size(),
+                                                       nkeys, nullptr, &err);
   if (!ls) return false;
   direct->gsplat_scene.reset(ls, lrt_gsplat_scene_free);
   // Share the tracer (SH + per-field transforms) owned by the scene object.
   direct->gsplat_tracer = std::shared_ptr<gs::GSplatTracer>(scene, &scene->tracer);
   direct->gsplat_srgb = srgb;
+  direct->gsplat_motion = nkeys > 1;
   std::cerr << "Cycles gsplat kernel (mixed scene, CPU integrator): "
-            << splats.size() << " splat(s)\n";
+            << src.size() << " splat(s)";
+  if (nkeys > 1) std::cerr << ", " << nkeys << " motion keys";
+  std::cerr << "\n";
   return true;
 }
 

@@ -955,6 +955,7 @@ struct DirectScene {
   std::shared_ptr<lrt_gsplat_scene> gsplat_scene;
   std::shared_ptr<lightusd::gsplat::GSplatTracer> gsplat_tracer;
   bool gsplat_srgb{false};
+  bool gsplat_motion{false};  // keys across the camera shutter
 
   bool has_ellipses() const { return ellipses || !ellipse_chunks.empty(); }
   bool has_round_curves() const {

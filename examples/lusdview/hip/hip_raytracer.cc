@@ -389,7 +389,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
         hs.pointBvh.clear();
         hs.pointChunks.clear();
         hs.pointCount = gs.splatCount;
-        gsChunkCount = int(gs.chunkCount);
+        gsChunkCount = int(gs.chunkCount) |
+                       int(std::min<uint32_t>(gs.nkeys, 64u) << 24);
         gsActive_ = true;
         std::fprintf(stderr, "HIP Cycles gsplat kernel: %u splat(s) in %u chunk(s)\n",
                      gs.splatCount, gs.chunkCount);

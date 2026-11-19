@@ -61,6 +61,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lusdrender")
     ap.add_argument("--spp", type=int, default=256)
+    ap.add_argument("--motion", action="store_true",
+                    help="animated splats + camera shutter (motion blur)")
     a = ap.parse_args()
     blender = os.environ.get("LIGHTUSD_BLENDER", "")
     if not (blender and os.path.exists(blender)):
@@ -73,11 +75,12 @@ def main():
             run([blender, "-b", "--factory-startup", "--python",
                  os.path.join(HERE, "blender_mixed_scene.py"), "--", sub,
                  "--width", str(W), "--height", str(H), "--spp", str(a.spp)] +
-                extra, cwd=d)
+                extra + (["--motion"] if a.motion else []), cwd=d)
             run([a.lusdrender, os.path.join(sub, "mixed.usda"),
                  os.path.join(sub, "ours.exr"), "--gsplat-kernel", "cycles",
                  "--gsplat-colorspace", "srgb", "-camera", "/World/Cam",
-                 "-width", str(W), "-height", str(H), "-samples", str(a.spp)])
+                 "-width", str(W), "-height", str(H), "-samples", str(a.spp)] +
+                (["-timecode", "1"] if a.motion else []))
         script = os.path.join(d, "cmp.py")
         open(script, "w").write(CMP)
         log = run([blender, "-b", "--factory-startup", "--python", script, "--", d])

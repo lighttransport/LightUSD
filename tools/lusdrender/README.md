@@ -495,8 +495,14 @@ Against Blender 5.3 (animated object, shutter 0.5, 17 exported transform
 samples), the result is 1.07x the noise floor with 3 or 9 steps on all three
 backends. With motion blur off it is 2.36x.
 
+Mixed mesh scenes are blurred too. The CPU integrator traces each camera
+sample, and its shadow and bounce rays, at the sample's shutter time.
+`check_mixed_scene.py --motion` (animated splats casting moving shadows)
+gives visibility 1.00x and emission 1.04x Blender's noise floor; without blur
+it fails at 1.81x.
+
 Not yet covered: camera motion; SH/DC colour motion (the render-time colour
-is used); motion blur in mixed mesh scenes and in lusdview.
+is used).
 
 ## Validated benchmark — Activision Caldera maps
 

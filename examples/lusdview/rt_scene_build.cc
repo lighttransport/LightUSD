@@ -2311,53 +2311,112 @@ uint64_t GsplatGpuBudgetBytes() {
   return uint64_t(4) << 30;
 }
 
+namespace {
+lrt_gsplat GsplatToLrt(const lightusd::gsplat::GSplatWorld& g, uint32_t id) {
+  lrt_gsplat d;
+  d.mu[0] = g.mu.x; d.mu[1] = g.mu.y; d.mu[2] = g.mu.z;
+  d.opacity = g.opacity;
+  std::memcpy(d.a, g.a, sizeof(d.a));
+  d.radius = g.radius;
+  d.id = id;
+  d.pad = 0;
+  return d;
+}
+
+// Adds one carrier to `tracer` at motion key `k` (-1 = render time).
+void AddGsplatCarrier(const DrawPointsCPU& src, int k,
+                      lightusd::gsplat::GSplatTracer* tracer) {
+  const size_t n = src.points.size() / 3;
+  const int K = src.gaussianMotionKeys;
+  const bool motion = k >= 0 && K > 1 &&
+                      src.gaussianMotionPositions.size() == n * size_t(K) * 3 &&
+                      src.gaussianMotionWorld.size() == size_t(K) * 16;
+  const float* w = motion ? &src.gaussianMotionWorld[size_t(k) * 16] : src.world;
+  // Column-major local-to-world.
+  const double linear[9] = {w[0], w[4], w[8], w[1], w[5], w[9], w[2], w[6], w[10]};
+  const double translation[3] = {w[12], w[13], w[14]};
+  std::vector<float> pos, rot, scl, opa;
+  const float *P = src.points.data(), *Q = src.gaussianRotations.data(),
+              *S = src.gaussianScales.data(), *O = nullptr;
+  if (motion) {
+    pos.resize(n * 3); rot.resize(n * 4); scl.resize(n * 3); opa.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      const size_t e = i * size_t(K) + size_t(k);
+      for (int c = 0; c < 3; ++c) pos[i * 3 + c] = src.gaussianMotionPositions[e * 3 + c];
+      for (int c = 0; c < 4; ++c) rot[i * 4 + c] = src.gaussianMotionRotations[e * 4 + c];
+      for (int c = 0; c < 3; ++c) scl[i * 3 + c] = src.gaussianMotionScales[e * 3 + c];
+      opa[i] = src.gaussianMotionOpacities[e];
+    }
+    P = pos.data(); Q = rot.data(); S = scl.data(); O = opa.data();
+  } else {
+    if (src.opacities.size() >= n) {
+      O = src.opacities.data();
+    } else {
+      opa.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
+      O = opa.data();
+    }
+  }
+  const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                        size_t(src.gaussianShDegree + 1) * 3;
+  const bool sh = src.gaussianSh.size() >= n * coeffs;
+  tracer->AddField(linear, translation, n, P, Q, S, O, src.gaussianShDegree,
+                   sh ? src.gaussianSh.data() : nullptr, /*keep_all=*/true);
+}
+
+bool HasGsplatKernelData(const DrawPointsCPU& src) {
+  const size_t n = src.points.size() / 3;
+  return src.gaussian && src.gaussianScales.size() >= n * 3 &&
+         src.gaussianRotations.size() >= n * 4;
+}
+}  // namespace
+
+bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out) {
+  *out = GsplatKeys();
+  out->center = std::make_shared<lightusd::gsplat::GSplatTracer>();
+  int K = 1;
+  for (const DrawPointsCPU& src : points) {
+    if (!src.gaussian) continue;
+    if (!HasGsplatKernelData(src)) {
+      out->skipped += src.points.size() / 3;
+      continue;
+    }
+    K = std::max(K, src.gaussianMotionKeys);
+    AddGsplatCarrier(src, -1, out->center.get());
+  }
+  out->count = out->center->size();
+  out->skipped += out->center->skipped();
+  if (out->count == 0 || out->count == out->center->skipped()) return false;
+  out->nkeys = uint32_t(K);
+  out->keys.resize(size_t(K) * out->count);
+  for (int k = 0; k < K; ++k) {
+    lightusd::gsplat::GSplatTracer tk;
+    if (K > 1)
+      for (const DrawPointsCPU& src : points)
+        if (HasGsplatKernelData(src)) AddGsplatCarrier(src, k, &tk);
+    const auto& recs = K > 1 && tk.size() == out->count ? tk.splats()
+                                                         : out->center->splats();
+    for (size_t i = 0; i < out->count; ++i)
+      out->keys[size_t(k) * out->count + i] = GsplatToLrt(recs[i], uint32_t(i));
+  }
+  return true;
+}
+
 bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
                         GsplatGpuData* out) {
   *out = GsplatGpuData();
-  lightusd::gsplat::GSplatTracer tracer;
-  for (const DrawPointsCPU& src : points) {
-    if (!src.gaussian) continue;
-    const size_t n = src.points.size() / 3;
-    if (src.gaussianScales.size() < n * 3 || src.gaussianRotations.size() < n * 4) {
-      out->skipped += n;
-      continue;
-    }
-    // DrawPointsCPU::world is column-major local-to-world (as in CPU RT).
-    const double linear[9] = {src.world[0], src.world[4], src.world[8],
-                              src.world[1], src.world[5], src.world[9],
-                              src.world[2], src.world[6], src.world[10]};
-    const double translation[3] = {src.world[12], src.world[13], src.world[14]};
-    const size_t coeffs = size_t(src.gaussianShDegree + 1) *
-                          size_t(src.gaussianShDegree + 1) * 3;
-    const bool sh = src.gaussianSh.size() >= n * coeffs;
-    std::vector<float> constOpacity;
-    if (src.opacities.size() < n)
-      constOpacity.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
-    tracer.AddField(linear, translation, n, src.points.data(),
-                    src.gaussianRotations.data(), src.gaussianScales.data(),
-                    constOpacity.empty() ? src.opacities.data() : constOpacity.data(),
-                    src.gaussianShDegree, sh ? src.gaussianSh.data() : nullptr);
-  }
-  out->skipped += tracer.skipped();
-  const auto& world = tracer.splats();
-  if (world.empty()) return false;
-  std::vector<lrt_gsplat> ls(world.size());
-  for (size_t i = 0; i < world.size(); ++i) {
-    const auto& g = world[i];
-    lrt_gsplat& d = ls[i];
-    d.mu[0] = g.mu.x; d.mu[1] = g.mu.y; d.mu[2] = g.mu.z;
-    d.opacity = g.opacity;
-    std::memcpy(d.a, g.a, sizeof(d.a));
-    d.radius = g.radius;
-    d.id = uint32_t(i);
-    d.pad = 0;
-  }
+  GsplatKeys gk;
+  if (!BuildGsplatKeys(points, &gk)) return false;
+  out->skipped = gk.skipped;
+  const lightusd::gsplat::GSplatTracer& tracer = *gk.center;
   // Chunks keep each BVH shallow enough for the 64-entry GPU stack.
   lrt_gsplat_build_options bo{};
   bo.max_chunk_splats = size_t(1) << 22;
   lrt_result err = LRT_RESULT_OK;
-  lrt_gsplat_scene* scene = lrt_gsplat_scene_build(ls.data(), ls.size(), &bo, &err);
+  lrt_gsplat_scene* scene = lrt_gsplat_scene_build_motion(
+      gk.keys.data(), gk.count, gk.nkeys, &bo, &err);
   if (!scene) return false;
+  const uint32_t K = gk.nkeys;
+  out->nkeys = K;
   const size_t nf = tracer.field_count();
   out->shData.assign(nf * 12, 0.f);
   for (size_t f = 0; f < nf; ++f)
@@ -2366,16 +2425,16 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
   out->shData.insert(out->shData.end(), tracer.sh_data().begin(),
                      tracer.sh_data().end());
   const size_t nchunks = lrt_gsplat_scene_chunk_count(scene);
-  for (size_t k = 0; k < nchunks; ++k) {
+  for (size_t c = 0; c < nchunks; ++c) {
     const uint32_t* nodes;
     const lrt_gsplat* sp;
     uint32_t nn, ns;
-    lrt_gsplat_scene_chunk(scene, k, &nodes, &nn, &sp, &ns);
+    lrt_gsplat_scene_chunk(scene, c, &nodes, &nn, &sp, &ns);
     if (!nn || !ns) continue;
     out->chunks.push_back(int32_t(out->nodes.size() / 8));
-    out->chunks.push_back(int32_t(out->splats.size() / 16));
+    out->chunks.push_back(int32_t(out->splats.size() / (16 * K)));
     out->nodes.insert(out->nodes.end(), nodes, nodes + size_t(nn) * 8);
-    for (uint32_t i = 0; i < ns; ++i) {
+    for (uint32_t i = 0; i < ns * K; ++i) {
       const lrt_gsplat& g = sp[i];
       const uint32_t f = tracer.field_of(g.id);
       const uint32_t shOff = uint32_t(shBase + tracer.sh_offset(g.id));
@@ -2389,7 +2448,7 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
     }
   }
   lrt_gsplat_scene_free(scene);
-  out->splatCount = uint32_t(out->splats.size() / 16);
+  out->splatCount = uint32_t(out->splats.size() / (16 * K));
   out->nodeCount = uint32_t(out->nodes.size() / 8);
   out->chunkCount = uint32_t(out->chunks.size() / 2);
   return out->splatCount > 0;

@@ -77,6 +77,11 @@ struct LoadOptions {
   // for the Cycles splat kernel (--gsplat-kernel cycles). Off by default: the
   // disc carriers need only the 2D radii.
   bool gaussianKernelData{false};
+  // Motion blur for the Cycles splat kernel: when this camera's
+  // shutter:open < shutter:close, splats are also sampled at
+  // gaussianMotionSteps times across the shutter (DrawPointsCPU motion keys).
+  std::string gaussianMotionCamera;
+  int gaussianMotionSteps{3};
   // Register ordinary texture slots during material conversion, then decode,
   // resize and compress them after geometry publication on bounded workers.
   bool asyncTextureDecode{false};

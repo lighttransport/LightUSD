@@ -746,6 +746,11 @@ Vec3 EvalIblSpecularSplitSum(const Vec3 &spec_env, const Vec3 &f0, float brdf_a,
   return Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
 }
 
+// Shutter time in [0,1] of the camera sample being shaded on this thread.
+// Motion-blurred splats are traced at it on the camera ray and on every
+// shadow/bounce ray it spawns (Cycles keeps ray time along a path).
+static thread_local float g_gsplat_ray_time = 0.5f;
+
 // Stochastic-hit seed for a ray (Cycles relies on per-sample ray jitter; the
 // hit-position hash then decorrelates). Mixes the ray's bits.
 static uint32_t GsplatRaySeed(const lrt_ray &ray) {
@@ -776,8 +781,9 @@ static bool OccludedGsplat(const DirectScene *direct, const Vec3 &p,
   ray.dir[0] = l.x; ray.dir[1] = l.y; ray.dir[2] = l.z;
   ray.tmax = max_t;
   lrt_hit h;
-  return lrt_gsplat_intersect1(direct->gsplat_scene.get(), &ray,
-                               GsplatRaySeed(ray), &h) != 0;
+  return lrt_gsplat_intersect1_time(direct->gsplat_scene.get(), &ray,
+                                    g_gsplat_ray_time, GsplatRaySeed(ray),
+                                    &h) != 0;
 }
 
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
@@ -797,8 +803,8 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     lrt_ray gr = ray;
     gr.tmax = std::min(tmax, best->t);
     lrt_hit h;
-    if (lrt_gsplat_intersect1(direct->gsplat_scene.get(), &gr,
-                              GsplatRaySeed(gr), &h) &&
+    if (lrt_gsplat_intersect1_time(direct->gsplat_scene.get(), &gr,
+                                   g_gsplat_ray_time, GsplatRaySeed(gr), &h) &&
         h.t < best->t) {
       // Cycles' default splat shader: pure emission, no lighting response.
       lightusd::gsplat::GSplatTracer::Hit th;
@@ -3238,6 +3244,17 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
             ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
           }
           float primary_hit_t = ray_camera.zfar;
+          if (direct && direct->gsplat_motion) {
+            // Stratified shutter time per pixel (Cramer-Patterson rotation).
+            uint32_t hpx = (uint32_t(y) * uint32_t(img.width) + uint32_t(x)) *
+                           0x9e3779b1u;
+            hpx ^= hpx >> 16;
+            hpx *= 0x85ebca6bu;
+            hpx ^= hpx >> 13;
+            const float tm = (float(s) + 0.5f) / float(spp) +
+                             float(hpx >> 8) * (1.0f / 16777216.0f);
+            g_gsplat_ray_time = tm - std::floor(tm);
+          }
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, ray_camera, opt,
                             org, dir, textures, tri_uvs, tri_uvs1, tlas, blas,
                             instances, rd, 0, tri_colors, tri_normals,

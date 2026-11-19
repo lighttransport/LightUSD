@@ -348,6 +348,14 @@ python3 examples/lusdview/render-motion.py \
     Vulkan and HIP (`tests/check_gsplat_mixed.py`). Preview lighting is not
     Cycles' (ambient/headlight fill), so its splat shadows are checked for
     presence only. The preview tracers have no bounce rays.
+    Motion blur: with `--camera` on a camera whose `shutter:open` <
+    `shutter:close`, splats are sampled at `--gsplat-motion-steps N`
+    (default 3) times across the shutter. Each sample (accumulated frame on
+    Vulkan, `--rt-samples`/`--pt-samples` sample elsewhere) gets a shutter time
+    that its shadow and bounce rays share. On the motion fixtures
+    (`tests/usda/gsplat-mixed-motion-*.usda`, use `--time 1`), the path tracer
+    matches Blender's 10x10 block maps at 0.0032 (0.0116 without blur) on
+    Vulkan and HIP.
     `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
     convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build

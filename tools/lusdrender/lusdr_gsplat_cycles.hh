@@ -48,8 +48,13 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
 // Mixed scenes (meshes + splats): builds the splats into direct->gsplat_* so
 // the regular CPU integrator traces them with the Cycles kernel on primary,
 // bounce and shadow rays. Returns false when the stage has no splats.
+// motion_steps > 1 with an open camera shutter (opt.camera) samples the
+// splats across the shutter; the integrator then traces each camera sample
+// and its shadow/bounce rays at that sample's shutter time.
 bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
-                                bool srgb, DirectScene *direct);
+                                bool srgb, DirectScene *direct,
+                                const std::string &camera = std::string(),
+                                int motion_steps = 1);
 
 // True when the stage has renderable non-splat geometry (meshes, gprims,
 // curves, points), i.e. the splat-only Cycles renderer is not sufficient.

@@ -344,6 +344,7 @@ int main(int argc, char** argv) {
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
   bool gsplatCycles = false, gsplatSrgb = false;  // --gsplat-kernel/-colorspace
+  int gsplatMotionSteps = 3;  // --gsplat-motion-steps (camera shutter)
   int rtSamples = 1;          // --rt-samples: AA supersamples for RT paths
   bool wantPathTrace = false;
   lusdview::PathTraceSettings pathTraceSettings;
@@ -1124,6 +1125,12 @@ int main(int argc, char** argv) {
         return 1;
       }
       gsplatCycles = k == "cycles";
+    } if (std::strcmp(argv[i], "--gsplat-motion-steps") == 0 && i + 1 < argc) {
+      gsplatMotionSteps = std::atoi(argv[++i]);
+      if (gsplatMotionSteps < 1 || gsplatMotionSteps > 64) {
+        LOGE("--gsplat-motion-steps expects 1..64");
+        return 1;
+      }
     } if (std::strcmp(argv[i], "--gsplat-colorspace") == 0 && i + 1 < argc) {
       const std::string k = argv[++i];
       if (k != "linear" && k != "srgb") {
@@ -2016,6 +2023,8 @@ int main(int argc, char** argv) {
   {
     lusdview::LoadOptions lo;
     lo.gaussianKernelData = gsplatCycles;
+    lo.gaussianMotionCamera = cameraName;
+    lo.gaussianMotionSteps = gsplatMotionSteps;
     if (rasterQualityHigh && !materialPurposeExplicit) materialPurpose = "full";
     if (rasterQualityHigh && !domeIblExplicit) textureOptions.domeIbl = 2;
     lo.materialPurpose = materialPurpose;

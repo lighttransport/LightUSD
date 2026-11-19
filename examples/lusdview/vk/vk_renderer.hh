@@ -1471,6 +1471,7 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtPointChunkCount_{0};
   // --gsplat-kernel cycles: the point buffers hold the LightRT splat encoding.
   bool gsplatCycles_{false}, gsplatSrgb_{false}, rtGsplatCycles_{false};
+  uint32_t rtGsplatKeys_{1};  // motion keys per splat in the point buffers
   // True when analytic Gaussian point buffers do not fit the current Vulkan
   // residency budget; raster camera-facing splat quads remain available.
   bool gaussianRtDisabled_{false};

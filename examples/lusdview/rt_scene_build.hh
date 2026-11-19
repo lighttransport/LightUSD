@@ -14,6 +14,9 @@
 
 #include "gpu_scene.hh"  // DrawScene
 #include "rt_bvh.hh"     // Node
+#include <memory>
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 
 namespace lusdview {
 
@@ -306,12 +309,26 @@ struct GsplatGpuData {
   std::vector<int32_t> chunks;
   std::vector<float> shData;
   uint32_t splatCount = 0, nodeCount = 0, chunkCount = 0;
+  uint32_t nkeys = 1;  // motion keys: splats holds nkeys records per splat
   size_t skipped = 0;  // carriers without kernel data or culled splats
   size_t bytes() const {
     return splats.size() * 4 + nodes.size() * 4 + chunks.size() * 4 +
            shData.size() * 4;
   }
 };
+
+// Index-aligned Cycles splat motion keys from the carriers' kernel data:
+// center = splats at the render time (SH + per-field transforms for radiance;
+// placeholders keep indices aligned), keys = nkeys key-major LightRT records
+// (nkeys > 1 when a carrier has motion keys across the camera shutter).
+struct GsplatKeys {
+  std::shared_ptr<lightusd::gsplat::GSplatTracer> center;
+  std::vector<lrt_gsplat> keys;
+  uint32_t nkeys = 1;
+  size_t count = 0;
+  size_t skipped = 0;
+};
+bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out);
 
 // Collects every Gaussian carrier that has kernel data (LoadOptions::
 // gaussianKernelData). Returns false when no splat survives.

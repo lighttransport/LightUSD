@@ -15,7 +15,13 @@ direct light): scene-linear EXRs must reproduce Blender 5.3's
   emission   E = full - black on the plane          (Cycles 0.06014)
 where E includes the plane lit by splat emission through the BSDF bounce.
 
-usage: check_gsplat_mixed.py LUSDVIEW REPO_ROOT BACKEND
+With "motion" the animated fixtures (tests/usda/gsplat-mixed-motion-*.usda,
+camera shutter 0.5 frames) are used. Path-trace backends then also compare
+10x10-pixel block maps of V and E with Blender's
+(tests/gsplat/mixed_scene_blocks.json); a static render of the motion scene
+fails that check, so it verifies the blur itself.
+
+usage: check_gsplat_mixed.py LUSDVIEW REPO_ROOT BACKEND [motion]
 Exit 77 when the backend did not run the Cycles splat kernel.
 """
 import os
@@ -92,6 +98,7 @@ def read_ppm(path):
 
 def main():
     lusdview, root, backend = sys.argv[1], sys.argv[2], sys.argv[3]
+    motion = len(sys.argv) > 4 and sys.argv[4] == "motion"
     pt = backend.startswith("pt-")
     dev = backend[3:] if pt else backend
     flags = {"cpu": ["--cpu-rt", "--rt-samples", "32"],
@@ -111,6 +118,8 @@ def main():
         def render(name, usda):
             out = os.path.join(d, name)
             cmd = [lusdview, "--headless", "--no-grid", "--size", "%dx%d" % (W, H)]
+            if motion:
+                cmd += ["--time", "1"]  # Blender rendered frame 1
             cmd += flags + ["--gsplat-kernel", "cycles", "--gsplat-colorspace",
                             "srgb", "--camera", "/World/Cam",
                             "--screenshot", out + ".ppm"]
@@ -123,7 +132,8 @@ def main():
                 print(r.stdout[-4000:])
                 raise SystemExit("FAIL: lusdview render %s" % name)
             return r.stdout, out
-        src = lambda n: os.path.join(root, "tests/usda/gsplat-mixed-%s.usda" % n)
+        src = lambda n: os.path.join(
+            root, "tests/usda/gsplat-mixed-%s%s.usda" % ("motion-" if motion else "", n))
         if pt:
             imgs = {}
             for n in ("black", "full", "plain"):  # splat scene first: skip early
@@ -141,6 +151,33 @@ def main():
                 return "FAIL: visibility differs from Cycles"
             if abs(E - CYCLES_E_PLANE) > 0.05 * CYCLES_E_PLANE:
                 return "FAIL: splat emission (incl. bounce light) differs from Cycles"
+            # Spatial check against Blender's block maps (motion blur shape).
+            import json
+            ref = json.load(open(os.path.join(root, "tests/gsplat/mixed_scene_blocks.json")))
+            ref = ref["motion" if motion else "static"]
+            Vp = np.where(mask, (imgs["black"] / np.maximum(imgs["plain"], 1e-6)).mean(2), np.nan)
+            Ep = np.where(mask, (imgs["full"] - imgs["black"]).mean(2), np.nan)
+            def blocks(x, B=10):
+                h, w = x.shape
+                out = []
+                for by in range(h // B):
+                    row = []
+                    for bx in range(w // B):
+                        t = x[by * B:(by + 1) * B, bx * B:(bx + 1) * B]
+                        row.append(None if np.isnan(t).mean() > 0.5 else float(np.nanmean(t)))
+                    out.append(row)
+                return out
+            def mad(a, b):
+                v = [abs(p - q) for ra, rb in zip(a, b) for p, q in zip(ra, rb)
+                     if p is not None and q is not None]
+                return sum(v) / max(len(v), 1)
+            dV, dE = mad(blocks(Vp), ref["V"]), mad(blocks(Ep), ref["E"])
+            print("%s: block MAD vs Cycles  V %.4f  E %.5f" % (backend, dV, dE))
+            # Static vs motion maps differ by ~0.012 in V; noise is ~0.002.
+            if dV > 0.005:
+                return "FAIL: visibility map differs from Cycles"
+            if dE > 0.003:
+                return "FAIL: emission map differs from Cycles"
             return 0
         # Preview: shadows on vs off (same camera occlusion).
         noshadow = os.path.join(d, "noshadow.usda")

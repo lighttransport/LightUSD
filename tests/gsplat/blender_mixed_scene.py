@@ -4,6 +4,7 @@ direct-light-only Cycles references.
 
 blender -b --factory-startup --python blender_mixed_scene.py -- \
     OUT_DIR [--width W] [--height H] [--spp N] [--no-splats] [--black]
+    [--motion]
 
 Scene: a Lambert ground plane (Diffuse BSDF, albedo 0.8) lit by a sun lamp,
 plus a cluster of emissive splats floating above it. Cycles light paths are
@@ -34,7 +35,11 @@ ap.add_argument("--no-splats", action="store_true")
 ap.add_argument("--black", action="store_true",
                 help="splats emit nothing (SH DC = -0.5/C0): isolates their "
                      "occlusion of the plane and of the sun")
+ap.add_argument("--motion", action="store_true",
+                help="animate the splat object; render frame 1 with Cycles "
+                     "motion blur (shutter 0.5, centred)")
 a = ap.parse_args(argv)
+SHUTTER = 0.5
 os.makedirs(a.out, exist_ok=True)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -103,6 +108,22 @@ if n:
     put("rotation", "QUATERNION", rot)
     splats = bpy.data.objects.new("Splats", pc)
     scene.collection.objects.link(splats)
+    if a.motion:
+        for frame, sgn in ((0, -1.0), (1, 0.0), (2, 1.0)):
+            splats.location = Vector((0.40, 0.25, 0.0)) * sgn
+            splats.rotation_euler = (0.0, 0.0, 0.5 * sgn)
+            splats.keyframe_insert("location", frame=frame)
+            splats.keyframe_insert("rotation_euler", frame=frame)
+        act = splats.animation_data.action
+        curves = list(getattr(act, "fcurves", []) or [])
+        for layer in getattr(act, "layers", []):
+            for strip in layer.strips:
+                for bag in strip.channelbags:
+                    curves += list(bag.fcurves)
+        for fc in curves:
+            for kp in fc.keyframe_points:
+                kp.interpolation = "LINEAR"
+        scene.frame_set(1)
 
 # ---- camera ----------------------------------------------------------------
 cam_data = bpy.data.cameras.new("Cam")
@@ -128,14 +149,22 @@ def usd_matrix(m):  # Blender column-vector -> USD row-vector (transpose)
 f3 = lambda v: "(%r, %r, %r)" % tuple(v)
 with open(os.path.join(a.out, "mixed.usda"), "w") as f:
     f.write('#usda 1.0\n(\n    defaultPrim = "World"\n    metersPerUnit = 1\n'
-            '    upAxis = "Z"\n)\n\ndef Xform "World"\n{\n')
-    f.write('    def Camera "Cam"\n    {\n'
-            "        float focalLength = %r\n        float horizontalAperture = %r\n"
-            "        float verticalAperture = %r\n        float2 clippingRange = (0.01, 1000)\n"
-            "        matrix4d xformOp:transform = %s\n"
-            '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n' %
-            (cam_data.lens, cam_data.sensor_width,
-             cam_data.sensor_width * a.height / a.width, usd_matrix(cam.matrix_world)))
+            + ('    startTimeCode = 0\n    endTimeCode = 2\n' if a.motion else '')
+            + '    upAxis = "Z"\n)\n\ndef Xform "World"\n{\n')
+    cam_block = ('    def Camera "Cam"\n    {\n'
+                 "        float focalLength = %r\n        float horizontalAperture = %r\n"
+                 "        float verticalAperture = %r\n        float2 clippingRange = (0.01, 1000)\n"
+                 "        matrix4d xformOp:transform = %s\n"
+                 '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n' %
+                 (cam_data.lens, cam_data.sensor_width,
+                  cam_data.sensor_width * a.height / a.width,
+                  usd_matrix(cam.matrix_world)))
+    if a.motion:
+        cam_block = cam_block.replace(
+            "        float2 clippingRange",
+            "        double shutter:open = %r\n        double shutter:close = %r\n"
+            "        float2 clippingRange" % (-SHUTTER / 2, SHUTTER / 2), 1)
+    f.write(cam_block)
     # UsdLux DistantLight shines along its local -Z; intensity is irradiance
     # (W/m^2 in Blender's sun units maps 1:1 with exposure 0).
     f.write('    def DistantLight "Sun"\n    {\n'
@@ -163,6 +192,17 @@ with open(os.path.join(a.out, "mixed.usda"), "w") as f:
             "            token outputs:surface\n        }\n    }\n" % (ALBEDO, ALBEDO, ALBEDO))
     if n:
         f.write('    def ParticleField3DGaussianSplat "Splats"\n    {\n')
+        if a.motion:
+            samples = []
+            for j in range(17):
+                sub = -SHUTTER / 2 + SHUTTER * j / 16.0
+                fr = int(math.floor(1 + sub))
+                scene.frame_set(fr, subframe=(1 + sub) - fr)
+                samples.append("%r: %s" % (1 + sub, usd_matrix(splats.matrix_world)))
+            scene.frame_set(1)
+            f.write("        matrix4d xformOp:transform.timeSamples = {\n            %s\n"
+                    "        }\n        uniform token[] xformOpOrder = "
+                    '["xformOp:transform"]\n' % ",\n            ".join(samples))
         f.write("        point3f[] positions = [%s]\n" % ", ".join(f3(p) for p in pos))
         f.write("        quatf[] orientations = [%s]\n" %
                 ", ".join("(%r, %r, %r, %r)" % q for q in rot))
@@ -185,6 +225,13 @@ scene.cycles.samples = a.spp
 scene.cycles.use_denoising = False
 scene.cycles.filter_width = 0.01
 scene.cycles.max_bounces = 0
+if a.motion:
+    scene.render.use_motion_blur = True
+    scene.render.motion_blur_shutter = SHUTTER
+    scene.render.motion_blur_position = "CENTER"
+    if n:
+        splats.cycles.motion_steps = 4
+    scene.frame_set(1)
 scene.cycles.transparent_max_bounces = 64
 scene.render.resolution_x = a.width
 scene.render.resolution_y = a.height

@@ -6198,7 +6198,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   if (opt.gsplat_cycles) {
     // Cycles splat kernel in a mixed scene: no disc carriers; the splats are
     // traced stochastically on every ray by the CPU integrator.
-    AttachGSplatCyclesToDirect(ctx.stage, time, opt.gsplat_srgb, &ctx.direct);
+    AttachGSplatCyclesToDirect(ctx.stage, time, opt.gsplat_srgb, &ctx.direct,
+                               opt.camera, opt.gsplat_motion_steps);
   } else if (!BuildCoreGaussianEllipses(ctx.stage, ctx, time)) {
     return false;
   }

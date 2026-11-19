@@ -882,6 +882,18 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;gsplat"
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
+      # Motion blur (animated splats, camera shutter) on the path tracers.
+      foreach(_gs_mixed pt-vk pt-hip pt-cuda cpu)
+        add_test(
+          NAME lusdview-gsplat-mixed-motion-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed} motion)
+        set_tests_properties(lusdview-gsplat-mixed-motion-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
     endif()
     # The same check on the GPU ray tracers (skip without a device/runtime).
     foreach(_gs_backend rt hip cuda)

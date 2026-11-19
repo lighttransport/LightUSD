@@ -11676,6 +11676,7 @@ void VulkanRenderer::rebuildTlas() {
     rtPointCount_ = gsData.splatCount;
     rtPointNodeCount_ = gsData.nodeCount;
     rtPointChunkCount_ = gsData.chunkCount;
+    rtGsplatKeys_ = gsData.nkeys;
   }
   // One descriptor per mesh + one trailing slot for the shared box proxy
   // (boxMeshId == meshes_.size()).
@@ -13830,7 +13831,8 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.context[1] = materialXFrame_;
   pc.pointParams[0] = rtPointCount_;
   pc.pointParams[1] = rtPointNodeCount_ | (rtGsplatCycles_ ? 0x80000000u : 0u);
-  pc.pointParams[2] = rtPointChunkCount_;
+  pc.pointParams[2] = rtPointChunkCount_ |
+                      (rtGsplatCycles_ ? (std::min(rtGsplatKeys_, 64u) << 24u) : 0u);
   pc.pointParams[3] = pathTrace_.enabled
                           ? ((pathTrace_.maxDepth & 0xffu) |
                              ((pathTrace_.russianRouletteDepth & 0xffu) << 8u) |

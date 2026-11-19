@@ -1939,6 +1939,12 @@ bool pointBoxHit(RtPointNode n, vec3 o, vec3 inv, float best) {
 // ray in the unit Gaussian frame, stochastic opaque acceptance
 // hash(x, seed) <= alpha, closest accepted hit.
 bool gsplatCyclesMode() { return (pc.pointParams.y & 0x80000000u) != 0u; }
+// pointParams.z = chunk count | motion keys << 24 in Cycles mode.
+uint gsChunkCount() { return pc.pointParams.z & 0xffffffu; }
+uint gsKeyCount() { return max(pc.pointParams.z >> 24u, 1u); }
+// Shutter time in [0,1] of this pixel's sample; camera, shadow and bounce
+// rays of the sample all see the motion-blurred splats at it (Cycles).
+float g_gsTime = 0.5;
 
 float gsHash(vec3 p, uint seed) {
   uint h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
@@ -1968,8 +1974,15 @@ bool gsBox(uint n, vec3 o, vec3 inv, float tmax, out float tnear) {
 
 float traceCyclesSplats(vec3 o, vec3 d, float tmax, uint seed, out int hit) {
   hit = -1;
-  uint chunkCount = pc.pointParams.z;
+  uint chunkCount = gsChunkCount();
   if (pc.pointParams.x == 0u || chunkCount == 0u) return 1e30;
+  uint K = gsKeyCount();
+  uint kstep = 0u; float kt = 0.0;
+  if (K > 1u) {
+    float f = clamp(g_gsTime, 0.0, 1.0) * float(K - 1u);
+    kstep = min(uint(f), K - 2u);
+    kt = f - float(kstep);
+  }
   vec3 inv;
   for (int k = 0; k < 3; k++) {
     float v = 1.0 / d[k];
@@ -1997,21 +2010,25 @@ float traceCyclesSplats(vec3 o, vec3 d, float tmax, uint seed, out int hit) {
         continue;
       }
       for (uint i = sb0 + first; i < sb0 + first + count; i++) {
-        uint s = i * 16u;
-        vec3 mu = vec3(gsS[s], gsS[s + 1u], gsS[s + 2u]);
-        float radius = gsS[s + 13u];
+        uint s = (i * K + kstep) * 16u;
+        uint s2 = K > 1u ? s + 16u : s;
+        #define GSK(o) mix(gsS[s + (o)], gsS[s2 + (o)], kt)
+        vec3 mu = vec3(GSK(0u), GSK(1u), GSK(2u));
+        float radius = GSK(13u);
+        if (!(radius > 0.0)) continue;
         vec3 oc = o - mu;
         float b = dot(oc, d);
         if (b * b - dd * (dot(oc, oc) - radius * radius) < 0.0) continue;
-        vec3 r0 = vec3(gsS[s + 4u], gsS[s + 5u], gsS[s + 6u]);
-        vec3 r1 = vec3(gsS[s + 7u], gsS[s + 8u], gsS[s + 9u]);
-        vec3 r2 = vec3(gsS[s + 10u], gsS[s + 11u], gsS[s + 12u]);
+        vec3 r0 = vec3(GSK(4u), GSK(5u), GSK(6u));
+        vec3 r1 = vec3(GSK(7u), GSK(8u), GSK(9u));
+        vec3 r2 = vec3(GSK(10u), GSK(11u), GSK(12u));
         vec3 og = vec3(dot(r0, oc), dot(r1, oc), dot(r2, oc));
         vec3 dg = vec3(dot(r0, d), dot(r1, d), dot(r2, d));
         float t = -dot(og, dg) / dot(dg, dg);
         if (!(t > 0.0 && t <= best)) continue;
         vec3 e = og + dg * t;
-        float alpha = gsS[s + 3u] * exp(-0.5 * dot(e, e));
+        float alpha = GSK(3u) * exp(-0.5 * dot(e, e));
+        #undef GSK
         if (gsHash(o + d * t, seed) > alpha) continue;
         best = t; hit = int(i);
       }
@@ -2027,7 +2044,7 @@ float gsSrgbToLinear(float c) {
 
 // SH emission (+0.5) evaluated along the object-space view direction.
 vec3 cyclesSplatRadiance(int id, vec3 d) {
-  uint s = uint(id) * 16u;
+  uint s = uint(id) * gsKeyCount() * 16u;
   uint shOff = floatBitsToUint(gsS[s + 14u]);
   uint meta = floatBitsToUint(gsS[s + 15u]);
   uint deg = meta & 3u, field = meta >> 8u;
@@ -3177,6 +3194,12 @@ void main() {
   // sample point inside the pixel by a Halton(2,3) offset for anti-aliasing.
   vec2 jit = accumulate ? (vec2(halton(fi + 1u, 2u), halton(fi + 1u, 3u)) - 0.5)
                         : vec2(0.0);
+  // Motion-blurred splats: stratified shutter time (Halton base 5 over the
+  // accumulated frames, Cramer-Patterson rotated per pixel).
+  if (gsplatCyclesMode() && gsKeyCount() > 1u)
+    g_gsTime = fract(halton(fi + 1u, 5u) +
+                     float(hashU(uint(px.y) * uint(size.x) + uint(px.x)) >> 8u) *
+                         (1.0 / 16777216.0));
   vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
