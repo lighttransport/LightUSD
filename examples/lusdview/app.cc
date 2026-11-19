@@ -5703,6 +5703,7 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
 #if defined(HAVE_VULKAN)
   else if (backend == Backend::Vulkan) {
     renderer_ = CreateVulkanRenderer();
+    renderer_->setGsplatKernel(gsplatCycles_, gsplatSrgb_);
   }
 #endif
 #if defined(HAVE_METAL)
@@ -7345,6 +7346,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #if defined(HAVE_VULKAN)
     else {
       renderer_ = CreateVulkanRenderer();
+      renderer_->setGsplatKernel(gsplatCycles_, gsplatSrgb_);
     }
 #endif
     if (!renderer_) {

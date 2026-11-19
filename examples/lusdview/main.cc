@@ -2226,12 +2226,11 @@ int main(int argc, char** argv) {
   app.setCudaRtBackend(cudaRtBackend);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
-  if (gsplatCycles && !wantCpuRt) {
-    // The Cycles splat kernel is implemented in the CPU ray tracer only.
-    LOGW("--gsplat-kernel cycles: using the CPU ray tracer (--cpu-rt)");
+  if (gsplatCycles && !wantCpuRt && !wantRt && !wantCuda && !wantHip) {
+    // The Cycles splat kernel runs in the ray tracers (CPU, Vulkan --rt,
+    // --cuda, --hip); raster has no equivalent, so default to the CPU one.
+    LOGW("--gsplat-kernel cycles: no ray tracer requested; using --cpu-rt");
     wantCpuRt = true;
-    wantCuda = false;
-    wantHip = false;
   }
   app.setCpuRt(wantCpuRt);
   app.setGsplatKernel(gsplatCycles, gsplatSrgb);

@@ -29,6 +29,14 @@ class GSplatTracer {
   size_t node_count() const { return nodes_.size(); }
   // World-space splats in BVH order; Radiance() takes indices into this.
   const std::vector<GSplatWorld>& splats() const { return splats_; }
+  // Per-splat field index and offset (floats) into sh_data(); per-field
+  // inverse linear part (row-major) and SH degree. For GPU encoders.
+  uint32_t field_of(size_t i) const { return field_of_[i]; }
+  size_t sh_offset(size_t i) const { return sh_of_[i]; }
+  const std::vector<float>& sh_data() const { return sh_; }
+  size_t field_count() const { return fields_.size(); }
+  const float* field_linv(size_t f) const { return fields_[f].linv; }
+  int field_degree(size_t f) const { return fields_[f].sh_degree; }
   // World-space bounds of the visible support (center +- bounding radius).
   const float* bounds_lo() const { return lo_; }
   const float* bounds_hi() const { return hi_; }

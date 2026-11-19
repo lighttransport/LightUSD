@@ -288,4 +288,37 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
                     std::string* err);
 
+// --gsplat-kernel cycles on the GPU backends: the Blender Cycles splat scene in
+// the LightRT encoding (src/external/lightrt/lightrt_c_gsplat.h), shared by the
+// Vulkan shader (raytrace.comp, bindings 15-18) and the CUDA/HIP kernel.
+//   splats : 16 floats per splat: mu.xyz, opacity, A (row-major 3x3, world ->
+//            unit Gaussian frame), radius, SH offset (uint bits, floats into
+//            shData), meta (uint bits: degree | srgb << 2 | field << 8)
+//   nodes  : 8 words per node: lo.xyz, hi.xyz (float bits), first, count;
+//            count == 0 => inner node, children first and first + 1 (chunk
+//            local); leaf splats first..first+count-1 (chunk local)
+//   chunks : {nodeFirst, splatFirst} per BVH chunk
+//   shData : per field 12 floats (row-major inverse linear part, padded),
+//            then the SH coefficients
+struct GsplatGpuData {
+  std::vector<float> splats;
+  std::vector<uint32_t> nodes;
+  std::vector<int32_t> chunks;
+  std::vector<float> shData;
+  uint32_t splatCount = 0, nodeCount = 0, chunkCount = 0;
+  size_t skipped = 0;  // carriers without kernel data or culled splats
+  size_t bytes() const {
+    return splats.size() * 4 + nodes.size() * 4 + chunks.size() * 4 +
+           shData.size() * 4;
+  }
+};
+
+// Collects every Gaussian carrier that has kernel data (LoadOptions::
+// gaussianKernelData). Returns false when no splat survives.
+bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
+                        GsplatGpuData* out);
+
+// Device budget for the splat buffers: LUSDVIEW_GSPLAT_VRAM_MB, default 4 GiB.
+uint64_t GsplatGpuBudgetBytes();
+
 }  // namespace lusdview

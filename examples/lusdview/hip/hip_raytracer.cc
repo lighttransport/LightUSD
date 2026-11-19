@@ -364,6 +364,38 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     retained_.reset();
     return false;
   }
+  // --gsplat-kernel cycles: the point arrays carry the LightRT splat encoding
+  // (rt_scene_build.hh GsplatGpuData); the kernel sees pointCount < 0.
+  gsActive_ = false;
+  int gsChunkCount = 0;
+  if (gsplatCycles_) {
+    GsplatGpuData gs;
+    if (BuildGsplatGpuData(scene.points, gsplatSrgb_, &gs)) {
+      if (gs.bytes() > GsplatGpuBudgetBytes()) {
+        std::fprintf(stderr,
+                     "HIP Cycles gsplat buffers %.1f MiB exceed the %.1f MiB "
+                     "budget (LUSDVIEW_GSPLAT_VRAM_MB); splats not traced\n",
+                     double(gs.bytes()) / (1024.0 * 1024.0),
+                     double(GsplatGpuBudgetBytes()) / (1024.0 * 1024.0));
+      } else {
+        hs.pointCenters = std::move(gs.splats);
+        hs.pointMajorAxes = std::move(gs.shData);
+        hs.pointRadii.resize(gs.nodes.size());
+        std::memcpy(hs.pointRadii.data(), gs.nodes.data(),
+                    gs.nodes.size() * sizeof(uint32_t));
+        hs.pointOrder.assign(gs.chunks.begin(), gs.chunks.end());
+        hs.pointNormals.clear();
+        hs.pointColors.clear();
+        hs.pointBvh.clear();
+        hs.pointChunks.clear();
+        hs.pointCount = gs.splatCount;
+        gsChunkCount = int(gs.chunkCount);
+        gsActive_ = true;
+        std::fprintf(stderr, "HIP Cycles gsplat kernel: %u splat(s) in %u chunk(s)\n",
+                     gs.splatCount, gs.chunkCount);
+      }
+    }
+  }
   const uint64_t gaussianBytes =
       uint64_t(hs.pointCenters.size()) * sizeof(float) +
       uint64_t(hs.pointMajorAxes.size()) * sizeof(float) +
@@ -388,7 +420,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
       if (freeBytes > kHeadroom) gaussianBudget = freeBytes - kHeadroom;
     }
   }
-  if (gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
+  if (!gsActive_ && gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
     pointPaging_ = true;
     pointHost_.reset(new HostScene());
     pointHost_->pointCenters = std::move(hs.pointCenters);
@@ -492,6 +524,10 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
     if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node),
             &dPointBvh_)) return false;
     pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
+    if (gsActive_) {
+      pointCount_ = -pointCount_;
+      pointChunkCount_ = gsChunkCount;
+    }
     if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
             &dPointChunks_)) return false;
   }

@@ -330,8 +330,15 @@ python3 examples/lusdview/render-motion.py \
     `cycles` traces `ParticleField3DGaussianSplat` prims with the Blender 5.3
     Cycles kernel (`src/tydra/gsplat-kernel.hh`): full 3D ellipsoids, a
     stochastic opacity test, and SH emission up to degree 3, composited with
-    mesh hits by depth. Only the CPU tracer implements it, so the flag selects
-    `--cpu-rt`. It is noisy at one sample; use `--rt-samples N` to average.
+    mesh hits by depth. It runs on every ray tracer: `--cpu-rt`, Vulkan
+    `--rt` (ray-query pipeline), `--hip` and `--cuda`. Without a ray tracer
+    flag it selects `--cpu-rt`. The GPU backends upload the LightRT splat
+    encoding (`BuildGsplatGpuData`, `rt_scene_build.hh`) into the Gaussian
+    point buffers, capped at `LUSDVIEW_GSPLAT_VRAM_MB` (default 4096). Vulkan's
+    compute-BVH fallback (cold pipeline cache) has no Cycles path; it warns,
+    and `LUSDVIEW_RT_ALLOW_COLD_COMPILE=1` compiles the ray-query pipeline.
+    It is noisy at one sample: average with `--rt-samples N` (CPU/HIP/CUDA) or
+    `--frames N` (Vulkan accumulation).
     `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
     convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build

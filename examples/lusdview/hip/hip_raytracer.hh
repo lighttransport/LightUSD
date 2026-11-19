@@ -25,6 +25,10 @@ namespace lusdview {
 
 class HipRayTracer {
  public:
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
   HipRayTracer() = default;
   ~HipRayTracer();
 
@@ -147,6 +151,8 @@ class HipRayTracer {
   uintptr_t dPointDepth_{0};
   int pointCount_{0};
   int pointChunkCount_{0};
+  // --gsplat-kernel cycles (pointCount_ < 0 selects the kernel path).
+  bool gsplatCycles_{false}, gsplatSrgb_{false}, gsActive_{false};
   int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_

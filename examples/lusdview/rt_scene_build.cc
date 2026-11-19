@@ -21,6 +21,8 @@
 #include "ptex_atlas.hh"
 #include "log.hh"
 #include "texture_tools.hh"
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 
 namespace lusdview {
 
@@ -2298,6 +2300,99 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
                  std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
   }
   return true;
+}
+
+uint64_t GsplatGpuBudgetBytes() {
+  if (const char* v = std::getenv("LUSDVIEW_GSPLAT_VRAM_MB")) {
+    char* end = nullptr;
+    const unsigned long long mb = std::strtoull(v, &end, 10);
+    if (end != v && *end == '\0' && mb > 0) return uint64_t(mb) << 20;
+  }
+  return uint64_t(4) << 30;
+}
+
+bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
+                        GsplatGpuData* out) {
+  *out = GsplatGpuData();
+  lightusd::gsplat::GSplatTracer tracer;
+  for (const DrawPointsCPU& src : points) {
+    if (!src.gaussian) continue;
+    const size_t n = src.points.size() / 3;
+    if (src.gaussianScales.size() < n * 3 || src.gaussianRotations.size() < n * 4) {
+      out->skipped += n;
+      continue;
+    }
+    // DrawPointsCPU::world is column-major local-to-world (as in CPU RT).
+    const double linear[9] = {src.world[0], src.world[4], src.world[8],
+                              src.world[1], src.world[5], src.world[9],
+                              src.world[2], src.world[6], src.world[10]};
+    const double translation[3] = {src.world[12], src.world[13], src.world[14]};
+    const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                          size_t(src.gaussianShDegree + 1) * 3;
+    const bool sh = src.gaussianSh.size() >= n * coeffs;
+    std::vector<float> constOpacity;
+    if (src.opacities.size() < n)
+      constOpacity.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
+    tracer.AddField(linear, translation, n, src.points.data(),
+                    src.gaussianRotations.data(), src.gaussianScales.data(),
+                    constOpacity.empty() ? src.opacities.data() : constOpacity.data(),
+                    src.gaussianShDegree, sh ? src.gaussianSh.data() : nullptr);
+  }
+  out->skipped += tracer.skipped();
+  const auto& world = tracer.splats();
+  if (world.empty()) return false;
+  std::vector<lrt_gsplat> ls(world.size());
+  for (size_t i = 0; i < world.size(); ++i) {
+    const auto& g = world[i];
+    lrt_gsplat& d = ls[i];
+    d.mu[0] = g.mu.x; d.mu[1] = g.mu.y; d.mu[2] = g.mu.z;
+    d.opacity = g.opacity;
+    std::memcpy(d.a, g.a, sizeof(d.a));
+    d.radius = g.radius;
+    d.id = uint32_t(i);
+    d.pad = 0;
+  }
+  // Chunks keep each BVH shallow enough for the 64-entry GPU stack.
+  lrt_gsplat_build_options bo{};
+  bo.max_chunk_splats = size_t(1) << 22;
+  lrt_result err = LRT_RESULT_OK;
+  lrt_gsplat_scene* scene = lrt_gsplat_scene_build(ls.data(), ls.size(), &bo, &err);
+  if (!scene) return false;
+  const size_t nf = tracer.field_count();
+  out->shData.assign(nf * 12, 0.f);
+  for (size_t f = 0; f < nf; ++f)
+    std::memcpy(&out->shData[f * 12], tracer.field_linv(f), 9 * sizeof(float));
+  const size_t shBase = out->shData.size();
+  out->shData.insert(out->shData.end(), tracer.sh_data().begin(),
+                     tracer.sh_data().end());
+  const size_t nchunks = lrt_gsplat_scene_chunk_count(scene);
+  for (size_t k = 0; k < nchunks; ++k) {
+    const uint32_t* nodes;
+    const lrt_gsplat* sp;
+    uint32_t nn, ns;
+    lrt_gsplat_scene_chunk(scene, k, &nodes, &nn, &sp, &ns);
+    if (!nn || !ns) continue;
+    out->chunks.push_back(int32_t(out->nodes.size() / 8));
+    out->chunks.push_back(int32_t(out->splats.size() / 16));
+    out->nodes.insert(out->nodes.end(), nodes, nodes + size_t(nn) * 8);
+    for (uint32_t i = 0; i < ns; ++i) {
+      const lrt_gsplat& g = sp[i];
+      const uint32_t f = tracer.field_of(g.id);
+      const uint32_t shOff = uint32_t(shBase + tracer.sh_offset(g.id));
+      const uint32_t meta = uint32_t(tracer.field_degree(f) & 3) |
+                            (srgb ? 4u : 0u) | (f << 8);
+      float rec[16];
+      std::memcpy(rec, &g, 14 * sizeof(float));
+      std::memcpy(&rec[14], &shOff, 4);
+      std::memcpy(&rec[15], &meta, 4);
+      out->splats.insert(out->splats.end(), rec, rec + 16);
+    }
+  }
+  lrt_gsplat_scene_free(scene);
+  out->splatCount = uint32_t(out->splats.size() / 16);
+  out->nodeCount = uint32_t(out->nodes.size() / 8);
+  out->chunkCount = uint32_t(out->chunks.size() / 2);
+  return out->splatCount > 0;
 }
 
 }  // namespace lusdview

@@ -256,7 +256,12 @@ class App
   // device-async upload step needed, so it's simpler than CUDA/HIP's path).
   void setCpuRt(bool on) { cpuRt_ = on; }
   void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
     cpuTracer_.setGsplatKernel(cycles, srgb);
+    cudaTracer_.setGsplatKernel(cycles, srgb);
+    hipTracer_.setGsplatKernel(cycles, srgb);
+    if (renderer_) renderer_->setGsplatKernel(cycles, srgb);
   }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
@@ -650,6 +655,7 @@ class App
   // handling in the main loop.
   int headlessWinW_{0};
   int headlessWinH_{0};
+  bool gsplatCycles_{false}, gsplatSrgb_{false};  // --gsplat-kernel cycles
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
   std::string cameraName_;  // --camera: named USD camera to frame (--core path)

@@ -1829,6 +1829,131 @@ __device__ float pointHitChunks(const Node* bvh, const int* order,
   }
   return best;
 }
+
+)CUDA"
+R"CUDA(
+// --gsplat-kernel cycles: Blender Cycles 3D Gaussian splat kernel (Apache-2.0,
+// Blender Foundation; ported via src/external/lightrt/lightrt_c_gsplat.c).
+// Host encoding (rt_scene_build.hh GsplatGpuData), signalled by pointCount < 0:
+// pointCenters = splats (16 floats), pointRadii = nodes (8 words), pointOrder =
+// chunks {nodeFirst, splatFirst}, pointMajor = per-field linv + SH.
+__device__ float gsHash(F3 p, unsigned seed) {
+  unsigned h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
+  const float v[3] = {p.x, p.y, p.z};
+  for (int i = 0; i < 3; ++i) {
+    unsigned b = __float_as_uint(v[i]);
+    h ^= b + 0x7f4a7c15u + (h << 6) + (h >> 2);
+    h = h * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+  }
+  return (float)(h >> 8) * (1.f / 16777216.f);
+}
+__device__ bool gsBox(const unsigned* N, unsigned n, F3 o, const float* inv,
+                      float tmax, float* tnear) {
+  const unsigned* b = N + n * 8u;
+  const float oo[3] = {o.x, o.y, o.z};
+  float t0 = 0.f, t1 = tmax;
+  for (int k = 0; k < 3; ++k) {
+    float a = (__uint_as_float(b[k]) - oo[k]) * inv[k];
+    float c = (__uint_as_float(b[3 + k]) - oo[k]) * inv[k];
+    t0 = fmaxf(t0, fminf(a, c));
+    t1 = fminf(t1, fmaxf(a, c));
+  }
+  *tnear = t0;
+  return t0 <= t1;
+}
+__device__ float gsTraceCycles(const float* S, const unsigned* N, const int* C,
+                               int chunkCount, F3 o, F3 d, float tmax,
+                               unsigned seed, int* hit) {
+  *hit = -1;
+  float inv[3];
+  const float dv[3] = {d.x, d.y, d.z};
+  for (int k = 0; k < 3; ++k) {
+    float v = 1.f / dv[k];
+    if (!(v >= -1e18f && v <= 1e18f)) v = (dv[k] < 0.f) ? -1e18f : 1e18f;
+    inv[k] = v;
+  }
+  const float dd = dot3(d, d);
+  float best = tmax;
+  for (int c = 0; c < chunkCount; ++c) {
+    const unsigned nb = (unsigned)C[c * 2], sb0 = (unsigned)C[c * 2 + 1];
+    unsigned stk[64]; int sp = 0; float tn;
+    if (gsBox(N, nb, o, inv, best, &tn)) stk[sp++] = 0u;
+    while (sp > 0) {
+      const unsigned n = nb + stk[--sp];
+      const unsigned first = N[n * 8u + 6u], count = N[n * 8u + 7u];
+      if (count == 0u) {
+        float ta, tb;
+        const bool ha = gsBox(N, nb + first, o, inv, best, &ta);
+        const bool hb = gsBox(N, nb + first + 1u, o, inv, best, &tb);
+        if (ha && hb && sp + 2 <= 64) {
+          if (ta <= tb) { stk[sp++] = first + 1u; stk[sp++] = first; }
+          else { stk[sp++] = first; stk[sp++] = first + 1u; }
+        } else if (ha && sp < 64) stk[sp++] = first;
+        else if (hb && sp < 64) stk[sp++] = first + 1u;
+        continue;
+      }
+      for (unsigned i = sb0 + first; i < sb0 + first + count; ++i) {
+        const float* g = S + (size_t)i * 16u;
+        const F3 oc = mk(o.x - g[0], o.y - g[1], o.z - g[2]);
+        const float b = dot3(oc, d);
+        if (b * b - dd * (dot3(oc, oc) - g[13] * g[13]) < 0.f) continue;
+        const F3 og = mk(g[4]*oc.x + g[5]*oc.y + g[6]*oc.z,
+                         g[7]*oc.x + g[8]*oc.y + g[9]*oc.z,
+                         g[10]*oc.x + g[11]*oc.y + g[12]*oc.z);
+        const F3 dg = mk(g[4]*d.x + g[5]*d.y + g[6]*d.z,
+                         g[7]*d.x + g[8]*d.y + g[9]*d.z,
+                         g[10]*d.x + g[11]*d.y + g[12]*d.z);
+        const float t = -dot3(og, dg) / dot3(dg, dg);
+        if (!(t > 0.f && t <= best)) continue;
+        const F3 e = add(og, scale(dg, t));
+        const float alpha = g[3] * expf(-0.5f * dot3(e, e));
+        if (gsHash(add(o, scale(d, t)), seed) > alpha) continue;
+        best = t; *hit = (int)i;
+      }
+    }
+  }
+  return best;
+}
+__device__ float gsSrgbToLinear(float c) {
+  return c < 0.04045f ? fmaxf(c, 0.f) * (1.f / 12.92f)
+                      : powf((c + 0.055f) * (1.f / 1.055f), 2.4f);
+}
+__device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d) {
+  const float* g = S + (size_t)id * 16u;
+  const unsigned shOff = __float_as_uint(g[14]);
+  const unsigned meta = __float_as_uint(g[15]);
+  const unsigned deg = meta & 3u;
+  const float* L = F + (size_t)(meta >> 8u) * 12u;
+  F3 v = mk(L[0]*d.x + L[1]*d.y + L[2]*d.z, L[3]*d.x + L[4]*d.y + L[5]*d.z,
+            L[6]*d.x + L[7]*d.y + L[8]*d.z);
+  const float l = sqrtf(dot3(v, v));
+  v = l > 0.f ? scale(v, 1.f / l) : mk(0.f, 0.f, 1.f);
+  const float x = v.x, y = v.y, z = v.z;
+  float bs[16];
+  bs[0] = 0.282094792f;
+  unsigned nb = 1u;
+  if (deg >= 1u) { bs[1] = -0.488602512f*y; bs[2] = 0.488602512f*z; bs[3] = -0.488602512f*x; nb = 4u; }
+  if (deg >= 2u) {
+    bs[4] = 1.092548431f*x*y; bs[5] = -1.092548431f*y*z;
+    bs[6] = 0.315391565f*(3.f*z*z - 1.f); bs[7] = -1.092548431f*x*z;
+    bs[8] = 0.546274215f*(x*x - y*y); nb = 9u;
+  }
+  if (deg >= 3u) {
+    bs[9] = -0.590043589f*y*(3.f*x*x - y*y); bs[10] = 2.890611442f*x*y*z;
+    bs[11] = -0.457045799f*y*(5.f*z*z - 1.f); bs[12] = 0.373176332f*z*(5.f*z*z - 3.f);
+    bs[13] = -0.457045799f*x*(5.f*z*z - 1.f); bs[14] = 1.445305721f*z*(x*x - y*y);
+    bs[15] = -0.590043590f*x*(x*x - 3.f*y*y); nb = 16u;
+  }
+  float r = 0.5f, gg = 0.5f, bb = 0.5f;
+  const float* c = F + shOff;
+  for (unsigned i = 0u; i < nb; ++i) {
+    r += c[i*3] * bs[i]; gg += c[i*3+1] * bs[i]; bb += c[i*3+2] * bs[i];
+  }
+  if (meta & 4u) return mk(gsSrgbToLinear(r), gsSrgbToLinear(gg), gsSrgbToLinear(bb));
+  return mk(fmaxf(r, 0.f), fmaxf(gg, 0.f), fmaxf(bb, 0.f));
+}
 )CUDA"
 R"CUDA(
 
@@ -1936,11 +2061,22 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   } else { ht=-1; hitInst=-1; }
   int pointHit = -1;
   float pointWeight = 0.f;
-  float pointT = pointHitChunks(pointBvh, pointOrder, pointChunks,
-                                pointChunkCount, pointCenters, pointMajor,
-                                pointNormals, pointRadii, o, d, &pointHit,
-                                &pointWeight);
-  if (pointChunkCount <= 0) {
+  const bool cyclesSplats = pointCount < 0;
+  float pointT = 1e30f;
+  if (cyclesSplats) {
+    pointT = gsTraceCycles(pointCenters, (const unsigned*)pointRadii, pointOrder,
+                           pointChunkCount, o, d, t,
+                           hashU((unsigned)(py*W+px)) ^
+                               hashU((unsigned)sampleIdx*0x9e3779b9u+1u),
+                           &pointHit);
+    pointWeight = 1.f;
+  } else {
+    pointT = pointHitChunks(pointBvh, pointOrder, pointChunks,
+                            pointChunkCount, pointCenters, pointMajor,
+                            pointNormals, pointRadii, o, d, &pointHit,
+                            &pointWeight);
+  }
+  if (!cyclesSplats && pointChunkCount <= 0) {
     pointT = pointHitBvh(pointBvh, pointOrder, pointCenters, pointMajor,
                          pointNormals, pointRadii, o, d, pointCount,
                          &pointHit, &pointWeight);
@@ -2837,7 +2973,11 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float v=vis/float(NS); outc=mk(v,v,v);
     }
   }
-  if (pointHit >= 0) {
+  if (pointHit >= 0 && cyclesSplats) {
+    // Cycles' default splat shader is pure emission.
+    if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
+    else outc = gsRadiance(pointCenters, pointMajor, pointHit, d);
+  } else if (pointHit >= 0) {
     F3 N = norm3(mk(pointNormals[pointHit*3], pointNormals[pointHit*3+1],
                     pointNormals[pointHit*3+2]));
     if (dot3(N, d) > 0.f) N = scale(N, -1.f);

@@ -866,6 +866,17 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     set_tests_properties(lusdview-cpu-gsplat-cycles
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
                                     LABELS "lusdview;cpu;gsplat")
+    # The same check on the GPU ray tracers (skip without a device/runtime).
+    foreach(_gs_backend rt hip cuda)
+      add_test(
+        NAME lusdview-${_gs_backend}-gsplat-cycles
+        COMMAND ${LIGHTUSD_BASH_CMD}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-gsplat-cycles.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_backend})
+      set_tests_properties(lusdview-${_gs_backend}-gsplat-cycles
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
+                                      LABELS "lusdview;gpu;gsplat")
+    endforeach()
 
     add_test(
       NAME lusdview-vk-gaussian-chunks

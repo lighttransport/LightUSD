@@ -49,6 +49,10 @@ class VulkanRenderer final : public Renderer {
   void setTransparencyMode(TransparencyMode mode) override;
   TransparencyStatus transparencyStatus() const override;
   void setRasterQualityHigh(bool high) override { rasterQualityHigh_ = high; }
+  void setGsplatKernel(bool cycles, bool srgb) override {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -1465,6 +1469,8 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtPointCount_{0};
   uint32_t rtPointNodeCount_{0};
   uint32_t rtPointChunkCount_{0};
+  // --gsplat-kernel cycles: the point buffers hold the LightRT splat encoding.
+  bool gsplatCycles_{false}, gsplatSrgb_{false}, rtGsplatCycles_{false};
   // True when analytic Gaussian point buffers do not fit the current Vulkan
   // residency budget; raster camera-facing splat quads remain available.
   bool gaussianRtDisabled_{false};
