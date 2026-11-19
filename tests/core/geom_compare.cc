@@ -15,6 +15,7 @@
 //
 // Matrices are row-major with the translation in the last row (Gf layout).
 #include <cstdio>
+#include <fstream>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -297,6 +298,40 @@ int DumpLod(const char* scene, double time, const double v[3], const double m[16
   return 0;
 }
 
+// usdLod screen size: FRUSTUM file = view16 proj16 planes24 pos3 persp refDepth
+// win2 transform16 (whitespace separated). Prints `<path> size <s> lod <i>`.
+int DumpLodScreen(const char* scene, const char* frustum_file) {
+  std::ifstream in(frustum_file);
+  std::vector<double> v;
+  double x;
+  while (in >> x) v.push_back(x);
+  if (v.size() != 16 + 16 + 24 + 3 + 1 + 1 + 2 + 16) return 2;
+  lightusd::LodFrustum f;
+  size_t i = 0;
+  for (double& d : f.view) d = v[i++];
+  for (double& d : f.projection) d = v[i++];
+  for (auto& plane : f.planes) for (double& d : plane) d = v[i++];
+  for (double& d : f.position) d = v[i++];
+  f.perspective = v[i++] != 0;
+  f.reference_plane_depth = v[i++];
+  f.window_size[0] = v[i++];
+  f.window_size[1] = v[i++];
+  double m[16];
+  for (double& d : m) d = v[i++];
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    if (prim.GetTypeName() != "LODScreenSizeHeuristic") return true;
+    lightusd::LodScreenSizeQuery q;
+    lightusd::CreateLodScreenSizeQuery(stage, prim, 0.0, &q);
+    const double size = lightusd::ComputeLodScreenSize(q, f, m);
+    std::printf("%s size %.12g lod %.9g\n", prim.GetPath().str().c_str(), size,
+                lightusd::ComputeLodIndex(q, size));
+    return true;
+  });
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -335,6 +370,9 @@ int main(int argc, char** argv) {
     const double t1 = colon == std::string::npos ? t0 : std::atof(range.substr(colon + 1).c_str());
     (void)argv[4];
     return DumpSemantics(argv[2], taxonomies, t0, t1);
+  }
+  if (argc == 4 && std::string(argv[1]) == "--dump-lod-screen") {
+    return DumpLodScreen(argv[2], argv[3]);
   }
   if (argc == 25 && std::string(argv[1]) == "--dump-lod") {
     double v[3], m[16];
