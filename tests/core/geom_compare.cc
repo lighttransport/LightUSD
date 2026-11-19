@@ -25,6 +25,7 @@
 #include "schema/physics-resolve.hh"
 #include "schema/usd-collection.hh"
 #include "schema/usd-render.hh"
+#include "schema/usd-semantics.hh"
 #include "schema/usd-shade.hh"
 #include "schema/geom-point-instancer.hh"
 #include "stage/stage.hh"
@@ -241,6 +242,33 @@ int DumpRenderSpec(const char* scene) {
   return 0;
 }
 
+// Per prim: `<path> tax <taxonomies...>` and, per taxonomy TAX listed on the
+// command line, `<path> <TAX> direct|inherited|interval <labels...>`.
+int DumpSemantics(const char* scene, const std::vector<std::string>& taxonomies, double t0,
+                  double t1) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    const std::string path = prim.GetPath().str();
+    std::printf("%s tax", path.c_str());
+    for (const auto& t : lightusd::ComputeInheritedTaxonomies(stage, prim)) std::printf(" %s", t.c_str());
+    std::printf("\n");
+    for (const auto& tax : taxonomies) {
+      const struct { const char* name; bool inherited, interval; } modes[] = {
+          {"direct", false, false}, {"inherited", true, false}, {"interval", true, true}};
+      for (const auto& m : modes) {
+        std::printf("%s %s %s", path.c_str(), tax.c_str(), m.name);
+        for (const auto& l : lightusd::ComputeUniqueSemanticsLabels(stage, prim, tax, m.inherited,
+                                                                     t0, m.interval, t1))
+          std::printf(" %s", l.c_str());
+        std::printf("\n");
+      }
+    }
+    return true;
+  });
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -270,6 +298,15 @@ int main(int argc, char** argv) {
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-volume") {
     return DumpVolumes(argv[2], std::atof(argv[3]));
+  }
+  if (argc >= 5 && std::string(argv[1]) == "--dump-semantics") {
+    std::vector<std::string> taxonomies(argv + 5, argv + argc);
+    const std::string range = argv[3];  // "t0" or "t0:t1"
+    const size_t colon = range.find(':');
+    const double t0 = std::atof(range.substr(0, colon).c_str());
+    const double t1 = colon == std::string::npos ? t0 : std::atof(range.substr(colon + 1).c_str());
+    (void)argv[4];
+    return DumpSemantics(argv[2], taxonomies, t0, t1);
   }
   if (argc == 3 && std::string(argv[1]) == "--dump-render-spec") {
     return DumpRenderSpec(argv[2]);
