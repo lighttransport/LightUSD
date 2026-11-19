@@ -143,7 +143,9 @@ jobs:
         deb="$(curl -fsSL "$pool/" | grep -o 'libpython3.12t64_[0-9][^" ]*ubuntu[^" ]*_amd64\.deb' | sort -V | tail -1)"
         test -n "$deb"
         curl -fsSL -o /tmp/libpython3.12t64.deb "$pool/$deb"
-        sudo dpkg -i /tmp/libpython3.12t64.deb
+        mkdir -p /tmp/libpython3.12
+        dpkg-deb -x /tmp/libpython3.12t64.deb /tmp/libpython3.12
+        echo "LD_LIBRARY_PATH=/tmp/libpython3.12/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
     - name: Download OpenUSD binary
       run: |
