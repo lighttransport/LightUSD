@@ -1032,7 +1032,9 @@ bool FlattenToUSDCFileBatched(const std::string &filename,
   BatchedComposer composer;
   if (!composer.Open(filename, resolver, options, batch_options, warn, err))
     return false;
-  CrateWriter writer(write_options);
+  CrateWriteOptions flattened_options = write_options;
+  flattened_options.composed_stage_output = true;
+  CrateWriter writer(flattened_options);
   if (composer.whole()) {
     // Nothing to batch: one regular compose and write.
     if (!composer.Plan(warn, err)) return false;

@@ -36,7 +36,9 @@ class UsdGeomPointInstancer {
   std::vector<Path> GetPrototypes() const;
   std::vector<int32_t> GetProtoIndices(double time = 0.0) const;
   std::vector<float> GetPositions(double time = 0.0) const;
+  /// Use orientationsf when its earliest sample (or default) is nonempty.
   std::vector<float> GetOrientations(double time = 0.0) const;
+  static bool UsesFloatOrientations(const PrimSpec& prim);
   std::vector<float> GetScales(double time = 0.0) const;
   std::vector<float> GetVelocities(double time = 0.0) const;
   std::vector<float> GetAngularVelocities(double time = 0.0) const;
@@ -45,6 +47,7 @@ class UsdGeomPointInstancer {
   std::vector<int64_t> GetInactiveIds() const;
 
   size_t GetInstanceCount(double time = 0.0) const;
+  /// Explicit empty protoIndices and positions describe a valid zero-instance frame.
   bool HasValidInstanceArrays(double time = 0.0, std::string* reason = nullptr) const;
 
   /// Compute per-instance local transforms from positions, orientations

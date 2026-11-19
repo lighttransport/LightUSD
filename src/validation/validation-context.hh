@@ -117,6 +117,8 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
                                USDValidationResult* result);
 void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& options,
                              USDValidationResult* result);
+void ValidateComposedGeometryTargets(const Stage& stage, const ValidationOptions& options,
+                                     USDValidationResult* result);
 // Evaluate at numeric samples with one coherent time across related properties.
 // Existing DefaultTime checks are performed by ValidateLayerAgainstAOUSDCore.
 USDValidationResult ValidateStageSamples(const Stage& stage,

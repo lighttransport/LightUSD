@@ -1307,6 +1307,8 @@ int lusdchecker::RunConfiguredChecker(CheckerOptions args,
     options.stage_presence_checks = false;
     options.run_callbacks = false;
     auto pass_result = lightusd::ValidateLayerAgainstAOUSDCore(*stage.GetRootLayer(), options);
+    if (args.composed)
+      lightusd::ValidateComposedGeometryTargets(stage, options, &pass_result);
     lightusd::ValidationContext context;
     context.layer = stage.GetRootLayer(); context.stage = &stage;
     context.options = options; context.source_asset = args.input; context.variants = selections;

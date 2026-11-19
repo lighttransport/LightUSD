@@ -333,10 +333,13 @@ void ApplyMetadata(const UsdzConvertOptions& o, Stage* stage) {
   }
 }
 
-bool SerializeRoot(const Stage& stage, bool usda, std::vector<uint8_t>* out,
-                   std::string* err) {
+bool SerializeRoot(const Stage& stage, bool usda, bool flattened,
+                   std::vector<uint8_t>* out, std::string* err) {
   if (usda) {
-    const std::string text = WriteUSDAToString(stage);
+    USDAWriteOptions options;
+    options.composed_stage_output = flattened;
+    options.emit_custom = flattened;
+    const std::string text = WriteUSDAToString(stage, options);
     if (text.empty()) {
       *err = "USDA export failed";
       return false;
@@ -344,7 +347,9 @@ bool SerializeRoot(const Stage& stage, bool usda, std::vector<uint8_t>* out,
     out->assign(text.begin(), text.end());
     return true;
   }
-  USDCWriteResult r = WriteUSDCToMemory(*out, stage, USDCWriteOptions());
+  USDCWriteOptions options;
+  options.crate_options.composed_stage_output = flattened;
+  USDCWriteResult r = WriteUSDCToMemory(*out, stage, options);
   if (!r.success) {
     *err = r.error.empty() ? "USDC export failed" : r.error;
     return false;
@@ -556,9 +561,10 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
     }
     RemapLayer(stage.GetRootLayer(), remap);
     std::vector<uint8_t> bytes;
-    if (!SerializeRoot(stage, opts.output_format == OutputFormat::USDA, &bytes,
-                       &err))
+    if (!SerializeRoot(stage, opts.output_format == OutputFormat::USDA,
+                       opts.flatten, &bytes, &err)) {
       return false;
+    }
     if (!WriteFile(opts.output, bytes.data(), bytes.size(), &err)) return false;
     stats.output_size = bytes.size();
     return true;
@@ -645,7 +651,7 @@ bool Convert(const UsdzConvertOptions& opts, UsdzConvertStats* stats_out,
   const bool usda_root =
       opts.usdz_root_layer_format == USDZRootLayerFormat::USDA;
   std::vector<uint8_t> root_bytes;
-  if (!SerializeRoot(stage, usda_root, &root_bytes, &err)) return false;
+  if (!SerializeRoot(stage, usda_root, opts.flatten, &root_bytes, &err)) return false;
   std::vector<uint8_t> package;
   USDZWriteOptions zopts;
   USDZWriteResult zr =

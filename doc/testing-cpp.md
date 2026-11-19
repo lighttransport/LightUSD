@@ -13,6 +13,26 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## USD schema conformance
+
+`core_test_validation` replays Lean-generated diagnostics for usdGeom,
+usdSkel, usdPhysics, usdMtlx, and usdVol. It also checks schema registry
+inheritance, applied APIs, and fallback values.
+
+```sh
+cmake --build build_ninja --target test_validation lusdcat lusdchecker lusdzconvert
+scripts/xctest.sh ctest --test-dir build_ninja -R '^core_test_validation$' --output-on-failure
+```
+
+The companion `usdspec-conformance` checkout provides the Lean sources and
+the `domain_composed_validation`, `domain_roundtrip`, and `domain_package`
+gates. They exercise authored layers, composed opinions, and USDA, USDC,
+and USDZ output with OpenUSD 26.11 as the interoperability oracle.
+
+`core_test_tydra` checks that grouped indexed mesh normals expand in selector
+order and take precedence over the built-in normals attribute. It also
+checks the separate behavior of empty and blocked indices.
+
 ## Explicit runtime configuration
 
 Library-owned code and `lusdrender` do not read process environment variables.

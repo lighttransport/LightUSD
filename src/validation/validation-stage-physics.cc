@@ -93,10 +93,41 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
       }
     }
     if (collider && registry.InheritsFrom(p.type_name(), "Points")) {
-      size_t points = 0, widths = 0;
-      if (!GetPoint3ArrayLen(p, "points", &points) || !GetArrayLengthProperty(p, "widths", &widths) ||
-          points == 0 || widths != points)
+      size_t points = 0;
+      std::vector<float> widths;
+      std::vector<int32_t> selectors;
+      const auto has_authored_value = [&](const char* name) {
+        const auto* samples = GetTimeSamplesOf(p, name);
+        return GetAttrValue(p, name) || (samples && !samples->empty());
+      };
+      const bool have_primvar = has_authored_value("primvars:widths");
+      const bool indexed = have_primvar && has_authored_value("primvars:widths:indices");
+      const PropMeta* meta = p.property_meta("primvars:widths");
+      const int authored_size = meta && (meta->authored & PropMeta::kElementSize)
+          ? meta->elementSize : 1;
+      const size_t group_size = authored_size > 0 ? static_cast<size_t>(authored_size) : 1;
+      const auto valid_width = [](float width) {
+        return std::isfinite(width) && width >= 0.0f;
+      };
+      const auto valid_group = [&](int32_t index) {
+        if (index < 0 || static_cast<size_t>(index) >= widths.size() / group_size)
+          return false;
+        const auto first = widths.cbegin() + static_cast<size_t>(index) * group_size;
+        return std::all_of(first, first + group_size, valid_width);
+      };
+      if (!GetPoint3ArrayLen(p, "points", &points) ||
+          !GetFloatArrayProperty(p, have_primvar ? "primvars:widths" : "widths", &widths) ||
+          (indexed && !GetIntArrayProperty(p, "primvars:widths:indices", &selectors)) ||
+          points == 0 ||
+          (indexed ? authored_size <= 0 || points % group_size != 0 ||
+                         selectors.size() != points / group_size
+                   : widths.size() != points)) {
         error("physics.collider.points", "Points collider needs nonempty matching widths and positions");
+      } else if (indexed ? !std::all_of(selectors.begin(), selectors.end(), valid_group)
+                         : !std::all_of(widths.begin(), widths.end(), valid_width)) {
+        error("physics.collider.points",
+              "Points collider widths must resolve to finite, non-negative diameters");
+      }
     }
     if (registry.InheritsFrom(p.type_name(), "PhysicsJoint")) {
       for (const char* rel : {"physics:body0", "physics:body1"}) {
@@ -104,9 +135,16 @@ void ValidateRegisteredPhysics(const Layer& layer, const ValidationOptions& opti
         if (!targets) continue;
         if (targets->size() > 1)
           error("physics.joint.bodyCount", "Joint body relationship must have at most one target");
-        for (const auto& target : *targets)
-          if (!layer.prim_at_path(target.str()))
+        // The OpenUSD physics importer looks up the authored target as a prim.
+        // A forwarding relationship is not a direct body endpoint.
+        for (const auto& target : *targets) {
+          const auto* target_prim = layer.prim_at_path(target.str());
+          if (!target_prim) {
             error("physics.joint.bodyTarget", "Joint body target does not resolve to a prim: " + target.str());
+          } else if (!registry.InheritsFrom(target_prim->type_name(), "Xformable")) {
+            error("physics.joint.bodyTarget", "Joint body target must be Xformable: " + target.str());
+          }
+        }
       }
     }
   }

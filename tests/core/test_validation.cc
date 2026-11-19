@@ -7,11 +7,17 @@
 
 #include "validation/usd-validation.hh"
 #include "validation/validation-context.hh"
+#include "schema/schema-registry.hh"
+#include "load-usd.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
+#include "writer/value-printer.hh"
 #include "../../src/pcp/layer-registry.hh"
 
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -70,6 +76,224 @@ static void DumpIssues(const USDValidationResult &result) {
 }
 
 // ---------------------------------------------------------------------------
+
+static void test_lean_registry_fallbacks() {
+  struct Probe {
+    const char *prim_type;
+    const char *applied;
+    const char *name;
+    const char *type;
+    const char *fallback;
+  };
+  static const Probe probes[] = {
+#define LIGHTUSD_REGISTRY_KIND(name, kind, parent)
+#define LIGHTUSD_REGISTRY_PROBE(prim, applied, name, type, fallback) \
+    {prim, applied, name, type, fallback},
+#define LIGHTUSD_REGISTRY_BUILTIN(owner, kind, api)
+#include "generated/lean/domain-registry-vectors.inc"
+#undef LIGHTUSD_REGISTRY_BUILTIN
+#undef LIGHTUSD_REGISTRY_PROBE
+#undef LIGHTUSD_REGISTRY_KIND
+  };
+  struct SchemaKind {
+    const char *name;
+    const char *kind;
+    const char *parent;
+  };
+  static const SchemaKind schemas[] = {
+#define LIGHTUSD_REGISTRY_KIND(name, kind, parent) {name, kind, parent},
+#define LIGHTUSD_REGISTRY_PROBE(prim, applied, name, type, fallback)
+#define LIGHTUSD_REGISTRY_BUILTIN(owner, kind, api)
+#include "generated/lean/domain-registry-vectors.inc"
+#undef LIGHTUSD_REGISTRY_BUILTIN
+#undef LIGHTUSD_REGISTRY_PROBE
+#undef LIGHTUSD_REGISTRY_KIND
+  };
+
+  struct BuiltinAPI {
+    const char *owner;
+    const char *kind;
+    const char *api;
+  };
+  static const BuiltinAPI builtins[] = {
+#define LIGHTUSD_REGISTRY_KIND(name, kind, parent)
+#define LIGHTUSD_REGISTRY_PROBE(prim, applied, name, type, fallback)
+#define LIGHTUSD_REGISTRY_BUILTIN(owner, kind, api) {owner, kind, api},
+#include "generated/lean/domain-registry-vectors.inc"
+#undef LIGHTUSD_REGISTRY_BUILTIN
+#undef LIGHTUSD_REGISTRY_PROBE
+#undef LIGHTUSD_REGISTRY_KIND
+  };
+
+  const SchemaRegistry &registry = GetSchemaRegistry();
+  for (const SchemaKind &schema : schemas) {
+    const std::string name = schema.name;
+    const std::string kind = schema.kind;
+    CHECK(registry.IsKnownSchema(name), name + " is registered");
+    CHECK(registry.IsConcreteTypedSchemaName(name) == (kind == "concreteTyped"),
+          name + " concrete type classification");
+    if (*schema.parent) {
+      CHECK(registry.InheritsFrom(name, schema.parent), name + " inherits " + schema.parent);
+    }
+    if (kind == "multipleApplyAPI") {
+      PrimSpec prim("Subject", "Xform");
+      prim.meta().apiSchemas().push_back(name);
+      CHECK(!registry.HasAPI(prim, name), name + " requires an instance");
+      prim.meta().apiSchemas()[0] += ":conformance";
+      CHECK(registry.HasAPI(prim, name, "conformance") &&
+                !registry.HasAPI(prim, name, "different"),
+            name + " resolves the applied instance");
+    }
+  }
+
+  std::map<std::string, std::vector<std::string>> expected_builtins;
+  for (const BuiltinAPI &builtin : builtins) {
+    auto &list = expected_builtins[builtin.owner];
+    if (list.empty() && std::strcmp(builtin.kind, "singleApplyAPI") == 0) {
+      list.emplace_back(builtin.owner);
+    }
+    list.emplace_back(builtin.api);
+  }
+  for (const SchemaKind &schema : schemas) {
+    const auto expected = expected_builtins.find(schema.name);
+    if (expected == expected_builtins.end()) continue;
+    const bool typed = std::strcmp(schema.kind, "concreteTyped") == 0;
+    PrimSpec prim("Subject", typed ? schema.name : "");
+    if (!typed) prim.meta().apiSchemas().push_back(schema.name);
+    CHECK(registry.AppliedSchemas(prim) == expected->second,
+          std::string(schema.name) + " resolved built-in API order");
+  }
+
+  std::map<std::pair<std::string, std::string>, Stage> stages;
+  const Path path("/Subject");
+  for (const Probe &probe : probes) {
+    const std::string label = std::string(*probe.prim_type ? probe.prim_type : probe.applied) +
+                              "." + probe.name;
+    auto entry = stages.try_emplace(std::make_pair(probe.prim_type, probe.applied));
+    Stage &stage = entry.first->second;
+    if (entry.second) {
+      std::string source = "#usda 1.0\ndef ";
+      if (*probe.prim_type) source += std::string(probe.prim_type) + " ";
+      source += "\"Subject\"";
+      if (*probe.applied) {
+        source += " (prepend apiSchemas = [\"" + std::string(probe.applied) + "\"])";
+      }
+      source += " {}\n";
+      std::string error;
+      if (!LoadUSDFromMemory(reinterpret_cast<const uint8_t *>(source.data()),
+                             source.size(), &stage, nullptr, &error)) {
+        CHECK(false, label + " fixture failed to parse: " + error);
+        continue;
+      }
+    }
+    const Layer *layer = stage.GetRootLayer();
+    const PrimSpec *spec = layer ? layer->prim_at_path(path.str()) : nullptr;
+    if (!spec) {
+      CHECK(false, label + " missing fixture prim");
+      continue;
+    }
+    const auto *definition = registry.FindProperty(*spec, probe.name);
+    if (!definition || definition->type_name != probe.type) {
+      CHECK(false, label + " expected type " + probe.type + ", got " +
+                       (definition ? definition->type_name : "<missing>"));
+      continue;
+    }
+
+    const UsdPrim prim = stage.GetPrimAtPath(path);
+    CHECK(prim.HasProperty(probe.name) && !prim.HasAuthoredProperty(probe.name),
+          label + " schema property is visible and unauthored");
+    const Value *actual = prim.GetPropertyValue(probe.name);
+    if (!probe.fallback) {
+      CHECK(!actual, label + " has no fallback");
+      continue;
+    }
+
+    const std::string type = probe.type;
+    const bool array = type.size() > 2 && type.compare(type.size() - 2, 2, "[]") == 0;
+    const TypeId id = GetTypeIdFromName(type.data(), type.size() - (array ? 2 : 0));
+    Lexer lexer(probe.fallback, std::strlen(probe.fallback));
+    ParseResult expected = array ? ParseArrayValue(lexer, id) : ParseValue(lexer, id);
+    CHECK(expected.success && actual && *actual == expected.value,
+          label + " expected fallback " + probe.fallback + ", got " +
+              (actual ? PrintValue(*actual) : "<missing>"));
+  }
+}
+
+static void test_lean_domain_catalog() {
+  struct Vector {
+    const char *prim_type;
+    const char *applied_api;
+    const char *property;
+    const char *type;
+  };
+  static const Vector vectors[] = {
+#include "generated/lean/domain-catalog-vectors.inc"
+  };
+  const auto &registry = GetSchemaRegistry();
+  for (const auto &vector : vectors) {
+    PrimSpec prim("Subject", vector.prim_type);
+    if (*vector.applied_api) {
+      prim.meta().apiSchemas().push_back(vector.applied_api);
+      const std::string applied(vector.applied_api);
+      const size_t separator = applied.find(':');
+      const std::string instance = separator == std::string::npos
+                                       ? "" : applied.substr(separator + 1);
+      CHECK(registry.HasAPI(prim, applied.substr(0, separator), instance),
+            vector.applied_api);
+    }
+    const auto *property = registry.FindProperty(prim, vector.property);
+    CHECK(property && property->type_name == vector.type, vector.property);
+  }
+  PrimSpec material("Subject", "Material");
+  CHECK(!registry.FindProperty(material, "config:mtlx:version"),
+        "MaterialX config fallback requires the applied API");
+  material.meta().apiSchemas().push_back("MaterialXConfigAPI");
+  const auto *version = registry.FindProperty(material, "config:mtlx:version");
+  CHECK(version && version->fallback.as_string() &&
+            *version->fallback.as_string() == "1.38",
+        "MaterialXConfigAPI publishes the OpenUSD fallback");
+}
+
+static void test_lean_domain_validation() {
+  struct Vector {
+    const char *schema;
+    const char *property;
+    const char *rule;
+    size_t errors;
+    size_t warnings;
+  };
+  static const Vector vectors[] = {
+#include "generated/lean/domain-validation-vectors.inc"
+  };
+  ValidationOptions options;
+  options.geom = options.physics = options.shade = true;
+  for (const auto &vector : vectors) {
+    const std::string usda = std::string("#usda 1.0\n") +
+        "def Scope \"Scene\" {\n" +
+        "def " + vector.schema + " \"Subject\" {\n" + vector.property +
+        "\n}\ndef OpenVDBAsset \"F\" {\n"
+        "token fieldDataType = \"float\"\nasset filePath = @frame-f.vdb@\n}\n"
+        "def OpenVDBAsset \"G\" {\n"
+        "token fieldDataType = \"float\"\nasset filePath = @frame-g.vdb@\n}\n"
+        "def Xform \"NotAField\" {}\n}\n";
+    USDValidationResult result;
+    CHECK(Validate(usda, options, &result), vector.schema);
+    size_t errors = 0;
+    size_t warnings = 0;
+    for (const auto &issue : result.issues) {
+      if (issue.rule_id != vector.rule) continue;
+      if (issue.severity == USDValidationSeverity::Error) ++errors;
+      else ++warnings;
+      CHECK(issue.location == "/Scene/Subject" ||
+                issue.location.compare(0, 15, "/Scene/Subject.") == 0,
+            issue.location);
+    }
+    CHECK(errors == vector.errors && warnings == vector.warnings,
+          std::string(vector.rule) + " for " + vector.schema + ": " + vector.property +
+              " (errors " + std::to_string(errors) + ", warnings " +
+              std::to_string(warnings) + ")");
+  }
+}
 
 static void test_valid_usda_passes() {
   std::cout << "[valid usda passes]\n";
@@ -608,6 +832,35 @@ def Material "BadMtlx"
         "unconnected MaterialX terminal flagged");
   CHECK(CountWarnings(result, "shade.materialX.output") == 1,
         "MaterialX shader without an output flagged");
+
+  const std::string references = R"(#usda 1.0
+def Xform "Root" (prepend references = @look.mtlx@</MaterialX>) {}
+def Material "Nested" (prepend references = @look.mtlx@</MaterialX/Materials/Paint>) {}
+def Material "Wrong" (prepend references = @look.mtlx@</MaterialXOther/Paint>) {}
+)";
+  USDValidationResult reference_result;
+  CHECK(Validate(references, opts, &reference_result), "references parse");
+  CHECK(CountWarnings(reference_result, "shade.materialX.referencePrimPath") == 1,
+        "only paths outside the MaterialX namespace are flagged");
+
+  const std::string synthesized = R"(#usda 1.0
+def Scope "MaterialX" {
+    def Scope "Materials" {
+        def Material "Missing" {
+            rel mtlx:surface:source = None
+        }
+        def Material "Bound" {
+            rel mtlx:surface:source = None
+            rel mtlx:volume:source = </MaterialX/Graph>
+        }
+    }
+    def NodeGraph "Graph" {}
+}
+)";
+  USDValidationResult synthesized_result;
+  CHECK(Validate(synthesized, opts, &synthesized_result), "synthetic materials parse");
+  CHECK(CountErrors(synthesized_result, "shade.materialX.nodeReference") == 1,
+        "a material with only empty terminal relationships has no shader reference");
 }
 
 static void test_lux_rules() {
@@ -1227,6 +1480,9 @@ int main() {
   CHECK(compat.error_count() == 1 && compat.warning_count() == 1,
         "compatibility upgrades remain selective and idempotent");
   ApplyUsdcheckerCompatSeverities(nullptr);
+  test_lean_domain_catalog();
+  test_lean_registry_fallbacks();
+  test_lean_domain_validation();
   test_valid_usda_passes();
   test_layer_metadata_rules();
   test_xform_op_order();

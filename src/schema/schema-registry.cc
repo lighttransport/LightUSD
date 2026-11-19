@@ -4,49 +4,79 @@
 #include "schema-registry.hh"
 
 #include "stage/stage.hh"
+#include "parser/lexer.hh"
+#include "parser/value-parser.hh"
 
 #include <algorithm>
-#include <limits>
+#include <cassert>
+#include <cstring>
+#include <iterator>
+#include <map>
+#include <set>
+#include <string_view>
 
 namespace lightusd {
 
 namespace {
 
-Value Token(const char* value) { return Value::MakeToken(value); }
+struct DomainProperty {
+  const char* schema;
+  const char* name;
+  const char* type;
+  const char* fallback;
+};
 
-bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
-  for (const std::string& applied : prim.meta().apiSchemas()) {
-    if (applied == schema ||
-        (applied.size() > schema.size() &&
-         applied.compare(0, schema.size(), schema) == 0 &&
-         applied[schema.size()] == ':')) {
-      return true;
+constexpr DomainProperty kDomainProperties[] = {
+#define LIGHTUSD_DOMAIN_BUILTIN(owner, applied)
+#define LIGHTUSD_DOMAIN_SCHEMA(name, parent)
+#define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback) \
+  {schema, name, type, fallback},
+#include "schema/generated/openusd-domain-schema-registry.inc"
+#undef LIGHTUSD_DOMAIN_PROPERTY
+#undef LIGHTUSD_DOMAIN_SCHEMA
+#undef LIGHTUSD_DOMAIN_BUILTIN
+};
+
+constexpr std::pair<std::string_view, std::string_view> kDomainParents[] = {
+#define LIGHTUSD_DOMAIN_BUILTIN(owner, applied)
+#define LIGHTUSD_DOMAIN_SCHEMA(name, parent) {name, parent},
+#define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback)
+#include "schema/generated/openusd-domain-schema-registry.inc"
+#undef LIGHTUSD_DOMAIN_PROPERTY
+#undef LIGHTUSD_DOMAIN_SCHEMA
+#undef LIGHTUSD_DOMAIN_BUILTIN
+};
+
+constexpr std::pair<std::string_view, std::string_view> kDomainBuiltinAPIs[] = {
+#define LIGHTUSD_DOMAIN_SCHEMA(name, parent)
+#define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback)
+#define LIGHTUSD_DOMAIN_BUILTIN(owner, applied) {owner, applied},
+#include "schema/generated/openusd-domain-schema-registry.inc"
+#undef LIGHTUSD_DOMAIN_BUILTIN
+#undef LIGHTUSD_DOMAIN_PROPERTY
+#undef LIGHTUSD_DOMAIN_SCHEMA
+};
+
+void AppendDomainAPIs(std::string_view owner, std::vector<std::string>& result) {
+  for (const auto& [schema, applied] : kDomainBuiltinAPIs) {
+    if (schema != owner ||
+        std::find(result.begin(), result.end(), applied) != result.end()) {
+      continue;
     }
+    result.emplace_back(applied);
+    AppendDomainAPIs(applied, result);
   }
-  // OpenUSD auto-applies these API schemas to the concrete 3D Gaussian type.
-  // They need not appear in authored apiSchemas metadata.
-  if (prim.type_name() == "ParticleField3DGaussianSplat") {
-    static const char* kGaussianSchemas[] = {
-        "ParticleFieldPositionAttributeAPI",
-        "ParticleFieldOrientationAttributeAPI",
-        "ParticleFieldScaleAttributeAPI",
-        "ParticleFieldOpacityAttributeAPI",
-        "ParticleFieldKernelGaussianEllipsoidAPI",
-        "ParticleFieldSphericalHarmonicsAttributeAPI"};
-    for (const char* auto_applied : kGaussianSchemas) {
-      if (schema == auto_applied) return true;
-    }
-  }
-  return false;
 }
 
-bool MatchDefinitionName(const PrimSpec& prim,
+Value SchemaToken(const char* value) { return Value::MakeToken(value); }
+
+bool MatchDefinitionName(const std::vector<std::string>& applied_schemas,
                          const SchemaPropertyDefinition& def,
                          const std::string& property_name) {
   static const std::string marker = "__INSTANCE__";
   const size_t marker_pos = def.instance_marker_pos;
   if (marker_pos == std::string::npos) return def.name == property_name;
-  for (const std::string& applied : prim.meta().apiSchemas()) {
+  for (const std::string& applied : applied_schemas) {
     const std::string prefix = def.schema_type + ":";
     if (applied.compare(0, prefix.size(), prefix) != 0) continue;
     const std::string instance = applied.substr(prefix.size());
@@ -64,10 +94,10 @@ bool IsAPISchemaTypeName(const std::string& name) {
 
 // Rank of the applied schema `schema` within the prim's apiSchemas (list-op
 // resolved order), or -1. Instance-qualified entries match their family.
-// The Gaussian auto-applies rank after every authored entry.
-int AppliedSchemaRank(const PrimSpec& prim, const std::string& schema) {
+int AppliedSchemaRank(const std::vector<std::string>& applied_schemas,
+                      const std::string& schema) {
   int rank = 0;
-  for (const std::string& applied : prim.meta().apiSchemas()) {
+  for (const std::string& applied : applied_schemas) {
     if (applied == schema ||
         (applied.size() > schema.size() &&
          applied.compare(0, schema.size(), schema) == 0 &&
@@ -76,7 +106,6 @@ int AppliedSchemaRank(const PrimSpec& prim, const std::string& schema) {
     }
     ++rank;
   }
-  if (HasAppliedSchema(prim, schema)) return rank;
   return -1;
 }
 
@@ -195,7 +224,7 @@ SchemaRegistry::SchemaRegistry() {
   // Keep the generated AOUSD 1.0.1 unqualified declarations above for read
   // compatibility and add the standard instantiated property namespace.
   add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:name",
-      "token", Token("custom"));
+      "token", SchemaToken("custom"));
   add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:redChroma",
       "float2", Value::MakeFloat2(1.0f, 0.0f));
   add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:greenChroma",
@@ -208,119 +237,15 @@ SchemaRegistry::SchemaRegistry() {
       "float", Value(1.0f));
   add("ColorSpaceDefinitionAPI", "colorSpaceDefinition:__INSTANCE__:linearBias",
       "float", Value(0.0f));
-  add("Imageable", "visibility", "token", Token("inherited"));
-  add("Imageable", "purpose", "token", Token("default"));
-  add("Xformable", "xformOpOrder", "token[]",
-      Value::MakeTokenArray(std::vector<std::string>()));
-  add("Gprim", "doubleSided", "bool", Value(false));
-  add("Gprim", "orientation", "token", Token("rightHanded"));
-  add("Mesh", "subdivisionScheme", "token", Token("catmullClark"));
-  add("Mesh", "interpolateBoundary", "token", Token("edgeAndCorner"));
-  add("Mesh", "faceVaryingLinearInterpolation", "token",
-      Token("cornersPlus1"));
-  add("Mesh", "triangleSubdivisionRule", "token", Token("catmullClark"));
-  add("Sphere", "radius", "double", Value(1.0));
-  add("Cube", "size", "double", Value(2.0));
-  add("Cylinder", "radius", "double", Value(1.0));
-  add("Cylinder", "height", "double", Value(2.0));
-  add("Cylinder", "axis", "token", Token("Z"));
-  add("Cone", "radius", "double", Value(1.0));
-  add("Cone", "height", "double", Value(2.0));
-  add("Cone", "axis", "token", Token("Z"));
-  add("Capsule", "radius", "double", Value(0.5));
-  add("Capsule", "height", "double", Value(1.0));
-  add("Capsule", "axis", "token", Token("Z"));
-  add("Camera", "projection", "token", Token("perspective"));
-  add("Camera", "horizontalAperture", "float", Value(20.955f));
-  add("Camera", "verticalAperture", "float", Value(15.2908f));
-  add("Camera", "focalLength", "float", Value(50.0f));
-  add("Camera", "focusDistance", "float", Value(5.0f));
-  add("Camera", "fStop", "float", Value(0.0f));
-  add("PhysicsScene", "physics:gravityDirection", "vector3f",
-      Value::MakeVector3f(0.0f, 0.0f, 0.0f));
-  add("PhysicsScene", "physics:gravityMagnitude", "float",
-      Value(-std::numeric_limits<float>::infinity()));
-
-  add("PhysicsRigidBodyAPI", "physics:rigidBodyEnabled", "bool", Value(true));
-  add("PhysicsRigidBodyAPI", "physics:kinematicEnabled", "bool", Value(false));
-  add("PhysicsRigidBodyAPI", "physics:startsAsleep", "bool", Value(false));
-  add("PhysicsRigidBodyAPI", "physics:velocity", "vector3f",
-      Value::MakeVector3f(0.0f, 0.0f, 0.0f));
-  add("PhysicsRigidBodyAPI", "physics:angularVelocity", "vector3f",
-      Value::MakeVector3f(0.0f, 0.0f, 0.0f));
-  add("PhysicsCollisionAPI", "physics:collisionEnabled", "bool", Value(true));
-  add("PhysicsMassAPI", "physics:mass", "float", Value(0.0f));
-  add("PhysicsMassAPI", "physics:density", "float", Value(0.0f));
-  const float infinity = std::numeric_limits<float>::infinity();
-  // UsdPhysics schema sentinel values request automatic computation. In
-  // particular, mass=0 and principalAxes=(0,0,0,0) are not physical zero-mass
-  // or normalized-rotation assertions.
-  add("PhysicsMassAPI", "physics:centerOfMass", "point3f",
-      Value::MakePoint3f(-infinity, -infinity, -infinity));
-  add("PhysicsMassAPI", "physics:diagonalInertia", "float3",
-      Value::MakeFloat3(0, 0, 0));
-  add("PhysicsMassAPI", "physics:principalAxes", "quatf", Value::MakeQuatf(0, 0, 0, 0));
-  add("PhysicsMaterialAPI", "physics:density", "float", Value(0.0f));
-  add("PhysicsMeshCollisionAPI", "physics:approximation", "token", Token("none"));
-  declare("PhysicsCollisionGroup", "physics:invertFilteredGroups", "bool");
-  declare("PhysicsCollisionGroup", "physics:mergeGroup", "string");
-  declare("PhysicsCollisionGroup", "physics:filteredGroups", "relationship");
   // CollisionGroup includes CollectionAPI:colliders without an authored API
   // list. AOUSD Core 1.0.1 / 1.1 define includeRoot's fallback as false;
   // OpenUSD 26.11's generated schema currently leaves it unset.
   add("PhysicsCollisionGroup", "collection:colliders:expansionRule", "token",
-      Token("expandPrims"));
+      SchemaToken("expandPrims"));
   add("PhysicsCollisionGroup", "collection:colliders:includeRoot", "bool",
       Value(false));
   declare("PhysicsCollisionGroup", "collection:colliders:includes", "relationship");
   declare("PhysicsCollisionGroup", "collection:colliders:excludes", "relationship");
-
-  add("PhysicsJoint", "physics:jointEnabled", "bool", Value(true));
-  add("PhysicsJoint", "physics:collisionEnabled", "bool", Value(false));
-  add("PhysicsJoint", "physics:excludeFromArticulation", "bool", Value(false));
-  add("PhysicsJoint", "physics:breakForce", "float", Value(infinity));
-  add("PhysicsJoint", "physics:breakTorque", "float", Value(infinity));
-  for (const char* name : {"physics:localPos0", "physics:localPos1"})
-    add("PhysicsJoint", name, "point3f", Value::MakePoint3f(0, 0, 0));
-  for (const char* name : {"physics:localRot0", "physics:localRot1"})
-    add("PhysicsJoint", name, "quatf", Value::MakeQuatf(1, 0, 0, 0));
-  for (const char* schema : {"PhysicsRevoluteJoint", "PhysicsPrismaticJoint"}) {
-    add(schema, "physics:axis", "token", Token("X"));
-    add(schema, "physics:lowerLimit", "float", Value(-infinity));
-    add(schema, "physics:upperLimit", "float", Value(infinity));
-  }
-  add("PhysicsSphericalJoint", "physics:axis", "token", Token("X"));
-  add("PhysicsSphericalJoint", "physics:coneAngle0Limit", "float", Value(-1.0f));
-  add("PhysicsSphericalJoint", "physics:coneAngle1Limit", "float", Value(-1.0f));
-  add("PhysicsDistanceJoint", "physics:minDistance", "float", Value(-1.0f));
-  add("PhysicsDistanceJoint", "physics:maxDistance", "float", Value(-1.0f));
-  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:type", "token", Token("force"));
-  add("PhysicsDriveAPI", "drive:__INSTANCE__:physics:maxForce", "float", Value(infinity));
-  for (const char* name : {"drive:__INSTANCE__:physics:targetPosition",
-       "drive:__INSTANCE__:physics:targetVelocity", "drive:__INSTANCE__:physics:damping",
-       "drive:__INSTANCE__:physics:stiffness"})
-    add("PhysicsDriveAPI", name, "float", Value(0.0f));
-  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:low", "float", Value(-infinity));
-  add("PhysicsLimitAPI", "limit:__INSTANCE__:physics:high", "float", Value(infinity));
-
-  // UsdGeom Imageable/Camera/curves/subset fallbacks (values verified
-  // against pxr's generated usdGeom schema.usda).
-  add("Imageable", "visibility", "token", Token("inherited"));
-  add("Imageable", "purpose", "token", Token("default"));
-  add("Camera", "clippingRange", "float2", Value::MakeFloat2(1.0f, 1000000.0f));
-  add("Camera", "horizontalApertureOffset", "float", Value(0.0f));
-  add("Camera", "verticalApertureOffset", "float", Value(0.0f));
-  add("Camera", "shutter:open", "double", Value(0.0));
-  add("Camera", "shutter:close", "double", Value(0.0));
-  add("Camera", "stereoRole", "token", Token("mono"));
-  add("BasisCurves", "type", "token", Token("cubic"));
-  add("BasisCurves", "basis", "token", Token("bezier"));
-  add("BasisCurves", "wrap", "token", Token("nonperiodic"));
-  add("Plane", "width", "double", Value(2.0));
-  add("Plane", "length", "double", Value(2.0));
-  add("Plane", "axis", "token", Token("Z"));
-  add("GeomSubset", "elementType", "token", Token("face"));
-  add("GeomSubset", "familyName", "token", Token(""));
 
   // UsdLux common light inputs (each concrete light carries them; values
   // from pxr's usdLux schema.usda). DistantLight overrides intensity.
@@ -340,7 +265,7 @@ SchemaRegistry::SchemaRegistry() {
     }
   }
   add("DistantLight", "inputs:angle", "float", Value(0.53f));
-  add("DomeLight", "inputs:texture:format", "token", Token("automatic"));
+  add("DomeLight", "inputs:texture:format", "token", SchemaToken("automatic"));
   add("SphereLight", "inputs:radius", "float", Value(0.5f));
   add("SphereLight", "treatAsPoint", "bool", Value(false));
   add("RectLight", "inputs:width", "float", Value(1.0f));
@@ -361,20 +286,11 @@ SchemaRegistry::SchemaRegistry() {
   add("ShadowAPI", "inputs:shadow:falloff", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloffGamma", "float", Value(1.0f));
 
-  // Non-core OpenUSD domain fallbacks (PRODUCT PARITY; values verified
-  // against pxr's generated usdGeom/usdVol/usdRender schema.usda).
-  add("NurbsPatch", "uForm", "token", Token("open"));
-  add("NurbsPatch", "vForm", "token", Token("open"));
-  add("NurbsCurves", "order", "int[]",
-      Value::MakeIntArray(std::vector<int32_t>()));
-  // pxr: `vector3f[] tangents = []` (an authored empty-array fallback).
-  add("HermiteCurves", "tangents", "vector3f[]",
-      Value::MakeFloatCompArray(std::vector<float>(), TypeId::Vector3f, 3));
-  add("VolumeFieldAsset", "vectorDataRoleHint", "token", Token("None"));
+  // UsdRender defaults.
   add("RenderSettingsBase", "resolution", "int2", Value::MakeInt2(2048, 1080));
   add("RenderSettingsBase", "pixelAspectRatio", "float", Value(1.0f));
   add("RenderSettingsBase", "aspectRatioConformPolicy", "token",
-      Token("expandAperture"));
+      SchemaToken("expandAperture"));
   add("RenderSettingsBase", "dataWindowNDC", "float4",
       Value::MakeFloat4(0.0f, 0.0f, 1.0f, 1.0f));
   add("RenderSettingsBase", "instantaneousShutter", "bool", Value(false));
@@ -384,54 +300,23 @@ SchemaRegistry::SchemaRegistry() {
       Value::MakeTokenArray({"default", "render"}));
   add("RenderSettings", "materialBindingPurposes", "token[]",
       Value::MakeTokenArray({"full", ""}));
-  add("RenderVar", "dataType", "token", Token("color3f"));
+  add("RenderVar", "dataType", "token", SchemaToken("color3f"));
   add("RenderVar", "sourceName", "string", Value(std::string("")));
-  add("RenderVar", "sourceType", "token", Token("raw"));
-  add("RenderProduct", "productType", "token", Token("raster"));
-  add("RenderProduct", "productName", "token", Token(""));
+  add("RenderVar", "sourceType", "token", SchemaToken("raw"));
+  add("RenderProduct", "productType", "token", SchemaToken("raster"));
+  add("RenderProduct", "productName", "token", SchemaToken(""));
   add("RenderPass", "collection:renderVisibility:includeRoot", "bool",
       Value(true));
   add("RenderPass", "collection:cameraVisibility:includeRoot", "bool",
       Value(true));
 
-  // OpenUSD 26.08 UsdVol ParticleField definitions. The concrete Gaussian
-  // type auto-applies the six data/kernel APIs handled by HasAppliedSchema().
-  add("ParticleField3DGaussianSplat", "projectionModeHint", "token",
-      Token("perspective"));
-  add("ParticleField3DGaussianSplat", "sortingModeHint", "token",
-      Token("zDepth"));
-  add("ParticleFieldSphericalHarmonicsAttributeAPI",
-      "radiance:sphericalHarmonicsDegree", "int", Value(int32_t(3)));
-
-  // OpenUSD 26.08 additions. Multiple-apply names use the registry's
-  // __INSTANCE__ marker and are expanded from authored apiSchemas metadata.
-  add("GeomModelAPI", "model:cardVisibility", "token", Token("inherited"));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:image", "asset",
-      Value::MakeAssetPath(""));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:alpha:image", "asset",
-      Value::MakeAssetPath(""));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:image", "asset",
-      Value::MakeAssetPath(""));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:minOffset", "float",
-      Value(0.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:normalizingFactor",
-      "float", Value(1.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:depth:cameraSpaceOffset",
-      "float", Value(0.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:scale:tweak", "float2",
-      Value::MakeFloat2(1.0f, 1.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:rotateXYZ:tweak", "float3",
-      Value::MakeFloat3(0.0f, 0.0f, 0.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:translate:tweak", "float3",
-      Value::MakeFloat3(0.0f, 0.0f, 0.0f));
+  // Retain the earlier BackPlate luma spellings for authored layers.
   add("BackPlateAPI", "backPlate:__INSTANCE__:luma:gain", "float3",
       Value::MakeFloat3(1.0f, 1.0f, 1.0f));
   add("BackPlateAPI", "backPlate:__INSTANCE__:luma:lift", "float3",
       Value::MakeFloat3(0.0f, 0.0f, 0.0f));
   add("BackPlateAPI", "backPlate:__INSTANCE__:luma:gamma", "float3",
       Value::MakeFloat3(1.0f, 1.0f, 1.0f));
-  add("BackPlateAPI", "backPlate:__INSTANCE__:plateVisibility", "token",
-      Token("solo"));
   add("SemanticsLabelsAPI", "semantics:labels:__INSTANCE__", "token[]",
       Value::MakeTokenArray({}));
 
@@ -440,86 +325,14 @@ SchemaRegistry::SchemaRegistry() {
   // inventing a fallback where the schema intentionally has none.
   const struct Decl { const char* schema; const char* name; const char* type; }
       declarations[] = {
-          {"Boundable", "extent", "float3[]"},
-          {"PointBased", "points", "point3f[]"},
-          {"PointBased", "velocities", "vector3f[]"},
-          {"PointBased", "accelerations", "vector3f[]"},
-          {"PointBased", "normals", "normal3f[]"},
           {"PointBased", "widths", "float[]"},
-          {"Mesh", "faceVertexCounts", "int[]"},
-          {"Mesh", "faceVertexIndices", "int[]"},
-          {"PointInstancer", "protoIndices", "int[]"},
-          {"PointInstancer", "positions", "point3f[]"},
-          {"PointInstancer", "orientations", "quath[]"},
-          {"PointInstancer", "scales", "float3[]"},
-          {"PointInstancer", "ids", "int64[]"},
-          {"PointInstancer", "invisibleIds", "int64[]"},
-          {"PointInstancer", "prototypes", "relationship"},
           {"Shader", "info:id", "token"},
           {"NodeGraph", "outputs", "namespace"},
           {"Material", "outputs:surface", "token"},
           {"Material", "outputs:displacement", "token"},
           {"Material", "outputs:volume", "token"},
-          {"Skeleton", "joints", "token[]"},
-          {"Skeleton", "bindTransforms", "matrix4d[]"},
-          {"Skeleton", "restTransforms", "matrix4d[]"},
-          {"SkelAnimation", "joints", "token[]"},
-          {"SkelAnimation", "translations", "float3[]"},
-          {"SkelAnimation", "rotations", "quath[]"},
-          {"SkelAnimation", "scales", "half3[]"},
-          {"BlendShape", "offsets", "vector3f[]"},
-          {"BlendShape", "normalOffsets", "vector3f[]"},
-          {"BlendShape", "pointIndices", "int[]"},
-          {"SkelBindingAPI", "skel:joints", "token[]"},
           {"SkelBindingAPI", "skel:jointIndices", "int[]"},
           {"SkelBindingAPI", "skel:jointWeights", "float[]"},
-          {"SkelBindingAPI", "skel:skeleton", "relationship"},
-          {"SkelBindingAPI", "skel:animationSource", "relationship"},
-          // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
-          {"TetMesh", "tetVertexIndices", "int4[]"},
-          {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},
-          {"NurbsPatch", "uVertexCount", "int"},
-          {"NurbsPatch", "vVertexCount", "int"},
-          {"NurbsPatch", "uOrder", "int"},
-          {"NurbsPatch", "vOrder", "int"},
-          {"NurbsPatch", "uKnots", "double[]"},
-          {"NurbsPatch", "vKnots", "double[]"},
-          {"NurbsPatch", "uRange", "double2"},
-          {"NurbsPatch", "vRange", "double2"},
-          {"NurbsPatch", "pointWeights", "double[]"},
-          {"NurbsPatch", "trimCurve:counts", "int[]"},
-          {"NurbsPatch", "trimCurve:orders", "int[]"},
-          {"NurbsPatch", "trimCurve:vertexCounts", "int[]"},
-          {"NurbsPatch", "trimCurve:knots", "double[]"},
-          {"NurbsPatch", "trimCurve:ranges", "double2[]"},
-          {"NurbsPatch", "trimCurve:points", "double3[]"},
-          {"NurbsCurves", "knots", "double[]"},
-          {"NurbsCurves", "ranges", "double2[]"},
-          {"NurbsCurves", "pointWeights", "double[]"},
-          // UsdVol: Volume's `field:<name>` relationships are DYNAMIC (any
-          // name in the namespace), so no builtin is declared for them —
-          // pxr's UsdVolVolume likewise has no property literally named
-          // "field". The validator checks the namespace structurally.
-          {"VolumeFieldAsset", "filePath", "asset"},
-          {"VolumeFieldAsset", "fieldName", "token"},
-          {"VolumeFieldAsset", "fieldIndex", "int"},
-          {"VolumeFieldAsset", "fieldDataType", "token"},
-          {"VolumeFieldAsset", "vectorDataRoleHint", "token"},
-          {"OpenVDBAsset", "fieldClass", "token"},
-          {"Field3DAsset", "fieldPurpose", "token"},
-          // UsdVol ParticleField applied API attributes.
-          {"ParticleFieldPositionAttributeAPI", "positions", "point3f[]"},
-          {"ParticleFieldPositionAttributeAPI", "positionsh", "point3h[]"},
-          {"ParticleFieldOrientationAttributeAPI", "orientations", "quatf[]"},
-          {"ParticleFieldOrientationAttributeAPI", "orientationsh", "quath[]"},
-          {"ParticleFieldScaleAttributeAPI", "scales", "float3[]"},
-          {"ParticleFieldScaleAttributeAPI", "scalesh", "half3[]"},
-          {"ParticleFieldOpacityAttributeAPI", "opacities", "float[]"},
-          {"ParticleFieldOpacityAttributeAPI", "opacitiesh", "half[]"},
-          {"ParticleFieldSphericalHarmonicsAttributeAPI",
-           "radiance:sphericalHarmonicsCoefficients", "float3[]"},
-          {"ParticleFieldSphericalHarmonicsAttributeAPI",
-           "radiance:sphericalHarmonicsCoefficientsh", "half3[]"},
           // UsdRender relationships + optional token.
           {"RenderSettingsBase", "camera", "relationship"},
           {"RenderSettings", "products", "relationship"},
@@ -535,10 +348,58 @@ SchemaRegistry::SchemaRegistry() {
     declare(declaration.schema, declaration.name, declaration.type);
   }
 
-  add("Shader", "info:implementationSource", "token", Token("id"));
-  add("PhysicsMaterialAPI", "physics:staticFriction", "float", Value(0.0f));
-  add("PhysicsMaterialAPI", "physics:dynamicFriction", "float", Value(0.0f));
-  add("PhysicsMaterialAPI", "physics:restitution", "float", Value(0.0f));
+  add("Shader", "info:implementationSource", "token", SchemaToken("id"));
+  // The OpenUSD 26.11 catalog supplies local declarations and ancestry for
+  // these domains. Replace old definitions of those properties even when the
+  // catalog moved them to a parent. Keep compatibility-only names elsewhere.
+  const std::map<std::string_view, std::string_view> domain_parents(
+      std::begin(kDomainParents), std::end(kDomainParents));
+  parents_.erase(std::remove_if(parents_.begin(), parents_.end(),
+                                [&](const auto& entry) {
+                                  return domain_parents.count(entry.first) != 0;
+                                }),
+                 parents_.end());
+  for (const auto& [name, parent] : kDomainParents) {
+    if (std::find(known_schemas_.begin(), known_schemas_.end(), name) ==
+        known_schemas_.end()) {
+      known_schemas_.emplace_back(name);
+    }
+    if (!parent.empty()) parents_.emplace_back(name, parent);
+  }
+
+  std::set<std::pair<std::string_view, std::string_view>> defined;
+  for (const auto& property : kDomainProperties) {
+    defined.emplace(property.schema, property.name);
+  }
+  const auto covered = [&](const SchemaPropertyDefinition& definition) {
+    std::string_view schema = definition.schema_type;
+    for (auto parent = domain_parents.find(schema);
+         parent != domain_parents.end(); parent = domain_parents.find(schema)) {
+      if (defined.count({schema, definition.name})) return true;
+      schema = parent->second;
+    }
+    return false;
+  };
+  properties_.erase(std::remove_if(properties_.begin(), properties_.end(), covered),
+                    properties_.end());
+
+  for (const auto& property : kDomainProperties) {
+    if (!property.fallback) {
+      declare(property.schema, property.name, property.type);
+      continue;
+    }
+    const std::string_view type(property.type);
+    const bool array = type.size() > 2 && type.substr(type.size() - 2) == "[]";
+    const TypeId id = GetTypeIdFromName(type.data(), type.size() - (array ? 2 : 0));
+    Lexer lexer(property.fallback, std::strlen(property.fallback));
+    ParseResult parsed = array ? ParseArrayValue(lexer, id) : ParseValue(lexer, id);
+    assert(parsed.success && "Generated schema fallback must parse");
+    if (parsed.success) {
+      add(property.schema, property.name, property.type, std::move(parsed.value));
+    } else {
+      declare(property.schema, property.name, property.type);
+    }
+  }
 }
 
 const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
@@ -579,16 +440,17 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
   // Resolution"): the typed schema (most-derived first) is strongest, then
   // each applied schema in list-op resolved order. Pick the strongest
   // matching definition rather than the first one registered.
+  const auto applied = AppliedSchemas(prim);
   const SchemaPropertyDefinition* best = nullptr;
   int best_rank = 0;
   for (const SchemaPropertyDefinition& def : properties_) {
-    if (!MatchDefinitionName(prim, def, property_name)) continue;
+    if (!MatchDefinitionName(applied, def, property_name)) continue;
     int rank = chain_rank(def.schema_type);
     if (rank == 0) return &def;
     if (rank < 0) {
-      const int applied = AppliedSchemaRank(prim, def.schema_type);
-      if (applied < 0) continue;
-      rank = 16 + applied;
+      const int api_rank = AppliedSchemaRank(applied, def.schema_type);
+      if (api_rank < 0) continue;
+      rank = 16 + api_rank;
     }
     if (!best || rank < best_rank) {
       best = &def;
@@ -611,10 +473,11 @@ std::vector<std::string> SchemaRegistry::PropertyNames(
     if (it == parents_.end()) break;
     current = it->second;
   }
+  const auto applied_schemas = AppliedSchemas(prim);
   const auto applies = [&](const SchemaPropertyDefinition& def) {
     return std::find(schemas.begin(), schemas.end(), def.schema_type) !=
                schemas.end() ||
-           HasAppliedSchema(prim, def.schema_type);
+           AppliedSchemaRank(applied_schemas, def.schema_type) >= 0;
   };
   for (const SchemaPropertyDefinition& def : properties_) {
     if (!applies(def)) continue;
@@ -622,7 +485,7 @@ std::vector<std::string> SchemaRegistry::PropertyNames(
     const std::string marker = "__INSTANCE__";
     const size_t marker_pos = name.find(marker);
     if (marker_pos != std::string::npos) {
-      for (const std::string& applied : prim.meta().apiSchemas()) {
+      for (const std::string& applied : applied_schemas) {
         const std::string prefix = def.schema_type + ":";
         if (applied.compare(0, prefix.size(), prefix) != 0) continue;
         std::string instantiated = name;
@@ -721,7 +584,7 @@ namespace {
 
 bool IsMultipleApplyAPI(const std::string& schema) {
   static const char* kMulti[] = {
-      "CollectionAPI", "CoordSysAPI", "PhysicsLimitAPI", "PhysicsDriveAPI",
+      "BackPlateAPI", "CollectionAPI", "CoordSysAPI", "PhysicsLimitAPI", "PhysicsDriveAPI",
       "PhysxLimitAPI", "PhysicsMimicJointAPI", "NewtonMimicAPI",
       "UsdPhysicsLimitAPI", "SemanticsLabelsAPI", "AccessibilityAPI",
       "PrimvarSamplingAPI"};
@@ -741,15 +604,9 @@ std::vector<std::string> BuiltinAPISchemas(const std::string& type) {
   for (const char* lt : kLightTypes) {
     if (type == lt) return {"LightAPI"};
   }
-  if (type == "ParticleField3DGaussianSplat") {
-    return {"ParticleFieldPositionAttributeAPI",
-            "ParticleFieldOrientationAttributeAPI",
-            "ParticleFieldScaleAttributeAPI",
-            "ParticleFieldOpacityAttributeAPI",
-            "ParticleFieldKernelGaussianEllipsoidAPI",
-            "ParticleFieldSphericalHarmonicsAttributeAPI"};
-  }
-  return {};
+  std::vector<std::string> result;
+  AppendDomainAPIs(type, result);
+  return result;
 }
 
 // API schemas that themselves include LightAPI (pxr builtin apiSchemas).
@@ -768,6 +625,7 @@ std::vector<std::string> SchemaRegistry::AppliedSchemas(
   for (const std::string& applied : prim.meta().apiSchemas()) {
     push(applied);
     if (IncludesLightAPI(applied)) push("LightAPI");
+    AppendDomainAPIs(applied, out);
   }
   return out;
 }

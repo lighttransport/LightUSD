@@ -121,9 +121,9 @@ bool RenderSceneConverter::Impl::ConvertVolume(const ::lightusd::Stage& stage,
       continue;
     }
     const UsdPrim field = stage.GetPrimAtPath(targets[0].str());
-    if (!field.IsValid()) {
+    if (!field.IsValid() || !field.IsActive()) {
       out->warnings.push_back(out->prim_path + "." + rel + ": target " + targets[0].str() +
-                              " is not a prim");
+                              " is not an active prim");
       continue;
     }
     if (!IsFieldAssetType(field.GetTypeName())) {

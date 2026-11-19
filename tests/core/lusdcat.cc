@@ -983,6 +983,7 @@ int main(int argc, char **argv) {
   // a binary crate (benchmark vehicle for the next crate writer).
   if (flatten && output_usdc) {
     USDCWriteOptions copts;
+    copts.crate_options.composed_stage_output = true;
     copts.crate_options.num_threads = 0;  // auto; LIGHTUSD_NUM_THREADS overrides
     copts.crate_options.enable_timing = timing;  // [core_crate_write] phases
     // The composed stage is discarded right after this write: let the writer

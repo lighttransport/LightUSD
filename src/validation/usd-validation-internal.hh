@@ -4,6 +4,7 @@
 #include "usd-validation.hh"
 #include "validation-context.hh"
 #include <array>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -18,6 +19,12 @@ struct AppliedSchema {
   std::string instance_name;
 };
 
+struct SkinningSources {
+  const PrimSpec *indices{nullptr};
+  const PrimSpec *weights{nullptr};
+  const PrimSpec *joint_order{nullptr};
+};
+
 struct AncestorContext {
   bool has_gprim_ancestor{false};
   std::string nearest_gprim_path;  // valid only when has_gprim_ancestor
@@ -25,6 +32,8 @@ struct AncestorContext {
   bool parent_mesh_face_count_known{false};
   size_t parent_mesh_face_count{0};
   bool has_skel_root_ancestor{false};
+  std::optional<size_t> inherited_skeleton_joint_count;
+  SkinningSources skinning_sources;
   bool has_articulation_ancestor{false};
   bool has_material_ancestor{false};
   std::string nearest_material_path;  // valid only when has_material_ancestor
@@ -227,8 +236,8 @@ bool GetTokenArrayProperty(const PrimSpec &ps, const std::string &name,
 bool GetValueArrayLength(const Value &v, size_t *size);
 bool GetArrayLengthProperty(const PrimSpec &ps, const std::string &name,
                             size_t *size);
-bool GetExtentProperty(const PrimSpec &ps, const std::string &name,
-                       std::vector<std::array<float, 3>> *out);
+bool ValueToExtent(const Value *value,
+                   std::vector<std::array<float, 3>> *out);
 const std::vector<std::pair<double, uint32_t>> *GetTimeSamplesOf(
     const PrimSpec &ps, const std::string &name);
 void ValidateTimeSamplesProp(const PrimSpec &ps, const std::string &prop_name,
@@ -253,7 +262,8 @@ void ValidateArrayLengthProperty(const PrimSpec &ps,
                                  const std::string &rule_id,
                                  const std::string &prim_location,
                                  const std::string &expected_name,
-                                 USDValidationResult *result);
+                                 USDValidationResult *result,
+                                 bool compare_sample_counts = true);
 const std::string *FindPrimType(const PrimTypeByPath &prim_types,
                                 const std::string &prim_path);
 const PrimSpecifier *FindPrimSpecifier(
@@ -280,7 +290,8 @@ void ValidateGeomPoints(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
 void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
-void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
+void ValidateVolume(const PrimSpec &ps, const UsdPrim &prim,
+                    const std::string &prim_location,
                     const PrimTypeByPath &prim_types, USDValidationResult *result);
 void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result);
@@ -324,8 +335,8 @@ void ValidateSkelBinding(const PrimSpec &ps,
                          USDValidationResult *result);
 void ValidateSkinningPrimvars(const PrimSpec &ps,
                               const std::string &prim_location,
-                              const PrimTypeByPath &prim_types,
-                              const SkeletonJointCountByPath &skeleton_joints,
+                              std::optional<size_t> bound_joint_count,
+                              const SkinningSources &sources,
                               USDValidationResult *result);
 std::string GetShaderInfoId(const PrimSpec &ps);
 void ValidateUsdPreviewSurface(const PrimSpec &ps,

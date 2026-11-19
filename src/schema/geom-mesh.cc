@@ -172,7 +172,7 @@ std::vector<float> UsdGeomMesh::GetNormals() const {
 
 bool UsdGeomMesh::HasNormals() const {
   if (!IsValid()) return false;
-  return prim_.HasProperty(kIdNormals());
+  return prim_.HasAuthoredProperty("normals");
 }
 
 bool UsdGeomMesh::GetExtent(float* min, float* max) const {

@@ -543,7 +543,8 @@ void ValidateArrayLengthProperty(const PrimSpec &ps,
                                  const std::string &rule_id,
                                  const std::string &prim_location,
                                  const std::string &expected_name,
-                                 USDValidationResult *result) {
+                                 USDValidationResult *result,
+                                 bool compare_sample_counts) {
   if (!HasAttributeProp(ps, prop_name)) {
     return;
   }
@@ -575,7 +576,8 @@ void ValidateArrayLengthProperty(const PrimSpec &ps,
                      " should be an array value");
       continue;
     }
-    if (!IsLengthCompatible(sample_count, expected, allow_singleton)) {
+    if (compare_sample_counts &&
+        !IsLengthCompatible(sample_count, expected, allow_singleton)) {
       AddError(result, rule_id, location,
                prop_name + " timeSamples sample " + std::to_string(i) +
                    " at time " + std::to_string((*samples)[i].first) +

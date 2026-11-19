@@ -256,19 +256,25 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
                "MaterialXConfigAPI is expected on Material prims");
   }
 
-  std::string version;
-  if (HasProperty(ps, "config:mtlx:version")) {
+  constexpr const char *version_property = "config:mtlx:version";
+  if (HasProperty(ps, version_property)) {
     const std::string location =
-        MakePropertyLocation(prim_location, "config:mtlx:version");
-    if (IsRelationshipProp(ps, "config:mtlx:version") ||
-        AttrTypeNameOf(ps, "config:mtlx:version") != "string" ||
-        !GetStringProperty(ps, "config:mtlx:version", &version)) {
+        MakePropertyLocation(prim_location, version_property);
+    const Value *authored = GetAttrValue(ps, version_property);
+    std::string version;
+    if (IsRelationshipProp(ps, version_property) ||
+        AttrTypeNameOf(ps, version_property) != "string") {
       AddError(result, "shade.materialX.version", location,
                "config:mtlx:version must be a string attribute");
-    } else if (version.empty() || !StartsWith(version, "1.")) {
-      AddWarning(result, "shade.materialX.version", location,
-                 "MaterialX version should be a 1.x version string, but is `" +
-                     version + "`");
+    } else if (authored && !authored->is_block()) {
+      if (!GetStringProperty(ps, version_property, &version)) {
+        AddError(result, "shade.materialX.version", location,
+                 "config:mtlx:version must have a string value");
+      } else if (!StartsWith(version, "1.")) {
+        AddWarning(result, "shade.materialX.version", location,
+                   "MaterialX version should be a 1.x version string, but is `" +
+                       version + "`");
+      }
     }
   }
 
@@ -320,20 +326,29 @@ void ValidateMaterialXSynthesizedMaterial(
     if (!HasProperty(ps, relationship_name)) {
       continue;
     }
-    has_shader = true;
     const std::string location =
         MakePropertyLocation(prim_location, relationship_name);
     if (!IsRelationshipProp(ps, relationship_name)) {
+      has_shader = true;  // Report the malformed property once.
       AddError(result, "shade.materialX.nodeReference", location,
                relationship_name + " must be a relationship");
       continue;
     }
-    ValidateRelationshipTargetPaths(ps, relationship_name,
-                                    "shade.materialX.nodeReference", location,
-                                    result);
-    for (const Path &target : RelTargets(ps, relationship_name)) {
-      std::string target_prim;
-      SplitScenePathString(target.str(), &target_prim, nullptr);
+    const auto &targets = RelTargets(ps, relationship_name);
+    if (targets.empty()) continue;
+    has_shader = true;
+    if (targets.size() > 1) {
+      AddWarning(result, "shade.materialX.nodeReference", location,
+                 "MaterialX terminal should name only one shader or node graph");
+    }
+    for (const Path &target : targets) {
+      const std::string target_prim = target.str();
+      std::string error;
+      if (!IsValidAbsolutePrimTargetPathString(target_prim, &error)) {
+        AddError(result, "shade.materialX.nodeReference", location,
+                 "contains invalid target path `" + target_prim + "`: " + error);
+        continue;
+      }
       const std::string *target_type = FindPrimType(prim_types, target_prim);
       if (!target_type) {
         AddError(result, "shade.materialX.nodeReference", location,

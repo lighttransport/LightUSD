@@ -744,9 +744,11 @@ void ValidateMaterialXReferenceConventions(const PrimSpec &ps,
     if (!IsMaterialXAssetPath(arc.asset_path)) {
       continue;
     }
-    if (arc.prim_path != "/MaterialX") {
+    if (arc.prim_path != "/MaterialX" &&
+        !StartsWith(arc.prim_path, "/MaterialX/")) {
       AddWarning(result, "shade.materialX.referencePrimPath", prim_location,
-                 "MaterialX references should target </MaterialX>");
+                 "MaterialX references should target </MaterialX> or one of its descendants");
+      break;
     }
   }
 }

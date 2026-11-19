@@ -4,7 +4,11 @@
 // validation_detail namespace shared through usd-validation-internal.hh.
 
 #include "usd-validation-internal.hh"
+#include "core/safe-arithmetic.hh"
+#include "schema/geom-point-instancer.hh"
 #include "schema/schema-registry.hh"
+#include "schema/usd-skel.hh"
+#include "types/value-view.hh"
 
 #include <algorithm>
 #include <array>
@@ -42,28 +46,35 @@ void ValidateGeomCommonProperties(const PrimSpec &ps,
   ValidateTokenSetProperty(ps, "orientation", kOrientation,
                            "geom.gprim.orientation", prim_location, result);
 
-  std::vector<std::array<float, 3>> extent;
-  if (GetExtentProperty(ps, "extent", &extent)) {
-    const std::string location = MakePropertyLocation(prim_location, "extent");
-    if (extent.size() != 2) {
+  const std::string location = MakePropertyLocation(prim_location, "extent");
+  const auto check_extent = [&](const Value *value, std::optional<double> time) {
+    std::vector<std::array<float, 3>> extent;
+    if (!ValueToExtent(value, &extent)) return;
+    const auto report = [&](const char *message) {
       AddError(result, "geom.gprim.extent", location,
-               "extent must contain exactly 2 points");
-    } else {
-      auto finite_point = [](const std::array<float, 3> &p) {
-        return std::isfinite(p[0]) && std::isfinite(p[1]) &&
-               std::isfinite(p[2]);
-      };
-      if (!finite_point(extent[0]) || !finite_point(extent[1])) {
-        AddError(result, "geom.gprim.extent", location,
-                 "extent bounds must be finite");
+               std::string(message) + (time ? " at time " + std::to_string(*time) : ""));
+    };
+    if (extent.size() != 2) {
+      report("extent must contain exactly 2 points");
+      return;
+    }
+    const auto finite_point = [](const std::array<float, 3> &p) {
+      return std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+    };
+    if (!finite_point(extent[0]) || !finite_point(extent[1])) {
+      report("extent bounds must be finite");
+    }
+    for (size_t axis = 0; axis < 3; axis++) {
+      if (extent[0][axis] > extent[1][axis]) {
+        report("extent minimum must be <= maximum on every axis");
+        break;
       }
-      for (size_t axis = 0; axis < 3; axis++) {
-        if (extent[0][axis] > extent[1][axis]) {
-          AddError(result, "geom.gprim.extent", location,
-                   "extent minimum must be <= maximum on every axis");
-          break;
-        }
-      }
+    }
+  };
+  check_extent(GetAttrValue(ps, "extent"), std::nullopt);
+  if (const auto *samples = GetTimeSamplesOf(ps, "extent")) {
+    for (const auto &sample : *samples) {
+      check_extent(ps.time_sample_value(sample.second), sample.first);
     }
   }
 
@@ -127,22 +138,31 @@ void ValidateGeomPoints(const PrimSpec &ps, const std::string &prim_location,
   if (!GetPoint3ArrayLen(ps, "points", &point_count)) {
     return;
   }
+  const auto *point_samples = GetTimeSamplesOf(ps, "points");
+  // The all-time-samples pass resolves both properties at the same time.
+  // A default point count is only a valid reference for static topology.
+  const bool static_points = !point_samples || point_samples->empty();
 
   ValidateArrayLengthProperty(ps, "ids", point_count, false,
                               "geom.points.size", prim_location, "points",
-                              result);
-  ValidateArrayLengthProperty(ps, "widths", point_count, true,
-                              "geom.points.size", prim_location, "points",
-                              result);
-  ValidateArrayLengthProperty(ps, "normals", point_count, true,
-                              "geom.points.size", prim_location, "points",
-                              result);
+                              result, static_points);
+  for (const char *name : {"widths", "normals"}) {
+    const auto *meta = ps.property_meta(name);
+    const bool authored = meta && (meta->authored & PropMeta::kInterpolation);
+    const bool constant = authored && meta->interpolation == "constant";
+    const bool allow_implicit_singleton = !authored;
+    ValidateArrayLengthProperty(ps, name, constant ? 1 : point_count,
+                                allow_implicit_singleton,
+                                "geom.points.size", prim_location,
+                                constant ? "constant interpolation" : "points",
+                                result, constant || static_points);
+  }
   ValidateArrayLengthProperty(ps, "velocities", point_count, false,
                               "geom.points.size", prim_location, "points",
-                              result);
+                              result, static_points);
   ValidateArrayLengthProperty(ps, "accelerations", point_count, false,
                               "geom.points.size", prim_location, "points",
-                              result);
+                              result, static_points);
 
   std::vector<float> widths;
   if (GetFloatArrayProperty(ps, "widths", &widths)) {
@@ -154,6 +174,373 @@ void ValidateGeomPoints(const PrimSpec &ps, const std::string &prim_location,
                      "] must be finite and non-negative");
       }
     }
+  }
+}
+
+static bool BasisCurvesVaryingSize(const PrimSpec &ps,
+                                   const std::vector<int32_t> &counts,
+                                   size_t *size) {
+  std::string type = "cubic", basis = "bezier", wrap = "nonperiodic";
+  GetTokenProperty(ps, "type", &type);
+  GetTokenProperty(ps, "basis", &basis);
+  GetTokenProperty(ps, "wrap", &wrap);
+  if ((type != "linear" && type != "cubic") ||
+      (type == "cubic" && basis != "bezier" && basis != "bspline" &&
+       basis != "catmullRom") ||
+      (wrap != "periodic" && wrap != "nonperiodic" && wrap != "pinned")) {
+    return false;
+  }
+  const bool periodic = wrap == "periodic";
+  const size_t step = basis == "bezier" ? 3 : 1;
+  *size = 0;
+  for (int32_t count : counts) {
+    if (count <= 0) return false;
+    const size_t n = static_cast<size_t>(count);
+    size_t varying = n + (periodic ? 1 : 0);
+    if (type == "cubic") {
+      // A short nonperiodic or pinned curve uses the single-segment minimum.
+      varying = periodic ? n / step : (n > 4 ? (n - 4) / step : 0) + 2;
+    }
+    if (varying > std::numeric_limits<size_t>::max() - *size) return false;
+    *size += varying;
+  }
+  return true;
+}
+
+static void ValidateCubicBasisCounts(const PrimSpec &ps,
+                                     const std::vector<int32_t> &counts,
+                                     const std::string &prim_location,
+                                     USDValidationResult *result) {
+  std::string type = "cubic", basis = "bezier", wrap = "nonperiodic";
+  GetTokenProperty(ps, "type", &type);
+  GetTokenProperty(ps, "basis", &basis);
+  GetTokenProperty(ps, "wrap", &wrap);
+  if (type != "cubic" ||
+      (basis != "bezier" && basis != "bspline" && basis != "catmullRom") ||
+      (wrap != "periodic" && wrap != "nonperiodic" && wrap != "pinned")) {
+    return;
+  }
+  const int step = basis == "bezier" ? 3 : 1;
+  for (size_t i = 0; i < counts.size(); ++i) {
+    const int32_t count = counts[i];
+    if (count <= 0) continue;  // Already checked by the generic curves rule.
+    const bool valid = wrap == "periodic" ? count % step == 0
+        : wrap == "pinned" && basis != "bezier" ? count >= 2
+        : count >= 4 && (count - 4) % step == 0;
+    if (!valid) {
+      AddError(result, "geom.curves.topology",
+               MakePropertyLocation(prim_location, "curveVertexCounts"),
+               "Cubic curve " + std::to_string(i) + " has " + std::to_string(count) +
+                   " vertices, which do not form complete " + basis + " segments for " + wrap);
+    }
+  }
+}
+
+// Evaluate homogeneous coordinates before projecting to UV. Bound the
+// quadratic recurrence so a high authored order cannot dominate validation.
+static bool EvaluateTrimEndpoint(const double *points, size_t vertices,
+                                 const double *knots, size_t order, double t,
+                                 double *uv) {
+  constexpr size_t kMaxEvaluatedOrder = 32;
+  if (t < knots[order - 1] || t > knots[vertices]) return false;
+  const double *point = nullptr;
+  std::array<std::array<double, 3>, kMaxEvaluatedOrder> scratch;
+  if (t == knots[0] && t == knots[order - 1]) {
+    point = points;
+  } else if (t == knots[vertices + order - 1] && t == knots[vertices]) {
+    point = points + 3 * (vertices - 1);
+  } else {
+    if (order > kMaxEvaluatedOrder) return false;
+    const size_t span = t == knots[vertices] ? vertices - 1 :
+        static_cast<size_t>(std::upper_bound(knots + order - 1,
+                                            knots + vertices, t) - knots - 1);
+    const size_t base = span + 1 - order;
+    for (size_t j = 0; j < order; ++j)
+      std::copy_n(points + 3 * (base + j), 3, scratch[j].begin());
+    for (size_t level = 1; level < order; ++level) {
+      for (size_t j = order - 1; j >= level; --j) {
+        const double lo = knots[base + j];
+        const double hi = knots[span + j + 1 - level];
+        const double interval = hi - lo;
+        if (!std::isfinite(interval)) return false;
+        const double blend = interval > 0 ? (t - lo) / interval : 0.0;
+        for (size_t axis = 0; axis < 3; ++axis)
+          scratch[j][axis] = (1.0 - blend) * scratch[j - 1][axis] +
+                             blend * scratch[j][axis];
+      }
+    }
+    point = scratch[order - 1].data();
+  }
+  if (!std::isfinite(point[2]) || point[2] == 0) return false;
+  uv[0] = point[0] / point[2];
+  uv[1] = point[1] / point[2];
+  return std::isfinite(uv[0]) && std::isfinite(uv[1]);
+}
+
+static void ValidateNurbsTrimTopology(const PrimSpec &ps,
+                                      const std::string &prim_location,
+                                      USDValidationResult *result) {
+  const char *rule = "geom.nurbsPatch.trimTopology";
+  const auto sum = [&](const char *name, std::vector<int32_t> &counts)
+      -> std::optional<size_t> {
+    if (!GetIntArrayProperty(ps, name, &counts)) return std::nullopt;
+    size_t total = 0;
+    for (int32_t count : counts) {
+      if (count <= 0 || !safe::add(total, count, &total)) {
+        AddError(result, rule, MakePropertyLocation(prim_location, name),
+                 "NURBS trim counts and orders must be positive and have a representable sum");
+        return std::nullopt;
+      }
+    }
+    return total;
+  };
+  const auto count_matches = [&](const char *name, size_t expected) {
+    size_t count = 0;
+    if (GetArrayLengthProperty(ps, name, &count) && count != expected) {
+      AddError(result, rule, MakePropertyLocation(prim_location, name),
+               "NURBS trim array must contain " + std::to_string(expected) + " elements");
+    }
+  };
+  std::vector<int32_t> loop_counts, curve_vertices, curve_orders;
+  const auto curves = sum("trimCurve:counts", loop_counts);
+  if (curves) {
+    count_matches("trimCurve:orders", *curves);
+    count_matches("trimCurve:vertexCounts", *curves);
+    count_matches("trimCurve:ranges", *curves);
+  }
+  const auto vertices = sum("trimCurve:vertexCounts", curve_vertices);
+  const auto orders = sum("trimCurve:orders", curve_orders);
+  if (vertices) count_matches("trimCurve:points", *vertices);
+  if (vertices && orders) {
+    if (curve_vertices.size() == curve_orders.size()) {
+      for (size_t curve = 0; curve < curve_orders.size(); ++curve) {
+        if (curve_vertices[curve] < curve_orders[curve]) {
+          AddError(result, rule,
+                   MakePropertyLocation(prim_location, "trimCurve:vertexCounts"),
+                   "NURBS trim curve " + std::to_string(curve) +
+                       " must have at least as many vertices as its order");
+        }
+      }
+    }
+    size_t knots = 0;
+    if (safe::add(*vertices, *orders, &knots)) {
+      count_matches("trimCurve:knots", knots);
+      std::vector<double> values;
+      if (curve_vertices.size() == curve_orders.size() &&
+          GetDoubleArrayProperty(ps, "trimCurve:knots", &values) &&
+          values.size() == knots) {
+        const Value *range_value = GetAttrValue(ps, "trimCurve:ranges");
+        const auto ranges = range_value && range_value->type_id() == TypeId::Double2
+            ? range_value->as_double_array() : ValueArrayView<const double>{};
+        const bool have_ranges = ranges && ranges->size() % 2 == 0 &&
+                                 ranges->size() / 2 == curve_orders.size();
+        const Value *point_value = GetAttrValue(ps, "trimCurve:points");
+        const auto points = point_value && point_value->type_id() == TypeId::Double3
+            ? point_value->as_double_array() : ValueArrayView<const double>{};
+        const bool check_closure = curves && *curves == curve_orders.size() &&
+            have_ranges && points && points->size() % 3 == 0 &&
+            points->size() / 3 == *vertices;
+        using Endpoints = std::array<double, 4>;
+        std::vector<std::optional<Endpoints>> endpoints;
+        if (check_closure) endpoints.resize(*curves);
+        size_t offset = 0;
+        size_t point_offset = 0;
+        for (size_t curve = 0; curve < curve_orders.size(); ++curve) {
+          const size_t count = static_cast<size_t>(curve_vertices[curve]) +
+                               static_cast<size_t>(curve_orders[curve]);
+          const auto first = values.begin() + static_cast<std::ptrdiff_t>(offset);
+          const auto last = first + static_cast<std::ptrdiff_t>(count);
+          const bool ordered =
+              std::all_of(first, last, [](double knot) { return std::isfinite(knot); }) &&
+              std::is_sorted(first, last);
+          if (!ordered) {
+            AddError(result, rule, MakePropertyLocation(prim_location, "trimCurve:knots"),
+                     "NURBS trim curve " + std::to_string(curve) +
+                         " knots must be finite and nondecreasing");
+          }
+          if (have_ranges) {
+            const double low = (*ranges)[2 * curve];
+            const double high = (*ranges)[2 * curve + 1];
+            const auto order = static_cast<size_t>(curve_orders[curve]);
+            if (!std::isfinite(low) || !std::isfinite(high) || low >= high ||
+                (ordered && (low < values[offset + order - 1] ||
+                             high > values[offset + count - 1]))) {
+              AddError(result, rule,
+                       MakePropertyLocation(prim_location, "trimCurve:ranges"),
+                       "NURBS trim curve " + std::to_string(curve) +
+                           " range must be finite, increasing, and within its knot bounds");
+            } else if (check_closure && ordered &&
+                       curve_vertices[curve] >= curve_orders[curve]) {
+              const size_t vertex_count = static_cast<size_t>(curve_vertices[curve]);
+              const double *control = &(*points)[3 * point_offset];
+              const double *curve_knots = values.data() + offset;
+              Endpoints uv;
+              if (EvaluateTrimEndpoint(control, vertex_count, curve_knots, order, low, uv.data()) &&
+                  EvaluateTrimEndpoint(control, vertex_count, curve_knots, order, high, uv.data() + 2)) {
+                endpoints[curve] = uv;
+              }
+            }
+          }
+          offset += count;
+          point_offset += static_cast<size_t>(curve_vertices[curve]);
+        }
+        if (check_closure) {
+          const auto close = [](double a, double b) {
+            return std::abs(a - b) <= 1e-6 * std::max({1.0, std::abs(a), std::abs(b)});
+          };
+          size_t first_curve = 0;
+          for (int32_t loop_count : loop_counts) {
+            const size_t end_curve = first_curve + static_cast<size_t>(loop_count);
+            for (size_t curve = first_curve; curve < end_curve; ++curve) {
+              const size_t next = curve + 1 == end_curve ? first_curve : curve + 1;
+              if (endpoints[curve] && endpoints[next] &&
+                  (!close((*endpoints[curve])[2], (*endpoints[next])[0]) ||
+                   !close((*endpoints[curve])[3], (*endpoints[next])[1]))) {
+                AddWarning(result, "geom.nurbsPatch.trimClosure",
+                           MakePropertyLocation(prim_location, "trimCurve:points"),
+                           "NURBS trim curve " + std::to_string(curve) +
+                               " does not meet curve " + std::to_string(next));
+              }
+            }
+            first_curve = end_curve;
+          }
+        }
+      }
+    } else {
+      AddError(result, rule, MakePropertyLocation(prim_location, "trimCurve:knots"),
+               "NURBS trim knot count is too large");
+    }
+  }
+}
+
+static void ValidateNurbsPatchTopology(const PrimSpec &ps,
+                                       const std::string &prim_location,
+                                       USDValidationResult *result) {
+  const char *rule = "geom.nurbsPatch.topology";
+  const auto check_axis = [&](const char *vertex_name, const char *order_name,
+                              const char *knot_name,
+                              const char *range_name) -> std::optional<uint64_t> {
+    int64_t vertices = 0, order = 0;
+    const bool have_vertices = GetIntegerScalarProperty(ps, vertex_name, &vertices);
+    const bool have_order = GetIntegerScalarProperty(ps, order_name, &order);
+    if (have_order && order <= 0) {
+      AddError(result, rule, MakePropertyLocation(prim_location, order_name),
+               "NURBS order must be positive");
+    }
+    if (have_vertices && (vertices <= 0 || (have_order && vertices < order))) {
+      AddError(result, rule, MakePropertyLocation(prim_location, vertex_name),
+               "NURBS vertex count must be positive and at least the order");
+    }
+    std::vector<double> knots;
+    bool knots_ordered = false;
+    if (GetDoubleArrayProperty(ps, knot_name, &knots)) {
+      const auto location = MakePropertyLocation(prim_location, knot_name);
+      if (have_vertices && have_order && vertices > 0 && order > 0 &&
+          knots.size() != static_cast<uint64_t>(vertices) + static_cast<uint64_t>(order)) {
+        AddError(result, rule, location, "NURBS knot count must equal vertex count plus order");
+      }
+      knots_ordered =
+          std::all_of(knots.begin(), knots.end(), [](double knot) { return std::isfinite(knot); }) &&
+          std::is_sorted(knots.begin(), knots.end());
+      if (!knots_ordered) {
+        AddError(result, rule, location, "NURBS knots must be finite and nondecreasing");
+      }
+    }
+    if (const Value *value = GetAttrValue(ps, range_name)) {
+      if (const double *range = value->as_double2()) {
+        const bool have_knot_interval = knots_ordered && have_order &&
+            order > 0 && static_cast<uint64_t>(order) <= knots.size();
+        if (!std::isfinite(range[0]) || !std::isfinite(range[1]) ||
+            range[0] >= range[1] ||
+            (have_knot_interval &&
+             (range[0] < knots[static_cast<size_t>(order - 1)] ||
+              range[1] > knots.back()))) {
+          AddError(result, rule, MakePropertyLocation(prim_location, range_name),
+                   "NURBS range must be finite, increasing, and within the axis knot bounds");
+        }
+      }
+    }
+    if (!have_vertices || vertices <= 0) return std::nullopt;
+    return static_cast<uint64_t>(vertices);
+  };
+  const auto u = check_axis("uVertexCount", "uOrder", "uKnots", "uRange");
+  const auto v = check_axis("vVertexCount", "vOrder", "vKnots", "vRange");
+  size_t points = 0;
+  if (!GetPoint3ArrayLen(ps, "points", &points)) return;
+  if (u && v && (points % *u != 0 || points / *u != *v)) {
+    AddError(result, rule, MakePropertyLocation(prim_location, "points"),
+             "NURBS points must fill the U by V control grid");
+  }
+  size_t weights = 0;
+  if (GetArrayLengthProperty(ps, "pointWeights", &weights) && weights != points) {
+    AddError(result, rule, MakePropertyLocation(prim_location, "pointWeights"),
+             "NURBS pointWeights must match the point count");
+  }
+}
+
+static void ValidateNurbsCurveTopology(const PrimSpec &ps,
+                                      const std::string &prim_location,
+                                      const std::vector<int32_t> &vertices,
+                                      USDValidationResult *result) {
+  const auto error = [&](const char *name, const std::string &message) {
+    AddError(result, "geom.nurbsCurves.topology",
+             MakePropertyLocation(prim_location, name), message);
+  };
+  size_t points = 0, weights = 0;
+  if (GetPoint3ArrayLen(ps, "points", &points) &&
+      GetArrayLengthProperty(ps, "pointWeights", &weights) && points != weights) {
+    error("pointWeights", "NURBS pointWeights must match the point count");
+  }
+  const Value *range_value = GetAttrValue(ps, "ranges");
+  const auto ranges = range_value && range_value->type_id() == TypeId::Double2
+      ? range_value->as_double_array() : ValueArrayView<const double>{};
+  const bool have_ranges = ranges && ranges->size() % 2 == 0 &&
+                           ranges->size() / 2 == vertices.size();
+  if (ranges && !have_ranges) {
+    error("ranges", "NURBS ranges must contain one interval per curve");
+  }
+  std::vector<int32_t> orders;
+  if (!GetIntArrayProperty(ps, "order", &orders)) return;
+  if (orders.size() != vertices.size()) {
+    error("order", "NURBS order must contain one value per curve");
+    return;
+  }
+  size_t total = 0;
+  bool valid = true;
+  for (size_t i = 0; i < orders.size(); ++i) {
+    if (orders[i] <= 0 || orders[i] > vertices[i]) {
+      error("order", "Curve " + std::to_string(i) +
+                         " must have positive order no greater than its vertex count");
+      valid = false;
+    } else if (!safe::add(total, vertices[i], &total) ||
+               !safe::add(total, orders[i], &total)) {
+      error("knots", "NURBS knot count is too large");
+      return;
+    }
+  }
+  std::vector<double> knots;
+  if (!valid || !GetDoubleArrayProperty(ps, "knots", &knots)) return;
+  if (knots.size() != total) {
+    error("knots", "NURBS knot count must equal the sum of vertex counts and orders");
+    return;
+  }
+  size_t offset = 0;
+  for (size_t i = 0; i < orders.size(); ++i) {
+    const size_t order = static_cast<size_t>(orders[i]);
+    const size_t count = static_cast<size_t>(vertices[i]) + order;
+    const auto first = knots.begin() + static_cast<std::ptrdiff_t>(offset);
+    const auto end = first + static_cast<std::ptrdiff_t>(count);
+    if (!std::all_of(first, end, [](double knot) { return std::isfinite(knot); }) ||
+        !std::is_sorted(first, end)) {
+      error("knots", "Curve " + std::to_string(i) + " knots must be finite and nondecreasing");
+    } else if (have_ranges) {
+      const double low = (*ranges)[2 * i], high = (*ranges)[2 * i + 1];
+      if (!std::isfinite(low) || !std::isfinite(high) || low >= high ||
+          low < knots[offset + order - 1] || high > knots[offset + count - 1]) {
+        error("ranges", "Curve " + std::to_string(i) + " range must be within its knot bounds");
+      }
+    }
+    offset += count;
   }
 }
 
@@ -174,6 +561,8 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
     ValidateTokenSetProperty(ps, "wrap", kWrap, "geom.curves.tokens",
                              prim_location, result);
   } else if (ps.type_name() == "NurbsPatch") {
+    ValidateNurbsPatchTopology(ps, prim_location, result);
+    ValidateNurbsTrimTopology(ps, prim_location, result);
     ValidateTokenSetProperty(ps, "uForm", kForm, "geom.curves.tokens",
                              prim_location, result);
     ValidateTokenSetProperty(ps, "vForm", kForm, "geom.curves.tokens",
@@ -182,10 +571,23 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
 
   size_t point_count = 0;
   const bool have_points = GetPoint3ArrayLen(ps, "points", &point_count);
+  if (have_points && ps.type_name() == "HermiteCurves") {
+    size_t tangents = 0;
+    if (GetPoint3ArrayLen(ps, "tangents", &tangents) && tangents != point_count) {
+      AddError(result, "geom.curves.topology",
+               MakePropertyLocation(prim_location, "tangents"),
+               "Hermite tangents must match the point count");
+    }
+  }
   std::vector<int32_t> counts;
   const bool have_counts =
       GetIntArrayProperty(ps, "curveVertexCounts", &counts);
   if (have_counts) {
+    if (ps.type_name() == "BasisCurves") {
+      ValidateCubicBasisCounts(ps, counts, prim_location, result);
+    } else if (ps.type_name() == "NurbsCurves") {
+      ValidateNurbsCurveTopology(ps, prim_location, counts, result);
+    }
     size_t total = 0;
     for (size_t i = 0; i < counts.size(); i++) {
       if (counts[i] <= 0) {
@@ -217,9 +619,23 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
       }
     }
 
-    const bool length_ok =
-        widths.size() == 1 || (have_points && widths.size() == point_count) ||
-        (have_counts && widths.size() == counts.size());
+    const PropMeta *width_meta = ps.property_meta("widths");
+    if (ps.type_name() == "BasisCurves" && width_meta &&
+        width_meta->interpolation == "varying") {
+      size_t expected = 0;
+      if (have_counts && BasisCurvesVaryingSize(ps, counts, &expected) &&
+          widths.size() != expected) {
+        AddError(result, "geom.curves.widths",
+                 MakePropertyLocation(prim_location, "widths"),
+                 "varying widths length must match the curve topology (" +
+                     std::to_string(expected) + ")");
+      }
+      return;
+    }
+
+    const bool length_ok = widths.size() == 1 ||
+                           (have_points && widths.size() == point_count) ||
+                           (have_counts && widths.size() == counts.size());
     if (!length_ok) {
       AddError(result, "geom.curves.widths",
                MakePropertyLocation(prim_location, "widths"),
@@ -233,7 +649,8 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
 // vol.volume.fieldRel / vol.fieldAsset.* / render.*
 // ---------------------------------------------------------------------------
 
-void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
+void ValidateVolume(const PrimSpec &ps, const UsdPrim &prim,
+                    const std::string &prim_location,
                     const PrimTypeByPath &prim_types, USDValidationResult *result) {
   // Volume binds its fields through `field:<name>` RELATIONSHIPS; an
   // attribute in that namespace is an authoring error, and a bound field
@@ -251,8 +668,16 @@ void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
   }
   for (const std::string &rel_name : ps.relationship_names()) {
     if (rel_name.compare(0, 6, "field:") != 0) continue;
-    const std::vector<Path> *targets = ps.relationship(rel_name);
-    if (!targets || targets->empty()) {
+    std::vector<Path> targets;
+    prim.GetForwardedRelationshipTargets(rel_name, &targets);
+    if (targets.empty()) {
+      const auto edit = ps.relationship_edits().find(rel_name);
+      const auto *direct = ps.relationship(rel_name);
+      if (edit != ps.relationship_edits().end() && edit->second.authored &&
+          edit->second.is_explicit && direct && direct->empty()) {
+        // UsdVolVolume::BlockFieldRelationship authors an explicit empty list.
+        continue;
+      }
       AddWarning(result, "vol.volume.fieldRel",
                  MakePropertyLocation(prim_location, rel_name),
                  "Volume field relationship `" + rel_name +
@@ -261,16 +686,24 @@ void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
     }
     // UsdVolVolume::GetFieldPaths ignores a field relationship unless it has
     // exactly one target.
-    if (targets->size() != 1) {
+    if (targets.size() != 1) {
       AddWarning(result, "vol.volume.fieldTargetCount",
                  MakePropertyLocation(prim_location, rel_name),
                  "Volume field relationship `" + rel_name + "` has " +
-                     std::to_string(targets->size()) +
+                     std::to_string(targets.size()) +
                      " targets; UsdVol uses a field only with exactly one");
       continue;
     }
     // Same-layer targets must be volume fields (VolumeFieldBase).
-    const std::string target = (*targets)[0].str();
+    const Path &target_path = targets.front();
+    const std::string &target = target_path.str();
+    if (target_path.has_property() || target_path.is_root()) {
+      AddWarning(result, "vol.volume.fieldTargetType",
+                 MakePropertyLocation(prim_location, rel_name),
+                 "Volume field relationship `" + rel_name + "` resolves to `" +
+                     target + "`, which is not a field prim path");
+      continue;
+    }
     const std::string *type = FindPrimType(prim_types, target);
     if (!type || type->empty()) continue;
     const SchemaRegistry &registry = GetSchemaRegistry();
@@ -298,39 +731,39 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
   static const std::set<std::string> kVectorRole = {"None", "Point", "Normal",
                                                     "Vector", "Color"};
 
-  std::string file;
+  const auto has_value = [&](const char *name, const auto &usable) {
+    if (const Value *value = GetAttrValue(ps, name); value && usable(*value)) {
+      return true;
+    }
+    if (const auto *samples = GetTimeSamplesOf(ps, name)) {
+      for (const auto &sample : *samples) {
+        const Value *value = ps.time_sample_value(sample.second);
+        if (value && !value->is_block() && !value->is_empty() && usable(*value)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
   if (!HasAttributeProp(ps, "filePath")) {
     AddWarning(result, "vol.fieldAsset.filePath",
                MakePropertyLocation(prim_location, "filePath"),
                ps.type_name() + " should author filePath");
-  } else {
-    // A time-sampled filePath is the canonical animated-volume authoring
-    // (one asset per sample); only a sample-less, default-less (or empty)
-    // filePath warrants a diagnostic.
-    const std::vector<std::pair<double, uint32_t>> *file_samples =
-        GetTimeSamplesOf(ps, "filePath");
-    if ((!file_samples || file_samples->empty()) &&
-        (!GetAssetPathProperty(ps, "filePath", &file) || file.empty())) {
-      AddWarning(result, "vol.fieldAsset.filePath",
-                 MakePropertyLocation(prim_location, "filePath"),
-                 ps.type_name() + " filePath should be a non-empty asset path");
-    }
+  } else if (!has_value("filePath", [](const Value &value) {
+               const auto path = value.as_asset_path();
+               return path && !path->empty();
+             })) {
+    AddWarning(result, "vol.fieldAsset.filePath",
+               MakePropertyLocation(prim_location, "filePath"),
+               ps.type_name() + " filePath should be a non-empty asset path");
   }
-  // pxr usdVol schema: for fieldDataType, "A missing value is considered an
-  // error." That statement is about the COMPOSED stage; this checker sees one
-  // layer, where the value may legitimately arrive from a sublayer or another
-  // arc — so a missing VALUE (no default, no timeSamples; the registry has no
-  // fallback either) reports as a warning, not a hard error.
-  {
-    const std::vector<std::pair<double, uint32_t>> *dt_samples =
-        GetTimeSamplesOf(ps, "fieldDataType");
-    if (!GetAttrValue(ps, "fieldDataType") &&
-        (!dt_samples || dt_samples->empty())) {
-      AddWarning(result, "vol.fieldAsset.dataType",
-                 MakePropertyLocation(prim_location, "fieldDataType"),
-                 ps.type_name() + " does not author a fieldDataType value "
-                 "(pxr: a missing value is an error on the composed stage)");
-    }
+  // A missing fieldDataType can be supplied by another layer. Check
+  // presence independently of the token legality diagnostic below.
+  if (!has_value("fieldDataType", [](const Value &) { return true; })) {
+    AddWarning(result, "vol.fieldAsset.dataType",
+               MakePropertyLocation(prim_location, "fieldDataType"),
+               ps.type_name() + " does not author a fieldDataType value "
+               "(pxr: a missing value is an error on the composed stage)");
   }
   if (ps.type_name() == "OpenVDBAsset") {
     ValidateTokenSetProperty(ps, "fieldDataType", kVdbDataTypes,
@@ -345,6 +778,21 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
   ValidateTokenSetProperty(ps, "vectorDataRoleHint", kVectorRole,
                            "vol.fieldAsset.vectorDataRoleHint", prim_location,
                            result);
+  const auto check_index = [&](const Value *value, std::optional<double> time) {
+    const int32_t *index = value ? value->as_int() : nullptr;
+    if (index && *index < 0) {
+      AddError(result, "vol.fieldAsset.fieldIndex",
+               MakePropertyLocation(prim_location, "fieldIndex"),
+               time ? "fieldIndex must be non-negative at time " + std::to_string(*time)
+                    : "fieldIndex must be non-negative");
+    }
+  };
+  check_index(GetAttrValue(ps, "fieldIndex"), std::nullopt);
+  if (const auto *samples = GetTimeSamplesOf(ps, "fieldIndex")) {
+    for (const auto &sample : *samples) {
+      check_index(ps.time_sample_value(sample.second), sample.first);
+    }
+  }
 }
 
 void ValidateParticleField(
@@ -421,18 +869,22 @@ void ValidateParticleField(
                "spherical harmonics degree must not be negative");
     return;
   }
-  const uint64_t per_particle = uint64_t(degree + 1) * uint64_t(degree + 1);
+  const uint64_t bands = static_cast<uint64_t>(degree) + 1;
+  size_t expected_coefficients = 0;
+  const bool count_fits = safe::mul3(particle_count, bands, bands,
+                                     &expected_coefficients);
   for (const char *prop_name : {"radiance:sphericalHarmonicsCoefficients",
                                 "radiance:sphericalHarmonicsCoefficientsh"}) {
     size_t value_count = 0;
     if (GetArrayLengthProperty(ps, prop_name, &value_count) &&
-        uint64_t(value_count) != per_particle * particle_count) {
+        (!count_fits || value_count != expected_coefficients)) {
       AddWarning(result, "vol.particleField.shCount",
                  MakePropertyLocation(prim_location, prop_name),
                  std::string(prop_name) + " has " + std::to_string(value_count) +
                      " coefficients; degree " + std::to_string(degree) + " with " +
                      std::to_string(particle_count) + " particles needs " +
-                     std::to_string(per_particle * particle_count));
+                     (count_fits ? std::to_string(expected_coefficients)
+                                 : "more coefficients than can be represented"));
     }
   }
 }
@@ -580,6 +1032,10 @@ void ValidatePointInstancer(const PrimSpec &ps,
                  MakePropertyLocation(prim_location, "prototypes"),
                  "prototypes target `" + target.str() +
                      "` is invalid: " + err);
+      } else if (target.has_property() || target.is_root()) {
+        AddError(result, "geom.pointInstancer.prototypes",
+                 MakePropertyLocation(prim_location, "prototypes"),
+                 "prototypes target `" + target.str() + "` must name a prim directly");
       }
     }
   }
@@ -603,12 +1059,48 @@ void ValidatePointInstancer(const PrimSpec &ps,
   }
 
   if (have_positions) {
+    const auto *position_samples = GetTimeSamplesOf(ps, "positions");
+    const bool static_positions = !position_samples || position_samples->empty();
+    const char *orientation_name =
+        UsdGeomPointInstancer::UsesFloatOrientations(ps) ? "orientationsf" : "orientations";
     for (const char *prop_name :
-         {"orientations", "scales", "ids", "velocities", "accelerations",
-          "angularVelocities"}) {
+         {orientation_name, "scales", "ids", "velocities",
+          "accelerations", "angularVelocities"}) {
       ValidateArrayLengthProperty(ps, prop_name, position_count, false,
                                   "geom.pointInstancer.arraySize",
-                                  prim_location, "positions", result);
+                                  prim_location, "positions", result, static_positions);
+    }
+  }
+
+  for (const std::string name : {"orientations", "orientationsf"}) {
+    const auto location = MakePropertyLocation(prim_location, name);
+    const auto check = [&](const Value *value, std::optional<double> time) {
+      if (!value || (value->type_id() != TypeId::Quath &&
+                     value->type_id() != TypeId::Quatf)) return;
+      ArrayScratch<float> scratch;
+      ArrayView<float> lanes;
+      if (!GetFloatArrayView(*value, &scratch, &lanes)) return;
+      // Half-precision lanes incur larger rounding error near unit length.
+      const double tolerance = value->type_id() == TypeId::Quath ? 2e-3 : 1e-5;
+      for (size_t i = 0; i + 3 < lanes.size; i += 4) {
+        double norm_squared = 0.0;
+        for (size_t component = 0; component < 4; ++component) {
+          const double lane = lanes[i + component];
+          norm_squared += lane * lane;
+        }
+        if (!std::isfinite(norm_squared) ||
+            std::abs(norm_squared - 1.0) > tolerance) {
+          AddError(result, "geom.pointInstancer.orientation", location,
+                   name + "[" + std::to_string(i / 4) + "] must be a finite unit quaternion" +
+                       (time ? " at time " + std::to_string(*time) : ""));
+        }
+      }
+    };
+    check(GetAttrValue(ps, name), std::nullopt);
+    if (const auto *samples = GetTimeSamplesOf(ps, name)) {
+      for (const auto &sample : *samples) {
+        check(ps.time_sample_value(sample.second), sample.first);
+      }
     }
   }
 }
@@ -624,26 +1116,56 @@ void ValidateCamera(const PrimSpec &ps, const std::string &prim_location,
   ValidateTokenSetProperty(ps, "stereoRole", kStereoRole,
                            "geom.camera.tokens", prim_location, result);
 
-  const Value *cr = GetAttrValue(ps, "clippingRange");
-  std::array<float, 2> clipping_range = {{0.0f, 0.0f}};
-  if (cr && ValueToFloat2(*cr, &clipping_range)) {
+  const auto check_clipping_range = [&](const Value *value,
+                                        std::optional<double> time) {
+    std::array<float, 2> clipping_range = {};
+    if (!value || value->is_block() || !ValueToFloat2(*value, &clipping_range)) {
+      return;
+    }
     if (!std::isfinite(clipping_range[0]) ||
         !std::isfinite(clipping_range[1]) || clipping_range[0] < 0.0f ||
         clipping_range[1] <= clipping_range[0]) {
       AddError(result, "geom.camera.range",
                MakePropertyLocation(prim_location, "clippingRange"),
-               "clippingRange must be finite with near >= 0 and far > near");
+               std::string("clippingRange must be finite with near >= 0 and far > near") +
+                   (time ? " at time " + std::to_string(*time) : ""));
+    }
+  };
+  check_clipping_range(GetAttrValue(ps, "clippingRange"), std::nullopt);
+  if (const auto *samples = GetTimeSamplesOf(ps, "clippingRange")) {
+    for (const auto &sample : *samples) {
+      check_clipping_range(ps.time_sample_value(sample.second), sample.first);
     }
   }
 
-  ValidatePositiveNumericProperty(ps, "focalLength", "geom.camera.optics",
-                                  prim_location, result);
-  ValidatePositiveNumericProperty(ps, "horizontalAperture",
-                                  "geom.camera.optics", prim_location, result);
-  ValidatePositiveNumericProperty(ps, "verticalAperture",
-                                  "geom.camera.optics", prim_location, result);
-  ValidateNonNegativeNumericProperty(ps, "fStop", "geom.camera.optics",
-                                     prim_location, result);
+  for (const std::string name : {"focalLength", "horizontalAperture",
+                                "verticalAperture", "fStop"}) {
+    const bool allow_zero = name == "fStop";
+    const char *rule = "geom.camera.optics";
+    const std::string location = MakePropertyLocation(prim_location, name);
+    if (IsRelationshipProp(ps, name)) {
+      AddError(result, rule, location, name + " must be a numeric attribute");
+      continue;
+    }
+    const auto check_optic = [&](const Value *value, std::optional<double> time) {
+      if (!value || value->is_block()) return;
+      double scalar = 0.0;
+      if (!ValueToDouble(*value, &scalar)) {
+        AddError(result, rule, location, name + " must have a numeric scalar value");
+      } else if (!std::isfinite(scalar) ||
+                 (allow_zero ? scalar < 0.0 : scalar <= 0.0)) {
+        AddError(result, rule, location, name +
+            (allow_zero ? " must be finite and non-negative" : " must be finite and positive") +
+            (time ? " at time " + std::to_string(*time) : ""));
+      }
+    };
+    check_optic(GetAttrValue(ps, name), std::nullopt);
+    if (const auto *samples = GetTimeSamplesOf(ps, name)) {
+      for (const auto &sample : *samples) {
+        check_optic(ps.time_sample_value(sample.second), sample.first);
+      }
+    }
+  }
 
   double shutter_open = 0.0;
   double shutter_close = 0.0;
@@ -674,10 +1196,6 @@ void ValidateMeshTopology(const PrimSpec &ps, const std::string &prim_location,
     *out_face_count = counts.size();
   }
 
-  if (!have_counts && !have_indices) {
-    return;
-  }
-
   size_t total = 0;
   if (have_counts) {
     for (size_t i = 0; i < counts.size(); i++) {
@@ -702,6 +1220,52 @@ void ValidateMeshTopology(const PrimSpec &ps, const std::string &prim_location,
 
   size_t point_count = 0;
   const bool have_points = GetPoint3ArrayLen(ps, "points", &point_count);
+  const bool primvar_normals = GetAttrValue(ps, "primvars:normals") != nullptr;
+  const char *normals_name = primvar_normals ? "primvars:normals" : "normals";
+  size_t normal_count = 0;
+  if (GetPoint3ArrayLen(ps, normals_name, &normal_count) &&
+      (primvar_normals || normal_count != 0)) {
+    const auto *meta = ps.property_meta(normals_name);
+    const std::string interpolation = meta && (meta->authored & PropMeta::kInterpolation)
+        ? meta->interpolation : (primvar_normals ? "constant" : "vertex");
+    const auto location = MakePropertyLocation(prim_location, normals_name);
+    std::optional<size_t> expected;
+    if (interpolation == "constant") {
+      expected = 1;
+    } else if (interpolation == "uniform" && have_counts) {
+      expected = counts.size();
+    } else if (interpolation == "faceVarying" && have_indices) {
+      expected = indices.size();
+    } else if ((interpolation == "vertex" || interpolation == "varying") && have_points) {
+      expected = point_count;
+    }
+    if (!IsValidPrimvarInterpolation(interpolation)) {
+      AddError(result, "geom.mesh.normals", location,
+               "invalid normals interpolation `" + interpolation + "`");
+    } else {
+      bool count_matches = !expected || normal_count == *expected;
+      if (primvar_normals && GetAttrValue(ps, "primvars:normals:indices")) {
+        std::vector<int32_t> selectors;
+        const int element_size = meta && (meta->authored & PropMeta::kElementSize)
+            ? meta->elementSize : 1;
+        if (element_size <= 0 ||
+            !GetIntArrayProperty(ps, "primvars:normals:indices", &selectors)) {
+          count_matches = false;
+        } else {
+          const size_t group = static_cast<size_t>(element_size);
+          count_matches = !expected ||
+              (*expected % group == 0 && selectors.size() == *expected / group);
+          count_matches = count_matches &&
+              std::all_of(selectors.begin(), selectors.end(), [&](int32_t selector) {
+                return selector >= 0 && static_cast<size_t>(selector) < normal_count / group;
+              });
+        }
+      }
+      if (!count_matches)
+        AddError(result, "geom.mesh.normals", location,
+                 "resolved normals do not match the " + interpolation + " interpolation domain");
+    }
+  }
   if (have_indices && have_points) {
     for (size_t i = 0; i < indices.size(); i++) {
       if (indices[i] < 0 || static_cast<size_t>(indices[i]) >= point_count) {
@@ -794,6 +1358,10 @@ void ValidatePrimvars(const PrimSpec &ps, const std::string &prim_location,
                "indexed primvar indices must be an int[] attribute");
       continue;
     }
+    const Value *indices_value = ps.property_value(indices_name);
+    if (indices_value && indices_value->is_block()) {
+      continue;
+    }
 
     std::vector<int32_t> indices;
     if (!GetIntArrayProperty(ps, indices_name, &indices)) {
@@ -850,8 +1418,9 @@ void ValidateSkeletonTopology(const PrimSpec &ps,
     return;
   }
 
-  std::unordered_map<std::string, size_t> joint_to_index;
-  size_t root_count = 0;
+  std::unordered_set<std::string> seen_joints;
+  std::vector<std::string> valid_joints;
+  valid_joints.reserve(joints.size());
   for (size_t i = 0; i < joints.size(); i++) {
     const std::string &joint = joints[i];
     if (joint.empty() || joint[0] == '/' || EndsWith(joint, "/") ||
@@ -862,26 +1431,30 @@ void ValidateSkeletonTopology(const PrimSpec &ps,
                    "] must be a relative joint path, but is `" + joint + "`");
       continue;
     }
-    if (!joint_to_index.emplace(joint, i).second) {
+    if (!seen_joints.insert(joint).second) {
       AddError(result, "geom.skel.skeleton.joints",
                MakePropertyLocation(prim_location, "joints"),
                "duplicate joint path `" + joint + "`");
       continue;
     }
 
-    const size_t slash = joint.find_last_of('/');
-    if (slash == std::string::npos) {
-      root_count++;
-      continue;
-    }
+    valid_joints.push_back(joint);
+  }
 
-    const std::string parent = joint.substr(0, slash);
-    auto parent_it = joint_to_index.find(parent);
-    if (parent_it == joint_to_index.end() || parent_it->second >= i) {
+  // Reuse the schema topology builder. It skips intermediate path components
+  // until it finds the nearest listed ancestor.
+  std::vector<int> parents;
+  BuildSkelTopology(valid_joints, parents, nullptr);
+  size_t root_count = 0;
+  for (size_t i = 0; i < parents.size(); ++i) {
+    if (parents[i] < 0) {
+      ++root_count;
+    } else if (const size_t parent = static_cast<size_t>(parents[i]); parent >= i) {
       AddError(result, "geom.skel.skeleton.topology",
                MakePropertyLocation(prim_location, "joints"),
-               "joint `" + joint +
-                   "` must appear after its parent joint `" + parent + "`");
+               "joint `" + valid_joints[i] +
+                   "` must appear after its parent joint `" +
+                   valid_joints[parent] + "`");
     }
   }
 
@@ -1004,14 +1577,14 @@ void ValidateBlendShape(const PrimSpec &ps, const std::string &prim_location,
   }
 
   if (HasAttributeProp(ps, "normalOffsets")) {
-    ValidateTimeSamplesProp(
-        ps, "normalOffsets", "geom.skel.blendShape.normalOffsets",
-        MakePropertyLocation(prim_location, "normalOffsets"), result);
+    const std::string location = MakePropertyLocation(prim_location, "normalOffsets");
     if (have_offsets) {
       ValidateArrayLengthAtAllSamples(
-          ps, "normalOffsets", "geom.skel.blendShape.normalOffsets",
-          MakePropertyLocation(prim_location, "normalOffsets"), offset_count,
-          "offsets", result);
+          ps, "normalOffsets", "geom.skel.blendShape.normalOffsets", location,
+          offset_count, "offsets", result);
+    } else {
+      ValidateTimeSamplesProp(ps, "normalOffsets",
+                              "geom.skel.blendShape.normalOffsets", location, result);
     }
   }
 
@@ -1052,15 +1625,19 @@ void ValidateBlendShape(const PrimSpec &ps, const std::string &prim_location,
     }
     const std::string location =
         MakePropertyLocation(prim_location, prop_name);
-    const PropMeta *meta = ps.property_meta(prop_name);
-    if (!meta || !(meta->authored & PropMeta::kWeight)) {
-      AddError(result, "geom.skel.blendShape.inbetween", location,
-               "BlendShape inbetween `" + prop_name +
-                   "` must author weight metadata");
-    } else if (!std::isfinite(meta->weight)) {
-      AddError(result, "geom.skel.blendShape.inbetween", location,
-               "BlendShape inbetween `" + prop_name +
-                   "` has a non-finite weight");
+    // The companion normalOffsets attribute belongs to the inbetween but
+    // only the inbetween's position offsets carry weight metadata.
+    if (!EndsWith(prop_name, ":normalOffsets")) {
+      const PropMeta *meta = ps.property_meta(prop_name);
+      if (!meta || !(meta->authored & PropMeta::kWeight)) {
+        AddError(result, "geom.skel.blendShape.inbetween", location,
+                 "BlendShape inbetween `" + prop_name +
+                     "` must author weight metadata");
+      } else if (!std::isfinite(meta->weight)) {
+        AddError(result, "geom.skel.blendShape.inbetween", location,
+                 "BlendShape inbetween `" + prop_name +
+                     "` has a non-finite weight");
+      }
     }
     if (have_offsets) {
       ValidateArrayLengthAtAllSamples(ps, prop_name,
@@ -1150,13 +1727,16 @@ void ValidateSkelBinding(const PrimSpec &ps,
 
 void ValidateSkinningPrimvars(const PrimSpec &ps,
                               const std::string &prim_location,
-                              const PrimTypeByPath &prim_types,
-                              const SkeletonJointCountByPath &skeleton_joints,
+                              std::optional<size_t> bound_joint_count,
+                              const SkinningSources &sources,
                               USDValidationResult *result) {
+  const PrimSpec &indices_source = sources.indices ? *sources.indices : ps;
+  const PrimSpec &weights_source = sources.weights ? *sources.weights : ps;
+  const PrimSpec &order_source = sources.joint_order ? *sources.joint_order : ps;
   const bool have_indices_attr =
-      HasAttributeProp(ps, "primvars:skel:jointIndices");
+      HasAttributeProp(indices_source, "primvars:skel:jointIndices");
   const bool have_weights_attr =
-      HasAttributeProp(ps, "primvars:skel:jointWeights");
+      HasAttributeProp(weights_source, "primvars:skel:jointWeights");
   if (!have_indices_attr && !have_weights_attr) {
     return;
   }
@@ -1168,8 +1748,8 @@ void ValidateSkinningPrimvars(const PrimSpec &ps,
     return;
   }
 
-  const PropMeta *indices_meta = ps.property_meta("primvars:skel:jointIndices");
-  const PropMeta *weights_meta = ps.property_meta("primvars:skel:jointWeights");
+  const PropMeta *indices_meta = indices_source.property_meta("primvars:skel:jointIndices");
+  const PropMeta *weights_meta = weights_source.property_meta("primvars:skel:jointWeights");
 
   const auto validate_skin_interp = [&](const PropMeta *meta,
                                         const std::string &name) {
@@ -1179,14 +1759,21 @@ void ValidateSkinningPrimvars(const PrimSpec &ps,
                name + " must author interpolation metadata");
       return;
     }
-    if (meta->interpolation != "vertex" && meta->interpolation != "varying") {
+    if (meta->interpolation != "vertex" && meta->interpolation != "constant") {
       AddError(result, "geom.skel.skinning.interpolation", location,
-               name + " interpolation must be vertex or varying, but is `" +
+               name + " interpolation must be constant or vertex, but is `" +
                    meta->interpolation + "`");
     }
   };
   validate_skin_interp(indices_meta, "primvars:skel:jointIndices");
   validate_skin_interp(weights_meta, "primvars:skel:jointWeights");
+  if (indices_meta && weights_meta &&
+      (indices_meta->authored & PropMeta::kInterpolation) &&
+      (weights_meta->authored & PropMeta::kInterpolation) &&
+      indices_meta->interpolation != weights_meta->interpolation) {
+    AddError(result, "geom.skel.skinning.interpolation", prim_location,
+             "jointIndices and jointWeights must use the same interpolation");
+  }
 
   const bool indices_es_ok = indices_meta &&
                              (indices_meta->authored & PropMeta::kElementSize) &&
@@ -1205,49 +1792,108 @@ void ValidateSkinningPrimvars(const PrimSpec &ps,
 
   std::vector<int32_t> joint_indices;
   std::vector<float> joint_weights;
-  if (GetIntArrayProperty(ps, "primvars:skel:jointIndices", &joint_indices) &&
-      GetFloatArrayProperty(ps, "primvars:skel:jointWeights",
+  if (GetIntArrayProperty(indices_source, "primvars:skel:jointIndices", &joint_indices) &&
+      GetFloatArrayProperty(weights_source, "primvars:skel:jointWeights",
                             &joint_weights)) {
-    if (joint_indices.size() != joint_weights.size()) {
+    std::vector<int32_t> index_selectors, weight_selectors;
+    const char *index_selector_name = "primvars:skel:jointIndices:indices";
+    const char *weight_selector_name = "primvars:skel:jointWeights:indices";
+    const bool indices_indexed =
+        GetIntArrayProperty(indices_source, index_selector_name, &index_selectors);
+    const bool weights_indexed =
+        GetIntArrayProperty(weights_source, weight_selector_name, &weight_selectors);
+    const auto group_count = [&](const char *selector, size_t values,
+                                 const PropMeta *metadata, bool size_valid,
+                                 bool indexed, std::vector<int32_t> &selectors)
+        -> std::optional<size_t> {
+      if (!size_valid) return std::nullopt;
+      const size_t element_size = static_cast<size_t>(metadata->elementSize);
+      if (values % element_size != 0) return std::nullopt;
+      const size_t table_groups = values / element_size;
+      if (!indexed) return table_groups;
+      bool valid = true;
+      for (int32_t index : selectors) {
+        if (index < 0 || static_cast<size_t>(index) >= table_groups) {
+          AddError(result, "geom.skel.skinning.selector",
+                   MakePropertyLocation(prim_location, selector),
+                   "influence selector " + std::to_string(index) +
+                       " is outside the primvar's value table");
+          valid = false;
+        }
+      }
+      if (!valid) return std::nullopt;
+      std::sort(selectors.begin(), selectors.end());
+      return selectors.size();
+    };
+    const auto index_groups = group_count(index_selector_name, joint_indices.size(),
+        indices_meta, indices_es_ok, indices_indexed, index_selectors);
+    const auto weight_groups = group_count(weight_selector_name, joint_weights.size(),
+        weights_meta, weights_es_ok, weights_indexed, weight_selectors);
+    const bool indexed = indices_indexed || weights_indexed;
+    const auto selected = [](const std::vector<int32_t> &selectors, size_t group) {
+      return std::binary_search(selectors.begin(), selectors.end(), group,
+          [](auto a, auto b) { return static_cast<size_t>(a) < static_cast<size_t>(b); });
+    };
+    if (!indexed && joint_indices.size() != joint_weights.size()) {
       AddError(result, "geom.skel.skinning.size", prim_location,
                "jointIndices has " + std::to_string(joint_indices.size()) +
                    " elements, but jointWeights has " +
                    std::to_string(joint_weights.size()) + " elements");
+    } else if (indexed && index_groups && weight_groups &&
+               *index_groups != *weight_groups) {
+      AddError(result, "geom.skel.skinning.size", prim_location,
+               "indexed jointIndices and jointWeights must resolve to the same number of influence groups");
     }
-
-    size_t local_joint_count = 0;
-    bool have_local_joint_count = false;
-    if (IsRelationshipProp(ps, "skel:skeleton")) {
-      const std::vector<Path> targets = RelTargets(ps, "skel:skeleton");
-      if (targets.size() == 1) {
-        std::string prim_part;
-        SplitScenePathString(targets[0].str(), &prim_part, nullptr);
-        const std::string *target_type = FindPrimType(prim_types, prim_part);
-        if (target_type && *target_type == "Skeleton") {
-          auto joint_count_it = skeleton_joints.find(prim_part);
-          if (joint_count_it != skeleton_joints.end()) {
-            local_joint_count = joint_count_it->second;
-            have_local_joint_count = true;
-          }
-        }
+    if ((indices_es_ok &&
+         joint_indices.size() % static_cast<size_t>(indices_meta->elementSize) != 0) ||
+        (weights_es_ok &&
+         joint_weights.size() % static_cast<size_t>(weights_meta->elementSize) != 0)) {
+      AddError(result, "geom.skel.skinning.size", prim_location,
+               "jointIndices and jointWeights must contain complete influence groups");
+    }
+    if (index_groups && weight_groups &&
+        (indices_meta->authored & PropMeta::kInterpolation) &&
+        (weights_meta->authored & PropMeta::kInterpolation) &&
+        indices_meta->interpolation == weights_meta->interpolation) {
+      size_t expected_groups = 1;
+      const auto &interpolation = indices_meta->interpolation;
+      const bool know_group_count = interpolation == "constant" ||
+          (interpolation == "vertex" &&
+           GetPoint3ArrayLen(ps, "points", &expected_groups));
+      if (know_group_count &&
+          (*index_groups != expected_groups || *weight_groups != expected_groups)) {
+        AddError(result, "geom.skel.skinning.size", prim_location,
+                 "skinning requires " + std::to_string(expected_groups) +
+                     " complete influence groups for " + interpolation +
+                     " interpolation");
       }
     }
 
+    std::vector<std::string> local_joints;
+    if (GetTokenArrayProperty(order_source, "skel:joints", &local_joints)) {
+      bound_joint_count = local_joints.size();
+    }
+
     for (size_t i = 0; i < joint_indices.size(); i++) {
+      if (indices_indexed &&
+          (!index_groups ||
+           !selected(index_selectors, i / static_cast<size_t>(indices_meta->elementSize)))) {
+        continue;
+      }
       if (joint_indices[i] < 0) {
         AddError(result, "geom.skel.skinning.index",
                  MakePropertyLocation(prim_location,
                                       "primvars:skel:jointIndices"),
                  "jointIndices[" + std::to_string(i) +
                      "] must be non-negative");
-      } else if (have_local_joint_count &&
-                 static_cast<size_t>(joint_indices[i]) >= local_joint_count) {
+      } else if (bound_joint_count &&
+                 static_cast<size_t>(joint_indices[i]) >= *bound_joint_count) {
         AddError(result, "geom.skel.skinning.index",
                  MakePropertyLocation(prim_location,
                                       "primvars:skel:jointIndices"),
                  "jointIndices[" + std::to_string(i) + "] references joint " +
-                     std::to_string(joint_indices[i]) + ", but skeleton has " +
-                     std::to_string(local_joint_count) + " joints");
+                     std::to_string(joint_indices[i]) + ", but the joint order has " +
+                     std::to_string(*bound_joint_count) + " joints");
       }
     }
 
@@ -1259,6 +1905,9 @@ void ValidateSkinningPrimvars(const PrimSpec &ps,
       if (element_size != 0 && (joint_weights.size() % element_size) == 0) {
         for (size_t group = 0; group < joint_weights.size() / element_size;
              group++) {
+          if (weights_indexed && (!weight_groups || !selected(weight_selectors, group))) {
+            continue;
+          }
           double sum = 0.0;
           bool all_finite = true;
           for (size_t item = 0; item < element_size; item++) {

@@ -27,12 +27,6 @@ const ::lightusd::PropNameId& kIdPositions() {
   return id;
 }
 
-const ::lightusd::PropNameId& kIdOrientations() {
-  static const ::lightusd::PropNameId id =
-      ::lightusd::GetPropNameTable().intern("orientations");
-  return id;
-}
-
 const ::lightusd::PropNameId& kIdScales() {
   static const ::lightusd::PropNameId id =
       ::lightusd::GetPropNameTable().intern("scales");
@@ -97,6 +91,12 @@ bool ReadFloatView(const UsdPrim& prim, const PropNameId name_id, double time,
                    ArrayScratch<float>* scratch, ArrayView<float>* view) {
   const Value* v = ValueAtOrDefault(prim, name_id, time, &scratch->materialized);
   return v && GetFloatArrayView(*v, scratch, view);
+}
+
+PropNameId OrientationAttribute(const UsdPrim& prim) {
+  const PrimSpec* spec = prim.GetPrimSpec();
+  return spec && UsdGeomPointInstancer::UsesFloatOrientations(*spec)
+      ? GetPropNameTable().find("orientationsf") : GetPropNameTable().find("orientations");
 }
 
 bool ReadIntView(const UsdPrim& prim, const PropNameId name_id, double time,
@@ -180,7 +180,7 @@ void ComposeTRS(const float* t, const float* q, const float* s, double out[16]) 
     y = static_cast<double>(q[2]);
     z = static_cast<double>(q[3]);
     const double len2 = w * w + x * x + y * y + z * z;
-    if (len2 > 0.0) {
+    if (std::isfinite(len2) && len2 > 0.0) {
       const double inv_len = 1.0 / std::sqrt(len2);
       w *= inv_len;
       x *= inv_len;
@@ -214,6 +214,17 @@ void ComposeTRS(const float* t, const float* q, const float* s, double out[16]) 
 
 UsdGeomPointInstancer::UsdGeomPointInstancer(const UsdPrim& prim) : prim_(prim) {
   is_point_instancer_ = prim_.IsValid() && prim_.GetTypeName() == "PointInstancer";
+}
+
+bool UsdGeomPointInstancer::UsesFloatOrientations(const PrimSpec& prim) {
+  const PropNameId float_id = GetPropNameTable().find("orientationsf");
+  if (!float_id.is_valid()) return false;
+  const auto* samples = prim.time_samples(float_id);
+  const Value* first = samples && !samples->empty()
+      ? prim.time_sample_value(samples->front().second)
+      : prim.property_value(float_id);
+  return first && first->type_id() == TypeId::Quatf &&
+         first->is_array() && first->array_size() != 0;
 }
 
 std::vector<Path> UsdGeomPointInstancer::GetPrototypes() const {
@@ -258,7 +269,7 @@ std::vector<float> UsdGeomPointInstancer::GetPositions(double time) const {
 }
 
 std::vector<float> UsdGeomPointInstancer::GetOrientations(double time) const {
-  return ReadFloatArrayById(prim_, kIdOrientations(), time);
+  return ReadFloatArrayById(prim_, OrientationAttribute(prim_), time);
 }
 
 std::vector<float> UsdGeomPointInstancer::GetScales(double time) const {
@@ -297,8 +308,7 @@ size_t UsdGeomPointInstancer::GetInstanceCount(double time) const {
   if (!IsValid()) return 0;
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
-  if (ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices) &&
-      !proto_indices.empty()) {
+  if (ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices)) {
     return proto_indices.size;
   }
   ArrayScratch<float> position_scratch;
@@ -317,17 +327,23 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   const std::vector<Path> prototypes = GetPrototypes();
   ArrayScratch<int32_t> proto_scratch;
   ArrayView<int32_t> proto_indices;
-  ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices);
+  const bool have_indices =
+      ReadIntView(prim_, kIdProtoIndices(), time, &proto_scratch, &proto_indices);
   ArrayScratch<float> position_scratch;
   ArrayView<float> positions;
-  ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions);
+  const bool have_positions =
+      ReadFloatView(prim_, kIdPositions(), time, &position_scratch, &positions);
   const size_t n = proto_indices.size;
   if (prototypes.empty()) {
     if (reason) *reason = "missing prototypes relationship";
     return false;
   }
-  if (n == 0) {
+  if (!have_indices) {
     if (reason) *reason = "missing protoIndices";
+    return false;
+  }
+  if (!have_positions) {
+    if (reason) *reason = "missing positions";
     return false;
   }
   if (positions.size != n * 3) {
@@ -342,7 +358,7 @@ bool UsdGeomPointInstancer::HasValidInstanceArrays(
   }
   ArrayScratch<float> orientation_scratch;
   ArrayView<float> orientations;
-  ReadFloatView(prim_, kIdOrientations(), time, &orientation_scratch, &orientations);
+  ReadFloatView(prim_, OrientationAttribute(prim_), time, &orientation_scratch, &orientations);
   if (!orientations.empty() && orientations.size != n * 4) {
     if (reason) *reason = "orientations size does not match protoIndices";
     return false;
@@ -395,7 +411,7 @@ UsdGeomPointInstancer::ComputeInstanceTransforms(double time) const {
   }
   ArrayScratch<float> orientation_scratch;
   ArrayView<float> orientations;
-  ReadFloatView(prim_, kIdOrientations(), time, &orientation_scratch, &orientations);
+  ReadFloatView(prim_, OrientationAttribute(prim_), time, &orientation_scratch, &orientations);
   ArrayScratch<float> scale_scratch;
   ArrayView<float> scales;
   ReadFloatView(prim_, kIdScales(), time, &scale_scratch, &scales);

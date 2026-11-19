@@ -1860,6 +1860,8 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
       Layer preview_layer = BuildPreviewLayer(*out);
       preview_layer.meta() = root->meta();
       preview_layer.meta().subLayers.clear();
+      preview_layer.meta().subLayers_set = false;
+      preview_layer.meta().subLayerOffsets.clear();
       preview_layer.meta().relocates.clear();
       preview_layer.finalize();
       Stage preview_stage;
@@ -2034,6 +2036,8 @@ auto Cache::Impl::BuildStage(Stage *stage, std::string *warn, std::string *err,
     // layer is read back. Relocates are likewise already APPLIED by the
     // stage-build walk — keeping them would re-relocate on re-read.
     out->meta().subLayers.clear();
+    out->meta().subLayers_set = false;
+    out->meta().subLayerOffsets.clear();
     out->meta().relocates.clear();
     for (const std::string &path : deferred_payload_prims) {
       if (PrimSpec *prim = out->prim_at_path_mutable(path)) {

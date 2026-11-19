@@ -8,6 +8,7 @@
 #include "core/native-io.hh"
 #include "crate-writer.hh"
 #include "layer/int64-listop.hh"
+#include "layer/listop-field-table.hh"
 #include "layer/array-edit.hh"
 #include "layer/arc-reference.hh"
 #include "prim/relocate-path.hh"

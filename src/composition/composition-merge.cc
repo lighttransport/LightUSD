@@ -605,12 +605,13 @@ void Compositor::CopyLocalOpinions(
     // empty list here would wrongly serialize as `= None`.
     const bool vacated = prior_opinions == 0 && src_opinions > 0 &&
                          src_vacated == src_opinions && effective.empty();
+    const bool has_target_opinion = !opinions.empty() && !vacated;
     target.set_relationship_targets(rel_name, std::move(effective));
     target.set_relationship_opinion_stack(rel_name, std::move(opinions));
     ArcListOp& resolved = target.ensure_relationship_edit(rel_name);
     resolved = ArcListOp();
-    resolved.authored = !vacated;
-    resolved.is_explicit = !vacated;
+    resolved.authored = has_target_opinion;
+    resolved.is_explicit = has_target_opinion;
     target.set_relationship_flags(
         rel_name, static_cast<uint16_t>(target.relationship_flags(rel_name) |
                                         source.relationship_flags(rel_name)));

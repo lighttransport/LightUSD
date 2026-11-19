@@ -22,6 +22,7 @@
 #include "validation-context.hh"
 
 #include "prim/identifier.hh"
+#include "resolver/asset-resolver.hh"
 #include "schema/schema-registry.hh"
 
 #include "external/fast_float/include/fast_float/fast_float.h"
@@ -254,7 +255,10 @@ bool IsMaterialXShaderId(const std::string &shader_id) {
 }
 
 bool IsMaterialXAssetPath(const std::string &asset_path) {
-  return EndsWith(asset_path, ".mtlx") || EndsWith(asset_path, ".MTLX");
+  std::string package, entry;
+  const std::string &path =
+      AssetResolver::ParsePackagePath(asset_path, &package, &entry) ? entry : asset_path;
+  return EndsWith(path, ".mtlx") || EndsWith(path, ".MTLX");
 }
 
 bool IsMultipleApplySchemaName(const std::string &schema_name) {
@@ -770,11 +774,8 @@ bool GetPoint3ArrayLen(const PrimSpec &ps, const std::string &name,
 }
 
 // extent: float3[2] (Float3-family array of 2, or the crate Extent scalar).
-bool GetExtentProperty(const PrimSpec &ps, const std::string &name,
-                       std::vector<std::array<float, 3>> *out) {
-  if (!out) return false;
-  const Value *v = GetAttrValue(ps, name);
-  if (!v) return false;
+bool ValueToExtent(const Value *v, std::vector<std::array<float, 3>> *out) {
+  if (!v || v->is_block() || !out) return false;
   out->clear();
   if (!v->is_array() && v->type_id() == TypeId::Extent) {
     const float *p = static_cast<const float *>(v->raw_data());
@@ -1108,6 +1109,32 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
   const std::string &type_name = ps.type_name();
   const bool has_arc = HasCompositionArc(ps);
   const bool is_over = IsOverride(ps);
+  auto bound_joint_count = ancestors.inherited_skeleton_joint_count;
+  auto skinning_sources = ancestors.skinning_sources;
+  const bool applies_skel_binding = HasAppliedSchema(applied_schemas, "SkelBindingAPI");
+  if (options.geom && (applies_skel_binding || type_name == "Mesh")) {
+    const auto local_source = [&](const char *name, const PrimSpec *ancestor) {
+      const auto *samples = GetTimeSamplesOf(ps, name);
+      return (GetAttrValue(ps, name) || (samples && !samples->empty()))
+          ? &ps : ancestor;
+    };
+    skinning_sources.indices = local_source("primvars:skel:jointIndices",
+                                            skinning_sources.indices);
+    skinning_sources.weights = local_source("primvars:skel:jointWeights",
+                                            skinning_sources.weights);
+    skinning_sources.joint_order = local_source("skel:joints",
+                                                skinning_sources.joint_order);
+    const auto &targets = RelTargets(ps, "skel:skeleton");
+    if (!targets.empty()) {
+      bound_joint_count.reset();
+      if (targets.size() == 1) {
+        const auto count = skeleton_joints.find(targets.front().str());
+        if (count != skeleton_joints.end()) bound_joint_count = count->second;
+      }
+    } else if (ps.relationship_edits().count("skel:skeleton")) {
+      bound_joint_count.reset();
+    }
+  }
 
   // ---- core.prim.name: prim name must be a valid USD identifier ----
   if (options.core && !ps.name().empty() && !IsValidIdentifier(ps.name())) {
@@ -1192,7 +1219,8 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
       // renderable), and its field-asset prims are the data sources that
       // geometry references — unlike UsdRender, which is pure scene
       // description and has its own group below.
-      ValidateVolume(ps, prim_location, prim_types, result);
+      ValidateVolume(ps, UsdPrim(&ps, &layer, prim_index), prim_location,
+                     prim_types, result);
     } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
       ValidateFieldAsset(ps, prim_location, result);
     } else if (type_name == "ParticleField" ||
@@ -1202,8 +1230,13 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
     ValidateOpenUsd2608GeomAPIs(ps, applied_schemas, prim_location, result);
     ValidatePrimvars(ps, prim_location, result);
     if (type_name == "Mesh") {
-      ValidateSkinningPrimvars(ps, prim_location, prim_types, skeleton_joints,
-                               result);
+      static const std::set<std::string> kSkinningMethods = {
+          "classicLinear", "dualQuaternion"};
+      ValidateTokenSetProperty(ps, "primvars:skel:skinningMethod",
+                               kSkinningMethods, "geom.skel.skinning.method",
+                               prim_location, result);
+      ValidateSkinningPrimvars(ps, prim_location, bound_joint_count,
+                               skinning_sources, result);
     } else if (type_name == "Skeleton") {
       ValidateSkeletonTopology(ps, prim_location, result, nullptr);
     } else if (type_name == "SkelAnimation") {
@@ -1531,6 +1564,10 @@ bool ValidateOnePrimSpec(const Layer &layer, uint32_t prim_index,
   child_ctx.parent_mesh_face_count = local_mesh_face_count;
   child_ctx.has_skel_root_ancestor =
       ancestors.has_skel_root_ancestor || type_name == "SkelRoot";
+  child_ctx.inherited_skeleton_joint_count = applies_skel_binding
+      ? bound_joint_count : ancestors.inherited_skeleton_joint_count;
+  child_ctx.skinning_sources = applies_skel_binding
+      ? skinning_sources : ancestors.skinning_sources;
   child_ctx.has_articulation_ancestor =
       ancestors.has_articulation_ancestor ||
       HasAppliedSchema(applied_schemas, "PhysicsArticulationRootAPI");

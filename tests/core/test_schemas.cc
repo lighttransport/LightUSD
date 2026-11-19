@@ -11,6 +11,7 @@
 #include "layer/layer.hh"
 #include "reader/usda-reader.hh"
 #include "stage/stage.hh"
+#include "types/interpolation.hh"
 #include "types/value.hh"
 #include <cstdio>
 #include <cassert>
@@ -242,12 +243,25 @@ void test_point_instancer_interpolation() {
   layer.begin_prim("Anim", "PointInstancer");
   layer.add_relationship("prototypes", Path("/Proto"));
   layer.add_property("protoIndices", Value::MakeIntArray({0}));
+  layer.add_property("positions", Value::MakeFloat3Array({99, 0, 0}));
+  layer.add_time_sample("protoIndices", 0.0, Value::MakeIntArray({0}));
+  layer.add_time_sample("protoIndices", 20.0, Value::MakeIntArray({0, 0}));
+  layer.add_time_sample("protoIndices", 30.0, Value::MakeIntArray({}));
+  layer.add_time_sample("protoIndices", 40.0, Value::MakeIntArray({}));
   layer.add_time_sample("positions", 0.0,
                         Value::MakeFloat3Array({0, 0, 0}));
   layer.add_time_sample("positions", 10.0,
                         Value::MakeFloat3Array({4, 0, 0}));
+  layer.add_time_sample("positions", 20.0,
+                        Value::MakeFloat3Array({4, 0, 0, 8, 0, 0}));
+  layer.add_time_sample("positions", 30.0, Value::MakeFloat3Array({}));
+  layer.add_time_sample("positions", 40.0, Value::MakeFloat3Array({4, 0, 0}));
+  layer.add_time_sample("positions", 50.0, Value::MakeBlock());
+  layer.add_time_sample("positions", 60.0, Value::MakeFloat3Array({6, 0, 0}));
   layer.add_time_sample("scales", 0.0, Value::MakeFloat3Array({1, 1, 1}));
   layer.add_time_sample("scales", 10.0, Value::MakeFloat3Array({3, 3, 3}));
+  layer.add_time_sample("scales", 20.0, Value::MakeFloat3Array({3, 3, 3, 2, 2, 2}));
+  layer.add_time_sample("scales", 30.0, Value::MakeFloat3Array({}));
   layer.end_prim();
   layer.finalize();
   Stage stage = sb.Build();
@@ -277,6 +291,94 @@ void test_point_instancer_interpolation() {
   if (xf.size() != 1 || xf[0].matrix[12] != 2.0 || xf[0].matrix[0] != 2.0) {
     FAIL("interpolated instance transform");
     return;
+  }
+  xf = pi.ComputeInstanceTransforms(20.0);
+  if (!pi.HasValidInstanceArrays(20.0) || xf.size() != 2 ||
+      xf[1].matrix[12] != 8.0 || xf[1].matrix[0] != 2.0) {
+    FAIL("instance transform after topology grows");
+    return;
+  }
+  if (!pi.HasValidInstanceArrays(30.0) || pi.GetInstanceCount(30.0) != 0 ||
+      !pi.ComputeInstanceTransforms(30.0).empty()) {
+    FAIL("empty instance frame");
+    return;
+  }
+  if (pi.HasValidInstanceArrays(40.0) || pi.GetInstanceCount(40.0) != 0) {
+    FAIL("empty prototype indices with nonempty positions");
+    return;
+  }
+  if (pi.GetPositions(45.0) != std::vector<float>({4, 0, 0}) ||
+      !pi.GetPositions(50.0).empty() || !pi.GetPositions(55.0).empty() ||
+      pi.GetPositions(60.0) != std::vector<float>({6, 0, 0})) {
+    FAIL("blocked positions leaked a default or affected the preceding interval");
+    return;
+  }
+  const std::vector<std::pair<double, Value>> samples = {
+      {40.0, Value::MakeFloat3Array({4, 0, 0})},
+      {50.0, Value::MakeBlock()},
+      {60.0, Value::MakeFloat3Array({6, 0, 0})}};
+  const auto before_block = TimeInterpolator::Interpolate(samples, 45.0);
+  const auto after_block = TimeInterpolator::Interpolate(samples, 55.0);
+  if (!before_block.success || before_block.blocked || before_block.interpolated ||
+      !after_block.blocked || after_block.success) {
+    FAIL("direct time sample interpolation disagrees with a blocked interval");
+    return;
+  }
+  PASS();
+}
+
+void test_point_instancer_orientation_precision() {
+  TEST("PointInstancerOrientationPrecision");
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+def Xform "Proto" {}
+def PointInstancer "Preferred" {
+    rel prototypes = </Proto>
+    int[] protoIndices = [0]
+    point3f[] positions = [(0,0,0)]
+    quath[] orientations = [(0,1,0,0)]
+    quatf[] orientationsf.timeSamples = {1: [(0,0,0,1)], 2: []}
+}
+def PointInstancer "Fallback" {
+    rel prototypes = </Proto>
+    int[] protoIndices = [0]
+    point3f[] positions = [(0,0,0)]
+    quath[] orientations = [(0,1,0,0)]
+    quatf[] orientationsf = [(0,0,0,1)]
+    quatf[] orientationsf.timeSamples = {1: [], 2: [(0,0,0,1)]}
+}
+def PointInstancer "Invalid" {
+    rel prototypes = </Proto>
+    int[] protoIndices = [0,0]
+    point3f[] positions = [(2,0,0),(3,0,0)]
+    float3[] scales = [(2,2,2),(2,2,2)]
+    quatf[] orientationsf = [(1,inf,0,0),(nan,1,0,0)]
+}
+)usd");
+  if (!loaded.success) { FAIL("failed to load orientation scene"); return; }
+  const UsdGeomPointInstancer preferred(loaded.stage.GetPrimAtPath("/Preferred"));
+  const UsdGeomPointInstancer fallback(loaded.stage.GetPrimAtPath("/Fallback"));
+  const auto z_rotation = preferred.ComputeInstanceTransforms(1.0);
+  const auto identity = preferred.ComputeInstanceTransforms(2.0);
+  const auto x_rotation = fallback.ComputeInstanceTransforms(2.0);
+  if (z_rotation.size() != 1 || z_rotation[0].matrix[0] != -1.0 ||
+      identity.size() != 1 || identity[0].matrix[0] != 1.0 ||
+      x_rotation.size() != 1 || x_rotation[0].matrix[5] != -1.0 ||
+      fallback.GetOrientations(2.0) != std::vector<float>({0, 1, 0, 0})) {
+    FAIL("unexpected selected orientation");
+    return;
+  }
+  const UsdGeomPointInstancer invalid(loaded.stage.GetPrimAtPath("/Invalid"));
+  const auto recovered = invalid.ComputeInstanceTransforms();
+  if (recovered.size() != 2) { FAIL("missing recovered transforms"); return; }
+  for (size_t i = 0; i < recovered.size(); ++i) {
+    const auto& matrix = recovered[i].matrix;
+    const double expected[16] = {2,0,0,0, 0,2,0,0, 0,0,2,0, 2.0 + i,0,0,1};
+    for (size_t lane = 0; lane < 16; ++lane) {
+      if (matrix[lane] != expected[lane]) {
+        FAIL("invalid quaternion contaminated the transform");
+        return;
+      }
+    }
   }
   PASS();
 }
@@ -884,6 +986,7 @@ int main() {
   test_mesh_schema_missing_arrays();
   test_point_instancer_schema();
   test_point_instancer_interpolation();
+  test_point_instancer_orientation_precision();
   test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();

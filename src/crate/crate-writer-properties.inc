@@ -992,7 +992,9 @@
       // Authored list-op edits encode natively via sublist header bits
       // (StorePathArcListOp), like the composition-arc fields.
       const ArcListOp* rel_edit = nullptr;
-      {
+      // Flattened output uses the effective target vector. With no targets,
+      // keep the relationship declaration without a targetPaths opinion.
+      if (!options_.composed_stage_output) {
         const auto& edits = prim.relationship_edits();
         auto eit = edits.find(rel_name);
         if (eit != edits.end() && eit->second.authored &&

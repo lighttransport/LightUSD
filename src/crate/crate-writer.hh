@@ -126,6 +126,9 @@ struct CrateWriteOptions {
   uint64_t max_prepared_bytes = uint64_t(8) << 30;
   // Optional allocator trimming; no OS hooks run by default.
   std::shared_ptr<const HostServices> host_services;
+
+  /// Emit the resolved apiSchemas as explicit opinions for a flattened stage.
+  bool composed_stage_output = false;
 };
 
 /// Result of crate write operation

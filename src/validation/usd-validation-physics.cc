@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 namespace lightusd {
 namespace validation_detail {
 
@@ -181,12 +182,51 @@ void ValidatePhysicsRelationship(const PrimSpec &ps,
   }
 }
 
+namespace {
+
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
+
+template <class Accept>
+std::optional<double> ReadCheckedPhysicsScalar(
+    const PrimSpec &ps, const std::string &name, const char *rule,
+    const std::string &prim_location, USDValidationResult *result,
+    const char *requirement, Accept accepts) {
+  if (!HasProperty(ps, name)) return std::nullopt;
+  double value = 0.0;
+  if (IsRelationshipProp(ps, name) ||
+      !GetNumericScalarProperty(ps, name, &value)) {
+    AddError(result, rule, MakePropertyLocation(prim_location, name),
+             name + " must have a numeric scalar value");
+    return std::nullopt;
+  }
+  if (!accepts(value)) {
+    AddError(result, rule, MakePropertyLocation(prim_location, name),
+             name + requirement);
+    return std::nullopt;
+  }
+  return value;
+}
+
+void ValidatePhysicsUnboundedForce(const PrimSpec &ps, const std::string &name,
+                                   const char *rule,
+                                   const std::string &prim_location,
+                                   USDValidationResult *result) {
+  ReadCheckedPhysicsScalar(
+      ps, name, rule, prim_location, result,
+      " must be finite and non-negative or +inf",
+      [](double value) { return value >= 0.0; });
+}
+
+}  // namespace
+
 void ValidatePhysicsScene(const PrimSpec &ps,
                           const std::string &prim_location,
                           USDValidationResult *result) {
-  ValidateNonNegativeNumericProperty(ps, "physics:gravityMagnitude",
-                                     "physics.scene.gravity", prim_location,
-                                     result);
+  // A negative magnitude requests Earth gravity, including -inf.
+  ReadCheckedPhysicsScalar(
+      ps, "physics:gravityMagnitude", "physics.scene.gravity", prim_location,
+      result, " must be finite or -inf",
+      [](double value) { return std::isfinite(value) || value == -kInfinity; });
 
   if (!HasProperty(ps, "physics:gravityDirection")) {
     return;
@@ -200,9 +240,6 @@ void ValidatePhysicsScene(const PrimSpec &ps,
              "physics:gravityDirection must be a vector3f attribute");
     return;
   }
-  const double len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-  // (0, 0, 0) is the schema fallback: "use the negative upAxis".
-  (void)len2;
   if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2])) {
     AddError(result, "physics.scene.gravity",
              MakePropertyLocation(prim_location, "physics:gravityDirection"),
@@ -213,8 +250,16 @@ void ValidatePhysicsScene(const PrimSpec &ps,
 void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                      const std::string &prim_location,
                                      USDValidationResult *result) {
-  ValidateFiniteVec3Property(ps, "physics:centerOfMass", "physics.inertia",
-                             prim_location, result, false);
+  const Value *center = GetAttrValue(ps, "physics:centerOfMass");
+  std::array<double, 3> point;
+  const bool automatic_center = center && ValueToVec3(*center, &point) &&
+      std::all_of(point.begin(), point.end(), [](double value) {
+        return value == -kInfinity;
+      });
+  if (!automatic_center) {
+    ValidateFiniteVec3Property(ps, "physics:centerOfMass", "physics.inertia",
+                               prim_location, result, false);
+  }
   ValidateFiniteNonNegativeVec3Property(ps, "physics:diagonalInertia",
                                         "physics.inertia", prim_location,
                                         result);
@@ -259,10 +304,13 @@ void ValidatePhysicsScalarProperties(const PrimSpec &ps,
                                      USDValidationResult *result) {
   for (const char *prop_name :
        {"physics:mass", "physics:density", "physics:staticFriction",
-        "physics:dynamicFriction", "physics:restitution",
-        "physics:breakForce", "physics:breakTorque"}) {
+        "physics:dynamicFriction", "physics:restitution"}) {
     ValidateNonNegativeNumericProperty(ps, prop_name, "physics.value.range",
                                        prim_location, result);
+  }
+  for (const char *prop_name : {"physics:breakForce", "physics:breakTorque"}) {
+    ValidatePhysicsUnboundedForce(ps, prop_name, "physics.value.range",
+                                 prim_location, result);
   }
 }
 
@@ -270,15 +318,8 @@ void ValidatePhysicsCollisionGroup(const PrimSpec &ps,
                                    const std::string &prim_location,
                                    const PrimTypeByPath &prim_types,
                                    USDValidationResult *result) {
-  std::string merge_group;
   CheckDeclaredAttrType(ps, "physics:mergeGroup", "string", prim_location,
                         result);
-  if (GetTokenProperty(ps, "physics:mergeGroup", &merge_group) &&
-      merge_group.empty()) {
-    AddError(result, "physics.collisionGroup.mergeGroup",
-             MakePropertyLocation(prim_location, "physics:mergeGroup"),
-             "physics:mergeGroup must not be empty when authored");
-  }
   ValidatePhysicsRelationship(ps, "physics:filteredGroups",
                               "physics.collisionGroup.filteredGroups",
                               prim_location, prim_types,
@@ -303,35 +344,37 @@ void ValidatePhysicsJointLimits(const PrimSpec &ps,
   ValidateTokenSetProperty(ps, "physics:axis", kAxis, "physics.joint.axis",
                            prim_location, result);
 
-  ValidateFiniteNumericProperty(ps, "physics:lowerLimit",
-                                "physics.joint.limit", prim_location, result);
-  ValidateFiniteNumericProperty(ps, "physics:upperLimit",
-                                "physics.joint.limit", prim_location, result);
-  double lower = 0.0;
-  double upper = 0.0;
-  if (GetNumericScalarProperty(ps, "physics:lowerLimit", &lower) &&
-      GetNumericScalarProperty(ps, "physics:upperLimit", &upper) &&
-      lower > upper) {
+  const auto lower = ReadCheckedPhysicsScalar(
+      ps, "physics:lowerLimit", "physics.joint.limit", prim_location, result,
+      " must be finite or -inf",
+      [](double value) { return std::isfinite(value) || value == -kInfinity; });
+  const auto upper = ReadCheckedPhysicsScalar(
+      ps, "physics:upperLimit", "physics.joint.limit", prim_location, result,
+      " must be finite or +inf",
+      [](double value) { return std::isfinite(value) || value == kInfinity; });
+  if (lower && upper && *lower > *upper) {
     AddError(result, "physics.joint.limit", prim_location,
              "physics:lowerLimit must be <= physics:upperLimit");
   }
 
-  ValidateNumericRangeProperty(ps, "physics:coneAngle0Limit", 0.0, 180.0,
-                               "physics.joint.limit", prim_location, result);
-  ValidateNumericRangeProperty(ps, "physics:coneAngle1Limit", 0.0, 180.0,
-                               "physics.joint.limit", prim_location, result);
+  // A negative cone or distance limit disables the limit.
+  const auto accept_cone = [](double value) {
+    return std::isfinite(value) && value <= 180.0;
+  };
+  for (const char *name : {"physics:coneAngle0Limit", "physics:coneAngle1Limit"}) {
+    ReadCheckedPhysicsScalar(ps, name, "physics.joint.limit", prim_location,
+                             result, " must be finite and <= 180", accept_cone);
+  }
 
-  ValidateNonNegativeNumericProperty(ps, "physics:minDistance",
-                                     "physics.joint.distance", prim_location,
-                                     result);
-  ValidateNonNegativeNumericProperty(ps, "physics:maxDistance",
-                                     "physics.joint.distance", prim_location,
-                                     result);
-  double min_distance = 0.0;
-  double max_distance = 0.0;
-  if (GetNumericScalarProperty(ps, "physics:minDistance", &min_distance) &&
-      GetNumericScalarProperty(ps, "physics:maxDistance", &max_distance) &&
-      min_distance > max_distance) {
+  const auto accept_distance = [](double value) { return std::isfinite(value); };
+  const auto min_distance = ReadCheckedPhysicsScalar(
+      ps, "physics:minDistance", "physics.joint.distance", prim_location,
+      result, " must be finite", accept_distance);
+  const auto max_distance = ReadCheckedPhysicsScalar(
+      ps, "physics:maxDistance", "physics.joint.distance", prim_location,
+      result, " must be finite", accept_distance);
+  if (min_distance && max_distance && *max_distance >= 0.0 &&
+      *min_distance > *max_distance) {
     AddError(result, "physics.joint.distance", prim_location,
              "physics:minDistance must be <= physics:maxDistance");
   }
@@ -434,8 +477,10 @@ void ValidatePhysicsDriveAndLimitAPIs(
       if (field == "type") {
         ValidateTokenSetProperty(ps, prop_name, kDriveTypes,
                                  "physics.drive.type", prim_location, result);
-      } else if (field == "maxForce" || field == "damping" ||
-                 field == "stiffness") {
+      } else if (field == "maxForce") {
+        ValidatePhysicsUnboundedForce(ps, prop_name, "physics.drive.value",
+                                     prim_location, result);
+      } else if (field == "damping" || field == "stiffness") {
         ValidateNonNegativeNumericProperty(ps, prop_name,
                                            "physics.drive.value",
                                            prim_location, result);
@@ -945,8 +990,6 @@ void ValidatePhysics(const PrimSpec &ps,
 
   const bool rigid_body =
       HasAppliedSchema(applied_schemas, "PhysicsRigidBodyAPI");
-  const bool collision =
-      HasAppliedSchema(applied_schemas, "PhysicsCollisionAPI");
   const bool articulation =
       HasAppliedSchema(applied_schemas, "PhysicsArticulationRootAPI");
 
@@ -966,19 +1009,6 @@ void ValidatePhysics(const PrimSpec &ps,
                "rigid body");
     }
   }
-  if (collision && type_name == "Points") {
-    size_t point_count = 0;
-    std::vector<float> widths;
-    const bool have_points = GetPoint3ArrayLen(ps, "points", &point_count);
-    const bool have_widths = GetFloatArrayProperty(ps, "widths", &widths);
-    if (!have_points || !have_widths || point_count == 0 || widths.empty() ||
-        point_count != widths.size()) {
-      AddError(result, "physics.collider.points", prim_location,
-               "Points collider requires non-empty points and widths arrays "
-               "of equal length");
-    }
-  }
-
   ValidatePhysicsScalarProperties(ps, prim_location, result);
   ValidatePhysicsInertiaAndMotion(ps, prim_location, result);
   ValidatePhysicsApproximation(ps, prim_location, result);

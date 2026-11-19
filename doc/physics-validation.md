@@ -26,6 +26,13 @@ Core checks include schema property types, relationships and authoring metadata.
 Physics checks include the existing mass/inertia, joint, collision, articulation,
 MuJoCo and Newton constraints implemented by the native validator.
 
+Authored schema sentinels are valid physics values. A negative gravity
+magnitude requests Earth gravity. Axis bounds permit `-inf` at the lower
+end and `+inf` at the upper end. Negative cone and distance limits disable
+the corresponding limits. Break force, break torque, and drive maximum
+force permit `+inf`. The center of mass permits `(-inf, -inf, -inf)` to
+request automatic computation.
+
 `samples=False` checks authored/default values using existing native behavior.
 `samples=True` additionally evaluates coherent snapshots at authored sample
 times and spline knots. Sample findings carry numeric `time`; default findings

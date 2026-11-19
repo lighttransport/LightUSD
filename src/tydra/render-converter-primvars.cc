@@ -136,16 +136,19 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
   };
 
   // Expand an indexed primvar to direct form; false on any out-of-range index.
-  auto expand_indexed = [](::lightusd::ValueArrayView<const float> data, uint32_t comps,
+  auto expand_indexed = [](::lightusd::ValueArrayView<const float> data, size_t stride,
                            ::lightusd::ValueArrayView<const int32_t> idxs,
                            std::vector<float>* out) -> bool {
-    const size_t elems = comps ? data.size() / comps : 0;
+    if (stride == 0 || idxs.size() > out->max_size() / stride) return false;
+    const size_t elems = data.size() / stride;
     out->clear();
-    out->reserve(idxs.size() * comps);
     for (int32_t raw : idxs) {
       if (raw < 0 || static_cast<size_t>(raw) >= elems) return false;
-      const float* src = data.data() + static_cast<size_t>(raw) * comps;
-      out->insert(out->end(), src, src + comps);
+    }
+    out->reserve(idxs.size() * stride);
+    for (int32_t raw : idxs) {
+      const float* src = data.data() + static_cast<size_t>(raw) * stride;
+      out->insert(out->end(), src, src + stride);
     }
     return true;
   };
@@ -243,9 +246,38 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
 
     // Indexed builtin primvars are expanded to direct form (the builtin
     // buffers carry no index channel).
+    if (is_normals && pv.indices().empty()) {
+      const Value* selectors = GetAttribute(prim, "primvars:normals:indices");
+      if (selectors && !selectors->is_empty() && !selectors->is_block()) {
+        AddWarning("Mesh '" + mesh->prim_path +
+                   "': indexed primvar 'normals' has no usable selectors; dropped");
+        continue;
+      }
+    }
     if (!pv.indices().empty() && builtin) {
       std::vector<float> expanded;
-      if (!expand_indexed(*fdata, comps, pv.indices(), &expanded)) {
+      size_t stride = comps;
+      if (is_normals) {
+        const ::lightusd::PrimSpec* spec = prim.GetPrimSpec();
+        const auto* meta = spec ? spec->property_meta("primvars:normals") : nullptr;
+        if (meta && (meta->authored & ::lightusd::PropMeta::kElementSize)) {
+          if (meta->elementSize <= 0 ||
+              static_cast<size_t>(meta->elementSize) > fdata->size() / comps) {
+            AddWarning("Mesh '" + mesh->prim_path +
+                       "': indexed primvar 'normals' has an invalid element size; dropped");
+            continue;
+          }
+          const size_t group_size = static_cast<size_t>(meta->elementSize);
+          const size_t largest_domain = std::max({size_t{1}, npoints, nfaces, ncorners});
+          if (pv.indices().size() > largest_domain / group_size) {
+            AddWarning("Mesh '" + mesh->prim_path +
+                       "': resolved normals exceed the mesh interpolation domains; dropped");
+            continue;
+          }
+          stride *= group_size;
+        }
+      }
+      if (!expand_indexed(*fdata, stride, pv.indices(), &expanded)) {
         AddWarning("Mesh '" + mesh->prim_path + "': primvar '" +
                             pv.name + "' has out-of-range indices; dropped");
         continue;

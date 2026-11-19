@@ -455,6 +455,67 @@ void ValidateRegisteredProperties(const Layer& layer, const ValidationOptions& o
   }
 }
 
+void ValidateComposedGeometryTargets(const Stage& stage, const ValidationOptions& options,
+                                     USDValidationResult* result) {
+  const Layer* layer = stage.GetRootLayer();
+  if (!options.geom || !layer) return;
+  const auto& registry = Registry(options);
+  for (const auto& prim : layer->prims()) {
+    if (registry.InheritsFrom(prim.type_name(), "Volume")) {
+      const UsdPrim volume = stage.GetPrimAtPath(prim.path());
+      for (const std::string& name : prim.relationship_names()) {
+        if (!Starts(name, "field:")) continue;
+        std::vector<Path> targets;
+        if (!volume.GetForwardedRelationshipTargets(name, &targets) || targets.size() != 1)
+          continue;
+        const Path& target = targets.front();
+        if (target.is_root() || target.has_property() || !target.is_valid()) continue;
+        const UsdPrim field = stage.GetPrimAtPath(target);
+        if (!field.IsValid() || !field.IsActive()) {
+          AddWarning(result, "vol.volume.fieldTargetMissing", prim.path().str() + "." + name,
+                     "volume field target `" + target.str() + "` does not resolve to an active prim on the composed stage");
+        } else if (field.GetTypeName().empty()) {
+          AddWarning(result, "vol.volume.fieldTargetType", prim.path().str() + "." + name,
+                     "volume field target `" + target.str() + "` has no field schema type");
+        }
+      }
+    }
+    if (!registry.InheritsFrom(prim.type_name(), "PointInstancer")) continue;
+    const auto require_array = [&](const char* name, TypeId type) {
+      const auto valid = [type](const Value* value) {
+        if (!value || !value->is_array()) return false;
+        const TypeId value_type = value->type_id();
+        // USDC can store point3f lanes under the unroled float3 value type.
+        return value_type == type ||
+               (type == TypeId::Point3f && value_type == TypeId::Float3);
+      };
+      if (valid(GetAttrValue(prim, name))) return;
+      if (const auto* samples = GetTimeSamplesOf(prim, name)) {
+        for (const auto& sample : *samples) {
+          if (valid(prim.time_sample_value(sample.second))) return;
+        }
+      }
+      // A clip declared here or on an ancestor can supply a value.
+      for (Path path = prim.path(); !path.empty() && !path.is_root(); path = path.parent()) {
+        const PrimSpec* ancestor = layer->prim_at_path(path.str());
+        if (ancestor && ancestor->meta().clips().as_dictionary()) return;
+      }
+      AddError(result, "geom.pointInstancer.requiredArray", prim.path().str() + "." + name,
+               std::string("PointInstancer requires an authored ") + name + " array");
+    };
+    require_array("protoIndices", TypeId::Int);
+    require_array("positions", TypeId::Point3f);
+    for (const Path& target : RelTargets(prim, "prototypes")) {
+      if (target.is_root() || target.has_property() ||
+          !IsValidScenePathString(target.str(), nullptr)) continue;
+      if (!stage.GetPrimAtPath(target).IsValid()) {
+        AddError(result, "geom.pointInstancer.prototypes", prim.path().str() + ".prototypes",
+                 "prototype target `" + target.str() + "` does not resolve on the composed stage");
+      }
+    }
+  }
+}
+
 void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& options,
                             USDValidationResult* result) {
   const auto& registry = Registry(options);
@@ -478,8 +539,8 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
       if (options.shade && f.first.second == "materialBind" && !restricted)
         AddWarning(result, "shade.subset.materialBindFamily", p.path().str(),
                    "materialBind subset families must be nonOverlapping or partition");
-      std::set<int32_t> seen;
-      std::set<std::pair<int32_t, int32_t>> seen_pairs, possible_pairs;
+      std::set<int32_t> seen, covered;
+      std::set<std::pair<int32_t, int32_t>> seen_pairs, possible_pairs, covered_pairs;
       std::string element_type;
       size_t count = 0;
       bool have_count = false;
@@ -545,8 +606,11 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
             const auto pair = std::make_pair(a,b);
             if (!seen_pairs.insert(pair).second && restricted)
               AddWarning(result, "geom.subset.familyOverlap", subset->path().str() + ".indices", "Restricted subset family repeats an element pair");
-            if (a < 0 || b < 0 || (have_count && !possible_pairs.count(pair)))
+            if (a < 0 || b < 0 || (have_count && !possible_pairs.count(pair))) {
               AddWarning(result, "geom.subset.indices", subset->path().str() + ".indices", "Subset pair is outside parent elements");
+            } else if (family_type == "partition" && have_count) {
+              covered_pairs.insert(pair);
+            }
           }
           continue;
         } else if (element == "face") {
@@ -567,12 +631,15 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
             AddWarning(result, "geom.subset.familyOverlap", subset->path().str() + ".indices",
                        "Restricted subset family '" + f.first.second + "' repeats index " + std::to_string(index));
           else if (!restricted) seen.insert(index);
-          if (index < 0 || (have_count && static_cast<size_t>(index) >= count))
+          if (index < 0 || (have_count && static_cast<size_t>(index) >= count)) {
             AddWarning(result, "geom.subset.indices", subset->path().str() + ".indices", "Subset index is outside parent elements");
+          } else if (family_type == "partition" && have_count) {
+            covered.insert(index);
+          }
         }
       }
       if (family_type == "partition" && have_count &&
-          (element_type == "edge" || element_type == "segment" ? seen_pairs.size() : seen.size()) != count)
+          (element_type == "edge" || element_type == "segment" ? covered_pairs.size() : covered.size()) != count)
         AddWarning(result, "geom.subset.familyPartition", p.path().str(), "Partition does not cover every parent element");
       if (options.require_complete && restricted && !have_count &&
           element_type != "face" && element_type != "point" && element_type != "tetrahedron")
@@ -621,6 +688,34 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
     }
     std::vector<ValidationShaderView> definitions;
     const std::string id = Text(prim, "info:id");
+    if (implementation == "id" && IsMaterialXShaderId(id)) {
+      for (const auto& slot : prim.properties().slots()) {
+        const std::string name(GetPropNameTable().get(slot.name_id));
+        if (slot.is_relationship() || !Starts(name, "inputs:")) continue;
+        const auto* connections = prim.connection(slot.name_id);
+        if (!connections) continue;
+        const std::string input_type = DeclaredType(prim, name);
+        if (!ValidType(input_type)) continue;
+        for (const auto& target : *connections) {
+          std::string source_path, source_port;
+          SplitScenePathString(target.str(), &source_path, &source_port);
+          const auto source = prims.find(source_path);
+          if (source == prims.end() ||
+              (!Starts(source_port, "outputs:") && !Starts(source_port, "inputs:"))) {
+            continue;
+          }
+          const auto* source_slot = source->second->property(source_port);
+          if (!source_slot || source_slot->is_relationship()) continue;
+          const std::string source_type = DeclaredType(*source->second, source_port);
+          if (ValidType(source_type) && source_type != input_type) {
+            AddWarning(result, "shade.materialX.connectionType",
+                       prim.path().str() + "." + name,
+                       "MaterialX connection from " + target.str() + " has type '" +
+                           source_type + "', but the input declares '" + input_type + "'");
+          }
+        }
+      }
+    }
     if (implementation == "id") {
       const auto d = registry.FindShader(id);
       if (d) definitions.push_back(*d);
@@ -646,21 +741,39 @@ void ValidateRegisteredStage(const Layer& layer, const ValidationOptions& option
     }
     std::map<std::string, std::string> expected;
     for (const auto& d : definitions) {
-      for (size_t i = 0; i < d.port_count(false); ++i) {
-        const auto port = d.port(false, i);
-        const std::pair<std::string, std::string> input{port.first, port.second};
-        const auto old = expected.find(input.first);
-        if (old != expected.end() && old->second != input.second)
-          AddWarning(result, "shade.shader.sourceTypeConflict", prim.path().str() + ".inputs:" + input.first,
-                     "Shader definitions disagree on input type");
-        expected[input.first] = input.second;
+      for (bool output : {false, true}) {
+        if (output && !IsMaterialXShaderId(id)) continue;
+        for (size_t i = 0; i < d.port_count(output); ++i) {
+          const auto port = d.port(output, i);
+          const std::string name = std::string(output ? "outputs:" : "inputs:") +
+                                   std::string(port.first);
+          const auto old = expected.find(name);
+          if (old != expected.end() && old->second != port.second)
+            AddWarning(result, "shade.shader.sourceTypeConflict",
+                       prim.path().str() + "." + name,
+                       "Shader definitions disagree on port type");
+          expected[name] = port.second;
+        }
       }
     }
-    for (const auto& input : expected) {
-      const std::string name = "inputs:" + input.first;
-      if (prim.property(name) && DeclaredType(prim, name) != input.second)
+    for (const auto& [name, type] : expected) {
+      if (prim.property(name) && DeclaredType(prim, name) != type)
         AddWarning(result, "shade.shader.typeMismatch", prim.path().str() + "." + name,
-                   "Shader definition requires '" + input.second + "', authored '" + DeclaredType(prim, name) + "'");
+                   "Shader definition requires '" + type + "', authored '" + DeclaredType(prim, name) + "'");
+    }
+    if (implementation == "id" && IsMaterialXShaderId(id) &&
+        std::any_of(definitions.begin(), definitions.end(), [](const auto& definition) {
+          return definition.source_type == "mtlx";
+        })) {
+      for (const auto& slot : prim.properties().slots()) {
+        const std::string name(GetPropNameTable().get(slot.name_id));
+        if (!slot.is_relationship() && (Starts(name, "inputs:") || Starts(name, "outputs:")) &&
+            expected.count(name) == 0) {
+          AddWarning(result, "shade.materialX.unknownPort",
+                     prim.path().str() + "." + name,
+                     "MaterialX node definition '" + id + "' has no port '" + name + "'");
+        }
+      }
     }
   }
 }
@@ -733,6 +846,7 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
   // One evaluated snapshot per time keeps topology/primvar comparisons coherent.
   for (double time : times) {
     Layer snapshot = layer->Clone();
+    std::vector<std::string> blocked_instancer_arrays;
     eval.time = TimeQuery::Numeric(time);
     evaluator.SetOptions(eval);
     for (size_t prim_index = 0; prim_index < snapshot.prims().size(); ++prim_index) {
@@ -746,6 +860,11 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
         const auto value = evaluator.Eval(p, name);
         if (value.success) prim.upsert_property(id, value.value);
         else {
+          if (value.blocked && context.options.geom &&
+              (name == "positions" || name == "protoIndices") &&
+              Registry(context.options).InheritsFrom(prim.type_name(), "PointInstancer")) {
+            blocked_instancer_arrays.push_back(prim.path().str() + "." + name);
+          }
           // Do not accidentally validate the authored default at a blocked time.
           prim.remove_property(id);
           if (!value.error.empty())
@@ -757,6 +876,10 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
     options.stage_presence_checks = false;
     options.run_callbacks = false;
     USDValidationResult sample = ValidateLayerAgainstAOUSDCore(snapshot, options);
+    for (const auto& location : blocked_instancer_arrays) {
+      AddError(&sample, "geom.pointInstancer.requiredArray", location,
+               "required PointInstancer array is blocked at this time");
+    }
     USDValidationResult tagged;
     tagged.checked_groups = sample.checked_groups;
     tagged.complete = sample.complete;
@@ -803,6 +926,51 @@ static const std::pair<const char*, const char*> kLeanReflectionTable[] = {
     {"core.listop.duplicateItems", "UsdSpec.Composable"},
     {"core.schema.familyVersion", "UsdSpec.Schema.parseFamilyVersion"},
     {"core.schema.selfFamilyInherit", "UsdSpec.Schema.versionedMayInherit"},
+    {"geom.mesh.topology.count", "UsdSpec.Domains.meshFaceCountsValid"},
+    {"geom.mesh.topology.index", "UsdSpec.Domains.meshInvalidIndexCount"},
+    {"geom.mesh.topology.size", "UsdSpec.Domains.meshIndexCountMatches"},
+    {"geom.pointInstancer.indices", "UsdSpec.Domains.pointInstancerIndexErrors"},
+    {"geom.pointInstancer.prototypes", "UsdSpec.Domains.prototypeErrors"},
+    {"geom.pointInstancer.requiredArray", "UsdSpec.Domains.pointInstancerRequiredArrayErrors"},
+    {"geom.pointInstancer.orientation", "UsdSpec.Domains.pointInstancerQuaternionValid"},
+    {"geom.points.size", "UsdSpec.Domains.pointsArraySizeValid"},
+    {"geom.points.widths", "UsdSpec.Domains.invalidPointWidths"},
+    {"geom.skel.animation.blendShapes", "UsdSpec.Domains.SkeletonValidation.animationBlendShapes"},
+    {"geom.skel.animation.joints", "UsdSpec.Domains.SkeletonValidation.animationJoints"},
+    {"geom.skel.animation.transforms", "UsdSpec.Domains.SkeletonValidation.arrayCardinality"},
+    {"geom.skel.blendShape.inbetween", "UsdSpec.Domains.SkeletonValidation.blendShapeInbetween"},
+    {"geom.skel.blendShape.normalOffsets", "UsdSpec.Domains.SkeletonValidation.arrayCardinality"},
+    {"geom.skel.blendShape.offsets", "UsdSpec.Domains.SkeletonValidation.blendShapeOffsets"},
+    {"geom.skel.blendShape.pointIndices", "UsdSpec.Domains.SkeletonValidation.blendShapeIndices"},
+    {"geom.skel.skeleton.jointNames", "UsdSpec.Domains.skeletonJointNameCount"},
+    {"geom.skel.skeleton.joints", "UsdSpec.Domains.skeletonJoints"},
+    {"geom.skel.skeleton.topology", "UsdSpec.Domains.skeletonTopology"},
+    {"geom.skel.skeleton.transforms", "UsdSpec.Domains.SkeletonValidation.skeletonTransforms"},
+    {"geom.subset.familyPartition", "UsdSpec.Domains.subsetCoversDomain"},
+    {"physics.drive.value", "UsdSpec.Domains.driveValueValid"},
+    {"physics.joint.axis", "UsdSpec.Domains.physicsJointAxis"},
+    {"physics.joint.distance", "UsdSpec.Domains.distanceLimitErrors"},
+    {"physics.joint.limit", "UsdSpec.Domains.jointLimitErrors"},
+    {"physics.scene.gravity", "UsdSpec.Domains.sceneGravityErrors"},
+    {"physics.value.range", "UsdSpec.Domains.physicalScalarValid"},
+    {"shade.materialX.configAPI", "UsdSpec.Domains.materialXConfig"},
+    {"shade.materialX.referencePrimPath", "UsdSpec.Domains.materialXReferencePrimPathValid"},
+    {"shade.materialX.version", "UsdSpec.Domains.materialXVersion"},
+    {"vol.fieldAsset.dataType", "UsdSpec.Domains.VolumeValidation.fieldAssetDataType"},
+    {"vol.fieldAsset.fieldClass", "UsdSpec.Domains.VolumeValidation.tokenProperty"},
+    {"vol.fieldAsset.filePath", "UsdSpec.Domains.VolumeValidation.fieldAssetFilePath"},
+    {"vol.fieldAsset.vectorDataRoleHint", "UsdSpec.Domains.VolumeValidation.tokenProperty"},
+    {"vol.particleField.arraySize", "UsdSpec.Domains.VolumeValidation.particleArraySize"},
+    {"vol.particleField.kernel", "UsdSpec.Domains.VolumeValidation.particleProvider"},
+    {"vol.particleField.position", "UsdSpec.Domains.VolumeValidation.particleProvider"},
+    {"vol.particleField.projectionModeHint", "UsdSpec.Domains.VolumeValidation.tokenProperty"},
+    {"vol.particleField.shCount", "UsdSpec.Domains.VolumeValidation.sphericalHarmonicsSize"},
+    {"vol.particleField.shDegree", "UsdSpec.Domains.VolumeValidation.sphericalHarmonicsDegree"},
+    {"vol.particleField.sortingModeHint", "UsdSpec.Domains.VolumeValidation.tokenProperty"},
+    {"vol.volume.fieldRel", "UsdSpec.Domains.volumeFieldRelationship"},
+    {"vol.volume.fieldTargetCount", "UsdSpec.Domains.volumeFieldTargetCount"},
+    {"vol.volume.fieldTargetType", "UsdSpec.Domains.volumeFieldTargetType"},
+    {"vol.volume.fieldTargetMissing", "UsdSpec.Domains.volumeFieldTargetMissing"},
 };
 // END LEAN_REFLECTION_TABLE
 

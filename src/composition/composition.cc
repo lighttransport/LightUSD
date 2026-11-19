@@ -146,6 +146,7 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // so the consumed list is dropped without any gap-fill.
   if (options_.resolve_sublayers || !options_.preserve_unresolved_arcs) {
     result->meta().subLayers.clear();
+    result->meta().subLayers_set = false;
     result->meta().subLayerOffsets.clear();
   }
 

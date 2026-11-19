@@ -153,7 +153,15 @@
       // as prepend flipped the qualifier on every USDC round trip.
       if (prim.meta().apiSchemasAuthored() ||
           !prim.meta().apiSchemas().empty()) {
-        if (prim.meta().apiSchemaEdits().authored) {
+        if (options_.composed_stage_output) {
+          StringListOps flattened;
+          flattened.authored = true;
+          flattened.is_explicit = true;
+          flattened.explicit_items = ApplyStringListOp(
+              listop_field_detail::ApiSchemasNormalizedEdits(prim.meta()), {});
+          fieldset.push_back(WFieldCount());
+          WPushField(MakeTokenListOpField("apiSchemas", flattened));
+        } else if (prim.meta().apiSchemaEdits().authored) {
           fieldset.push_back(WFieldCount());
           WPushField(
               MakeTokenListOpField("apiSchemas", prim.meta().apiSchemaEdits()));

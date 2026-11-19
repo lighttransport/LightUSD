@@ -49,6 +49,7 @@
 #include "load-usd.hh"
 #include "c/mtlx/mtlx-internal.h"
 #include "reader/usda-reader.hh"
+#include "writer/usdc-writer.hh"
 #include "schema/geom-mesh.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/color-space.hh"
@@ -9422,6 +9423,28 @@ def Mesh "M"
 // OPENUSD_ROOT) points at them. Covers pxr-authored files rather than our own
 // writer: two fields sharing one file, a time-sampled filePath, flipped /
 // large scale placement, and the fallback material.
+static void TestInactiveVolumeFieldTarget() {
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+def Volume "Volume" {
+    rel field:density = </Field>
+}
+def OpenVDBAsset "Field" (active = false) {
+    asset filePath = @inactive.vdb@
+    token fieldDataType = "float"
+}
+)usd");
+  assert(loaded.success);
+  RenderSceneConverter converter(ConverterConfig{});
+  const auto result = converter.Convert(loaded.stage);
+  assert(result.success && result.scene.volumes.size() == 1);
+  const auto& volume = result.scene.volumes[0];
+  assert(volume.fields.empty());
+  assert(std::any_of(volume.warnings.begin(), volume.warnings.end(),
+                     [](const std::string& warning) {
+                       return warning.find("is not an active prim") != std::string::npos;
+                     }));
+}
+
 static void TestOpenUsdVdbVolumeFixtures() {
   std::cout << "OpenUSD VDB volume fixtures\n";
   namespace fs = std::filesystem;
@@ -9785,6 +9808,92 @@ static void TestLevelSetGridChoice() {
     for (tvdb_file_t& f : files) tvdb_file_close(&f);
     return bytes;
   };
+  {
+    const auto bytes = two_grids("fog volume", "level set");
+    {
+      std::ofstream out(path, std::ios::binary);
+      out.write(reinterpret_cast<const char*>(bytes.data()),
+                static_cast<std::streamsize>(bytes.size()));
+      assert(out);
+    }
+    struct GridCase {
+      const char* name;
+      int index;
+      const char* type;
+      const char* class_hint;
+      const char* grid_class;
+      bool level_set;
+      size_t warning_count;
+    };
+    const GridCase cases[] = {
+#include "../core/generated/lean/domain-volume-grid-vectors.inc"
+    };
+    lightusd::tydra::vol::FieldCache cache;
+    for (const auto& test : cases) {
+      lightusd::tydra::vol::FieldRequest request;
+      request.prim_type = "OpenVDBAsset";
+      request.file_path = path.string();
+      request.field_name = test.name;
+      request.field_index = test.index;
+      request.field_data_type = test.type;
+      request.field_class = test.class_hint;
+      lightusd::tydra::vol::ResolvedField field;
+      std::string err;
+      const bool resolved = cache.Resolve(request, &field, &err);
+      assert(resolved == (test.grid_class[0] != '\0'));
+      if (resolved) {
+        assert(field.grid_class == test.grid_class);
+        assert(field.level_set == test.level_set);
+        assert(field.value_type == "float");
+        assert(field.warnings.size() == test.warning_count);
+      }
+    }
+    // Both stages use the same VDB. Only the composed field index changes.
+    const fs::path weak = path.string() + ".weak.usda";
+    const fs::path root = path.string() + ".root.usda";
+    const fs::path crate = path.string() + ".usdc";
+    {
+      std::ofstream out(weak);
+      out << "#usda 1.0\ndef Volume \"V\" {\n"
+             "rel field:density = </V/Field>\n"
+             "def OpenVDBAsset \"Field\" {\nasset filePath = @"
+          << path.filename().string() << "@\n"
+             "token fieldName = \"sdf\"\nint fieldIndex = 0\n}\n}\n";
+      assert(out);
+    }
+    {
+      std::ofstream out(root);
+      out << "#usda 1.0\n(subLayers = [@" << weak.filename().string()
+          << "@])\nover \"V\" {\nover \"Field\" {\nint fieldIndex = 1\n}\n}\n";
+      assert(out);
+    }
+    const auto composed_field = [&](const fs::path &source, const char *grid_class,
+                                    bool level_set) {
+      Stage stage;
+      std::string warn, err;
+      assert(LoadUSDComposed(source.string(), &stage, &warn, &err));
+      ConverterConfig config;
+      config.asset_base_dir = source.parent_path().string();
+      RenderSceneConverter converter(config);
+      const auto result = converter.Convert(stage);
+      assert(result.success && result.scene.volumes.size() == 1);
+      const auto& fields = result.scene.volumes.front().fields;
+      assert(fields.size() == 1);
+      assert(fields.front().field.grid_class == grid_class);
+      assert(fields.front().field.level_set == level_set);
+      return stage;
+    };
+    composed_field(weak, "fogVolume", false);
+    const Stage stage = composed_field(root, "levelSet", true);
+    USDCWriteOptions options;
+    options.crate_options.composed_stage_output = true;
+    assert(WriteUSDCToFile(crate.string(), stage, options).success);
+    composed_field(crate, "levelSet", true);
+    fs::remove(crate);
+    fs::remove(root);
+    fs::remove(weak);
+    fs::remove(path);
+  }
   auto chosen = [](std::vector<uint8_t> bytes, size_t budget = 0) {
     ia::LevelSet level_set;
     std::string err;
@@ -10004,6 +10113,76 @@ static void TestGeneratedSmoothNormals() {
   assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
 }
 
+void TestGroupedIndexedMeshNormals() {
+  const char* usda = R"(#usda 1.0
+def Mesh "M" {
+    uniform token subdivisionScheme = "none"
+    point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]
+    int[] faceVertexCounts = [3,3]
+    int[] faceVertexIndices = [0,1,2,0,2,3]
+    normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)]
+    normal3f[] primvars:normals = [(1,0,0),(0,1,0)] (
+        interpolation = "faceVarying"
+        elementSize = 2
+    )
+    int[] primvars:normals:indices = [0,0,0]
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  RenderSceneConverter converter(ConverterConfig{});
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success && converted.scene.meshes.size() == 1);
+  const RenderMesh& mesh = converted.scene.meshes[0];
+  assert(mesh.normals_interp == Interpolation::FaceVarying);
+  assert(mesh.normals.size() == 18);
+  for (size_t corner = 0; corner < 6; ++corner) {
+    assert(mesh.normals[corner * 3] == (corner % 2 == 0 ? 1.0f : 0.0f));
+    assert(mesh.normals[corner * 3 + 1] == (corner % 2 == 0 ? 0.0f : 1.0f));
+    assert(mesh.normals[corner * 3 + 2] == 0.0f);
+  }
+}
+
+void TestEmptyMeshNormalSelectors() {
+  const char* usda = R"(#usda 1.0
+def Mesh "M" {
+    uniform token subdivisionScheme = "none"
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+    normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1)]
+    normal3f[] primvars:normals = [(1,0,0),(1,0,0),(1,0,0)] (
+        interpolation = "vertex"
+    )
+    int[] primvars:normals:indices = []
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  RenderSceneConverter converter(ConverterConfig{});
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success && converted.scene.meshes.size() == 1);
+  const RenderMesh& mesh = converted.scene.meshes[0];
+  assert(mesh.normals.size() == 9);
+  assert(mesh.normals[0] == 0.0f && mesh.normals[2] == 1.0f);
+  assert(std::any_of(converted.warnings.begin(), converted.warnings.end(),
+                     [](const std::string& warning) {
+                       return warning.find("has no usable selectors") != std::string::npos;
+                     }));
+
+  std::string blocked(usda);
+  const size_t empty_indices = blocked.rfind("= []");
+  assert(empty_indices != std::string::npos);
+  blocked.replace(empty_indices, 4, "= None");
+  LoadResult unindexed = LoadUSDAFromString(blocked.data(), blocked.size());
+  assert(unindexed.success);
+  ConvertResult direct = converter.Convert(unindexed.stage);
+  assert(direct.success && direct.scene.meshes.size() == 1);
+  const RenderMesh& direct_mesh = direct.scene.meshes[0];
+  assert(direct_mesh.normals.size() == 9);
+  assert(direct_mesh.normals[0] == 1.0f && direct_mesh.normals[2] == 0.0f);
+}
+
 int main() {
   {
     RenderMaterial mat;
@@ -10038,6 +10217,8 @@ int main() {
   TestMtlxConstantEvaluatorLeanVectors();
   TestAuthoredPlaneTextureDomain();
   TestGeneratedSmoothNormals();
+  TestGroupedIndexedMeshNormals();
+  TestEmptyMeshNormalSelectors();
   std::cout << "=== Tydra Unit Tests ===\n\n";
 
   // ChunkedArray tests
@@ -10134,6 +10315,7 @@ int main() {
   TestParallelMaterialTextureRemapAndCallbackPolicy();
   TestStrictConversionDiagnostics();
   TestSparseUDIMTextureRetention();
+  TestInactiveVolumeFieldTarget();
   TestOpenUsdVdbVolumeFixtures();
   TestLevelSetFieldMesh();
   TestFieldFallbackAndDenseBox();

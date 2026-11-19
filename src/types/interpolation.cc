@@ -548,8 +548,13 @@ SampleResult TimeInterpolator::Interpolate(
   }
 
   // Linear interpolation
-  if (samples[low].second.is_block() || samples[high].second.is_block()) {
+  if (samples[low].second.is_block()) {
     result.blocked = true;
+    return result;
+  }
+  if (samples[high].second.is_block()) {
+    result.value = samples[low].second;
+    result.success = true;
     return result;
   }
   double t_low = samples[low].first;
