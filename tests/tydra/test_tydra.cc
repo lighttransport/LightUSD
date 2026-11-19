@@ -5145,6 +5145,9 @@ def Xform "W"
     }
     def SphereLight "L"
     {
+        # The LightAPI fallback includeRoot = 1 would link everything not
+        # excluded (UsdCollectionAPI); disable it to test the include ranges.
+        uniform bool collection:lightLink:includeRoot = 0
         rel collection:lightLink:includes = [</W/A>, </W/C>]
         rel collection:lightLink:excludes = [</W/A/B>]
     }
@@ -6562,6 +6565,8 @@ def Xform "World"
     def SphereLight "KeyLight"
     {
         float inputs:intensity = 5
+        uniform bool collection:lightLink:includeRoot = 0
+        uniform bool collection:shadowLink:includeRoot = 0
         rel collection:lightLink:includes = [</World/Props>]
         rel collection:lightLink:excludes = [</World/Props/Barrel>]
         uniform token collection:lightLink:expansionRule = "expandPrims"

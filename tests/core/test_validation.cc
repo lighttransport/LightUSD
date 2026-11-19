@@ -157,7 +157,10 @@ static void test_lean_registry_fallbacks() {
   for (const SchemaKind &schema : schemas) {
     const auto expected = expected_builtins.find(schema.name);
     if (expected == expected_builtins.end()) continue;
-    const bool typed = std::strcmp(schema.kind, "concreteTyped") == 0;
+    // Abstract typed bases (e.g. BoundableLightBase) carry built-ins too;
+    // author them as the prim type, never as an applied API.
+    const bool typed = std::strcmp(schema.kind, "concreteTyped") == 0 ||
+                       std::strcmp(schema.kind, "abstractTyped") == 0;
     PrimSpec prim("Subject", typed ? schema.name : "");
     if (!typed) prim.meta().apiSchemas().push_back(schema.name);
     CHECK(registry.AppliedSchemas(prim) == expected->second,

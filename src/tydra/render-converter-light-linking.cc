@@ -3,6 +3,7 @@
 //
 // Collection API and path-expression based light-link resolution.
 
+#include "schema/usd-collection.hh"
 #include "render-converter-light-linking.hh"
 #include "render-converter-prop-read.hh"
 #include "layer/prim-spec.hh"
@@ -207,11 +208,8 @@ bool ResolveExpressionLightLinks(const Stage& stage, const UsdPrim& owner,
 }
 
 // Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
-// to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
-// excludes take hierarchical precedence, includeRoot adds the light prim's
-// subtree, explicitOnly matches exact paths, expandPrims (default) and
-// expandPrimsAndProperties match descendants. Unauthored collections keep
-// *links_all = true (light affects everything).
+// to RenderScene mesh indices with UsdCollectionAPI membership semantics.
+// Unauthored collections keep *links_all = true (light affects everything).
 void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
                               const RenderScene& scene,
                               MeshPathIndex& index,
@@ -226,66 +224,49 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
     return;
   }
 
-  const std::vector<::lightusd::Path>* includes =
-      prim.GetRelationship(base + "includes");
-  const std::vector<::lightusd::Path>* excludes =
-      prim.GetRelationship(base + "excludes");
-  if (!includes && !excludes) return;  // unauthored -> links all
-
-  bool include_root = false;
-  GetPropBool(prim, base + "includeRoot", &include_root);
-  std::string rule = "expandPrims";
-  GetPropToken(prim, base + "expansionRule", &rule);
-  const bool explicit_only = (rule == "explicitOnly");
-  const std::string& owner_path = prim.GetPath().str();
+  // UsdCollectionAPI membership (schema/usd-collection.hh): the nearest
+  // include/exclude ancestor decides, includeRoot includes the pseudo-root,
+  // explicitOnly matches exact paths, nested collections are flattened.
+  ::lightusd::CollectionMembershipQuery query;
+  if (!query.Compute(stage, prim, instance_name) || !query.authored()) return;
+  // Only the root included (e.g. the LightAPI includeRoot fallback): every
+  // prim is a member, which RenderLight expresses as links_all.
+  if (query.entries().size() == 1 && query.entries().begin()->first == "/" &&
+      query.entries().begin()->second && !query.explicit_only()) {
+    return;
+  }
 
   *links_all = false;
   mesh_indices->clear();
 
-  // Mark the excluded set first (excludes take hierarchical precedence), then
-  // walk only the meshes the includes actually name. Cost is proportional to
-  // the matched subtrees, not to the whole scene.
-  index.NewGeneration();
-  if (excludes) {
-    for (const ::lightusd::Path& p : *excludes) {
-      const std::string ep = p.str();
-      const int32_t exact = index.ExactMatch(ep);
-      if (exact >= 0) index.Mark(exact);
-      size_t b = 0, e = 0;
-      index.DescendantRange(ep, &b, &e);
-      for (size_t i = b; i < e; ++i) index.Mark(index.MeshAt(i));
-    }
-  }
-
+  // Candidates come from the include entries' subtrees only, so cost stays
+  // proportional to the matched subtrees unless the root is included.
   std::vector<int32_t> candidates;
   auto add_subtree = [&](const std::string& root) {
     const int32_t exact = index.ExactMatch(root);
     if (exact >= 0) candidates.push_back(exact);
+    if (query.explicit_only()) return;
     size_t b = 0, e = 0;
     index.DescendantRange(root, &b, &e);
     for (size_t i = b; i < e; ++i) candidates.push_back(index.MeshAt(i));
   };
-
-  if (include_root) add_subtree(owner_path);
-  if (includes) {
-    for (const ::lightusd::Path& p : *includes) {
-      const std::string ip = p.str();
-      if (explicit_only) {
-        const int32_t exact = index.ExactMatch(ip);
-        if (exact >= 0) candidates.push_back(exact);
-      } else {
-        add_subtree(ip);
-      }
-    }
+  bool all = false;
+  for (const auto& entry : query.entries()) {
+    if (!entry.second) continue;
+    if (entry.first == "/") { all = true; break; }
+    add_subtree(entry.first);
   }
-
-  // Sorting by mesh index preserves the scene order the previous full scan
-  // emitted; unique() collapses overlapping include targets.
+  if (all) {
+    candidates.clear();
+    for (size_t i = 0; i < scene.meshes.size(); ++i) candidates.push_back(static_cast<int32_t>(i));
+  }
+  // Sorting by mesh index preserves scene order; unique() collapses overlaps.
   std::sort(candidates.begin(), candidates.end());
   candidates.erase(std::unique(candidates.begin(), candidates.end()),
                    candidates.end());
   for (int32_t mi : candidates) {
-    if (!index.Marked(mi)) mesh_indices->push_back(mi);
+    if (query.IsPathIncluded(scene.meshes[static_cast<size_t>(mi)].prim_path))
+      mesh_indices->push_back(mi);
   }
 }
 

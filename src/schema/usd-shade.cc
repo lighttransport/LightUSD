@@ -4,6 +4,8 @@
 // LightUSD - UsdShade Schema Implementation
 
 #include "usd-shade.hh"
+#include "usd-collection.hh"
+#include <algorithm>
 #include "layer/prim-spec.hh"
 
 #include <algorithm>
@@ -230,6 +232,53 @@ static std::string GetTerminalShaderPath(const UsdPrim& material,
   return "";
 }
 
+namespace {
+
+// Connection source of `attr` on `prim` ("" when unconnected).
+std::string ConnectionOf(const UsdPrim& prim, const std::string& attr) {
+  if (const PrimSpec* spec = prim.GetPrimSpec()) {
+    if (const std::vector<Path>* conns = spec->connection(attr)) {
+      if (!conns->empty()) return (*conns)[0].str();
+    }
+  }
+  return "";
+}
+
+// Follow `source` ("/P.outputs:x") through NodeGraph/Material outputs to a
+// Shader output (UsdShadeConnectableAPI value-producing attribute).
+std::string ResolveToShaderOutput(const Stage& stage, std::string source) {
+  for (int depth = 0; depth < 64 && !source.empty(); ++depth) {
+    const size_t dot = source.rfind('.');
+    if (dot == std::string::npos) return "";
+    const UsdPrim prim = stage.GetPrimAtPath(source.substr(0, dot));
+    if (!prim.IsValid()) return "";
+    if (IsShader(prim)) return source;
+    if (!IsNodeGraph(prim) && !IsMaterial(prim)) return "";
+    source = ConnectionOf(prim, source.substr(dot + 1));
+  }
+  return "";
+}
+
+}  // namespace
+
+std::string ComputeTerminalSource(const Stage& stage, const UsdPrim& material,
+                                  const std::vector<std::string>& contexts,
+                                  const std::string& terminal) {
+  if (!IsMaterial(material)) return "";
+  std::vector<std::string> outputs;
+  for (const std::string& ctx : contexts) {
+    if (!ctx.empty() && ctx != "universal") outputs.push_back("outputs:" + ctx + ":" + terminal);
+  }
+  outputs.push_back("outputs:" + terminal);
+  for (const std::string& out : outputs) {
+    const std::string src = ConnectionOf(material, out);
+    if (src.empty()) continue;
+    const std::string resolved = ResolveToShaderOutput(stage, src);
+    if (!resolved.empty()) return resolved;
+  }
+  return "";
+}
+
 std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
   return GetTerminalShaderPath(material, "outputs:surface");
@@ -359,6 +408,86 @@ std::string GetInheritedBoundMaterialPath(const Stage& stage,
     path = ParentPathOf(path);
   }
   return strongest_ancestor.empty() ? leaf_binding : strongest_ancestor;
+}
+
+namespace {
+
+bool RelIsStronger(const UsdPrim& prim, const std::string& rel) {
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return false;
+  const PropMeta* pm = spec->property_meta(rel);
+  return pm && (pm->authored & PropMeta::kBindMaterialAs) &&
+         pm->bindMaterialAs == "strongerThanDescendants";
+}
+
+struct BindingChoice {
+  bool valid = false;           // hasValidTargetPath
+  std::string material;         // target path
+  std::string owner;            // prim holding the winning relationship
+};
+
+}  // namespace
+
+std::string ComputeBoundMaterial(const Stage& stage, const std::string& prim_path,
+                                 const std::string& purpose) {
+  std::vector<std::string> passes;
+  if (!purpose.empty() && purpose != "allPurpose") passes.push_back(purpose);
+  passes.push_back("");
+  for (const std::string& pass : passes) {
+    BindingChoice win;
+    for (std::string path = prim_path; !path.empty() && path != "/";
+         path = ParentPathOf(path)) {
+      const UsdPrim p = stage.GetPrimAtPath(path);
+      if (!p.IsValid()) continue;
+      // Direct binding for this pass. For a restricted purpose the prim's
+      // own allPurpose binding is only used by the allPurpose pass.
+      const std::string direct =
+          pass.empty() ? "material:binding" : "material:binding:" + pass;
+      const std::vector<Path>* targets = p.GetRelationship(direct);
+      if (targets && !targets->empty()) {
+        if (!win.valid || RelIsStronger(p, direct)) {
+          win.valid = true;
+          win.material = (*targets)[0].str();
+          win.owner = path;
+        }
+      }
+      // Collection bindings for this pass, in property-name order.
+      const std::string prefix = pass.empty()
+          ? "material:binding:collection:"
+          : "material:binding:collection:" + pass + ":";
+      std::vector<std::string> names;
+      for (const std::string& name : p.GetPropertyNames()) {
+        if (name.compare(0, prefix.size(), prefix) != 0) continue;
+        const std::string rest = name.substr(prefix.size());
+        // allPurpose names must not be purpose-restricted ones.
+        if (pass.empty() && (rest.rfind("preview:", 0) == 0 || rest.rfind("full:", 0) == 0))
+          continue;
+        names.push_back(name);
+      }
+      std::sort(names.begin(), names.end());
+      for (const std::string& name : names) {
+        const std::vector<Path>* coll = p.GetRelationship(name);
+        if (!coll || coll->size() != 2) continue;
+        const std::string cpath = (*coll)[0].str();
+        const size_t at = cpath.find(".collection:");
+        if (at == std::string::npos) continue;
+        const UsdPrim cowner = stage.GetPrimAtPath(cpath.substr(0, at));
+        if (!cowner.IsValid()) continue;
+        if (!IsPathInCollection(stage, cowner, cpath.substr(at + 12), prim_path)) continue;
+        if (!win.valid || win.owner == path || RelIsStronger(p, name)) {
+          win.valid = true;
+          win.material = (*coll)[1].str();
+          win.owner = path;
+          break;
+        }
+      }
+    }
+    if (win.valid) {
+      const UsdPrim m = stage.GetPrimAtPath(win.material);
+      return (m.IsValid() && IsMaterial(m)) ? win.material : std::string();
+    }
+  }
+  return std::string();
 }
 
 std::string GetInheritedBoundMaterialPathForPurpose(

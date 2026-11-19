@@ -22,6 +22,8 @@
 #include "eval/xform-eval.hh"
 #include "load-usd.hh"
 #include "schema/geom-boundable.hh"
+#include "schema/usd-collection.hh"
+#include "schema/usd-shade.hh"
 #include "schema/geom-point-instancer.hh"
 #include "stage/stage.hh"
 
@@ -83,6 +85,62 @@ int DumpExtents(const char* scene, double time) {
   });
   return 0;
 }
+int LoadOr(const char* scene, lightusd::Stage* stage) {
+  std::string warn, err;
+  if (!lightusd::LoadUSDComposed(scene, stage, &warn, &err)) {
+    std::fprintf(stderr, "load failed: %s\n", err.c_str());
+    return 1;
+  }
+  return 0;
+}
+
+// `<prim path> <material path or ->` per prim, for purpose "" / preview / full.
+int DumpBindings(const char* scene, const std::string& purpose) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    const std::string m = lightusd::ComputeBoundMaterial(stage, prim.GetPath().str(), purpose);
+    std::printf("%s %s\n", prim.GetPath().str().c_str(), m.empty() ? "-" : m.c_str());
+    return true;
+  });
+  return 0;
+}
+
+// `<material path> <shader.output or ->` for render contexts CTX (comma list).
+int DumpSurface(const char* scene, const std::string& ctx_list) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  std::vector<std::string> contexts;
+  size_t start = 0;
+  while (start <= ctx_list.size()) {
+    const size_t comma = ctx_list.find(',', start);
+    const std::string c = ctx_list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+    if (!c.empty() && c != "-") contexts.push_back(c);
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    if (lightusd::IsMaterial(prim)) {
+      const std::string src = lightusd::ComputeTerminalSource(stage, prim, contexts);
+      std::printf("%s %s\n", prim.GetPath().str().c_str(), src.empty() ? "-" : src.c_str());
+    }
+    return true;
+  });
+  return 0;
+}
+
+// `<path> 0|1` membership of every prim in OWNER.collection:NAME.
+int DumpCollection(const char* scene, const char* owner, const char* name) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  const lightusd::UsdPrim o = stage.GetPrimAtPath(std::string(owner));
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    std::printf("%s %d\n", prim.GetPath().str().c_str(),
+                lightusd::IsPathInCollection(stage, o, name, prim.GetPath().str()) ? 1 : 0);
+    return true;
+  });
+  return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -94,6 +152,15 @@ int main(int argc, char** argv) {
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-extent") {
     return DumpExtents(argv[2], std::atof(argv[3]));
+  }
+  if (argc == 4 && std::string(argv[1]) == "--dump-binding") {
+    return DumpBindings(argv[2], std::string(argv[3]) == "all" ? "" : argv[3]);
+  }
+  if (argc == 4 && std::string(argv[1]) == "--dump-surface") {
+    return DumpSurface(argv[2], argv[3]);
+  }
+  if (argc == 5 && std::string(argv[1]) == "--dump-collection") {
+    return DumpCollection(argv[2], argv[3], argv[4]);
   }
   std::fprintf(stderr,
                "usage: geom_compare --dump-instancer|--dump-xform|--dump-extent SCENE TIME\n");

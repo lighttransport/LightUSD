@@ -57,6 +57,16 @@ std::string GetSurfaceShader(const Stage& stage, const UsdPrim& material);
 std::string GetSurfaceShaderWithRenderContextFallback(const Stage& stage,
                                                       const UsdPrim& material);
 
+/// UsdShadeMaterial::ComputeSurfaceSource(renderContexts): the first of
+/// `outputs:<ctx>:surface` (in `contexts` order), then the universal
+/// `outputs:surface`, whose connection resolves to a Shader output. NodeGraph
+/// (and Material) outputs are followed to the value-producing Shader
+/// output; cycles and dead ends fail. Returns "<shader path>.<output>" or "".
+/// `terminal` ("surface", "displacement", "volume") selects the output.
+std::string ComputeTerminalSource(const Stage& stage, const UsdPrim& material,
+                                  const std::vector<std::string>& contexts,
+                                  const std::string& terminal = "surface");
+
 /// Get material displacement shader path
 std::string GetDisplacementShader(const Stage& stage, const UsdPrim& material);
 
@@ -91,6 +101,19 @@ std::string GetInheritedBoundMaterialPath(const Stage& stage,
 std::string GetInheritedBoundMaterialPathForPurpose(
     const Stage& stage, const std::string& prim_path,
     const std::string& purpose);
+
+/// UsdShadeMaterialBindingAPI::ComputeBoundMaterial for `purpose` ("" =
+/// allPurpose, "preview", "full"): purposes are tried as [purpose,
+/// allPurpose]; within a pass the nearest direct or collection binding wins
+/// unless an ancestor's is `strongerThanDescendants`; a collection binding
+/// beats a direct binding on the same prim; the first pass with a non-empty
+/// target wins, and a target that is not a Material yields "" (no fallthrough
+/// to ancestors or weaker purposes). Collection bindings
+/// (`material:binding:collection[:<purpose>]:<name>` = [collection, material])
+/// use IsPathInCollection. The renderer helpers above keep their preview-first,
+/// skip-dangling policy; use this for spec-faithful resolution.
+std::string ComputeBoundMaterial(const Stage& stage, const std::string& prim_path,
+                                 const std::string& purpose = std::string());
 
 /// Does this prim's winning binding declare `bindMaterialAs =
 /// "strongerThanDescendants"`? (The default is "weakerThanDescendants", i.e. a

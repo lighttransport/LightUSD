@@ -3963,7 +3963,12 @@ void TestPxrTextFormRules() {
     assert(g.HasAPI("ParticleFieldPositionAttributeAPI"));
     assert(!g.HasAPI("MaterialBindingAPI"));
     const std::vector<std::string> applied = m.GetAppliedSchemas();
-    assert(applied.size() == 4 && applied[1] == "CollectionAPI:lights");
+    // OpenUSD 26.11 GetAppliedSchemas: MeshLightAPI's built-in LightAPI
+    // brings its own built-in light/shadow link collections.
+    const std::vector<std::string> want = {
+        "MaterialBindingAPI", "CollectionAPI:lights", "MeshLightAPI", "LightAPI",
+        "CollectionAPI:lightLink", "CollectionAPI:shadowLink"};
+    assert(applied == want);
     assert(!UsdPrim().HasAPI("LightAPI"));
   }
   // (e) pxr-accepted forms: list ops on unregistered layer metadata (an

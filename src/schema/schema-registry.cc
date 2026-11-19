@@ -597,21 +597,12 @@ bool IsMultipleApplyAPI(const std::string& schema) {
 // Built-in (typed-schema apiSchemas) and auto-applied API schemas of a prim
 // type, OpenUSD 26.11 parity for the schemas next models.
 std::vector<std::string> BuiltinAPISchemas(const std::string& type) {
-  static const char* kLightTypes[] = {
-      "DistantLight", "DomeLight", "DomeLight_1", "SphereLight", "RectLight",
-      "DiskLight", "CylinderLight", "GeometryLight", "PortalLight",
-      "PluginLight"};
-  for (const char* lt : kLightTypes) {
-    if (type == lt) return {"LightAPI"};
-  }
+  // Generated from the OpenUSD 26.11 domain catalogs (including usdLux and
+  // usdShade), expanded transitively: e.g. DiskLight -> LightAPI ->
+  // CollectionAPI:lightLink, CollectionAPI:shadowLink.
   std::vector<std::string> result;
   AppendDomainAPIs(type, result);
   return result;
-}
-
-// API schemas that themselves include LightAPI (pxr builtin apiSchemas).
-bool IncludesLightAPI(const std::string& api) {
-  return api == "MeshLightAPI" || api == "VolumeLightAPI";
 }
 
 }  // namespace
@@ -624,8 +615,9 @@ std::vector<std::string> SchemaRegistry::AppliedSchemas(
   };
   for (const std::string& applied : prim.meta().apiSchemas()) {
     push(applied);
-    if (IncludesLightAPI(applied)) push("LightAPI");
-    AppendDomainAPIs(applied, out);
+    std::vector<std::string> expanded;
+    AppendDomainAPIs(applied, expanded);
+    for (const std::string& e : expanded) push(e);
   }
   return out;
 }
