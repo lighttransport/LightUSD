@@ -175,7 +175,9 @@ for ci, (x, y) in enumerate(zip(a, b)):
 expected_advanced = {
     "/World/MainCam": (8.0, 2.8, -0.25, 0.5, 1, 2),
     "/World/OrthoCam": (20.0, 8.0, 0.0, 0.0, 2, 1),
-    "/World/Rig/RigCam": (5.0, 0.0, 0.0, 0.0, 0, 0),
+    # Unauthored focusDistance/fStop resolve to the UsdGeomCamera schema
+    # fallbacks (0 and 0 in OpenUSD 26.11), not a renderer default.
+    "/World/Rig/RigCam": (0.0, 0.0, 0.0, 0.0, 0, 0),
 }
 for row in a:
     got = tuple(float(row[i]) for i in range(22, 28))

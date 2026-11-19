@@ -550,7 +550,8 @@ static void test_conversion_diagnostics(void) {
   assert(lightusd_render_conversion_diagnostic_count(scene) == 1);
   lightusd_render_conversion_diagnostic diagnostic;
   assert(lightusd_render_conversion_diagnostic_get(scene, 0, &diagnostic) == LIGHTUSD_OK);
-  assert(diagnostic.disposition == LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED);
+  /* NurbsPatch is tessellated; an empty patch is invalid data (Failed). */
+  assert(diagnostic.disposition == LIGHTUSD_RENDER_FAILED);
   assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
   assert(lightusd_render_conversion_diagnostic_get(scene, 1, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
   assert(lightusd_render_config_set_strict(&config, 2) == LIGHTUSD_ERR_INVALID_ARG);

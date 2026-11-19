@@ -291,14 +291,13 @@ bool IsAnalyticGeomTypeName(const std::string& type_name) {
 }
 
 bool IsMeshRenderableTypeName(const std::string& type_name) {
-  return type_name == "Mesh" || type_name == "TetMesh" ||
+  return type_name == "Mesh" || type_name == "TetMesh" || type_name == "NurbsPatch" ||
          IsAnalyticGeomTypeName(type_name);
 }
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
   return type_name == "Points" ||
-         type_name == "ParticleField3DGaussianSplat" || type_name == "ParticleField" ||
-         type_name == "NurbsPatch";
+         type_name == "ParticleField3DGaussianSplat" || type_name == "ParticleField";
 }
 
 bool CollectRenderPrims(const ::lightusd::Stage& stage,

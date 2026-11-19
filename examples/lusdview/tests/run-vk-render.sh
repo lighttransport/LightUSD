@@ -276,8 +276,11 @@ run_asset_pass() {
     echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
     return $SKIP
   fi
+  # Curves render as instanced native carriers (not counted in the mesh
+  # triangle stats), so a curve-only asset passes on a nonzero carrier count.
   if grep -q "load failed" <<< "$log" ||
-     ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log"; then
+     { ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log" &&
+       ! grep -Eq 'native carriers: [1-9][0-9]* persistent' <<< "$log"; }; then
     echo "FAIL: $label produced no renderable triangles"
     return 1
   fi

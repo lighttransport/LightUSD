@@ -118,6 +118,9 @@ class RenderSceneConverter::Impl {
 
   // Extract mesh data directly into chunked arrays
   bool ConvertGeomPrimitive(const UsdPrim& prim, RenderMesh* out);
+  bool TessellateNurbsPatch(const UsdPrim& prim, std::vector<std::array<float, 3>>* points,
+                            std::vector<int>* face_counts, std::vector<int>* face_indices,
+                            std::vector<std::array<float, 2>>* uvs);
   bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
   bool ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh);
   /// Drop faces with out-of-range (or negative) indices and truncate counts

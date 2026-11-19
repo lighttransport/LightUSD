@@ -1490,6 +1490,60 @@ def SkelRoot "Model" {
   std::cout << "  Dual-quaternion skinning: PASSED\n";
 }
 
+// UsdGeomNurbsPatch tessellation: a clamped bilinear (order 2) patch is
+// exactly the bilinear interpolation of its corners; a clamped cubic patch
+// interpolates its corner control points; scaling every weight is a no-op.
+void TestNurbsPatchTessellation() {
+  auto convert = [](const std::string& body, RenderMesh* mesh) {
+    const std::string src = "#usda 1.0\ndef NurbsPatch \"P\" {\n" + body + "}\n";
+    auto loaded = LoadUSDAFromString(src);
+    assert(loaded.success);
+    ConverterConfig cfg;
+    RenderSceneConverter conv(cfg);
+    ConvertResult res = conv.Convert(loaded.stage);
+    assert(res.success && res.scene.meshes.size() == 1);
+    *mesh = res.scene.meshes[0];
+  };
+  RenderMesh bilinear;
+  convert(R"(    int uVertexCount = 2
+    int vVertexCount = 2
+    int uOrder = 2
+    int vOrder = 2
+    double[] uKnots = [0, 0, 1, 1]
+    double[] vKnots = [0, 0, 1, 1]
+    point3f[] points = [(0,0,0), (2,0,0), (0,2,1), (2,2,3)]
+)", &bilinear);
+  std::vector<float> bp(bilinear.points.begin(), bilinear.points.end());
+  assert(!bp.empty() && bp.size() % 3 == 0);
+  for (size_t i = 0; i < bp.size(); i += 3) {
+    const float u = bp[i] / 2, v = bp[i + 1] / 2;  // x = 2u, y = 2v
+    const float z = (1 - u) * v * 1 + u * v * 3;
+    assert(std::abs(bp[i + 2] - z) < 1e-5f);
+  }
+  const char* cubic = R"(    int uVertexCount = 4
+    int vVertexCount = 4
+    int uOrder = 4
+    int vOrder = 4
+    double[] uKnots = [0, 0, 0, 0, 1, 1, 1, 1]
+    double[] vKnots = [0, 0, 0, 0, 1, 1, 1, 1]
+    point3f[] points = [(0,0,0),(1,0,1),(2,0,1),(3,0,0),(0,1,1),(1,1,2),(2,1,2),(3,1,1),(0,2,1),(1,2,2),(2,2,2),(3,2,1),(0,3,0),(1,3,1),(2,3,1),(3,3,5)]
+)";
+  RenderMesh plain, scaled;
+  convert(cubic, &plain);
+  convert(std::string(cubic) + "    double[] pointWeights = [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]\n", &scaled);
+  std::vector<float> pp(plain.points.begin(), plain.points.end());
+  std::vector<float> sp(scaled.points.begin(), scaled.points.end());
+  assert(pp.size() == sp.size());
+  bool corner = false;
+  for (size_t i = 0; i < pp.size(); i += 3) {
+    for (size_t c = 0; c < 3; ++c) assert(std::abs(pp[i + c] - sp[i + c]) < 1e-5f);
+    if (std::abs(pp[i] - 3) < 1e-6f && std::abs(pp[i + 1] - 3) < 1e-6f)
+      corner = std::abs(pp[i + 2] - 5) < 1e-5f;
+  }
+  assert(corner);
+  std::cout << "  NurbsPatch tessellation: PASSED\n";
+}
+
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
   {
@@ -1674,6 +1728,8 @@ class RetainedStreamSink : public SceneSink {
 };
 
 void TestStrictConversionDiagnostics() {
+  // NurbsPatch is tessellated now, so an empty (invalid) patch is a Failed
+  // conversion rather than a preserved-unsupported prim.
   const std::string unsupported = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
   auto loaded = LoadUSDAFromString(unsupported.data(), unsupported.size());
   assert(loaded.success);
@@ -1683,7 +1739,7 @@ void TestStrictConversionDiagnostics() {
   assert(result.scene.conversion_diagnostics.size() == 1);
   assert(result.scene.conversion_diagnostics[0].prim_path == "/V");
   assert(result.scene.conversion_diagnostics[0].disposition ==
-         ConversionDisposition::PreservedUnsupported);
+         ConversionDisposition::Failed);
   ConverterConfig config;
   config.strict_conversion = true;
   RenderSceneConverter strict(config);
@@ -1691,8 +1747,9 @@ void TestStrictConversionDiagnostics() {
   assert(!refused.success && refused.status == OperationStatus::InvalidData);
   assert(!refused.warnings.empty());
   RetainedStreamSink sink;
+  // Invalid geometry is only found while converting, after the sink began;
+  // strict mode must still fail the stream.
   assert(!strict.ConvertToSink(loaded.stage, &sink).success);
-  assert(!sink.began);
   const std::string supported = "#usda 1.0\ndef Xform \"World\" {}\n";
   auto clean = LoadUSDAFromString(supported.data(), supported.size());
   assert(clean.success);
@@ -10305,6 +10362,7 @@ int main() {
   TestDeepSceneAccess();
   TestSkinnedPointEvaluation();
   TestDualQuaternionSkinning();
+  TestNurbsPatchTessellation();
   TestRenderExtract();
 
   std::cout << "\n";

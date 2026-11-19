@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "types/value-view.hh"
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
 #include "render-extract.hh"
@@ -108,11 +109,153 @@ void FillGeneratedMesh(const UsdPrim& prim,
 }
 }  // namespace
 
+namespace {
+
+// float/double array attribute as floats (knots and weights are double[];
+// uRange/vRange are double2).
+bool ReadPatchFloats(const UsdPrim& prim, const char* name, double time,
+                     std::vector<float>* out) {
+  ValueArrayRead<float> f;
+  if (ReadFloatArray(prim, name, time, &f) && !f.empty()) {
+    out->assign(f.begin(), f.end());
+    return true;
+  }
+  const Value* v = prim.GetPropertyValue(name);
+  if (!v) return false;
+  if (const double* d2 = v->as_double2()) {
+    out->assign({float(d2[0]), float(d2[1])});
+    return true;
+  }
+  ::lightusd::ArrayScratch<double> scratch;
+  ::lightusd::ArrayView<double> view;
+  if (!::lightusd::GetDoubleArrayView(*v, &scratch, &view) || view.empty()) return false;
+  out->clear();
+  for (size_t i = 0; i < view.size; ++i) out->push_back(float(view[i]));
+  return true;
+}
+
+// Cox-de Boor basis functions N_{i,order}(t) for all control points.
+void NurbsBasis(const std::vector<double>& knots, int order, int count, double t,
+                std::vector<double>* out) {
+  const int m = static_cast<int>(knots.size()) - 1;
+  std::vector<double> n(static_cast<size_t>(m), 0.0);
+  // Degree-0 spans; the last non-degenerate span closes at the range end.
+  int last = -1;
+  for (int i = 0; i < m; ++i)
+    if (knots[size_t(i)] < knots[size_t(i) + 1]) last = i;
+  for (int i = 0; i < m; ++i) {
+    const double a = knots[size_t(i)], b = knots[size_t(i) + 1];
+    if (a < b && ((t >= a && t < b) || (i == last && t == b))) n[size_t(i)] = 1.0;
+  }
+  for (int k = 2; k <= order; ++k) {
+    for (int i = 0; i + k <= m; ++i) {
+      double v = 0.0;
+      const double d1 = knots[size_t(i + k - 1)] - knots[size_t(i)];
+      const double d2 = knots[size_t(i + k)] - knots[size_t(i + 1)];
+      if (d1 > 0) v += (t - knots[size_t(i)]) / d1 * n[size_t(i)];
+      if (d2 > 0) v += (knots[size_t(i + k)] - t) / d2 * n[size_t(i + 1)];
+      n[size_t(i)] = v;
+    }
+  }
+  out->assign(n.begin(), n.begin() + count);
+}
+
+}  // namespace
+
+// UsdGeomNurbsPatch: rational tensor-product B-spline surface over
+// [uRange] x [vRange] (default: knots[order-1] .. knots[count]); points are
+// u-fastest (index = v * uVertexCount + u), pointWeights optional. Tessellated
+// into a quad grid with (u,v) texcoords; trim curves are not applied.
+bool RenderSceneConverter::Impl::TessellateNurbsPatch(
+    const UsdPrim& prim, std::vector<value::float3>* points, std::vector<int>* face_counts,
+    std::vector<int>* face_indices, std::vector<value::float2>* uvs) {
+  auto read_int = [&](const char* name, int fallback) {
+    const Value* v = prim.GetPropertyValue(name);
+    const int32_t* i = v ? v->as_int() : nullptr;
+    return i ? int(*i) : fallback;
+  };
+  const int nu = read_int("uVertexCount", 0), nv = read_int("vVertexCount", 0);
+  const int ou = read_int("uOrder", 0), ov = read_int("vOrder", 0);
+  std::vector<float> fu, fv, fw;
+  ValueArrayRead<float> cps;
+  if (nu < 2 || nv < 2 || ou < 2 || ov < 2 || ou > nu || ov > nv ||
+      !ReadPatchFloats(prim, "uKnots", config_.time_code, &fu) ||
+      !ReadPatchFloats(prim, "vKnots", config_.time_code, &fv) ||
+      fu.size() != size_t(nu + ou) || fv.size() != size_t(nv + ov) ||
+      !ReadFloatArray(prim, "points", config_.time_code, &cps) ||
+      cps.view.size != size_t(nu) * size_t(nv) * 3) {
+    SetLastError("Invalid NurbsPatch '" + prim.GetPath().str() + "'");
+    return false;
+  }
+  const std::vector<double> ku(fu.begin(), fu.end()), kv(fv.begin(), fv.end());
+  for (size_t i = 1; i < ku.size(); ++i)
+    if (!(ku[i] >= ku[i - 1])) { SetLastError("NurbsPatch uKnots not ascending"); return false; }
+  for (size_t i = 1; i < kv.size(); ++i)
+    if (!(kv[i] >= kv[i - 1])) { SetLastError("NurbsPatch vKnots not ascending"); return false; }
+  const bool weighted = ReadPatchFloats(prim, "pointWeights", config_.time_code, &fw) &&
+                        fw.size() == size_t(nu) * size_t(nv);
+  double u0 = ku[size_t(ou - 1)], u1 = ku[size_t(nu)];
+  double v0 = kv[size_t(ov - 1)], v1 = kv[size_t(nv)];
+  std::vector<float> range;
+  if (ReadPatchFloats(prim, "uRange", config_.time_code, &range) && range.size() == 2 &&
+      range[0] < range[1]) { u0 = range[0]; u1 = range[1]; }
+  if (ReadPatchFloats(prim, "vRange", config_.time_code, &range) && range.size() == 2 &&
+      range[0] < range[1]) { v0 = range[0]; v1 = range[1]; }
+  if (prim.GetPropertyValue("trimCurve:counts"))
+    AddWarning("NurbsPatch '" + prim.GetPath().str() + "': trim curves are not applied");
+  const int su = std::min(64, 8 * (nu - ou + 1)), sv = std::min(64, 8 * (nv - ov + 1));
+  std::vector<double> bu, bv;
+  points->clear();
+  uvs->clear();
+  std::vector<value::float3> grid;
+  std::vector<value::float2> grid_uv;
+  for (int j = 0; j <= sv; ++j) {
+    const double v = v0 + (v1 - v0) * j / sv;
+    NurbsBasis(kv, ov, nv, v, &bv);
+    for (int i = 0; i <= su; ++i) {
+      const double u = u0 + (u1 - u0) * i / su;
+      NurbsBasis(ku, ou, nu, u, &bu);
+      double acc[3] = {0, 0, 0}, wsum = 0;
+      for (int b = 0; b < nv; ++b) {
+        if (bv[size_t(b)] == 0) continue;
+        for (int a = 0; a < nu; ++a) {
+          const size_t idx = size_t(b) * size_t(nu) + size_t(a);
+          const double w = bu[size_t(a)] * bv[size_t(b)] * (weighted ? fw[idx] : 1.0);
+          if (w == 0) continue;
+          for (int c = 0; c < 3; ++c) acc[c] += w * cps.view.data[idx * 3 + size_t(c)];
+          wsum += w;
+        }
+      }
+      if (!(std::abs(wsum) > 1e-300)) {
+        SetLastError("NurbsPatch '" + prim.GetPath().str() + "': degenerate weights");
+        return false;
+      }
+      grid.push_back(value::float3{float(acc[0] / wsum), float(acc[1] / wsum),
+                                   float(acc[2] / wsum)});
+      grid_uv.push_back(value::float2{float(double(i) / su), float(double(j) / sv)});
+    }
+  }
+  *points = grid;
+  face_counts->clear();
+  face_indices->clear();
+  for (int j = 0; j < sv; ++j)
+    for (int i = 0; i < su; ++i) {
+      const int a = j * (su + 1) + i;
+      const int quad[4] = {a, a + 1, a + su + 2, a + su + 1};
+      face_counts->push_back(4);
+      for (int k : quad) {
+        face_indices->push_back(k);
+        uvs->push_back(grid_uv[size_t(k)]);
+      }
+    }
+  return true;
+}
+
 bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
                                                 RenderMesh* out) {
   if (!out || !prim.IsValid() ||
       (!IsAnalyticGeomTypeName(prim.GetTypeName()) &&
-       prim.GetTypeName() != "TetMesh")) {
+       prim.GetTypeName() != "TetMesh" && prim.GetTypeName() != "NurbsPatch")) {
     SetLastError("Invalid generated geom prim");
     return false;
   }
@@ -274,6 +417,8 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
         if (remapped.size() == 4) uvs = std::move(remapped);
       }
     }
+  } else if (type == "NurbsPatch") {
+    if (!TessellateNurbsPatch(prim, &points, &face_counts, &face_indices, &uvs)) return false;
   } else {
     SetLastError("Unsupported analytic geom prim");
     return false;
@@ -287,7 +432,7 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
   // so every closed solid is outward. Authored normals already point
   // outward, so only the corner order flips (normals/uvs are per-corner and
   // reverse with it to stay parallel).
-  {
+  if (type != "NurbsPatch") {  // open surfaces have no signed volume
     double volume = 0.0;
     size_t off = 0;
     for (int c : face_counts) {
@@ -323,7 +468,7 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
     }
   }
 
-  if (type != "TetMesh") {
+  if (type != "TetMesh" && type != "NurbsPatch") {
     std::string axis = "Z";
     GetPropToken(prim, "axis", &axis);
     if (type == "Cube" || type == "Sphere") axis = "Y";
