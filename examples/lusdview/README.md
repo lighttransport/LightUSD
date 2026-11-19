@@ -339,6 +339,15 @@ python3 examples/lusdview/render-motion.py \
     and `LUSDVIEW_RT_ALLOW_COLD_COMPILE=1` compiles the ray-query pipeline.
     It is noisy at one sample: average with `--rt-samples N` (CPU/HIP/CUDA) or
     `--frames N` (Vulkan accumulation).
+    As in Cycles, splats are full geometry. They block shadow rays on every
+    tracer: CPU, Vulkan, HIP and CUDA, in preview and `--path-trace`. In
+    `--path-trace` they also appear on bounce rays, so their emission lights
+    nearby surfaces. With `--pt-max-depth 2` (Cycles' direct-light setting),
+    the Blender mixed fixtures (`tests/usda/gsplat-mixed-*.usda`) give
+    visibility 0.7219 vs Cycles 0.7218 and plane emission 0.0599 vs 0.0601 on
+    Vulkan and HIP (`tests/check_gsplat_mixed.py`). Preview lighting is not
+    Cycles' (ambient/headlight fill), so its splat shadows are checked for
+    presence only. The preview tracers have no bounce rays.
     `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
     convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build

@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Camera "Cam"
+    {
+        float focalLength = 35.0
+        float horizontalAperture = 36.0
+        float verticalAperture = 20.25
+        float2 clippingRange = (0.01, 1000)
+        matrix4d xformOp:transform = ( (0.7943577766418457, 0.6074501872062683, -3.5997196334847104e-08, 0.0), (-0.2623952627182007, 0.34313228726387024, 0.9018918871879578, 0.0), (0.5478543639183044, -0.716424822807312, 0.43196186423301697, 0.0), (2.5999999046325684, -3.4000000953674316, 2.4000000953674316, 1.0) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+    def DistantLight "Sun"
+    {
+        float inputs:intensity = 3.0
+        float inputs:angle = 0
+        matrix4d xformOp:transform = ( (-0.5812381505966187, -0.8137335181236267, 2.7068242758332417e-08, 0.0), (0.7475203275680542, -0.5339429974555969, 0.39511796832084656, 0.0), (-0.32152071595191956, 0.22965766489505768, 0.9186303615570068, 0.0), (0.0, 0.0, 0.0, 1.0) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+    def Mesh "Ground" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-2.0, -2.0, 0), (2.0, -2.0, 0), (2.0, 2.0, 0), (-2.0, 2.0, 0)]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </World/Lambert>
+    }
+    def Material "Lambert"
+    {
+        token outputs:surface.connect = </World/Lambert/S.outputs:surface>
+        def Shader "S"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+            float inputs:roughness = 1
+            int inputs:useSpecularWorkflow = 1
+            color3f inputs:specularColor = (0, 0, 0)
+            token outputs:surface
+        }
+    }
+}

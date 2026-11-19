@@ -866,6 +866,23 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     set_tests_properties(lusdview-cpu-gsplat-cycles
                          PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
                                     LABELS "lusdview;cpu;gsplat")
+    # Mixed mesh + splat scene: splat shadows on every preview tracer, and
+    # Cycles-matching visibility/emission (incl. bounce light) on the path
+    # tracers. Skips without the device or numpy.
+    find_program(LUSDVIEW_GSPLAT_PYTHON NAMES python3 python)
+    if(LUSDVIEW_GSPLAT_PYTHON)
+      foreach(_gs_mixed cpu rt hip cuda pt-vk pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-mixed-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed})
+        set_tests_properties(lusdview-gsplat-mixed-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+    endif()
     # The same check on the GPU ray tracers (skip without a device/runtime).
     foreach(_gs_backend rt hip cuda)
       add_test(
@@ -875,7 +892,8 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                 "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_backend})
       set_tests_properties(lusdview-${_gs_backend}-gsplat-cycles
                            PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
-                                      LABELS "lusdview;gpu;gsplat")
+                                      LABELS "lusdview;gpu;gsplat"
+                                      RESOURCE_LOCK lusdview_gpu)
     endforeach()
 
     add_test(

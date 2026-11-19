@@ -2070,6 +2070,19 @@ vec3 cyclesSplatRadiance(int id, vec3 d) {
   return max(c, vec3(0.0));
 }
 
+// Shadow-ray visibility through Cycles splats: 0 when an accepted splat lies
+// in (0, maxT), as Cycles' shadow_all treats splats as opaque stochastic hits.
+uint gsPointSeed(vec3 p, uint salt) {
+  return hashU(floatBitsToUint(p.x) ^ hashU(floatBitsToUint(p.y) ^
+               hashU(floatBitsToUint(p.z) ^ salt)));
+}
+float gsShadow(vec3 o, vec3 L, float maxT, uint seed) {
+  if (!gsplatCyclesMode()) return 1.0;
+  int h;
+  traceCyclesSplats(o, L, maxT, seed, h);
+  return h >= 0 ? 0.0 : 1.0;
+}
+
 float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) {
   hit = -1;
   gaussianWeight = 0.0;
@@ -2699,6 +2712,10 @@ vec3 ptShadowVisibility(PtSurface s, vec3 direction, float maxT,
   vec3 origin = s.p + s.n * 1.0e-4;
   float cursor = 1.0e-4;
   vec3 visibility = vec3(1.0);
+  if (gsShadow(origin, direction, maxT,
+               gsPointSeed(origin, lightIndex * 977u +
+                                       uint(pc.sceneMin.w + 0.5) * 26699u)) <= 0.0)
+    return vec3(0.0);
   [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
     uint iid = 0u; int prim = -1; vec2 bc = vec2(0.0); bool front = true;
     mat4x3 o2w; float hitT = maxT;
@@ -2848,8 +2865,20 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
     uint iid = 0u; int prim = 0; vec2 bc = vec2(0); bool front = true;
     mat4x3 o2w; float hitT = 1.0e30;
-    if (!traceAcceptedPrimary(ro, rd, 1.0e-4, 1.0e30, iid, prim, bc,
-                              front, o2w, hitT)) {
+    // --gsplat-kernel cycles: splats are emission-only geometry on camera and
+    // bounce rays. A splat in front of the next surface ends the path with its
+    // emission (BSDF-sampled; splats are not light-sampled, weight 1).
+    int gsId = -1;
+    float gsT = 1.0e30;
+    if (gsplatCyclesMode() && !inSubsurface)
+      gsT = traceCyclesSplats(ro, rd, 1.0e30,
+                              hashU(floatBitsToUint(rnd(seed)) ^ bounce), gsId);
+    if (!traceAcceptedPrimary(ro, rd, 1.0e-4, gsId >= 0 ? gsT : 1.0e30, iid,
+                              prim, bc, front, o2w, hitT)) {
+      if (gsId >= 0) {
+        radiance += throughput * cyclesSplatRadiance(gsId, rd);
+        break;
+      }
       if (!inSubsurface) {
         float mis = previousDelta
                         ? 1.0
@@ -3696,6 +3725,11 @@ void main() {
             if (rayQueryGetIntersectionTypeEXT(sq, true) ==
                 gl_RayQueryCommittedIntersectionTriangleEXT) shadow = 0.0;
           }
+          if (shadow > 0.0)
+            shadow *= gsShadow(hit + N * 1.0e-3, L,
+                               int(l0.x + 0.5) == 5 ? 1.0e30
+                                                    : sqrt(1.0 / attenuation),
+                               gsPointSeed(hit, li * 977u + fi * 26699u));
         }
         vec3 H = normalize(V + L);
         float nh = max(dot(N, H), 0.0), nv = max(dot(N, V), 1.0e-4);
@@ -4399,6 +4433,9 @@ void main() {
           }
           if (tailHit) shadow = 0.0;
         }
+        if (shadow > 0.0)
+          shadow *= gsShadow(shadowOrigin, L, maxShadowT,
+                             gsPointSeed(hit, li * 977u + fi * 26699u));
       }
       vec3 H = normalize(L + V);
       vec3 tangent = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0))

@@ -2964,6 +2964,25 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                          0.7152f * transmittance[1] +
                          0.0722f * transmittance[2];
               }
+              // --gsplat-kernel cycles: splats block shadow rays with the
+              // same stochastic opaque test as camera rays (Cycles'
+              // shadow_all). The seed mixes the shading point and light.
+              if (shadow > 0.0f && !gsplats_.empty()) {
+                namespace gs = lightusd::gsplat;
+                uint32_t bx, by, bz;
+                std::memcpy(&bx, &shadowRay.org[0], 4);
+                std::memcpy(&by, &shadowRay.org[1], 4);
+                std::memcpy(&bz, &shadowRay.org[2], 4);
+                const uint32_t seed = (bx * 0x9e3779b1u) ^ (by * 0x85ebca77u) ^
+                                      (bz * 0xc2b2ae3du) ^
+                                      (static_cast<uint32_t>(li) * 0x27d4eb2fu);
+                gs::GSplatTracer::Hit sh;
+                if (gsplats_.Trace({shadowRay.org[0], shadowRay.org[1],
+                                    shadowRay.org[2]},
+                                   {L[0], L[1], L[2]}, 1e-4f, maxShadowT, seed,
+                                   &sh))
+                  shadow = 0.0f;
+              }
             }
             const float lightToPoint[3] = {-L[0], -L[1], -L[2]};
             const float radiance = std::max(0.0f, emitter[0]) * 0.3333333f +

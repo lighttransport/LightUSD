@@ -1352,6 +1352,142 @@ __device__ float ptEnvironmentPdf(const float* lights,int count,F3 clear,
 }
 __device__ float ptSpectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.f||abbe<=0.f)return iorD;float lc=.6562725f,ld=.5875618f,lf=.4861327f,delta=(iorD-1.f)/fmaxf(abbe,1.f)*dispersion;float ic=1.f/(lc*lc),id=1.f/(ld*ld),iff=1.f/(lf*lf),B=delta/fmaxf(iff-ic,1e-6f),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return fmaxf(A+B/(lambda*lambda),1.0001f);}
 
+// --gsplat-kernel cycles: Blender Cycles 3D Gaussian splat kernel (Apache-2.0,
+// Blender Foundation; ported via src/external/lightrt/lightrt_c_gsplat.c).
+// Host encoding (rt_scene_build.hh GsplatGpuData), signalled by pointCount < 0:
+// pointCenters = splats (16 floats), pointRadii = nodes (8 words), pointOrder =
+// chunks {nodeFirst, splatFirst}, pointMajor = per-field linv + SH.
+__device__ float gsHash(F3 p, unsigned seed) {
+  unsigned h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
+  const float v[3] = {p.x, p.y, p.z};
+  for (int i = 0; i < 3; ++i) {
+    unsigned b = __float_as_uint(v[i]);
+    h ^= b + 0x7f4a7c15u + (h << 6) + (h >> 2);
+    h = h * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+  }
+  return (float)(h >> 8) * (1.f / 16777216.f);
+}
+__device__ bool gsBox(const unsigned* N, unsigned n, F3 o, const float* inv,
+                      float tmax, float* tnear) {
+  const unsigned* b = N + n * 8u;
+  const float oo[3] = {o.x, o.y, o.z};
+  float t0 = 0.f, t1 = tmax;
+  for (int k = 0; k < 3; ++k) {
+    float a = (__uint_as_float(b[k]) - oo[k]) * inv[k];
+    float c = (__uint_as_float(b[3 + k]) - oo[k]) * inv[k];
+    t0 = fmaxf(t0, fminf(a, c));
+    t1 = fminf(t1, fmaxf(a, c));
+  }
+  *tnear = t0;
+  return t0 <= t1;
+}
+__device__ float gsTraceCycles(const float* S, const unsigned* N, const int* C,
+                               int chunkCount, F3 o, F3 d, float tmax,
+                               unsigned seed, int* hit) {
+  *hit = -1;
+  float inv[3];
+  const float dv[3] = {d.x, d.y, d.z};
+  for (int k = 0; k < 3; ++k) {
+    float v = 1.f / dv[k];
+    if (!(v >= -1e18f && v <= 1e18f)) v = (dv[k] < 0.f) ? -1e18f : 1e18f;
+    inv[k] = v;
+  }
+  const float dd = dot3(d, d);
+  float best = tmax;
+  for (int c = 0; c < chunkCount; ++c) {
+    const unsigned nb = (unsigned)C[c * 2], sb0 = (unsigned)C[c * 2 + 1];
+    unsigned stk[64]; int sp = 0; float tn;
+    if (gsBox(N, nb, o, inv, best, &tn)) stk[sp++] = 0u;
+    while (sp > 0) {
+      const unsigned n = nb + stk[--sp];
+      const unsigned first = N[n * 8u + 6u], count = N[n * 8u + 7u];
+      if (count == 0u) {
+        float ta, tb;
+        const bool ha = gsBox(N, nb + first, o, inv, best, &ta);
+        const bool hb = gsBox(N, nb + first + 1u, o, inv, best, &tb);
+        if (ha && hb && sp + 2 <= 64) {
+          if (ta <= tb) { stk[sp++] = first + 1u; stk[sp++] = first; }
+          else { stk[sp++] = first; stk[sp++] = first + 1u; }
+        } else if (ha && sp < 64) stk[sp++] = first;
+        else if (hb && sp < 64) stk[sp++] = first + 1u;
+        continue;
+      }
+      for (unsigned i = sb0 + first; i < sb0 + first + count; ++i) {
+        const float* g = S + (size_t)i * 16u;
+        const F3 oc = mk(o.x - g[0], o.y - g[1], o.z - g[2]);
+        const float b = dot3(oc, d);
+        if (b * b - dd * (dot3(oc, oc) - g[13] * g[13]) < 0.f) continue;
+        const F3 og = mk(g[4]*oc.x + g[5]*oc.y + g[6]*oc.z,
+                         g[7]*oc.x + g[8]*oc.y + g[9]*oc.z,
+                         g[10]*oc.x + g[11]*oc.y + g[12]*oc.z);
+        const F3 dg = mk(g[4]*d.x + g[5]*d.y + g[6]*d.z,
+                         g[7]*d.x + g[8]*d.y + g[9]*d.z,
+                         g[10]*d.x + g[11]*d.y + g[12]*d.z);
+        const float t = -dot3(og, dg) / dot3(dg, dg);
+        if (!(t > 0.f && t <= best)) continue;
+        const F3 e = add(og, scale(dg, t));
+        const float alpha = g[3] * expf(-0.5f * dot3(e, e));
+        if (gsHash(add(o, scale(d, t)), seed) > alpha) continue;
+        best = t; *hit = (int)i;
+      }
+    }
+  }
+  return best;
+}
+__device__ float gsSrgbToLinear(float c) {
+  return c < 0.04045f ? fmaxf(c, 0.f) * (1.f / 12.92f)
+                      : powf((c + 0.055f) * (1.f / 1.055f), 2.4f);
+}
+__device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d) {
+  const float* g = S + (size_t)id * 16u;
+  const unsigned shOff = __float_as_uint(g[14]);
+  const unsigned meta = __float_as_uint(g[15]);
+  const unsigned deg = meta & 3u;
+  const float* L = F + (size_t)(meta >> 8u) * 12u;
+  F3 v = mk(L[0]*d.x + L[1]*d.y + L[2]*d.z, L[3]*d.x + L[4]*d.y + L[5]*d.z,
+            L[6]*d.x + L[7]*d.y + L[8]*d.z);
+  const float l = sqrtf(dot3(v, v));
+  v = l > 0.f ? scale(v, 1.f / l) : mk(0.f, 0.f, 1.f);
+  const float x = v.x, y = v.y, z = v.z;
+  float bs[16];
+  bs[0] = 0.282094792f;
+  unsigned nb = 1u;
+  if (deg >= 1u) { bs[1] = -0.488602512f*y; bs[2] = 0.488602512f*z; bs[3] = -0.488602512f*x; nb = 4u; }
+  if (deg >= 2u) {
+    bs[4] = 1.092548431f*x*y; bs[5] = -1.092548431f*y*z;
+    bs[6] = 0.315391565f*(3.f*z*z - 1.f); bs[7] = -1.092548431f*x*z;
+    bs[8] = 0.546274215f*(x*x - y*y); nb = 9u;
+  }
+  if (deg >= 3u) {
+    bs[9] = -0.590043589f*y*(3.f*x*x - y*y); bs[10] = 2.890611442f*x*y*z;
+    bs[11] = -0.457045799f*y*(5.f*z*z - 1.f); bs[12] = 0.373176332f*z*(5.f*z*z - 3.f);
+    bs[13] = -0.457045799f*x*(5.f*z*z - 1.f); bs[14] = 1.445305721f*z*(x*x - y*y);
+    bs[15] = -0.590043590f*x*(x*x - 3.f*y*y); nb = 16u;
+  }
+  float r = 0.5f, gg = 0.5f, bb = 0.5f;
+  const float* c = F + shOff;
+  for (unsigned i = 0u; i < nb; ++i) {
+    r += c[i*3] * bs[i]; gg += c[i*3+1] * bs[i]; bb += c[i*3+2] * bs[i];
+  }
+  if (meta & 4u) return mk(gsSrgbToLinear(r), gsSrgbToLinear(gg), gsSrgbToLinear(bb));
+  return mk(fmaxf(r, 0.f), fmaxf(gg, 0.f), fmaxf(bb, 0.f));
+}
+// Shadow visibility through the splats (0 = blocked), as Cycles' shadow_all.
+__device__ float gsShadowK(const float* S, const unsigned* N, const int* C,
+                           int chunkCount, F3 o, F3 d, float maxT,
+                           unsigned seed) {
+  if (!S || chunkCount <= 0) return 1.f;
+  int h;
+  gsTraceCycles(S, N, C, chunkCount, o, d, maxT, seed, &h);
+  return h >= 0 ? 0.f : 1.f;
+}
+__device__ unsigned gsPointSeed(F3 p, unsigned salt) {
+  return hashU(__float_as_uint(p.x) ^ hashU(__float_as_uint(p.y) ^
+               hashU(__float_as_uint(p.z) ^ salt)));
+}
+
 __device__ F3 productionPath(
     const float* tris,const float* nrms,const float* cols,const int* mats,
     const int* backMats,const float* matPbr,const float* matLightRt,
@@ -1362,7 +1498,9 @@ __device__ F3 productionPath(
     unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents,
     float graphSceneTime,float graphSceneFrame,
     const GeomPropDesc* geomProps,const float* geomPropValues,
-    int geomPropCount){
+    int geomPropCount,
+    const float* gsS,const unsigned* gsN,const int* gsC,const float* gsF,
+    int gsChunks){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
   int subsurfaceEvents=0,transparentEvents=0,transmissionEvents=0;
   bool inSubsurface=false;
@@ -1375,9 +1513,16 @@ __device__ F3 productionPath(
   float mediumIor[8]={1.f,1.f,1.f,1.f,1.f,1.f,1.f,1.f};F3 mediumSigma[8]={};F3 mediumSigmaS[8]={};F3 mediumEmission[8]={};float mediumG[8]={};int mediumInstance[8]={-1,-1,-1,-1,-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
   for(int bounce=0;bounce<maxDepth;++bounce){
     int tri=-1,ii=-1;float bu=0.f,bv=0.f;
-    float t=traverseCutout(tlas,insts,blas,tris,ro,rd,1e30f,&tri,&bu,&bv,&ii,
+    // --gsplat-kernel cycles: emission-only splats on camera/bounce rays; a
+    // splat in front of the next surface ends the path (BSDF-sampled, w=1).
+    int gsId=-1;float gsT=1e30f;
+    if(gsChunks>0&&!inSubsurface)
+      gsT=gsTraceCycles(gsS,gsN,gsC,gsChunks,ro,rd,1e30f,
+                        hashU(__float_as_uint(rndf(seed))^(unsigned)bounce),&gsId);
+    float t=traverseCutout(tlas,insts,blas,tris,ro,rd,gsId>=0?gsT:1e30f,&tri,&bu,&bv,&ii,
       cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,
       texels,textures,numTextures,uvs,uvs1,-1,false);
+    if((tri<0||ii<0)&&gsId>=0){L=add(L,ptMul(beta,gsRadiance(gsS,gsF,gsId,rd)));break;}
     if(tri<0||ii<0){
       if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear,texels,textures,numTextures)),mis));}
       break;
@@ -1476,7 +1621,9 @@ __device__ F3 productionPath(
               fmaxf(maxT-2e-4f,1e-4f),&st,&su,&sv,&si,cols,mats,backMats,
               matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,
               textures,numTextures,uvs,uvs1,li,(lflags&(1<<6))!=0);
-          if(st<0){
+          if(st<0&&gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),ld,
+                             fmaxf(maxT-2e-4f,1e-4f),
+                             gsPointSeed(p,(unsigned)li*977u+(unsigned)bounce))>0.f){
             F3 v=scale(rd,-1.f);
             float r=(m.ior-1.f)/(m.ior+1.f),dielectricF0=r*r;
             F3 dielectric=scale(m.specularColor,dielectricF0*m.specularWeight);
@@ -1538,7 +1685,8 @@ __device__ F3 productionPath(
           1e30f,&et,&eu,&ev,&ei,cols,mats,backMats,matPbr,matLightRt,
           matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,
           uvs,uvs1,-1,false);
-      if(et<0){
+      if(et<0&&gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),envDir,
+                         1e30f,gsPointSeed(p,0x51ed27u+(unsigned)bounce))>0.f){
         float mis=ptPowerHeuristic(envPdf,reflectionPdf);
         F3 c=ptMul(ptMul(beta,reflection),ptEnvironment(lightParams,numLights,envDir,clear,texels,textures,numTextures));
         L=add(L,scale(c,envNl*mis/envPdf));}
@@ -1832,128 +1980,6 @@ __device__ float pointHitChunks(const Node* bvh, const int* order,
 
 )CUDA"
 R"CUDA(
-// --gsplat-kernel cycles: Blender Cycles 3D Gaussian splat kernel (Apache-2.0,
-// Blender Foundation; ported via src/external/lightrt/lightrt_c_gsplat.c).
-// Host encoding (rt_scene_build.hh GsplatGpuData), signalled by pointCount < 0:
-// pointCenters = splats (16 floats), pointRadii = nodes (8 words), pointOrder =
-// chunks {nodeFirst, splatFirst}, pointMajor = per-field linv + SH.
-__device__ float gsHash(F3 p, unsigned seed) {
-  unsigned h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
-  const float v[3] = {p.x, p.y, p.z};
-  for (int i = 0; i < 3; ++i) {
-    unsigned b = __float_as_uint(v[i]);
-    h ^= b + 0x7f4a7c15u + (h << 6) + (h >> 2);
-    h = h * 747796405u + 2891336453u;
-    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
-    h = (h >> 22u) ^ h;
-  }
-  return (float)(h >> 8) * (1.f / 16777216.f);
-}
-__device__ bool gsBox(const unsigned* N, unsigned n, F3 o, const float* inv,
-                      float tmax, float* tnear) {
-  const unsigned* b = N + n * 8u;
-  const float oo[3] = {o.x, o.y, o.z};
-  float t0 = 0.f, t1 = tmax;
-  for (int k = 0; k < 3; ++k) {
-    float a = (__uint_as_float(b[k]) - oo[k]) * inv[k];
-    float c = (__uint_as_float(b[3 + k]) - oo[k]) * inv[k];
-    t0 = fmaxf(t0, fminf(a, c));
-    t1 = fminf(t1, fmaxf(a, c));
-  }
-  *tnear = t0;
-  return t0 <= t1;
-}
-__device__ float gsTraceCycles(const float* S, const unsigned* N, const int* C,
-                               int chunkCount, F3 o, F3 d, float tmax,
-                               unsigned seed, int* hit) {
-  *hit = -1;
-  float inv[3];
-  const float dv[3] = {d.x, d.y, d.z};
-  for (int k = 0; k < 3; ++k) {
-    float v = 1.f / dv[k];
-    if (!(v >= -1e18f && v <= 1e18f)) v = (dv[k] < 0.f) ? -1e18f : 1e18f;
-    inv[k] = v;
-  }
-  const float dd = dot3(d, d);
-  float best = tmax;
-  for (int c = 0; c < chunkCount; ++c) {
-    const unsigned nb = (unsigned)C[c * 2], sb0 = (unsigned)C[c * 2 + 1];
-    unsigned stk[64]; int sp = 0; float tn;
-    if (gsBox(N, nb, o, inv, best, &tn)) stk[sp++] = 0u;
-    while (sp > 0) {
-      const unsigned n = nb + stk[--sp];
-      const unsigned first = N[n * 8u + 6u], count = N[n * 8u + 7u];
-      if (count == 0u) {
-        float ta, tb;
-        const bool ha = gsBox(N, nb + first, o, inv, best, &ta);
-        const bool hb = gsBox(N, nb + first + 1u, o, inv, best, &tb);
-        if (ha && hb && sp + 2 <= 64) {
-          if (ta <= tb) { stk[sp++] = first + 1u; stk[sp++] = first; }
-          else { stk[sp++] = first; stk[sp++] = first + 1u; }
-        } else if (ha && sp < 64) stk[sp++] = first;
-        else if (hb && sp < 64) stk[sp++] = first + 1u;
-        continue;
-      }
-      for (unsigned i = sb0 + first; i < sb0 + first + count; ++i) {
-        const float* g = S + (size_t)i * 16u;
-        const F3 oc = mk(o.x - g[0], o.y - g[1], o.z - g[2]);
-        const float b = dot3(oc, d);
-        if (b * b - dd * (dot3(oc, oc) - g[13] * g[13]) < 0.f) continue;
-        const F3 og = mk(g[4]*oc.x + g[5]*oc.y + g[6]*oc.z,
-                         g[7]*oc.x + g[8]*oc.y + g[9]*oc.z,
-                         g[10]*oc.x + g[11]*oc.y + g[12]*oc.z);
-        const F3 dg = mk(g[4]*d.x + g[5]*d.y + g[6]*d.z,
-                         g[7]*d.x + g[8]*d.y + g[9]*d.z,
-                         g[10]*d.x + g[11]*d.y + g[12]*d.z);
-        const float t = -dot3(og, dg) / dot3(dg, dg);
-        if (!(t > 0.f && t <= best)) continue;
-        const F3 e = add(og, scale(dg, t));
-        const float alpha = g[3] * expf(-0.5f * dot3(e, e));
-        if (gsHash(add(o, scale(d, t)), seed) > alpha) continue;
-        best = t; *hit = (int)i;
-      }
-    }
-  }
-  return best;
-}
-__device__ float gsSrgbToLinear(float c) {
-  return c < 0.04045f ? fmaxf(c, 0.f) * (1.f / 12.92f)
-                      : powf((c + 0.055f) * (1.f / 1.055f), 2.4f);
-}
-__device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d) {
-  const float* g = S + (size_t)id * 16u;
-  const unsigned shOff = __float_as_uint(g[14]);
-  const unsigned meta = __float_as_uint(g[15]);
-  const unsigned deg = meta & 3u;
-  const float* L = F + (size_t)(meta >> 8u) * 12u;
-  F3 v = mk(L[0]*d.x + L[1]*d.y + L[2]*d.z, L[3]*d.x + L[4]*d.y + L[5]*d.z,
-            L[6]*d.x + L[7]*d.y + L[8]*d.z);
-  const float l = sqrtf(dot3(v, v));
-  v = l > 0.f ? scale(v, 1.f / l) : mk(0.f, 0.f, 1.f);
-  const float x = v.x, y = v.y, z = v.z;
-  float bs[16];
-  bs[0] = 0.282094792f;
-  unsigned nb = 1u;
-  if (deg >= 1u) { bs[1] = -0.488602512f*y; bs[2] = 0.488602512f*z; bs[3] = -0.488602512f*x; nb = 4u; }
-  if (deg >= 2u) {
-    bs[4] = 1.092548431f*x*y; bs[5] = -1.092548431f*y*z;
-    bs[6] = 0.315391565f*(3.f*z*z - 1.f); bs[7] = -1.092548431f*x*z;
-    bs[8] = 0.546274215f*(x*x - y*y); nb = 9u;
-  }
-  if (deg >= 3u) {
-    bs[9] = -0.590043589f*y*(3.f*x*x - y*y); bs[10] = 2.890611442f*x*y*z;
-    bs[11] = -0.457045799f*y*(5.f*z*z - 1.f); bs[12] = 0.373176332f*z*(5.f*z*z - 3.f);
-    bs[13] = -0.457045799f*x*(5.f*z*z - 1.f); bs[14] = 1.445305721f*z*(x*x - y*y);
-    bs[15] = -0.590043590f*x*(x*x - 3.f*y*y); nb = 16u;
-  }
-  float r = 0.5f, gg = 0.5f, bb = 0.5f;
-  const float* c = F + shOff;
-  for (unsigned i = 0u; i < nb; ++i) {
-    r += c[i*3] * bs[i]; gg += c[i*3+1] * bs[i]; bb += c[i*3+2] * bs[i];
-  }
-  if (meta & 4u) return mk(gsSrgbToLinear(r), gsSrgbToLinear(gg), gsSrgbToLinear(bb));
-  return mk(fmaxf(r, 0.f), fmaxf(gg, 0.f), fmaxf(bb, 0.f));
-}
 )CUDA"
 R"CUDA(
 
@@ -2025,7 +2051,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         textures,numTextures,uvs,uvs1,blas,tlas,insts,o,d,
         mk(cam.clear[0],cam.clear[1],cam.clear[2]),pathSeed,
         maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f),
-        cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount);
+        cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount,
+        pointCount<0?pointCenters:nullptr,(const unsigned*)pointRadii,pointOrder,
+        pointMajor,pointCount<0?pointChunkCount:0);
     float volumeDepth=1e30f;
     if(numVols>0 && tris && tlas && insts){
       int vh=-1,vi=-1;float vu=0.f,vv=0.f;
@@ -2652,6 +2680,10 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
                     texels,textures,numTextures,uvs,uvs1,li,
                     (lflags&(1<<6))!=0);
         if (sht>=0 && st<maxT-2e-3f) shadow=0.f;
+        if (shadow>0.f && cyclesSplats)
+          shadow*=gsShadowK(pointCenters,(const unsigned*)pointRadii,pointOrder,
+                            pointChunkCount,so,Ll,fmaxf(maxT-2e-3f,1e-3f),
+                            gsPointSeed(hit,(unsigned)li*977u+(unsigned)sampleIdx*26699u));
       }
       F3 Hh=norm3(add(Ll,V)); float nh=fmaxf(dot3(Ns,Hh),0.f),vh=fmaxf(dot3(V,Hh),0.f);
       F3 f0=materialF0;
