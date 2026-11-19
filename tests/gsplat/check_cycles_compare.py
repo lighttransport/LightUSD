@@ -89,6 +89,8 @@ def main():
                                      "refs"])
     ap.add_argument("--write-refs", action="store_true",
                     help="variants: (re)write tests/gsplat/refs from Blender")
+    ap.add_argument("--only", default="",
+                    help="variants: run just this variant name")
     ap.add_argument("--lusdcat", default="",
                     help="--write-refs: lusdcat used to store scenes as usdc")
     ap.add_argument("--spp", type=int, default=256)
@@ -132,7 +134,8 @@ def main():
         if a.write_refs and not a.lusdcat:
             raise SystemExit("--write-refs needs --lusdcat")
         return variants(a.lusdrender, blender, a.spp, a.lusdview,
-                        a.lusdview_backend, a.lusdcat if a.write_refs else "")
+                        a.lusdview_backend, a.lusdcat if a.write_refs else "",
+                        a.only)
     with tempfile.TemporaryDirectory(prefix="gsplat-cycles-") as d:
         run([sys.executable, "-I", os.path.join(HERE, "make_cycles_fixture.py"),
              d, "--count", "120", "--seed", "5", "--degree", "3"])
@@ -231,6 +234,8 @@ VARIANTS = [
     # Animated camera; animated DC colour + opacity (Geometry Nodes).
     ("cammotion", ["--camera-motion"], ["-timecode", "1"]),
     ("colourmotion", ["--colour-motion"], ["-timecode", "1"]),
+    # Animated colour on static splats: Cycles uses the frame-time colour.
+    ("colouronly", ["--colour-motion", "--colour-only"], ["-timecode", "1"]),
 ]
 
 
@@ -328,9 +333,12 @@ def run_refs(lusdrender, lusdview="", lv_backend="vk"):
     return 0 if ok else 1
 
 
-def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk", lusdcat=""):
+def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk", lusdcat="",
+             only=""):
     ok = True
     for name, bargs, largs in VARIANTS:
+        if only and name != only:
+            continue
         with tempfile.TemporaryDirectory(prefix="gsplat-variant-") as d:
             run([blender, "-b", "--factory-startup", "--python",
                  os.path.join(HERE, "blender_make_and_export.py"), "--", d,

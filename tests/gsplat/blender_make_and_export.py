@@ -56,6 +56,9 @@ ap.add_argument("--world", default="0,0,0")
 ap.add_argument("--motion", action="store_true")
 ap.add_argument("--camera-motion", action="store_true")
 ap.add_argument("--colour-motion", action="store_true")
+ap.add_argument("--colour-only", action="store_true",
+                help="with --colour-motion: animate colour only (no position "
+                     "offset): Cycles then uses the frame-time colour")
 ap.add_argument("--exr", action="store_true",
                 help="write references as 32-bit scene-linear EXR (no view transform)")
 a = ap.parse_args(argv)
@@ -195,7 +198,7 @@ if a.colour_motion:
     st.inputs["Name"].default_value = "radiance:base"
     sp = ng.nodes.new("GeometryNodeSetPosition")
     vm = ng.nodes.new("ShaderNodeVectorMath"); vm.operation = "SCALE"
-    vm.inputs[0].default_value = (0.6, 0.25, 0.1)
+    vm.inputs[0].default_value = (0.0, 0.0, 0.0) if a.colour_only else (0.6, 0.25, 0.1)
     fval = ng.nodes.new("ShaderNodeValue")
     ng.links.new(fval.outputs[0], vm.inputs["Scale"])
     ng.links.new(vm.outputs[0], sp.inputs["Offset"])

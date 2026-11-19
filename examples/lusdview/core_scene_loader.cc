@@ -8157,6 +8157,20 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
             mkeys.clear();
           }
         }
+        // Like Cycles, colour/opacity are interpolated only for deforming
+        // splats: without geometry motion, use the frame-time values.
+        auto sameArr = [](const PublicFloatArray &a, const PublicFloatArray &b) {
+          return a.size() == b.size() &&
+                 std::equal(a.begin(), a.begin() + a.size(), b.begin());
+        };
+        bool deforms = false;
+        for (size_t k = 1; k < mkeys.size() && !deforms; ++k) {
+          const MotionKey &a = mkeys[0], &b = mkeys[k];
+          deforms = std::memcmp(a.world, b.world, sizeof(a.world)) != 0 ||
+                    !sameArr(a.pos, b.pos) || !sameArr(a.scl, b.scl) ||
+                    (a.haveRot && b.haveRot && !sameArr(a.rot, b.rot));
+        }
+        if (!deforms) mkeys.clear();
       }
       size_t emitted = 0;
       for (size_t first = 0; first < n; first += chunkSize) {

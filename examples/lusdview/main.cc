@@ -1797,11 +1797,12 @@ int main(int argc, char** argv) {
     if (ptSamples) pathTraceSettings.targetSamples = *ptSamples;
     if (ptMaxDepth) pathTraceSettings.maxDepth = *ptMaxDepth;
     if (ptRrDepth) pathTraceSettings.russianRouletteDepth = *ptRrDepth;
-    if (ptMotionSegments) pathTraceSettings.motionSegments = *ptMotionSegments;
-    // Cycles splats: the app renders camera/mesh motion in shutter segments
-    // (splats are interpolated within each). Two segments ghost visibly, so
-    // default to 16 when the user did not choose.
-    else if (gsplatCycles) pathTraceSettings.motionSegments = 16;
+    // Without --pt-motion-segments the app raises the segment count to 16
+    // once a camera with an open shutter is framed (App::applyShutterDefaults).
+    if (ptMotionSegments) {
+      pathTraceSettings.motionSegments = *ptMotionSegments;
+      pathTraceSettings.motionSegmentsExplicit = true;
+    }
     if (ptSeed) pathTraceSettings.seed = *ptSeed;
     if (ptMaxSssEvents)
       pathTraceSettings.maxSubsurfaceEvents = *ptMaxSssEvents;

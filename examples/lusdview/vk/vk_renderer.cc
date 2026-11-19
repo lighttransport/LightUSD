@@ -12708,10 +12708,15 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   // optimization; the resulting cache still gives deterministic startup and
   // is preferable to never reaching the first frame. Existing warm caches keep
   // their normal optimized creation path.
-  const bool allowBlockingColdCompile = [] {
+  // --gsplat-kernel cycles needs this pipeline (the compute-BVH fallback has
+  // no Cycles splat path), so it accepts the one-time blocking compile too.
+  const bool allowBlockingColdCompile = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
+  if (gsplatCycles_ && !rtCacheWarm)
+    LOGI("Vulkan RT: compiling the ray-query pipeline for Cycles splats "
+         "(cold cache; one-time)");
   if (pipelineCompileRequiredSupported_ && !allowBlockingColdCompile) {
     cpci.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
   } else if (!cacheHit) {
@@ -14108,9 +14113,10 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   info.stage.module = shader;
   info.stage.pName = "main";
   info.layout = liveLayout;
-  const bool allowColdCompileHere = [] {
+  // Cycles splats need the full path-tracing shader (see createRtResources).
+  const bool allowColdCompileHere = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
   if (pipelineCompileRequiredSupported_ && !allowColdCompileHere) {
     // Live full-shader promotion is optional. A cache miss must not strand the
@@ -14150,9 +14156,9 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   // entering the driver compiler on the render thread.
   // LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 (the same opt-in that lets the initial
   // hardware pipeline compile cold) also permits a cold compile here.
-  const bool allowColdReload = [] {
+  const bool allowColdReload = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
   if (pipelineCompileRequiredSupported_ && !allowColdReload &&
       (cacheBlob.empty() || readyPath.empty() ||

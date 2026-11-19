@@ -94,15 +94,18 @@ Round-trip fixtures: `tests/usda/gsplat-schema-sh-degrees.usda`,
 - **[Cycles]** K motion keys are sampled evenly over the shutter
   (`--gsplat-motion-steps`). Centre, opacity, A and radius are interpolated
   linearly between the two keys around τ. Orientation uses nlerp.
-- **[Deviation]** DC colour (SH band 0) is interpolated whenever it is
-  animated. Cycles interpolates it only for deforming (position-animated)
-  primitives.
+- **[Cycles]** DC colour and opacity (`radiance_base`) are interpolated only
+  for deforming splats (positions, orientations or scales animated, or an
+  animated transform). Splats that only change colour/opacity use the
+  frame-time value (Blender variant `colouronly`).
 - **[Cycles]** Higher SH bands are not interpolated; they use the frame-time
   value.
 - **[Cycles]** Camera motion blur: the camera transform is interpolated per ray
   time.
-- **[Deviation]** In lusdview, camera blur comes from its shutter-segment
-  rendering (`--pt-motion-segments`), not from `--gsplat-motion-steps`.
+- **[Deviation]** In lusdview, camera and mesh blur come from shutter-segment
+  rendering: when path tracing, 16 segments by default whenever the camera has an open shutter,
+  with or without splats (`--pt-motion-segments` overrides). Splats follow
+  each segment's time through their `--gsplat-motion-steps` keys.
 
 ## 4. Validation against Cycles
 A render passes when its error against Blender 5.3 is within a small factor of

@@ -829,8 +829,10 @@ void Gui::drawDockspaceAndMenu() {
           pathTrace_.maxDepth = static_cast<uint32_t>(depth);
         if (ImGui::SliderInt("Roulette depth", &rrDepth, 0, depth))
           pathTrace_.russianRouletteDepth = static_cast<uint32_t>(rrDepth);
-        if (ImGui::SliderInt("Motion segments", &motion, 1, 64))
+        if (ImGui::SliderInt("Motion segments", &motion, 1, 64)) {
           pathTrace_.motionSegments = static_cast<uint32_t>(motion);
+          pathTrace_.motionSegmentsExplicit = true;
+        }
         int denoise = static_cast<int>(pathTrace_.denoise);
         const char* modes[] = {"Off", "Auto", "On"};
         if (ImGui::Combo("Denoise", &denoise, modes, 3))

@@ -937,6 +937,35 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;gsplat;gpu"
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
+      # The shared CUDA/HIP kernel (incl. Cycles splats) must compile for CUDA
+      # even on machines without an NVIDIA GPU (skips without nvcc).
+      add_test(NAME lusdview-cuda-kernel-compile
+        COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_cuda_kernel_compile.py"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/raytracer_kernel_src.txt")
+      set_tests_properties(lusdview-cuda-kernel-compile PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview;compile")
+      # --gsplat-kernel cycles compiles the ray-query path-tracing pipeline
+      # even from a cold cache (the compute-BVH fallback has no splat path).
+      add_test(NAME lusdview-vk-gsplat-cold-cache
+        COMMAND sh -c "d=\"$1\"; rm -rf \"$d\" && mkdir -p \"$d\" && LUSDVIEW_VK_PIPELINE_CACHE_DIR=\"$d\" \"$2\" --headless --path-trace --pt-samples 4 --size 64x36 --gsplat-kernel cycles --camera /World/Cam \"$3\""
+                lusdview-cold
+                "${CMAKE_CURRENT_BINARY_DIR}/vk-cold-cache"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-full.usda")
+      set_tests_properties(lusdview-vk-gsplat-cold-cache PROPERTIES
+                           PASS_REGULAR_EXPRESSION "Vulkan RT: Cycles gsplat kernel"
+                           FAIL_REGULAR_EXPRESSION "interactive preview shader;compute-BVH fallback"
+                           TIMEOUT 600 LABELS "lusdview;gsplat;vulkan")
+      # An authored camera shutter raises the default motion segments to 16,
+      # with or without splats.
+      add_test(NAME lusdview-shutter-motion-segments
+        COMMAND $<TARGET_FILE:lusdview> --headless --path-trace --pt-samples 4
+                --size 64x36 --camera /World/Cam --time 1
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-cammotion-plain.usda")
+      set_tests_properties(lusdview-shutter-motion-segments PROPERTIES
+                           PASS_REGULAR_EXPRESSION "shutter \\[-0.25, 0.25\\]: 16 motion segments"
+                           TIMEOUT 120 LABELS "lusdview;camera;gpu")
       # Points and BasisCurves honour their parent transform (they used to be
       # transposed, dropping the translation).
       foreach(_pts_be cpu vk)

@@ -128,13 +128,20 @@ bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
         if (kdc[c] != cdc[c]) recolours = true;
       }
       const gs::GSplatWorld &c = center[i];
+      // Geometry motion only: Cycles interpolates radiance_base (DC colour
+      // and opacity) solely for deforming primitives. The bounding radius
+      // follows opacity, and scale changes already show in A.
       if (g.mu.x != c.mu.x || g.mu.y != c.mu.y || g.mu.z != c.mu.z ||
-          g.radius != c.radius || g.opacity != c.opacity ||
           std::memcmp(g.a, c.a, sizeof(g.a)) != 0)
         moves = true;
     }
   }
-  if (!moves && !recolours) return false;
+  if (!moves) {
+    if (recolours)
+      std::cerr << "NOTE: splat colour/opacity is animated but the splats do "
+                   "not move; like Cycles, the frame-time value is used.\n";
+    return false;
+  }
   scene->motion_keys.swap(keys);
   scene->motion_nkeys = uint32_t(times.size());
   if (recolours) scene->motion_dc.swap(dc);

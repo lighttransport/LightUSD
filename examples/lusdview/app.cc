@@ -3113,6 +3113,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           campose.projection == CameraProjection::Perspective);
       cameraShutter_.open = campose.shutterOpen;
       cameraShutter_.close = campose.shutterClose;
+      // Path tracing only: raster / RT previews keep their 2-segment contract.
+      if (cameraShutter_.enabled() && pathTrace_.enabled &&
+          !pathTrace_.motionSegmentsExplicit &&
+          pathTrace_.motionSegments < PathTraceSettings::kShutterMotionSegments) {
+        pathTrace_.motionSegments = PathTraceSettings::kShutterMotionSegments;
+        LOGI("camera: shutter [%g, %g]: %u motion segments",
+             cameraShutter_.open, cameraShutter_.close, pathTrace_.motionSegments);
+        gui_.setPathTraceSettings(pathTrace_);  // per-frame source of truth
+      }
       gui_.setCameraClippingPlanes(campose.clippingPlanes);
       if (campose.clippingPlanes.size() / 4 >
           static_cast<size_t>(RenderFrameParams::kMaxClippingPlanes)) {
