@@ -27,6 +27,8 @@ class GSplatTracer {
   bool empty() const { return splats_.empty(); }
   size_t skipped() const { return skipped_; }
   size_t node_count() const { return nodes_.size(); }
+  // World-space splats in BVH order; Radiance() takes indices into this.
+  const std::vector<GSplatWorld>& splats() const { return splats_; }
   // World-space bounds of the visible support (center +- bounding radius).
   const float* bounds_lo() const { return lo_; }
   const float* bounds_hi() const { return hi_; }

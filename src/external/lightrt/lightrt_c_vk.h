@@ -395,6 +395,23 @@ int lrt_vk_shade_scene_render(lrt_vk_engine *e, lrt_vk_shade_scene *s,
 
 void lrt_vk_shade_scene_free(lrt_vk_engine *e, lrt_vk_shade_scene *s);
 
+
+/* --- 3D Gaussian splats (lightrt_c_gsplat.h) -------------------------------
+ *
+ * Trace n rays against a splat scene with the Cycles stochastic splat kernel
+ * (trace_gsplat.comp). Ray i uses seed seed_base + i, matching
+ * lrt_gsplat_intersect1N. Chunks are uploaded one at a time and every ray's
+ * tmax is clamped to its best hit so far, so the result equals a single-BVH
+ * trace. max_device_bytes bounds the device memory resident at once (chunk +
+ * ray/hit tile); 0 = no limit. A chunk larger than the budget fails with
+ * LRT_RESULT_BUILD_LIMIT (build with lrt_gsplat_chunk_splats_for_budget()).
+ * Returns the hit count, or -1 on error. */
+struct lrt_gsplat_scene;
+int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                        const lrt_ray *rays, uint32_t n, uint32_t seed_base,
+                        uint64_t max_device_bytes, lrt_hit *out,
+                        lrt_result *err);
+
 #ifdef __cplusplus
 }
 #endif

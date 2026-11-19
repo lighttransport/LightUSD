@@ -132,6 +132,8 @@ add_library(lightrt_c STATIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.h
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.h
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_gsplat.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_gsplat.h
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.h
 )
@@ -391,7 +393,7 @@ if(LUSDRENDER_WITH_VULKAN)
     ${LIGHTRT_VK_SRC}/lightrt_vkew.h)
   target_include_directories(lightrt_c_vk PUBLIC ${LIGHTRT_VK_SRC})
   target_compile_definitions(lightrt_c_vk PRIVATE VKEW_IMPLEMENTATION)
-  target_link_libraries(lightrt_c_vk ${CMAKE_DL_LIBS})
+  target_link_libraries(lightrt_c_vk lightrt_c ${CMAKE_DL_LIBS})
   set_target_properties(lightrt_c_vk PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
   target_sources(lusdrender PRIVATE ${LIGHTRT_VK_SRC}/lightrt_c_vk.c
@@ -414,6 +416,31 @@ if(LUSDRENDER_WITH_HIP AND NOT WIN32)
   target_compile_definitions(lusdrender PRIVATE HAVE_HIP=1)
   target_include_directories(lusdrender PRIVATE ${LIGHTRT_HIP_SRC} ${HIPEW_SRC})
   target_link_libraries(lusdrender ${CMAKE_DL_LIBS})
+endif()
+
+# LightRT 3D Gaussian splat primitive: CPU BVH vs brute force, chunking, and
+# the Vulkan / HIP kernels (each skipped at runtime when no device exists).
+if(LIGHTUSD_BUILD_TESTS)
+  add_executable(test_lightrt_gsplat
+    ${PROJECT_SOURCE_DIR}/src/external/lightrt/test_gsplat.c)
+  target_link_libraries(test_lightrt_gsplat PRIVATE lightrt_c)
+  if(TARGET lightrt_c_vk)
+    target_link_libraries(test_lightrt_gsplat PRIVATE lightrt_c_vk)
+    target_compile_definitions(test_lightrt_gsplat PRIVATE HAVE_VULKAN=1)
+  endif()
+  if(LUSDRENDER_WITH_HIP AND NOT WIN32)
+    target_sources(test_lightrt_gsplat PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_hip.c
+      ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+    target_include_directories(test_lightrt_gsplat PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/hipew)
+    target_compile_definitions(test_lightrt_gsplat PRIVATE HAVE_HIP=1)
+    target_link_libraries(test_lightrt_gsplat PRIVATE ${CMAKE_DL_LIBS})
+  endif()
+  set_target_properties(test_lightrt_gsplat PROPERTIES C_STANDARD 11)
+  add_test(NAME lightrt-gsplat COMMAND test_lightrt_gsplat)
+  set_tests_properties(lightrt-gsplat PROPERTIES TIMEOUT 120
+                       LABELS "lightrt;gsplat;gpu")
 endif()
 
 # The viewer defines this GUI-free target before pulling lusdrender in for its
@@ -765,6 +792,24 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-gsplat-cycles-blender PROPERTIES
                          TIMEOUT 600 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;gsplat;blender")
+    # The same checks through the LightRT Vulkan / HIP splat kernels (skip
+    # when the backend has no device).
+    foreach(_gs_backend vk hip)
+      add_test(NAME tool-lusdrender-gsplat-cycles-smoke-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" smoke --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-cycles-smoke-${_gs_backend}
+                           PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat")
+      add_test(NAME tool-lusdrender-gsplat-blender-roundtrip-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" roundtrip --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-blender-roundtrip-${_gs_backend}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat;blender")
+    endforeach()
     add_test(
       NAME tool-lusdrender-sparse-volume-cpu
       COMMAND ${LUSDR_PYTHON}

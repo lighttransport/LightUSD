@@ -415,6 +415,50 @@ analytic curve API is available.
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
   lower `-complexity`) instead of being OOM-killed.
 
+## Gaussian splats with the Cycles kernel
+
+`--gsplat-kernel cycles` renders `ParticleField3DGaussianSplat` prims (and
+`.ply` 3DGS files) with the Blender 5.3 Cycles splat kernel. The kernel lives
+in LightRT (`src/external/lightrt/lightrt_c_gsplat.{h,c}`), with CPU, Vulkan
+compute (`vk/shaders/trace_gsplat.comp`) and HIP
+(`hip/trace_gsplat_hip.h`) backends:
+
+```sh
+lusdrender scene.usda out.exr --gsplat-kernel cycles --gsplat-colorspace srgb \
+    -samples 256 -vk            # or -hip; no flag = CPU
+lusdrender scene.usda out.png --gsplat-kernel cycles -vk -maxVram 2
+```
+
+- The splats are split into spatially coherent chunks. Each chunk has its own
+  BVH and is uploaded one at a time, with each ray's `tmax` clamped to its
+  best hit so far. The result is bit-identical to a single-chunk trace on the
+  same device.
+- Device memory (chunk + ray/hit tile) stays under `-maxVram` GiB, which
+  defaults to **4 GiB** for this path so a shared GPU keeps most of its VRAM.
+- Ray `(y*w + x)*spp + s` uses that index as its stochastic seed on every
+  backend. Backends agree statistically; the GPU rounds hit positions
+  differently, so individual stochastic decisions differ.
+- `-cuda` and `-d3d` are not supported for this path; they fall back to the
+  CPU with a warning. A GPU trace failure also falls back to the CPU.
+
+Validation against Blender 5.3 Cycles (`tests/gsplat/check_cycles_compare.py
+roundtrip --backend cpu|vk|hip`, 320x180, 1024 spp, scene-linear EXR): every
+backend is at 0.94x Blender's seed-to-seed noise floor, with mean brightness
+within 0.3%. `test_lightrt_gsplat` checks the BVH against brute force, chunked
+against single-chunk, GPU against CPU, and rejection of an over-budget chunk.
+
+| Scene (RX 9070 XT, shared GPU) | Splats | Backend | Chunks | Trace+shade |
+|---|---|---|---|---|
+| ALab preview, 960x540x16 | 1.48M | Vulkan, 4 GiB | 1 | 0.70 s |
+| | | Vulkan, 0.05 GiB | 32 | 6.5 s |
+| | | HIP, 4 GiB | 1 | 0.66 s |
+| | | HIP, 0.05 GiB | 32 | 3.4 s |
+| Hotel preview, 960x540x32 | 0.77M | CPU (32 threads) | 1 | 0.58 s |
+| | | Vulkan / HIP, 4 GiB | 1 | 1.4 / 1.2 s |
+
+These views are mostly background, so ray upload and readback dominate and
+the CPU is competitive. The GPU pays off when most rays hit splats.
+
 ## Validated benchmark — Activision Caldera maps
 
 All six maps rendered directly from their raw `.usd` (no pre-flatten), 320×180,

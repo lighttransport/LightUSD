@@ -83,6 +83,8 @@ scope; new properties on supported schemas require fallback/validation tests.
   5.3 treats splats as sRGB (`--gsplat-colorspace srgb` matches it). The
   Cycles-ported kernel (`src/tydra/gsplat-kernel.hh`, `--gsplat-kernel cycles`)
   intersects full 3D ellipsoids; the default disc carriers keep two axes.
+  lusdrender traces it through LightRT (`lightrt_c_gsplat.h`) on the CPU,
+  Vulkan (`-vk`) or HIP (`-hip`), chunked under `-maxVram` (default 4 GiB).
 - 3D Gaussian splat PLY (`src/reader/ply-reader.cc`, usdPly-style): a `.ply`
   opens as a root layer or a reference/payload target. It contains one
   `ParticleField3DGaussianSplat` prim, `/Splats`, which is the default prim.

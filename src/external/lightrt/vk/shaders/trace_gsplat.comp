@@ -1,0 +1,128 @@
+#version 460
+//
+// trace_gsplat.comp — Vulkan compute trace of LightRT 3D Gaussian splat chunks
+// (lightrt_c_gsplat.c). One invocation = one ray; mirrors gs_trace_chunk:
+// binary sphere-bounded BVH, near-first traversal, Blender Cycles peak-response
+// splat test with the stochastic opaque acceptance hash(x, seed) <= alpha.
+//
+// Kernel math ported from Blender 5.3 Cycles (Apache-2.0, Blender Foundation,
+// intern/cycles/kernel/geom/gsplat_intersect.h).
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Nodes  { uint nodes[]; };  // 8 words / node
+layout(std430, binding = 1) readonly buffer Splats { uint splats[]; }; // 16 words / splat
+layout(std430, binding = 2) readonly buffer Rays   { uint rays[]; };   // 8 words / ray
+layout(std430, binding = 3) writeonly buffer Hits  { uint hits[]; };   // 4 words / hit
+
+layout(push_constant) uniform PC {
+    uint ray_count;
+    uint seed_base;  // ray i uses seed seed_base + i
+    uint node_count;
+    uint pad;
+} pc;
+
+const uint NO_HIT = 0xFFFFFFFFu;
+const int STACK = 64;
+
+float fu(uint i) { return uintBitsToFloat(i); }
+
+float gs_hash(vec3 p, uint seed) {
+    uint h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
+    for (int i = 0; i < 3; i++) {
+        uint b = floatBitsToUint(p[i]);
+        h ^= b + 0x7f4a7c15u + (h << 6) + (h >> 2);
+        h = h * 747796405u + 2891336453u;
+        h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+        h = (h >> 22u) ^ h;
+    }
+    return float(h >> 8) * (1.0 / 16777216.0);
+}
+
+bool box_hit(uint n, vec3 o, vec3 inv, float tmin, float tmax, out float tnear) {
+    uint b = n * 8u;
+    vec3 lo = vec3(fu(nodes[b + 0u]), fu(nodes[b + 1u]), fu(nodes[b + 2u]));
+    vec3 hi = vec3(fu(nodes[b + 3u]), fu(nodes[b + 4u]), fu(nodes[b + 5u]));
+    vec3 a = (lo - o) * inv, c = (hi - o) * inv;
+    vec3 tn = min(a, c), tf = max(a, c);
+    float t0 = max(max(tn.x, tn.y), max(tn.z, tmin));
+    float t1 = min(min(tf.x, tf.y), min(tf.z, tmax));
+    tnear = t0;
+    return t0 <= t1;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= pc.ray_count) return;
+    uint rb = gid * 8u;
+    vec3 o = vec3(fu(rays[rb + 0u]), fu(rays[rb + 1u]), fu(rays[rb + 2u]));
+    float tmin = fu(rays[rb + 3u]);
+    vec3 d = vec3(fu(rays[rb + 4u]), fu(rays[rb + 5u]), fu(rays[rb + 6u]));
+    float best = fu(rays[rb + 7u]);
+    uint seed = pc.seed_base + gid;
+
+    vec3 inv;
+    for (int k = 0; k < 3; k++) {
+        float v = 1.0 / d[k];
+        if (!(v >= -1e18 && v <= 1e18)) v = (d[k] < 0.0) ? -1e18 : 1e18;
+        inv[k] = v;
+    }
+    float dd = dot(d, d);
+    uint best_id = NO_HIT;
+    float best_alpha = 0.0;
+
+    uint stk[STACK];
+    int sp = 0;
+    float tn;
+    if (pc.node_count > 0u && box_hit(0u, o, inv, tmin, best, tn)) stk[sp++] = 0u;
+    while (sp > 0) {
+        uint n = stk[--sp];
+        uint first = nodes[n * 8u + 6u];
+        uint count = nodes[n * 8u + 7u];
+        if (count == 0u) {
+            float ta, tb;
+            bool ha = box_hit(first, o, inv, tmin, best, ta);
+            bool hb = box_hit(first + 1u, o, inv, tmin, best, tb);
+            if (ha && hb && sp + 2 <= STACK) {
+                if (ta <= tb) { stk[sp++] = first + 1u; stk[sp++] = first; }
+                else          { stk[sp++] = first;      stk[sp++] = first + 1u; }
+            } else if (ha && sp < STACK) {
+                stk[sp++] = first;
+            } else if (hb && sp < STACK) {
+                stk[sp++] = first + 1u;
+            }
+            continue;
+        }
+        for (uint i = first; i < first + count; i++) {
+            uint sb = i * 16u;
+            vec3 mu = vec3(fu(splats[sb + 0u]), fu(splats[sb + 1u]), fu(splats[sb + 2u]));
+            float opacity = fu(splats[sb + 3u]);
+            float radius = fu(splats[sb + 13u]);
+            vec3 oc = o - mu;
+            float b = dot(oc, d);
+            float c = dot(oc, oc) - radius * radius;
+            if (b * b - dd * c < 0.0) continue;
+            vec3 r0 = vec3(fu(splats[sb + 4u]), fu(splats[sb + 5u]), fu(splats[sb + 6u]));
+            vec3 r1 = vec3(fu(splats[sb + 7u]), fu(splats[sb + 8u]), fu(splats[sb + 9u]));
+            vec3 r2 = vec3(fu(splats[sb + 10u]), fu(splats[sb + 11u]), fu(splats[sb + 12u]));
+            vec3 og = vec3(dot(r0, oc), dot(r1, oc), dot(r2, oc));
+            vec3 dg = vec3(dot(r0, d), dot(r1, d), dot(r2, d));
+            float t = -dot(og, dg) / dot(dg, dg);
+            if (!(t >= tmin && t <= best)) continue;
+            vec3 e = og + dg * t;
+            float alpha = opacity * exp(-0.5 * dot(e, e));
+            vec3 x = o + d * t;
+            if (gs_hash(x, seed) > alpha) continue;
+            best = t;
+            best_alpha = alpha;
+            best_id = splats[sb + 14u];
+        }
+    }
+    uint hb = gid * 4u;
+    hits[hb + 0u] = floatBitsToUint(best_id != NO_HIT ? best : 0.0);
+    hits[hb + 1u] = floatBitsToUint(best_alpha);
+    hits[hb + 2u] = 0u;
+    hits[hb + 3u] = best_id;
+}

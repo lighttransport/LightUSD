@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// CPU reference renderer for Gaussian splats using the Blender Cycles kernel
-// ported in src/tydra/gsplat-kernel.hh (--gsplat-kernel cycles).
+// Gaussian splat renderer using the Blender Cycles kernel
+// (--gsplat-kernel cycles). Rays are traced with the LightRT splat primitive
+// (lightrt_c_gsplat.h) on the CPU, Vulkan or HIP; SH emission is shaded on
+// the CPU with src/tydra/gsplat-kernel.hh.
 #pragma once
 
 #include "lusdr_context.hh"
@@ -22,7 +24,8 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
 
 // Renders emission-only splats (Cycles' default splat shader) with jittered
 // primary rays and writes opt.output (8-bit sRGB-encoded, like Blender's
-// Standard view transform).
+// Standard view transform, or scene-linear for .exr). -vk/-vkr or -hip select
+// the GPU backend, which keeps device memory under -maxVram (default 4 GiB).
 bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
                         const CameraFrame &camera, int height);
 

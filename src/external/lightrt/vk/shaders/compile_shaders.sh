@@ -66,6 +66,7 @@ if [[ "${ONLY:-}" != "trace_materialx_path" ]]; then
     # stored separately, so instanced scenes past the 32-bit prim_id product still trace.
     gen trace_ray_query_wide trace_ray_query_wide_spv trace_ray_query -DLRT_WIDE_ID
     gen shade_analytic   shade_analytic_spv   shade_analytic   # analytic sphere/box forward shading
+    gen trace_gsplat     trace_gsplat_spv     trace_gsplat     # 3D Gaussian splat chunks (lightrt_c_gsplat)
 fi
 if [[ -n "${GLSLC:-}" ]]; then
     gen_glslc trace_materialx_path trace_materialx_path_spv trace_materialx_path

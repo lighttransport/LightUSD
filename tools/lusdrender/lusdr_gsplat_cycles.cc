@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <iostream>
@@ -11,6 +13,14 @@
 #include "image-writer.hh"
 #include "lusdr_math.hh"
 #include "tydra/render-converter-internal.hh"
+
+#include "lightrt_c_gsplat.h"
+#ifdef HAVE_VULKAN
+#include "lightrt_c_vk.h"
+#endif
+#ifdef HAVE_HIP
+#include "lightrt_c_hip.h"
+#endif
 
 namespace lusdr {
 
@@ -61,6 +71,150 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
   return true;
 }
 
+namespace {
+
+// Trace backend for the splat rays: LightRT CPU, Vulkan compute or HIP. GPU
+// backends stay within `budget` bytes of device memory (chunked upload).
+class SplatBackend {
+ public:
+  ~SplatBackend() {
+#ifdef HAVE_VULKAN
+    if (vk_) lrt_vk_engine_destroy(vk_);
+#endif
+#ifdef HAVE_HIP
+    if (hip_) lrt_hip_engine_destroy(hip_);
+#endif
+    lrt_gsplat_scene_free(scene_);
+  }
+
+  bool Init(const Options &opt, const gs::GSplatTracer &tracer) {
+    budget_ = uint64_t((opt.max_vram_gib > 0.0 ? opt.max_vram_gib : 4.0) *
+                       double(1ull << 30));
+    const bool want_vk = opt.vulkan || opt.vulkan_rt;
+    const bool want_hip = opt.hip;
+    if (opt.use_d3d || opt.cuda)
+      std::cerr << "WARN: --gsplat-kernel cycles supports -vk/-vkr and -hip "
+                   "GPU backends; tracing on the CPU.\n";
+#ifdef HAVE_VULKAN
+    if (want_vk) {
+      lrt_vk_engine_options vopts;
+      std::memset(&vopts, 0, sizeof(vopts));
+      vopts.device_index = opt.vulkan_device;
+      vopts.prefer_discrete = 1;
+      lrt_result err = LRT_RESULT_OK;
+      vk_ = lrt_vk_engine_create(&vopts, &err);
+      if (vk_) name_ = std::string("Vulkan ") + lrt_vk_engine_device_name(vk_);
+      else std::cerr << "WARN: Vulkan unavailable (err=" << int(err)
+                     << "); tracing splats on the CPU.\n";
+    }
+#else
+    if (want_vk)
+      std::cerr << "WARN: built without Vulkan; tracing splats on the CPU.\n";
+#endif
+#ifdef HAVE_HIP
+    if (want_hip && !vk_) {
+      lrt_hip_engine_options hopts;
+      std::memset(&hopts, 0, sizeof(hopts));
+      hopts.device_index = -1;
+      lrt_result err = LRT_RESULT_OK;
+      hip_ = lrt_hip_engine_create(&hopts, &err);
+      if (hip_) name_ = std::string("HIP ") + lrt_hip_engine_device_name(hip_);
+      else std::cerr << "WARN: HIP unavailable (err=" << int(err)
+                     << "); tracing splats on the CPU.\n";
+    }
+#else
+    if (want_hip)
+      std::cerr << "WARN: built without HIP; tracing splats on the CPU.\n";
+#endif
+    const auto &src = tracer.splats();
+    std::vector<lrt_gsplat> splats(src.size());
+    for (size_t i = 0; i < src.size(); ++i) {
+      const gs::GSplatWorld &g = src[i];
+      lrt_gsplat &d = splats[i];
+      d.mu[0] = g.mu.x;
+      d.mu[1] = g.mu.y;
+      d.mu[2] = g.mu.z;
+      d.opacity = g.opacity;
+      std::memcpy(d.a, g.a, sizeof(d.a));
+      d.radius = g.radius;
+      d.id = uint32_t(i);
+      d.pad = 0;
+    }
+    lrt_gsplat_build_options bo;
+    std::memset(&bo, 0, sizeof(bo));
+    if (gpu()) bo.max_chunk_splats = lrt_gsplat_chunk_splats_for_budget(
+                   budget_, kGpuBatch);
+    lrt_result err = LRT_RESULT_OK;
+    scene_ = lrt_gsplat_scene_build(splats.data(), splats.size(), &bo, &err);
+    if (!scene_) {
+      std::cerr << "LightRT gsplat build failed (err=" << int(err) << ").\n";
+      return false;
+    }
+    return true;
+  }
+
+  bool gpu() const { return vk_ || hip_; }
+  uint32_t batch() const { return gpu() ? kGpuBatch : kCpuBatch; }
+  const std::string &name() const { return name_; }
+  size_t chunks() const { return lrt_gsplat_scene_chunk_count(scene_); }
+  uint64_t budget() const { return budget_; }
+
+  // Falls back to the CPU permanently if the GPU trace fails.
+  bool Trace(const std::vector<lrt_ray> &rays, uint32_t seed_base,
+             std::vector<lrt_hit> *hits) {
+    hits->resize(rays.size());
+    const uint32_t n = uint32_t(rays.size());
+    lrt_result err = LRT_RESULT_OK;
+#ifdef HAVE_VULKAN
+    if (vk_) {
+      if (lrt_vk_gsplat_trace(vk_, scene_, rays.data(), n, seed_base, budget_,
+                              hits->data(), &err) >= 0)
+        return true;
+      std::cerr << "WARN: Vulkan gsplat trace failed (err=" << int(err)
+                << "): " << lrt_vk_engine_last_error(vk_)
+                << "; continuing on the CPU.\n";
+      lrt_vk_engine_destroy(vk_);
+      vk_ = nullptr;
+      name_ = "CPU";
+    }
+#endif
+#ifdef HAVE_HIP
+    if (hip_) {
+      if (lrt_hip_gsplat_trace(hip_, scene_, rays.data(), n, seed_base,
+                               budget_, hits->data(), &err) >= 0)
+        return true;
+      std::cerr << "WARN: HIP gsplat trace failed (err=" << int(err)
+                << "): " << lrt_hip_engine_last_error(hip_)
+                << "; continuing on the CPU.\n";
+      lrt_hip_engine_destroy(hip_);
+      hip_ = nullptr;
+      name_ = "CPU";
+    }
+#endif
+    lrt_gsplat_intersect1N(scene_, rays.data(), n, seed_base, hits->data());
+    return true;
+  }
+
+ private:
+  static constexpr uint32_t kGpuBatch = 8u << 20;
+  static constexpr uint32_t kCpuBatch = 1u << 20;
+#ifdef HAVE_VULKAN
+  lrt_vk_engine *vk_ = nullptr;
+#else
+  void *vk_ = nullptr;
+#endif
+#ifdef HAVE_HIP
+  lrt_hip_engine *hip_ = nullptr;
+#else
+  void *hip_ = nullptr;
+#endif
+  lrt_gsplat_scene *scene_ = nullptr;
+  uint64_t budget_ = 0;
+  std::string name_ = "CPU";
+};
+
+}  // namespace
+
 bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
                         const CameraFrame &camera, int height) {
   const int w = std::max(1, opt.width > 0 ? opt.width : 960);
@@ -69,12 +223,33 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
   const float aspect = float(w) / float(h);
   const gs::GSplatColorSpace cs =
       opt.gsplat_srgb ? gs::GSplatColorSpace::SRGB : gs::GSplatColorSpace::Linear;
+  SplatBackend backend;
+  const auto t0 = std::chrono::steady_clock::now();
+  if (!backend.Init(opt, scene.tracer)) return false;
+  const auto t1 = std::chrono::steady_clock::now();
   std::vector<float> rgb(size_t(w) * size_t(h) * 3, 0.f);
-  std::atomic<int> next_row{0};
-  auto worker = [&]() {
-    for (int y; (y = next_row.fetch_add(1)) < h;) {
-      for (int x = 0; x < w; ++x) {
-        gs::Vec3 sum = {0, 0, 0};
+  // Rays are generated in (y*w + x)*spp + s order; that index is the seed,
+  // so every backend (and the batch size) gives the same stochastic choices.
+  const int rows = std::max(1, int(backend.batch() / (uint32_t(w) * uint32_t(spp))));
+  std::vector<lrt_ray> rays;
+  std::vector<lrt_hit> hits;
+  const unsigned nt = std::max(1u, std::thread::hardware_concurrency());
+  auto parallel_rows = [&](int y0, int y1, auto &&fn) {
+    std::atomic<int> next{y0};
+    auto work = [&]() {
+      for (int y; (y = next.fetch_add(1)) < y1;) fn(y);
+    };
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < nt; ++t) pool.emplace_back(work);
+    work();
+    for (auto &t : pool) t.join();
+  };
+  for (int y0 = 0; y0 < h; y0 += rows) {
+    const int y1 = std::min(h, y0 + rows);
+    const size_t base = size_t(y0) * size_t(w) * size_t(spp);
+    rays.resize(size_t(y1 - y0) * size_t(w) * size_t(spp));
+    parallel_rows(y0, y1, [&](int y) {
+      for (int x = 0; x < w; ++x)
         for (int s = 0; s < spp; ++s) {
           float jx, jy;
           PixelJitter(s, spp, &jx, &jy);
@@ -83,28 +258,56 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
                   (float(y) + jy) / float(h), &org, &dir);
           const float cosine =
               camera.ortho ? 1.f : std::max(1e-6f, Dot(camera.forward, dir));
-          const gs::Vec3 ro = {org.x, org.y, org.z}, rd = {dir.x, dir.y, dir.z};
-          const uint32_t seed =
-              uint32_t((size_t(y) * size_t(w) + size_t(x)) * size_t(spp) + s);
-          gs::GSplatTracer::Hit hit;
-          if (scene.tracer.Trace(ro, rd, camera.znear / cosine,
-                                 camera.zfar / cosine, seed, &hit))
-            sum = gs::Add(sum, scene.tracer.Radiance(hit, rd, cs));
-          else
+          lrt_ray &r = rays[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +
+                            size_t(s) - base];
+          r.org[0] = org.x;
+          r.org[1] = org.y;
+          r.org[2] = org.z;
+          r.dir[0] = dir.x;
+          r.dir[1] = dir.y;
+          r.dir[2] = dir.z;
+          r.tmin = camera.znear / cosine;
+          r.tmax = camera.zfar / cosine;
+        }
+    });
+    if (!backend.Trace(rays, uint32_t(base), &hits)) return false;
+    parallel_rows(y0, y1, [&](int y) {
+      for (int x = 0; x < w; ++x) {
+        gs::Vec3 sum = {0, 0, 0};
+        const size_t r0 = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp) - base;
+        for (int s = 0; s < spp; ++s) {
+          const lrt_hit &hit = hits[r0 + size_t(s)];
+          if (hit.prim_id != LRT_TRI_NO_HIT) {
+            const lrt_ray &r = rays[r0 + size_t(s)];
+            gs::GSplatTracer::Hit th;
+            th.t = hit.t;
+            th.index = hit.prim_id;
+            sum = gs::Add(sum, scene.tracer.Radiance(
+                                   th, {r.dir[0], r.dir[1], r.dir[2]}, cs));
+          } else {
             sum = gs::Add(sum, {opt.bg.x, opt.bg.y, opt.bg.z});
+          }
         }
         float *px = &rgb[(size_t(y) * size_t(w) + size_t(x)) * 3];
         px[0] = sum.x / float(spp);
         px[1] = sum.y / float(spp);
         px[2] = sum.z / float(spp);
       }
-    }
-  };
-  const unsigned nt = std::max(1u, std::thread::hardware_concurrency());
-  std::vector<std::thread> pool;
-  for (unsigned t = 1; t < nt; ++t) pool.emplace_back(worker);
-  worker();
-  for (auto &t : pool) t.join();
+    });
+  }
+  const auto t2 = std::chrono::steady_clock::now();
+  if (opt.stats) {
+    const double bms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    const double rms = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    std::cerr << "Cycles gsplat kernel (LightRT, " << backend.name() << "): "
+              << scene.tracer.size() << " splat(s) in " << backend.chunks()
+              << " chunk(s)";
+    if (backend.gpu())
+      std::cerr << ", device budget "
+                << double(backend.budget()) / double(1ull << 30) << " GiB";
+    std::cerr << ", build " << bms << " ms, trace+shade " << rms << " ms, "
+              << spp << " spp\n";
+  }
 
   lightusd::Image img;
   img.width = w;
@@ -142,11 +345,8 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
     return false;
   }
   if (opt.stats)
-    std::cerr << "Cycles gsplat kernel: " << scene.tracer.size()
-              << " splat(s), " << scene.tracer.node_count()
-              << " BVH node(s), " << spp << " spp, skipped splats "
-              << scene.tracer.skipped() << ", skipped prims "
-              << scene.skipped_prims << "\n";
+    std::cerr << "Cycles gsplat: skipped splats " << scene.tracer.skipped()
+              << ", skipped prims " << scene.skipped_prims << "\n";
   return true;
 }
 

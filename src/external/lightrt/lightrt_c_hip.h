@@ -69,6 +69,16 @@ int lrt_hip_trace_scene(lrt_hip_engine *e, const lrt_tri_scene *s,
                         const lrt_ray *rays, uint32_t n, lrt_hit *out,
                         lrt_result *err);
 
+/* --- 3D Gaussian splats (lightrt_c_gsplat.h) ------------------------------
+ * HIP analogue of lrt_vk_gsplat_trace: same semantics, seeds and memory
+ * budget (max_device_bytes, 0 = no limit). The splat kernel is compiled with
+ * hiprtc on first use. Returns the hit count, or -1 on error. */
+struct lrt_gsplat_scene;
+int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
+                         const lrt_ray *rays, uint32_t n, uint32_t seed_base,
+                         uint64_t max_device_bytes, lrt_hit *out,
+                         lrt_result *err);
+
 #ifdef __cplusplus
 }
 #endif

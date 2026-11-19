@@ -15,7 +15,11 @@ roundtrip: create splats natively in Blender (blender_make_and_export.py),
          within 1.1x the noise floor in MAE and within 1% in mean brightness.
 Exit 77 (skip) when Blender or Pillow is unavailable.
 
+--backend vk|hip traces through the LightRT Vulkan / HIP splat kernel (skips
+with 77 when that GPU backend is unavailable).
+
 usage: check_cycles_compare.py LUSDRENDER smoke|compare|roundtrip [--spp N]
+                               [--backend cpu|vk|hip]
 """
 import argparse
 import math
@@ -47,8 +51,11 @@ def metrics(a_path, b_path):
     return mae, 10 * math.log10(65025.0 / max(mse, 1e-9))
 
 
+BACKEND = []
+
+
 def ours(lusdrender, usda, out, spp, colorspace):
-    run([lusdrender, usda, out, "--gsplat-kernel", "cycles",
+    run([lusdrender, usda, out] + BACKEND + ["--gsplat-kernel", "cycles",
          "--gsplat-colorspace", colorspace, "-camera", "/World/Cam",
          "-width", str(W), "-height", str(H), "-samples", str(spp)])
 
@@ -58,7 +65,21 @@ def main():
     ap.add_argument("lusdrender")
     ap.add_argument("mode", choices=["smoke", "compare", "roundtrip"])
     ap.add_argument("--spp", type=int, default=256)
+    ap.add_argument("--backend", choices=["cpu", "vk", "hip"], default="cpu")
     a = ap.parse_args()
+    if a.backend != "cpu":
+        BACKEND.append("-" + a.backend)
+        # Probe: the backend must actually trace on the GPU.
+        with tempfile.TemporaryDirectory(prefix="gsplat-probe-") as d:
+            run([sys.executable, "-I", os.path.join(HERE, "make_cycles_fixture.py"),
+                 d, "--count", "8", "--seed", "1", "--degree", "0"])
+            log = run([a.lusdrender, os.path.join(d, "splats.usda"),
+                       os.path.join(d, "p.png"), "-" + a.backend,
+                       "--gsplat-kernel", "cycles", "-width", "16",
+                       "-height", "16", "-samples", "2", "-stats"])
+            if "LightRT, CPU" in log:
+                print("SKIP: %s backend unavailable" % a.backend)
+                return 77
     try:
         import PIL  # noqa: F401
     except ImportError:
@@ -124,8 +145,8 @@ def roundtrip(lusdrender, blender, spp):
         cands = [os.path.join(d, "ref_from_ply.exr")]
         for name in ("splats", "scene_ply"):
             out = os.path.join(d, "ours_%s.exr" % name)
-            run([lusdrender, os.path.join(d, name + ".usda"), out,
-                 "--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",
+            run([lusdrender, os.path.join(d, name + ".usda"), out] + BACKEND +
+                ["--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",
                  "-camera", "/World/Cam", "-width", str(W), "-height", str(H),
                  "-samples", str(spp)])
             cands.append(out)

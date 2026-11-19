@@ -1965,12 +1965,10 @@ int main(int argc, char **argv) {
     PrepareLodStream(&opt, &lod_wrapper);
   }
 
-  // --gsplat-kernel cycles: CPU reference render of a splat scene with the
-  // Blender Cycles kernel. Scenes without splats fall through unchanged.
+  // --gsplat-kernel cycles: render a splat scene with the Blender Cycles
+  // kernel through LightRT (CPU, or -vk/-vkr Vulkan / -hip HIP compute under
+  // the -maxVram budget, default 4 GiB). Scenes without splats fall through.
   if (opt.gsplat_cycles) {
-    if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda)
-      std::cerr << "WARN: --gsplat-kernel cycles renders on the CPU; the GPU "
-                   "backend flag is ignored for the splat scene.\n";
     lightusd::Stage stage;
     lightusd::ValueClipStageLoader clip_stage_loader;
     std::string warn, err;

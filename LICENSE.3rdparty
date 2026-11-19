@@ -38,7 +38,7 @@ in each entry.
 | sRGB transform by Project Nayuki | MIT | `src/image-util.cc` |
 | OpenSubdiv | Modified Apache 2.0 | `src/osd/LICENSE.txt` |
 | MaterialX data | Apache 2.0 | `data/materialx/LICENSE` |
-| Blender Cycles Gaussian splat kernel (ported, Blender 5.3) | Apache 2.0 (Copyright 2026 Blender Foundation) | `src/tydra/gsplat-kernel.hh` |
+| Blender Cycles Gaussian splat kernel (ported, Blender 5.3) | Apache 2.0 (Copyright 2026 Blender Foundation) | `src/tydra/gsplat-kernel.hh`, `src/external/lightrt/lightrt_c_gsplat.{h,c}`, `src/external/lightrt/vk/shaders/trace_gsplat.comp`, `src/external/lightrt/hip/trace_gsplat_hip.h` |
 
 ## Optional Feature Dependencies
 
