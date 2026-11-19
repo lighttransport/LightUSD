@@ -135,7 +135,7 @@ jobs:
     - name: Install TBB dependency
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtbb12
+        sudo apt-get install -y libtbb12 libpython3.12t64
 
     - name: Download OpenUSD binary
       run: |
@@ -392,6 +392,7 @@ jobs:
     - name: build tests
       run: |
         cmake --build build_lusdview -j $(nproc) \
+          --target lusdview \
           --target lusdview_lighting_test \
           --target lusdview_lightrt_bridge_test \
           --target lusdview_openpbr_material_test \
