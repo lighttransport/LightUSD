@@ -27,6 +27,7 @@
 #include "schema/usd-shade.hh"
 #include "schema/geom-point-instancer.hh"
 #include "stage/stage.hh"
+#include "tydra/render-converter.hh"
 
 namespace {
 int DumpInstancers(const char* scene, double time) {
@@ -180,6 +181,39 @@ int DumpPhysics(const char* scene) {
   return 0;
 }
 
+// One line per Volume field binding, as tydra's converter resolves it:
+// <volume> <binding> <file> <grid name> <name index> <value type> <class>
+// <active voxels> <index min xyz> <index max xyz>   (or "<volume> <binding> ERROR")
+int DumpVolumes(const char* scene, double time) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  lightusd::tydra::ConverterConfig cfg;
+  cfg.time_code = time;
+  const std::string s(scene);
+  const size_t slash = s.find_last_of('/');
+  cfg.asset_base_dir = slash == std::string::npos ? "." : s.substr(0, slash);
+  lightusd::tydra::RenderSceneConverter conv(cfg);
+  const auto res = conv.Convert(stage);
+  for (const auto& v : res.scene.volumes) {
+    for (const auto& f : v.fields) {
+      if (!f.resolution_error.empty()) {
+        std::printf("%s %s ERROR\n", v.prim_path.c_str(), f.binding.c_str());
+        continue;
+      }
+      const auto& g = f.field.grid;
+      std::string file = f.field.request.file_path;
+      const size_t fs = file.find_last_of('/');
+      if (fs != std::string::npos) file = file.substr(fs + 1);
+      std::printf("%s %s %s %s %d %s %s %llu %d %d %d %d %d %d\n", v.prim_path.c_str(),
+                  f.binding.c_str(), file.c_str(), g.name.c_str(), g.name_index,
+                  f.field.value_type.c_str(), f.field.level_set ? "levelSet" : "fogVolume",
+                  static_cast<unsigned long long>(g.active_voxels), g.index_min[0], g.index_min[1],
+                  g.index_min[2], g.index_max[0], g.index_max[1], g.index_max[2]);
+    }
+  }
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -206,6 +240,9 @@ int main(int argc, char** argv) {
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-binding") {
     return DumpBindings(argv[2], std::string(argv[3]) == "all" ? "" : argv[3]);
+  }
+  if (argc == 4 && std::string(argv[1]) == "--dump-volume") {
+    return DumpVolumes(argv[2], std::atof(argv[3]));
   }
   if (argc == 3 && std::string(argv[1]) == "--dump-physics") {
     return DumpPhysics(argv[2]);
