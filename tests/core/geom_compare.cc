@@ -22,6 +22,7 @@
 #include "eval/xform-eval.hh"
 #include "load-usd.hh"
 #include "schema/geom-boundable.hh"
+#include "schema/physics-resolve.hh"
 #include "schema/usd-collection.hh"
 #include "schema/usd-shade.hh"
 #include "schema/geom-point-instancer.hh"
@@ -129,6 +130,56 @@ int DumpSurface(const char* scene, const std::string& ctx_list) {
   return 0;
 }
 
+void JsonList(const std::vector<std::string>& v) {
+  std::printf("[");
+  for (size_t i = 0; i < v.size(); ++i) std::printf("%s\"%s\"", i ? "," : "", v[i].c_str());
+  std::printf("]");
+}
+
+// One JSON object per line: {"kind": ..., "path": ..., fields}.
+int DumpPhysics(const char* scene) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  const lightusd::ResolvedPhysics r = lightusd::ResolvePhysics(stage);
+  for (const auto& s : r.scenes) {
+    std::printf("{\"kind\":\"Scene\",\"path\":\"%s\",\"gravityDirection\":[%.9g,%.9g,%.9g],"
+                "\"gravityMagnitude\":%.9g}\n", s.path.c_str(), s.gravity_direction[0],
+                s.gravity_direction[1], s.gravity_direction[2], s.gravity_magnitude);
+  }
+  for (const auto& b : r.bodies) {
+    std::printf("{\"kind\":\"RigidBody\",\"path\":\"%s\",\"rigidBodyEnabled\":%s,"
+                "\"simulationOwners\":", b.path.c_str(), b.enabled ? "true" : "false");
+    JsonList(b.simulation_owners);
+    std::printf(",\"collisions\":");
+    JsonList(b.collisions);
+    std::printf("}\n");
+  }
+  for (const auto& c : r.colliders) {
+    std::printf("{\"kind\":\"Collider\",\"path\":\"%s\",\"rigidBody\":\"%s\","
+                "\"collisionEnabled\":%s,\"simulationOwners\":", c.path.c_str(),
+                c.rigid_body.c_str(), c.collision_enabled ? "true" : "false");
+    JsonList(c.simulation_owners);
+    std::printf("}\n");
+  }
+  for (const auto& j : r.joints) {
+    std::printf("{\"kind\":\"Joint\",\"path\":\"%s\",\"rel0\":\"%s\",\"rel1\":\"%s\","
+                "\"body0\":\"%s\",\"body1\":\"%s\",\"jointEnabled\":%s,"
+                "\"collisionEnabled\":%s,\"excludeFromArticulation\":%s}\n",
+                j.path.c_str(), j.rel0.c_str(), j.rel1.c_str(), j.body0.c_str(), j.body1.c_str(),
+                j.joint_enabled ? "true" : "false", j.collision_enabled ? "true" : "false",
+                j.exclude_from_articulation ? "true" : "false");
+  }
+  for (const auto& g : r.collision_groups) {
+    std::printf("{\"kind\":\"CollisionGroup\",\"path\":\"%s\",\"invertFilteredGroups\":%s,"
+                "\"filteredGroups\":", g.path.c_str(), g.invert_filtered_groups ? "true" : "false");
+    JsonList(g.filtered_groups);
+    std::printf(",\"mergedGroups\":");
+    JsonList(g.merged_groups);
+    std::printf("}\n");
+  }
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -155,6 +206,9 @@ int main(int argc, char** argv) {
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-binding") {
     return DumpBindings(argv[2], std::string(argv[3]) == "all" ? "" : argv[3]);
+  }
+  if (argc == 3 && std::string(argv[1]) == "--dump-physics") {
+    return DumpPhysics(argv[2]);
   }
   if (argc == 4 && std::string(argv[1]) == "--dump-surface") {
     return DumpSurface(argv[2], argv[3]);

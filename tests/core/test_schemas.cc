@@ -3,6 +3,7 @@
 
 #include "schema/geom-mesh.hh"
 #include "schema/geom-boundable.hh"
+#include "schema/physics-resolve.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/color-space.hh"
@@ -488,6 +489,43 @@ def Cylinder "Bad" {
       ComputeExtent(loaded.stage.GetPrimAtPath("/Constant"), 0.0, scratch) ||
       ComputeExtent(loaded.stage.GetPrimAtPath("/Bad"), 0.0, scratch)) {
     FAIL("unexpected computed extent");
+    return;
+  }
+  PASS();
+}
+
+// UsdPhysics ownership resolution (OpenUSD parser parity; see
+// usdspec-conformance test-domain-physics-runtime.py and PhysicsResolve.lean).
+void test_resolve_physics() {
+  TEST("ResolvePhysics");
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+(
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+def PhysicsScene "S" {
+    float physics:gravityMagnitude = -1
+}
+def Xform "On" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+    def Xform "Off" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        bool physics:rigidBodyEnabled = 0
+        def Cube "Col" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+    }
+}
+def PhysicsFixedJoint "J" {
+    rel physics:body0 = </On/Off/Col>
+}
+def PhysicsCollisionGroup "G" {
+}
+)usd");
+  if (!loaded.success) { FAIL("failed to load physics scene"); return; }
+  const ResolvedPhysics r = ResolvePhysics(loaded.stage);
+  if (r.scenes.size() != 1 || std::fabs(r.scenes[0].gravity_magnitude - 981.0f) > 1e-3f ||
+      r.scenes[0].gravity_direction[2] != -1.0f || r.colliders.size() != 1 ||
+      r.colliders[0].rigid_body != "/On" || r.joints.size() != 1 ||
+      r.joints[0].body0 != "/On" || r.collision_groups.size() != 1 ||
+      r.collision_groups[0].invert_filtered_groups) {
+    FAIL("unexpected resolved physics");
     return;
   }
   PASS();
@@ -1099,6 +1137,7 @@ int main() {
   test_point_instancer_orientation_precision();
   test_point_instancer_layout_and_motion();
   test_compute_extent();
+  test_resolve_physics();
   test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();
