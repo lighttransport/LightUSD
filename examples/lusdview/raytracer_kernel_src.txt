@@ -1081,6 +1081,22 @@ __device__ F3 ptCoatDarkening(F3 base,F3 ssColor,float ss,float metal,float spec
   return mk(1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.x*k)-1.f)*t,1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.y*k)-1.f)*t,
             1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.z*k)-1.f)*t);
 }
+/* MaterialX GGX multiple-scattering compensation (mx_ggx_energy_compensation,
+ * Turquin): comp = 1 + Favg (1 - Ess) / Ess with the mx_ggx_dir_albedo_analytic
+ * fit and Favg = F0 + (1 - F0)/21. Applied to the metallic share of the GGX
+ * reflection, matching LightRT's verified conductor (bsdf.c conductor_response);
+ * dielectric layering is left unchanged. */
+__device__ F3 ptGgxEnergyComp(float nv,float rough,F3 f0,float metal){
+  float x=fminf(fmaxf(nv,0.f),1.f),y=fmaxf(rough*rough,.002f),x2=x*x,y2=y*y;
+  float r0=.1003f-.6303f*x+9.748f*y-2.038f*x*y+29.34f*x2-8.245f*y2-26.44f*x2*y+19.99f*x*y2-5.448f*x2*y2;
+  float r1=.9345f-2.323f*x+2.229f*y-3.748f*x*y+1.424f*x2-.7684f*y2+1.436f*x2*y+.2913f*x*y2+.6286f*x2*y2;
+  float r2=1.f-1.765f*x+8.263f*y+11.53f*x*y+28.96f*x2-7.507f*y2-36.11f*x2*y+15.86f*x*y2+33.37f*x2*y2;
+  float r3=1.f+.2281f*x+15.94f*y-55.83f*x*y+13.08f*x2+41.26f*y2+54.9f*x2*y+300.2f*x*y2-285.1f*x2*y2;
+  float ess=fminf(fmaxf(r0/r2,0.f),1.f)+fminf(fmaxf(r1/r3,0.f),1.f);
+  if(!(ess>1e-4f))return mk(1.f,1.f,1.f);
+  float k=(1.f-ess)/ess,m=fminf(fmaxf(metal,0.f),1.f);
+  return mk(1.f+m*(f0.x+(1.f-f0.x)/21.f)*k,1.f+m*(f0.y+(1.f-f0.y)/21.f)*k,1.f+m*(f0.z+(1.f-f0.z)/21.f)*k);
+}
 __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
     F3 diffuseC,F3 f0,F3 sheenC,F3 coatF0,float coatWeight,
     float diffuseP,float glossyP,float coatP,
@@ -1105,7 +1121,8 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
   F3 sheenAtt=mk(1.f-fminf(sheenC.x*sheenAlb,1.f),1.f-fminf(sheenC.y*sheenAlb,1.f),1.f-fminf(sheenC.z*sheenAlb,1.f));
   F3 diffuse=mk((1.f-Fv.x)*sheenAtt.x*diffuseC.x*.31830988618f,(1.f-Fv.y)*sheenAtt.y*diffuseC.y*.31830988618f,(1.f-Fv.z)*sheenAtt.z*diffuseC.z*.31830988618f);
   F3 cFv=scale(fresnelSchlick(cnv,coatF0),coatWeight);
-  F3 base=add(add(diffuse,scale(sheenC,sheenShape)),scale(F,gs));
+  F3 ec=ptGgxEnergyComp(nv,s.rough,f0,s.metal);
+  F3 base=add(add(diffuse,scale(sheenC,sheenShape)),mk(F.x*gs*ec.x,F.y*gs*ec.y,F.z*gs*ec.z));
   base=mk(base.x*(1.f-cFv.x),base.y*(1.f-cFv.y),base.z*(1.f-cFv.z));
   return add(base,scale(cF,cs));
 }

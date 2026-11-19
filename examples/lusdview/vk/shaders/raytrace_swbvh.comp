@@ -119,6 +119,22 @@ layout(push_constant) uniform PC {
   uint pathParams;
 } pc;
 
+// MaterialX GGX multiple-scattering compensation (mx_ggx_energy_compensation)
+// on the metallic share of the GGX reflection, as LightRT's verified conductor.
+vec3 ptGgxEnergyComp(float nv, float rough, vec3 f0, float metal) {
+  float x = clamp(nv, 0.0, 1.0), y = max(rough * rough, 0.002), x2 = x * x, y2 = y * y;
+  vec4 r = vec4(0.1003, 0.9345, 1.0, 1.0) + vec4(-0.6303, -2.323, -1.765, 0.2281) * x +
+           vec4(9.748, 2.229, 8.263, 15.94) * y + vec4(-2.038, -3.748, 11.53, -55.83) * x * y +
+           vec4(29.34, 1.424, 28.96, 13.08) * x2 + vec4(-8.245, -0.7684, -7.507, 41.26) * y2 +
+           vec4(-26.44, 1.436, -36.11, 54.9) * x2 * y + vec4(19.99, 0.2913, 15.86, 300.2) * x * y2 +
+           vec4(-5.448, 0.6286, 33.37, -285.1) * x2 * y2;
+  vec2 ab = clamp(r.xy / r.zw, 0.0, 1.0);
+  float ess = ab.x + ab.y;
+  if (!(ess > 1.0e-4)) return vec3(1.0);
+  vec3 favg = f0 + (vec3(1.0) - f0) / 21.0;
+  return vec3(1.0) + clamp(metal, 0.0, 1.0) * favg * ((1.0 - ess) / ess);
+}
+
 // OpenPBR coat darkening (open_pbr_surface 1.1, LightRT's verified CPU BSDF):
 // factor = (1 - Kcoat) / (1 - Ebase * Kcoat), mixed toward 1 by
 // coat_weight * coat_darkening. A white base is not darkened.
@@ -1747,7 +1763,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
   vec3 sheenAtt = vec3(1.0) - min(sheenC * sheenAlb, vec3(1.0));
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
-              sheen + F * glossy;
+              sheen + F * glossy * ptGgxEnergyComp(nv, s.roughness, f0, s.metallic);
   vec3 coatFv = swPtFresnel(cnv, coatF0) * s.coatWeight;
   return base * (vec3(1.0) - coatFv) + coat;
 }
