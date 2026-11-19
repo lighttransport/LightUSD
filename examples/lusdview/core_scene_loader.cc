@@ -4330,6 +4330,9 @@ bool CopyPublicMaterial(const lightusd_stage* stage, const std::string& path,
     LUSDVIEW_READ_OPENPBR_PARAM(coat_anisotropy);
     LUSDVIEW_READ_OPENPBR_PARAM(coat_roughness_anisotropy);
     LUSDVIEW_READ_OPENPBR_PARAM(coat_normal);
+    LUSDVIEW_READ_OPENPBR_PARAM(coat_affect_color);
+    LUSDVIEW_READ_OPENPBR_PARAM(coat_affect_roughness);
+    LUSDVIEW_READ_OPENPBR_PARAM(coat_darkening);
     LUSDVIEW_READ_OPENPBR_PARAM(sheen_weight);
     LUSDVIEW_READ_OPENPBR_PARAM(sheen_color);
     LUSDVIEW_READ_OPENPBR_PARAM(sheen_roughness);
@@ -5029,6 +5032,7 @@ int BuildCoreMaterial(const lightusd_stage* stageHandle,
     // coat_color route is inert (measured: low/high rendered identically).
     retainDiagnosticScalar("coat_affect_color", s.coat_affect_color);
     retainDiagnosticScalar("coat_affect_roughness", s.coat_affect_roughness);
+    retainDiagnosticScalar("coat_darkening", s.coat_darkening);
     retainDiagnosticScalar("transmission_dispersion",
                            s.transmission_dispersion);
     retainDiagnosticScalar("transmission_dispersion_scale",

@@ -44,7 +44,7 @@ void ForEachMaterialShaderParam(RenderMaterial* mat, Fn&& fn) {
           &o.subsurface_scale, &o.subsurface_anisotropy,
           &o.coat_weight, &o.coat_color, &o.coat_roughness, &o.coat_rotation,
           &o.coat_ior, &o.coat_anisotropy, &o.coat_roughness_anisotropy,
-          &o.coat_affect_color, &o.coat_affect_roughness,
+          &o.coat_affect_color, &o.coat_affect_roughness, &o.coat_darkening,
           &o.coat_normal, &o.sheen_weight, &o.sheen_color, &o.sheen_roughness,
           &o.fuzz_weight, &o.fuzz_color, &o.fuzz_roughness,
           &o.thin_film_weight, &o.thin_film_thickness, &o.thin_film_ior,

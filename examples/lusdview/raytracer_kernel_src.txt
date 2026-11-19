@@ -1067,6 +1067,20 @@ __device__ float ptGgxDirectionPdf(F3 n,F3 v,F3 l,float rough,float anisotropy,f
 __device__ float ptPowerHeuristic(float a,float b){
   float aa=a*a,bb=b*b;return aa/fmaxf(aa+bb,1e-20f);
 }
+/* OpenPBR coat darkening (open_pbr_surface 1.1, the bounded ratio LightRT's
+ * verified CPU BSDF uses): Kcoat = 1 - (1 - F0)/n^2, Ebase = the base albedo
+ * estimate, factor = (1 - K)/(1 - Ebase K) per channel, mixed toward 1 by
+ * coat_weight * coat_darkening. A white base is not darkened (energy stays
+ * at 1 in a white furnace); the previous fixed 0.8 scale lost 20%. */
+__device__ F3 ptCoatDarkening(F3 base,F3 ssColor,float ss,float metal,float specW,float coatIor,float t){
+  float n=fmaxf(coatIor,1.f),c=(n-1.f)/(n+1.f),k=fminf(fmaxf(1.f-(1.f-c*c)/(n*n),0.f),.9999f);
+  t=fminf(fmaxf(t,0.f),1.f);
+  F3 diel=mk(base.x+(ssColor.x-base.x)*ss,base.y+(ssColor.y-base.y)*ss,base.z+(ssColor.z-base.z)*ss);
+  F3 met=scale(base,fmaxf(specW,0.f));
+  F3 e=mk(diel.x+(met.x-diel.x)*metal,diel.y+(met.y-diel.y)*metal,diel.z+(met.z-diel.z)*metal);
+  return mk(1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.x*k)-1.f)*t,1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.y*k)-1.f)*t,
+            1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.z*k)-1.f)*t);
+}
 __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
     F3 diffuseC,F3 f0,F3 sheenC,F3 coatF0,float coatWeight,
     float diffuseP,float glossyP,float coatP,
@@ -1192,9 +1206,10 @@ __device__ PtMat ptResolveMaterial(
     }
     if(matGraph&&matLightRt&&matGraph[mid*LIGHTUSD_GPU_GRAPH_FLOATS+9]>=0.f)
       m.radius=scale(m.radius,fmaxf(matLightRt[mid*LIGHTUSD_GPU_OPENPBR_FLOATS+23],0.f));
+    F3 coatDark=ptCoatDarkening(m.base,m.subsurfaceColor,m.subsurface,m.metal,m.specularWeight,m.coatIor,m.coatWeight*m.coatDarkening);
     float coatColorMix=fminf(fmaxf(m.coatWeight*m.coatAffectColor,0.f),1.f);
     m.base=mk(m.base.x*(1.f+(m.coatColor.x-1.f)*coatColorMix),m.base.y*(1.f+(m.coatColor.y-1.f)*coatColorMix),m.base.z*(1.f+(m.coatColor.z-1.f)*coatColorMix));
-    m.base=scale(m.base,1.f-.2f*fminf(fmaxf(m.coatWeight*m.coatDarkening,0.f),1.f));
+    m.base=mk(m.base.x*coatDark.x,m.base.y*coatDark.y,m.base.z*coatDark.z);
     float coatRoughMix=fminf(fmaxf(m.coatWeight*m.coatAffectRoughness,0.f),1.f);
     m.rough=m.rough*(1.f-coatRoughMix)+m.coatRoughness*coatRoughMix;
   }
@@ -2063,7 +2078,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     base=mk(base.x*(1.f-subsurface)+subsurfaceColor.x*subsurface,
             base.y*(1.f-subsurface)+subsurfaceColor.y*subsurface,
             base.z*(1.f-subsurface)+subsurfaceColor.z*subsurface);
-    base=scale(base,1.f-0.2f*fminf(fmaxf(coatWeight*coatDarkening,0.f),1.f));
+    {F3 d=ptCoatDarkening(base,base,0.f,metallic,specWeight,lrt?lrt[45]:1.5f,coatWeight*coatDarkening);
+     base=mk(base.x*d.x,base.y*d.y,base.z*d.z);}
     base=mk(base.x*(1.f+(coatColor.x-1.f)*coatWeight*coatAffectColor),
             base.y*(1.f+(coatColor.y-1.f)*coatWeight*coatAffectColor),
             base.z*(1.f+(coatColor.z-1.f)*coatWeight*coatAffectColor));

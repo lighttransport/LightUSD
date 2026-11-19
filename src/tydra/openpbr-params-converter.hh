@@ -68,7 +68,8 @@ inline bool BuildRealtimePbrMaterial(
              rm.openpbr) {
     const OpenPBRSurfaceShader &s = *rm.openpbr;
     p.openPbrCoatRemap = 1;
-    p.coatDarkening = 1.0f;
+    // Authored coat_darkening (OpenPBR nodedef default 1.0).
+    p.coatDarkening = s.coat_darkening.value.x;
     p.baseWeight = s.base_weight.value.x;
     CopyShaderParam3ToOpenPBR(s.base_color, p.baseColor);
     p.diffuseRoughness = s.base_diffuse_roughness.value.x;

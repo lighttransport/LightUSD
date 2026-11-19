@@ -842,6 +842,9 @@ const td::ShaderParam* FindParamOpenPBR(const td::OpenPBRSurfaceShader& s,
   if (n == "coat_roughness_anisotropy")
     return &s.coat_roughness_anisotropy;
   if (n == "coat_normal") return &s.coat_normal;
+  if (n == "coat_affect_color") return &s.coat_affect_color;
+  if (n == "coat_affect_roughness") return &s.coat_affect_roughness;
+  if (n == "coat_darkening") return &s.coat_darkening;
   if (n == "sheen_weight") return &s.sheen_weight;
   if (n == "sheen_color") return &s.sheen_color;
   if (n == "sheen_roughness") return &s.sheen_roughness;

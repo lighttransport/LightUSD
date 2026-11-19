@@ -270,6 +270,7 @@ bool RenderSceneConverter::Impl::ExtractOpenPBRSurface(const Stage& stage,
                      &out->coat_affect_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_affect_roughness",
                      &out->coat_affect_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_darkening", &out->coat_darkening, scene);
   ExtractShaderParam(stage, shader_prim, "coat_anisotropy",
                      &out->coat_anisotropy, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness_anisotropy",

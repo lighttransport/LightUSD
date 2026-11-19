@@ -92,6 +92,8 @@ struct OpenPBRSurfaceShader {
   ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
   ShaderParam coat_affect_color = {-1, {0, 0, 0, 0}};
   ShaderParam coat_affect_roughness = {-1, {0, 0, 0, 0}};
+  // OpenPBR coat_darkening (nodedef default 1.0).
+  ShaderParam coat_darkening = {-1, {1, 0, 0, 0}};
   ShaderParam coat_anisotropy = {-1, {0, 0, 0, 0}};
   ShaderParam coat_roughness_anisotropy = {-1, {0, 0, 0, 0}};
   // OpenPBR's independently authored coat-layer normal. Keep this separate

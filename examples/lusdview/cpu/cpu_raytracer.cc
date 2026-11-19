@@ -2912,6 +2912,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           float sheenWeight = 0.0f, sheenRoughness = 0.3f;
           float coatAffectColor = 0.0f, coatAffectRoughness = 0.0f;
           float coatDarkening = 0.0f;
+          float coatIorDark = 1.5f;
           float thinFilmWeight = 0.0f, thinFilmThickness = 0.0f;
           float thinFilmIor = 1.5f;
           float emission[3] = {0.0f, 0.0f, 0.0f};
@@ -2958,6 +2959,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               coatAffectColor = std::clamp(lrt[67], 0.0f, 1.0f);
               coatAffectRoughness = std::clamp(lrt[68], 0.0f, 1.0f);
               coatDarkening = std::clamp(lrt[70], 0.0f, 1.0f);
+              coatIorDark = std::max(lrt[45], 1.0001f);
               emission[0] += lrt[76] * std::max(lrt[79], 0.0f);
               emission[1] += lrt[77] * std::max(lrt[79], 0.0f);
               emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
@@ -3227,10 +3229,19 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // brightness spike on grazing views.
           const float coatColorMix = std::clamp(coatWeight * coatAffectColor,
                                                 0.0f, 1.0f);
-          for (int c = 0; c < 3; ++c) {
-            base[c] *= 1.0f - 0.2f * std::clamp(coatWeight * coatDarkening,
-                                                0.0f, 1.0f);
-            base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+          {
+            // OpenPBR coat darkening (1 - K) / (1 - Ebase K), as in the GPU
+            // path tracers and LightRT's verified CPU BSDF.
+            const float n = std::max(coatIorDark, 1.0f);
+            const float cr = (n - 1.0f) / (n + 1.0f);
+            const float k = std::clamp(1.0f - (1.0f - cr * cr) / (n * n), 0.0f, 0.9999f);
+            const float t = std::clamp(coatWeight * coatDarkening, 0.0f, 1.0f);
+            for (int c = 0; c < 3; ++c) {
+              const float e = base[c] + (base[c] * std::max(specWeight, 0.0f) - base[c]) * metallic;
+              const float f = (1.0f - k) / std::max(1.0e-4f, 1.0f - e * k);
+              base[c] *= 1.0f + (f - 1.0f) * t;
+              base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+            }
           }
           const float coatRoughMix = std::clamp(coatWeight * coatAffectRoughness,
                                                 0.0f, 1.0f);

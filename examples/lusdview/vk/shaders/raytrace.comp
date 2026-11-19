@@ -2004,6 +2004,18 @@ mat3 instanceNormalMatrix(mat4x3 o2w) {
   return mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) / det;
 }
 
+// OpenPBR coat darkening (open_pbr_surface 1.1, LightRT's verified CPU BSDF):
+// factor = (1 - Kcoat) / (1 - Ebase * Kcoat), mixed toward 1 by
+// coat_weight * coat_darkening. A white base is not darkened.
+vec3 ptCoatDarkening(vec3 base, vec3 ssColor, float ss, float metal, float specW,
+                     float coatIor, float t) {
+  float n = max(coatIor, 1.0), c = (n - 1.0) / (n + 1.0);
+  float k = clamp(1.0 - (1.0 - c * c) / (n * n), 0.0, 0.9999);
+  vec3 e = mix(mix(base, ssColor, ss), base * max(specW, 0.0), metal);
+  vec3 f = vec3(1.0 - k) / max(vec3(1.0e-4), vec3(1.0) - e * k);
+  return mix(vec3(1.0), f, clamp(t, 0.0, 1.0));
+}
+
 #if !LUSDVIEW_RT_INTERACTIVE_ONLY
 void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
                       out PtSurface s) {
@@ -2246,11 +2258,19 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
                               ? lrt(mid, 9u).w : mat(mid, 0u).a;
   if (resolvedMode > 1.5 && s.ior > 1.01 && authoredOpacity < 0.999)
     s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
+  {
+    float coatDarkening = clamp(lrt(mid, 17u).z, 0.0, 1.0);
+    if (gb + 49u < uint(graphRows.length()) && graphRows[gb + 48u] >= 0.0)
+      coatDarkening = clamp(evalMaterialXGraph(mid, 47, uv0, uv1, face).x, 0.0, 1.0);
+    s.base *= ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
+                              s.specularWeight, s.coatIor, s.coatWeight * coatDarkening);
+  }
   // The instance tint (display colour fallback) applies only to material-less
   // hits (see the early return above), as in the compute-BVH and HIP path
   // tracers. Multiplying it into a bound material's base colour darkened
   // ray-query path tracing by the default 0.8 tint (issues/lightusd/06).
 }
+
 
 vec3 ptCosineDirection(vec3 n, inout uint seed) {
   float r = sqrt(rnd(seed)), phi = 6.28318530718 * rnd(seed);
@@ -3687,7 +3707,7 @@ void main() {
           coatAffectColor = lrt(mid, 16u).w;
           coatAffectRoughness = lrt(mid, 17u).x;
           coatRoughnessAnisotropy = lrt(mid, 17u).y;
-          coatDarkening = lrt(mid, 17u).w;
+          coatDarkening = lrt(mid, 17u).z;  // index 70 (.w is thin_walled)
           volumeAlbedo = lrt(mid, 18u).rgb;
           volumeDensity = lrt(mid, 18u).w;
           volumeEmission = lrt(mid, 19u).rgb;
@@ -4036,8 +4056,8 @@ void main() {
                                 1.0 - 0.25 * dispersion);
     base = mix(base, base * coatColor,
                clamp(coatWeight * coatAffectColor, 0.0, 1.0));
-    base = mix(base, base * (1.0 - 0.2 * coatDarkening),
-               clamp(coatDarkening * coatWeight, 0.0, 1.0));
+    base *= ptCoatDarkening(base, base, 0.0, metallic, specWeight,
+                            max(lrt(mid, 11u).y, 1.0001), coatWeight * coatDarkening);
     roughness = mix(roughness, mix(roughness, coatRoughness,
                                    clamp(coatAffectRoughness, 0.0, 1.0)),
                     clamp(coatWeight * coatAffectRoughness, 0.0, 1.0));

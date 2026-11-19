@@ -427,7 +427,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                nlohmann::json::array({1, 1, 1}), "color3");
       emitLeaf("coat_affect_roughness", "coat_affect_roughness", 0.0,
                "float");
-      emitLeaf("coat_darkening", "coat_darkening", 0.0, "float");
+      // OpenPBR's nodedef default is 1.0 (open_pbr_surface.mtlx); Standard
+      // Surface has no darkening control.
+      emitLeaf("coat_darkening", "coat_darkening", standard ? 0.0 : 1.0, "float");
       emitLeaf("subsurface_weight", standard ? "subsurface" : "subsurface_weight",
                0.0, "float");
       emitLeaf("subsurface_color", "subsurface_color",
