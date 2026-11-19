@@ -792,6 +792,22 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-gsplat-cycles-blender PROPERTIES
                          TIMEOUT 600 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-blender-variants
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" variants)
+    set_tests_properties(tool-lusdrender-gsplat-blender-variants PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    # Mixed mesh + splat scene: splat shadows, camera-ray transmittance and
+    # splat emission lighting a Lambert plane, against Blender direct light.
+    add_test(NAME tool-lusdrender-gsplat-blender-mixed
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-gsplat-blender-mixed PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
     # The same checks through the LightRT Vulkan / HIP splat kernels (skip
     # when the backend has no device).
     foreach(_gs_backend vk hip)

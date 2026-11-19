@@ -13,6 +13,9 @@ roundtrip: create splats natively in Blender (blender_make_and_export.py),
          USD scene referencing the PLY (usdPly reader), and Blender on the
          re-imported PLY, all against Blender's native render. Each must be
          within 1.1x the noise floor in MAE and within 1% in mean brightness.
+variants: like roundtrip (USDA only) for SH degrees 0/1/2, a non-uniform
+         object scale, an orthographic camera and a coloured world background
+         (lusdrender -bg); each within 1.1x the noise floor and 1% mean.
 Exit 77 (skip) when Blender or Pillow is unavailable.
 
 --backend vk|hip traces through the LightRT Vulkan / HIP splat kernel (skips
@@ -63,7 +66,7 @@ def ours(lusdrender, usda, out, spp, colorspace):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lusdrender")
-    ap.add_argument("mode", choices=["smoke", "compare", "roundtrip"])
+    ap.add_argument("mode", choices=["smoke", "compare", "roundtrip", "variants"])
     ap.add_argument("--spp", type=int, default=256)
     ap.add_argument("--backend", choices=["cpu", "vk", "hip"], default="cpu")
     a = ap.parse_args()
@@ -91,6 +94,8 @@ def main():
         return 77
     if a.mode == "roundtrip":
         return roundtrip(a.lusdrender, blender, a.spp)
+    if a.mode == "variants":
+        return variants(a.lusdrender, blender, a.spp)
     with tempfile.TemporaryDirectory(prefix="gsplat-cycles-") as d:
         run([sys.executable, "-I", os.path.join(HERE, "make_cycles_fixture.py"),
              d, "--count", "120", "--seed", "5", "--degree", "3"])
@@ -174,6 +179,50 @@ def roundtrip(lusdrender, blender, spp):
                   (name, mae, floor, mae / floor, ["%.4f" % r for r in ratio],
                    "ok" if good else "FAIL"))
         return 0 if ok else 1
+
+
+
+VARIANTS = [
+    ("degree0", ["--degree", "0"], []),
+    ("degree1", ["--degree", "1"], []),
+    ("degree2", ["--degree", "2"], []),
+    ("nonuniform", ["--scale", "1.6,0.7,1.1"], []),
+    ("ortho", ["--ortho"], []),
+    ("world", ["--world", "0.20,0.35,0.60"], ["-bg", "0.20,0.35,0.60"]),
+]
+
+
+def variants(lusdrender, blender, spp):
+    ok = True
+    for name, bargs, largs in VARIANTS:
+        with tempfile.TemporaryDirectory(prefix="gsplat-variant-") as d:
+            run([blender, "-b", "--factory-startup", "--python",
+                 os.path.join(HERE, "blender_make_and_export.py"), "--", d,
+                 "--width", str(W), "--height", str(H), "--spp", str(spp),
+                 "--exr"] + bargs, cwd=d)
+            out = os.path.join(d, "ours.exr")
+            run([lusdrender, os.path.join(d, "splats.usda"), out] + BACKEND +
+                ["--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",
+                 "-camera", "/World/Cam", "-width", str(W), "-height", str(H),
+                 "-samples", str(spp)] + largs)
+            log = run([blender, "-b", "--factory-startup", "--python",
+                       os.path.join(HERE, "blender_compare_exr.py"), "--",
+                       os.path.join(d, "ref_seed0.exr"),
+                       os.path.join(d, "ref_seed7.exr"), out])
+            rows = {}
+            for line in log.splitlines():
+                if line.startswith("CMP "):
+                    f = line.split()
+                    rows[os.path.basename(f[1])] = (float(f[2]),
+                                                    [float(x) for x in f[3:6]])
+            floor = rows["floor"][0]
+            mae, ratio = rows["ours.exr"]
+            good = mae <= 1.1 * floor and all(abs(r - 1) <= 0.01 for r in ratio)
+            ok = ok and good
+            print("%-11s MAE %.5f (floor %.5f, %.2fx)  mean ratio %s  %s" %
+                  (name, mae, floor, mae / max(floor, 1e-12),
+                   ["%.4f" % r for r in ratio], "ok" if good else "FAIL"))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -3,6 +3,12 @@
 
 blender -b --factory-startup --python blender_make_and_export.py -- \
     OUT_DIR [--count N] [--seed S] [--width W] [--height H] [--spp N]
+    [--degree 0-3] [--scale X,Y,Z] [--ortho] [--world R,G,B] [--exr]
+
+Variants: --degree sets the SH degree; --scale gives a non-uniform object
+scale (not representable in a transform-free PLY, so the PLY outputs and
+ref_from_ply are skipped); --ortho uses an orthographic camera; --world sets
+a constant world background colour (strength 1).
 
 Writes into OUT_DIR:
   splats.usda        OpenUSD ParticleField3DGaussianSplat + camera (USD friendly)
@@ -34,11 +40,18 @@ ap.add_argument("--seed", type=int, default=3)
 ap.add_argument("--width", type=int, default=320)
 ap.add_argument("--height", type=int, default=180)
 ap.add_argument("--spp", type=int, default=256)
+ap.add_argument("--degree", type=int, default=3, choices=[0, 1, 2, 3])
+ap.add_argument("--scale", default="1.3,1.3,1.3")
+ap.add_argument("--ortho", action="store_true")
+ap.add_argument("--world", default="0,0,0")
 ap.add_argument("--exr", action="store_true",
                 help="write references as 32-bit scene-linear EXR (no view transform)")
 a = ap.parse_args(argv)
 os.makedirs(a.out, exist_ok=True)
-DEGREE = 3
+DEGREE = a.degree
+OBJ_SCALE = tuple(float(v) for v in a.scale.split(","))
+WORLD = tuple(float(v) for v in a.world.split(","))
+UNIFORM = max(OBJ_SCALE) - min(OBJ_SCALE) < 1e-9
 NCOEF = (DEGREE + 1) ** 2
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -92,7 +105,7 @@ scene.collection.objects.link(obj)
 # into the portable (transform-free) PLY.
 obj.location = (0.1, -0.05, 0.2)
 obj.rotation_euler = (0.4, -0.3, 0.7)
-obj.scale = (1.3, 1.3, 1.3)
+obj.scale = OBJ_SCALE
 
 cam_data = bpy.data.cameras.new("Cam")
 cam_data.lens = 40.0
@@ -100,6 +113,9 @@ cam_data.sensor_fit = "HORIZONTAL"
 cam_data.sensor_width = 36.0
 cam_data.clip_start = 0.01
 cam_data.clip_end = 1000.0
+if a.ortho:
+    cam_data.type = "ORTHO"
+    cam_data.ortho_scale = 2.6
 cam = bpy.data.objects.new("Cam", cam_data)
 cam.location = (2.2, -2.6, 1.6)
 scene.collection.objects.link(cam)
@@ -120,14 +136,26 @@ def usd_matrix(m):  # Blender column-vector -> USD row-vector (transpose)
 
 
 f3 = lambda v: "(%r, %r, %r)" % tuple(v)
-cam_block = (
-    '    def Camera "Cam"\n    {\n'
-    "        float focalLength = %r\n        float horizontalAperture = %r\n"
-    "        float verticalAperture = %r\n        float2 clippingRange = (0.01, 1000)\n"
-    "        matrix4d xformOp:transform = %s\n"
-    '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n'
-) % (cam_data.lens, cam_data.sensor_width,
-     cam_data.sensor_width * a.height / a.width, usd_matrix(cam.matrix_world))
+if a.ortho:
+    # USD apertures are in tenths of a scene unit for orthographic cameras.
+    aperture_h = cam_data.ortho_scale * 10.0
+    cam_block = (
+        '    def Camera "Cam"\n    {\n'
+        '        token projection = "orthographic"\n'
+        "        float horizontalAperture = %r\n        float verticalAperture = %r\n"
+        "        float2 clippingRange = (0.01, 1000)\n"
+        "        matrix4d xformOp:transform = %s\n"
+        '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n'
+    ) % (aperture_h, aperture_h * a.height / a.width, usd_matrix(cam.matrix_world))
+else:
+    cam_block = (
+        '    def Camera "Cam"\n    {\n'
+        "        float focalLength = %r\n        float horizontalAperture = %r\n"
+        "        float verticalAperture = %r\n        float2 clippingRange = (0.01, 1000)\n"
+        "        matrix4d xformOp:transform = %s\n"
+        '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n'
+    ) % (cam_data.lens, cam_data.sensor_width,
+         cam_data.sensor_width * a.height / a.width, usd_matrix(cam.matrix_world))
 header = '#usda 1.0\n(\n    defaultPrim = "World"\n    metersPerUnit = 1\n    upAxis = "Z"\n)\n\n'
 
 with open(os.path.join(a.out, "splats.usda"), "w") as f:
@@ -190,40 +218,47 @@ def sh_rotation_matrices(R):
 
 Rm = qobj.to_matrix()
 D = sh_rotation_matrices(Rm)
-with open(os.path.join(a.out, "splats.ply"), "wb") as f:
-    props = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2"]
-    props += ["f_rest_%d" % i for i in range((NCOEF - 1) * 3)]
-    props += ["opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
-    f.write(("ply\nformat binary_little_endian 1.0\nelement vertex %d\n" % n +
-             "".join("property float %s\n" % p for p in props) + "end_header\n").encode())
-    for i in range(n):
-        wp = M @ Vector(pos[i])
-        wq = qobj @ Quaternion(rot[i])
-        ws = [v * uniform for v in scl[i]]
-        coef = np.array([rest[k][i] for k in range(NCOEF - 1)])  # (15, 3)
-        rotated = np.zeros_like(coef)
-        start = 0
-        for band in range(3):
-            size = 2 * band + 3
-            # coefficients c' such that sum c'_m B_m(d) = sum c_m B_m(R^-1 d)
-            rotated[start:start + size] = D[band].T @ coef[start:start + size]
-            start += size
-        rest_cm = [rotated[k][ch] for ch in range(3) for k in range(NCOEF - 1)]
-        o = min(max(base[i][3], 1e-6), 1 - 1e-6)
-        vals = list(wp) + list(base[i][:3]) + rest_cm
-        vals += [math.log(o / (1 - o))] + [math.log(v) for v in ws] + list(wq)
-        f.write(struct.pack("<%df" % len(vals), *vals))
 
-with open(os.path.join(a.out, "scene_ply.usda"), "w") as f:
-    f.write(header + 'def Xform "World"\n{\n' + cam_block)
-    f.write('    def "Splats" (\n        references = @./splats.ply@\n    )\n    {\n    }\n}\n')
+
+def write_ply():
+  with open(os.path.join(a.out, "splats.ply"), "wb") as f:
+      props = ["x", "y", "z", "f_dc_0", "f_dc_1", "f_dc_2"]
+      props += ["f_rest_%d" % i for i in range((NCOEF - 1) * 3)]
+      props += ["opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"]
+      f.write(("ply\nformat binary_little_endian 1.0\nelement vertex %d\n" % n +
+               "".join("property float %s\n" % p for p in props) + "end_header\n").encode())
+      for i in range(n):
+          wp = M @ Vector(pos[i])
+          wq = qobj @ Quaternion(rot[i])
+          ws = [v * uniform for v in scl[i]]
+          coef = np.array([rest[k][i] for k in range(NCOEF - 1)]).reshape(NCOEF - 1, 3)
+          rotated = np.zeros_like(coef)
+          start = 0
+          for band in range(DEGREE):
+              size = 2 * band + 3
+              # coefficients c' such that sum c'_m B_m(d) = sum c_m B_m(R^-1 d)
+              rotated[start:start + size] = D[band].T @ coef[start:start + size]
+              start += size
+          rest_cm = [rotated[k][ch] for ch in range(3) for k in range(NCOEF - 1)]
+          o = min(max(base[i][3], 1e-6), 1 - 1e-6)
+          vals = list(wp) + list(base[i][:3]) + rest_cm
+          vals += [math.log(o / (1 - o))] + [math.log(v) for v in ws] + list(wq)
+          f.write(struct.pack("<%df" % len(vals), *vals))
+
+if UNIFORM:
+    write_ply()
+    with open(os.path.join(a.out, "scene_ply.usda"), "w") as f:
+        f.write(header + 'def Xform "World"\n{\n' + cam_block)
+        f.write('    def "Splats" (\n        references = @./splats.ply@\n    )\n    {\n    }\n}\n')
 
 bpy.ops.wm.usd_export(filepath=os.path.join(a.out, "blender_native.usda"))
 
 # ---- Cycles references ------------------------------------------------------
 world = bpy.data.worlds.new("W")
 world.use_nodes = True
-world.node_tree.nodes["Background"].inputs[1].default_value = 0.0
+bg = world.node_tree.nodes["Background"]
+bg.inputs[0].default_value = WORLD + (1.0,)
+bg.inputs[1].default_value = 1.0 if any(WORLD) else 0.0
 scene.world = world
 scene.render.engine = "CYCLES"
 scene.cycles.device = "CPU"
@@ -254,7 +289,8 @@ def render(path, seed):
 render(os.path.join(a.out, "ref_seed0" + EXT), 0)
 render(os.path.join(a.out, "ref_seed7" + EXT), 7)
 # Portable round trip inside Blender: replace the native object with the PLY.
-bpy.data.objects.remove(obj)
-bpy.ops.wm.ply_import(filepath=os.path.join(a.out, "splats.ply"))
-render(os.path.join(a.out, "ref_from_ply" + EXT), 0)
+if UNIFORM:
+    bpy.data.objects.remove(obj)
+    bpy.ops.wm.ply_import(filepath=os.path.join(a.out, "splats.ply"))
+    render(os.path.join(a.out, "ref_from_ply" + EXT), 0)
 print("EXPORTED", n, "splats to", a.out)

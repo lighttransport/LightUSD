@@ -71,6 +71,55 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
   return true;
 }
 
+bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
+                                bool srgb, DirectScene *direct) {
+  auto scene = std::make_shared<GSplatCyclesScene>();
+  if (!BuildGSplatCyclesScene(stage, time, scene.get())) return false;
+  const auto &src = scene->tracer.splats();
+  std::vector<lrt_gsplat> splats(src.size());
+  for (size_t i = 0; i < src.size(); ++i) {
+    const gs::GSplatWorld &g = src[i];
+    lrt_gsplat &d = splats[i];
+    d.mu[0] = g.mu.x;
+    d.mu[1] = g.mu.y;
+    d.mu[2] = g.mu.z;
+    d.opacity = g.opacity;
+    std::memcpy(d.a, g.a, sizeof(d.a));
+    d.radius = g.radius;
+    d.id = uint32_t(i);
+    d.pad = 0;
+  }
+  lrt_result err = LRT_RESULT_OK;
+  lrt_gsplat_scene *ls =
+      lrt_gsplat_scene_build(splats.data(), splats.size(), nullptr, &err);
+  if (!ls) return false;
+  direct->gsplat_scene.reset(ls, lrt_gsplat_scene_free);
+  // Share the tracer (SH + per-field transforms) owned by the scene object.
+  direct->gsplat_tracer = std::shared_ptr<gs::GSplatTracer>(scene, &scene->tracer);
+  direct->gsplat_srgb = srgb;
+  std::cerr << "Cycles gsplat kernel (mixed scene, CPU integrator): "
+            << splats.size() << " splat(s)\n";
+  return true;
+}
+
+bool StageHasNonSplatGeometry(const lightusd::Stage &stage) {
+  static const char *const kTypes[] = {
+      "Mesh", "Sphere", "Cube", "Cylinder", "Cylinder_1", "Capsule",
+      "Capsule_1", "Cone", "Plane", "BasisCurves", "HermiteCurves",
+      "NurbsCurves", "NurbsPatch", "Points", "TetMesh", "PointInstancer"};
+  bool found = false;
+  stage.Traverse([&](const lightusd::UsdPrim &prim) {
+    const std::string &t = prim.GetTypeName();
+    for (const char *k : kTypes)
+      if (t == k) {
+        found = true;
+        return false;
+      }
+    return true;
+  });
+  return found;
+}
+
 namespace {
 
 // Trace backend for the splat rays: LightRT CPU, Vulkan compute or HIP. GPU

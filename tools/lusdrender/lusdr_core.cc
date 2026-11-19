@@ -41,6 +41,7 @@
 #include "tydra/texture-util.hh"
 #include "tydra/vol/volume-field.hh"
 #include "usdVol.hh"
+#include "lusdr_gsplat_cycles.hh"
 #include "lusdr_context.hh"
 #include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
@@ -6167,6 +6168,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.stats = RTPreviewStats();
   ctx.direct.ellipses.reset();
   ctx.direct.ellipse_chunks.clear();
+  ctx.direct.gsplat_scene.reset();
+  ctx.direct.gsplat_tracer.reset();
   ctx.triangle_chunks.clear();
   ctx.direct.round_curve_chunks.clear();
   ctx.direct.flat_curve_chunks.clear();
@@ -6190,7 +6193,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
                       &instances, &proto_ids, &protos, &curve_jobs, &curve_inst,
                       &ctx.stats, &proto_holders);
   }
-  if (!BuildCoreGaussianEllipses(ctx.stage, ctx, time)) return false;
+  if (opt.gsplat_cycles) {
+    // Cycles splat kernel in a mixed scene: no disc carriers; the splats are
+    // traced stochastically on every ray by the CPU integrator.
+    AttachGSplatCyclesToDirect(ctx.stage, time, opt.gsplat_srgb, &ctx.direct);
+  } else if (!BuildCoreGaussianEllipses(ctx.stage, ctx, time)) {
+    return false;
+  }
   // Curves (BasisCurves/HermiteCurves/NurbsCurves, plus any baked from curve-prototype
   // instancers) build into ctx.direct as LightRT hair scenes; RenderImage traces
   // them via the DirectScene path in both the flat and TLAS render modes.

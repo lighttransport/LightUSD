@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -745,6 +746,40 @@ Vec3 EvalIblSpecularSplitSum(const Vec3 &spec_env, const Vec3 &f0, float brdf_a,
   return Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
 }
 
+// Stochastic-hit seed for a ray (Cycles relies on per-sample ray jitter; the
+// hit-position hash then decorrelates). Mixes the ray's bits.
+static uint32_t GsplatRaySeed(const lrt_ray &ray) {
+  uint32_t h = 0x811c9dc5u;
+  const float v[6] = {ray.org[0], ray.org[1], ray.org[2],
+                      ray.dir[0], ray.dir[1], ray.dir[2]};
+  for (float f : v) {
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    h = (h ^ b) * 0x01000193u;
+    h ^= h >> 15;
+  }
+  return h;
+}
+
+// Shadow/visibility test against the Cycles splats: any accepted splat in
+// (tmin, tmax) blocks (opaque stochastic hit, as Cycles' shadow_all).
+static bool OccludedGsplat(const DirectScene *direct, const Vec3 &p,
+                           const Vec3 &n, const Vec3 &l, float max_t) {
+  if (!direct || !direct->gsplat_scene) return false;
+  const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                             std::fabs(p.z));
+  const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+  const Vec3 o = Add(p, Mul(n, eps));
+  lrt_ray ray;
+  ray.org[0] = o.x; ray.org[1] = o.y; ray.org[2] = o.z;
+  ray.tmin = eps;
+  ray.dir[0] = l.x; ray.dir[1] = l.y; ray.dir[2] = l.z;
+  ray.tmax = max_t;
+  lrt_hit h;
+  return lrt_gsplat_intersect1(direct->gsplat_scene.get(), &ray,
+                               GsplatRaySeed(ray), &h) != 0;
+}
+
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
                           const Vec3 &ray_dir, float tmin, float tmax,
                           DirectHit *best) {
@@ -758,6 +793,29 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   ray.dir[1] = ray_dir.y;
   ray.dir[2] = ray_dir.z;
   ray.tmax = tmax;
+  if (direct->gsplat_scene && direct->gsplat_tracer) {
+    lrt_ray gr = ray;
+    gr.tmax = std::min(tmax, best->t);
+    lrt_hit h;
+    if (lrt_gsplat_intersect1(direct->gsplat_scene.get(), &gr,
+                              GsplatRaySeed(gr), &h) &&
+        h.t < best->t) {
+      // Cycles' default splat shader: pure emission, no lighting response.
+      lightusd::gsplat::GSplatTracer::Hit th;
+      th.t = h.t;
+      th.index = h.prim_id;
+      const lightusd::gsplat::Vec3 c = direct->gsplat_tracer->Radiance(
+          th, {ray_dir.x, ray_dir.y, ray_dir.z},
+          direct->gsplat_srgb ? lightusd::gsplat::GSplatColorSpace::SRGB
+                              : lightusd::gsplat::GSplatColorSpace::Linear);
+      best->t = h.t;
+      best->n = Normalize(Mul(ray_dir, -1.0f));
+      best->base_color = Vec3{0.0f, 0.0f, 0.0f};
+      best->emission = Vec3{c.x, c.y, c.z};
+      best->hit = true;
+      best->unlit = true;
+    }
+  }
   auto test_scene = [&](lrt_tri_scene *scene, const std::vector<TriInfo> &info,
                         size_t first, size_t count, bool sphere) {
     if (!scene) return;
@@ -781,6 +839,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->base_color = ti.base_color;
     best->emission = ti.emission;
     best->hit = true;
+    best->unlit = false;
   };
   test_scene(direct->spheres.get(), direct->sphere_info, 0,
              direct->sphere_info.size(), true);
@@ -809,6 +868,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->base_color = ti.base_color;
     best->emission = ti.emission;
     best->hit = true;
+    best->unlit = false;
   };
   if (!direct->ellipse_chunks.empty()) {
     for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
@@ -830,6 +890,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
         best->base_color = tet.base_color;
         best->emission = tet.emission;
         best->hit = true;
+        best->unlit = false;
       }
     }
   }
@@ -1641,6 +1702,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
+  if (direct_hit.hit && direct_hit.unlit && opt.aov == CaptureAov::Color)
+    return direct_hit.emission;  // Cycles splat: emission shader only
   if (!IsMaterialXAov(opt.aov)) {
     if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
     if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
@@ -1861,9 +1924,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {
-    return tlas ? OccludedTLAS(tlas, op, on, ol, omax)
-                : Occluded(scene, tris, op, on, ol, omax, direct,
-                           opt.purpose_mask, triangle_chunks);
+    return (tlas ? OccludedTLAS(tlas, op, on, ol, omax)
+                 : Occluded(scene, tris, op, on, ol, omax, direct,
+                            opt.purpose_mask, triangle_chunks)) ||
+           OccludedGsplat(direct, op, on, ol, omax);
   };
   Vec3 n = tri.n;
   if (Dot(n, ray_dir) > 0.0f) {
@@ -3092,7 +3156,14 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   const bool data_aov = opt.aov != CaptureAov::Color;
   const bool linear_color_pfm = opt.mtlx_runtime && opt.path_trace &&
       opt.output.size() >= 4 && opt.output.substr(opt.output.size()-4) == ".pfm";
-  const bool float_output = data_aov || linear_color_pfm;
+  // --gsplat-kernel cycles: .exr is scene-linear (no display transform), as
+  // in the splat-only Cycles renderer and Blender's EXR output.
+  std::string out_ext = opt.output.size() >= 4
+                            ? opt.output.substr(opt.output.size() - 4)
+                            : std::string();
+  for (char &ch : out_ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+  const bool linear_color_exr = opt.gsplat_cycles && out_ext == ".exr";
+  const bool float_output = data_aov || linear_color_pfm || linear_color_exr;
   img.bpp = float_output ? 32 : 8;
   img.format = float_output ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (float_output ? 4 : 1));

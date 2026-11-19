@@ -29,4 +29,14 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
 bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
                         const CameraFrame &camera, int height);
 
+// Mixed scenes (meshes + splats): builds the splats into direct->gsplat_* so
+// the regular CPU integrator traces them with the Cycles kernel on primary,
+// bounce and shadow rays. Returns false when the stage has no splats.
+bool AttachGSplatCyclesToDirect(const lightusd::Stage &stage, double time,
+                                bool srgb, DirectScene *direct);
+
+// True when the stage has renderable non-splat geometry (meshes, gprims,
+// curves, points), i.e. the splat-only Cycles renderer is not sufficient.
+bool StageHasNonSplatGeometry(const lightusd::Stage &stage);
+
 }  // namespace lusdr

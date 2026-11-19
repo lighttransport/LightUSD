@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "lusdr_math.hh"
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 #include "core/color-transform.hh"
 #include "lusdr_value.hh"
 #include "image-types.hh"
@@ -671,6 +673,8 @@ struct Options {
   // default; lower values bring the preview closer to a plain sRGB encode.
   float exposure{1.0f};
   bool aov_explicit{false};
+  bool ambient_explicit{false};
+  bool material_shading_explicit{false};
   bool all_render_products{false};
   std::string input;
   std::string output;
@@ -864,6 +868,7 @@ struct DirectHit {
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   bool hit{false};
+  bool unlit{false};  // emission only (Cycles Gaussian splats)
 };
 
 struct TetPrim {
@@ -937,6 +942,13 @@ struct DirectScene {
   std::vector<TetPrim> tet_prims;
   std::vector<DirectShape> shapes;
   std::unordered_set<std::string> direct_paths;
+
+  // --gsplat-kernel cycles in mixed scenes: 3D Gaussians traced with the
+  // Blender Cycles stochastic kernel (LightRT) on primary, bounce and shadow
+  // rays; radiance from the SH in gsplat_tracer (indices = lrt prim ids).
+  std::shared_ptr<lrt_gsplat_scene> gsplat_scene;
+  std::shared_ptr<lightusd::gsplat::GSplatTracer> gsplat_tracer;
+  bool gsplat_srgb{false};
 
   bool has_ellipses() const { return ellipses || !ellipse_chunks.empty(); }
   bool has_round_curves() const {

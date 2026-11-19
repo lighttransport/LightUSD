@@ -459,6 +459,27 @@ against single-chunk, GPU against CPU, and rejection of an over-budget chunk.
 These views are mostly background, so ray upload and readback dominate and
 the CPU is competitive. The GPU pays off when most rays hit splats.
 
+### Mixed scenes (meshes + splats)
+
+When the stage also has meshes or other gprims, the splats go to the regular
+CPU integrator instead of the splat-only renderer. There they are traced with
+the Cycles kernel on camera, bounce and shadow rays, as in Cycles, where
+splats are ordinary geometry. Splats occlude meshes and cast stochastic
+shadows, and their emission lights surfaces through the BSDF-sampled bounce
+ray. This path defaults to `-materialShading lightrt-bsdf` and `-ambient 0`,
+and `.exr` output is scene-linear. GPU backend flags are ignored (CPU only).
+
+Validated by `tests/gsplat/check_mixed_scene.py` against Blender 5.3 direct
+light (Lambert plane, sun, 160 splats). The comparison cancels the mesh BRDF:
+- visibility = black-splat render / no-splat render (shadows and camera-ray
+  transmittance): 1.01x Blender's noise floor, mean 0.7213 vs 0.7218.
+- emission = splat render - black-splat render (including the lit plane):
+  1.05x the noise floor, mean 0.0442 vs 0.0444.
+
+Splat-only variants (`check_cycles_compare.py variants`: SH degree 0/1/2,
+non-uniform object scale, orthographic camera, world colour) are each within
+1.03x the noise floor and 0.7% mean brightness.
+
 ## Validated benchmark — Activision Caldera maps
 
 All six maps rendered directly from their raw `.usd` (no pre-flatten), 320×180,

@@ -1968,6 +1968,7 @@ int main(int argc, char **argv) {
   // --gsplat-kernel cycles: render a splat scene with the Blender Cycles
   // kernel through LightRT (CPU, or -vk/-vkr Vulkan / -hip HIP compute under
   // the -maxVram budget, default 4 GiB). Scenes without splats fall through.
+  bool gsplat_mixed = false;
   if (opt.gsplat_cycles) {
     lightusd::Stage stage;
     lightusd::ValueClipStageLoader clip_stage_loader;
@@ -1979,7 +1980,9 @@ int main(int argc, char **argv) {
     }
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     GSplatCyclesScene splats;
-    if (BuildGSplatCyclesScene(stage, opt.timecode, &splats)) {
+    gsplat_mixed = StageHasNonSplatGeometry(stage);
+    if (!gsplat_mixed &&
+        BuildGSplatCyclesScene(stage, opt.timecode, &splats)) {
       const std::string up = stage.GetUpAxis();
       const lusdr::Axis usd_up = up == "Z"   ? lusdr::Axis::Z
                                  : up == "X" ? lusdr::Axis::X
@@ -2014,8 +2017,23 @@ int main(int argc, char **argv) {
                  ? EXIT_SUCCESS
                  : EXIT_FAILURE;
     }
-    std::cerr << "WARN: --gsplat-kernel cycles: no Gaussian splats found; "
-                 "using the default renderer.\n";
+    if (gsplat_mixed) {
+      // Meshes + splats: the CPU integrator traces the splats with the Cycles
+      // kernel on primary, bounce and shadow rays (lusdr_core.cc).
+      if (opt.vulkan || opt.vulkan_rt || opt.use_d3d || opt.hip || opt.cuda)
+        std::cerr << "WARN: --gsplat-kernel cycles with meshes renders on the "
+                     "CPU integrator; the GPU backend flag is ignored.\n";
+      opt.vulkan = opt.vulkan_rt = opt.use_d3d = opt.hip = opt.cuda = false;
+      // Cycles-like defaults: physically based BSDF with a sampled bounce
+      // (splat emission lights surfaces, as Cycles' BSDF-sampled direct
+      // light does) and no ad-hoc ambient term.
+      if (!opt.material_shading_explicit)
+        opt.material_shading = Options::MaterialShading::LightRtBsdf;
+      if (!opt.ambient_explicit) opt.ambient = 0.0f;
+    } else {
+      std::cerr << "WARN: --gsplat-kernel cycles: no Gaussian splats found; "
+                   "using the default renderer.\n";
+    }
   }
 
   // Every CPU render uses the core streaming path.

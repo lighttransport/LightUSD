@@ -151,6 +151,9 @@ void PrintUsage(const char *prog) {
       << "      cycles: Blender Cycles 3D ellipsoid + stochastic opacity via\n"
       << "      LightRT on the CPU, or -vk/-vkr (Vulkan) / -hip (HIP) within\n"
       << "      -maxVram GiB (default 4); -samples sets spp (16 if left at 1).\n"
+      << "      With meshes, the CPU integrator traces splats on camera, bounce\n"
+      << "      and shadow rays; defaults -materialShading lightrt-bsdf,\n"
+      << "      -ambient 0 and scene-linear .exr (as Blender's Cycles).\n"
       << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
@@ -625,6 +628,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
+      opt->ambient_explicit = true;
     }
     OPT_MATCH(a == "-diagnosticEmission" || a == "--diagnostic-emission") {
       opt->diagnostic_emission = true;
@@ -758,6 +762,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
+      opt->material_shading_explicit = true;
       if (mode == "legacy") {
         opt->material_shading = Options::MaterialShading::Legacy;
       } else if (mode == "lightrt-bsdf") {
