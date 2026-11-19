@@ -46,13 +46,22 @@ class GSplatTracer {
   // positions xyz, orientations (w,x,y,z), scales (linear sigma), opacities
   // [0,1], sh: (degree+1)^2 RGB per splat (nullptr = neutral grey).
   // Returns false when the transform is singular (field skipped).
+  // keep_all keeps a zero-radius placeholder for every culled splat (and for
+  // a singular field), so splat i of a field always has the same index; this
+  // keeps motion keys sampled at different times aligned.
   bool AddField(const double linear[9], const double translation[3],
                 size_t count, const float* positions, const float* orientations,
                 const float* scales, const float* opacities, int sh_degree,
-                const float* sh) {
+                const float* sh, bool keep_all = false) {
     Field field;
     if (!Invert3(linear, field.linv)) {
       skipped_ += count;
+      if (!keep_all) return false;
+      const float ident[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+      for (int k = 0; k < 9; ++k) field.linv[k] = ident[k];
+      const uint32_t fi = uint32_t(fields_.size());
+      fields_.push_back(field);
+      for (size_t i = 0; i < count; ++i) PushPlaceholder(fi);
       return false;
     }
     float fro = 0.f;
@@ -80,6 +89,7 @@ class GSplatTracer {
                            {std::fabs(s[0]), std::fabs(s[1]), std::fabs(s[2])},
                            opacities ? opacities[i] : 1.f, field.linv, fro, &g)) {
         ++skipped_;
+        if (keep_all) PushPlaceholder(field_index);
         continue;
       }
       splats_.push_back(g);
@@ -215,6 +225,14 @@ class GSplatTracer {
   }
 
  private:
+  void PushPlaceholder(uint32_t field_index) {
+    GSplatWorld g{};
+    g.radius = 0.f;  // never hit
+    splats_.push_back(g);
+    field_of_.push_back(field_index);
+    sh_of_.push_back(sh_.size());
+    sh_.insert(sh_.end(), {0.f, 0.f, 0.f});
+  }
   struct Field {
     float linv[9];
     int sh_degree = 0;

@@ -16,12 +16,13 @@ layout(std430, binding = 0) readonly buffer Nodes  { uint nodes[]; };  // 8 word
 layout(std430, binding = 1) readonly buffer Splats { uint splats[]; }; // 16 words / splat
 layout(std430, binding = 2) readonly buffer Rays   { uint rays[]; };   // 8 words / ray
 layout(std430, binding = 3) writeonly buffer Hits  { uint hits[]; };   // 4 words / hit
+layout(std430, binding = 4) readonly buffer Times  { float times[]; }; // shutter time / ray
 
 layout(push_constant) uniform PC {
     uint ray_count;
     uint seed_base;  // ray i uses seed seed_base + i
     uint node_count;
-    uint pad;
+    uint nkeys;      // motion keys per splat (records i*nkeys .. +nkeys)
 } pc;
 
 const uint NO_HIT = 0xFFFFFFFFu;
@@ -62,6 +63,14 @@ void main() {
     vec3 d = vec3(fu(rays[rb + 4u]), fu(rays[rb + 5u]), fu(rays[rb + 6u]));
     float best = fu(rays[rb + 7u]);
     uint seed = pc.seed_base + gid;
+    uint K = max(pc.nkeys, 1u);
+    // Motion: interpolate between the two keys around the ray's shutter time.
+    uint step = 0u; float ft = 0.0;
+    if (K > 1u) {
+        float f = clamp(times[gid], 0.0, 1.0) * float(K - 1u);
+        step = min(uint(f), K - 2u);
+        ft = f - float(step);
+    }
 
     vec3 inv;
     for (int k = 0; k < 3; k++) {
@@ -96,17 +105,21 @@ void main() {
             continue;
         }
         for (uint i = first; i < first + count; i++) {
-            uint sb = i * 16u;
-            vec3 mu = vec3(fu(splats[sb + 0u]), fu(splats[sb + 1u]), fu(splats[sb + 2u]));
-            float opacity = fu(splats[sb + 3u]);
-            float radius = fu(splats[sb + 13u]);
+            uint sb = (i * K + step) * 16u;
+            uint sb2 = (K > 1u) ? sb + 16u : sb;
+            #define GSV(o) mix(fu(splats[sb + (o)]), fu(splats[sb2 + (o)]), ft)
+            vec3 mu = vec3(GSV(0u), GSV(1u), GSV(2u));
+            float opacity = GSV(3u);
+            float radius = GSV(13u);
+            if (!(radius > 0.0)) continue;
             vec3 oc = o - mu;
             float b = dot(oc, d);
             float c = dot(oc, oc) - radius * radius;
             if (b * b - dd * c < 0.0) continue;
-            vec3 r0 = vec3(fu(splats[sb + 4u]), fu(splats[sb + 5u]), fu(splats[sb + 6u]));
-            vec3 r1 = vec3(fu(splats[sb + 7u]), fu(splats[sb + 8u]), fu(splats[sb + 9u]));
-            vec3 r2 = vec3(fu(splats[sb + 10u]), fu(splats[sb + 11u]), fu(splats[sb + 12u]));
+            vec3 r0 = vec3(GSV(4u), GSV(5u), GSV(6u));
+            vec3 r1 = vec3(GSV(7u), GSV(8u), GSV(9u));
+            vec3 r2 = vec3(GSV(10u), GSV(11u), GSV(12u));
+            #undef GSV
             vec3 og = vec3(dot(r0, oc), dot(r1, oc), dot(r2, oc));
             vec3 dg = vec3(dot(r0, d), dot(r1, d), dot(r2, d));
             float t = -dot(og, dg) / dot(dg, dg);

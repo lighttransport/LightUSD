@@ -411,6 +411,11 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
                         const lrt_ray *rays, uint32_t n, uint32_t seed_base,
                         uint64_t max_device_bytes, lrt_hit *out,
                         lrt_result *err);
+/* Motion-blurred scenes: times = n shutter times in [0,1] (NULL = 0.5). */
+int lrt_vk_gsplat_trace_time(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                             const lrt_ray *rays, const float *times, uint32_t n,
+                             uint32_t seed_base, uint64_t max_device_bytes,
+                             lrt_hit *out, lrt_result *err);
 
 #ifdef __cplusplus
 }

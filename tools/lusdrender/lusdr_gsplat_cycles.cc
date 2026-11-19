@@ -26,11 +26,13 @@ namespace lusdr {
 
 namespace gs = lightusd::gsplat;
 
-bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
-                            GSplatCyclesScene *scene) {
-  scene->tracer.Clear();
-  scene->bounds = Bounds();
-  scene->skipped_prims = 0;
+namespace {
+
+// Appends every Gaussian splat field at `time` to `tracer` in traversal order
+// (keep_all: one record per authored splat, culled ones as placeholders).
+void CollectGSplatFields(const lightusd::Stage &stage, double time,
+                         gs::GSplatTracer *tracer, size_t *skipped_prims,
+                         std::vector<size_t> *field_counts) {
   stage.Traverse([&](const lightusd::UsdPrim &prim) {
     const std::string &type = prim.GetTypeName();
     if (type != "ParticleField3DGaussianSplat" && type != "ParticleField")
@@ -38,12 +40,12 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
     lightusd::tydra::RenderParticleField f;
     if (!lightusd::tydra::ConvertParticleField(stage, prim, time, &f)) {
       std::cerr << "WARN: cannot read splats: " << prim.GetPath().str() << "\n";
-      ++scene->skipped_prims;
+      if (skipped_prims) ++*skipped_prims;
       return true;
     }
     if (type != "ParticleField3DGaussianSplat" &&
         f.kernel != "gaussianEllipsoid") {
-      ++scene->skipped_prims;  // surflet kernels are not 3D Gaussians
+      if (skipped_prims) ++*skipped_prims;  // surflets are not 3D Gaussians
       return true;
     }
     // USD row-vector matrix (p_w = p * M): column-vector linear part is M^T.
@@ -54,20 +56,80 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
     const int deg = std::max(0, std::min(3, f.sh_degree));
     const size_t coeffs = size_t(deg + 1) * size_t(deg + 1) * 3;
     const bool have_sh = f.sh_coefficients.size() >= f.count * coeffs;
-    if (!scene->tracer.AddField(linear, translation, f.count,
-                                f.positions.data(), f.orientations.data(),
-                                f.scales.data(), f.opacities.data(), deg,
-                                have_sh ? f.sh_coefficients.data() : nullptr))
-      ++scene->skipped_prims;
+    tracer->AddField(linear, translation, f.count, f.positions.data(),
+                     f.orientations.data(), f.scales.data(), f.opacities.data(),
+                     deg, have_sh ? f.sh_coefficients.data() : nullptr,
+                     /*keep_all=*/true);
+    if (field_counts) field_counts->push_back(f.count);
     return true;
   });
-  if (scene->tracer.empty()) return false;
-  scene->tracer.Build();
+}
+
+lrt_gsplat ToLrt(const gs::GSplatWorld &g, uint32_t id) {
+  lrt_gsplat d;
+  d.mu[0] = g.mu.x;
+  d.mu[1] = g.mu.y;
+  d.mu[2] = g.mu.z;
+  d.opacity = g.opacity;
+  std::memcpy(d.a, g.a, sizeof(d.a));
+  d.radius = g.radius;
+  d.id = id;
+  d.pad = 0;
+  return d;
+}
+
+}  // namespace
+
+bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
+                            GSplatCyclesScene *scene) {
+  scene->tracer.Clear();
+  scene->bounds = Bounds();
+  scene->skipped_prims = 0;
+  scene->motion_keys.clear();
+  scene->motion_nkeys = 1;
+  // Traversal is done by LightRT; the tracer keeps the authored splat order
+  // (no Build()) so motion keys and SH stay index-aligned.
+  CollectGSplatFields(stage, time, &scene->tracer, &scene->skipped_prims,
+                      nullptr);
+  if (scene->tracer.empty() ||
+      scene->tracer.size() == scene->tracer.skipped())
+    return false;
   scene->bounds.lo = {scene->tracer.bounds_lo()[0], scene->tracer.bounds_lo()[1],
                       scene->tracer.bounds_lo()[2]};
   scene->bounds.hi = {scene->tracer.bounds_hi()[0], scene->tracer.bounds_hi()[1],
                       scene->tracer.bounds_hi()[2]};
   scene->bounds.valid = true;
+  return true;
+}
+
+bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
+                             const std::vector<double> &times,
+                             GSplatCyclesScene *scene) {
+  const size_t n = scene->tracer.size();
+  if (times.size() < 2 || n == 0) return false;
+  const auto &center = scene->tracer.splats();
+  std::vector<lrt_gsplat> keys(times.size() * n);
+  bool moves = false;
+  for (size_t k = 0; k < times.size(); ++k) {
+    gs::GSplatTracer tk;
+    CollectGSplatFields(stage, times[k], &tk, nullptr, nullptr);
+    const bool aligned = tk.size() == n;
+    if (!aligned)
+      std::cerr << "WARN: splat count changes across the shutter; motion blur "
+                   "disabled for this step.\n";
+    for (size_t i = 0; i < n; ++i) {
+      const gs::GSplatWorld &g = aligned ? tk.splats()[i] : center[i];
+      keys[k * n + i] = ToLrt(g, uint32_t(i));
+      const gs::GSplatWorld &c = center[i];
+      if (g.mu.x != c.mu.x || g.mu.y != c.mu.y || g.mu.z != c.mu.z ||
+          g.radius != c.radius || g.opacity != c.opacity ||
+          std::memcmp(g.a, c.a, sizeof(g.a)) != 0)
+        moves = true;
+    }
+  }
+  if (!moves) return false;
+  scene->motion_keys.swap(keys);
+  scene->motion_nkeys = uint32_t(times.size());
   return true;
 }
 
@@ -136,7 +198,7 @@ class SplatBackend {
     lrt_gsplat_scene_free(scene_);
   }
 
-  bool Init(const Options &opt, const gs::GSplatTracer &tracer) {
+  bool Init(const Options &opt, const GSplatCyclesScene &scene) {
     budget_ = uint64_t((opt.max_vram_gib > 0.0 ? opt.max_vram_gib : 4.0) *
                        double(1ull << 30));
     const bool want_vk = opt.vulkan || opt.vulkan_rt;
@@ -175,26 +237,26 @@ class SplatBackend {
     if (want_hip)
       std::cerr << "WARN: built without HIP; tracing splats on the CPU.\n";
 #endif
-    const auto &src = tracer.splats();
-    std::vector<lrt_gsplat> splats(src.size());
-    for (size_t i = 0; i < src.size(); ++i) {
-      const gs::GSplatWorld &g = src[i];
-      lrt_gsplat &d = splats[i];
-      d.mu[0] = g.mu.x;
-      d.mu[1] = g.mu.y;
-      d.mu[2] = g.mu.z;
-      d.opacity = g.opacity;
-      std::memcpy(d.a, g.a, sizeof(d.a));
-      d.radius = g.radius;
-      d.id = uint32_t(i);
-      d.pad = 0;
+    const auto &src = scene.tracer.splats();
+    std::vector<lrt_gsplat> splats;
+    const uint32_t nkeys =
+        scene.motion_nkeys > 1 &&
+                scene.motion_keys.size() == size_t(scene.motion_nkeys) * src.size()
+            ? scene.motion_nkeys
+            : 1u;
+    if (nkeys == 1) {
+      splats.resize(src.size());
+      for (size_t i = 0; i < src.size(); ++i) splats[i] = ToLrt(src[i], uint32_t(i));
     }
+    const std::vector<lrt_gsplat> &keys = nkeys > 1 ? scene.motion_keys : splats;
     lrt_gsplat_build_options bo;
     std::memset(&bo, 0, sizeof(bo));
     if (gpu()) bo.max_chunk_splats = lrt_gsplat_chunk_splats_for_budget(
-                   budget_, kGpuBatch);
+                   budget_, kGpuBatch) / nkeys;
     lrt_result err = LRT_RESULT_OK;
-    scene_ = lrt_gsplat_scene_build(splats.data(), splats.size(), &bo, &err);
+    scene_ = lrt_gsplat_scene_build_motion(keys.data(), src.size(), nkeys, &bo,
+                                           &err);
+    nkeys_ = nkeys;
     if (!scene_) {
       std::cerr << "LightRT gsplat build failed (err=" << int(err) << ").\n";
       return false;
@@ -209,15 +271,18 @@ class SplatBackend {
   uint64_t budget() const { return budget_; }
 
   // Falls back to the CPU permanently if the GPU trace fails.
-  bool Trace(const std::vector<lrt_ray> &rays, uint32_t seed_base,
-             std::vector<lrt_hit> *hits) {
+  bool motion() const { return nkeys_ > 1; }
+  uint32_t nkeys() const { return nkeys_; }
+
+  bool Trace(const std::vector<lrt_ray> &rays, const float *times,
+             uint32_t seed_base, std::vector<lrt_hit> *hits) {
     hits->resize(rays.size());
     const uint32_t n = uint32_t(rays.size());
     lrt_result err = LRT_RESULT_OK;
 #ifdef HAVE_VULKAN
     if (vk_) {
-      if (lrt_vk_gsplat_trace(vk_, scene_, rays.data(), n, seed_base, budget_,
-                              hits->data(), &err) >= 0)
+      if (lrt_vk_gsplat_trace_time(vk_, scene_, rays.data(), times, n,
+                                   seed_base, budget_, hits->data(), &err) >= 0)
         return true;
       std::cerr << "WARN: Vulkan gsplat trace failed (err=" << int(err)
                 << "): " << lrt_vk_engine_last_error(vk_)
@@ -229,8 +294,8 @@ class SplatBackend {
 #endif
 #ifdef HAVE_HIP
     if (hip_) {
-      if (lrt_hip_gsplat_trace(hip_, scene_, rays.data(), n, seed_base,
-                               budget_, hits->data(), &err) >= 0)
+      if (lrt_hip_gsplat_trace_time(hip_, scene_, rays.data(), times, n,
+                                    seed_base, budget_, hits->data(), &err) >= 0)
         return true;
       std::cerr << "WARN: HIP gsplat trace failed (err=" << int(err)
                 << "): " << lrt_hip_engine_last_error(hip_)
@@ -240,7 +305,8 @@ class SplatBackend {
       name_ = "CPU";
     }
 #endif
-    lrt_gsplat_intersect1N(scene_, rays.data(), n, seed_base, hits->data());
+    lrt_gsplat_intersect1N_time(scene_, rays.data(), times, n, seed_base,
+                                hits->data());
     return true;
   }
 
@@ -258,6 +324,7 @@ class SplatBackend {
   void *hip_ = nullptr;
 #endif
   lrt_gsplat_scene *scene_ = nullptr;
+  uint32_t nkeys_ = 1;
   uint64_t budget_ = 0;
   std::string name_ = "CPU";
 };
@@ -274,13 +341,14 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
       opt.gsplat_srgb ? gs::GSplatColorSpace::SRGB : gs::GSplatColorSpace::Linear;
   SplatBackend backend;
   const auto t0 = std::chrono::steady_clock::now();
-  if (!backend.Init(opt, scene.tracer)) return false;
+  if (!backend.Init(opt, scene)) return false;
   const auto t1 = std::chrono::steady_clock::now();
   std::vector<float> rgb(size_t(w) * size_t(h) * 3, 0.f);
   // Rays are generated in (y*w + x)*spp + s order; that index is the seed,
   // so every backend (and the batch size) gives the same stochastic choices.
   const int rows = std::max(1, int(backend.batch() / (uint32_t(w) * uint32_t(spp))));
   std::vector<lrt_ray> rays;
+  std::vector<float> times;
   std::vector<lrt_hit> hits;
   const unsigned nt = std::max(1u, std::thread::hardware_concurrency());
   auto parallel_rows = [&](int y0, int y1, auto &&fn) {
@@ -297,6 +365,7 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
     const int y1 = std::min(h, y0 + rows);
     const size_t base = size_t(y0) * size_t(w) * size_t(spp);
     rays.resize(size_t(y1 - y0) * size_t(w) * size_t(spp));
+    if (backend.motion()) times.resize(rays.size());
     parallel_rows(y0, y1, [&](int y) {
       for (int x = 0; x < w; ++x)
         for (int s = 0; s < spp; ++s) {
@@ -317,9 +386,23 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
           r.dir[2] = dir.z;
           r.tmin = camera.znear / cosine;
           r.tmax = camera.zfar / cosine;
+          if (backend.motion()) {
+            // Stratified shutter time per pixel (Cramer-Patterson rotation).
+            const uint32_t px = uint32_t(y) * uint32_t(w) + uint32_t(x);
+            uint32_t h = px * 0x9e3779b1u;
+            h ^= h >> 16;
+            h *= 0x85ebca6bu;
+            h ^= h >> 13;
+            const float rot = float(h >> 8) * (1.f / 16777216.f);
+            float tm = (float(s) + 0.5f) / float(spp) + rot;
+            times[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +
+                  size_t(s) - base] = tm - std::floor(tm);
+          }
         }
     });
-    if (!backend.Trace(rays, uint32_t(base), &hits)) return false;
+    if (!backend.Trace(rays, backend.motion() ? times.data() : nullptr,
+                       uint32_t(base), &hits))
+      return false;
     parallel_rows(y0, y1, [&](int y) {
       for (int x = 0; x < w; ++x) {
         gs::Vec3 sum = {0, 0, 0};
@@ -351,6 +434,7 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
     std::cerr << "Cycles gsplat kernel (LightRT, " << backend.name() << "): "
               << scene.tracer.size() << " splat(s) in " << backend.chunks()
               << " chunk(s)";
+    if (backend.motion()) std::cerr << ", " << backend.nkeys() << " motion keys";
     if (backend.gpu())
       std::cerr << ", device budget "
                 << double(backend.budget()) / double(1ull << 30) << " GiB";

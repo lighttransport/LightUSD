@@ -2011,6 +2011,19 @@ int main(int argc, char **argv) {
         if (out_height <= 0) out_height = 540;
         camera = MakeCameraFrame(auto_opt, splats.bounds, out_height, usd_up);
       }
+      // Motion blur across the camera shutter (Cycles motion steps).
+      if (camera.shutter_close > camera.shutter_open &&
+          opt.gsplat_motion_steps > 1) {
+        std::vector<double> times(size_t(opt.gsplat_motion_steps));
+        for (size_t k = 0; k < times.size(); ++k)
+          times[k] = opt.timecode + double(camera.shutter_open) +
+                     double(camera.shutter_close - camera.shutter_open) *
+                         double(k) / double(times.size() - 1);
+        if (BuildGSplatCyclesMotion(stage, times, &splats) && opt.stats)
+          std::cerr << "Cycles gsplat motion blur: shutter ["
+                    << camera.shutter_open << ", " << camera.shutter_close
+                    << "] frames, " << times.size() << " steps\n";
+      }
       Options render_opt = opt;
       render_opt.width = cam_width;
       return RenderGSplatCycles(render_opt, splats, camera, out_height)

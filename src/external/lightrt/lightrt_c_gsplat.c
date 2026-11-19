@@ -43,6 +43,7 @@ struct lrt_gsplat_scene {
     gs_chunk *chunks;
     size_t chunk_count;
     size_t size;
+    uint32_t nkeys; /* motion keys per splat (1 = static) */
     float lo[3], hi[3];
 };
 
@@ -149,12 +150,16 @@ static int gs_widest_axis(const uint32_t *idx, size_t b, size_t e,
     return axis;
 }
 
-/* Median-split BVH over bounding spheres of idx[b,e). */
-static int gs_build_chunk(const lrt_gsplat *src, uint32_t *idx, size_t b,
+/* Median-split BVH over bounding spheres of idx[b,e). keys holds nkeys
+ * key-major arrays of ntot splats; src (the middle key) drives the splits and
+ * node bounds cover the splat's sphere at every key (linear motion between
+ * keys stays inside their union's box). */
+static int gs_build_chunk(const lrt_gsplat *src, const lrt_gsplat *keys,
+                          size_t ntot, uint32_t nkeys, uint32_t *idx, size_t b,
                           size_t e, uint32_t leaf, gs_chunk *c) {
     const size_t n = e - b;
     c->splat_count = (uint32_t)n;
-    c->splats = (lrt_gsplat *)malloc((n ? n : 1) * sizeof(lrt_gsplat));
+    c->splats = (lrt_gsplat *)malloc((n ? n : 1) * nkeys * sizeof(lrt_gsplat));
     size_t cap = n / leaf * 2 + 3;
     c->nodes = (gs_node *)malloc(cap * sizeof(gs_node));
     if (!c->splats || !c->nodes) return 0;
@@ -170,13 +175,14 @@ static int gs_build_chunk(const lrt_gsplat *src, uint32_t *idx, size_t b,
             nd->lo[k] = INFINITY;
             nd->hi[k] = -INFINITY;
         }
-        for (uint32_t i = it.begin; i < it.end; ++i) {
-            const lrt_gsplat *g = &src[idx[i]];
-            for (int k = 0; k < 3; ++k) {
-                if (g->mu[k] - g->radius < nd->lo[k]) nd->lo[k] = g->mu[k] - g->radius;
-                if (g->mu[k] + g->radius > nd->hi[k]) nd->hi[k] = g->mu[k] + g->radius;
+        for (uint32_t i = it.begin; i < it.end; ++i)
+            for (uint32_t key = 0; key < nkeys; ++key) {
+                const lrt_gsplat *g = &keys[(size_t)key * ntot + idx[i]];
+                for (int k = 0; k < 3; ++k) {
+                    if (g->mu[k] - g->radius < nd->lo[k]) nd->lo[k] = g->mu[k] - g->radius;
+                    if (g->mu[k] + g->radius > nd->hi[k]) nd->hi[k] = g->mu[k] + g->radius;
+                }
             }
-        }
         const uint32_t cnt = it.end - it.begin;
         if (cnt <= leaf || sp + 2 > 128) {
             nd->first = it.begin - (uint32_t)b;
@@ -200,14 +206,22 @@ static int gs_build_chunk(const lrt_gsplat *src, uint32_t *idx, size_t b,
         nn += 2;
     }
     c->node_count = nn;
-    for (size_t i = 0; i < n; ++i) c->splats[i] = src[idx[b + i]];
+    for (size_t i = 0; i < n; ++i)
+        for (uint32_t key = 0; key < nkeys; ++key)
+            c->splats[i * nkeys + key] = keys[(size_t)key * ntot + idx[b + i]];
     return 1;
 }
 
 lrt_gsplat_scene *lrt_gsplat_scene_build(const lrt_gsplat *splats, size_t n,
                                          const lrt_gsplat_build_options *opts,
                                          lrt_result *err) {
-    if ((!splats && n) || n > 0xfffffffeu) {
+    return lrt_gsplat_scene_build_motion(splats, n, 1, opts, err);
+}
+
+lrt_gsplat_scene *lrt_gsplat_scene_build_motion(
+    const lrt_gsplat *keys, size_t n, uint32_t nkeys,
+    const lrt_gsplat_build_options *opts, lrt_result *err) {
+    if ((!keys && n) || n > 0xfffffffeu || nkeys < 1 || nkeys > 64) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return NULL;
     }
@@ -215,24 +229,34 @@ lrt_gsplat_scene *lrt_gsplat_scene_build(const lrt_gsplat *splats, size_t n,
     if (leaf > 8u) leaf = 8u;
     size_t cap = opts && opts->max_chunk_splats ? opts->max_chunk_splats : n;
     if (cap < 1) cap = 1;
+    const lrt_gsplat *splats = keys + (size_t)(nkeys / 2) * n; /* split key */
     lrt_gsplat_scene *s = (lrt_gsplat_scene *)calloc(1, sizeof(*s));
+    if (s) s->nkeys = nkeys;
     uint32_t *idx = (uint32_t *)malloc((n ? n : 1) * sizeof(uint32_t));
     if (!s || !idx) goto oom;
     for (int k = 0; k < 3; ++k) {
         s->lo[k] = INFINITY;
         s->hi[k] = -INFINITY;
     }
-    /* Drop never-hit splats up front. */
+    /* Drop never-hit splats up front: zero radius at every key, or a
+     * non-finite center at any key. */
     size_t m = 0;
     for (size_t i = 0; i < n; ++i) {
-        const lrt_gsplat *g = &splats[i];
-        if (!(g->radius > 0.f) || !isfinite(g->mu[0]) || !isfinite(g->mu[1]) ||
-            !isfinite(g->mu[2]))
-            continue;
+        int any = 0, finite = 1;
+        for (uint32_t key = 0; key < nkeys; ++key) {
+            const lrt_gsplat *g = &keys[(size_t)key * n + i];
+            if (g->radius > 0.f) any = 1;
+            if (!isfinite(g->mu[0]) || !isfinite(g->mu[1]) || !isfinite(g->mu[2]))
+                finite = 0;
+        }
+        if (!any || !finite) continue;
         idx[m++] = (uint32_t)i;
-        for (int k = 0; k < 3; ++k) {
-            if (g->mu[k] - g->radius < s->lo[k]) s->lo[k] = g->mu[k] - g->radius;
-            if (g->mu[k] + g->radius > s->hi[k]) s->hi[k] = g->mu[k] + g->radius;
+        for (uint32_t key = 0; key < nkeys; ++key) {
+            const lrt_gsplat *g = &keys[(size_t)key * n + i];
+            for (int k = 0; k < 3; ++k) {
+                if (g->mu[k] - g->radius < s->lo[k]) s->lo[k] = g->mu[k] - g->radius;
+                if (g->mu[k] + g->radius > s->hi[k]) s->hi[k] = g->mu[k] + g->radius;
+            }
         }
     }
     s->size = m;
@@ -251,7 +275,8 @@ lrt_gsplat_scene *lrt_gsplat_scene_build(const lrt_gsplat *splats, size_t n,
         while (qn) {
             seg sg = q[--qn];
             if (sg.parts <= 1 || sg.e - sg.b <= cap) {
-                if (!gs_build_chunk(splats, idx, sg.b, sg.e, leaf, &s->chunks[out++])) {
+                if (!gs_build_chunk(splats, keys, n, nkeys, idx, sg.b, sg.e, leaf,
+                                    &s->chunks[out++])) {
                     free(q);
                     s->chunk_count = out;
                     goto oom;
@@ -288,6 +313,9 @@ void lrt_gsplat_scene_free(lrt_gsplat_scene *s) {
 }
 
 size_t lrt_gsplat_scene_size(const lrt_gsplat_scene *s) { return s ? s->size : 0; }
+uint32_t lrt_gsplat_scene_key_count(const lrt_gsplat_scene *s) {
+    return s ? s->nkeys : 1u;
+}
 size_t lrt_gsplat_scene_chunk_count(const lrt_gsplat_scene *s) {
     return s ? s->chunk_count : 0;
 }
@@ -327,8 +355,32 @@ static int gs_box(const gs_node *nd, const float o[3], const float inv[3],
 }
 
 /* Trace one chunk, tightening *best_t; returns 1 if a closer hit was found. */
-static int gs_trace_chunk(const gs_chunk *c, const lrt_ray *r, uint32_t seed,
-                          float *best_t, lrt_hit *hit) {
+/* Splat i of chunk c at shutter time in [0,1]: linear interpolation between
+ * the two neighbouring motion keys (Cycles motion_gsplat interpolates its
+ * attributes linearly per step as well). */
+static const lrt_gsplat *gs_at_time(const gs_chunk *c, uint32_t nkeys,
+                                    uint32_t i, float time, lrt_gsplat *tmp) {
+    const lrt_gsplat *k0 = &c->splats[(size_t)i * nkeys];
+    if (nkeys == 1) return k0;
+    float f = time * (float)(nkeys - 1);
+    if (!(f > 0.f)) f = 0.f;
+    if (f > (float)(nkeys - 1)) f = (float)(nkeys - 1);
+    uint32_t step = (uint32_t)f;
+    if (step > nkeys - 2) step = nkeys - 2;
+    const float t = f - (float)step, u = 1.f - t;
+    const lrt_gsplat *a = k0 + step, *b = k0 + step + 1;
+    for (int k = 0; k < 3; ++k) tmp->mu[k] = a->mu[k] * u + b->mu[k] * t;
+    for (int k = 0; k < 9; ++k) tmp->a[k] = a->a[k] * u + b->a[k] * t;
+    tmp->opacity = a->opacity * u + b->opacity * t;
+    tmp->radius = a->radius * u + b->radius * t;
+    tmp->id = a->id;
+    tmp->pad = 0;
+    return tmp;
+}
+
+static int gs_trace_chunk(const gs_chunk *c, uint32_t nkeys, float time,
+                          const lrt_ray *r, uint32_t seed, float *best_t,
+                          lrt_hit *hit) {
     if (!c->node_count || !c->splat_count) return 0;
     const float *o = r->org, *d = r->dir;
     float inv[3];
@@ -368,7 +420,9 @@ static int gs_trace_chunk(const gs_chunk *c, const lrt_ray *r, uint32_t seed,
             continue;
         }
         for (uint32_t i = nd->first; i < nd->first + nd->count; ++i) {
-            const lrt_gsplat *g = &c->splats[i];
+            lrt_gsplat tmp;
+            const lrt_gsplat *g = gs_at_time(c, nkeys, i, time, &tmp);
+            if (!(g->radius > 0.f)) continue;
             const float oc[3] = {o[0] - g->mu[0], o[1] - g->mu[1], o[2] - g->mu[2]};
             const float b = oc[0] * d[0] + oc[1] * d[1] + oc[2] * d[2];
             const float cc = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] -
@@ -403,6 +457,11 @@ static int gs_trace_chunk(const gs_chunk *c, const lrt_ray *r, uint32_t seed,
 
 int lrt_gsplat_intersect1(const lrt_gsplat_scene *s, const lrt_ray *ray,
                           uint32_t seed, lrt_hit *hit) {
+    return lrt_gsplat_intersect1_time(s, ray, 0.5f, seed, hit);
+}
+
+int lrt_gsplat_intersect1_time(const lrt_gsplat_scene *s, const lrt_ray *ray,
+                               float time, uint32_t seed, lrt_hit *hit) {
     hit->t = 0.f;
     hit->u = hit->v = 0.f;
     hit->prim_id = LRT_TRI_NO_HIT;
@@ -410,13 +469,15 @@ int lrt_gsplat_intersect1(const lrt_gsplat_scene *s, const lrt_ray *ray,
     float best = ray->tmax;
     int found = 0;
     for (size_t k = 0; k < s->chunk_count; ++k)
-        found |= gs_trace_chunk(&s->chunks[k], ray, seed, &best, hit);
+        found |= gs_trace_chunk(&s->chunks[k], s->nkeys, time, ray, seed, &best,
+                                hit);
     return found;
 }
 
 typedef struct gs_job {
     const lrt_gsplat_scene *s;
     const lrt_ray *rays;
+    const float *times;
     lrt_hit *out;
     uint32_t n, seed_base;
 #if LRT_GS_HAS_THREADS
@@ -441,8 +502,9 @@ static int gs_worker(void *p) {
         if (b >= j->n) break;
         uint32_t e = b + 256u < j->n ? b + 256u : j->n;
         for (uint32_t i = b; i < e; ++i)
-            local += lrt_gsplat_intersect1(j->s, &j->rays[i], j->seed_base + i,
-                                           &j->out[i]);
+            local += lrt_gsplat_intersect1_time(
+                j->s, &j->rays[i], j->times ? j->times[i] : 0.5f,
+                j->seed_base + i, &j->out[i]);
     }
 #if LRT_GS_HAS_THREADS
     atomic_fetch_add(&j->hits, local);
@@ -467,10 +529,17 @@ static unsigned gs_threads(void) {
 
 int lrt_gsplat_intersect1N(const lrt_gsplat_scene *s, const lrt_ray *rays,
                            uint32_t n, uint32_t seed_base, lrt_hit *out) {
+    return lrt_gsplat_intersect1N_time(s, rays, NULL, n, seed_base, out);
+}
+
+int lrt_gsplat_intersect1N_time(const lrt_gsplat_scene *s, const lrt_ray *rays,
+                                const float *times, uint32_t n,
+                                uint32_t seed_base, lrt_hit *out) {
     gs_job job;
     memset(&job, 0, sizeof(job));
     job.s = s;
     job.rays = rays;
+    job.times = times;
     job.out = out;
     job.n = n;
     job.seed_base = seed_base;

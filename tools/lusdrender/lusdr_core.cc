@@ -4125,6 +4125,8 @@ bool FindCoreCameraFrameRecursive(const lightusd::Stage &stage,
       frame->znear = std::max(1.0e-5f, znear);
       frame->zfar = std::max(frame->znear, zfar);
       frame->ortho = (proj == "orthographic");
+      frame->shutter_open = ReadCamFloatCore(prim, "shutter:open", 0.0f);
+      frame->shutter_close = ReadCamFloatCore(prim, "shutter:close", 0.0f);
       if (aspect) *aspect = hap / std::max(1.0e-6f, vap);
       return true;
     }

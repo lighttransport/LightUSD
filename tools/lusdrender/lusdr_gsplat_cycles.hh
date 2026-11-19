@@ -5,15 +5,22 @@
 // the CPU with src/tydra/gsplat-kernel.hh.
 #pragma once
 
+#include <vector>
+
+#include "lightrt_c_gsplat.h"
 #include "lusdr_context.hh"
 #include "tydra/gsplat-tracer.hh"
 
 namespace lusdr {
 
 struct GSplatCyclesScene {
-  lightusd::gsplat::GSplatTracer tracer;
+  lightusd::gsplat::GSplatTracer tracer;  // splats at the render time + SH
   Bounds bounds;
   size_t skipped_prims = 0;  // non-Gaussian kernels / unreadable prims
+  // Motion blur: motion_nkeys key-major arrays of tracer.size() world splats
+  // across the shutter (empty / 1 = static).
+  std::vector<lrt_gsplat> motion_keys;
+  uint32_t motion_nkeys = 1;
 };
 
 // Collects every ParticleField3DGaussianSplat (and ParticleField with a
@@ -21,6 +28,15 @@ struct GSplatCyclesScene {
 // Returns false when the stage contains no renderable splats.
 bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
                             GSplatCyclesScene *scene);
+
+// Samples the splats at `times` (shutter open .. close, ascending) into
+// scene->motion_keys, like Cycles' motion steps: position, orientation, scale,
+// opacity and the object transform are evaluated per step. Fields whose splat
+// count changes across the shutter stay static. Returns false if no splat
+// moves (scene left static).
+bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
+                             const std::vector<double> &times,
+                             GSplatCyclesScene *scene);
 
 // Renders emission-only splats (Cycles' default splat shader) with jittered
 // primary rays and writes opt.output (8-bit sRGB-encoded, like Blender's

@@ -14,8 +14,9 @@ roundtrip: create splats natively in Blender (blender_make_and_export.py),
          re-imported PLY, all against Blender's native render. Each must be
          within 1.1x the noise floor in MAE and within 1% in mean brightness.
 variants: like roundtrip (USDA only) for SH degrees 0/1/2, a non-uniform
-         object scale, an orthographic camera and a coloured world background
-         (lusdrender -bg); each within 1.1x the noise floor and 1% mean.
+         object scale, an orthographic camera, a coloured world background
+         (lusdrender -bg) and motion blur (animated object, camera shutter);
+         each within 1.1x the noise floor and 1% mean.
 Exit 77 (skip) when Blender or Pillow is unavailable.
 
 --backend vk|hip traces through the LightRT Vulkan / HIP splat kernel (skips
@@ -189,6 +190,8 @@ VARIANTS = [
     ("nonuniform", ["--scale", "1.6,0.7,1.1"], []),
     ("ortho", ["--ortho"], []),
     ("world", ["--world", "0.20,0.35,0.60"], ["-bg", "0.20,0.35,0.60"]),
+    # Animated object, Cycles motion blur (shutter 0.5, centred on frame 1).
+    ("motion", ["--motion"], ["-timecode", "1"]),
 ]
 
 

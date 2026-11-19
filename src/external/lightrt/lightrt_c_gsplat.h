@@ -83,17 +83,29 @@ size_t lrt_gsplat_chunk_splats_for_budget(uint64_t budget_bytes,
 lrt_gsplat_scene *lrt_gsplat_scene_build(const lrt_gsplat *splats, size_t n,
                                          const lrt_gsplat_build_options *opts,
                                          lrt_result *err);
+/* Motion blur: nkeys (1..64) key-major arrays of n splats, keys[k*n + i] =
+ * splat i at shutter time k/(nkeys-1); every key must carry the same id for a
+ * splat. A ray at time in [0,1] sees each splat linearly interpolated (center,
+ * opacity, A, radius) between its two neighbouring keys, like Cycles' motion
+ * Gaussian splats. Node bounds cover all keys. nkeys == 1 is
+ * lrt_gsplat_scene_build. */
+lrt_gsplat_scene *lrt_gsplat_scene_build_motion(
+    const lrt_gsplat *keys, size_t n, uint32_t nkeys,
+    const lrt_gsplat_build_options *opts, lrt_result *err);
 void lrt_gsplat_scene_free(lrt_gsplat_scene *s);
 
 size_t lrt_gsplat_scene_size(const lrt_gsplat_scene *s);
 size_t lrt_gsplat_scene_chunk_count(const lrt_gsplat_scene *s);
+uint32_t lrt_gsplat_scene_key_count(const lrt_gsplat_scene *s);
 /* World bounds of the visible support (center +- radius). */
 void lrt_gsplat_scene_bounds(const lrt_gsplat_scene *s, float lo[3],
                              float hi[3]);
 
 /* Raw GPU image of chunk k: nodes = 8 words each (lo.xyz, hi.xyz as float,
  * then first, count; count == 0 => inner node, children first and first + 1),
- * splats = lrt_gsplat in leaf order. Root is node 0. */
+ * splats = lrt_gsplat in leaf order, key_count records per splat (splat i's
+ * keys at [i*key_count, (i+1)*key_count)); splat_count counts splats. Root is
+ * node 0. */
 void lrt_gsplat_scene_chunk(const lrt_gsplat_scene *s, size_t k,
                             const uint32_t **nodes, uint32_t *node_count,
                             const lrt_gsplat **splats, uint32_t *splat_count);
@@ -104,9 +116,18 @@ void lrt_gsplat_scene_chunk(const lrt_gsplat_scene *s, size_t k,
 int lrt_gsplat_intersect1(const lrt_gsplat_scene *s, const lrt_ray *ray,
                           uint32_t seed, lrt_hit *hit);
 
+/* As lrt_gsplat_intersect1 for a ray at shutter time in [0,1] (motion scenes;
+ * ignored when key_count == 1). lrt_gsplat_intersect1 uses time 0.5. */
+int lrt_gsplat_intersect1_time(const lrt_gsplat_scene *s, const lrt_ray *ray,
+                               float time, uint32_t seed, lrt_hit *hit);
+
 /* n rays, ray i uses seed seed_base + i. Multithreaded. Returns hit count. */
 int lrt_gsplat_intersect1N(const lrt_gsplat_scene *s, const lrt_ray *rays,
                            uint32_t n, uint32_t seed_base, lrt_hit *out);
+/* times = n shutter times (NULL = 0.5 each). */
+int lrt_gsplat_intersect1N_time(const lrt_gsplat_scene *s, const lrt_ray *rays,
+                                const float *times, uint32_t n,
+                                uint32_t seed_base, lrt_hit *out);
 
 #ifdef __cplusplus
 }

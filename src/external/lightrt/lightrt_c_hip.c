@@ -374,6 +374,14 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
                          const lrt_ray *rays, uint32_t n, uint32_t seed_base,
                          uint64_t max_device_bytes, lrt_hit *out,
                          lrt_result *err) {
+    return lrt_hip_gsplat_trace_time(e, s, rays, NULL, n, seed_base,
+                                     max_device_bytes, out, err);
+}
+
+int lrt_hip_gsplat_trace_time(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
+                              const lrt_ray *rays, const float *times, uint32_t n,
+                              uint32_t seed_base, uint64_t max_device_bytes,
+                              lrt_hit *out, lrt_result *err) {
     if (!e || !s || (n && (!rays || !out))) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
@@ -392,18 +400,19 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
         return -1;
     }
     const size_t nchunks = lrt_gsplat_scene_chunk_count(s);
+    const uint32_t nkeys = lrt_gsplat_scene_key_count(s);
     uint64_t max_chunk = 0;
     for (size_t k = 0; k < nchunks; k++) {
         const uint32_t *nodes;
         const lrt_gsplat *sp;
         uint32_t nn, ns;
         lrt_gsplat_scene_chunk(s, k, &nodes, &nn, &sp, &ns);
-        uint64_t b = (uint64_t)nn * 32u + (uint64_t)ns * sizeof(lrt_gsplat);
+        uint64_t b = (uint64_t)nn * 32u + (uint64_t)ns * nkeys * sizeof(lrt_gsplat);
         if (b > max_chunk) max_chunk = b;
     }
     uint32_t tile = hip_ray_tile_size();
     if (tile > n) tile = n;
-    const uint64_t per_ray = sizeof(lrt_ray) + sizeof(lrt_hit);
+    const uint64_t per_ray = sizeof(lrt_ray) + sizeof(lrt_hit) + sizeof(float);
     if (max_device_bytes) {
         if (max_chunk + per_ray * 4096u > max_device_bytes) {
             hip_set_err(e, "gsplat chunk exceeds the device memory budget");
@@ -416,10 +425,12 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
     lrt_ray *work = (lrt_ray *)malloc((size_t)tile * sizeof(lrt_ray));
     lrt_hit *th = (lrt_hit *)malloc((size_t)tile * sizeof(lrt_hit));
     float *best = (float *)malloc((size_t)n * sizeof(float));
-    hipDeviceptr_t d_rays = NULL, d_hits = NULL, d_nodes = NULL;
+    hipDeviceptr_t d_rays = NULL, d_hits = NULL, d_nodes = NULL, d_times = NULL;
     int ok = work && th && best &&
              hip_ok(hipMalloc(&d_rays, (size_t)tile * sizeof(lrt_ray))) &&
              hip_ok(hipMalloc(&d_hits, (size_t)tile * sizeof(lrt_hit))) &&
+             (!times || nkeys < 2 ||
+              hip_ok(hipMalloc(&d_times, (size_t)tile * sizeof(float)))) &&
              /* One allocation holds a chunk's nodes followed by its splats. */
              hip_ok(hipMalloc(&d_nodes, (size_t)max_chunk));
     if (!ok) hip_set_err(e, "hipMalloc(gsplat) failed");
@@ -431,7 +442,7 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
         uint32_t nn, ns;
         lrt_gsplat_scene_chunk(s, k, &nodes, &nn, &sp, &ns);
         if (!nn || !ns) continue;
-        const size_t nb = (size_t)nn * 32u, sb = (size_t)ns * sizeof(lrt_gsplat);
+        const size_t nb = (size_t)nn * 32u, sb = (size_t)ns * nkeys * sizeof(lrt_gsplat);
         hipDeviceptr_t d_sp = (hipDeviceptr_t)((char *)d_nodes + nb);
         if (!hip_ok(hipMemcpyHtoD(d_nodes, nodes, nb)) ||
             !hip_ok(hipMemcpyHtoD(d_sp, sp, sb))) {
@@ -446,9 +457,12 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
                 work[i].tmax = best[off + i];
             }
             uint32_t ray_count = cnt, sb0 = seed_base + off, node_count = nn;
+            uint32_t kkeys = nkeys;
             void *params[] = {&d_nodes, &d_sp, &d_rays, &d_hits,
-                              &ray_count, &sb0, &node_count};
+                              &ray_count, &sb0, &node_count, &d_times, &kkeys};
             ok = hip_ok(hipMemcpyHtoD(d_rays, work, (size_t)cnt * sizeof(lrt_ray))) &&
+                 (!d_times || hip_ok(hipMemcpyHtoD(d_times, times + off,
+                                                   (size_t)cnt * sizeof(float)))) &&
                  hip_ok(hipModuleLaunchKernel(e->gsplat_kernel, (cnt + 63u) / 64u, 1, 1,
                                               64, 1, 1, 0, NULL, params, NULL)) &&
                  hip_ok(hipDeviceSynchronize()) &&
@@ -467,6 +481,7 @@ int lrt_hip_gsplat_trace(lrt_hip_engine *e, const struct lrt_gsplat_scene *s,
     if (d_rays) hipFree(d_rays);
     if (d_hits) hipFree(d_hits);
     if (d_nodes) hipFree(d_nodes);
+    if (d_times) hipFree(d_times);
     free(work);
     free(th);
     free(best);

@@ -155,6 +155,8 @@ void PrintUsage(const char *prog) {
       << "      and shadow rays; defaults -materialShading lightrt-bsdf,\n"
       << "      -ambient 0 and scene-linear .exr (as Blender's Cycles).\n"
       << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
+      << "  --gsplat-motion-steps N  Motion-blur samples per splat across the camera\n"
+      << "      shutter (shutter:open/close), as Cycles motion steps (default 3, 1 = off).\n"
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
@@ -968,6 +970,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
         return false;
       }
+    }
+    OPT_MATCH(a == "-gsplatMotionSteps" || a == "--gsplat-motion-steps") {
+      const char *v = need_value(a.c_str());
+      int n = 0;
+      if (!v || !ParseIntStrict(v, &n) || n < 1 || n > 64) {
+        std::cerr << "--gsplat-motion-steps expects 1..64.\n";
+        return false;
+      }
+      opt->gsplat_motion_steps = n;
     }
     OPT_MATCH(a == "-gsplatKernel" || a == "--gsplat-kernel") {
       const char *v = need_value(a.c_str());

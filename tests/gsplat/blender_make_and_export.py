@@ -3,12 +3,16 @@
 
 blender -b --factory-startup --python blender_make_and_export.py -- \
     OUT_DIR [--count N] [--seed S] [--width W] [--height H] [--spp N]
-    [--degree 0-3] [--scale X,Y,Z] [--ortho] [--world R,G,B] [--exr]
+    [--degree 0-3] [--scale X,Y,Z] [--ortho] [--world R,G,B] [--motion] [--exr]
 
 Variants: --degree sets the SH degree; --scale gives a non-uniform object
 scale (not representable in a transform-free PLY, so the PLY outputs and
 ref_from_ply are skipped); --ortho uses an orthographic camera; --world sets
-a constant world background colour (strength 1).
+a constant world background colour (strength 1); --motion animates the
+splat object (location, rotation, scale; linear keys around frame 1) and
+renders frame 1 with Cycles motion blur (shutter 0.5 frames, centred). The
+USDA then carries xformOp:transform time samples over the shutter and the
+camera's shutter:open/close (PLY outputs are skipped).
 
 Writes into OUT_DIR:
   splats.usda        OpenUSD ParticleField3DGaussianSplat + camera (USD friendly)
@@ -44,6 +48,7 @@ ap.add_argument("--degree", type=int, default=3, choices=[0, 1, 2, 3])
 ap.add_argument("--scale", default="1.3,1.3,1.3")
 ap.add_argument("--ortho", action="store_true")
 ap.add_argument("--world", default="0,0,0")
+ap.add_argument("--motion", action="store_true")
 ap.add_argument("--exr", action="store_true",
                 help="write references as 32-bit scene-linear EXR (no view transform)")
 a = ap.parse_args(argv)
@@ -51,7 +56,8 @@ os.makedirs(a.out, exist_ok=True)
 DEGREE = a.degree
 OBJ_SCALE = tuple(float(v) for v in a.scale.split(","))
 WORLD = tuple(float(v) for v in a.world.split(","))
-UNIFORM = max(OBJ_SCALE) - min(OBJ_SCALE) < 1e-9
+UNIFORM = max(OBJ_SCALE) - min(OBJ_SCALE) < 1e-9 and not a.motion
+SHUTTER = 0.5  # frames, centred on the frame
 NCOEF = (DEGREE + 1) ** 2
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -106,6 +112,28 @@ scene.collection.objects.link(obj)
 obj.location = (0.1, -0.05, 0.2)
 obj.rotation_euler = (0.4, -0.3, 0.7)
 obj.scale = OBJ_SCALE
+if a.motion:
+    base_loc = obj.location.copy()
+    base_rot = obj.rotation_euler.copy()
+    base_scl = obj.scale.copy()
+    for frame, sgn in ((0, -1.0), (1, 0.0), (2, 1.0)):
+        obj.location = base_loc + Vector((0.30, 0.12, -0.05)) * sgn
+        obj.rotation_euler = (base_rot[0], base_rot[1] + 0.15 * sgn,
+                              base_rot[2] + 0.6 * sgn)
+        obj.scale = base_scl * (1.0 + 0.2 * sgn)
+        obj.keyframe_insert("location", frame=frame)
+        obj.keyframe_insert("rotation_euler", frame=frame)
+        obj.keyframe_insert("scale", frame=frame)
+    act = obj.animation_data.action
+    curves = list(getattr(act, "fcurves", []) or [])
+    for layer in getattr(act, "layers", []):  # Blender 5.x layered actions
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                curves += list(bag.fcurves)
+    for fc in curves:
+        for kp in fc.keyframe_points:
+            kp.interpolation = "LINEAR"
+    scene.frame_set(1)
 
 cam_data = bpy.data.cameras.new("Cam")
 cam_data.lens = 40.0
@@ -156,12 +184,30 @@ else:
         '        uniform token[] xformOpOrder = ["xformOp:transform"]\n    }\n'
     ) % (cam_data.lens, cam_data.sensor_width,
          cam_data.sensor_width * a.height / a.width, usd_matrix(cam.matrix_world))
-header = '#usda 1.0\n(\n    defaultPrim = "World"\n    metersPerUnit = 1\n    upAxis = "Z"\n)\n\n'
+if a.motion:
+    cam_block = cam_block.replace(
+        "        float2 clippingRange",
+        "        double shutter:open = %r\n        double shutter:close = %r\n"
+        "        float2 clippingRange" % (-SHUTTER / 2, SHUTTER / 2), 1)
+header = ('#usda 1.0\n(\n    defaultPrim = "World"\n    metersPerUnit = 1\n'
+          + ('    startTimeCode = 0\n    endTimeCode = 2\n' if a.motion else '')
+          + '    upAxis = "Z"\n)\n\n')
 
 with open(os.path.join(a.out, "splats.usda"), "w") as f:
     f.write(header + 'def Xform "World"\n{\n' + cam_block)
     f.write('    def ParticleField3DGaussianSplat "Splats"\n    {\n')
-    f.write("        matrix4d xformOp:transform = %s\n" % usd_matrix(M))
+    if a.motion:
+        samples = []
+        for j in range(17):
+            sub = -SHUTTER / 2 + SHUTTER * j / 16.0
+            fr = int(math.floor(1 + sub))
+            scene.frame_set(fr, subframe=(1 + sub) - fr)
+            samples.append("%r: %s" % (1 + sub, usd_matrix(obj.matrix_world)))
+        scene.frame_set(1)
+        f.write("        matrix4d xformOp:transform.timeSamples = {\n            %s\n        }\n"
+                % ",\n            ".join(samples))
+    else:
+        f.write("        matrix4d xformOp:transform = %s\n" % usd_matrix(M))
     f.write('        uniform token[] xformOpOrder = ["xformOp:transform"]\n')
     f.write("        point3f[] positions = [%s]\n" % ", ".join(f3(p) for p in pos))
     f.write("        quatf[] orientations = [%s]\n" % ", ".join("(%r, %r, %r, %r)" % q for q in rot))
@@ -251,7 +297,8 @@ if UNIFORM:
         f.write(header + 'def Xform "World"\n{\n' + cam_block)
         f.write('    def "Splats" (\n        references = @./splats.ply@\n    )\n    {\n    }\n}\n')
 
-bpy.ops.wm.usd_export(filepath=os.path.join(a.out, "blender_native.usda"))
+if not a.motion:
+    bpy.ops.wm.usd_export(filepath=os.path.join(a.out, "blender_native.usda"))
 
 # ---- Cycles references ------------------------------------------------------
 world = bpy.data.worlds.new("W")
@@ -261,6 +308,12 @@ bg.inputs[0].default_value = WORLD + (1.0,)
 bg.inputs[1].default_value = 1.0 if any(WORLD) else 0.0
 scene.world = world
 scene.render.engine = "CYCLES"
+if a.motion:
+    scene.render.use_motion_blur = True
+    scene.render.motion_blur_shutter = SHUTTER
+    scene.render.motion_blur_position = "CENTER"
+    obj.cycles.motion_steps = 4   # 2^4 + 1 transform samples over the shutter
+    scene.frame_set(1)
 scene.cycles.device = "CPU"
 scene.cycles.samples = a.spp
 scene.cycles.use_denoising = False

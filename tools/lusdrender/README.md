@@ -477,8 +477,26 @@ light (Lambert plane, sun, 160 splats). The comparison cancels the mesh BRDF:
   1.05x the noise floor, mean 0.0442 vs 0.0444.
 
 Splat-only variants (`check_cycles_compare.py variants`: SH degree 0/1/2,
-non-uniform object scale, orthographic camera, world colour) are each within
-1.03x the noise floor and 0.7% mean brightness.
+non-uniform object scale, orthographic camera, world colour, motion blur) are
+each within 1.07x the noise floor and 0.7% mean brightness.
+
+### Motion blur
+
+When the camera's `shutter:open` < `shutter:close` (frames, relative to
+`-timecode`), each ParticleField is sampled at `--gsplat-motion-steps` times
+(default 3, as Cycles motion steps) across the shutter. Every sample includes
+positions, orientations, scales, opacities and the object transform. Each ray
+gets a stratified shutter time, and LightRT interpolates every splat linearly
+between its two neighbouring keys (`lrt_gsplat_scene_build_motion`), on the
+CPU, Vulkan and HIP. A splat whose count changes across the shutter stays
+static.
+
+Against Blender 5.3 (animated object, shutter 0.5, 17 exported transform
+samples), the result is 1.07x the noise floor with 3 or 9 steps on all three
+backends. With motion blur off it is 2.36x.
+
+Not yet covered: camera motion; SH/DC colour motion (the render-time colour
+is used); motion blur in mixed mesh scenes and in lusdview.
 
 ## Validated benchmark — Activision Caldera maps
 

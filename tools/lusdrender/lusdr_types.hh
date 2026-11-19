@@ -610,6 +610,9 @@ struct CameraFrame {
   float znear{0.001f};
   float zfar{1.0e30f};
   bool ortho{false};
+  // UsdGeomCamera shutter:open/close, in frames relative to the render time
+  // (open < close enables motion blur where supported).
+  float shutter_open{0.0f}, shutter_close{0.0f};
 };
 
 enum class CaptureAov {
@@ -734,6 +737,9 @@ struct Options {
   bool gsplat_cycles{false};
   // Treat splat SH radiance as sRGB-encoded (Blender convention). USD
   // specifies linear radiance, so this is off by default.
+  // --gsplat-motion-steps: shutter samples per splat for motion blur (Cycles
+  // motion steps); 1 disables. Active when the camera shutter is open.
+  int gsplat_motion_steps{3};
   bool gsplat_srgb{false};
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server

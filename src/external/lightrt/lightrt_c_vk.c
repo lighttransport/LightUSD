@@ -3463,12 +3463,12 @@ typedef struct gsplat_push {
     uint32_t ray_count;
     uint32_t seed_base;
     uint32_t node_count;
-    uint32_t pad;
+    uint32_t nkeys;
 } gsplat_push;
 
 static vk_pipeline *gsplat_get_pipeline(lrt_vk_engine *e) {
     if (e->gsplat_pipe.valid) return &e->gsplat_pipe;
-    if (!vk_pipeline_build(e, trace_gsplat_spv, sizeof(trace_gsplat_spv), 4, NULL,
+    if (!vk_pipeline_build(e, trace_gsplat_spv, sizeof(trace_gsplat_spv), 5, NULL,
                            (uint32_t)sizeof(gsplat_push), NULL, &e->gsplat_pipe))
         return NULL;
     return &e->gsplat_pipe;
@@ -3478,6 +3478,14 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
                         const lrt_ray *rays, uint32_t n, uint32_t seed_base,
                         uint64_t max_device_bytes, lrt_hit *out,
                         lrt_result *err) {
+    return lrt_vk_gsplat_trace_time(e, s, rays, NULL, n, seed_base,
+                                    max_device_bytes, out, err);
+}
+
+int lrt_vk_gsplat_trace_time(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                             const lrt_ray *rays, const float *times, uint32_t n,
+                             uint32_t seed_base, uint64_t max_device_bytes,
+                             lrt_hit *out, lrt_result *err) {
     if (!e || !s || (n && (!rays || !out))) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return -1;
@@ -3496,6 +3504,7 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
         return -1;
     }
     /* Largest chunk decides the device footprint; size the ray tile to fit. */
+    const uint32_t nkeys = lrt_gsplat_scene_key_count(s);
     uint64_t max_chunk = 0;
     const size_t nchunks = lrt_gsplat_scene_chunk_count(s);
     for (size_t k = 0; k < nchunks; k++) {
@@ -3503,12 +3512,12 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
         const lrt_gsplat *sp;
         uint32_t nn, ns;
         lrt_gsplat_scene_chunk(s, k, &nodes, &nn, &sp, &ns);
-        uint64_t b = (uint64_t)nn * 32u + (uint64_t)ns * sizeof(lrt_gsplat);
+        uint64_t b = (uint64_t)nn * 32u + (uint64_t)ns * nkeys * sizeof(lrt_gsplat);
         if (b > max_chunk) max_chunk = b;
     }
     uint32_t tile = vk_ray_tile_size();
     if (tile == 0 || tile > n) tile = n;
-    const uint64_t per_ray = sizeof(lrt_ray) + sizeof(lrt_hit);
+    const uint64_t per_ray = sizeof(lrt_ray) + sizeof(lrt_hit) + sizeof(float);
     if (max_device_bytes) {
         if (max_chunk + per_ray * 4096u > max_device_bytes) {
             vk_set_err(e, "gsplat chunk exceeds the device memory budget");
@@ -3521,16 +3530,28 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
     lrt_ray *work = (lrt_ray *)malloc((size_t)tile * sizeof(lrt_ray));
     lrt_hit *th = (lrt_hit *)malloc((size_t)tile * sizeof(lrt_hit));
     float *best = (float *)malloc((size_t)n * sizeof(float));
-    vk_buffer b_rays, b_hits;
+    vk_buffer b_rays, b_hits, b_times;
     memset(&b_rays, 0, sizeof(b_rays));
     memset(&b_hits, 0, sizeof(b_hits));
+    memset(&b_times, 0, sizeof(b_times));
     int ok = work && th && best &&
              vk_buffer_create(e, (VkDeviceSize)tile * sizeof(lrt_ray), &b_rays) &&
+             vk_buffer_create(e, (VkDeviceSize)tile * sizeof(float), &b_times) &&
              /* Read back once per tile per chunk: host-cached memory. */
              vk_buffer_create_cached(e, (VkDeviceSize)tile * sizeof(lrt_hit),
                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &b_hits);
     if (ok)
         for (uint32_t i = 0; i < n; i++) best[i] = rays[i].tmax;
+    if (ok && nkeys > 1 && !times) {
+        /* Untimed rays see the shutter center. */
+        float *mid = (float *)malloc((size_t)tile * sizeof(float));
+        ok = mid != NULL;
+        if (ok) {
+            for (uint32_t i = 0; i < tile; i++) mid[i] = 0.5f;
+            ok = vk_buffer_write(e, &b_times, mid, (size_t)tile * sizeof(float));
+            free(mid);
+        }
+    }
     for (size_t k = 0; ok && k < nchunks; k++) {
         const uint32_t *nodes;
         const lrt_gsplat *sp;
@@ -3540,7 +3561,7 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
         vk_buffer b_nodes, b_splats;
         memset(&b_nodes, 0, sizeof(b_nodes));
         memset(&b_splats, 0, sizeof(b_splats));
-        const size_t nb = (size_t)nn * 32u, sb = (size_t)ns * sizeof(lrt_gsplat);
+        const size_t nb = (size_t)nn * 32u, sb = (size_t)ns * nkeys * sizeof(lrt_gsplat);
         /* Splat chunks are read at every leaf visit: prefer device-local. */
         if (!vk_buffer_create_device_filled(e, nb, nodes, nb, &b_nodes) &&
             !(vk_buffer_create(e, nb, &b_nodes) && vk_buffer_write(e, &b_nodes, nodes, nb)))
@@ -3551,8 +3572,8 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
         VkDescriptorPool pool = VK_NULL_HANDLE;
         VkDescriptorSet set;
         if (ok) {
-            vk_buffer set_bufs[4] = {b_nodes, b_splats, b_rays, b_hits};
-            ok = vk_descriptors_bind(e, pipe->dsl, set_bufs, 4, &pool, &set);
+            vk_buffer set_bufs[5] = {b_nodes, b_splats, b_rays, b_hits, b_times};
+            ok = vk_descriptors_bind(e, pipe->dsl, set_bufs, 5, &pool, &set);
         }
         for (uint32_t off = 0; ok && off < n; off += tile) {
             const uint32_t cnt = n - off < tile ? n - off : tile;
@@ -3564,8 +3585,11 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
             pc.ray_count = cnt;
             pc.seed_base = seed_base + off;
             pc.node_count = nn;
-            pc.pad = 0;
+            pc.nkeys = nkeys;
             ok = vk_buffer_write(e, &b_rays, work, (size_t)cnt * sizeof(lrt_ray)) &&
+                 (!times || nkeys < 2 ||
+                  vk_buffer_write(e, &b_times, times + off,
+                                  (size_t)cnt * sizeof(float))) &&
                  vk_dispatch(e, pipe, set, &pc, (uint32_t)sizeof(pc), (cnt + 63u) / 64u) &&
                  vk_buffer_read(e, &b_hits, th, (size_t)cnt * sizeof(lrt_hit));
             if (!ok) break;
@@ -3581,6 +3605,7 @@ int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
     }
     vk_buffer_destroy(e, &b_rays);
     vk_buffer_destroy(e, &b_hits);
+    vk_buffer_destroy(e, &b_times);
     free(work);
     free(th);
     free(best);

@@ -8,6 +8,10 @@
  *     the hit rate and mean alpha agree statistically (fp rounding of the hit
  *     position decorrelates individual stochastic decisions); a budget smaller
  *     than one chunk is rejected with LRT_RESULT_BUILD_LIMIT.
+ *  4. Motion blur (3 keys, translating + scaling splats): at times 0 and 1 the
+ *     scene equals a static scene of the first/last key (bitwise); at 0.25 it
+ *     equals a static scene of the linearly interpolated records; GPU traces
+ *     with per-ray times agree with the CPU statistically.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -153,6 +157,93 @@ static void compare_gpu(const char *name, const lrt_hit *gpu) {
           same_prim);
 }
 
+#define NKEY 3
+static lrt_gsplat mkeys[NKEY * NSPLAT];
+static lrt_gsplat mtmp[NSPLAT];
+static float mtimes[NRAY];
+
+static void motion_test(void) {
+    /* Key k: translated by k*0.08 along x, scaled by (1 + 0.15k). */
+    for (int k = 0; k < NKEY; ++k)
+        for (int i = 0; i < NSPLAT; ++i) {
+            lrt_gsplat g = splats[i];
+            g.mu[0] += 0.08f * (float)k;
+            for (int j = 0; j < 9; ++j) g.a[j] /= 1.0f + 0.15f * (float)k;
+            g.radius *= 1.0f + 0.15f * (float)k;
+            mkeys[k * NSPLAT + i] = g;
+        }
+    lrt_result err;
+    lrt_gsplat_build_options bo;
+    memset(&bo, 0, sizeof(bo));
+    bo.max_chunk_splats = 1500;
+    lrt_gsplat_scene *ms = lrt_gsplat_scene_build_motion(mkeys, NSPLAT, NKEY, &bo, &err);
+    CHECK(ms && lrt_gsplat_scene_key_count(ms) == NKEY, "motion build");
+    if (!ms) return;
+    const float probe[3] = {0.0f, 1.0f, 0.25f};
+    for (int pi = 0; pi < 3; ++pi) {
+        const float tm = probe[pi];
+        const float f = tm * (NKEY - 1);
+        int step = (int)f;
+        if (step > NKEY - 2) step = NKEY - 2;
+        const float t = f - (float)step, u = 1.0f - t;
+        for (int i = 0; i < NSPLAT; ++i) {
+            const lrt_gsplat *a = &mkeys[step * NSPLAT + i], *b = &mkeys[(step + 1) * NSPLAT + i];
+            lrt_gsplat g = *a;
+            for (int k = 0; k < 3; ++k) g.mu[k] = a->mu[k] * u + b->mu[k] * t;
+            for (int k = 0; k < 9; ++k) g.a[k] = a->a[k] * u + b->a[k] * t;
+            g.opacity = a->opacity * u + b->opacity * t;
+            g.radius = a->radius * u + b->radius * t;
+            mtmp[i] = g;
+        }
+        lrt_gsplat_scene *st = lrt_gsplat_scene_build(mtmp, NSPLAT, &bo, &err);
+        for (int i = 0; i < NRAY; ++i) mtimes[i] = tm;
+        lrt_gsplat_intersect1N_time(ms, rays, mtimes, NRAY, 99u, ha);
+        lrt_gsplat_intersect1N(st, rays, NRAY, 99u, hb);
+        char what[64];
+        snprintf(what, sizeof(what), "motion t=%.2f vs static interpolated", tm);
+        same(ha, hb, NRAY, what);
+        lrt_gsplat_scene_free(st);
+    }
+    /* Motion must change the image: t=0 vs t=1 differ. */
+    for (int i = 0; i < NRAY; ++i) mtimes[i] = 0.0f;
+    lrt_gsplat_intersect1N_time(ms, rays, mtimes, NRAY, 99u, ha);
+    for (int i = 0; i < NRAY; ++i) mtimes[i] = 1.0f;
+    lrt_gsplat_intersect1N_time(ms, rays, mtimes, NRAY, 99u, hb);
+    int diff = 0;
+    for (int i = 0; i < NRAY; ++i) diff += ha[i].prim_id != hb[i].prim_id;
+    CHECK(diff > NRAY / 20, "motion has no effect (%d rays differ)", diff);
+    /* Per-ray stratified times; GPU vs CPU. */
+    for (int i = 0; i < NRAY; ++i) mtimes[i] = (float)((i * 7919) % 1000) / 999.0f;
+    lrt_gsplat_intersect1N_time(ms, rays, mtimes, NRAY, 5u, ha);
+#ifdef HAVE_VULKAN
+    {
+        lrt_vk_engine_options vo;
+        memset(&vo, 0, sizeof(vo));
+        vo.device_index = -1;
+        vo.prefer_discrete = 1;
+        lrt_vk_engine *vk = lrt_vk_engine_create(&vo, NULL);
+        if (vk) {
+            CHECK(lrt_vk_gsplat_trace_time(vk, ms, rays, mtimes, NRAY, 5u, 0, hc, &err) >= 0,
+                  "vk motion trace: %s", lrt_vk_engine_last_error(vk));
+            compare_gpu("vulkan motion", hc);
+            lrt_vk_engine_destroy(vk);
+        }
+    }
+#endif
+#ifdef HAVE_HIP
+    {
+        lrt_hip_engine *hip = lrt_hip_engine_create(NULL, NULL);
+        if (hip) {
+            CHECK(lrt_hip_gsplat_trace_time(hip, ms, rays, mtimes, NRAY, 5u, 0, hc, &err) >= 0,
+                  "hip motion trace: %s", lrt_hip_engine_last_error(hip));
+            compare_gpu("hip motion", hc);
+            lrt_hip_engine_destroy(hip);
+        }
+    }
+#endif
+    lrt_gsplat_scene_free(ms);
+}
+
 int main(void) {
     make_data();
     lrt_result err;
@@ -224,6 +315,7 @@ int main(void) {
 #endif
     lrt_gsplat_scene_free(s1);
     lrt_gsplat_scene_free(s2);
+    motion_test();
     printf(g_fail ? "FAILED\n" : "OK\n");
     return g_fail;
 }
