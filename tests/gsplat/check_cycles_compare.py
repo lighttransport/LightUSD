@@ -17,7 +17,12 @@ variants: like roundtrip (USDA only) for SH degrees 0/1/2, a non-uniform
          object scale, an orthographic camera, a coloured world background
          (lusdrender -bg) and motion blur (animated object, camera shutter);
          each within 1.1x the noise floor and 1% mean.
-Exit 77 (skip) when Blender or Pillow is unavailable.
+refs:    the variants against references checked in under tests/gsplat/refs/
+         (no Blender needed): each case holds the Blender-exported scene
+         (scene.usdc), Blender's seed-0 render (ref.npz, float16) and the
+         seed-to-seed noise floor (meta.json). Same 1.1x floor / 1% mean criteria.
+         Regenerate with: variants --write-refs (needs Blender and --lusdcat).
+Exit 77 (skip) when Blender or Pillow (numpy for refs) is unavailable.
 
 --backend vk|hip traces through the LightRT Vulkan / HIP splat kernel (skips
 with 77 when that GPU backend is unavailable).
@@ -30,9 +35,22 @@ import math
 import os
 import subprocess
 import sys
+import json
+import shutil
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REFS = os.path.join(HERE, "refs")
+
+
+def compare_np(ours, ref, floor, mean, tol):
+    """(good, mae, ratio) of a render against a stored full-res ref.
+    (Box-filtering both would hide noise but magnify small biases.)"""
+    import numpy as np
+    mae = float(np.abs(ours - ref).mean())
+    ratio = ours.mean((0, 1)) / np.maximum(np.asarray(mean), 1e-9)
+    good = mae <= tol * floor and all(abs(r - 1) <= 0.01 for r in ratio)
+    return good, mae, ratio
 W, H = 320, 180
 
 
@@ -67,7 +85,12 @@ def ours(lusdrender, usda, out, spp, colorspace):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lusdrender")
-    ap.add_argument("mode", choices=["smoke", "compare", "roundtrip", "variants"])
+    ap.add_argument("mode", choices=["smoke", "compare", "roundtrip", "variants",
+                                     "refs"])
+    ap.add_argument("--write-refs", action="store_true",
+                    help="variants: (re)write tests/gsplat/refs from Blender")
+    ap.add_argument("--lusdcat", default="",
+                    help="--write-refs: lusdcat used to store scenes as usdc")
     ap.add_argument("--spp", type=int, default=256)
     ap.add_argument("--backend", choices=["cpu", "vk", "hip"], default="cpu")
     ap.add_argument("--lusdview", default="",
@@ -92,6 +115,13 @@ def main():
     except ImportError:
         print("SKIP: Pillow not available")
         return 77
+    if a.mode == "refs":
+        try:
+            import numpy  # noqa: F401
+        except ImportError:
+            print("SKIP: numpy not available")
+            return 77
+        return run_refs(a.lusdrender, a.lusdview, a.lusdview_backend)
     blender = os.environ.get("LIGHTUSD_BLENDER", "")
     if a.mode != "smoke" and not (blender and os.path.exists(blender)):
         print("SKIP: set LIGHTUSD_BLENDER to a Blender 5.3+ executable")
@@ -99,7 +129,10 @@ def main():
     if a.mode == "roundtrip":
         return roundtrip(a.lusdrender, blender, a.spp)
     if a.mode == "variants":
-        return variants(a.lusdrender, blender, a.spp, a.lusdview, a.lusdview_backend)
+        if a.write_refs and not a.lusdcat:
+            raise SystemExit("--write-refs needs --lusdcat")
+        return variants(a.lusdrender, blender, a.spp, a.lusdview,
+                        a.lusdview_backend, a.lusdcat if a.write_refs else "")
     with tempfile.TemporaryDirectory(prefix="gsplat-cycles-") as d:
         run([sys.executable, "-I", os.path.join(HERE, "make_cycles_fixture.py"),
              d, "--count", "120", "--seed", "5", "--degree", "3"])
@@ -224,7 +257,78 @@ def lusdview_render(lusdview, backend, usda, out, spp, time):
     return True
 
 
-def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk"):
+def write_ref(name, d, largs, spp, lusdcat):
+    """Store one variant's Blender scene + seed-0 reference."""
+    import numpy as np
+    import exr_np
+    r0 = exr_np.read_rgb(os.path.join(d, "ref_seed0.exr"))
+    r7 = exr_np.read_rgb(os.path.join(d, "ref_seed7.exr"))
+    out = os.path.join(REFS, name)
+    if os.path.isdir(out):
+        shutil.rmtree(out)
+    os.makedirs(out)
+    run([lusdcat, "--rewrite-layer", "-o", os.path.join(out, "scene.usdc"),
+         os.path.join(d, "splats.usda")])
+    np.savez_compressed(os.path.join(out, "ref.npz"), ref=r0.astype(np.float16))
+    meta = {"floor": float(np.abs(r7 - r0).mean()),
+            "mean": [float(x) for x in r0.mean((0, 1))],
+            "lusdrender_args": largs, "spp": spp, "width": W, "height": H,
+            "blender": "5.3", "note": "regenerate: check_cycles_compare.py "
+                                      "LUSDRENDER variants --write-refs"}
+    json.dump(meta, open(os.path.join(out, "meta.json"), "w"), indent=1)
+    print("wrote refs/%s (floor %.5f)" % (name, meta["floor"]))
+
+
+def run_refs(lusdrender, lusdview="", lv_backend="vk"):
+    """Variants against the checked-in references; no Blender needed."""
+    import numpy as np
+    sys.path.insert(0, HERE)
+    import exr_np
+    # Variant cases carry lusdrender_args; refs/mixed* belong to
+    # check_mixed_scene.py.
+    cases = sorted(c for c in os.listdir(REFS)
+                   if os.path.exists(os.path.join(REFS, c, "meta.json")) and
+                   "lusdrender_args" in json.load(open(os.path.join(REFS, c,
+                                                                    "meta.json"))))
+    if not cases:
+        print("SKIP: no references under %s" % REFS)
+        return 77
+    ok = True
+    for name in cases:
+        c = os.path.join(REFS, name)
+        meta = json.load(open(os.path.join(c, "meta.json")))
+        ref = np.load(os.path.join(c, "ref.npz"))["ref"].astype(np.float64)
+        scene = os.path.join(c, "scene.usdc")
+        largs = meta["lusdrender_args"]
+        spp, w, h = meta["spp"], meta["width"], meta["height"]
+        with tempfile.TemporaryDirectory(prefix="gsplat-ref-") as d:
+            out = os.path.join(d, "ours.exr")
+            run([lusdrender, scene, out] + BACKEND +
+                ["--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",
+                 "-camera", "/World/Cam", "-width", str(w), "-height", str(h),
+                 "-samples", str(spp)] + largs)
+            good, mae, ratio = compare_np(exr_np.read_rgb(out), ref,
+                                          meta["floor"], meta["mean"], 1.1)
+            ok = ok and good
+            print("%-12s MAE %.5f (floor %.5f, %.2fx)  mean ratio %s  %s" %
+                  (name, mae, meta["floor"], mae / max(meta["floor"], 1e-12),
+                   ["%.4f" % r for r in ratio], "ok" if good else "FAIL"))
+            if lusdview and "-bg" not in largs:
+                t = largs[largs.index("-timecode") + 1] if "-timecode" in largs else None
+                lv = os.path.join(d, "lusdview.exr")
+                if not lusdview_render(lusdview, lv_backend, scene, lv, spp, t):
+                    print("SKIP: lusdview %s did not run the Cycles splat kernel" % lv_backend)
+                    return 77
+                good, mae, ratio = compare_np(exr_np.read_rgb(lv), ref,
+                                              meta["floor"], meta["mean"], 1.3)
+                ok = ok and good
+                print("%-12s lusdview %s MAE %.5f (%.2fx)  mean ratio %s  %s" %
+                      ("", lv_backend, mae, mae / max(meta["floor"], 1e-12),
+                       ["%.4f" % r for r in ratio], "ok" if good else "FAIL"))
+    return 0 if ok else 1
+
+
+def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk", lusdcat=""):
     ok = True
     for name, bargs, largs in VARIANTS:
         with tempfile.TemporaryDirectory(prefix="gsplat-variant-") as d:
@@ -232,6 +336,9 @@ def variants(lusdrender, blender, spp, lusdview="", lv_backend="vk"):
                  os.path.join(HERE, "blender_make_and_export.py"), "--", d,
                  "--width", str(W), "--height", str(H), "--spp", str(spp),
                  "--exr"] + bargs, cwd=d)
+            if lusdcat:
+                sys.path.insert(0, HERE)
+                write_ref(name, d, largs, spp, lusdcat)
             out = os.path.join(d, "ours.exr")
             run([lusdrender, os.path.join(d, "splats.usda"), out] + BACKEND +
                 ["--gsplat-kernel", "cycles", "--gsplat-colorspace", "srgb",

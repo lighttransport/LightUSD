@@ -13,16 +13,53 @@ BRDF is shaded:
 Each of V and E must be within 1.2x Blender's own seed-to-seed noise on that
 quantity, and their means within 2%.
 
-usage: check_mixed_scene.py LUSDRENDER [--spp N]   (LIGHTUSD_BLENDER=blender)
-Exit 77 when Blender is unavailable.
+usage: check_mixed_scene.py LUSDRENDER [--spp N] [--motion|--camera-motion]
+                            [--refs | --write-refs]   (LIGHTUSD_BLENDER=blender)
+--refs: no Blender. Renders the checked-in scenes
+        tests/usda/gsplat-mixed[-VARIANT]-{plain,black,full}.usda and compares
+        them with Blender's seed-0 renders stored in
+        tests/gsplat/refs/mixed[-VARIANT]/ (float16 npz) and the noise floors
+        in its meta.json. --write-refs regenerates those from Blender (and
+        checks that Blender's exported scenes still equal the fixtures).
+Exit 77 when Blender (or numpy for --refs) is unavailable.
 """
 import argparse
 import os
 import subprocess
 import sys
+import json
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
+KINDS = ("plain", "black", "full")
+
+
+def metrics_np(ref0, ref7, ours):
+    """VIS/EMI (floor, err, mean_ref, mean_ours) as the Blender CMP script."""
+    import numpy as np
+    mask = ref0["plain"].mean(2) > 0.05
+
+    def vis(b, p):
+        return (b / np.maximum(p, 1e-6)).mean(2)[mask]
+    V0, Vo = vis(ref0["black"], ref0["plain"]), vis(ours["black"], ours["plain"])
+    E0 = ref0["full"] - ref0["black"]
+    Eo = ours["full"] - ours["black"]
+    out = {"VIS": [None, float(np.abs(Vo - V0).mean()), float(V0.mean()),
+                   float(Vo.mean())],
+           "EMI": [None, float(np.abs(Eo - E0).mean()), float(E0.mean()),
+                   float(Eo.mean())]}
+    if ref7 is not None:
+        out["VIS"][0] = float(np.abs(vis(ref7["black"], ref7["plain"]) - V0).mean())
+        out["EMI"][0] = float(np.abs((ref7["full"] - ref7["black"]) - E0).mean())
+    return out
+
+
+def judge(name, floor, err, mref, mours):
+    good = err <= 1.2 * floor and abs(mours - mref) <= 0.02 * max(abs(mref), 1e-3)
+    print("%s floor %.5f ours %.5f mean ref %.5f ours %.5f  %s" %
+          (name, floor, err, mref, mours, "ok" if good else "FAIL"))
+    return good
 W, H = 320, 180
 
 CMP = r'''
@@ -65,10 +102,49 @@ def main():
                     help="animated splats + camera shutter (motion blur)")
     ap.add_argument("--camera-motion", action="store_true",
                     help="animated camera (camera motion blur)")
+    ap.add_argument("--refs", action="store_true",
+                    help="compare against checked-in references (no Blender)")
+    ap.add_argument("--write-refs", action="store_true",
+                    help="regenerate the checked-in references with Blender")
     a = ap.parse_args()
     blur = a.motion or a.camera_motion
     bflags = (["--motion"] if a.motion else []) + \
              (["--camera-motion"] if a.camera_motion else [])
+    variant = "motion" if a.motion else ("cammotion" if a.camera_motion else "")
+    refdir = os.path.join(HERE, "refs", "mixed" + ("-" + variant if variant else ""))
+    fixture = lambda k: os.path.join(
+        ROOT, "tests/usda/gsplat-mixed-%s%s.usda" % (variant + "-" if variant else "", k))
+    lus = lambda usda, out: run(
+        [a.lusdrender, usda, out, "--gsplat-kernel", "cycles",
+         "--gsplat-colorspace", "srgb", "-camera", "/World/Cam",
+         "-width", str(W), "-height", str(H), "-samples", str(a.spp)] +
+        (["-timecode", "1"] if blur else []))
+    if a.refs:
+        try:
+            import numpy as np
+        except ImportError:
+            print("SKIP: numpy not available")
+            return 77
+        sys.path.insert(0, HERE)
+        import exr_np
+        if not os.path.exists(os.path.join(refdir, "meta.json")):
+            print("SKIP: no references in %s" % refdir)
+            return 77
+        meta = json.load(open(os.path.join(refdir, "meta.json")))
+        a.spp = meta["spp"]
+        ref0 = {k: np.load(os.path.join(refdir, "ref.npz"))[k].astype(np.float64)
+                for k in KINDS}
+        ours = {}
+        with tempfile.TemporaryDirectory(prefix="gsplat-mixed-ref-") as d:
+            for k in KINDS:
+                out = os.path.join(d, k + ".exr")
+                lus(fixture(k), out)
+                ours[k] = exr_np.read_rgb(out)
+        m = metrics_np(ref0, None, ours)
+        ok = True
+        for q in ("VIS", "EMI"):
+            ok = judge(q, meta[q]["floor"], m[q][1], m[q][2], m[q][3]) and ok
+        return 0 if ok else 1
     blender = os.environ.get("LIGHTUSD_BLENDER", "")
     if not (blender and os.path.exists(blender)):
         print("SKIP: set LIGHTUSD_BLENDER to a Blender 5.3+ executable")
@@ -81,11 +157,32 @@ def main():
                  os.path.join(HERE, "blender_mixed_scene.py"), "--", sub,
                  "--width", str(W), "--height", str(H), "--spp", str(a.spp)] +
                 extra + bflags, cwd=d)
-            run([a.lusdrender, os.path.join(sub, "mixed.usda"),
-                 os.path.join(sub, "ours.exr"), "--gsplat-kernel", "cycles",
-                 "--gsplat-colorspace", "srgb", "-camera", "/World/Cam",
-                 "-width", str(W), "-height", str(H), "-samples", str(a.spp)] +
-                (["-timecode", "1"] if blur else []))
+            lus(os.path.join(sub, "mixed.usda"), os.path.join(sub, "ours.exr"))
+            if a.write_refs and open(os.path.join(sub, "mixed.usda")).read() != \
+                    open(fixture(name)).read():
+                raise SystemExit("Blender's %s scene differs from %s: update the "
+                                 "fixture first" % (name, fixture(name)))
+        if a.write_refs:
+            import numpy as np
+            sys.path.insert(0, HERE)
+            import exr_np
+            r0 = {k: exr_np.read_rgb(os.path.join(d, k, "ref_seed0.exr")) for k in KINDS}
+            r7 = {k: exr_np.read_rgb(os.path.join(d, k, "ref_seed7.exr")) for k in KINDS}
+            ours = {k: exr_np.read_rgb(os.path.join(d, k, "ours.exr")) for k in KINDS}
+            m = metrics_np(r0, r7, ours)
+            os.makedirs(refdir, exist_ok=True)
+            np.savez_compressed(os.path.join(refdir, "ref.npz"),
+                                **{k: r0[k].astype(np.float16) for k in KINDS})
+            meta = {q: {"floor": m[q][0], "mean": m[q][2]} for q in ("VIS", "EMI")}
+            meta.update({"spp": a.spp, "width": W, "height": H, "blender": "5.3",
+                         "note": "regenerate: check_mixed_scene.py LUSDRENDER "
+                                 "[--motion|--camera-motion] --write-refs"})
+            json.dump(meta, open(os.path.join(refdir, "meta.json"), "w"), indent=1)
+            ok = True
+            for q in ("VIS", "EMI"):
+                ok = judge(q, *m[q]) and ok
+            print("wrote %s" % refdir)
+            return 0 if ok else 1
         script = os.path.join(d, "cmp.py")
         open(script, "w").write(CMP)
         log = run([blender, "-b", "--factory-startup", "--python", script, "--", d])

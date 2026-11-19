@@ -446,6 +446,10 @@ roundtrip --backend cpu|vk|hip`, 320x180, 1024 spp, scene-linear EXR): every
 backend is at 0.94x Blender's seed-to-seed noise floor, with mean brightness
 within 0.3%. `test_lightrt_gsplat` checks the BVH against brute force, chunked
 against single-chunk, GPU against CPU, and rejection of an over-budget chunk.
+The default ctest run compares against Blender references checked in under
+`tests/gsplat/refs/` (no Blender needed); set `LIGHTUSD_BLENDER` to a Blender
+5.3 executable for the live `*-blender-*` tests or to regenerate the references
+(see [doc/gsplat-rendering-spec.md](../../doc/gsplat-rendering-spec.md)).
 
 | Scene (RX 9070 XT, shared GPU) | Splats | Backend | Chunks | Trace+shade |
 |---|---|---|---|---|

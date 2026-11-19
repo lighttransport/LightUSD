@@ -17,6 +17,22 @@ void Append(std::string* warning, const std::string& message) {
   *warning += message;
 }
 
+// Crate time samples carry the value type (e.g. float3), not the attribute's
+// role type (point3f), so accept role variants with the same layout.
+bool SameArrayLayout(TypeId got, TypeId want) {
+  if (got == want) return true;
+  auto canon = [](TypeId t) {
+    switch (t) {
+      case TypeId::Point3f: case TypeId::Vector3f: case TypeId::Normal3f:
+      case TypeId::Color3f: return TypeId::Float3;
+      case TypeId::Point3h: case TypeId::Vector3h: case TypeId::Normal3h:
+      case TypeId::Color3h: return TypeId::Half3;
+      default: return t;
+    }
+  };
+  return canon(got) == canon(want);
+}
+
 bool SelectArray(const AttributeEval& eval, const UsdPrim& prim,
                  const char* full_name, const char* half_name,
                  TypeId full_type, TypeId half_type,
@@ -28,10 +44,10 @@ bool SelectArray(const AttributeEval& eval, const UsdPrim& prim,
   *source_count = 0;
   EvalResult value = eval.Eval(prim, full_name);
   if (!value.success || !value.value.is_array() ||
-      value.value.type_id() != full_type) {
+      !SameArrayLayout(value.value.type_id(), full_type)) {
     value = eval.Eval(prim, half_name);
     if (!value.success || !value.value.is_array() ||
-        value.value.type_id() != half_type) {
+        !SameArrayLayout(value.value.type_id(), half_type)) {
       return false;
     }
     *half = true;

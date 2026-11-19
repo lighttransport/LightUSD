@@ -85,6 +85,8 @@ scope; new properties on supported schemas require fallback/validation tests.
   intersects full 3D ellipsoids; the default disc carriers keep two axes.
   lusdrender traces it through LightRT (`lightrt_c_gsplat.h`) on the CPU,
   Vulkan (`-vk`) or HIP (`-hip`), chunked under `-maxVram` (default 4 GiB).
+  The schema defaults, validation rules and Cycles rendering semantics are
+  specified in [gsplat-rendering-spec.md](gsplat-rendering-spec.md).
 - 3D Gaussian splat PLY (`src/reader/ply-reader.cc`, usdPly-style): a `.ply`
   opens as a root layer or a reference/payload target. It contains one
   `ParticleField3DGaussianSplat` prim, `/Splats`, which is the default prim.

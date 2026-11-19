@@ -3,6 +3,7 @@
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
 #include "render-extract.hh"
+#include "types/value-view.hh"
 #include "core/safe-arithmetic.hh"
 #include "shape-to-mesh.hh"
 #include <algorithm>
@@ -24,6 +25,174 @@ double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
   if (const double* number = value.as_double()) return *number;
   if (const float* number = value.as_float()) return *number;
   return fallback;
+}
+
+int ReadIntScalar(const UsdPrim& prim, const char* name, int fallback,
+                  double time) {
+  const Value* authored = prim.GetPropertyValue(name);
+  const Value value = std::isnan(time)
+      ? (authored ? *authored : Value())
+      : prim.GetInterpolatedValue(name, time);
+  if (const int32_t* i = value.as_int()) return *i;
+  return fallback;
+}
+
+// Numeric array (double[] or float[]) as doubles.
+bool ReadNumberArray(const UsdPrim& prim, const char* name, double time,
+                     std::vector<double>* out) {
+  const Value* authored = prim.GetPropertyValue(name);
+  const Value value = std::isnan(time)
+      ? (authored ? *authored : Value())
+      : prim.GetInterpolatedValue(name, time);
+  ::lightusd::ArrayScratch<double> sd;
+  ::lightusd::ArrayView<double> vd;
+  if (::lightusd::GetDoubleArrayView(value, &sd, &vd)) {
+    out->assign(vd.data, vd.data + vd.size);
+    return true;
+  }
+  ::lightusd::ArrayScratch<float> sf;
+  ::lightusd::ArrayView<float> vf;
+  if (::lightusd::GetFloatArrayView(value, &sf, &vf)) {
+    out->assign(vf.data, vf.data + vf.size);
+    return true;
+  }
+  return false;
+}
+
+// Cox-de Boor B-spline basis N_{i,degree}(u). The last knot span is closed so
+// u == knots.back() evaluates to the end point.
+double BsplineBasis(size_t i, int degree, double u,
+                    const std::vector<double>& knots) {
+  if (degree == 0) {
+    const double a = knots[i], b = knots[i + 1];
+    if (u >= a && u < b) return 1.0;
+    // Closed end: the last non-empty span includes its right end.
+    if (u == knots.back() && b == knots.back() && a < b) return 1.0;
+    return 0.0;
+  }
+  double v = 0.0;
+  const double d0 = knots[i + size_t(degree)] - knots[i];
+  if (d0 > 0.0) v += (u - knots[i]) / d0 * BsplineBasis(i, degree - 1, u, knots);
+  const double d1 = knots[i + size_t(degree) + 1] - knots[i + 1];
+  if (d1 > 0.0) {
+    v += (knots[i + size_t(degree) + 1] - u) / d1 *
+         BsplineBasis(i + 1, degree - 1, u, knots);
+  }
+  return v;
+}
+
+// Tessellates a UsdGeomNurbsPatch (rational, pointWeights) into a
+// (kSeg+1)^2 vertex grid of quads over uRange x vRange.
+bool TessellateNurbsPatch(const UsdPrim& prim, double time,
+                          std::vector<value::float3>* points,
+                          std::vector<int>* face_counts,
+                          std::vector<int>* face_indices,
+                          std::vector<value::float3>* normals,
+                          std::vector<value::float2>* uvs, std::string* err) {
+  const int uCount = ReadIntScalar(prim, "uVertexCount", 0, time);
+  const int vCount = ReadIntScalar(prim, "vVertexCount", 0, time);
+  const int uOrder = ReadIntScalar(prim, "uOrder", 0, time);
+  const int vOrder = ReadIntScalar(prim, "vOrder", 0, time);
+  ValueArrayRead<float> pts;
+  std::vector<double> uKnots, vKnots, wts;
+  if (uCount < 2 || vCount < 2 || uOrder < 1 || vOrder < 1 ||
+      uOrder > uCount || vOrder > vCount ||
+      !ReadFloatArray(prim, "points", time, &pts) ||
+      !ReadNumberArray(prim, "uKnots", time, &uKnots) ||
+      !ReadNumberArray(prim, "vKnots", time, &vKnots)) {
+    *err = "NurbsPatch needs u/vVertexCount, u/vOrder, u/vKnots and points";
+    return false;
+  }
+  const size_t ncv = size_t(uCount) * size_t(vCount);
+  if (pts.view.size < ncv * 3 || uKnots.size() < size_t(uCount + uOrder) ||
+      vKnots.size() < size_t(vCount + vOrder)) {
+    *err = "NurbsPatch points/knots are shorter than the vertex counts need";
+    return false;
+  }
+  uKnots.resize(size_t(uCount + uOrder));
+  vKnots.resize(size_t(vCount + vOrder));
+  for (size_t i = 1; i < uKnots.size(); ++i) {
+    if (uKnots[i] < uKnots[i - 1]) { *err = "uKnots decrease"; return false; }
+  }
+  for (size_t i = 1; i < vKnots.size(); ++i) {
+    if (vKnots[i] < vKnots[i - 1]) { *err = "vKnots decrease"; return false; }
+  }
+  const bool have_w = ReadNumberArray(prim, "pointWeights", time, &wts) &&
+                      wts.size() >= ncv;
+  double u0 = uKnots[size_t(uOrder - 1)], u1 = uKnots[size_t(uCount)];
+  double v0 = vKnots[size_t(vOrder - 1)], v1 = vKnots[size_t(vCount)];
+  {
+    const Value* r = prim.GetPropertyValue("uRange");
+    if (r) if (const double* d = r->as_double2()) { u0 = d[0]; u1 = d[1]; }
+    r = prim.GetPropertyValue("vRange");
+    if (r) if (const double* d = r->as_double2()) { v0 = d[0]; v1 = d[1]; }
+  }
+  constexpr int kSeg = 16;
+  auto eval = [&](double u, double v) {
+    double acc[3] = {0, 0, 0}, wsum = 0.0;
+    for (int j = 0; j < vCount; ++j) {
+      const double bv = BsplineBasis(size_t(j), vOrder - 1, v, vKnots);
+      if (bv == 0.0) continue;
+      for (int i = 0; i < uCount; ++i) {
+        const double bu = BsplineBasis(size_t(i), uOrder - 1, u, uKnots);
+        if (bu == 0.0) continue;
+        const size_t idx = size_t(j) * size_t(uCount) + size_t(i);
+        const double b = bu * bv * (have_w ? wts[idx] : 1.0);
+        for (int k = 0; k < 3; ++k) acc[k] += b * pts.view.data[idx * 3 + k];
+        wsum += b;
+      }
+    }
+    if (std::fabs(wsum) > 1e-12) for (double& a : acc) a /= wsum;
+    return value::float3{float(acc[0]), float(acc[1]), float(acc[2])};
+  };
+  const int n = kSeg + 1;
+  points->resize(size_t(n) * n);
+  uvs->resize(size_t(n) * n);
+  for (int y = 0; y < n; ++y) {
+    const double tv = double(y) / kSeg;
+    for (int x = 0; x < n; ++x) {
+      const double tu = double(x) / kSeg;
+      (*points)[size_t(y * n + x)] =
+          eval(u0 + (u1 - u0) * tu, v0 + (v1 - v0) * tv);
+      (*uvs)[size_t(y * n + x)] = value::float2{float(tu), float(tv)};
+    }
+  }
+  normals->resize(points->size());
+  for (int y = 0; y < n; ++y) {
+    for (int x = 0; x < n; ++x) {
+      const auto& a = (*points)[size_t(y * n + std::max(0, x - 1))];
+      const auto& b = (*points)[size_t(y * n + std::min(kSeg, x + 1))];
+      const auto& c = (*points)[size_t(std::max(0, y - 1) * n + x)];
+      const auto& d = (*points)[size_t(std::min(kSeg, y + 1) * n + x)];
+      const float du[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+      const float dv[3] = {d[0] - c[0], d[1] - c[1], d[2] - c[2]};
+      float nn[3] = {du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2],
+                     du[0] * dv[1] - du[1] * dv[0]};
+      const float len = std::sqrt(nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]);
+      if (len > 1e-12f) { nn[0] /= len; nn[1] /= len; nn[2] /= len; }
+      else { nn[0] = 0; nn[1] = 0; nn[2] = 1; }
+      (*normals)[size_t(y * n + x)] = value::float3{nn[0], nn[1], nn[2]};
+    }
+  }
+  for (int y = 0; y < kSeg; ++y) {
+    for (int x = 0; x < kSeg; ++x) {
+      const int a = y * n + x, d = (y + 1) * n + x;
+      face_counts->push_back(4);
+      face_indices->insert(face_indices->end(), {a, a + 1, d + 1, d});
+    }
+  }
+  // Generated normals/UVs are face-varying (one per face-vertex).
+  std::vector<value::float3> fv_n;
+  std::vector<value::float2> fv_uv;
+  fv_n.reserve(face_indices->size());
+  fv_uv.reserve(face_indices->size());
+  for (int idx : *face_indices) {
+    fv_n.push_back((*normals)[size_t(idx)]);
+    fv_uv.push_back((*uvs)[size_t(idx)]);
+  }
+  *normals = std::move(fv_n);
+  *uvs = std::move(fv_uv);
+  return true;
 }
 
 void ApplyAxis(std::vector<value::float3>* points,
@@ -267,7 +436,14 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
   std::vector<value::float2> uvs;
 
   const std::string type = prim.GetTypeName();
-  if (type == "TetMesh") {
+  if (type == "NurbsPatch") {
+    std::string err;
+    if (!TessellateNurbsPatch(prim, config_.time_code, &points, &face_counts,
+                              &face_indices, &normals, &uvs, &err)) {
+      SetLastError("NurbsPatch '" + prim.GetPath().str() + "': " + err);
+      return false;
+    }
+  } else if (type == "TetMesh") {
     ValueArrayRead<float> authored_points;
     ValueArrayRead<int32_t> authored_tets;
     if (!ReadFloatArray(prim, "points", config_.time_code, &authored_points) ||
@@ -484,14 +660,16 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
   out->normals.clear();
   out->texcoords_0.clear();
   ExtractMeshPrimvars(prim, out);
-  if (out->normals.empty()) {
+  // A patch's authored points are control vertices: per-vertex authored
+  // normals/UVs do not map onto the tessellation, so keep the generated ones.
+  if (out->normals.empty() || type == "NurbsPatch") {
     out->normals = std::move(generated_normals);
     out->normals_interp = generated_normals_interp;
   }
   // Plane generation already maps the authored texture domain to its canonical
   // quad corners. Preserve that mapping instead of reinterpreting it as Mesh
   // vertex order.
-  if (out->texcoords_0.empty() || type == "Plane") {
+  if (out->texcoords_0.empty() || type == "Plane" || type == "NurbsPatch") {
     out->texcoords_0 = std::move(generated_uvs);
     out->texcoords_0_interp = generated_uv_interp;
   }

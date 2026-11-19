@@ -910,6 +910,45 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                           RESOURCE_LOCK lusdview_gpu)
         endforeach()
       endif()
+      # The same variants against the checked-in references (no Blender).
+      if(TARGET lusdrender)
+        foreach(_gs_lv vk hip)
+          add_test(
+            NAME lusdview-gsplat-refs-${_gs_lv}
+            COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                    "${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py"
+                    "$<TARGET_FILE:lusdrender>" refs
+                    --lusdview "$<TARGET_FILE:lusdview>" --lusdview-backend ${_gs_lv})
+          set_tests_properties(lusdview-gsplat-refs-${_gs_lv}
+                               PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800
+                                          LABELS "lusdview;gsplat;gpu"
+                                          RESOURCE_LOCK lusdview_gpu)
+        endforeach()
+      endif()
+      # inputs:shadow:enable = 0 also disables splat shadows (path tracers).
+      foreach(_gs_se pt-vk pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-shadow-enable-${_gs_se}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_shadow_enable.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_se})
+        set_tests_properties(lusdview-gsplat-shadow-enable-${_gs_se}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
+                                        LABELS "lusdview;gsplat;gpu"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      # Points and BasisCurves honour their parent transform (they used to be
+      # transposed, dropping the translation).
+      foreach(_pts_be cpu vk)
+        add_test(
+          NAME lusdview-points-xform-${_pts_be}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_points_xform.py"
+                  "$<TARGET_FILE:lusdview>" ${_pts_be})
+        set_tests_properties(lusdview-points-xform-${_pts_be}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                        LABELS "lusdview;points")
+      endforeach()
       # Motion blur (animated splats, camera shutter) on the path tracers.
       foreach(_gs_mixed pt-vk pt-hip pt-cuda cpu)
         add_test(

@@ -1647,9 +1647,12 @@ __device__ F3 productionPath(
               fmaxf(maxT-2e-4f,1e-4f),&st,&su,&sv,&si,cols,mats,backMats,
               matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,
               textures,numTextures,uvs,uvs1,li,(lflags&(1<<6))!=0);
-          if(st<0&&gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),ld,
+          // shadow:enable = false skips splat occlusion too (as the mesh
+          // traversal above), matching Vulkan's ptShadowVisibility.
+          if(st<0&&((lflags&2)==0||
+                    gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),ld,
                              fmaxf(maxT-2e-4f,1e-4f),
-                             gsPointSeed(p,(unsigned)li*977u+(unsigned)bounce),gsTime)>0.f){
+                             gsPointSeed(p,(unsigned)li*977u+(unsigned)bounce),gsTime)>0.f)){
             F3 v=scale(rd,-1.f);
             float r=(m.ior-1.f)/(m.ior+1.f),dielectricF0=r*r;
             F3 dielectric=scale(m.specularColor,dielectricF0*m.specularWeight);

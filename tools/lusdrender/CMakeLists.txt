@@ -822,9 +822,37 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-gsplat-blender-mixed-camera-motion PROPERTIES
                          TIMEOUT 1800 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;gsplat;blender")
+    # Mixed scenes against checked-in Blender references (no Blender).
+    foreach(_gs_mix "" "--motion" "--camera-motion")
+      string(REPLACE "--" "-" _gs_mix_name "${_gs_mix}")
+      add_test(NAME tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+                "$<TARGET_FILE:lusdrender>" ${_gs_mix} --refs)
+      set_tests_properties(tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;cpu;gsplat")
+    endforeach()
+    # The variants against checked-in Blender references (tests/gsplat/refs):
+    # runs without Blender. Regenerate the references with
+    # check_cycles_compare.py LUSDRENDER variants --write-refs --lusdcat LUSDCAT.
+    add_test(NAME tool-lusdrender-gsplat-cycles-refs
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" refs)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-refs PROPERTIES
+                         TIMEOUT 900 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat")
     # The same checks through the LightRT Vulkan / HIP splat kernels (skip
     # when the backend has no device).
     foreach(_gs_backend vk hip)
+      add_test(NAME tool-lusdrender-gsplat-cycles-refs-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" refs --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-cycles-refs-${_gs_backend}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat")
       add_test(NAME tool-lusdrender-gsplat-cycles-smoke-${_gs_backend}
         COMMAND ${LUSDR_PYTHON}
                 ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py

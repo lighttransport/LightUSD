@@ -8403,7 +8403,10 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           dp.opacities.insert(dp.opacities.end(), opacities.begin() + first,
                               opacities.begin() + last);
       }
-      RowMatrixToColumnMajor(rec.world, dp.world);
+      // rec.world (USD row-vector, row-major) already is the column-major
+      // column-vector layout of DrawPointsCPU::world; transposing it dropped
+      // the prim's translation.
+      for (int e = 0; e < 16; ++e) dp.world[e] = float(rec.world[e]);
       addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin,
                        dp.aabbMax);
       emitted += last - first;
@@ -8665,7 +8668,7 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
       }
     }
     curveStrandsRetained += dc.vertexCounts.size();
-    RowMatrixToColumnMajor(rec.world, dc.world);
+    for (int e = 0; e < 16; ++e) dc.world[e] = float(rec.world[e]);  // as points
     addCarrierBounds(rec.world, dc.points, dc.widths, dc.aabbMin, dc.aabbMax);
     draw->curves.push_back(std::move(dc));
     publishAvailableNonMeshes();
