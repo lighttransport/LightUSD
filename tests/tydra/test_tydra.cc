@@ -1446,6 +1446,50 @@ void TestSkinnedPointEvaluation() {
   std::cout << "  Standard linear skinning: PASSED\n";
 }
 
+// UsdSkel dual-quaternion skinning (UsdSkelSkinPointsDQS). Weights 1/4 and
+// 3/4 on the identity root and a child turned 180 degrees about Z: linear
+// blending collapses (1,0,0) to (-1/2,0,0); DQS keeps it on the unit circle at
+// (-4/5, 3/5, 0) (Lean dualQuaternionUnitX, usdspec-conformance).
+void TestDualQuaternionSkinning() {
+  const std::string source = R"(#usda 1.0
+def SkelRoot "Model" {
+  def Skeleton "Rig" {
+    uniform token[] joints = ["root", "root/child"]
+    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+    uniform matrix4d[] restTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+    rel skel:animationSource = </Model/Motion>
+  }
+  def SkelAnimation "Motion" {
+    uniform token[] joints = ["root", "root/child"]
+    float3[] translations = [(0,0,0),(0,0,0)]
+    quatf[] rotations = [(1,0,0,0),(0,0,0,1)]
+    half3[] scales = [(1,1,1),(1,1,1)]
+  }
+  def Mesh "Mesh" {
+    rel skel:skeleton = </Model/Rig>
+    uniform token primvars:skel:skinningMethod = "dualQuaternion"
+    point3f[] points = [(1,0,0)]
+    int[] primvars:skel:jointIndices = [0,1] (elementSize = 2 interpolation = "vertex")
+    float[] primvars:skel:jointWeights = [0.25,0.75] (elementSize = 2 interpolation = "vertex")
+  }
+}
+)";
+  auto loaded = LoadUSDAFromString(source);
+  assert(loaded.success);
+  auto prim = loaded.stage.GetPrimAtPath("/Model/Mesh");
+  ValueArrayRead<float> points;
+  assert(ReadFloatArray(prim, "points", 0, &points));
+  std::vector<float> result;
+  std::vector<double> normals;
+  std::string error;
+  assert(EvaluateSkinnedPoints(loaded.stage, prim, 0, points, &result, &error, &normals));
+  assert(result.size() == 3);
+  assert(std::abs(result[0] + 0.8f) < 1e-5 && std::abs(result[1] - 0.6f) < 1e-5 &&
+         std::abs(result[2]) < 1e-5);
+  assert(normals.size() == 9);
+  std::cout << "  Dual-quaternion skinning: PASSED\n";
+}
+
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
   {
@@ -10260,6 +10304,7 @@ int main() {
   TestSceneAccess();
   TestDeepSceneAccess();
   TestSkinnedPointEvaluation();
+  TestDualQuaternionSkinning();
   TestRenderExtract();
 
   std::cout << "\n";

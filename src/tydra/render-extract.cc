@@ -422,6 +422,121 @@ bool MeshFloatAttribute::TupleIndex(size_t point, size_t corner, size_t face,
 
 // Evaluate standard linear blend skinning in mesh-local space. Binding
 // relationships and influence primvars may be inherited from an ancestor.
+namespace {
+
+// Hamilton product (w, x, y, z).
+void DqQuatMul(const double a[4], const double b[4], double o[4]) {
+  o[0] = a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3];
+  o[1] = a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2];
+  o[2] = a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1];
+  o[3] = a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0];
+}
+
+// Unit quaternion of a row-vector rotation matrix R (p' = p R), the inverse of
+// the quaternion -> matrix construction used for joint transforms (Gf).
+void DqQuatFromRotation(const double r[3][3], double q[4]) {
+  const double trace = r[0][0] + r[1][1] + r[2][2];
+  if (trace > 0) {
+    const double s = std::sqrt(trace + 1.0) * 2;
+    q[0] = 0.25 * s;
+    q[1] = (r[1][2] - r[2][1]) / s;
+    q[2] = (r[2][0] - r[0][2]) / s;
+    q[3] = (r[0][1] - r[1][0]) / s;
+  } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+    const double s = std::sqrt(1.0 + r[0][0] - r[1][1] - r[2][2]) * 2;
+    q[0] = (r[1][2] - r[2][1]) / s;
+    q[1] = 0.25 * s;
+    q[2] = (r[1][0] + r[0][1]) / s;
+    q[3] = (r[2][0] + r[0][2]) / s;
+  } else if (r[1][1] > r[2][2]) {
+    const double s = std::sqrt(1.0 + r[1][1] - r[0][0] - r[2][2]) * 2;
+    q[0] = (r[2][0] - r[0][2]) / s;
+    q[1] = (r[1][0] + r[0][1]) / s;
+    q[2] = 0.25 * s;
+    q[3] = (r[2][1] + r[1][2]) / s;
+  } else {
+    const double s = std::sqrt(1.0 + r[2][2] - r[0][0] - r[1][1]) * 2;
+    q[0] = (r[0][1] - r[1][0]) / s;
+    q[1] = (r[2][0] + r[0][2]) / s;
+    q[2] = (r[2][1] + r[1][2]) / s;
+    q[3] = 0.25 * s;
+  }
+  const double len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  for (int k = 0; k < 4; ++k) q[k] /= len;
+}
+
+bool DqInvert3(const double a[3][3], double o[3][3]) {
+  const double det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+                     a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+                     a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  if (!std::isfinite(det) || std::abs(det) < 1e-300) return false;
+  const double inv = 1.0 / det;
+  o[0][0] = (a[1][1] * a[2][2] - a[1][2] * a[2][1]) * inv;
+  o[0][1] = (a[0][2] * a[2][1] - a[0][1] * a[2][2]) * inv;
+  o[0][2] = (a[0][1] * a[1][2] - a[0][2] * a[1][1]) * inv;
+  o[1][0] = (a[1][2] * a[2][0] - a[1][0] * a[2][2]) * inv;
+  o[1][1] = (a[0][0] * a[2][2] - a[0][2] * a[2][0]) * inv;
+  o[1][2] = (a[0][2] * a[1][0] - a[0][0] * a[1][2]) * inv;
+  o[2][0] = (a[1][0] * a[2][1] - a[1][1] * a[2][0]) * inv;
+  o[2][1] = (a[0][1] * a[2][0] - a[0][0] * a[2][1]) * inv;
+  o[2][2] = (a[0][0] * a[1][1] - a[0][1] * a[1][0]) * inv;
+  return true;
+}
+
+// UsdSkel _ConvertToDualQuaternions for one row-major 4x4 skinning matrix:
+// the orthogonal polar factor U of the upper 3x3 (GfMatrix4d::Factor +
+// Orthonormalize), the translation, and the residual scale/shear
+// S = M3 * U^-1 applied by linear blending.
+struct JointDq {
+  double real[4] = {1, 0, 0, 0}, dual[4] = {0, 0, 0, 0};
+  double scale[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  bool has_scale = false;
+};
+
+bool DqFromMatrix(const double* m, JointDq* out) {
+  double a[3][3], u[3][3];
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) a[r][c] = u[r][c] = m[4 * r + c];
+  // Newton iteration U <- (U + U^-T) / 2 converges to the orthogonal factor.
+  for (int it = 0; it < 64; ++it) {
+    double inv[3][3];
+    if (!DqInvert3(u, inv)) return false;
+    double next[3][3], delta = 0;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) {
+        next[r][c] = 0.5 * (u[r][c] + inv[c][r]);
+        delta = std::max(delta, std::abs(next[r][c] - u[r][c]));
+      }
+    std::copy(&next[0][0], &next[0][0] + 9, &u[0][0]);
+    if (delta < 1e-15) break;
+  }
+  DqQuatFromRotation(u, out->real);
+  const double t[4] = {0, 0.5 * m[12], 0.5 * m[13], 0.5 * m[14]};
+  DqQuatMul(t, out->real, out->dual);
+  double uinv[3][3];
+  if (!DqInvert3(u, uinv)) return false;
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) {
+      double v = 0;
+      for (int k = 0; k < 3; ++k) v += a[r][k] * uinv[k][c];
+      out->scale[r][c] = v;
+      if (std::abs(v - (r == c ? 1.0 : 0.0)) > 1e-6) out->has_scale = true;
+    }
+  return true;
+}
+
+// Rotate `p` by unit quaternion q (Hamilton q p q*).
+void DqRotate(const double q[4], const double p[3], double o[3]) {
+  const double v[4] = {0, p[0], p[1], p[2]};
+  const double conj[4] = {q[0], -q[1], -q[2], -q[3]};
+  double t[4], r[4];
+  DqQuatMul(q, v, t);
+  DqQuatMul(t, conj, r);
+  o[0] = r[1]; o[1] = r[2]; o[2] = r[3];
+}
+
+}  // namespace
+
 bool EvaluateSkinnedPoints(const ::lightusd::Stage& stage,
                            const ::lightusd::UsdPrim& mesh, double time,
                            const ValueArrayRead<float>& points,
@@ -453,13 +568,17 @@ bool EvaluateSkinnedPoints(const ::lightusd::Stage& stage,
   const auto weight_owner = owner("primvars:skel:jointWeights");
   if (!index_owner.IsValid() || !weight_owner.IsValid())
     return fail("missing skin influences");
+  bool dual_quaternion = false;
   auto method_owner = owner("primvars:skel:skinningMethod");
   if (method_owner.IsValid()) {
     const auto* method =
         method_owner.GetPropertyValue("primvars:skel:skinningMethod");
     const auto token = method->as_token();
-    if (token && *token != "classicLinear")
+    if (token && *token == "dualQuaternion") {
+      dual_quaternion = true;
+    } else if (token && *token != "classicLinear") {
       return fail("unsupported skinning method");
+    }
   }
   n::SkeletonData skeleton;
   if (!n::GetSkeletonData(stage, skel, &skeleton))
@@ -662,6 +781,106 @@ bool EvaluateSkinnedPoints(const ::lightusd::Stage& stage,
           (weight_constant ? 1 : points.size() / 3))
     return fail("skin influence count mismatch");
   output->resize(points.size());
+  std::vector<JointDq> joint_dq;
+  bool any_joint_scale = false;
+  if (dual_quaternion) {
+    joint_dq.resize(count);
+    for (size_t j = 0; j < count; ++j) {
+      if (!DqFromMatrix(palette.data() + 16 * j, &joint_dq[j]))
+        return fail("singular joint transform for dual-quaternion skinning");
+      any_joint_scale = any_joint_scale || joint_dq[j].has_scale;
+    }
+  }
+  for (size_t p = 0; p < points.size() / 3 && dual_quaternion; ++p) {
+    // UsdSkel _SkinPointsDQS: scale/shear by linear blending, then the
+    // pivot-aligned, normalized blend of joint dual quaternions.
+    const size_t index_slot = constant ? 0 : p, weight_slot = weight_constant ? 0 : p;
+    const int64_t index_row = indexed ? int64_t(index_rows[index_slot]) : int64_t(index_slot);
+    const int64_t weight_row =
+        weights_indexed ? int64_t(weight_rows[weight_slot]) : int64_t(weight_slot);
+    if (index_row < 0 || uint64_t(index_row) >= indices.size() / influences ||
+        weight_row < 0 || uint64_t(weight_row) >= weights.size() / influences)
+      return fail("skin indirection out of range");
+    double initial[3];
+    for (size_t c = 0; c < 3; ++c) {
+      double v = geom_bind[12 + c];
+      for (size_t r = 0; r < 3; ++r) v += points[3 * p + r] * geom_bind[4 * r + c];
+      initial[c] = v;
+    }
+    // Pivot: the joint with the largest weight.
+    int pivot = -1;
+    double max_weight = -1, total = 0;
+    for (size_t k = 0; k < influences; ++k) {
+      const int32_t index = indices[size_t(index_row) * influences + k];
+      const double weight = weights[size_t(weight_row) * influences + k];
+      if (index < 0 || size_t(index) >= joint_order.size() || !std::isfinite(weight) ||
+          weight < 0)
+        return fail("invalid skin influence");
+      total += weight;
+      if (pivot < 0 || max_weight < weight) {
+        max_weight = weight;
+        pivot = int(joint_order[size_t(index)]);
+      }
+    }
+    if (!std::isfinite(total) || total < 1e-12) return fail("zero skin influence weight");
+    double real[4] = {0, 0, 0, 0}, dual[4] = {0, 0, 0, 0}, scaled[3] = {0, 0, 0};
+    for (size_t k = 0; k < influences; ++k) {
+      const size_t j = joint_order[size_t(indices[size_t(index_row) * influences + k])];
+      double w = weights[size_t(weight_row) * influences + k] / total;
+      if (w == 0) continue;
+      const JointDq& dq = joint_dq[j];
+      if (any_joint_scale)
+        for (size_t c = 0; c < 3; ++c)
+          for (size_t r = 0; r < 3; ++r) scaled[c] += w * initial[r] * dq.scale[r][c];
+      const double* pr = joint_dq[size_t(pivot)].real;
+      if (dq.real[0] * pr[0] + dq.real[1] * pr[1] + dq.real[2] * pr[2] + dq.real[3] * pr[3] < 0)
+        w = -w;
+      for (int c = 0; c < 4; ++c) {
+        real[c] += w * dq.real[c];
+        dual[c] += w * dq.dual[c];
+      }
+    }
+    if (!any_joint_scale) std::copy(initial, initial + 3, scaled);
+    const double len = std::sqrt(real[0] * real[0] + real[1] * real[1] + real[2] * real[2] +
+                                 real[3] * real[3]);
+    if (!(len >= 1e-12)) {
+      real[0] = 1; real[1] = real[2] = real[3] = 0;
+      dual[0] = dual[1] = dual[2] = dual[3] = 0;
+    } else {
+      for (int c = 0; c < 4; ++c) { real[c] /= len; dual[c] /= len; }
+      const double d = real[0] * dual[0] + real[1] * dual[1] + real[2] * dual[2] + real[3] * dual[3];
+      for (int c = 0; c < 4; ++c) dual[c] -= d * real[c];
+    }
+    // translation = 2 * (dual * conj(real)).imaginary
+    const double conj[4] = {real[0], -real[1], -real[2], -real[3]};
+    double tq[4], skel_p[3];
+    DqQuatMul(dual, conj, tq);
+    DqRotate(real, scaled, skel_p);
+    for (int c = 0; c < 3; ++c) skel_p[c] += 2 * tq[c + 1];
+    for (size_t c = 0; c < 3; ++c) {
+      double v = to_mesh[12 + c];
+      for (size_t r = 0; r < 3; ++r) v += skel_p[r] * to_mesh[4 * r + c];
+      if (!std::isfinite(v)) return fail("nonfinite skinned point");
+      (*output)[3 * p + c] = float(v);
+    }
+    if (point_normal_matrices) {
+      // Normals follow the blended rotation (UsdSkelSkinNormalsDQS), between
+      // the geom-bind and skeleton-to-mesh normal transforms.
+      double rot[16];
+      Identity(rot);
+      const double w = real[0], x = real[1], y = real[2], z = real[3];
+      rot[0] = 1 - 2 * (y * y + z * z); rot[1] = 2 * (x * y + w * z); rot[2] = 2 * (x * z - w * y);
+      rot[4] = 2 * (x * y - w * z); rot[5] = 1 - 2 * (x * x + z * z); rot[6] = 2 * (y * z + w * x);
+      rot[8] = 2 * (x * z + w * y); rot[9] = 2 * (y * z - w * x); rot[10] = 1 - 2 * (x * x + y * y);
+      double bound_normal[16], final_normal[16];
+      MulRowMajor(geom_normal, rot, bound_normal);
+      MulRowMajor(bound_normal, mesh_normal, final_normal);
+      for (size_t r = 0; r < 3; ++r)
+        for (size_t c = 0; c < 3; ++c)
+          (*point_normal_matrices)[p * 9 + r * 3 + c] = final_normal[4 * r + c];
+    }
+  }
+  if (dual_quaternion) return true;
   for (size_t p = 0; p < points.size() / 3; ++p) {
     double blended[16] = {}, blended_normal[16] = {};
     double total = 0;
