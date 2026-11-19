@@ -31,7 +31,15 @@ constexpr DomainProperty kDomainProperties[] = {
 #define LIGHTUSD_DOMAIN_SCHEMA(name, parent)
 #define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback) \
   {schema, name, type, fallback},
+#ifndef LIGHTUSD_DOMAIN_KIND
+#define LIGHTUSD_DOMAIN_KIND(name, kind)
+#define LIGHTUSD_DOMAIN_KIND_LOCAL 1
+#endif
 #include "schema/generated/openusd-domain-schema-registry.inc"
+#ifdef LIGHTUSD_DOMAIN_KIND_LOCAL
+#undef LIGHTUSD_DOMAIN_KIND
+#undef LIGHTUSD_DOMAIN_KIND_LOCAL
+#endif
 #undef LIGHTUSD_DOMAIN_PROPERTY
 #undef LIGHTUSD_DOMAIN_SCHEMA
 #undef LIGHTUSD_DOMAIN_BUILTIN
@@ -41,7 +49,15 @@ constexpr std::pair<std::string_view, std::string_view> kDomainParents[] = {
 #define LIGHTUSD_DOMAIN_BUILTIN(owner, applied)
 #define LIGHTUSD_DOMAIN_SCHEMA(name, parent) {name, parent},
 #define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback)
+#ifndef LIGHTUSD_DOMAIN_KIND
+#define LIGHTUSD_DOMAIN_KIND(name, kind)
+#define LIGHTUSD_DOMAIN_KIND_LOCAL 1
+#endif
 #include "schema/generated/openusd-domain-schema-registry.inc"
+#ifdef LIGHTUSD_DOMAIN_KIND_LOCAL
+#undef LIGHTUSD_DOMAIN_KIND
+#undef LIGHTUSD_DOMAIN_KIND_LOCAL
+#endif
 #undef LIGHTUSD_DOMAIN_PROPERTY
 #undef LIGHTUSD_DOMAIN_SCHEMA
 #undef LIGHTUSD_DOMAIN_BUILTIN
@@ -51,11 +67,40 @@ constexpr std::pair<std::string_view, std::string_view> kDomainBuiltinAPIs[] = {
 #define LIGHTUSD_DOMAIN_SCHEMA(name, parent)
 #define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback)
 #define LIGHTUSD_DOMAIN_BUILTIN(owner, applied) {owner, applied},
+#ifndef LIGHTUSD_DOMAIN_KIND
+#define LIGHTUSD_DOMAIN_KIND(name, kind)
+#define LIGHTUSD_DOMAIN_KIND_LOCAL 1
+#endif
 #include "schema/generated/openusd-domain-schema-registry.inc"
+#ifdef LIGHTUSD_DOMAIN_KIND_LOCAL
+#undef LIGHTUSD_DOMAIN_KIND
+#undef LIGHTUSD_DOMAIN_KIND_LOCAL
+#endif
 #undef LIGHTUSD_DOMAIN_BUILTIN
 #undef LIGHTUSD_DOMAIN_PROPERTY
 #undef LIGHTUSD_DOMAIN_SCHEMA
 };
+
+// Schema kinds of the OpenUSD 26.11 domain catalogs (concreteTyped,
+// abstractTyped, singleApplyAPI, multipleApplyAPI, ...).
+constexpr std::pair<std::string_view, std::string_view> kDomainKinds[] = {
+#define LIGHTUSD_DOMAIN_SCHEMA(name, parent)
+#define LIGHTUSD_DOMAIN_PROPERTY(schema, name, type, fallback)
+#define LIGHTUSD_DOMAIN_BUILTIN(owner, applied)
+#define LIGHTUSD_DOMAIN_KIND(name, kind) {name, kind},
+#include "schema/generated/openusd-domain-schema-registry.inc"
+#undef LIGHTUSD_DOMAIN_KIND
+#undef LIGHTUSD_DOMAIN_BUILTIN
+#undef LIGHTUSD_DOMAIN_PROPERTY
+#undef LIGHTUSD_DOMAIN_SCHEMA
+};
+
+std::string_view DomainKind(std::string_view name) {
+  for (const auto& [schema, kind] : kDomainKinds) {
+    if (schema == name) return kind;
+  }
+  return {};
+}
 
 void AppendDomainAPIs(std::string_view owner, std::vector<std::string>& result) {
   for (const auto& [schema, applied] : kDomainBuiltinAPIs) {
@@ -122,14 +167,15 @@ bool SchemaRegistry::IsAbstractTypedSchemaName(const std::string& name) {
   for (const char* a : kAbstract) {
     if (name == a) return true;
   }
-  return false;
+  const std::string_view kind = DomainKind(name);
+  return kind == "abstractTyped" || kind == "abstractBase";
 }
 
 bool SchemaRegistry::IsConcreteTypedSchemaName(const std::string& name) const {
-  if (name.empty() || IsAbstractTypedSchemaName(name) ||
-      IsAPISchemaTypeName(name)) {
-    return false;
-  }
+  if (name.empty() || IsAbstractTypedSchemaName(name)) return false;
+  const std::string_view kind = DomainKind(name);
+  if (!kind.empty()) return kind == "concreteTyped";
+  if (IsAPISchemaTypeName(name)) return false;
   return IsKnownSchema(name);
 }
 
@@ -591,7 +637,7 @@ bool IsMultipleApplyAPI(const std::string& schema) {
   for (const char* m : kMulti) {
     if (schema == m) return true;
   }
-  return false;
+  return DomainKind(schema) == "multipleApplyAPI";
 }
 
 // Built-in (typed-schema apiSchemas) and auto-applied API schemas of a prim
