@@ -307,8 +307,11 @@
     serial_sections_ = false;
 
     // Clear all accumulated table state from previous writes
-    tokens_.clear();
+    // Clear the lookup maps BEFORE the string storage their keys view: MSVC's
+    // unordered_map::clear() may re-hash keys, which would read freed memory.
     token_to_index_.clear();
+    string_to_index_.clear();
+    tokens_.clear();
     type_name_token_cache_.clear();
     declared_type_token_cache_.clear();
     ResetFieldTokens();

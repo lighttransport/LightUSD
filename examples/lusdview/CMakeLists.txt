@@ -462,6 +462,10 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra lightusd_preview_images)
+  if(MSVC)
+    # main() keeps ~1 MB of locals; the Windows default stack is 1 MB (Linux: 8 MB).
+    target_link_options(lusdview_lightrt_bridge_test PRIVATE /STACK:16777216)
+  endif()
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)

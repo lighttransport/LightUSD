@@ -26,13 +26,23 @@ bool IsAbsoluteDir(const std::string& p) {
   return p.size() >= 2 && p[1] == ':';
 }
 
+// Anchors and resolved asset paths are authored/compared as USD paths, which
+// use '/'. On Windows NormalizePath yields '\'; fold it back (UNC kept).
+std::string ToUsdSeparators(std::string p) {
+  const size_t start = (p.compare(0, 2, "\\\\") == 0) ? 2 : 0;
+  for (size_t i = start; i < p.size(); ++i)
+    if (p[i] == '\\') p[i] = '/';
+  return p;
+}
+
 // Resolve only against an explicitly supplied base. Interning never queries
 // CWD.
 std::string AbsolutizeDir(const std::string& dir, const std::string& base) {
   if (dir.empty() || base.empty() || IsAbsoluteDir(dir) ||
       !AssetResolver::GetIdentifierScheme(dir).empty())
     return dir;
-  return AssetResolver::NormalizePath(AssetResolver::JoinPath(base, dir));
+  return ToUsdSeparators(
+      AssetResolver::NormalizePath(AssetResolver::JoinPath(base, dir)));
 }
 
 struct AnchorTable {
@@ -93,7 +103,8 @@ std::string ResolveAssetAnchorPath(const std::string& asset, uint32_t id) {
       return {};
     return package + "[" + joined + "]";
   }
-  return AssetResolver::NormalizePath(AssetResolver::JoinPath(anchor, asset));
+  return ToUsdSeparators(
+      AssetResolver::NormalizePath(AssetResolver::JoinPath(anchor, asset)));
 }
 
 void StampLayerAssetAnchor(Layer* layer, const std::string& identifier,

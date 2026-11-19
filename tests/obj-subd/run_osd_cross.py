@@ -65,18 +65,35 @@ def main():
     if not root:
         print("SKIP: set OSD_ROOT to an OpenSubdiv install to run the cross-check")
         return 77
+    import shutil
+    if os.name == "nt" and not shutil.which("cl"):
+        print("SKIP: MSVC cl not on PATH (run from a VS developer prompt)")
+        return 77
     os.makedirs(work, exist_ok=True)
     ref = os.path.join(work, "osd_refine")
     tobj = os.path.join(src, "external", "tinyobjloader-c")
     objs = []
+    msvc = os.name == "nt"
     for c in ("tiny_obj_c.c", "tobj_tess.c", "tobj_subd.c"):
-        o = os.path.join(work, c + ".o")
-        subprocess.run(["cc", "-std=c11", "-O1", "-c", os.path.join(tobj, c), "-o", o], check=True)
+        if msvc:
+            o = os.path.join(work, c + ".obj")
+            subprocess.run(["cl", "/nologo", "/MD", "/utf-8", "/std:c11", "/O1", "/c", os.path.join(tobj, c),
+                            "/Fo" + o], check=True, cwd=work)
+        else:
+            o = os.path.join(work, c + ".o")
+            subprocess.run(["cc", "-std=c11", "-O1", "-c", os.path.join(tobj, c), "-o", o], check=True)
         objs.append(o)
-    subprocess.run(["c++", "-std=c++17", "-O1", f"-I{root}/include", f"-I{src}",
-                    os.path.join(HERE, "osd_refine.cc")] + objs +
-                   [f"-L{root}/lib", "-losdCPU", f"-Wl,-rpath,{root}/lib", "-lm", "-o", ref],
-                   check=True)
+    if msvc:
+        ref += ".exe"
+        subprocess.run(["cl", "/nologo", "/MD", "/utf-8", "/D_USE_MATH_DEFINES", "/std:c++17", "/EHsc", "/O1", f"/I{root}/include", f"/I{src}",
+                        os.path.join(HERE, "osd_refine.cc")] + objs +
+                       ["/Fe" + ref, "/Fo" + os.path.join(work, "osd_refine.obj"),
+                        "/link", f"{root}/lib/osdCPU.lib"], check=True, cwd=work)
+    else:
+        subprocess.run(["c++", "-std=c++17", "-O1", f"-I{root}/include", f"-I{src}",
+                        os.path.join(HERE, "osd_refine.cc")] + objs +
+                       [f"-L{root}/lib", "-losdCPU", f"-Wl,-rpath,{root}/lib", "-lm", "-o", ref],
+                       check=True)
     fails = 0
     for fx in FIXTURES:
         obj = os.path.join(HERE, fx)

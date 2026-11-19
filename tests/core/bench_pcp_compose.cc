@@ -23,8 +23,7 @@
 #include <string>
 #include <vector>
 
-#include <sys/resource.h>
-#include <unistd.h>
+#include "../compat/posix_compat.h"
 
 #include "crate/lazy-array.hh"
 #include "layer/layer.hh"

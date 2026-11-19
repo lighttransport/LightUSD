@@ -1,5 +1,18 @@
 #include "bsdf.h"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef SRWLOCK ms_mutex_t;
+#define MS_MUTEX_INIT SRWLOCK_INIT
+#define ms_mutex_lock(m) AcquireSRWLockExclusive(m)
+#define ms_mutex_unlock(m) ReleaseSRWLockExclusive(m)
+#else
 #include <pthread.h>
+typedef pthread_mutex_t ms_mutex_t;
+#define MS_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+#define ms_mutex_lock(m) pthread_mutex_lock(m)
+#define ms_mutex_unlock(m) pthread_mutex_unlock(m)
+#endif
 
 #include <math.h>
 #include <stddef.h>
@@ -1218,7 +1231,7 @@ void bsdf_set_dielectric_multiscatter(int enable) { g_ms_dielectric = enable != 
 typedef struct { int key; float albedo[MS_TAB_ALPHA][MS_TAB_MU]; } MsTable;
 static MsTable g_ms_tables[MS_TAB_CACHE];
 static int g_ms_table_count = 0;
-static pthread_mutex_t g_ms_lock = PTHREAD_MUTEX_INITIALIZER;
+static ms_mutex_t g_ms_lock = MS_MUTEX_INIT;
 
 static float ms_interface_albedo_sample(float mu, float alpha, float eta, int n, int reflect_only) {
     pcg32 rng; pcg32_seed(&rng, 0x5eed, 7);
@@ -1251,7 +1264,7 @@ static float sampled_albedo_table(float mu, float alpha, float eta, int reflect_
     MsTable *tabs = reflect_only ? g_ri_tables : g_ms_tables;
     int *count = reflect_only ? &g_ri_table_count : &g_ms_table_count;
     int key = (int)lrintf(eta * 1000.0f);
-    pthread_mutex_lock(&g_ms_lock);
+    ms_mutex_lock(&g_ms_lock);
     MsTable *t = NULL;
     for (int i = 0; i < *count; ++i)
         if (tabs[i].key == key) { t = &tabs[i]; break; }
@@ -1272,7 +1285,7 @@ static float sampled_albedo_table(float mu, float alpha, float eta, int reflect_
     float tm = fm - i0, ta = fa - j0;
     float v = (1 - ta) * ((1 - tm) * t->albedo[j0][i0] + tm * t->albedo[j0][i0 + 1]) +
               ta * ((1 - tm) * t->albedo[j0 + 1][i0] + tm * t->albedo[j0 + 1][i0 + 1]);
-    pthread_mutex_unlock(&g_ms_lock);
+    ms_mutex_unlock(&g_ms_lock);
     return v;
 }
 

@@ -13,9 +13,7 @@
 //   With --combine-chain, ONLY the AOUSD supplemental corpus combine_chain
 //   JSON cases are replayed (exit 77 when the directory is absent).
 
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include "../compat/posix_compat.h"
 
 #include <algorithm>
 #include <cmath>

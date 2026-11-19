@@ -62,18 +62,18 @@ def Xform "World" (customData={int tag=7}) {
         prefix=root/('output'+str(binary))
         stdout=run(app,"--layer-json",str(package),str(prefix))
         assert 'Main USD file: '+root_name in stdout, stdout
-        scene=json.loads(prefix.with_name(prefix.name+'_usd.json').read_text())
+        scene=json.loads(prefix.with_name(prefix.name+'_usd.json').read_text(encoding='utf-8'))
         reports.append(scene)
         assert scene['typeName']=='Layer' and scene['metas']['defaultPrim']=='World'
         assert scene['primSpecs']['World']['children']['Child']['typeName']=='Scope'
         assert 'gain' in scene['primSpecs']['World']['properties']
-        assets=json.loads(prefix.with_name(prefix.name+'_assets.json').read_text())
+        assets=json.loads(prefix.with_name(prefix.name+'_assets.json').read_text(encoding='utf-8'))
         assert set(assets)==set(files), assets.keys()
         for name,data in files.items():
             assert assets[name]['filename']==name and assets[name]['size']==len(data)
             assert base64.b64decode(assets[name]['data'],validate=True)==data
         run(app,str(package),cwd=root)
-        runtime=json.loads((root/(package.stem+'_usd.json')).read_text())
+        runtime=json.loads((root/(package.stem+'_usd.json')).read_text(encoding='utf-8'))
         assert runtime['version']==1 and runtime['properties']['upAxis']=='Z'
         assert runtime['primChildren']['World']['xformOpOrder']==['offset','']
         children=runtime['primChildren']['World']['primChildren']

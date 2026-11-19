@@ -25,7 +25,7 @@ uint64_t ImageCacheHash(const std::string& resolved,
 
 std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file,
                                                    uint32_t asset_anchor_id) const {
-  if (file.empty() || file[0] == '/' ||
+  if (file.empty() || ::lightusd::AssetResolver::IsAbsolutePath(file) ||
       file.find("://") != std::string::npos) {
     return file;
   }
@@ -54,8 +54,11 @@ std::string RenderSceneConverter::Impl::ResolveAssetPath(const std::string& file
       // match a different package entry with the same authored name.
       if (!dir.empty() && !::lightusd::AssetResolver::IsPackagePath(dir) &&
           (config_.asset_resolver->GetAllowParentPaths() || resolved.exists)) {
-        const std::string anchored = ::lightusd::AssetResolver::NormalizePath(
+        std::string anchored = ::lightusd::AssetResolver::NormalizePath(
             ::lightusd::AssetResolver::JoinPath(dir, file));
+        // Memory identifiers are authored with '/'; NormalizePath yields the
+        // native separator on Windows.
+        for (char& c : anchored) if (c == '\\') c = '/';
         if (config_.asset_resolver->GetMemoryAssetView(anchored)) {
           if (exists) *exists = true;
           return anchored;

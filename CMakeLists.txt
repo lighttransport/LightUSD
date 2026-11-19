@@ -9,6 +9,26 @@ if(_LIGHTUSD_CONFIGURE_LEGACY_PRODUCT)
 endif()
 
 project(lightusd C CXX)
+
+# A POSIX bash for shell-driven tests. On Windows, C:\Windows\System32ash.exe
+# is the WSL launcher (cannot read D:/... paths), so prefer Git for Windows' bash.
+if(WIN32)
+  find_program(LIGHTUSD_BASH NAMES bash
+               HINTS "$ENV{ProgramFiles}/Git/bin" "$ENV{ProgramFiles}/Git/usr/bin"
+               NO_DEFAULT_PATH)
+endif()
+find_program(LIGHTUSD_BASH NAMES bash)
+set(LUSDR_BASH "${LIGHTUSD_BASH}" CACHE FILEPATH "bash for lusdrender tests" FORCE)
+# Command prefix for running scripts. Git bash rewrites POSIX-looking arguments
+# such as "/World/Camera" into Windows paths unless excluded.
+if(WIN32)
+  # Prim/camera paths the scripts pass to the renderers; real file paths
+  # (/d/work/...) must still be converted.
+  set(_lusd_excl "/C$<SEMICOLON>/Cam$<SEMICOLON>/Camera$<SEMICOLON>/World$<SEMICOLON>/root$<SEMICOLON>/Render$<SEMICOLON>/P$<SEMICOLON>/NotSelected")
+  set(LIGHTUSD_BASH_CMD ${CMAKE_COMMAND} -E env "MSYS2_ARG_CONV_EXCL=${_lusd_excl}" PYTHONUTF8=1 "${LIGHTUSD_BASH}")
+else()
+  set(LIGHTUSD_BASH_CMD "${LIGHTUSD_BASH}")
+endif()
 option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
 if(NOT LIGHTUSD_NATIVE_IO)
   add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
@@ -119,6 +139,14 @@ if(LIGHTUSD_BUILD_EXAMPLES AND NOT DEFINED LIGHTUSD_BUILD_C_API_EXAMPLE)
       "Build the public C API consumer example")
 endif()
 if(LIGHTUSD_BUILD_TESTS)
+# Many tests hard-code "/tmp/..." scratch paths, which Windows resolves to
+# <current drive>:/tmp. Make sure that directory exists.
+if(WIN32)
+  string(REGEX MATCH "^[A-Za-z]:/" _lusd_drive_root "${CMAKE_BINARY_DIR}")
+  if(_lusd_drive_root)
+    file(MAKE_DIRECTORY "${_lusd_drive_root}tmp")
+  endif()
+endif()
   enable_testing()
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)

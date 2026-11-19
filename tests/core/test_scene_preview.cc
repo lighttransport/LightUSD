@@ -583,7 +583,7 @@ def PointInstancer "Instances" {
         portable_light.GetPropertyValue("inputs:texture:file");
     Require(emission && emission->as_asset_path(),
             "preserve baked light texture");
-    const fs::path sidecar(emission->as_asset_path());
+    const fs::path sidecar{std::string(emission->as_asset_path())};
     Require(!sidecar.is_absolute() && sidecar.extension() == ".hdr",
             "relative linear HDR light sidecar");
     fs::remove(scratch / "light.ppm");
@@ -606,8 +606,13 @@ def PointInstancer "Instances" {
                                   options);
     const auto manifest =
         fs::path(lit.usd_path).parent_path() / "manifest.json";
-    std::ifstream old_manifest(manifest);
-    std::string contents((std::istreambuf_iterator<char>(old_manifest)), {});
+    std::string contents;
+    {
+      // Close before the upgrade: Windows cannot rename a directory that holds
+      // an open file.
+      std::ifstream old_manifest(manifest);
+      contents.assign((std::istreambuf_iterator<char>(old_manifest)), {});
+    }
     auto version = contents.find("\"lighting_version\": 2");
     Require(version != std::string::npos, "lighting cache version marker");
     contents.replace(version, std::string("\"lighting_version\": 2").size(),

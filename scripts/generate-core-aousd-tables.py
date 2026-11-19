@@ -37,7 +37,7 @@ def main():
                         help="fail when generated coverage is incomplete")
     args = parser.parse_args()
     generated = args.root / "src/schema/generated"
-    schema_text = (generated / "aousd-core-schema-definitions.inc").read_text()
+    schema_text = (generated / "aousd-core-schema-definitions.inc").read_text(encoding="utf-8")
     actual = {}
     for schema, name in re.findall(
             r'AOUSD_SCHEMA_(?:FALLBACK|DECLARE)\("([^"]+)",\s*"([^"]+)"',
@@ -48,7 +48,7 @@ def main():
         for name in sorted(names - actual.get(schema, set())):
             missing.append(f"schema {schema}.{name}")
 
-    field_text = (generated / "aousd-elective-field-coverage.inc").read_text()
+    field_text = (generated / "aousd-elective-field-coverage.inc").read_text(encoding="utf-8")
     fields = set(re.findall(r"AOUSD_FIELD\((\w+),\s*([\w]+),\s*\w+\)",
                             field_text))
     for scope, name in sorted(MINIMUM_FIELDS - fields):
@@ -60,7 +60,7 @@ def main():
     # tests/core/test_aousd_conformance.cc must not silently shrink. Rows are
     # counted between each `k<Name>Matrix[] = {` and its closing `};`.
     conformance = (args.root /
-                   "tests/core/test_aousd_conformance.cc").read_text()
+                   "tests/core/test_aousd_conformance.cc").read_text(encoding="utf-8")
     matrix_floors = {
         "kPathGrammarMatrix": 25,   # §8.3 production-derived path cases
         "kEscapeMatrix": 14,        # string escape decode/round-trip cases
@@ -79,7 +79,7 @@ def main():
 
     # VR edge matrix (pxr-baked expectations) floor.
     vr_inc = args.root / "tests/core/generated/vr-edge-expected.inc"
-    vr_rows = len(re.findall(r"^VR_EDGE_CASE\(", vr_inc.read_text(), re.M))
+    vr_rows = len(re.findall(r"^VR_EDGE_CASE\(", vr_inc.read_text(encoding="utf-8"), re.M))
     if vr_rows < 70:
         missing.append(
             f"vr-edge-expected.inc has only {vr_rows} rows (expected >=70)")

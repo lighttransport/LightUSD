@@ -24,7 +24,11 @@ def main():
         return 1
     fails = 0
     for t in times:
-        r = subprocess.run([dump, src, str(t)], capture_output=True, text=True, check=True)
+        import os
+        # Windows cannot exec a .sh wrapper: call the SKIN_COMPARE executable it wraps.
+        cmd = ([os.environ["SKIN_COMPARE"], "--dump"] if os.name == "nt" and dump.endswith(".sh")
+               and os.environ.get("SKIN_COMPARE") else [dump])
+        r = subprocess.run(cmd + [src, str(t)], capture_output=True, text=True, check=True)
         native = {}
         for line in r.stdout.splitlines():
             f = line.split()

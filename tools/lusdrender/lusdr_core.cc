@@ -3714,7 +3714,7 @@ static void RetainMaterialXFields(const lightusd::Stage& stage, const lightusd::
     const std::string binding = rel.substr(6);
     if (out->Field(binding)) continue;
     const auto fail = [&](const std::string& message) {
-      out->fields.push_back({binding, {}, message});
+      out->fields.emplace_back(binding, lightusd::tydra::vol::ResolvedField(), message);
     };
     std::vector<lightusd::Path> targets;
     volume.GetForwardedRelationshipTargets(rel, &targets);
@@ -3756,7 +3756,7 @@ static void RetainMaterialXFields(const lightusd::Stage& stage, const lightusd::
       out->fields.push_back({binding, std::move(resolved)});
     else {
       std::cerr << "WARN: MaterialX volume field '" << binding << "': " << error << "\n";
-      out->fields.push_back({binding, {}, error.empty() ? "field resolution failed" : error});
+      out->fields.emplace_back(binding, lightusd::tydra::vol::ResolvedField(), error.empty() ? std::string("field resolution failed") : error);
     }
   }
 }

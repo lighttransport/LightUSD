@@ -300,7 +300,7 @@ if(LIGHTUSD_BUILD_TESTS)
   # Differential parity harness vs pxr usdchecker over tests/usda.
   # Self-skips when pxr is not installed.
   add_test(NAME lusdchecker_vs_usdchecker
-    COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-lusdchecker-vs-usdchecker.sh)
+    COMMAND ${LIGHTUSD_BASH_CMD} ${PROJECT_SOURCE_DIR}/tests/run-lusdchecker-vs-usdchecker.sh)
   set_tests_properties(lusdchecker_vs_usdchecker PROPERTIES
     SKIP_REGULAR_EXPRESSION "SKIP:"
     ENVIRONMENT "LUSDCHECKER_PATH=$<TARGET_FILE:lusdchecker>")

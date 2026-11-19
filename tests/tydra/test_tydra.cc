@@ -3,6 +3,9 @@
 //
 // Tydra - Unit Tests
 
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES 1  // M_PI on MSVC
+#endif
 #include <algorithm>
 #include "layer/asset-anchor.hh"
 #include <iostream>
@@ -4132,9 +4135,11 @@ def Xform "Scene"
   assert(rough_texture.output_channel == RenderTexture::Channel::R);
   assert(normal_texture.output_channel == RenderTexture::Channel::RGB);
 
-  const std::string expected_prefix = (materials / "tex").string() + "/";
+  const std::string expected_prefix = (materials / "tex").generic_string() + "/";
   for (const TextureImage& image : result.scene.images) {
-    assert(image.resolved_path.rfind(expected_prefix, 0) == 0);
+    std::string resolved = image.resolved_path;  // native separators on Windows
+    for (char& c : resolved) if (c == '\\') c = '/';
+    assert(resolved.rfind(expected_prefix, 0) == 0);
   }
 
   fs::remove_all(fixture, ec);
@@ -4282,7 +4287,11 @@ def Xform "Scene"
   RenderSceneConverter memory_converter(memory_config);
   const auto memory_scene = memory_converter.Convert(memory_stage.stage);
   assert(memory_scene.success && memory_scene.scene.images.size() == 1);
-  assert(memory_scene.scene.images[0].resolved_path == "nested/textures/albedo.png");
+  {
+    std::string p = memory_scene.scene.images[0].resolved_path;  // native separators on Windows
+    for (char& c : p) if (c == '\\') c = '/';  // mixed separators are possible
+    assert(p == "nested/textures/albedo.png");
+  }
 
   std::cout << "  Forwarded texture asset anchoring: PASSED\n";
 }
@@ -9145,7 +9154,11 @@ void TestPtexMaterialInterfaceAsset() {
   assert(converted.success);
   assert(converted.scene.textures.size() == 1);
   assert(converted.scene.textures[0].asset_path == "maps/surface.ptx");
-  assert(converted.scene.images[0].resolved_path == "maps/surface.ptx");
+  {
+    std::string p = converted.scene.images[0].resolved_path;
+    for (char& c : p) if (c == '\\') c = '/';
+    assert(p == "maps/surface.ptx");
+  }
   std::cout << "  Ptex material-interface asset forwarding: PASSED\n";
 }
 

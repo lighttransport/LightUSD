@@ -473,7 +473,11 @@ static void test_suffix_fallback_resolution() {
   ResolvedAsset hit =
       resolver.Resolve("F:/projects/other-machine/textures/wood.png", "");
   CHECK(hit.exists, "foreign absolute path rehomes via suffix fallback");
-  CHECK(hit.resolved_path.find("textures/wood.png") != std::string::npos,
+  CHECK([&] {
+          std::string p = hit.resolved_path;
+          for (char& c : p) if (c == '\\') c = '/';
+          return p.find("textures/wood.png") != std::string::npos;
+        }(),
         "resolved path points at the rehomed file");
   CHECK(hit.original_path == "F:/projects/other-machine/textures/wood.png",
         "original path preserved");
@@ -513,7 +517,11 @@ static void test_recursive_resolution_and_identifiers() {
   AssetResolver resolver(cfg);
   const ResolvedAsset hit = resolver.Resolve("material.usda");
   CHECK(hit.exists, "recursive search finds a nested asset");
-  CHECK(hit.resolved_path.find("a/nested/material.usda") != std::string::npos,
+  CHECK([&] {
+          std::string p = hit.resolved_path;
+          for (char& c : p) if (c == '\\') c = '/';
+          return p.find("a/nested/material.usda") != std::string::npos;
+        }(),
         "recursive search returns the nested path");
 
   cfg.search_recursively = false;

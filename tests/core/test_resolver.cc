@@ -28,6 +28,12 @@ static int g_fail = 0;
 
 namespace {
 
+// Resolver paths use the native separator; compare in forward-slash form.
+std::string Slashes(std::string p) {
+  for (char& c : p) if (c == '\\') c = '/';
+  return p;
+}
+
 std::filesystem::path MakeTempRoot(const char* tag) {
   namespace fs = std::filesystem;
   const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -267,7 +273,7 @@ void TestPathNormalization() {
       {"a/b/..", "a"},
   };
   for (const Case& c : cases) {
-    CHECK(AssetResolver::NormalizePath(c.input) == c.expected,
+    CHECK(Slashes(AssetResolver::NormalizePath(c.input)) == c.expected,
           "normalized path keeps its meaning");
   }
 }
@@ -423,10 +429,10 @@ void TestAnchoredMemoryAssets() {
   CHECK(resolver.SetAlias("nested/looks/alias.usda", "nested/looks/look.usda"),
         "anchored memory alias registers");
   const auto anchored = resolver.Resolve("looks/look.usda", "nested/root.usda");
-  CHECK(anchored.exists && anchored.resolved_path == "nested/looks/look.usda" &&
+  CHECK(anchored.exists && Slashes(anchored.resolved_path) == "nested/looks/look.usda" &&
         !anchored.has_file_identity, "relative memory assets resolve against their layer");
   const auto alias = resolver.Resolve("looks/alias.usda", "nested/root.usda");
-  CHECK(alias.exists && alias.canonical_path == "nested/looks/look.usda",
+  CHECK(alias.exists && Slashes(alias.canonical_path) == "nested/looks/look.usda",
         "anchored aliases retain canonical memory identity");
   resolver.SetWorkingDirectory("nested");
   CHECK(resolver.Resolve("looks/look.usda").exists, "working directory resolves memory assets");
@@ -513,8 +519,10 @@ void TestAssetInfoAndTimestamp() {
         "ReadAsset rejects a directory descriptor");
 
   const ResolvedAsset payload = resolver.Resolve("payload.bin");
+#if !defined(_WIN32)  // Windows reports no stable device/inode pair.
   CHECK(payload.has_file_identity,
         "resolution captures the file device/inode identity");
+#endif
   CHECK(resolver.ReadAsset(payload, &bytes, &read_error) &&
             bytes == std::vector<uint8_t>({'h', 'e', 'l', 'l', 'o'}),
         "identity-checked ReadAsset reads the resolved file");

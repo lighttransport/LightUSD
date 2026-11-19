@@ -1378,6 +1378,14 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(anchor_dir, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    // Memory assets are registered under their authored ('/') identifiers;
+    // NormalizePath yields native separators, so also probe the folded form.
+    if (memory_asset_count_.load(std::memory_order_relaxed) != 0) {
+      std::string folded = candidate;
+      std::replace(folded.begin(), folded.end(), '\\', '/');
+      if (folded != candidate && HasMemoryAsset(CanonicalPath(folded)))
+        candidate = std::move(folded);
+    }
     const std::string canonical = CanonicalPath(candidate);
     if (HasMemoryAsset(canonical)) {
       result.resolved_path = candidate;
@@ -1398,6 +1406,14 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(config_.working_directory, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    // Memory assets are registered under their authored ('/') identifiers;
+    // NormalizePath yields native separators, so also probe the folded form.
+    if (memory_asset_count_.load(std::memory_order_relaxed) != 0) {
+      std::string folded = candidate;
+      std::replace(folded.begin(), folded.end(), '\\', '/');
+      if (folded != candidate && HasMemoryAsset(CanonicalPath(folded)))
+        candidate = std::move(folded);
+    }
     const std::string canonical = CanonicalPath(candidate);
     if (HasMemoryAsset(canonical)) {
       result.resolved_path = candidate;
@@ -1420,6 +1436,14 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     std::string candidate = JoinPath(search_path, asset_path);
     candidate = NormalizePath(candidate);
     uint64_t device = 0, inode = 0;
+    // Memory assets are registered under their authored ('/') identifiers;
+    // NormalizePath yields native separators, so also probe the folded form.
+    if (memory_asset_count_.load(std::memory_order_relaxed) != 0) {
+      std::string folded = candidate;
+      std::replace(folded.begin(), folded.end(), '\\', '/');
+      if (folded != candidate && HasMemoryAsset(CanonicalPath(folded)))
+        candidate = std::move(folded);
+    }
     const std::string canonical = CanonicalPath(candidate);
     if (HasMemoryAsset(canonical)) {
       result.resolved_path = candidate;

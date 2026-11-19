@@ -2,6 +2,7 @@
 /// Writes a Stage to USDC, then reads it back with pxrUSD's usdcat.
 /// Documents current pxrUSD compatibility level.
 
+#include "../compat/posix_compat.h"
 #include "stage/stage.hh"
 #include "layer/layer.hh"
 #include "types/value.hh"

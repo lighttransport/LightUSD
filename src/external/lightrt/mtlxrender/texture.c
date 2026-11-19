@@ -1,3 +1,6 @@
+#if defined(_MSC_VER) && !defined(strdup)
+#define strdup _strdup
+#endif
 #include "texture.h"
 #include "color.h"
 #include "mtlx_doc.h"
