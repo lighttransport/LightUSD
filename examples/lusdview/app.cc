@@ -8828,10 +8828,19 @@ int App::run(const std::string& initialFile, int maxFrames,
       const uint32_t accepted =
           renderer_ ? renderer_->rayTracingAccumulatedSamples() : 0u;
       fixedFrameBudgetReached = accepted >= pathTrace_.targetSamples;
-      const uint32_t convergenceInterval =
-          std::max(8u, pathTrace_.minSamples / 4u);
+      // Shutter motion is rendered as one segment per accepted sample
+      // (round robin). Converging mid-cycle would weight the segments
+      // unequally and skew the motion blur, so only test (and stop) after
+      // whole cycles.
+      const uint32_t shutterSegments =
+          cameraShutter_.enabled() && !cameraName_.empty()
+              ? std::max(1u, pathTrace_.motionSegments) : 1u;
+      uint32_t convergenceInterval = std::max(8u, pathTrace_.minSamples / 4u);
+      convergenceInterval =
+          (convergenceInterval + shutterSegments - 1u) / shutterSegments *
+          shutterSegments;
       if (!fixedFrameBudgetReached && pathTrace_.varianceThreshold > 0.0f &&
-          accepted >= pathTrace_.minSamples &&
+          accepted >= pathTrace_.minSamples && accepted % shutterSegments == 0u &&
           accepted >= pathConvergenceLastSample + convergenceInterval) {
         std::vector<float> current;
         int convergenceW = 0, convergenceH = 0;

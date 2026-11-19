@@ -363,8 +363,9 @@ python3 examples/lusdview/render-motion.py \
     stay in step with the camera. Blender splat-only variants through
     `--path-trace`: 1.20-1.24x the noise floor, including motion, camera motion
     and animated colour (`tests/gsplat/check_cycles_compare.py variants
-    --lusdview`). Known issue: Vulkan's segment camera over-blurs splats
-    (~25% wider than Cycles); HIP matches. `--background black|white` sets
+    --lusdview`). Adaptive convergence (`--pt-variance`) only stops after
+    whole shutter-segment cycles, so the segments stay equally weighted.
+    `--background black|white` sets
     the viewport/RT environment colour, now also honoured by the CPU, CUDA and
     HIP tracers.
     `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's

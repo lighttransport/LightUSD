@@ -171,8 +171,9 @@ def main():
                     out.append(row)
                 return out
             # Only blocks entirely on the lit plane: its blurred outline is
-            # mesh (camera) motion blur, which the app samples in shutter
-            # segments; this check is about the splats.
+            # mesh (camera) motion blur, sampled by the app in 16 discrete
+            # shutter segments (~2% off a continuous shutter at the edge);
+            # this check is about the splats.
             fullmask = np.where(mask, 1.0, np.nan)
             full = [[(None if np.isnan(fullmask[by * 10:(by + 1) * 10,
                                                 bx * 10:(bx + 1) * 10]).any() else 1.0)

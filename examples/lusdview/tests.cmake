@@ -882,9 +882,8 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;gsplat"
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
-      # Camera motion blur (app shutter segments). Vulkan is left out: its
-      # segment camera currently over-blurs splats (~25% wider than Cycles).
-      foreach(_gs_mixed pt-hip pt-cuda)
+      # Camera motion blur (app shutter segments).
+      foreach(_gs_mixed pt-vk pt-hip pt-cuda)
         add_test(
           NAME lusdview-gsplat-mixed-cammotion-${_gs_mixed}
           COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
