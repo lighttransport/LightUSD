@@ -2,6 +2,7 @@
 /// Tests detection functions (IsMesh, IsCamera, etc.) and data getters.
 
 #include "schema/geom-mesh.hh"
+#include "schema/geom-boundable.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/color-space.hh"
@@ -436,6 +437,57 @@ def PointInstancer "Motion" {
       std::fabs(motion[0].matrix[1] - c) > 1e-6 ||
       std::fabs(motion[0].matrix[4] + c) > 1e-6) {
     FAIL("velocity/angular velocity motion");
+    return;
+  }
+  PASS();
+}
+
+// UsdGeomBoundable::ComputeExtentFromPlugins rules (checked against OpenUSD
+// and the Lean GeomRuntime model by usdspec-conformance
+// test-domain-geom-runtime.py).
+void test_compute_extent() {
+  TEST("ComputeExtent");
+  const auto loaded = LoadUSDAFromString(R"usd(#usda 1.0
+def Cube "C" {}
+def Capsule "Cap" {
+    double height = 2
+    double radius = 0.25
+    uniform token axis = "Y"
+}
+def Points "P" {
+    point3f[] points = [(0,0,0),(2,1,0)]
+    float[] widths = [0.5, 1]
+}
+def Points "Constant" {
+    point3f[] points = [(0,0,0),(2,1,0)]
+    float[] widths = [1] (interpolation = "constant")
+}
+def BasisCurves "Curves" {
+    int[] curveVertexCounts = [2]
+    point3f[] points = [(0,0,0),(1,0,0)]
+    float[] widths = [0.25, 0.5]
+}
+def Cylinder "Bad" {
+    uniform token axis = "W"
+}
+)usd");
+  if (!loaded.success) { FAIL("failed to load extent scene"); return; }
+  auto extent = [&](const char* path, const double want[6]) {
+    double e[6];
+    if (!ComputeExtent(loaded.stage.GetPrimAtPath(path), 0.0, e)) return false;
+    for (int k = 0; k < 6; ++k) if (std::fabs(e[k] - want[k]) > 1e-6) return false;
+    return true;
+  };
+  const double cube[6] = {-1, -1, -1, 1, 1, 1};
+  const double cap[6] = {-0.25, -1.25, -0.25, 0.25, 1.25, 0.25};
+  const double pts[6] = {-0.25, -0.25, -0.5, 2.5, 1.5, 0.5};
+  const double crv[6] = {-0.25, -0.25, -0.25, 1.25, 0.25, 0.25};
+  double scratch[6];
+  if (!extent("/C", cube) || !extent("/Cap", cap) || !extent("/P", pts) ||
+      !extent("/Curves", crv) ||
+      ComputeExtent(loaded.stage.GetPrimAtPath("/Constant"), 0.0, scratch) ||
+      ComputeExtent(loaded.stage.GetPrimAtPath("/Bad"), 0.0, scratch)) {
+    FAIL("unexpected computed extent");
     return;
   }
   PASS();
@@ -1046,6 +1098,7 @@ int main() {
   test_point_instancer_interpolation();
   test_point_instancer_orientation_precision();
   test_point_instancer_layout_and_motion();
+  test_compute_extent();
   test_mesh_xform_timecode_interpolation();
   test_xform_schema();
   test_camera_schema();

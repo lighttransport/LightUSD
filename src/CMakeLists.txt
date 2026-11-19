@@ -130,6 +130,7 @@ set(LIGHTUSD_CORE_SOURCES
 
     # Schema convenience APIs
     schema/geom-point-instancer.cc
+    schema/geom-boundable.cc
     schema/color-space.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
