@@ -24,6 +24,7 @@
 #include "schema/geom-boundable.hh"
 #include "schema/physics-resolve.hh"
 #include "schema/usd-collection.hh"
+#include "schema/usd-lod.hh"
 #include "schema/usd-render.hh"
 #include "schema/usd-semantics.hh"
 #include "schema/usd-shade.hh"
@@ -269,6 +270,33 @@ int DumpSemantics(const char* scene, const std::vector<std::string>& taxonomies,
   return 0;
 }
 
+// usdLod: for each LODDistanceHeuristic, `<path> dist <d> lod <i> hyst <dh> lodh <ih>`
+// for viewpoint V under transform M (16 numbers, Gf layout) with prev/hysteresis;
+// for every prim, `<path> override <mode> <index>`.
+int DumpLod(const char* scene, double time, const double v[3], const double m[16], double prev,
+            double hyst) {
+  lightusd::Stage stage;
+  if (LoadOr(scene, &stage)) return 1;
+  stage.Traverse([&](const lightusd::UsdPrim& prim) {
+    const std::string path = prim.GetPath().str();
+    if (prim.GetTypeName() == "LODDistanceHeuristic") {
+      lightusd::LodDistanceQuery q;
+      lightusd::CreateLodDistanceQuery(stage, prim, time, &q);
+      const double d = lightusd::ComputeLodDistance(q, v, m);
+      const double dh = lightusd::ComputeLodDistance(q, v, m, prev, hyst);
+      std::printf("%s dist %.9g lod %.9g hyst %.9g lodh %.9g domain %s\n", path.c_str(), d,
+                  lightusd::ComputeLodIndex(q, d), dh, lightusd::ComputeLodIndex(q, dh),
+                  q.lod_domain.empty() ? "-" : q.lod_domain.c_str());
+    }
+    float index = 0;
+    const std::string mode = lightusd::ComputeLodOverride(stage, prim, time, &index);
+    std::printf("%s override %s %.9g\n", path.c_str(), mode.c_str(),
+                mode == "indexedLOD" ? index : 0.0f);
+    return true;
+  });
+  return 0;
+}
+
 // `<path> 0|1` membership of every prim in OWNER.collection:NAME.
 int DumpCollection(const char* scene, const char* owner, const char* name) {
   lightusd::Stage stage;
@@ -307,6 +335,12 @@ int main(int argc, char** argv) {
     const double t1 = colon == std::string::npos ? t0 : std::atof(range.substr(colon + 1).c_str());
     (void)argv[4];
     return DumpSemantics(argv[2], taxonomies, t0, t1);
+  }
+  if (argc == 25 && std::string(argv[1]) == "--dump-lod") {
+    double v[3], m[16];
+    for (int k = 0; k < 3; ++k) v[k] = std::atof(argv[4 + k]);
+    for (int k = 0; k < 16; ++k) m[k] = std::atof(argv[7 + k]);
+    return DumpLod(argv[2], std::atof(argv[3]), v, m, std::atof(argv[23]), std::atof(argv[24]));
   }
   if (argc == 3 && std::string(argv[1]) == "--dump-render-spec") {
     return DumpRenderSpec(argv[2]);

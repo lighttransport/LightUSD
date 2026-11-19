@@ -133,6 +133,7 @@ set(LIGHTUSD_CORE_SOURCES
     schema/geom-boundable.cc
     schema/usd-collection.cc
     schema/physics-resolve.cc
+    schema/usd-lod.cc
     schema/color-space.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
