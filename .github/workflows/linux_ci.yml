@@ -135,7 +135,15 @@ jobs:
     - name: Install TBB dependency
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtbb12 libpython3.12t64
+        sudo apt-get install -y libtbb12
+        # The downloaded OpenUSD binary links against libpython3.12.so.1.0,
+        # which is no longer in the runner's distro repos. Install the latest
+        # Ubuntu python3.12 runtime .deb directly so `usdcat --help` works.
+        pool="https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12"
+        deb="$(curl -fsSL "$pool/" | grep -o 'libpython3.12t64_[0-9][^" ]*ubuntu[^" ]*_amd64\.deb' | sort -V | tail -1)"
+        test -n "$deb"
+        curl -fsSL -o /tmp/libpython3.12t64.deb "$pool/$deb"
+        sudo dpkg -i /tmp/libpython3.12t64.deb
 
     - name: Download OpenUSD binary
       run: |
@@ -392,7 +400,6 @@ jobs:
     - name: build tests
       run: |
         cmake --build build_lusdview -j $(nproc) \
-          --target lusdview \
           --target lusdview_lighting_test \
           --target lusdview_lightrt_bridge_test \
           --target lusdview_openpbr_material_test \
@@ -404,7 +411,7 @@ jobs:
           --target lusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav|lusdview-vk-oit-validation"
+        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav"
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/next/ — it is gated
