@@ -189,6 +189,13 @@ public:
   /// Get relationship targets
   const std::vector<Path>* GetRelationship(const std::string& name) const;
 
+  /// Like GetRelationship(), but rebase targets authored in a prototype's
+  /// namespace onto this instance proxy's public namespace. Use this whenever
+  /// a target must address this particular instance rather than the shared
+  /// prototype (material/skeleton/light/physics bindings, shader connections).
+  bool GetMappedRelationshipTargets(const std::string& name,
+                                    std::vector<Path>* targets) const;
+
   /// Resolve relationship-to-relationship target chains. Terminal prim and
   /// attribute paths are returned in first-seen order with duplicates removed.
   /// Cycles are ignored after the first visit. Returns false when this prim has

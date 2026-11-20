@@ -182,9 +182,10 @@ std::string GetValidBoundMaterialPath(const Stage& stage, const UsdPrim& prim,
     const char* rel = (purpose.empty() || standardPurpose)
                           ? bindingOrder[i]
                           : purpose_rel.c_str();
-    const std::vector<Path>* targets = prim.GetRelationship(rel);
-    if (!targets || targets->empty()) continue;
-    const std::string path = (*targets)[0].str();
+    std::vector<Path> targets;
+    if (!prim.GetMappedRelationshipTargets(rel, &targets) || targets.empty())
+      continue;
+    const std::string path = targets[0].str();
     if (!IsMaterial(stage.GetPrimAtPath(path))) continue;
     if (stronger && spec) {
       if (const PropMeta* pm = spec->property_meta(rel)) {
