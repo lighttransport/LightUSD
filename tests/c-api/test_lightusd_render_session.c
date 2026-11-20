@@ -685,9 +685,101 @@ static void test_nested_instance_node_paths(void) {
   for (size_t i = 0; i < 3; ++i) remove(paths[i]);
 }
 
+/* Regression for PR #298 follow-up: a nested instance shared by two different
+ * outer prototypes (A references rack_a, B/C reference rack_b) must map its
+ * grandchild mesh through the nested prototype holder for BOTH outer groups.
+ * Mapping only the outer instance leaves C's mesh at A's path. */
+static void test_nested_instance_cross_prototype_paths(void) {
+  const char* leaf_path = "./lightusd-nested-cross-leaf.usda";
+  const char* rack_a_path = "./lightusd-nested-cross-rack-a.usda";
+  const char* rack_b_path = "./lightusd-nested-cross-rack-b.usda";
+  const char* root_path = "./lightusd-nested-cross-root.usda";
+  const char* leaf_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"Geo\" {\n"
+      "  def Mesh \"Box\" {\n"
+      "   int[] faceVertexCounts = [4]\n"
+      "   int[] faceVertexIndices = [0,1,2,3]\n"
+      "   point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\n"
+      "  }\n"
+      " }\n"
+      "}\n";
+  const char* rack_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"Crate\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-leaf.usda@) {}\n"
+      "}\n";
+  const char* root_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"A\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-a.usda@) {}\n"
+      " def Xform \"B\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-b.usda@) {}\n"
+      " def Xform \"C\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-b.usda@) {}\n"
+      "}\n";
+  const char* paths[4] = {leaf_path, rack_a_path, rack_b_path, root_path};
+  const char* sources[4] = {leaf_source, rack_source, rack_source, root_source};
+  for (size_t i = 0; i < 4; ++i) {
+    FILE* file = fopen(paths[i], "wb");
+    assert(file);
+    assert(fwrite(sources[i], 1, strlen(sources[i]), file) == strlen(sources[i]));
+    assert(fclose(file) == 0);
+  }
+
+  lightusd_stage* stage = NULL;
+  assert(lightusd_stage_load(root_path, NULL, &stage) == LIGHTUSD_OK);
+  lightusd_render_config config;
+  lightusd_render_config_init(&config);
+  lightusd_render_scene* scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+  lightusd_render_stats stats;
+  memset(&stats, 0, sizeof(stats));
+  assert(lightusd_render_scene_get_stats(scene, &stats) == LIGHTUSD_OK);
+  assert(stats.node_count == 13);
+  assert(lightusd_render_count(scene, LIGHTUSD_RENDER_MESH) == 3);
+
+  const char* expected[] = {"/World/A/Crate/Geo/Box",
+                            "/World/B/Crate/Geo/Box",
+                            "/World/C/Crate/Geo/Box"};
+  for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+    const int32_t node = lightusd_render_lookup(scene, LIGHTUSD_RENDER_NODE, expected[i]);
+    assert(node >= 0);
+    lightusd_render_node_info info;
+    memset(&info, 0, sizeof(info));
+    assert(lightusd_render_node_get_info(scene, node, &info) == LIGHTUSD_OK);
+    assert(info.data_id >= 0);
+    assert(lightusd_render_lookup(scene, LIGHTUSD_RENDER_MESH, expected[i]) ==
+           info.data_id);
+    const int32_t mesh = info.data_id;
+    lightusd_render_mesh_info mesh_info;
+    memset(&mesh_info, 0, sizeof(mesh_info));
+    assert(lightusd_render_mesh_get_info(scene, mesh, &mesh_info) == LIGHTUSD_OK);
+    assert(mesh_info.prim_path.len == strlen(expected[i]));
+    assert(memcmp(mesh_info.prim_path.data, expected[i],
+                  strlen(expected[i])) == 0);
+  }
+  lightusd_render_scene_destroy(scene);
+  lightusd_stage_destroy(stage);
+  for (size_t i = 0; i < 4; ++i) remove(paths[i]);
+}
+
 int main(void) {
   test_conversion_diagnostics();
   test_nested_instance_node_paths();
+  test_nested_instance_cross_prototype_paths();
   test_resource_budget();
   test_converter_controls();
   test_clip_curve_query();

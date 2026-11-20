@@ -213,17 +213,16 @@ static const PrimMetadata kDefaultMeta;
 // path instead. Using the outer mapping for those children gives every outer
 // instance after the first the first instance's child paths, so the nested
 // instances lose their children in composed/rendered scenes.
-static void InstanceChildRoots(const Layer &layer, const PrimSpec *spec,
+static bool InstanceChildRoots(const Layer &layer, const PrimSpec *spec,
                                const Path &public_path,
                                const std::string &prototype_root,
-                               const std::string &instance_root,
                                std::string *source_root,
                                std::string *target_root) {
   const std::string &nested = spec->meta().instance_prototype();
   if (!nested.empty()) {
     *source_root = nested;
     *target_root = public_path.str();
-    return;
+    return true;
   }
   // Holder-mode flattening stores the nested prototype as an internal
   // reference instead of instance_prototype. A proxy inside an outer instance
@@ -233,10 +232,28 @@ static void InstanceChildRoots(const Layer &layer, const PrimSpec *spec,
       holder != prototype_root) {
     *source_root = std::move(holder);
     *target_root = public_path.str();
+    return true;
+  }
+  return false;
+}
+
+// Resolve the mapping used for a prim's children. A nested instance introduces
+// a new mapping that overrides the one inherited from its parent proxy; plain
+// descendants inherit it so grandchildren stay in the right namespace.
+static void EffectiveChildRoots(const Layer &layer, const PrimSpec *spec,
+                                const Path &public_path,
+                                const std::string &prototype_root,
+                                const std::string &instance_root,
+                                const std::string &inherited_source,
+                                const std::string &inherited_target,
+                                std::string *source_root,
+                                std::string *target_root) {
+  if (InstanceChildRoots(layer, spec, public_path, prototype_root,
+                         source_root, target_root)) {
     return;
   }
-  *source_root = prototype_root;
-  *target_root = instance_root;
+  *source_root = inherited_source.empty() ? prototype_root : inherited_source;
+  *target_root = inherited_target.empty() ? instance_root : inherited_target;
 }
 
 static std::string InstanceChildPath(const PrimSpec *child,
@@ -636,8 +653,10 @@ bool UsdPrim::GetForwardedRelationshipTargets(
   targets->clear();
   if (!spec_ || !layer_ || !GetRelationship(name)) return false;
 
-  std::string prototype_root = prototype_root_;
-  std::string instance_root = instance_root_;
+  std::string prototype_root =
+      child_source_root_.empty() ? prototype_root_ : child_source_root_;
+  std::string instance_root =
+      child_target_root_.empty() ? instance_root_ : child_target_root_;
   const PrimSpec* root_owner = spec_;
   if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
     prototype_root = spec_->meta().instance_prototype();
@@ -738,7 +757,8 @@ UsdPrim UsdPrim::GetParent() const {
     const uint32_t index = layer_->index_at_path(prototype_parent);
     const PrimSpec* parent = layer_->prim_at_path(Path(prototype_parent));
     return parent ? UsdPrim(parent, layer_, index, Path(proxy_parent),
-                            prototype_root_, instance_root_)
+                            prototype_root_, instance_root_,
+                            child_source_root_, child_target_root_)
                   : UsdPrim();
   }
 
@@ -803,8 +823,9 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
     }
   }
   std::string source_root, target_root;
-  InstanceChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
-                     &source_root, &target_root);
+  EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                      child_source_root_, child_target_root_,
+                      &source_root, &target_root);
   std::vector<uint32_t> ordered;
   const auto& indices = layer_->ordered_child_indices(*src, &ordered);
   children.reserve(indices.size());
@@ -815,7 +836,8 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
       if (!source_root.empty()) {
         children.emplace_back(child, layer_, idx,
                               Path(InstanceChildPath(child, source_root, target_root)),
-                              prototype_root, instance_root);
+                              prototype_root, instance_root,
+                              source_root, target_root);
       } else {
         children.emplace_back(child, layer_, idx);
       }
@@ -853,12 +875,14 @@ UsdPrim UsdPrim::GetChildAt(size_t index) const {
     }
   }
   std::string source_root, target_root;
-  InstanceChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
-                     &source_root, &target_root);
+  EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                      child_source_root_, child_target_root_,
+                      &source_root, &target_root);
   if (!source_root.empty()) {
     return UsdPrim(child, layer_, idx,
                    Path(InstanceChildPath(child, source_root, target_root)),
-                   prototype_root, instance_root);
+                   prototype_root, instance_root,
+                   source_root, target_root);
   }
   return UsdPrim(child, layer_, idx);
 }
@@ -885,12 +909,14 @@ UsdPrim UsdPrim::GetChild(const std::string& name) const {
         }
       }
       std::string source_root, target_root;
-      InstanceChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
-                         &source_root, &target_root);
+      EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                          child_source_root_, child_target_root_,
+                          &source_root, &target_root);
       if (!source_root.empty()) {
         return UsdPrim(child, layer_, idx,
                        Path(InstanceChildPath(child, source_root, target_root)),
-                       prototype_root, instance_root);
+                       prototype_root, instance_root,
+                       source_root, target_root);
       }
       return UsdPrim(child, layer_, idx);
     }
