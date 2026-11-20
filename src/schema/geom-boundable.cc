@@ -170,6 +170,23 @@ bool ComputeExtent(const UsdPrim& prim, double time, double out[6]) {
     double box[3] = {across, across, across2};
     box[axis] = along;
     SetBox(out, box[0], box[1], box[2]);
+  } else if (type == "SphereLight") {
+    // UsdLuxBoundableLightBase extent; `treatAsPoint` is a renderer hint and
+    // does not change it.
+    const double r = ScalarOr(prim, "inputs:radius", time, 0.5);
+    SetBox(out, r, r, r);
+  } else if (type == "CylinderLight") {
+    // Length runs along X; `treatAsLine` does not change the extent.
+    const double l = ScalarOr(prim, "inputs:length", time, 1.0);
+    const double r = ScalarOr(prim, "inputs:radius", time, 0.5);
+    SetBox(out, 0.5 * l, r, r);
+  } else if (type == "DiskLight") {
+    const double r = ScalarOr(prim, "inputs:radius", time, 0.5);
+    SetBox(out, r, r, 0.0);
+  } else if (type == "RectLight" || type == "PortalLight") {
+    const double w = ScalarOr(prim, "inputs:width", time, 1.0);
+    const double h = ScalarOr(prim, "inputs:height", time, 1.0);
+    SetBox(out, 0.5 * w, 0.5 * h, 0.0);
   } else if (type == "Capsule_1") {
     const int axis = AxisOf(prim, time);
     const double height = ScalarOr(prim, "height", time, 1.0);
