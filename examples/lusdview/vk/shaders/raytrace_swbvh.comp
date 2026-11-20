@@ -1733,6 +1733,21 @@ vec3 swPtHg(vec3 forward, float g, inout uint seed) {
                    normalize(forward) * ct);
 }
 
+// OpenPBR coat directional albedo with Turquin compensation (LightRT
+// coat_substrate_attenuation): albedo = (a f0 + b) comp. The coat lobe is scaled
+// by comp and the base by 1 - coatWeight albedo.
+vec3 ptCoatComp(float nv, float rough, vec3 f0, out vec3 albedo) {
+  float x = clamp(nv, 0.0, 1.0), y = max(rough * rough, 0.002), x2 = x * x, y2 = y * y;
+  float r0 = .1003 - .6303 * x + 9.748 * y - 2.038 * x * y + 29.34 * x2 - 8.245 * y2 - 26.44 * x2 * y + 19.99 * x * y2 - 5.448 * x2 * y2;
+  float r1 = .9345 - 2.323 * x + 2.229 * y - 3.748 * x * y + 1.424 * x2 - .7684 * y2 + 1.436 * x2 * y + .2913 * x * y2 + .6286 * x2 * y2;
+  float r2 = 1. - 1.765 * x + 8.263 * y + 11.53 * x * y + 28.96 * x2 - 7.507 * y2 - 36.11 * x2 * y + 15.86 * x * y2 + 33.37 * x2 * y2;
+  float r3 = 1. + .2281 * x + 15.94 * y - 55.83 * x * y + 13.08 * x2 + 41.26 * y2 + 54.9 * x2 * y + 300.2 * x * y2 - 285.1 * x2 * y2;
+  float a = clamp(r0 / r2, 0.0, 1.0), b = clamp(r1 / r3, 0.0, 1.0), ess = a + b;
+  if (!(ess > 1.0e-4)) { albedo = f0 + (vec3(1.0) - f0) * pow(1.0 - x, 5.0); return vec3(1.0); }
+  vec3 comp = vec3(1.0) + (f0 + (vec3(1.0) - f0) / 21.0) * ((1.0 - ess) / ess);
+  albedo = (a * f0 + vec3(b)) * comp;
+  return comp;
+}
 vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
     vec3 diffuseC, vec3 f0, vec3 sheenC, vec3 coatF0,
     float diffuseP, float glossyP, float coatP, out float pdf) {
@@ -1751,7 +1766,8 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   swPtBasis(s.coatN, s.coatRotation, ct, cb);
   float cnl = max(dot(s.coatN, l), 0.0), cnv = max(dot(s.coatN, v), 1.0e-6);
   float cnh = max(dot(s.coatN, ch), 0.0), cvh = max(dot(v, ch), 0.0);
-  vec3 coat = swPtFresnel(cvh, coatF0) * s.coatWeight *
+  vec3 coatAlb; vec3 coatComp = ptCoatComp(cnv, s.coatRoughness, coatF0, coatAlb);
+  vec3 coat = swPtFresnel(cvh, coatF0) * coatComp * s.coatWeight *
       swPtGgxD(cnh, dot(ch, ct), dot(ch, cb), s.coatRoughness,
                s.coatAnisotropy) *
       swPtGgxG1(s.coatN, v, ct, cb, s.coatRoughness, s.coatAnisotropy) *
@@ -1773,7 +1789,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   vec3 sheenAtt = vec3(1.0) - min(sheenC * sheenAlb, vec3(1.0));
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
               sheen + F * glossy * ptGgxEnergyComp(nv, s.roughness, f0, s.metallic);
-  vec3 coatFv = swPtFresnel(cnv, coatF0) * s.coatWeight;
+  vec3 coatFv = coatAlb * s.coatWeight;
   return base * (vec3(1.0) - coatFv) * s.coatDark + coat;
 }
 

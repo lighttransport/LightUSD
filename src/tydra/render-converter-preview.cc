@@ -265,6 +265,9 @@ bool RenderSceneConverter::Impl::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color, scene);
   ExtractShaderParam(stage, shader_prim, "coat_roughness", &out->coat_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "coat_rotation", &out->coat_rotation, scene);
+  // OpenPBR nodedef default (open_pbr_surface.mtlx): coat_ior 1.6, not the 1.5 of
+  // the ShaderParam struct default shared with UsdPreviewSurface/standard_surface.
+  out->coat_ior.value.x = 1.6f;
   ExtractShaderParam(stage, shader_prim, "coat_ior", &out->coat_ior, scene);
   ExtractShaderParam(stage, shader_prim, "coat_affect_color",
                      &out->coat_affect_color, scene);

@@ -2373,6 +2373,21 @@ float ptPowerHeuristic(float a, float b) {
   return aa / max(aa + bb, 1.0e-20);
 }
 
+// OpenPBR coat directional albedo with Turquin compensation (LightRT
+// coat_substrate_attenuation): albedo = (a f0 + b) comp. The coat lobe is scaled
+// by comp and the base by 1 - coatWeight albedo.
+vec3 ptCoatComp(float nv, float rough, vec3 f0, out vec3 albedo) {
+  float x = clamp(nv, 0.0, 1.0), y = max(rough * rough, 0.002), x2 = x * x, y2 = y * y;
+  float r0 = .1003 - .6303 * x + 9.748 * y - 2.038 * x * y + 29.34 * x2 - 8.245 * y2 - 26.44 * x2 * y + 19.99 * x * y2 - 5.448 * x2 * y2;
+  float r1 = .9345 - 2.323 * x + 2.229 * y - 3.748 * x * y + 1.424 * x2 - .7684 * y2 + 1.436 * x2 * y + .2913 * x * y2 + .6286 * x2 * y2;
+  float r2 = 1. - 1.765 * x + 8.263 * y + 11.53 * x * y + 28.96 * x2 - 7.507 * y2 - 36.11 * x2 * y + 15.86 * x * y2 + 33.37 * x2 * y2;
+  float r3 = 1. + .2281 * x + 15.94 * y - 55.83 * x * y + 13.08 * x2 + 41.26 * y2 + 54.9 * x2 * y + 300.2 * x * y2 - 285.1 * x2 * y2;
+  float a = clamp(r0 / r2, 0.0, 1.0), b = clamp(r1 / r3, 0.0, 1.0), ess = a + b;
+  if (!(ess > 1.0e-4)) { albedo = f0 + (vec3(1.0) - f0) * pow(1.0 - x, 5.0); return vec3(1.0); }
+  vec3 comp = vec3(1.0) + (f0 + (vec3(1.0) - f0) / 21.0) * ((1.0 - ess) / ess);
+  albedo = (a * f0 + vec3(b)) * comp;
+  return comp;
+}
 vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
                           vec3 diffuseCoefficient, vec3 f0,
                           vec3 sheenCoefficient, vec3 coatF0,
@@ -2397,7 +2412,8 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
   float coatNl = max(dot(s.coatN, l), 0.0);
   float coatNv = max(dot(s.coatN, v), 1.0e-6);
   float coatNh = max(dot(s.coatN, coatH), 0.0);
-  vec3 coatF = fresnelSchlick(max(dot(v, coatH), 0.0), coatF0);
+  vec3 coatAlb; vec3 coatComp = ptCoatComp(coatNv, s.coatRoughness, coatF0, coatAlb);
+  vec3 coatF = fresnelSchlick(max(dot(v, coatH), 0.0), coatF0) * coatComp;
   vec3 coat = coatF * coatWeight *
               ggxDAniso(coatNh, dot(coatH, ct), dot(coatH, cb),
                         s.coatRoughness, s.coatAnisotropy) *
@@ -2423,7 +2439,7 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
   vec3 sheenAtt = vec3(1.0) - min(sheenCoefficient * sheenAlb, vec3(1.0));
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseCoefficient /
                   3.14159265359 + sheen + glossy;
-  vec3 coatFv = fresnelSchlick(coatNv, coatF0) * coatWeight;
+  vec3 coatFv = coatAlb * coatWeight;
   return base * (vec3(1.0) - coatFv) * s.coatDark + coat;
 }
 
