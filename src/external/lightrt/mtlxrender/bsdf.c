@@ -874,13 +874,16 @@ static v3 coat_substrate_attenuation(const Layers *L, float ndotv,
  * reflection and the transmission lobe are scaled by the same s = 1/(E_up + reserve)
  * instead of the fitted MaterialX factor, so s R + s T <= s E_up < 1: the interface never
  * creates energy.  Outside the domain the material is rendered exactly as in reference
- * mode and nothing is claimed.  The reserve covers binary32 evaluation of the lobes; it is
- * an estimate, not a proved bound (see doc/validation/certified-albedo.md). */
+ * mode and nothing is claimed.  The reserve covers binary32 evaluation of the lobes: proved
+ * for a restricted direction set (entering side, alpha >= 0.707, see the domain table in
+ * doc/validation/certified-albedo.md) and empirical (f32_lobe_error) elsewhere. */
 #include "cert_albedo_table.h"
 void bsdf_set_energy_mode(int mode) { g_energy_mode = mode; }
 int bsdf_energy_mode(void) { return g_energy_mode; }
 void bsdf_set_conservative_film_fn(MtlxFilmReflectanceFn fn) { g_conservative_film_fn = fn; }
-#define CERT_ALBEDO_RESERVE 1.0e-3
+/* 1.5e-3: the worst-case binary32 lobe error proved in materialx-conformance (LobeErrorTotal.
+ * reserve_covers_proved_domain) is 1.23e-3 on the proved domain; 1e-3 did not cover it. */
+#define CERT_ALBEDO_RESERVE 1.5e-3
 #define CERT_LOOKUP_EPS 1.0e-5
 
 static int cert_glass_domain(const Layers *L) {
@@ -915,7 +918,7 @@ static double cert_albedo_upper(float mu, float alpha, float eta) {
 /* Floor of the conservative scale: alpha = roughness^2 >= 0.09 (roughness 0.3), the range the
  * binary32 lobe error was measured over (tests/f32_lobe_error.c).  The worst-case forward error of
  * the GGX normal distribution grows like 1/alpha^2 (doc/validation/binary32-lobe-error-2026-11-20.md),
- * so below the floor the 1e-3 reserve is not justified.  There the lobes get no compensation
+ * so below the floor the 1.5e-3 reserve is not justified.  There the lobes get no compensation
  * (single scatter, E <= 1), as for an uncertified cell.  Reference mode is unaffected. */
 #define CERT_ALPHA_MIN 0.09f
 static double cert_dielectric_scale(const Layers *L, float nv, float eta) {
