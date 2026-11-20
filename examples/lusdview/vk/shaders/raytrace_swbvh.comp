@@ -1241,6 +1241,7 @@ vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
 // self-contained so the established preview/AOV shader below remains stable,
 // but use the same packed material/light ABI and estimators as raytrace.comp.
 struct SwPtSurface {
+  vec3 coatDark;
   vec3 p; vec3 n; vec3 coatN; vec3 tangent; vec3 bitangent;
   vec3 base; vec3 emission; vec3 transmissionColor;
   vec3 transmissionScatter; vec3 subsurfaceColor; vec3 subsurfaceRadius;
@@ -1346,6 +1347,7 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
   s.dispersion = 0.0; s.dispersionAbbe = 0.0;
   s.subsurface = 0.0; s.specularWeight = 1.0;
   s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
+  s.coatDark = vec3(1.0);
   s.coatAnisotropy = 0.0; s.coatRotation = 0.0;
   s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
   s.subsurfaceAnisotropy = 0.0; s.subsurfaceScatterAnisotropy = 0.0;
@@ -1560,8 +1562,15 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
       coatDarkening = clamp(swEvalMaterialXGraph(uint(mid), 47, uv0, uv1, sourceFace).x,
                             0.0, 1.0);
 #endif
-    s.base *= ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
+    s.coatDark = ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
                               s.specularWeight, s.coatIor, s.coatWeight * coatDarkening);
+  }
+  if (s.coatWeight > 0.0 && s.transmission <= 0.0) {  // OpenPBR graph: base IOR relative to the coat; roughness raised toward the coat's
+    float cw = s.coatWeight, ratio = s.ior / max(s.coatIor, 1.0e-4);
+    s.ior = (1.0 - cw) * s.ior + cw * max(ratio, 1.0 / ratio);
+    float sr = clamp(s.roughness, 0.0, 1.0), cr = clamp(s.coatRoughness, 0.0, 1.0);
+    s.roughness = (1.0 - cw) * s.roughness +
+                  cw * pow(min(1.0, 2.0 * cr * cr * cr * cr + sr * sr * sr * sr), 0.25);
   }
   s.base *= inst.tint.rgb;
 }
@@ -1765,7 +1774,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
               sheen + F * glossy * ptGgxEnergyComp(nv, s.roughness, f0, s.metallic);
   vec3 coatFv = swPtFresnel(cnv, coatF0) * s.coatWeight;
-  return base * (vec3(1.0) - coatFv) + coat;
+  return base * (vec3(1.0) - coatFv) * s.coatDark + coat;
 }
 
 vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,

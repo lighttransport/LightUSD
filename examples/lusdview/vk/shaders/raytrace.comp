@@ -1973,6 +1973,7 @@ float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) 
 // its established path below, so enabling this mode cannot perturb RT goldens.
 #if !LUSDVIEW_RT_INTERACTIVE_ONLY
 struct PtSurface {
+  vec3 coatDark;
   vec3 p; vec3 n; vec3 coatN; vec3 tangent; vec3 bitangent;
   vec3 base; vec3 emission;
   vec3 transmissionColor; vec3 subsurfaceColor; vec3 subsurfaceRadius;
@@ -2068,6 +2069,7 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
   s.metallic = 0.0; s.roughness = 0.5; s.transmission = 0.0;
   s.ior = 1.5; s.subsurface = 0.0; s.specularWeight = 1.0;
   s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
+  s.coatDark = vec3(1.0);
   s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
   s.subsurfaceAnisotropy = 0.0; s.subsurfaceScatterAnisotropy = 0.0;
   s.anisotropy = 0.0; s.anisotropyRotation = 0.0;
@@ -2278,8 +2280,15 @@ void resolvePtSurface(uint iid, int prim, vec2 bc, bool front, mat4x3 o2w,
     float coatDarkening = clamp(lrt(mid, 17u).z, 0.0, 1.0);
     if (gb + 49u < uint(graphRows.length()) && graphRows[gb + 48u] >= 0.0)
       coatDarkening = clamp(evalMaterialXGraph(mid, 47, uv0, uv1, face).x, 0.0, 1.0);
-    s.base *= ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
+    s.coatDark = ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
                               s.specularWeight, s.coatIor, s.coatWeight * coatDarkening);
+  }
+  if (s.coatWeight > 0.0 && s.transmission <= 0.0) {  // OpenPBR graph: base IOR relative to the coat; roughness raised toward the coat's
+    float cw = s.coatWeight, ratio = s.ior / max(s.coatIor, 1.0e-4);
+    s.ior = (1.0 - cw) * s.ior + cw * max(ratio, 1.0 / ratio);
+    float sr = clamp(s.roughness, 0.0, 1.0), cr = clamp(s.coatRoughness, 0.0, 1.0);
+    s.roughness = (1.0 - cw) * s.roughness +
+                  cw * pow(min(1.0, 2.0 * cr * cr * cr * cr + sr * sr * sr * sr), 0.25);
   }
   // The instance tint (display colour fallback) applies only to material-less
   // hits (see the early return above), as in the compute-BVH and HIP path
@@ -2415,7 +2424,7 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseCoefficient /
                   3.14159265359 + sheen + glossy;
   vec3 coatFv = fresnelSchlick(coatNv, coatF0) * coatWeight;
-  return base * (vec3(1.0) - coatFv) + coat;
+  return base * (vec3(1.0) - coatFv) * s.coatDark + coat;
 }
 
 vec3 ptSampleHg(vec3 forward, float g, inout uint seed) {

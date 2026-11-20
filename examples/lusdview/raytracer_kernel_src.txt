@@ -1013,6 +1013,7 @@ struct PtMat {
   float metal, rough, transmission, ior, subsurface, specularWeight;
   float coatWeight, coatRoughness, coatIor, sheenWeight, sheenRoughness;
   float coatAffectColor, coatAffectRoughness, coatDarkening;
+  F3 coatDark;
   float subsurfaceAnisotropy, subsurfaceScatterAnisotropy;
   float anisotropy, anisotropyRotation, coatAnisotropy, coatRotation;
   float thinFilmWeight, thinFilmThickness, thinFilmIor;
@@ -1123,7 +1124,7 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
   F3 cFv=scale(fresnelSchlick(cnv,coatF0),coatWeight);
   F3 ec=ptGgxEnergyComp(nv,s.rough,f0,s.metal);
   F3 base=add(add(diffuse,scale(sheenC,sheenShape)),mk(F.x*gs*ec.x,F.y*gs*ec.y,F.z*gs*ec.z));
-  base=mk(base.x*(1.f-cFv.x),base.y*(1.f-cFv.y),base.z*(1.f-cFv.z));
+  base=mk(base.x*(1.f-cFv.x)*s.coatDark.x,base.y*(1.f-cFv.y)*s.coatDark.y,base.z*(1.f-cFv.z)*s.coatDark.z);
   return add(base,scale(cF,cs));
 }
 __device__ F3 ptSampleHg(F3 forward,float g,unsigned& seed){
@@ -1167,7 +1168,7 @@ __device__ PtMat ptResolveMaterial(
   m.sheenColor=mk(1.f,1.f,1.f);
   m.radius=mk(1.f,1.f,1.f);m.metal=0.f;m.rough=.5f;m.transmission=0.f;
   m.ior=1.5f;m.subsurface=0.f;m.specularWeight=1.f;m.coatWeight=0.f;
-  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;m.coatAffectColor=0.f;m.coatAffectRoughness=0.f;m.coatDarkening=0.f;
+  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;m.coatAffectColor=0.f;m.coatAffectRoughness=0.f;m.coatDarkening=0.f;m.coatDark=mk(1.f,1.f,1.f);
   m.sheenRoughness=.3f;m.subsurfaceAnisotropy=0.f;m.subsurfaceScatterAnisotropy=0.f;
   m.anisotropy=0.f;m.anisotropyRotation=0.f;m.coatAnisotropy=0.f;m.coatRotation=0.f;
   m.thinFilmWeight=0.f;m.thinFilmThickness=0.f;m.thinFilmIor=1.5f;
@@ -1226,7 +1227,14 @@ __device__ PtMat ptResolveMaterial(
     F3 coatDark=ptCoatDarkening(m.base,m.subsurfaceColor,m.subsurface,m.metal,m.specularWeight,m.coatIor,m.coatWeight*m.coatDarkening);
     float coatColorMix=fminf(fmaxf(m.coatWeight*m.coatAffectColor,0.f),1.f);
     m.base=mk(m.base.x*(1.f+(m.coatColor.x-1.f)*coatColorMix),m.base.y*(1.f+(m.coatColor.y-1.f)*coatColorMix),m.base.z*(1.f+(m.coatColor.z-1.f)*coatColorMix));
-    m.base=mk(m.base.x*coatDark.x,m.base.y*coatDark.y,m.base.z*coatDark.z);
+    m.coatDark=coatDark;
+    if(m.coatWeight>0.f&&m.transmission<=0.f){ /* OpenPBR graph: base specular IOR is relative to the coat; base roughness is raised toward the coat's */
+      float cw=m.coatWeight,ratio=m.ior/fmaxf(m.coatIor,1e-4f),rel=fmaxf(ratio,1.f/ratio);
+      m.ior=(1.f-cw)*m.ior+cw*rel;
+      float sr=fminf(fmaxf(m.rough,0.f),1.f),cr=fminf(fmaxf(m.coatRoughness,0.f),1.f);
+      float aff=powf(fminf(1.f,2.f*cr*cr*cr*cr+sr*sr*sr*sr),.25f);
+      m.rough=(1.f-cw)*m.rough+cw*aff;
+    }
     float coatRoughMix=fminf(fmaxf(m.coatWeight*m.coatAffectRoughness,0.f),1.f);
     m.rough=m.rough*(1.f-coatRoughMix)+m.coatRoughness*coatRoughMix;
   }
