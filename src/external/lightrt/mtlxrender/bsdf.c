@@ -912,8 +912,15 @@ static double cert_albedo_upper(float mu, float alpha, float eta) {
 }
 
 /* Shared R/T scale for the certified domain, or -1 when the domain does not apply. */
+/* Floor of the conservative scale: alpha = roughness^2 >= 0.09 (roughness 0.3), the range the
+ * binary32 lobe error was measured over (tests/f32_lobe_error.c).  The worst-case forward error of
+ * the GGX normal distribution grows like 1/alpha^2 (doc/validation/binary32-lobe-error-2026-11-20.md),
+ * so below the floor the 1e-3 reserve is not justified.  There the lobes get no compensation
+ * (single scatter, E <= 1), as for an uncertified cell.  Reference mode is unaffected. */
+#define CERT_ALPHA_MIN 0.09f
 static double cert_dielectric_scale(const Layers *L, float nv, float eta) {
     if (!cert_glass_domain(L)) return -1.0;
+    if (L->alpha < CERT_ALPHA_MIN) return 1.0;
     double up = cert_albedo_upper(nv, L->alpha, eta);
     if (up >= 1.0) return 1.0;           /* uncertified cell: single scatter, no compensation */
     return 1.0 / fmin(1.0, up + CERT_ALBEDO_RESERVE);
