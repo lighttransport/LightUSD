@@ -69,6 +69,19 @@ std::string NormalizeEntryName(std::string name) {
   return name;
 }
 
+// `.usd` can hold either USDA text or a crate binary. The USDA parser accepts
+// leading whitespace before the magic, so sniff past it instead of requiring
+// `#usda` at byte 0.
+bool HasUSDAMagic(const uint8_t *data, size_t size) {
+  size_t pos = 0;
+  while (pos < size &&
+         (data[pos] == ' ' || data[pos] == '\t' || data[pos] == '\r' ||
+          data[pos] == '\n')) {
+    ++pos;
+  }
+  return size - pos >= 5 && std::memcmp(data + pos, "#usda", 5) == 0;
+}
+
 
 std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
                                          const std::string &label,
@@ -212,11 +225,18 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     return LoadOBJLayerFromMemory(label, data, size, obj_options, warn, err);
   }
 #endif
-  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
-  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
-  if (!is_usdc && !is_usda && size >= 8 &&
-      std::memcmp(data, "PXR-USDC", 8) == 0) {
-    is_usdc = true;
+  const std::string entry = reader.EntryName(static_cast<size_t>(idx));
+  bool is_usdc = EndsWithNoCase(entry, ".usdc");
+  bool is_usda = EndsWithNoCase(entry, ".usda");
+  if (!is_usdc && !is_usda) {
+    if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+      is_usdc = true;
+    } else if (EndsWithNoCase(entry, ".usd") || HasUSDAMagic(data, size)) {
+      // `.usd` is encoding-agnostic: without crate magic it is USDA, exactly
+      // as the filesystem loader treats it. Other ambiguous entry names need
+      // an explicit `#usda` header before we hand bytes to the USDA parser.
+      is_usda = true;
+    }
   }
   if (is_usdc) {
     USDCLoadOptions lopts;
