@@ -957,6 +957,18 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                            PASS_REGULAR_EXPRESSION "Vulkan RT: Cycles gsplat kernel"
                            FAIL_REGULAR_EXPRESSION "interactive preview shader;compute-BVH fallback"
                            TIMEOUT 600 LABELS "lusdview;gsplat;vulkan")
+      # Scene Preview Preset menu path (LUSDVIEW_PREVIEW_PRESET_SWITCH drives
+      # the same request): re-convert at quality and reload.
+      add_test(NAME lusdview-preview-preset-switch
+        COMMAND ${CMAKE_COMMAND} -E env LUSDVIEW_PREVIEW_PRESET_SWITCH=quality
+                $<TARGET_FILE:lusdview> --headless --frames 600 --size 160x90
+                --preview-preset fast
+                --preview-cache-dir "${CMAKE_CURRENT_BINARY_DIR}/preview-preset-cache"
+                --preview-refresh
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-plain.usda")
+      set_tests_properties(lusdview-preview-preset-switch PROPERTIES
+                           PASS_REGULAR_EXPRESSION "scene preview: preset quality"
+                           TIMEOUT 300 LABELS "lusdview;preview")
       # An authored camera shutter raises the default motion segments to 16,
       # with or without splats.
       add_test(NAME lusdview-shutter-motion-segments

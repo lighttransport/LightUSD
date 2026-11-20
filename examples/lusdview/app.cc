@@ -2,6 +2,7 @@
 #include "viewer_document.hh"
 #include "public_stage_queries.hh"
 #include "app.hh"
+#include "resolver/asset-resolver.hh"
 
 #include <glad/glad.h>
 //
@@ -4715,6 +4716,17 @@ void App::stepScenePreviewLods() {
           std::future_status::ready) {
     const bool cancelled = previewRefinementCancel_->load();
     auto refined = previewRefinement_.get();
+    const int presetDone = previewPresetInFlight_;
+    previewPresetInFlight_ = -1;
+    if (!cancelled && refined.first.success && refined.second.success &&
+        presetDone >= 0) {
+      previewRequest_.options = previewPresetOptions_;
+      previewRequest_.preset = presetDone;
+      previewRefinementTried_ = false;  // refine again at the new preset
+      LOGI("scene preview: preset %s, %llu samples",
+           presetDone == 0 ? "fast" : presetDone == 1 ? "standard" : "quality",
+           static_cast<unsigned long long>(refined.first.samples));
+    }
     if (!cancelled && refined.first.success && refined.second.success &&
         refined.second.root_path != previewLods_.root_path) {
       previewRequest_.result = std::move(refined.first);
@@ -4731,6 +4743,49 @@ void App::stepScenePreviewLods() {
     }
     if (!cancelled && !refined.first.success)
       LOGW("source refinement: %s", refined.first.error.c_str());
+  }
+  // GUI preset change: cancel any refinement, then re-convert the source at
+  // the new preset in the background (loaded by the handler above).
+  if (pendingPreviewPreset_ >= 0 && previewRequest_.enabled) {
+    if (previewRefinement_.valid()) {
+      if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+      return;  // collect the cancelled job next frame
+    }
+    previewPresetInFlight_ = pendingPreviewPreset_;
+    pendingPreviewPreset_ = -1;
+    previewRefinementTried_ = true;
+    previewRefinementCancel_ = std::make_shared<std::atomic<bool>>(false);
+    auto request = previewRequest_;
+    lightusd::tydra::ApplyScenePreviewPreset(
+        static_cast<lightusd::tydra::ScenePreviewPreset>(previewPresetInFlight_),
+        &request.options);
+    request.options.region_enabled = false;
+    request.options.base_preview_path.clear();
+    previewPresetOptions_ = request.options;
+    const auto cancel = previewRefinementCancel_;
+    LOGI("scene preview: converting at preset %d", previewPresetInFlight_);
+    previewRefinement_ = std::async(std::launch::async, [request, cancel]() mutable {
+      request.options.progress = [cancel](const std::string&, uint64_t) {
+        return !cancel->load();
+      };
+      lightusd::AssetResolver resolver;
+      auto result = lightusd::tydra::ConvertScenePreview(request.source, resolver,
+                                                         request.options);
+      lightusd::tydra::ScenePreviewLods lods;
+      if (result.success && !cancel->load()) {
+        if (request.direct_volume &&
+            request.options.kind == lightusd::tydra::ScenePreviewKind::Volume) {
+          lods.success = true;
+          lods.root_path = result.render_usd_path;
+          lods.cell_size = result.voxel_size;
+          lods.gpu_budget_bytes = request.options.gpu_budget_bytes;
+        } else {
+          lods = lightusd::tydra::BuildScenePreviewLods(result, request.options);
+        }
+      }
+      return PreviewRefinement{std::move(result), std::move(lods)};
+    });
+    return;
   }
   if (previewRequest_.enabled && previewRequest_.source_refinement &&
       !previewRefinementTried_ && !previewRefinement_.valid()) {
@@ -8003,6 +8058,23 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
     const RenderTechnique requestedTechnique = gui_.requestedTechnique();
     const bool hasCudaDeviceRequest = gui_.hasCudaDeviceRequest();
+    int presetReq = gui_.takeScenePreviewPresetRequest();
+    // Test hook: LUSDVIEW_PREVIEW_PRESET_SWITCH=fast|standard|quality requests
+    // one preset change after the first load, as the GUI menu would.
+    static bool presetSwitchEnvDone = false;
+    if (!presetSwitchEnvDone && loaded_.ok && !loadActive_) {
+      presetSwitchEnvDone = true;
+      lightusd::tydra::ScenePreviewPreset p;
+      if (const char* env = std::getenv("LUSDVIEW_PREVIEW_PRESET_SWITCH"))
+        if (lightusd::tydra::ParseScenePreviewPreset(env, &p))
+          presetReq = static_cast<int>(p);
+    }
+    if (presetReq >= 0 && previewRequest_.enabled && !previewRequest_.native_volume)
+      pendingPreviewPreset_ = presetReq;
+    gui_.setScenePreviewPresetState(
+        previewRequest_.enabled && !previewRequest_.native_volume,
+        previewRequest_.preset,
+        pendingPreviewPreset_ >= 0 || previewPresetInFlight_ >= 0);
     const bool hasHipDeviceRequest = gui_.hasHipDeviceRequest();
     const bool hasCudaRtBackendRequest = gui_.hasCudaRtBackendRequest();
     const CudaRtBackend requestedCudaRtBackend =

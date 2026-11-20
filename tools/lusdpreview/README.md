@@ -383,30 +383,53 @@ captures with LOD disabled.
 and lusdrender) sets defaults that later explicit options override, whatever
 their position on the command line:
 
-| Preset | Source refinement index | Texture samples | Batches | Notes |
-|---|---|---|---|---|
-| fast | off | 128 px | 400K prims, composition overlapped with sampling | camera-driven refinement re-composes the source later |
-| standard (default) | on | 512 px, 256 MiB | 100K prims | previous behaviour |
-| quality | on | 2048 px, 1 GiB | 100K prims | |
+| Preset | Source refinement index | Texture samples | Automatic grid | Samples / triangle | Sample cap | Batches |
+|---|---|---|---|---|---|---|
+| fast | off | 128 px | 1024 cells | <= 16 | 1x budget | 400K prims, composition overlapped with sampling |
+| standard (default) | on | 512 px, 256 MiB | 2048 cells | <= 64 | 1x budget | 100K prims |
+| quality | on | 2048 px, 1 GiB | 4096 cells | <= 256 | 2x budget | 100K prims |
 
-Sampling density stays budget-driven in every preset. Without the index or a
-refinement region, mesh sampling runs on up to 8 worker threads. Results are
-emitted in traversal order, so output is deterministic (byte-identical across
-runs).
+The automatic grid still coarsens to the renderer budget (the sample cap) in
+every preset; `--preview-resolution` / `--preview-budget-mib` override it.
+quality may plan up to twice the budget-derived GPU memory for finer cells.
+Without the index or a refinement region, mesh sampling runs on up to 8 worker
+threads, and top-level instance replay transforms and keys prototype samples
+on up to 16 threads (inserted in placement order), giving the same output as
+the serial replay (`LIGHTUSD_PREVIEW_SERIAL_REPLAY=1`). hotel_01 and ALab are
+byte-identical across runs; Moana varies in about 80 of 470K samples between
+runs, with serial replay as well (a pre-existing nondeterminism, not yet
+traced).
 
 Cold conversions on a 32-thread host (default 2048 MiB budget):
 
 | Scene | Preset | Wall | Peak RSS | Splats |
 |---|---|---:|---:|---:|
-| Caldera `hotel_01.usd` (composed; 109K prims, 24K meshes) | fast | 8.5–8.8 s | 1.2 GiB | 775,598 |
-| Caldera `hotel_01.usd` | standard | 20.8 s | 0.86 GiB | 773,351 |
-| Caldera `hotel_01.usd` | quality | 18.9 s | 0.87 GiB | 773,351 |
-| ALab `_merged_ALab/entry.usda` | fast | 58 s | 3.8 GiB | 1,478,233 |
-| Moana `island.usda` (30.9M instances) | fast | 31.8 min | 4.6 GiB | 478,894 |
-| Caldera `caldera.usda` (authored proxy district LODs) | fast | 7.4 s | 2.4 GiB | 233,557 |
+| Caldera `hotel_01.usd` (composed; 109K prims, 24K meshes, 10K instances) | fast | 7.3–8.4 s | 1.0 GiB | 751,299 |
+| Caldera `hotel_01.usd` | standard | 17.5 s | 0.85 GiB | 773,351 |
+| Caldera `hotel_01.usd` | quality | 22.0 s | 1.2 GiB | 2,525,880 |
+| ALab `_merged_ALab/entry.usda` | fast | 42 s | 2.3 GiB | 1,318,794 |
+| ALab `_merged_ALab/entry.usda` | standard | 65 s | 1.2 GiB | 1,305,421 |
+| ALab `_merged_ALab/entry.usda` | quality | 74 s | 1.6 GiB | 1,768,546 |
+| Moana `island.usda` (30.9M instances) | fast | 24.9 min (serial replay 34–37 min) | 4.6 GiB | 470,080 |
+| Caldera `caldera.usda` (authored proxy district LODs) | fast | 6.6 s | 2.4 GiB | 80,371 |
+| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 1.15M meshes, 2.78M instances) | fast | 20.4 min | 18.3 GiB | 617,596 |
 
-The island is dominated by per-instance prototype replay, which is still
-serial.
+lusdrender wall time for the hotel_01 previews (whole process, auto-framed,
+1280x720, 1 spp, RX 9070 XT / 32 threads):
+
+| Preset | Splats | CPU | `-vk` |
+|---|---:|---:|---:|
+| fast | 751,299 | 0.8 s | 1.6 s |
+| standard | 773,351 | 0.8 s | 1.5 s |
+| quality | 2,525,880 | 2.1 s | 4.7 s |
+
+`tool-lusdpreview-fast-preset-timing` checks the hotel_01 fast conversion stays
+within 10 s (configure with `-DLIGHTUSD_PRESET_SCENE=.../hotel_01.usd`;
+it skips otherwise).
+Instance targets that are never composed (pruned, inactive or absent
+prototypes) render nothing and are reported in the warning; the full Caldera
+source has eight such foliage prototypes under one terrain tile's
+`clutter/proto` scope.
 
 ## Qualification result
 

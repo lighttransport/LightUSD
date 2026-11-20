@@ -851,6 +851,17 @@ void Gui::drawDockspaceAndMenu() {
                             pathTrace_.seed);
         ImGui::EndMenu();
       }
+      // Scene -> Gaussian preview conversion preset (--preview-preset);
+      // choosing one re-converts in the background and reloads.
+      if (ImGui::BeginMenu("Scene Preview Preset", scenePreviewActive_)) {
+        static const char* kPresets[] = {"Fast", "Standard", "Quality"};
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::MenuItem(kPresets[i], nullptr, scenePreviewPreset_ == i) &&
+              scenePreviewPreset_ != i)
+            requestedScenePreviewPreset_ = i;
+        if (scenePreviewBusy_) ImGui::TextDisabled("converting...");
+        ImGui::EndMenu();
+      }
       if (ImGui::BeginMenu("Skinning")) {
         auto item = [&](SkinningMode mode, const char* label) {
           if (ImGui::MenuItem(label, nullptr, skinning_.requested == mode)) {

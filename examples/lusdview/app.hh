@@ -719,6 +719,11 @@ class App
   std::future<PreviewRefinement> previewRefinement_;
   std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
   bool previewRefinementTried_ = false;
+  // GUI preset change: -1 none; otherwise ScenePreviewPreset as int. The
+  // conversion runs in previewRefinement_; its options apply on success.
+  int pendingPreviewPreset_ = -1;
+  int previewPresetInFlight_ = -1;
+  lightusd::tydra::ScenePreviewOptions previewPresetOptions_;
   bool previewLodReloadPending_ = false;
   bool previewLodHaveCamera_ = false;
   double previewLodLastFocalPixels_ = 0;

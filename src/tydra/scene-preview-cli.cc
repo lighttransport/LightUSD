@@ -64,6 +64,7 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
         return false;
       }
       ApplyScenePreviewPreset(preset, &request->options);
+      request->preset = static_cast<int>(preset);
     }
   for (int i = 1; i < *argc; ++i) {
     const std::string a = argv[i];

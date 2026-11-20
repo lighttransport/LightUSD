@@ -340,6 +340,7 @@ lightusd_keep_test_asserts("${CMAKE_CURRENT_SOURCE_DIR}")
 # test properties; older CMake keeps the per-group locks only.
 set(LIGHTUSD_GPU_TEST_EXTRA
     lusdview-core-mesh-materials lusdview-openchess-path-trace
+    lusdview-opacity-material
     lusdview-rt-geomsubset-material lightrt-gsplat tool-lusdrender-smoke
     tool-lusdrender-materialx-flake-parity
     tool-lusdrender-materialx-projection-parity

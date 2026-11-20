@@ -2,6 +2,7 @@
 #include <atomic>
 #include <thread>
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -189,8 +190,24 @@ bool Build::insert(const Sample& s, bool filter_region) {
       return false;
     }
   }
-  const Key k = Cell(s, cell_size);
-  const uint64_t rank = Rank(s);
+  return place(s, Cell(s, cell_size), Rank(s));
+}
+// True when insert() would accept `s` (region filtering aside) and its grid
+// coordinates are representable at `size`; mirrors insert()'s checks so the
+// parallel replay can pre-key samples.
+bool InsertableSample(const Sample& s, double size) {
+  if (!std::isfinite(s.p[0]) || !std::isfinite(s.p[1]) ||
+      !std::isfinite(s.p[2]) || !std::isfinite(s.radius) || s.radius <= 0 ||
+      s.opacity <= 0 || !std::isfinite(s.opacity))
+    return false;
+  for (int k = 0; k < 3; ++k)
+    if (!std::isfinite(s.n[k]) || !std::isfinite(s.color[k])) return false;
+  for (int axis = 0; axis < 3; ++axis)
+    if (!std::isfinite(s.p[axis] / size) || std::abs(s.p[axis] / size) > 9e18)
+      return false;
+  return true;
+}
+bool Build::place(const Sample& s, const Key& k, uint64_t rank) {
   auto it = cells.find(k);
   if (it == cells.end())
     cells.emplace(k, Accum{s, rank});
@@ -244,8 +261,12 @@ bool Build::replay(
   if (!flush_prototype(key)) return false;
   std::ifstream f(prototype_file(key), std::ios::binary);
   if (!f) {
-    result.error = "missing cross-batch preview prototype: " + key;
-    return false;
+    // Never traversed as a prototype (finish_placements runs after every
+    // batch): the target is pruned, inactive or absent and renders nothing.
+    if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
+      result.warning += "scene preview: instance target not found, skipped: " +
+                        key + "\n";
+    return true;
   }
   const SampleTransform transform(world);
   Sample buffer[4096];
@@ -862,7 +883,9 @@ bool Build::mesh(
       // preserving a bounded prototype working set. Convert world spacing back
       // into the mesh's local units when evaluating the requested resolution.
       const double sample_limit =
-          (opts.resolution || (opts.region_enabled)) ? 4096.0 : 64.0;
+          (opts.resolution || (opts.region_enabled))
+              ? 4096.0
+              : double(std::max(1u, opts.triangle_sample_limit));
       if ((opts.resolution || opts.region_enabled) && transform.scale > 0)
         spacing /= transform.scale;
       const size_t count = std::max(
@@ -1079,7 +1102,8 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
       longest = std::max(longest, highs[highs.size() - 1 - trim] - lows[trim]);
     }
     if (longest > 0)
-      cell_size = longest / (opts.resolution ? opts.resolution : 2048);
+      cell_size = longest / (opts.resolution ? opts.resolution
+                                              : std::max(1u, opts.auto_resolution));
   }
   usd::Stage stage;
   stage.SetRootLayer(std::move(*batch.layer));
@@ -1225,11 +1249,130 @@ bool Build::queue_placement(
   }
   return true;
 }
+// Replays a batch of top-level placements (no enclosing prototypes, no source
+// capture/region): samples are transformed, validated, ranked and keyed on
+// worker threads, then inserted in placement order on this thread, so the
+// grid matches a serial replay exactly (keys are recomputed if the grid
+// coarsened mid-batch).
+bool Build::replay_top_batch(std::vector<TopPlacement>* batch) {
+  if (batch->empty()) return true;
+  struct Item {
+    Sample s;
+    Key k;
+    uint64_t rank;
+    uint8_t state;  // 0 skip, 1 keyed, 2 slow path (insert)
+  };
+  struct Range {
+    size_t placement, begin, end;
+  };
+  // Bound the prototype cache between batches only: `sources` below points
+  // into it for the whole batch.
+  if (prototype_sample_cache_bytes > (size_t(512) << 20)) {
+    prototype_sample_cache.clear();
+    prototype_sample_cache_bytes = 0;
+  }
+  std::vector<const std::vector<Sample>*> sources(batch->size(), nullptr);
+  std::vector<Range> ranges;
+  size_t total = 0;
+  for (size_t i = 0; i < batch->size(); ++i) {
+    const std::string& key = (*batch)[i].key;
+    auto it = prototype_sample_cache.find(key);
+    if (it == prototype_sample_cache.end()) {
+      if (!flush_prototype(key)) return false;
+      std::vector<Sample> samples;
+      std::ifstream f(prototype_file(key), std::ios::binary);
+      if (!f) {
+        if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
+          result.warning += "scene preview: instance target not found, skipped: " +
+                            key + "\n";
+      } else {
+        f.seekg(0, std::ios::end);
+        const auto bytes = static_cast<size_t>(f.tellg());
+        f.seekg(0);
+        if (bytes % sizeof(Sample)) {
+          result.error = "truncated preview prototype spill";
+          return false;
+        }
+        samples.resize(bytes / sizeof(Sample));
+        if (!samples.empty() &&
+            !f.read(reinterpret_cast<char*>(samples.data()),
+                    static_cast<std::streamsize>(bytes))) {
+          result.error = "preview prototype spill read failed";
+          return false;
+        }
+      }
+      prototype_sample_cache_bytes += samples.size() * sizeof(Sample);
+      it = prototype_sample_cache.emplace(key, std::move(samples)).first;
+    }
+    sources[i] = &it->second;
+    const size_t n = it->second.size();
+    for (size_t b = 0; b < n; b += 16384)
+      ranges.push_back({i, b, std::min(n, b + 16384)});
+    total += n;
+  }
+  std::vector<SampleTransform> transforms;
+  transforms.reserve(batch->size());
+  for (const auto& p : *batch) transforms.emplace_back(p.world.data());
+  const size_t threads_max =
+      std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
+  // Windows of <= 128 ranges (2M samples) bound the keyed-sample buffers.
+  for (size_t w0 = 0; w0 < ranges.size(); w0 += 128) {
+    const size_t w1 = std::min(ranges.size(), w0 + 128);
+    const double cs = cell_size;
+    std::vector<std::vector<Item>> out(w1 - w0);
+    std::atomic<size_t> next{w0};
+    auto work = [&]() {
+      for (size_t r; (r = next.fetch_add(1)) < w1;) {
+        const Range& range = ranges[r];
+        const auto& src = *sources[range.placement];
+        const SampleTransform& t = transforms[range.placement];
+        auto& items = out[r - w0];
+        items.resize(range.end - range.begin);
+        for (size_t j = range.begin; j < range.end; ++j) {
+          Item& it = items[j - range.begin];
+          it.s = t(src[j]);
+          if (cs <= 0) {
+            it.state = 2;
+            continue;
+          }
+          if (!InsertableSample(it.s, cs)) {
+            // insert() drops invalid samples; out-of-range ones report errors.
+            it.state = (std::isfinite(it.s.p[0]) && std::isfinite(it.s.p[1]) &&
+                        std::isfinite(it.s.p[2]))
+                           ? 2
+                           : 0;
+            continue;
+          }
+          it.k = Cell(it.s, cs);
+          it.rank = Rank(it.s);
+          it.state = 1;
+        }
+      }
+    };
+    const size_t threads = std::min(w1 - w0, threads_max);
+    std::vector<std::thread> pool;
+    for (size_t i = 1; i < threads; ++i) pool.emplace_back(work);
+    work();
+    for (auto& t : pool) t.join();
+    for (const auto& items : out)
+      for (const Item& it : items) {
+        if (it.state == 0) continue;
+        const bool ok = (it.state == 1 && cell_size == cs)
+                            ? place(it.s, it.k, it.rank)
+                            : insert(it.s);
+        if (!ok) return false;
+      }
+  }
+  batch->clear();
+  return check("prototype-samples", total);
+}
 bool Build::finish_placements() {
   if (!placements.is_open()) return true;
   placements.close();
   const fs::path current = directory / "prototypes" / "placements",
                  next = directory / "prototypes" / "placements.next";
+  std::vector<TopPlacement> top_batch;
+  size_t top_batch_samples = 0;
   for (size_t round = 0; round < 1024; ++round) {
     std::ifstream input(current, std::ios::binary);
     std::ofstream deferred(next, std::ios::binary);
@@ -1269,6 +1412,33 @@ bool Build::finish_placements() {
         const auto local = point_prototype_local.find(key);
         if (is_point && local != point_prototype_local.end())
           Multiply(world.data(), local->second.data(), placed.data());
+        static const bool serial_replay =
+            std::getenv("LIGHTUSD_PREVIEW_SERIAL_REPLAY") != nullptr;
+        if (!serial_replay && ancestors.empty() && !source_capture &&
+            !opts.region_enabled) {
+          top_batch.push_back({key, placed});
+          auto known = prototype_sample_counts.find(key);
+          if (known == prototype_sample_counts.end()) {
+            if (!flush_prototype(key)) return false;
+            std::error_code size_ec;
+            const auto bytes = fs::file_size(prototype_file(key), size_ec);
+            known = prototype_sample_counts
+                        .emplace(key, size_ec ? 0 : size_t(bytes / sizeof(Sample)))
+                        .first;
+          }
+          top_batch_samples += std::max<size_t>(1, known->second);
+          if (top_batch_samples >= (size_t(1) << 20)) {
+            if (!replay_top_batch(&top_batch)) return false;
+            top_batch_samples = 0;
+          }
+          ++done;
+          if (((done + waiting) & 4095) == 0 && !check("instances", done + waiting))
+            return false;
+          continue;
+        }
+        // Keep placement order: flush queued top-level work first.
+        if (!replay_top_batch(&top_batch)) return false;
+        top_batch_samples = 0;
         if (!replay(key, placed.data(), ancestors)) return false;
         for (const auto& a : ancestors) {
           if (!flush_prototype(a.first)) return false;
@@ -1291,6 +1461,8 @@ bool Build::finish_placements() {
       if (((done + waiting) & 4095) == 0 && !check("instances", done + waiting))
         return false;
     }
+    if (!replay_top_batch(&top_batch)) return false;
+    top_batch_samples = 0;
     if (!input.eof() || !deferred) {
       result.error = "preview placement spill I/O failed";
       return false;

@@ -3,6 +3,9 @@
 // /curve collection, instancing split, parallel triangle streaming + BVH build,
 // next light/IBL setup, camera resolve, and the RunRTPreviewCore driver.
 #include <algorithm>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -114,9 +117,21 @@ bool AllowGaussianSHDecode(const lightusd::UsdPrim &prim) {
   const lightusd::Value *value = prim.GetPropertyValue(
       "radiance:sphericalHarmonicsCoefficients");
   if (!value || !value->is_array()) return true;
-  constexpr size_t kMaxDecodedShBytes = size_t(128) * 1024 * 1024;
-  const bool oversized = value->array_size() >
-                         kMaxDecodedShBytes / sizeof(float);
+  // A compressed SH array decodes whole (crate has no ranged decode), and
+  // only while this prim's splats are built (DC is extracted per splat). Cap
+  // that transient at 1/8 of physical memory, never below 128 MiB.
+  static const uint64_t kMaxDecodedShBytes = [] {
+    uint64_t cap = uint64_t(128) << 20;
+#if defined(_SC_PHYS_PAGES) && defined(_SC_PAGESIZE)
+    const long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && page > 0)
+      cap = std::max(cap, uint64_t(pages) * uint64_t(page) / 8);
+#endif
+    return cap;
+  }();
+  // array_size() counts float3 elements.
+  const bool oversized = uint64_t(value->array_size()) * 3 * sizeof(float) >
+                         kMaxDecodedShBytes;
   return !oversized || !value->is_lazy() ||
          lightusd::CanBorrowLazyFlat(*value);
 }

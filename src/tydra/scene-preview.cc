@@ -45,7 +45,9 @@ std::string Fingerprint(const std::string& source,
   std::ostringstream s;
   s << kVersion << ':' << (ec ? source : path.lexically_normal().string())
     << ':' << ScenePreviewKindName(o.kind) << ':' << o.gpu_budget_bytes << ':'
-    << o.resolution << ':' << std::setprecision(17) << o.time_code << ':'
+    << o.resolution << ':' << o.auto_resolution << ':'
+    << o.triangle_sample_limit << ':' << o.cell_budget_scale << ':'
+    << std::setprecision(17) << o.time_code << ':'
     << o.texture_max_edge << ':' << o.texture_budget_bytes << ':'
     << o.composition.load_payloads << ':'
     << static_cast<int>(o.composition.expression_variable_policy);
@@ -172,18 +174,27 @@ void ApplyScenePreviewPreset(ScenePreviewPreset preset,
       o->texture_max_edge = 128;
       o->compose_pipeline = true;
       o->batch_prims = 400000;  // fewer batches; composer default size
+      o->auto_resolution = 1024;
+      o->triangle_sample_limit = 16;
+      o->cell_budget_scale = 1.0;
       break;
     case ScenePreviewPreset::Standard:
       o->source_index = true;
       o->texture_max_edge = 512;
       o->texture_budget_bytes = uint64_t(256) << 20;
       o->batch_prims = 100000;
+      o->auto_resolution = 2048;
+      o->triangle_sample_limit = 64;
+      o->cell_budget_scale = 1.0;
       break;
     case ScenePreviewPreset::Quality:
       o->source_index = true;
       o->texture_max_edge = 2048;
       o->texture_budget_bytes = uint64_t(1) << 30;
       o->batch_prims = 100000;
+      o->auto_resolution = 4096;
+      o->triangle_sample_limit = 256;
+      o->cell_budget_scale = 2.0;
       break;
   }
 }
@@ -898,6 +909,10 @@ Build::Build(const ScenePreviewOptions& o, ScenePreviewResult& r, fs::path d)
       std::min(o.gpu_budget_bytes / 2, uint64_t(512) << 20);
   max_cells = static_cast<size_t>(std::min(
       (o.gpu_budget_bytes - reserve) / 1024, o.host_budget_bytes / 1024));
+  if (o.cell_budget_scale > 0 && std::isfinite(o.cell_budget_scale))
+    max_cells = static_cast<size_t>(std::min(
+        double(max_cells) * o.cell_budget_scale,
+        double(o.host_budget_bytes / 1024)));
   max_cells = std::max(size_t(1), max_cells);
   if (o.region_enabled && o.kind == ScenePreviewKind::Gaussian &&
       !o.base_preview_path.empty()) {

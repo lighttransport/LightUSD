@@ -822,6 +822,21 @@ if(LIGHTUSD_BUILD_TESTS)
     set_tests_properties(tool-lusdrender-gsplat-blender-mixed-camera-motion PROPERTIES
                          TIMEOUT 1800 SKIP_RETURN_CODE 77
                          LABELS "lusdrender;cpu;gsplat;blender")
+    # Scene -> gsplat fast preset: cold hotel_01 conversion within 10 s and a
+    # non-blank render (skips unless -DLIGHTUSD_PRESET_SCENE names the scene).
+    # Serial: it is a timing budget.
+    set(LIGHTUSD_PRESET_SCENE "" CACHE FILEPATH
+        "Scene for the fast-preset timing test (Caldera hotel_01.usd)")
+    if(TARGET lusdpreview)
+      add_test(NAME tool-lusdpreview-fast-preset-timing
+        COMMAND ${CMAKE_COMMAND} -E env "LIGHTUSD_PRESET_SCENE=${LIGHTUSD_PRESET_SCENE}"
+                ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tools/lusdpreview/check-preset-timing.py
+                "$<TARGET_FILE:lusdpreview>" "$<TARGET_FILE:lusdrender>")
+      set_tests_properties(tool-lusdpreview-fast-preset-timing PROPERTIES
+                           TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                           LABELS "lusdpreview;timing")
+    endif()
     # Mixed scenes against checked-in Blender references (no Blender).
     foreach(_gs_mix "" "--motion" "--camera-motion")
       string(REPLACE "--" "-" _gs_mix_name "${_gs_mix}")

@@ -358,6 +358,17 @@ class Gui {
   RenderTechnique requestedTechnique() const { return requestedTechnique_; }
   bool hasCudaDeviceRequest() const { return hasCudaDeviceRequest_; }
   bool hasHipDeviceRequest() const { return hasHipDeviceRequest_; }
+  // Scene preview preset menu: 0 fast, 1 standard, 2 quality, -1 unknown.
+  void setScenePreviewPresetState(bool active, int preset, bool busy) {
+    scenePreviewActive_ = active;
+    scenePreviewPreset_ = preset;
+    scenePreviewBusy_ = busy;
+  }
+  int takeScenePreviewPresetRequest() {
+    const int r = requestedScenePreviewPreset_;
+    requestedScenePreviewPreset_ = -1;
+    return r;
+  }
   int requestedCudaDevice() const { return requestedCudaDevice_; }
   int requestedHipDevice() const { return requestedHipDevice_; }
   bool hasCudaRtBackendRequest() const { return hasCudaRtBackendRequest_; }
@@ -1005,6 +1016,10 @@ class Gui {
   int requestedHipDevice_{0};
   bool hasCudaDeviceRequest_{false};
   bool hasHipDeviceRequest_{false};
+  bool scenePreviewActive_{false};
+  bool scenePreviewBusy_{false};
+  int scenePreviewPreset_{-1};
+  int requestedScenePreviewPreset_{-1};
   CudaRtBackend cudaRtBackend_{CudaRtBackend::Auto};
   CudaRtBackend requestedCudaRtBackend_{CudaRtBackend::Auto};
   bool hasCudaRtBackendRequest_{false};

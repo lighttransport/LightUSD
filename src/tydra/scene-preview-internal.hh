@@ -152,6 +152,9 @@ struct Build {
   std::set<std::string> point_prototypes;
   std::map<std::string, std::string> native_prototypes;
   std::map<std::string, std::array<double, 16>> point_prototype_local;
+  // Placement targets never traversed as prototypes (pruned, inactive or
+  // absent): they render nothing, as in USD; reported in the warning.
+  std::set<std::string> missing_prototypes;
   std::string resolve_prototype(std::string) const;
   std::map<std::string, uint64_t> pending_prototype_placements;
   std::ofstream placements;
@@ -195,6 +198,17 @@ struct Build {
   bool finish_plan();
   bool consume(usd::pcp::ComposedBatch&);
   bool insert(const Sample&, bool filter_region = true);
+  // Insert with a precomputed grid key and rank (valid for cell_size).
+  bool place(const Sample&, const Key&, uint64_t rank);
+  // Parallel replay of top-level placements (see finish_placements).
+  struct TopPlacement {
+    std::string key;
+    std::array<double, 16> world;
+  };
+  bool replay_top_batch(std::vector<TopPlacement>* batch);
+  std::map<std::string, std::vector<Sample>> prototype_sample_cache;
+  size_t prototype_sample_cache_bytes = 0;
+  std::map<std::string, size_t> prototype_sample_counts;
   // conv/out are set only by drain_meshes worker threads: samples are
   // buffered in *out instead of emitted, and shared result fields untouched.
   bool mesh(const usd::Stage&, const usd::UsdPrim&, const double*,
