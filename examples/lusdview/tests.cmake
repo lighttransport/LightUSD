@@ -871,7 +871,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
     # tracers. Skips without the device or numpy.
     find_program(LUSDVIEW_GSPLAT_PYTHON NAMES python3 python)
     if(LUSDVIEW_GSPLAT_PYTHON)
-      foreach(_gs_mixed cpu rt hip cuda pt-vk pt-hip pt-cuda)
+      foreach(_gs_mixed cpu rt hip cuda pt-vk pt-sw pt-hip pt-cuda)
         add_test(
           NAME lusdview-gsplat-mixed-${_gs_mixed}
           COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
@@ -883,7 +883,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
       # Camera motion blur (app shutter segments).
-      foreach(_gs_mixed pt-vk pt-hip pt-cuda)
+      foreach(_gs_mixed pt-vk pt-sw pt-hip pt-cuda)
         add_test(
           NAME lusdview-gsplat-mixed-cammotion-${_gs_mixed}
           COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
@@ -912,7 +912,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
       endif()
       # The same variants against the checked-in references (no Blender).
       if(TARGET lusdrender)
-        foreach(_gs_lv vk hip)
+        foreach(_gs_lv vk sw hip)
           add_test(
             NAME lusdview-gsplat-refs-${_gs_lv}
             COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
@@ -991,7 +991,7 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;points")
       endforeach()
       # Motion blur (animated splats, camera shutter) on the path tracers.
-      foreach(_gs_mixed pt-vk pt-hip pt-cuda cpu)
+      foreach(_gs_mixed pt-vk pt-sw pt-hip pt-cuda cpu)
         add_test(
           NAME lusdview-gsplat-mixed-motion-${_gs_mixed}
           COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
@@ -1002,6 +1002,10 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                         LABELS "lusdview;gsplat"
                                         RESOURCE_LOCK lusdview_gpu)
       endforeach()
+      set_property(TEST lusdview-gsplat-mixed-pt-sw
+                        lusdview-gsplat-mixed-cammotion-pt-sw
+                        lusdview-gsplat-mixed-motion-pt-sw
+                   APPEND PROPERTY LABELS vulkan)
     endif()
     # The same check on the GPU ray tracers (skip without a device/runtime).
     foreach(_gs_backend rt hip cuda)

@@ -715,7 +715,13 @@ struct Cache::Impl {
   // ExpandArcs); the parallel opinion fill only READS the pool (Apply), and a
   // std::deque never relocates existing entries -> lock-free concurrent reads.
   std::deque<NamespaceMapping> nm_pool_{NamespaceMapping{}};
-  const NamespaceMapping &Mapping(uint32_t idx) const { return nm_pool_[idx]; }
+  // Warm workers read the immutable prefix from the main cache until join.
+  // Their deque holds only appended mappings, numbered after that prefix.
+  const std::deque<NamespaceMapping>* nm_seed_ = nullptr;
+  size_t nm_seed_count_ = 0;
+  const NamespaceMapping &Mapping(uint32_t idx) const {
+    return idx < nm_seed_count_ ? (*nm_seed_)[idx] : nm_pool_[idx - nm_seed_count_];
+  }
   uint32_t InternMapping(NamespaceMapping m) ;
 
   // Phase 10: lazily-composed per-prim specs + their composed child names,

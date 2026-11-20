@@ -340,6 +340,8 @@ bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out);
 bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
                         GsplatGpuData* out);
 
+bool BuildGsplatGpuData(const GsplatKeys& keys, bool srgb, GsplatGpuData* out);
+
 // Device budget for the splat buffers: LUSDVIEW_GSPLAT_VRAM_MB, default 4 GiB.
 uint64_t GsplatGpuBudgetBytes();
 

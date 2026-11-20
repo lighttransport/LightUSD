@@ -276,8 +276,14 @@ typedef struct lrt_vk_material_path_desc {
      * 1 = material id, 2 = first texture id of the material, 3 = UV. */
     uint32_t debug_aov;
     /* Display transform: 0 = filmic beauty curve, 1 = plain sRGB encode
-     * (usdrecord's colorCorrectionMode=sRGB). */
+     * (usdrecord's colorCorrectionMode=sRGB), 2 = scene-linear radiance. */
     uint32_t display_transform;
+    /* Optional Cycles Gaussian BVH, SH and shutter camera projections. */
+    const float *gs_records, *gs_sh, *gs_camera_matrices;
+    const uint32_t *gs_nodes;
+    const int32_t *gs_chunks;
+    size_t gs_record_floats, gs_sh_floats, gs_node_words, gs_chunk_words;
+    uint32_t gs_camera_count;
 } lrt_vk_material_path_desc;
 
 /* Packed light ABI consumed by trace_materialx_path.comp. */

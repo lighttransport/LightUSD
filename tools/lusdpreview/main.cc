@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
   options.composition.usdc_limits.max_specs = 300000000;
   options.composition.usdc_limits.max_fieldset_indices = 300000000;
   std::string source, output;
-  bool budget_explicit = false;
+  bool budget_explicit = request.budget_explicit;
   bool lod = false;
   auto number = [](const char* arg, uint64_t* n) {
     char* end = nullptr;

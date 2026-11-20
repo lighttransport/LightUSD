@@ -35,6 +35,11 @@ struct ArrayScratch {
 bool CanBorrowLazyFlat(const Value& value);
 bool CanBorrowLazyFlat(ValueView value);
 
+/// Read a contiguous span of uncompressed crate float3/half3 elements,
+/// widening half components. A zero-length query also checks layout support.
+bool ReadLazyFloat3Range(const Value& value, size_t first, size_t count,
+                         float* output);
+
 bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
                        ArrayView<float>* out);
 bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,

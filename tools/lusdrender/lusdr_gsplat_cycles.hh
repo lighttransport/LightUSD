@@ -11,7 +11,14 @@
 #include "lusdr_context.hh"
 #include "tydra/gsplat-tracer.hh"
 
+#include "rt_scene_build.hh"
+
 namespace lusdr {
+
+struct MixedGsplatFrame {
+  lusdview::GsplatGpuData data;
+  std::vector<CameraFrame> cameras;
+};
 
 struct GSplatCyclesScene {
   lightusd::gsplat::GSplatTracer tracer;  // splats at the render time + SH
@@ -28,6 +35,9 @@ struct GSplatCyclesScene {
   // (empty = static camera).
   std::vector<CameraFrame> camera_keys;
 };
+
+bool PackGSplatCyclesScene(GSplatCyclesScene* scene, bool srgb,
+                          lusdview::GsplatGpuData* out);
 
 // DC colour of splat i at shutter time tau (motion_dc must be non-empty).
 void GSplatDcAt(const std::vector<float> &dc, uint32_t nkeys, size_t n,

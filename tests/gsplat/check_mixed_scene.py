@@ -25,6 +25,7 @@ Exit 77 when Blender (or numpy for --refs) is unavailable.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 import json
@@ -97,6 +98,7 @@ def run(cmd, **kw):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("lusdrender")
+    ap.add_argument("--backend", choices=("cpu", "vk", "hip"), default="cpu")
     ap.add_argument("--spp", type=int, default=256)
     ap.add_argument("--motion", action="store_true",
                     help="animated splats + camera shutter (motion blur)")
@@ -114,11 +116,37 @@ def main():
     refdir = os.path.join(HERE, "refs", "mixed" + ("-" + variant if variant else ""))
     fixture = lambda k: os.path.join(
         ROOT, "tests/usda/gsplat-mixed-%s%s.usda" % (variant + "-" if variant else "", k))
-    lus = lambda usda, out: run(
-        [a.lusdrender, usda, out, "--gsplat-kernel", "cycles",
-         "--gsplat-colorspace", "srgb", "-camera", "/World/Cam",
-         "-width", str(W), "-height", str(H), "-samples", str(a.spp)] +
-        (["-timecode", "1"] if blur else []))
+    def lus(usda, out):
+        flags = [] if a.backend == "cpu" else [
+            "-vk" if a.backend == "vk" else "-hip", "--path-trace",
+            "--pt-samples", str(a.spp), "--pt-max-depth", "2"]
+        cmd = [a.lusdrender, usda, out, "--gsplat-kernel", "cycles",
+               "--gsplat-colorspace", "srgb", "-camera", "/World/Cam",
+               "-width", str(W), "-height", str(H), "-samples", str(a.spp)]
+        if blur:
+            cmd += ["-timecode", "1"]
+        if a.backend == "cpu":
+            return run(cmd)
+        result = subprocess.run(cmd + flags, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+        log = result.stdout
+        if result.returncode:
+            unavailable = ("Failed to create LightRT Vulkan engine", "HIP runtime not available",
+                           "no HIP device", "hipErrorNoDevice", "backend not built in")
+            caps = next((line for line in log.splitlines() if line.startswith("Vulkan caps:")), "")
+            if any(reason in log for reason in unavailable) or (caps and "ray_query" not in caps):
+                print(f"SKIP: {a.backend} device unavailable\n{log[-1500:]}")
+                raise SystemExit(77)
+            raise SystemExit(log)
+        marker = "Vulkan Cycles mixed path:" if a.backend == "vk" else "backend: shared HIP RT"
+        if marker not in log:
+            raise SystemExit(f"missing {marker} in render log:\n{log}")
+        if not usda.endswith("-plain.usda"):
+            kernel = ("Vulkan Cycles mixed path:" if a.backend == "vk"
+                      else "HIP Cycles gsplat kernel:")
+            if not re.search(kernel + r" [1-9][0-9]* splat", log):
+                raise SystemExit(f"missing positive splat count in render log:\n{log}")
+        return log
     if a.refs:
         try:
             import numpy as np

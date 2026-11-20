@@ -324,7 +324,7 @@ bool HipRayTracer::reloadKernel(const std::string& sourcePath,
 bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
                          size_t maxInstances, std::string* err,
                          float displacementScale, BuildProgress* progress,
-                         bool retainForRefit, uint32_t purposeVisibleMask) {
+                         bool retainForRefit, uint32_t purposeVisibleMask, GsplatGpuData* packedSplats) {
   previewAlbedo_=std::any_of(scene.points.begin(),scene.points.end(),[](const DrawPointsCPU& points){return points.previewAlbedo;});
 
   if (!ready_) { if (err) *err = "HIP not initialized"; return false; }
@@ -369,9 +369,14 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   gsActive_ = false;
   int gsChunkCount = 0;
   if (gsplatCycles_) {
-    GsplatGpuData gs;
-    if (BuildGsplatGpuData(scene.points, gsplatSrgb_, &gs)) {
+    GsplatGpuData localSplats;
+    GsplatGpuData& gs = packedSplats ? *packedSplats : localSplats;
+    if (packedSplats ? gs.splatCount != 0 : BuildGsplatGpuData(scene.points, gsplatSrgb_, &gs)) {
       if (gs.bytes() > GsplatGpuBudgetBytes()) {
+        if (packedSplats) {
+          if (err) *err = "packed Cycles splats exceed the GPU buffer budget";
+          return false;
+        }
         std::fprintf(stderr,
                      "HIP Cycles gsplat buffers %.1f MiB exceed the %.1f MiB "
                      "budget (LUSDVIEW_GSPLAT_VRAM_MB); splats not traced\n",

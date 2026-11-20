@@ -195,7 +195,7 @@ class VulkanRenderer final : public Renderer {
     const bool ready = rtTechnique_ == RtTechnique::kHardware
                            ? tlas_ != VK_NULL_HANDLE
                            : (rtTechnique_ == RtTechnique::kComputeBvh &&
-                              swTlasNodeCount_ > 0u && swInstCount_ > 0u);
+                              ((swTlasNodeCount_ > 0u && swInstCount_ > 0u) || swGsCount_ > 0));
     return ready ? rtAccumFrame_ + 1u : 0u;
   }
   uint32_t rayTracingTlasChunks() const override { return rtTlasChunkCount_; }
@@ -1597,6 +1597,10 @@ class VulkanRenderer final : public Renderer {
 
   const DrawScene* hostSceneSource_{nullptr};  // see setHostSceneSource()
 
+  VkBuffer swGsBuffers_[4]{};
+  VkDeviceMemory swGsMemory_[4]{};
+  uint32_t swGsCount_ = 0;
+  void destroySwGsBuffers();
   VkDescriptorSetLayout swRtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool swRtPool_{VK_NULL_HANDLE};
   VkDescriptorSet swRtSet_{VK_NULL_HANDLE};

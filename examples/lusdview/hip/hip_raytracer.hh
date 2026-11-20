@@ -63,7 +63,8 @@ class HipRayTracer {
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
              BuildProgress* progress = nullptr, bool retainForRefit = false,
-             uint32_t purposeVisibleMask = 0x3u);
+             uint32_t purposeVisibleMask = 0x3u,
+             GsplatGpuData* packedSplats = nullptr);
   bool updateMaterialConstants(int materialId,
                                const DrawMaterialCPU& material,
                                std::string* err);

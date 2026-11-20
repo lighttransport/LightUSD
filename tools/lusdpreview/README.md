@@ -392,6 +392,9 @@ their position on the command line:
 The automatic grid still coarsens to the renderer budget (the sample cap) in
 every preset; `--preview-resolution` / `--preview-budget-mib` override it.
 quality may plan up to twice the budget-derived GPU memory for finer cells.
+All three presets write degree-zero spherical harmonics. The converter samples a
+single view-independent surface colour per splat. Baking higher bands would
+require measurements or shading evaluated from multiple view directions.
 Without the index or a refinement region, mesh sampling runs on up to 8 worker
 threads, and top-level instance replay transforms and keys prototype samples
 on up to 16 threads (inserted in placement order), giving the same output as
@@ -400,6 +403,30 @@ byte-identical across runs (hotel_01, ALab and Moana checked). Texture
 sampling is order-independent: Ptex faces are cached per face, and the
 decoder has no admission budget (a budget shrank or dropped images
 depending on what other sampling threads still held).
+
+Instance replay uses worker-local cell reduction by default. Set
+`LIGHTUSD_PREVIEW_SHARD_REPLAY=0` for grouped transforms and serial insertion.
+Each worker retains the earliest
+placement and lowest-ranked representative for each cell. When a window could
+cross the grid budget, replay follows the original placement order so the grid
+coarsens at the same sample. On a 60-million-sample slice of Moana with 48
+occupied cells, grouped replay took 4.07 s and worker-local reduction took
+1.33 s. These timings cover replay of that slice only.
+
+The preview cache checks each recorded source dependency against its filesystem
+stamp. A path index preserves manifest order and avoids rescanning the stamp
+list for every dependency. On the full Caldera manifest, checking 60,239 stamps
+took 1.76 s, down from 57.24 s on the same host.
+
+Mesh conversion applies its triangulation memory limit to each temporary
+render mesh. The preview host budget still bounds the overall conversion.
+Earlier versions accumulated triangulation estimates across meshes assigned
+to the same worker and could omit later meshes in a large scene. Automatic
+cache lookup uses a new key so those previews are regenerated on the next
+conversion. Previously exported USD files can still be opened directly.
+In a controlled run of 1,200 one-triangle meshes with a 4 KiB triangulation
+budget, reusing the converter admitted 170 meshes. Scoping it to each mesh
+admitted all 1,200 at the same limit.
 
 Cold conversions on a 32-thread host (default 2048 MiB budget):
 
@@ -411,9 +438,41 @@ Cold conversions on a 32-thread host (default 2048 MiB budget):
 | ALab `_merged_ALab/entry.usda` | fast | 42 s | 2.3 GiB | 1,318,794 |
 | ALab `_merged_ALab/entry.usda` | standard | 65 s | 1.2 GiB | 1,305,421 |
 | ALab `_merged_ALab/entry.usda` | quality | 74 s | 1.6 GiB | 1,768,546 |
-| Moana `island.usda` (30.9M instances) | fast | 24.9 min (serial replay 34–37 min) | 4.6 GiB | 470,080 |
+| Moana `island.usda` (30.9M instances) | fast | 21 min 59 s–22 min 22 s | 4.7–4.8 GiB | 470,080 |
 | Caldera `caldera.usda` (authored proxy district LODs) | fast | 6.6 s | 2.4 GiB | 80,371 |
-| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 1.07M meshes, 2.78M instances) | fast | 21.3 min | 18.4 GiB | 775,233 |
+| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 2.18M meshes, 2.78M instances) | fast | 18 min 14 s | 18.60 GiB | 780,372 |
+
+Three cold sharded Moana runs took 22:22, 21:59 and 22:19. All nine USD
+payloads matched the original export. The last two exports, including their
+manifests, matched byte-for-byte. The manifest lists sidecars and missing
+surface textures by path so filesystem enumeration and worker scheduling do
+not change the output. With other work running on the host, the original
+converter took 37:04 and grouped transforms with serial insertion took 40:23.
+With Caldera and the regression suite idle, the original executable took
+30:15. The sharded runs reduced wall time by 26–27% relative to that control
+and retained the same 470,080 splats.
+
+For full Caldera, the pre-change executable converted 1,067,017 meshes and
+produced 775,284 splats in 25 min 58 s on the same shared host. The corrected
+grouped run converted 2,178,476 meshes in 19 min 56 s (18.54 GiB peak RSS).
+Both used the same 45 full districts,
+2,784,179 instances and 2 GiB renderer budget. Sharded replay of the corrected
+scene took 18 min 14 s (18.60 GiB peak RSS). Its 780,372 splats, USD sidecars
+and manifest were byte-identical to the grouped export. In a separate
+instrumented run, the 48 planning batches took 606 s and the 37 conversion
+batches took 557 s. The composition thread spent 581 s and 541 s in
+stage construction during those passes, respectively.
+
+A tiled, constant-colour prototype emitted one Gaussian per nondegenerate
+triangle and flushed every 65,536 samples. On the hotel scene it produced
+19,332,842 splats and a 1,083 MB sidecar in 13.85 s (903 MiB peak RSS).
+The fast grid produced 751,358 splats and 42.4 MB in 16.36 s (1,022 MiB
+peak RSS). These single runs shared the host with other workloads. At
+320 × 234, mean absolute RGB difference across pixels covered by either
+CPU auto-framed render was 0.084 on a 0–1 scale. The triangle output's
+estimated renderer budget was 18.9 GiB. The fast preset retains the grid
+for its smaller sidecar and bounded renderer footprint.
+
 
 lusdrender wall time for the hotel_01 previews (whole process, auto-framed,
 1280x720, 1 spp, RX 9070 XT / 32 threads):

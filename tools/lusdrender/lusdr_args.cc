@@ -151,8 +151,8 @@ void PrintUsage(const char *prog) {
       << "      cycles: Blender Cycles 3D ellipsoid + stochastic opacity via\n"
       << "      LightRT on the CPU, or -vk/-vkr (Vulkan) / -hip (HIP) within\n"
       << "      -maxVram GiB (default 4); -samples sets spp (16 if left at 1).\n"
-      << "      With meshes, the CPU integrator traces splats on camera, bounce\n"
-      << "      and shadow rays; defaults -materialShading lightrt-bsdf,\n"
+      << "      With meshes, CPU, Vulkan ray queries and HIP trace splats on camera,\n"
+      << "      bounce and shadow rays. CPU defaults to -materialShading lightrt-bsdf,\n"
       << "      -ambient 0 and scene-linear .exr (as Blender's Cycles).\n"
       << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
       << "  --gsplat-motion-steps N  Motion-blur samples per splat across the camera\n"
@@ -1351,7 +1351,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     opt->input = positional[0];
     opt->output = positional.size() > 1 ? positional[1] : std::string();
   }
-  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
+  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt &&
+      !(opt->vulkan && opt->gsplat_cycles)) {
     std::cerr << "--path-trace requires --mtlx, -vkr, -cuda, or -hip.\n";
     return false;
   }

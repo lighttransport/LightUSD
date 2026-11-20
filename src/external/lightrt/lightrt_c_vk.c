@@ -25,6 +25,7 @@
 #include "vk/shaders/trace_ray_query.spv.h"  /* trace_ray_query_spv[] */
 #include "vk/shaders/trace_ray_query_wide.spv.h" /* trace_ray_query_wide_spv[] */
 #include "vk/shaders/shade_analytic.spv.h"   /* shade_analytic_spv[]  */
+#include "vk/shaders/trace_materialx_gsplat_path.spv.h"
 #include "vk/shaders/trace_materialx_path.spv.h"
 #include "vk/shaders/trace_gsplat.spv.h"     /* trace_gsplat_spv[]    */
 #include "lightrt_c_gsplat.h"
@@ -113,6 +114,7 @@ struct lrt_vk_engine {
     vk_pipeline rtx_pipe;   /* trace_ray_query: AS + 2 SSBO bindings */
     vk_pipeline rtx_pipe_wide; /* trace_ray_query_wide: 5-word hits (inst,prim) */
     vk_pipeline shade_pipe; /* shade_analytic: 3 SSBO bindings + push */
+    vk_pipeline material_gsplat_path_pipe;
     vk_pipeline material_path_pipe; /* TLAS + packed MaterialX/path buffers */
     vk_pipeline gsplat_pipe; /* trace_gsplat: 4 SSBO bindings + push */
 };
@@ -768,6 +770,7 @@ void lrt_vk_engine_destroy(lrt_vk_engine *e) {
         vk_pipeline_destroy(e, &e->rtx_pipe);
         vk_pipeline_destroy(e, &e->rtx_pipe_wide);
         vk_pipeline_destroy(e, &e->shade_pipe);
+        vk_pipeline_destroy(e, &e->material_gsplat_path_pipe);
         vk_pipeline_destroy(e, &e->material_path_pipe);
         vk_pipeline_destroy(e, &e->gsplat_pipe);
         if (e->cmd_pool) vkDestroyCommandPool(e->device, e->cmd_pool, NULL);
@@ -3265,36 +3268,38 @@ typedef struct material_path_push {
     uint32_t frame[4], path[4];
 } material_path_push;
 
-static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e) {
-    VkDescriptorType types[11];
+static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e, uint32_t buffers) {
+    VkDescriptorType types[16];
+    const int mixed = buffers == 15;
+    vk_pipeline *pipe = mixed ? &e->material_gsplat_path_pipe : &e->material_path_pipe;
+    const uint32_t *code = mixed ? trace_materialx_gsplat_path_spv : trace_materialx_path_spv;
+    const size_t bytes = mixed ? sizeof(trace_materialx_gsplat_path_spv) : sizeof(trace_materialx_path_spv);
     uint32_t i;
-    if (e->material_path_pipe.valid) return &e->material_path_pipe;
+    if (pipe->valid) return pipe;
     types[0] = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 1; i < 11; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    if (!vk_pipeline_build(e, trace_materialx_path_spv,
-                           sizeof(trace_materialx_path_spv), 11, types,
-                           (uint32_t)sizeof(material_path_push), NULL,
-                           &e->material_path_pipe)) return NULL;
-    return &e->material_path_pipe;
+    for (i = 1; i <= buffers; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    if (!vk_pipeline_build(e, code, bytes, buffers + 1, types,
+                           (uint32_t)sizeof(material_path_push), NULL, pipe)) return NULL;
+    return pipe;
 }
 
 static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
                               VkAccelerationStructureKHR tlas,
-                              const vk_buffer *buffers,
+                              const vk_buffer *buffers, uint32_t count,
                               VkDescriptorPool *out_pool,
                               VkDescriptorSet *out_set) {
     VkDescriptorPoolSize ps[2];
     VkDescriptorPoolCreateInfo pci;
     VkDescriptorSetAllocateInfo ai;
-    VkDescriptorBufferInfo bi[10];
-    VkWriteDescriptorSet w[11];
+    VkDescriptorBufferInfo bi[15];
+    VkWriteDescriptorSet w[16];
     VkWriteDescriptorSetAccelerationStructureKHR asw;
     uint32_t i;
     memset(ps, 0, sizeof(ps));
     ps[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     ps[0].descriptorCount = 1;
     ps[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps[1].descriptorCount = 10;
+    ps[1].descriptorCount = count;
     memset(&pci, 0, sizeof(pci));
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 1; pci.poolSizeCount = 2; pci.pPoolSizes = ps;
@@ -3313,23 +3318,24 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[0].pNext = &asw;
     w[0].dstSet = *out_set; w[0].dstBinding = 0; w[0].descriptorCount = 1;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 0; i < 10; ++i) {
+    for (i = 0; i < count; ++i) {
         bi[i].buffer = buffers[i].buf; bi[i].offset = 0; bi[i].range = VK_WHOLE_SIZE;
         w[i+1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i+1].dstSet = *out_set; w[i+1].dstBinding = i+1;
         w[i+1].descriptorCount = 1; w[i+1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[i+1].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(e->device, 11, w, 0, NULL);
+    vkUpdateDescriptorSets(e->device, count + 1, w, 0, NULL);
     return 1;
 }
 
 int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *d, float *out_rgba, lrt_result *err) {
-    vk_buffer b[10]; size_t sizes[10]; const void *data[10];
+    vk_buffer b[15]; size_t sizes[15]; const void *data[15];
     VkDescriptorPool pool = VK_NULL_HANDLE; VkDescriptorSet set;
     material_path_push pc; vk_pipeline *pipe; uint32_t i, pixels; int ok = 0;
+    uint32_t count;
     const char *stage = "validate";
     if (!e || !s || !d || !out_rgba || !d->vertices || !d->indices ||
         !d->triangle_materials || !d->materials || !d->graphs || !d->width ||
@@ -3337,7 +3343,22 @@ int lrt_vk_rtx_scene_render_materialx_path(
         d->material_stride_floats < 80u || s->ntlas > 1u) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT; return -1;
     }
-    stage = "pipeline"; pipe = material_path_get_pipeline(e);
+    count = d->gs_chunk_words || d->gs_camera_count ? 15u : 10u;
+    if (d->gs_record_floats > SIZE_MAX / sizeof(float) ||
+        d->gs_node_words > SIZE_MAX / sizeof(uint32_t) ||
+        d->gs_chunk_words > SIZE_MAX / sizeof(int32_t) ||
+        d->gs_sh_floats > SIZE_MAX / sizeof(float) ||
+        (uint64_t)d->gs_camera_count * 16u > SIZE_MAX / sizeof(float) ||
+        (d->gs_chunk_words && (!d->gs_chunks || !d->gs_nodes || !d->gs_records ||
+                              !d->gs_sh || d->gs_chunk_words % 2u ||
+                              !d->gs_node_words || d->gs_node_words % 8u ||
+                              !d->gs_record_floats || d->gs_record_floats % 16u ||
+                              d->gs_sh_floats < 4u)) ||
+        (d->gs_camera_count && !d->gs_camera_matrices)) {
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    stage = "pipeline"; pipe = material_path_get_pipeline(e, count);
     if (!pipe) {
         if (e->err[0] == '\0') vk_set_err(e, "material path pipeline");
         if (err) *err = LRT_RESULT_NOT_BUILT; return -1;
@@ -3365,13 +3386,18 @@ int lrt_vk_rtx_scene_render_materialx_path(
         sizes[9]=have?(size_t)d->nptex_tri*sizeof(uint32_t):sizeof(no_ptex);
         data[9]=have?(const void *)d->ptex_tri:(const void *)&no_ptex;
     }
-    stage = "buffers"; for (i=0;i<10;++i) {
+    sizes[10]=d->gs_record_floats*sizeof(float); data[10]=d->gs_records;
+    sizes[11]=d->gs_node_words*sizeof(uint32_t); data[11]=d->gs_nodes;
+    sizes[12]=d->gs_chunk_words*sizeof(int32_t); data[12]=d->gs_chunks;
+    sizes[13]=d->gs_sh_floats*sizeof(float); data[13]=d->gs_sh;
+    sizes[14]=(size_t)d->gs_camera_count*16u*sizeof(float); data[14]=d->gs_camera_matrices;
+    stage = "buffers"; for (i=0;i<count;++i) {
         size_t n=sizes[i]?sizes[i]:4u;
         if(!vk_buffer_create(e,n,&b[i])) goto done;
         if(sizes[i]&&data[i]&&!vk_buffer_write(e,&b[i],data[i],sizes[i])) goto done;
     }
     stage = "descriptors";
-    if(!material_path_bind(e,pipe->dsl,s->tlas.as,b,&pool,&set)) goto done;
+    if(!material_path_bind(e,pipe->dsl,s->tlas.as,b,count,&pool,&set)) goto done;
     memset(&pc,0,sizeof(pc)); memcpy(pc.inv_view_proj,d->inv_view_proj,sizeof(pc.inv_view_proj));
     memcpy(pc.camera,d->camera,3u*sizeof(float)); memcpy(pc.clear_color,d->clear_color,3u*sizeof(float));
     pc.clear_color[3]=d->exposure; pc.frame[0]=d->width; pc.frame[1]=d->height;
@@ -3387,7 +3413,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
 done:
     if (!ok && e->err[0] == '\0') vk_set_err(e, stage);
     if(pool!=VK_NULL_HANDLE&&!e->device_lost)vkDestroyDescriptorPool(e->device,pool,NULL);
-    for(i=0;i<10;++i)vk_buffer_destroy(e,&b[i]);
+    for(i=0;i<count;++i)vk_buffer_destroy(e,&b[i]);
     if(err)*err=ok?LRT_RESULT_OK:LRT_RESULT_OUT_OF_MEMORY;
     return ok?0:-1;
 }

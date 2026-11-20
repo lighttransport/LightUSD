@@ -1474,7 +1474,9 @@ bool CompileLiveVulkanShader(const std::string& source,
   const std::string compilerCommand =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
       "-fshader-stage=compute" + variantDefines + " -I" +
-      ShellQuote(include) + " " +
+      ShellQuote(include) + " -I" +
+      ShellQuote(std::filesystem::path(LUSDVIEW_DEFAULT_VK_SHADER_SOURCE)
+                     .parent_path().string()) + " " +
       ShellQuote(source) + " -o " + ShellQuote(output) + " >" +
       ShellQuote(logPath) + " 2>&1";
   bool timedOut = false;

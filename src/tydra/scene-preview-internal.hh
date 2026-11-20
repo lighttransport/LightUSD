@@ -53,6 +53,7 @@ struct KeyHash {
 struct Accum {
   Sample representative;
   uint64_t rank = UINT64_MAX;
+  uint64_t order = 0;  // First insertion of this cell, preserved across coarsening.
 };
 // Open-addressing Key -> Accum map for the sampling grid (hot path: one
 // lookup per emitted sample). Entries are contiguous; emplace may relocate
@@ -126,6 +127,30 @@ class CellMap {
   std::vector<value_type> entries_;
   std::vector<uint32_t> slots_;  // entry index + 1; 0 = empty
 };
+struct CellGrid {
+  static constexpr size_t kShards = 16;
+  std::array<CellMap, kShards> shards;
+  size_t count = 0;
+  uint64_t next_order = 0;
+
+  static size_t shardIndex(const Key& key) {
+    const uint64_t hash = KeyHash()(key);
+    return (hash ^ (hash >> 32)) % kShards;
+  }
+  size_t size() const { return count; }
+  void place(const Key& key, const Sample& sample, uint64_t rank) {
+    count += placeInShard(shards[shardIndex(key)], key, sample, rank, next_order++);
+  }
+  static bool placeInShard(CellMap& shard, const Key& key, const Sample& sample,
+                           uint64_t rank, uint64_t order) {
+    auto entry = shard.emplace(key, Accum{sample, rank, order});
+    if (!entry.second && rank < entry.first->second.rank) {
+      entry.first->second.representative = sample;
+      entry.first->second.rank = rank;
+    }
+    return entry.second;
+  }
+};
 struct Material {
   RenderScene scene;
   RenderMaterial value;
@@ -141,12 +166,12 @@ struct Build {
   const ScenePreviewOptions& opts;
   ScenePreviewResult& result;
   fs::path directory;
-  RenderSceneConverter converter;
   TextureDecoder decoder;
   std::map<std::string, Material> materials;
   std::map<std::string, usd::PrimSpec> material_specs;
   std::map<std::string, std::shared_ptr<DecodedImage>> images;
-  std::set<std::string> failed_images;
+  std::set<std::pair<std::string, bool>> failed_images;
+  void appendTextureWarnings();
   std::set<std::string> dependencies;
   std::set<std::string> prototypes;
   std::set<std::string> point_prototypes;
@@ -160,7 +185,7 @@ struct Build {
   std::ofstream placements;
   std::unordered_map<std::string, std::array<double, 16>> prototype_inverse;
   std::map<std::string, std::vector<Sample>> prototype_buffers;
-  CellMap cells;
+  CellGrid cells;
   std::map<std::string, uint32_t> source_material_ids;
   std::vector<std::string> source_material_paths;
   std::map<uint64_t, std::array<double, 6>> source_bounds;
@@ -209,11 +234,11 @@ struct Build {
   std::map<std::string, std::vector<Sample>> prototype_sample_cache;
   size_t prototype_sample_cache_bytes = 0;
   std::map<std::string, size_t> prototype_sample_counts;
-  // conv/out are set only by drain_meshes worker threads: samples are
+  // out is set only by drain_meshes worker threads: samples are
   // buffered in *out instead of emitted, and shared result fields untouched.
   bool mesh(const usd::Stage&, const usd::UsdPrim&, const double*,
             const std::vector<std::pair<std::string, std::array<double, 16>>>&,
-            RenderSceneConverter* conv = nullptr, MeshJobOut* out = nullptr);
+            MeshJobOut* out = nullptr);
   // Deferred renderable prims of the current batch, sampled in parallel and
   // emitted in traversal order by drain_meshes().
   struct MeshJob {
@@ -223,7 +248,6 @@ struct Build {
   };
   std::vector<MeshJob> mesh_jobs;
   std::vector<std::string> pending_flushes;  // popped prototype ancestors
-  std::vector<std::unique_ptr<RenderSceneConverter>> worker_converters;
   std::mutex shade_mutex;
   bool parallel_meshes();
   bool drain_meshes(const usd::Stage&);

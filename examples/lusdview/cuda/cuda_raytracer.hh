@@ -101,7 +101,8 @@ class CudaRayTracer {
              std::string* err, float displacementScale = 0.0f,
              BuildProgress* progress = nullptr,
              bool retainForRefit = false,
-             uint32_t purposeVisibleMask = 0x3u);
+             uint32_t purposeVisibleMask = 0x3u,
+             GsplatGpuData* packedSplats = nullptr);
   bool refit(const DrawScene& scene, std::string* err);
   bool canRefit() const { return retained_ != nullptr && refitMap_.valid; }
   bool updateMaterialConstants(int materialId,

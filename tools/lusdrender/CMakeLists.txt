@@ -828,6 +828,13 @@ if(LIGHTUSD_BUILD_TESTS)
     # PointInstancer prototypes under an invisible scope are still drawn by the
     # instancer (full Caldera terrain clutter).
     if(TARGET lusdpreview)
+      add_test(NAME tool-lusdpreview-sharded-replay
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tools/lusdpreview/check-sharded-replay.py"
+                $<TARGET_FILE:lusdpreview>
+                "${PROJECT_SOURCE_DIR}/tests/usda/preview-instancer-invisible-protos.usda")
+      set_tests_properties(tool-lusdpreview-sharded-replay PROPERTIES
+                           TIMEOUT 180 LABELS "lusdpreview")
       add_test(NAME tool-lusdpreview-instancer-invisible-protos
         COMMAND sh -c "rm -rf \"$2\" && \"$1\" \"$3\" \"$2\" --preset fast --refresh --preview-cache-dir \"$2.cache\""
                 lusdpreview-protos
@@ -861,6 +868,15 @@ if(LIGHTUSD_BUILD_TESTS)
       set_tests_properties(tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}
                            PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
                            LABELS "lusdrender;cpu;gsplat")
+      foreach(_backend vk hip)
+        add_test(NAME tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}-${_backend}
+          COMMAND ${LUSDR_PYTHON}
+                  ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+                  "$<TARGET_FILE:lusdrender>" ${_gs_mix} --refs --backend ${_backend})
+        set_tests_properties(tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}-${_backend}
+                             PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                             LABELS "lusdrender;gpu;gsplat" RESOURCE_LOCK lightusd_gpu_device)
+      endforeach()
     endforeach()
     # The variants against checked-in Blender references (tests/gsplat/refs):
     # runs without Blender. Regenerate the references with

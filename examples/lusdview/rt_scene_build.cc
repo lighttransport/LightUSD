@@ -2436,8 +2436,24 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
   *out = GsplatGpuData();
   GsplatKeys gk;
   if (!BuildGsplatKeys(points, &gk)) return false;
+  return BuildGsplatGpuData(gk, srgb, out);
+}
+
+bool BuildGsplatGpuData(const GsplatKeys& gk, bool srgb, GsplatGpuData* out) {
+  *out = GsplatGpuData();
+  if (!gk.center || !gk.count || !gk.nkeys ||
+      gk.count != gk.center->size() || gk.count > UINT32_MAX / 16u / gk.nkeys ||
+      gk.keys.size() != gk.count * gk.nkeys ||
+      (!gk.dc.empty() && gk.dc.size() != gk.keys.size() * 3u)) return false;
   out->skipped = gk.skipped;
   const lightusd::gsplat::GSplatTracer& tracer = *gk.center;
+  // All shader offsets are 32-bit and the packed field ID uses 24 bits.
+  const size_t nf = tracer.field_count();
+  const size_t fieldBase = 4;
+  if (nf > (size_t(1) << 24) ||
+      tracer.sh_data().size() > UINT32_MAX - fieldBase - nf * 12 ||
+      gk.dc.size() > UINT32_MAX - fieldBase - nf * 12 - tracer.sh_data().size())
+    return false;
   // Chunks keep each BVH shallow enough for the 64-entry GPU stack.
   lrt_gsplat_build_options bo{};
   bo.max_chunk_splats = size_t(1) << 22;
@@ -2447,8 +2463,6 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
   if (!scene) return false;
   const uint32_t K = gk.nkeys;
   out->nkeys = K;
-  const size_t nf = tracer.field_count();
-  const size_t fieldBase = 4;
   out->shData.assign(fieldBase + nf * 12, 0.f);
   for (size_t f = 0; f < nf; ++f)
     std::memcpy(&out->shData[fieldBase + f * 12], tracer.field_linv(f),
@@ -2491,7 +2505,7 @@ bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
     dcBase = uint32_t(out->shData.size());
     out->shData.insert(out->shData.end(), dcRecords.begin(), dcRecords.end());
   }
-  const uint32_t header[4] = {dcBase, 0u, uint32_t(fieldBase), 0u};
+  const uint32_t header[4] = {dcBase, 0u, uint32_t(fieldBase), K};
   std::memcpy(out->shData.data(), header, sizeof(header));
   out->splatCount = uint32_t(out->splats.size() / (16 * K));
   out->nodeCount = uint32_t(out->nodes.size() / 8);

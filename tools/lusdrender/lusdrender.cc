@@ -95,9 +95,9 @@ extern "C" {
 #include "lusdr_context.hh"
 #include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
+#include "lusdr_gsplat_cycles.hh"
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 #include "lusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
-#include "lusdr_gsplat_cycles.hh"
 #endif
 
 
@@ -502,11 +502,18 @@ void CollectGpuPointsRec(
       return;
     }
     if (!field_warning.empty()) std::cerr << field_warning << "\n";
+    if (opt.gsplat_cycles && opt.path_trace &&
+        (prim.GetTypeName() == "ParticleField3DGaussianSplat" ||
+         field.kernel == lightusd::ParticleKernel::GaussianEllipsoid)) {
+      for (const auto& child : prim.GetChildren())
+        CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
+                            depth + 1, opt);
+      return;
+    }
     lightusd::tydra::ValueArrayRead<float> points;
     lightusd::tydra::ValueArrayRead<float> scales;
     lightusd::tydra::ValueArrayRead<float> orientations;
     lightusd::tydra::ValueArrayRead<float> opacities;
-    lightusd::tydra::ValueArrayRead<float> sh;
     const bool have_points = !field.positions_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                &points);
@@ -519,13 +526,6 @@ void CollectGpuPointsRec(
     const bool have_opacities = !field.opacities_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.opacities_property.c_str(), time,
                                &opacities);
-    const bool allow_sh = AllowGaussianSHDecode(prim);
-    const bool have_sh = allow_sh &&
-        !field.spherical_harmonics_property.empty() && ReadFloatArrayViewLazy(
-        prim, field.spherical_harmonics_property.c_str(), time, &sh);
-    if (!allow_sh)
-      std::cerr << "Gaussian fallback: skipping oversized compressed SH payload at "
-                << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
       for (const lightusd::UsdPrim &child : prim.GetChildren())
@@ -535,7 +535,7 @@ void CollectGpuPointsRec(
     }
     size_t limit = opt.gaussian_max ? std::min(count, opt.gaussian_max) : count;
 
-    const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
+    GaussianDcReader dc(prim, field.spherical_harmonics_property, time, count);
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
     const size_t batch_limit = opt.gpu_triangle_chunk;
     const size_t gaussian_geo_first = geos->size();
@@ -592,11 +592,10 @@ void CollectGpuPointsRec(
       const float ry = std::max(
           1.0e-6f, 2.0f * std::fabs(scales[scale_index + 1]) * wy);
       Vec3 color{0.72f, 0.72f, 0.72f};
-      if (have_sh && sh_stride > 0 && i * sh_stride * 3 + 2 < sh.size()) {
-        const size_t j = i * sh_stride * 3;
-        color = Vec3{0.5f + 0.2820948f * sh[j + 0],
-                     0.5f + 0.2820948f * sh[j + 1],
-                     0.5f + 0.2820948f * sh[j + 2]};
+      if (const float* sh = dc.get(i)) {
+        color = Vec3{0.5f + 0.2820948f * sh[0],
+                     0.5f + 0.2820948f * sh[1],
+                     0.5f + 0.2820948f * sh[2]};
         color.x = std::max(0.0f, std::min(1.0f, color.x));
         color.y = std::max(0.0f, std::min(1.0f, color.y));
         color.z = std::max(0.0f, std::min(1.0f, color.z));
@@ -1968,6 +1967,8 @@ int main(int argc, char **argv) {
   // --gsplat-kernel cycles: render a splat scene with the Blender Cycles
   // kernel through LightRT (CPU, or -vk/-vkr Vulkan / -hip HIP compute under
   // the -maxVram budget, default 4 GiB). Scenes without splats fall through.
+  MixedGsplatFrame mixed_frame;
+  bool mixed_gpu = false;
   bool gsplat_mixed = false;
   if (opt.gsplat_cycles) {
     lightusd::Stage stage;
@@ -2035,7 +2036,13 @@ int main(int argc, char **argv) {
                  ? EXIT_SUCCESS
                  : EXIT_FAILURE;
     }
-    if (gsplat_mixed) {
+    mixed_gpu = gsplat_mixed && (opt.hip || opt.vulkan);
+    if (mixed_gpu) {
+      opt.path_trace = true;
+      opt.vulkan_rt = opt.vulkan;
+      if (!opt.path_trace_samples)
+        opt.path_trace_samples = std::max(1, opt.samples);
+    } else if (gsplat_mixed) {
       // Meshes + splats: the CPU integrator traces the splats with the Cycles
       // kernel on primary, bounce and shadow rays (lusdr_core.cc).
       if (opt.vulkan || opt.vulkan_rt || opt.use_d3d || opt.hip || opt.cuda)
@@ -2105,7 +2112,7 @@ int main(int argc, char **argv) {
     // by source prim into shared prototypes + per-instance transforms as it goes,
     // no per-instance MeshJobCore), then renders. On any failure (no shares, ray
     // query unavailable) it falls through to the flat GPU path below.
-    if (opt.vulkan_instanced && opt.vulkan_rt) {
+    if (opt.vulkan_instanced && opt.vulkan_rt && !mixed_gpu) {
       const int result = TryRunInstancedVk(stage, opt, clip_stage_loader);
       if (result < 0) return EXIT_FAILURE;
       if (result > 0) return EXIT_SUCCESS;
@@ -2663,8 +2670,8 @@ int main(int argc, char **argv) {
         return true;
       });
     }
-    if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty() &&
-        !has_other_native_carrier) {
+    if (gpu_backend && !mixed_gpu && (opt.vulkan || opt.hip || opt.cuda) &&
+        geos.empty() && !has_other_native_carrier) {
       native_gaussian =
           BuildCoreGaussianEllipses(stage, gaussian_ctx, opt.timecode,
                                     /*defer_gpu_bvh=*/true) &&
@@ -2678,7 +2685,10 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    if (geos.empty() && !native_gaussian && !gpu_flat_bounds.valid) {
+    GSplatCyclesScene splats;
+    const bool have_splats =
+        mixed_gpu && BuildGSplatCyclesScene(stage, opt.timecode, &splats);
+    if (geos.empty() && !native_gaussian && !gpu_flat_bounds.valid && !have_splats) {
       std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
       return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
                  ? EXIT_SUCCESS
@@ -2698,6 +2708,7 @@ int main(int argc, char **argv) {
                            : lusdr::Axis::Y;
 
     Bounds bounds = gpu_flat_bounds;
+    if (have_splats) MergeBounds(&bounds, splats.bounds);
     for (const auto &g : geos) {
       for (size_t j = 0; j < g.positions.size() / 3; ++j) {
         bounds.lo.x = std::min(bounds.lo.x, g.positions[j * 3 + 0]);
@@ -2771,6 +2782,28 @@ int main(int argc, char **argv) {
                  : EXIT_FAILURE;
     }
 #endif
+
+    if (mixed_gpu) {
+      if (camera.shutter_close > camera.shutter_open && opt.gsplat_motion_steps > 1) {
+        std::vector<double> times(size_t(opt.gsplat_motion_steps));
+        for (size_t i = 0; i < times.size(); ++i)
+          times[i] = opt.timecode + camera.shutter_open +
+                     (camera.shutter_close - camera.shutter_open) *
+                         double(i) / double(times.size() - 1);
+        if (have_splats) BuildGSplatCyclesMotion(stage, times, &splats);
+        BuildCameraMotion(stage, opt.camera, times, &splats);
+        mixed_frame.cameras = std::move(splats.camera_keys);
+      }
+      if (have_splats && !PackGSplatCyclesScene(&splats, opt.gsplat_srgb, &mixed_frame.data)) {
+        std::cerr << "Could not pack Cycles splats for GPU path tracing.\n";
+        return EXIT_FAILURE;
+      }
+      const double budget_gib = opt.max_vram_gib > 0 ? opt.max_vram_gib : 4.0;
+      if (mixed_frame.data.bytes() > budget_gib * double(uint64_t(1) << 30)) {
+        std::cerr << "Cycles splat buffers exceed the GPU budget.\n";
+        return EXIT_FAILURE;
+      }
+    }
 
     // Flatten-side view-dependent LOD for the GPU backends (-vk/-vkr/-d3d/-hip).
     // LightRT's Vulkan/D3D paths build a single flat world-space BLAS (no GPU
@@ -2928,7 +2961,8 @@ int main(int argc, char **argv) {
 #ifdef HAVE_VULKAN
     if (opt.vulkan) {
       if (!RunVulkanLightRT(opt, base_colors, geos, gpu_materials,
-                            gpu_textures, gpu_lights, camera, out_height)) {
+                            gpu_textures, gpu_lights, camera, out_height,
+                            mixed_gpu ? &mixed_frame : nullptr)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;
@@ -2943,7 +2977,7 @@ int main(int argc, char **argv) {
                                           out_height)
                           : RunHipSharedRT(opt, base_colors, geos, gpu_materials,
                                            gpu_textures, gpu_lights, camera,
-                                           out_height);
+                                           out_height, mixed_gpu ? &mixed_frame : nullptr);
       if (!ok) {
         return EXIT_FAILURE;
       }

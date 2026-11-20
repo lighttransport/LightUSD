@@ -97,7 +97,7 @@ def main():
     ap.add_argument("--backend", choices=["cpu", "vk", "hip"], default="cpu")
     ap.add_argument("--lusdview", default="",
                     help="variants: also check this lusdview binary's path tracer")
-    ap.add_argument("--lusdview-backend", choices=["vk", "hip", "cuda"], default="vk")
+    ap.add_argument("--lusdview-backend", choices=["vk", "sw", "hip", "cuda"], default="vk")
     a = ap.parse_args()
     if a.backend != "cpu":
         BACKEND.append("-" + a.backend)
@@ -243,7 +243,7 @@ def lusdview_render(lusdview, backend, usda, out, spp, time):
     """lusdview path tracer (direct light, no denoise) at Blender's frame."""
     cmd = [lusdview, "--headless", "--no-grid", "--background", "black",
            "--size", "%dx%d" % (W, H), "--path-trace"]
-    if backend != "vk":
+    if backend not in ("vk", "sw"):
         cmd += ["--" + backend]
     cmd += ["--pt-samples", str(spp), "--pt-max-depth", "2", "--pt-denoise", "off",
             "--pt-firefly-clamp", "0", "--gsplat-kernel", "cycles",
@@ -252,10 +252,12 @@ def lusdview_render(lusdview, backend, usda, out, spp, time):
     if time is not None:
         cmd += ["--time", time]
     env = dict(os.environ, LUSDVIEW_RT_ALLOW_COLD_COMPILE="1")
+    if backend == "sw":
+        env["LUSDVIEW_RT_FORCE_SW"] = "1"
     r = subprocess.run(cmd + [usda], stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, text=True, env=env)
     log = r.stdout
-    marker = {"vk": "Vulkan RT: Cycles gsplat", "hip": "HIP Cycles gsplat",
+    marker = {"vk": "Vulkan RT: Cycles gsplat", "sw": "Vulkan compute-BVH: Cycles gsplat kernel", "hip": "HIP Cycles gsplat",
               "cuda": "CUDA Cycles gsplat"}[backend]
     if r.returncode != 0 or marker not in log or not os.path.exists(out):
         return False

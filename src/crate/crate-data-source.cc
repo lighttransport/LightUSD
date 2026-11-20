@@ -463,6 +463,12 @@ void CrateDataSource::ReleaseParseBuffer() {
   if (pager_) paged_parse_.reset();
 }
 
+bool CrateDataSource::ReadBytes(uint64_t offset, size_t length, void* dst) const {
+  if (!pager_) return LazyArraySource::ReadBytes(offset, length, dst);
+  return offset <= pager_->size() && length <= pager_->size() - offset &&
+         (!length || (dst && pager_->Read(offset, length, static_cast<uint8_t*>(dst))));
+}
+
 bool CrateDataSource::ReadRange(uint64_t offset, size_t length,
                                 std::vector<uint8_t>* out) const {
   if (!out || !pager_) return false;

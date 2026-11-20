@@ -104,6 +104,9 @@ def main():
     motion = variant in ("motion", "cammotion")
     pt = backend.startswith("pt-")
     dev = backend[3:] if pt else backend
+    software_bvh = dev == "sw"
+    if software_bvh:
+        dev = "vk"
     flags = {"cpu": ["--cpu-rt", "--rt-samples", "32"],
              "rt": ["--rt", "--frames", "32"],
              "vk": ["--frames", "48"],
@@ -117,6 +120,9 @@ def main():
     marker = {"cpu": "CPU RT: Cycles gsplat kernel", "rt": "Vulkan RT: Cycles gsplat",
               "vk": "Vulkan RT: Cycles gsplat", "hip": "HIP Cycles gsplat",
               "cuda": "CUDA Cycles gsplat"}[dev]
+    if software_bvh:
+        env["LUSDVIEW_RT_FORCE_SW"] = "1"
+        marker = "Vulkan compute-BVH: Cycles gsplat kernel"
     with tempfile.TemporaryDirectory(prefix="lusdview-gsplat-mixed-") as d:
         def render(name, usda):
             out = os.path.join(d, name)

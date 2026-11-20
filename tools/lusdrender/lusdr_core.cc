@@ -113,13 +113,19 @@ bool ReadFloatArrayViewLazy(const lightusd::UsdPrim &prim,
   return lightusd::tydra::ReadFloatArray(prim, name, time, out);
 }
 
-bool AllowGaussianSHDecode(const lightusd::UsdPrim &prim) {
-  const lightusd::Value *value = prim.GetPropertyValue(
-      "radiance:sphericalHarmonicsCoefficients");
-  if (!value || !value->is_array()) return true;
-  // A compressed SH array decodes whole (crate has no ranged decode), and
-  // only while this prim's splats are built (DC is extracted per splat). Cap
-  // that transient at 1/8 of physical memory, never below 128 MiB.
+GaussianDcReader::GaussianDcReader(const lightusd::UsdPrim& prim,
+                                   const std::string& name, double time,
+                                   size_t particles) {
+  if (name.empty() || !particles) return;
+  const auto* value = prim.GetPropertyValue(name);
+  const bool animated = !std::isnan(time) && prim.HasTimeSamples(name);
+  if (!animated && value && !lightusd::CanBorrowLazyFlat(*value) &&
+      lightusd::ReadLazyFloat3Range(*value, 0, 0, nullptr)) {
+    ranged_ = value;
+    elements_ = value->array_size();
+    stride_ = elements_ / particles;
+    return;
+  }
   static const uint64_t kMaxDecodedShBytes = [] {
     uint64_t cap = uint64_t(128) << 20;
 #if defined(_SC_PHYS_PAGES) && defined(_SC_PAGESIZE)
@@ -129,11 +135,44 @@ bool AllowGaussianSHDecode(const lightusd::UsdPrim &prim) {
 #endif
     return cap;
   }();
-  // array_size() counts float3 elements.
-  const bool oversized = uint64_t(value->array_size()) * 3 * sizeof(float) >
-                         kMaxDecodedShBytes;
-  return !oversized || !value->is_lazy() ||
-         lightusd::CanBorrowLazyFlat(*value);
+  auto oversized = [](const lightusd::Value* v) {
+    return v && v->is_lazy() && !lightusd::CanBorrowLazyFlat(*v) &&
+           v->array_size() > kMaxDecodedShBytes / (3 * sizeof(float));
+  };
+  bool skip = !animated && oversized(value);
+  // Interpolation may materialize either neighbour. Check before evaluation.
+  if (animated) {
+    const auto times = prim.GetTimeSampleTimes(name);
+    auto hi = std::lower_bound(times.begin(), times.end(), time);
+    if (hi != times.end()) skip = oversized(prim.GetValueAtTime(name, *hi));
+    if (hi != times.begin() && (hi == times.end() || *hi != time))
+      skip |= oversized(prim.GetValueAtTime(name, *std::prev(hi)));
+  }
+  if (skip) {
+    std::cerr << "Gaussian splat: skipping oversized SH payload at "
+              << prim.GetPath().str() << "; using fallback color.\n";
+    return;
+  }
+  if (ReadFloatArrayViewLazy(prim, name.c_str(), time, &full_)) {
+    elements_ = full_.size() / 3;
+    stride_ = elements_ / particles;
+  }
+}
+
+const float* GaussianDcReader::get(size_t particle) {
+  if (!stride_ || particle > (elements_ - 1) / stride_) return nullptr;
+  const size_t index = particle * stride_;
+  if (!ranged_) return full_.begin() + index * 3;
+  if (index < first_ || index - first_ >= window_.size() / 3) {
+    first_ = index;
+    const size_t count = std::min(size_t(8192), elements_ - first_);
+    window_.resize(count * 3);
+    if (!lightusd::ReadLazyFloat3Range(*ranged_, first_, count, window_.data())) {
+      stride_ = 0;
+      return nullptr;
+    }
+  }
+  return window_.data() + (index - first_) * 3;
 }
 
 bool ReadIntArrayViewLazy(const lightusd::UsdPrim &prim,
@@ -4841,7 +4880,6 @@ bool BuildCoreGaussianEllipses(const lightusd::Stage &stage,
       lightusd::tydra::ValueArrayRead<float> s;
       lightusd::tydra::ValueArrayRead<float> qv;
       lightusd::tydra::ValueArrayRead<float> op;
-      lightusd::tydra::ValueArrayRead<float> sh;
       const bool have_p = !field.positions_property.empty() &&
           ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                  &p);
@@ -4853,25 +4891,17 @@ bool BuildCoreGaussianEllipses(const lightusd::Stage &stage,
       const bool have_op = !field.opacities_property.empty() &&
           ReadFloatArrayViewLazy(prim, field.opacities_property.c_str(), time,
                                  &op);
-      const bool allow_sh = AllowGaussianSHDecode(prim);
-      const bool have_sh = allow_sh &&
-          !field.spherical_harmonics_property.empty() && ReadFloatArrayViewLazy(
-          prim, field.spherical_harmonics_property.c_str(), time, &sh);
-      if (!allow_sh)
-        std::cerr << "Gaussian splat: skipping oversized compressed SH payload at "
-                  << prim.GetPath().str() << "; using fallback color.\n";
       if (!have_p || !have_s || p.size() < 3 || s.size() < 3) {
         for (const lightusd::UsdPrim &child : prim.GetChildren())
           self(self, child, world);
         return;
       }
       const size_t n = std::min(p.size() / 3, s.size() / 3);
-      const size_t sh_stride = (have_sh && n) ? (sh.size() / 3) / n : 0;
+      GaussianDcReader dc(prim, field.spherical_harmonics_property, time, n);
       const float *pp = p.begin();
       const float *ss = s.begin();
       const float *qq = have_q ? qv.begin() : nullptr;
       const float *oo = have_op ? op.begin() : nullptr;
-      const float *hh = have_sh ? sh.begin() : nullptr;
       for (size_t i = 0; i < n && (budget == 0 || total_count + chunk_info.size() < budget); ++i) {
         ++count_seen;
         const float opacity = (oo && op.size() > 1 && i < op.size())
@@ -4914,12 +4944,11 @@ bool BuildCoreGaussianEllipses(const lightusd::Stage &stage,
         ti.p0 = c;
         ti.p1 = nz;
         ti.base_color = Vec3{0.72f, 0.72f, 0.72f};
-        if (hh && sh_stride >= 1 && i * sh_stride * 3 + 2 < sh.size()) {
-          const size_t j = i * sh_stride * 3;
+        if (const float* hh = dc.get(i)) {
           ti.base_color = Vec3{
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j])),
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j + 1])),
-              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[j + 2]))};
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[0])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[1])),
+              std::max(0.0f, std::min(1.0f, 0.5f + 0.2820948f * hh[2]))};
         }
         ti.base_color = Mul(ti.base_color, opacity);
         chunk_info.push_back(ti);

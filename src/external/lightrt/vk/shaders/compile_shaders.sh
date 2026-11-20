@@ -70,8 +70,10 @@ if [[ "${ONLY:-}" != "trace_materialx_path" ]]; then
 fi
 if [[ -n "${GLSLC:-}" ]]; then
     gen_glslc trace_materialx_path trace_materialx_path_spv trace_materialx_path
+    gen_glslc trace_materialx_gsplat_path trace_materialx_gsplat_path_spv trace_materialx_path -DLRT_PATH_GSPLAT
 else
     gen trace_materialx_path trace_materialx_path_spv trace_materialx_path
+    gen trace_materialx_gsplat_path trace_materialx_gsplat_path_spv trace_materialx_path -DLRT_PATH_GSPLAT
 fi
 
 echo "done."

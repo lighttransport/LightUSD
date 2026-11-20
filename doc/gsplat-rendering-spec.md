@@ -71,7 +71,11 @@ Round-trip fixtures: `tests/usda/gsplat-schema-sh-degrees.usda`,
 - **[Cycles]** Stochastic opaque acceptance: a hit counts when
   `hash(o + t* d, seed) <= α`. The closest accepted hit wins, so a plain
   closest-hit traversal integrates transmittance by Monte Carlo. CPU, Vulkan
-  and HIP share the same hash.
+  and HIP share the same hash. For mixed meshes and splats, lusdrender
+  supports Vulkan ray queries (`-vk`) and HIP (`-hip`) with
+  `--gsplat-kernel cycles --path-trace`. Both backends write scene-linear
+  EXR. In lusdview, Vulkan compute BVH traversal uses the same Gaussian
+  intersection and radiance functions as the ray-query shader.
 
 ### 3.2 Shading
 - **[Cycles]** Emission-only shader: a splat emits `SH(view dir) + 0.5` and
@@ -118,8 +122,8 @@ brightness within 1–2%.
   (`scene.usdc`, or the `tests/usda/gsplat-mixed-*` fixtures), Blender's
   seed-0 render (`ref.npz`, float16, full resolution) and the noise floor
   (`meta.json`). Tests: `tool-lusdrender-gsplat-cycles-refs[-vk|-hip]`,
-  `tool-lusdrender-gsplat-mixed-refs[-motion|-camera-motion]`,
-  `lusdview-gsplat-refs-{vk,hip}`. `tests/gsplat/exr_np.py` reads the EXRs
+  `tool-lusdrender-gsplat-mixed-refs[-motion|-camera-motion][-vk|-hip]`,
+  `lusdview-gsplat-refs-{vk,hip,sw}`. `tests/gsplat/exr_np.py` reads the EXRs
   without OpenEXR.
 - **With Blender:** set `LIGHTUSD_BLENDER` to a Blender 5.3 executable. The
   `*-blender-*` tests then render the references live. To regenerate the

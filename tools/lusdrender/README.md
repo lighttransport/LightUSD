@@ -465,13 +465,28 @@ the CPU is competitive. The GPU pays off when most rays hit splats.
 
 ### Mixed scenes (meshes + splats)
 
-When the stage also has meshes or other gprims, the splats go to the regular
-CPU integrator instead of the splat-only renderer. There they are traced with
-the Cycles kernel on camera, bounce and shadow rays, as in Cycles, where
-splats are ordinary geometry. Splats occlude meshes and cast stochastic
-shadows, and their emission lights surfaces through the BSDF-sampled bounce
-ray. This path defaults to `-materialShading lightrt-bsdf` and `-ambient 0`,
-and `.exr` output is scene-linear. GPU backend flags are ignored (CPU only).
+For mixed meshes and Gaussian splats, `--gsplat-kernel cycles` traces
+splats on camera, bounce and shadow rays. They occlude meshes, cast
+stochastic shadows and light nearby surfaces through BSDF-sampled bounce
+rays. The CPU integrator defaults to `-materialShading lightrt-bsdf` and
+`-ambient 0`. Select `-vk` for Vulkan hardware ray queries or `-hip` for
+the HIP path tracer. Both write scene-linear EXR and support splat and
+camera motion across the shutter.
+
+```sh
+lusdrender scene.usda mixed.exr --gsplat-kernel cycles --gsplat-colorspace srgb -vk --path-trace
+```
+
+The preview renderer reads the DC colour from static, uncompressed USDC
+float3 and half3 coefficients in windows of up to 8192 triples. It can
+borrow directly addressable float data and widen half data as needed.
+Compressed integer-coded and lookup-table coefficient streams require
+whole-array decoding. The deferred decode limit for those arrays is one
+eighth of physical memory, with a 128 MiB minimum. Animated interpolation
+checks the neighbouring samples against the same limit. Reading 16,777,216
+mapped half3 triples in 8192-element windows reached 99.8 MiB peak RSS,
+compared with 291.6 MiB for full float materialization. Both produced the
+same component sum.
 
 Validated by `tests/gsplat/check_mixed_scene.py` against Blender 5.3 direct
 light (Lambert plane, sun, 160 splats). The comparison cancels the mesh BRDF:

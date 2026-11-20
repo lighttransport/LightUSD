@@ -10,6 +10,7 @@
 #include <iostream>
 #include <thread>
 
+#include "rt_scene_build.hh"
 #include "image-writer.hh"
 #include "lusdr_math.hh"
 #include "tydra/render-converter-internal.hh"
@@ -100,6 +101,23 @@ bool BuildGSplatCyclesScene(const lightusd::Stage &stage, double time,
                       scene->tracer.bounds_hi()[2]};
   scene->bounds.valid = true;
   return true;
+}
+
+bool PackGSplatCyclesScene(GSplatCyclesScene* scene, bool srgb,
+                          lusdview::GsplatGpuData* out) {
+  lusdview::GsplatKeys keys;
+  keys.count = scene->tracer.size();
+  keys.nkeys = scene->motion_nkeys;
+  keys.keys = std::move(scene->motion_keys);
+  keys.dc = std::move(scene->motion_dc);
+  if (keys.keys.empty()) {
+    keys.nkeys = 1;
+    keys.keys.reserve(keys.count);
+    for (const auto& record : scene->tracer.splats())
+      keys.keys.push_back(ToLrt(record, uint32_t(keys.keys.size())));
+  }
+  keys.center = std::make_shared<gs::GSplatTracer>(std::move(scene->tracer));
+  return lusdview::BuildGsplatGpuData(keys, srgb, out);
 }
 
 bool BuildGSplatCyclesMotion(const lightusd::Stage &stage,
