@@ -1816,6 +1816,9 @@ vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,
     float mode = 0.0;
     float alpha = swOpacityAtHit(ii, tri, bc, mode);
     if (mode > 0.5 && mode < 1.5 && alpha <= 0.0) continue;
+    // Environment sampling (lightIndex 32) must treat transmissive hits as occluders: the BSDF path already carries the
+    // light through the refraction, so passing it here counts it twice (rough glass furnace 1.0137 -> 0.9959).
+    if (mode > 1.5 && lightIndex == 32u) return vec3(0.0);
     if (mode > 1.5) {
       int mid = swPtMaterial(tri, front);
       float transmission = mid >= 0

@@ -2569,6 +2569,9 @@ vec3 ptShadowVisibility(PtSurface s, vec3 direction, float maxT,
     float mode = 0.0;
     float alpha = materialOpacityAtHit(iid, prim, bc, front, mode);
     if (mode > 0.5 && mode < 1.5 && alpha <= 0.0) continue;
+    // Environment sampling (lightIndex 32) treats transmissive hits as occluders: the BSDF path already carries the
+    // light through the refraction (see raytrace_swbvh.comp swPtVisibility).
+    if (mode > 1.5 && lightIndex == 32u) return vec3(0.0);
     if (mode > 1.5) {
       MeshDesc md = meshes[insts[iid].meshId];
       uint mid = selectedMaterial(md, prim, front);
