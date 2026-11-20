@@ -825,6 +825,20 @@ if(LIGHTUSD_BUILD_TESTS)
     # Scene -> gsplat fast preset: cold hotel_01 conversion within 10 s and a
     # non-blank render (skips unless -DLIGHTUSD_PRESET_SCENE names the scene).
     # Serial: it is a timing budget.
+    # PointInstancer prototypes under an invisible scope are still drawn by the
+    # instancer (full Caldera terrain clutter).
+    if(TARGET lusdpreview)
+      add_test(NAME tool-lusdpreview-instancer-invisible-protos
+        COMMAND sh -c "rm -rf \"$2\" && \"$1\" \"$3\" \"$2\" --preset fast --refresh --preview-cache-dir \"$2.cache\""
+                lusdpreview-protos
+                $<TARGET_FILE:lusdpreview>
+                "${CMAKE_CURRENT_BINARY_DIR}/preview-instancer-invisible-protos-out"
+                "${PROJECT_SOURCE_DIR}/tests/usda/preview-instancer-invisible-protos.usda")
+      set_tests_properties(tool-lusdpreview-instancer-invisible-protos PROPERTIES
+                           PASS_REGULAR_EXPRESSION "instances=3 samples=96 "
+                           FAIL_REGULAR_EXPRESSION "skipped:;preview failed"
+                           TIMEOUT 60 LABELS "lusdpreview")
+    endif()
     set(LIGHTUSD_PRESET_SCENE "" CACHE FILEPATH
         "Scene for the fast-preset timing test (Caldera hotel_01.usd)")
     if(TARGET lusdpreview)

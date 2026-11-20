@@ -898,7 +898,12 @@ Build::Build(const ScenePreviewOptions& o, ScenePreviewResult& r, fs::path d)
     : opts(o), result(r), directory(std::move(d)), converter(), decoder([&] {
         TextureDecodeOptions t;
         t.max_edge = o.texture_max_edge;
-        t.budget_bytes = o.texture_budget_bytes;
+        // No admission budget: a budget-limited decode shrinks or drops an
+        // image depending on what other sampling threads still hold, which
+        // made preview colours vary between runs. max_edge bounds each image
+        // and sample_texture clears its cache at 3/4 of texture_budget_bytes
+        // (residency is still tracked), which affects speed, not results.
+        t.budget_bytes = 0;
         t.max_source_bytes = uint64_t(256) << 20;
         return t;
       }()) {

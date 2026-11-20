@@ -226,6 +226,11 @@ class TextureDecoder {
   std::shared_ptr<::lightusd::TextureBudgetState> budget_state_;
   uint64_t downscaled_ = 0;
   std::unordered_map<std::string, PtexCacheEntry> ptex_cache_;
+  // Opened Ptex sources (bytes + reader), most recent last: faces of one file
+  // are decoded without re-reading the whole file each time.
+  struct PtexSource;
+  std::list<std::pair<std::string, std::shared_ptr<PtexSource>>> ptex_sources_;
+  uint64_t ptex_source_bytes_ = 0;
   std::list<std::string> ptex_lru_;
   uint64_t ptex_cache_bytes_ = 0;
 

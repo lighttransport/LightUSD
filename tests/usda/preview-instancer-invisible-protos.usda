@@ -1,0 +1,37 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# PointInstancer prototypes kept under an invisible sibling scope (common
+# authoring, e.g. terrain clutter): the instancer must still draw them.
+def Xform "World"
+{
+    def Scope "clutter"
+    {
+        def Scope "proto"
+        {
+            token visibility = "invisible"
+
+            def Xform "rock"
+            {
+                def Mesh "geo"
+                {
+                    int[] faceVertexCounts = [4]
+                    int[] faceVertexIndices = [0, 1, 2, 3]
+                    point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+                    color3f[] primvars:displayColor = [(0.6, 0.5, 0.4)]
+                }
+            }
+        }
+
+        def PointInstancer "points"
+        {
+            rel prototypes = </World/clutter/proto/rock>
+            int[] protoIndices = [0, 0, 0]
+            point3f[] positions = [(0, 0, 0), (5, 0, 0), (10, 0, 0)]
+        }
+    }
+}

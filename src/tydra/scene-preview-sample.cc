@@ -2,6 +2,7 @@
 #include <atomic>
 #include <thread>
 #include <algorithm>
+#include <set>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -75,16 +76,25 @@ float Attribute(const FloatChunked& data, Interpolation mode, uint32_t vertex,
   return i < data.size() / components ? data[i * components + channel]
                                       : fallback;
 }
-bool Visible(usd::UsdPrim prim, double time) {
+// `stop_at`: prototype roots. Visibility/purpose above a prototype root do
+// not apply to it (PointInstancer prototypes are commonly kept under an
+// invisible scope; the instancer still draws them). Inactive and class
+// ancestors still exclude it.
+bool Visible(usd::UsdPrim prim, double time,
+             const std::set<std::string>* stop_at = nullptr) {
+  bool above_root = false;
   for (size_t depth = 0; prim && depth < 1024;
        ++depth, prim = prim.GetParent()) {
     if (!prim.GetMeta().active ||
         prim.GetSpecifier() == usd::PrimSpecifier::Class)
       return false;
-    const auto visibility = prim.GetValueAtTime("visibility", time);
-    const auto purpose = prim.GetPropertyValue("purpose");
-    if (visibility && visibility->as_token() == "invisible") return false;
-    if (purpose && purpose->as_token() == "guide") return false;
+    if (!above_root) {
+      const auto visibility = prim.GetValueAtTime("visibility", time);
+      const auto purpose = prim.GetPropertyValue("purpose");
+      if (visibility && visibility->as_token() == "invisible") return false;
+      if (purpose && purpose->as_token() == "guide") return false;
+      if (stop_at && stop_at->count(prim.GetPath().str())) above_root = true;
+    }
   }
   return true;
 }
@@ -264,7 +274,7 @@ bool Build::replay(
     // Never traversed as a prototype (finish_placements runs after every
     // batch): the target is pruned, inactive or absent and renders nothing.
     if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
-      result.warning += "scene preview: instance target not found, skipped: " +
+      result.warning += "scene preview: instance target not composed (inactive, pruned or absent), skipped: " +
                         key + "\n";
     return true;
   }
@@ -604,11 +614,21 @@ std::array<float, 4> Build::shade(const std::string& path,
                       t.source_color_space != "data" &&
                       t.source_color_space != "linear" &&
                       (!t.color_transform_valid || t.source_gamma != 1.f);
-    const std::string key = file + (srgb ? ":srgb" : ":linear");
+    const bool ptex = (file.size() > 4 && file.substr(file.size() - 4) == ".ptx") ||
+                      (file.size() > 5 && file.substr(file.size() - 5) == ".ptex");
+    // Ptex decodes one face per entry: the face must be part of the key, or
+    // whichever face a worker decoded first is reused for every face of the
+    // file (wrong colours that vary with thread timing).
+    const std::string key = file + (srgb ? ":srgb" : ":linear") +
+                            (ptex ? ":face" + std::to_string(face) : std::string());
     std::shared_ptr<DecodedImage> held;
     {
     std::lock_guard<std::mutex> lock(shade_mutex);
-    if (failed_images.count(key)) return out;
+    // Ptex failures are recorded per file (a missing .ptx would otherwise be
+    // re-read and re-reported for every face).
+    const std::string file_key = file + (srgb ? ":srgb" : ":linear");
+    if (failed_images.count(key) || (ptex && failed_images.count(file_key)))
+      return out;
     auto image = images.find(key);
     if (image == images.end()) {
       auto decoded = std::make_shared<DecodedImage>();
@@ -617,14 +637,13 @@ std::array<float, 4> Build::shade(const std::string& path,
         images.clear();
       dependencies.insert(file);
       bool ok = false;
-      if (file.size() > 4 && (file.substr(file.size() - 4) == ".ptx" ||
-                              file.substr(file.size() - 5) == ".ptex"))
+      if (ptex)
         ok = decoder.DecodePtexFace(file, static_cast<uint32_t>(face), 0, srgb,
                                     decoded.get());
       else
         ok = decoder.Decode(file, srgb, decoded.get());
       if (!ok) {
-        failed_images.insert(key);
+        failed_images.insert(ptex ? file_key : key);
         if (result.warning.size() < 16384)
           result.warning += "Preview texture unavailable: " + file + "\n";
         return out;
@@ -1140,7 +1159,7 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
         type != "PointInstancer" && type != "Camera" &&
         type.find("Light") == std::string::npos)
       continue;
-    if (!Visible(prim, opts.time_code)) continue;
+    if (!Visible(prim, opts.time_code, &prototypes)) continue;
     auto world = Identity();
     usd::ComputeWorldTransform(stage, prim, world.data(), opts.time_code);
     if (renderable && !native_instance && !proto_root && parallel) {
@@ -1283,7 +1302,7 @@ bool Build::replay_top_batch(std::vector<TopPlacement>* batch) {
       std::ifstream f(prototype_file(key), std::ios::binary);
       if (!f) {
         if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
-          result.warning += "scene preview: instance target not found, skipped: " +
+          result.warning += "scene preview: instance target not composed (inactive, pruned or absent), skipped: " +
                             key + "\n";
       } else {
         f.seekg(0, std::ios::end);

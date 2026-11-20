@@ -568,6 +568,11 @@ bool TextureDecoder::DecodeMaterialXMips(const std::string& asset, bool srgb,
   return Decode(asset, srgb, &image) && BuildMaterialXMips(image, srgb, out);
 }
 
+struct TextureDecoder::PtexSource {
+  std::vector<uint8_t> bytes;
+  ::lightusd::ptx::Reader reader;
+};
+
 bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
                                     uint32_t level, bool srgb, DecodedImage* out) {
   if (!out || !HasPtxExtension(asset)) return false;
@@ -580,12 +585,34 @@ bool TextureDecoder::DecodePtexFace(const std::string& asset, uint32_t face,
     return true;
   }
 
-  std::vector<uint8_t> source;
-  if (!ReadAssetBytes(asset, &source)) return false;
-  ::lightusd::ptx::Reader reader;
+  std::shared_ptr<PtexSource> opened;
+  for (auto it = ptex_sources_.begin(); it != ptex_sources_.end(); ++it)
+    if (it->first == asset) {
+      opened = it->second;
+      ptex_sources_.splice(ptex_sources_.end(), ptex_sources_, it);
+      break;
+    }
   std::string err;
-  if (!::lightusd::ptx::Reader::OpenMemory(source.data(), source.size(),
-                                           &reader, &err)) return false;
+  if (!opened) {
+    opened = std::make_shared<PtexSource>();
+    if (!ReadAssetBytes(asset, &opened->bytes)) return false;
+    if (!::lightusd::ptx::Reader::OpenMemory(opened->bytes.data(),
+                                             opened->bytes.size(),
+                                             &opened->reader, &err))
+      return false;
+    constexpr uint64_t kMaxSourceBytes = uint64_t(512) << 20;
+    if (opened->bytes.size() <= kMaxSourceBytes) {
+      while (!ptex_sources_.empty() &&
+             (ptex_sources_.size() >= 8 ||
+              ptex_source_bytes_ + opened->bytes.size() > kMaxSourceBytes)) {
+        ptex_source_bytes_ -= ptex_sources_.front().second->bytes.size();
+        ptex_sources_.pop_front();
+      }
+      ptex_sources_.emplace_back(asset, opened);
+      ptex_source_bytes_ += opened->bytes.size();
+    }
+  }
+  const ::lightusd::ptx::Reader& reader = opened->reader;
   ::lightusd::ptx::FaceImage faceImage;
   const uint64_t configured_budget = options_.max_source_bytes
                                          ? options_.max_source_bytes

@@ -395,10 +395,11 @@ quality may plan up to twice the budget-derived GPU memory for finer cells.
 Without the index or a refinement region, mesh sampling runs on up to 8 worker
 threads, and top-level instance replay transforms and keys prototype samples
 on up to 16 threads (inserted in placement order), giving the same output as
-the serial replay (`LIGHTUSD_PREVIEW_SERIAL_REPLAY=1`). hotel_01 and ALab are
-byte-identical across runs; Moana varies in about 80 of 470K samples between
-runs, with serial replay as well (a pre-existing nondeterminism, not yet
-traced).
+the serial replay (`LIGHTUSD_PREVIEW_SERIAL_REPLAY=1`). Output is
+byte-identical across runs (hotel_01, ALab and Moana checked). Texture
+sampling is order-independent: Ptex faces are cached per face, and the
+decoder has no admission budget (a budget shrank or dropped images
+depending on what other sampling threads still held).
 
 Cold conversions on a 32-thread host (default 2048 MiB budget):
 
@@ -412,7 +413,7 @@ Cold conversions on a 32-thread host (default 2048 MiB budget):
 | ALab `_merged_ALab/entry.usda` | quality | 74 s | 1.6 GiB | 1,768,546 |
 | Moana `island.usda` (30.9M instances) | fast | 24.9 min (serial replay 34–37 min) | 4.6 GiB | 470,080 |
 | Caldera `caldera.usda` (authored proxy district LODs) | fast | 6.6 s | 2.4 GiB | 80,371 |
-| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 1.15M meshes, 2.78M instances) | fast | 20.4 min | 18.3 GiB | 617,596 |
+| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 1.07M meshes, 2.78M instances) | fast | 21.3 min | 18.4 GiB | 775,233 |
 
 lusdrender wall time for the hotel_01 previews (whole process, auto-framed,
 1280x720, 1 spp, RX 9070 XT / 32 threads):
@@ -426,10 +427,13 @@ lusdrender wall time for the hotel_01 previews (whole process, auto-framed,
 `tool-lusdpreview-fast-preset-timing` checks the hotel_01 fast conversion stays
 within 10 s (configure with `-DLIGHTUSD_PRESET_SCENE=.../hotel_01.usd`;
 it skips otherwise).
-Instance targets that are never composed (pruned, inactive or absent
-prototypes) render nothing and are reported in the warning; the full Caldera
-source has eight such foliage prototypes under one terrain tile's
-`clutter/proto` scope.
+PointInstancer prototypes are drawn even when an ancestor above the prototype
+root is invisible (the common `proto` scope with `visibility = "invisible"`,
+e.g. Caldera terrain clutter); only the prototype's own and its descendants'
+visibility and purpose apply. Instance targets that are never composed
+(pruned, inactive or absent) render nothing and are reported in the warning;
+in the full Caldera source those are rock-cliff prototypes authored
+`active = false`.
 
 ## Qualification result
 
