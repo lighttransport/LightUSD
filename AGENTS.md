@@ -688,3 +688,18 @@ Do **not** assume "auto mode" or any prior `--yes`-style flag covers a push. For
 - For unintended assets — confirm with the user whether the asset belongs in Git LFS, an external bucket, or should simply be removed.
 
 The Pre-push checklist is non-negotiable. A single 100 MB binary in `origin` permanently bloats every future clone of this repo; a single leaked key in `origin` is a security incident regardless of how fast it gets rotated.
+
+
+## GitHub Issue Reporting
+
+Before preparing or submitting an upstream bug report,
+follow the reproduction-first procedure in
+[issue_reporting.md](doc/issue_reporting.md).
+
+Prefer independent CI verification using GitHub Actions.
+
+Never claim that a bug was reproduced without actual
+execution evidence. Include the reproduction repository,
+CI run URL, and verified reproduction status.
+
+Do not submit an Issue without user authorization.

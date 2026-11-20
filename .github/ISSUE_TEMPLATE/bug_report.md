@@ -18,7 +18,7 @@ assignees: ''
 
 **Reproduce first, report second.**
 
-You must follow the **[Reproduction and Issue Reporting Guide](../../doc/issue_reporting.md)** before submitting an issue.
+You must follow the **[Reproduction and Issue Reporting Guide](https://github.com/lighttransport/LightUSD/blob/main/doc/issue_reporting.md)** before submitting an issue.
 
 The guide covers coding-agent investigation, minimal reproducer creation, verification using GitHub Actions or other free CI services, and collection of execution logs and reproducible evidence.
 
@@ -31,7 +31,7 @@ The guide covers coding-agent investigation, minimal reproducer creation, verifi
 - [ ] I thoroughly searched existing open and closed issues.
 - [ ] I investigated the issue using a coding agent.
 - [ ] I created a minimal, standalone reproducible example (code and/or USD scene).
-- [ ] I followed the [Reproduction and Issue Reporting Guide](../../doc/issue_reporting.md).
+- [ ] I followed the [Reproduction and Issue Reporting Guide](https://github.com/lighttransport/LightUSD/blob/main/doc/issue_reporting.md).
 - [ ] I executed the reproducer and verified the actual results.
 - [ ] I attempted CI reproduction where technically feasible, or explained why it was not possible.
 - [ ] I included reproduction instructions, relevant logs, and execution evidence.
