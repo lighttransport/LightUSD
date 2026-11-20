@@ -567,9 +567,6 @@ MUJOCO_LOG.TXT
 # Machine-local validation reports and captures.
 /doc/validation/
 
-# Serena MCP tool state (local)
-.serena/
-
 # Local regression/comparison logs; may contain machine-specific paths.
 /reglogs/
 
