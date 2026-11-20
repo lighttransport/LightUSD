@@ -1114,6 +1114,13 @@ __device__ F3 ptCoatComp(float nv,float rough,F3 f0,F3* albedo){
   *albedo=mk((a*f0.x+b)*comp.x,(a*f0.y+b)*comp.y,(a*f0.z+b)*comp.z);
   return comp;
 }
+/* Base-layer Fresnel with F90 = specular weight for dielectrics (1 for metals), as LightRT's
+ * L.F90: a zero specular weight must remove the grazing reflection too. */
+__device__ F3 ptFresnelBase(float c,F3 f0,float specW,float metal){
+  float f90=1.f+(fminf(fmaxf(specW,0.f),1.f)-1.f)*(1.f-fminf(fmaxf(metal,0.f),1.f));
+  float q=powf(1.f-fminf(fmaxf(c,0.f),1.f),5.f);
+  return mk(f0.x+(f90-f0.x)*q,f0.y+(f90-f0.y)*q,f0.z+(f90-f0.z)*q);
+}
 __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
     F3 diffuseC,F3 f0,F3 sheenC,F3 coatF0,float coatWeight,
     float diffuseP,float glossyP,float coatP,
@@ -1121,7 +1128,7 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
   float nl=fmaxf(dot3(n,l),0.f),nv=fmaxf(dot3(n,v),1e-6f);
   if(nl<=0.f){*pdf=0.f;return mk(0.f,0.f,0.f);}F3 h=norm3(add(v,l));
   float nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),0.f);
-  F3 F=fresnelSchlick(vh,f0);F3 t,b;ptRotatedBasis(n,s.anisotropyRotation,&t,&b);
+  F3 F=ptFresnelBase(vh,f0,s.specularWeight,s.metal);F3 t,b;ptRotatedBasis(n,s.anisotropyRotation,&t,&b);
   float gs=ggxDAniso(nh,dot3(h,t),dot3(h,b),s.rough,s.anisotropy)*ggxG1Aniso(nv,dot3(v,t),dot3(v,b),s.rough,s.anisotropy)*ggxG1Aniso(nl,dot3(l,t),dot3(l,b),s.rough,s.anisotropy)/fmaxf(4.f*nv*nl,1e-6f);
   F3 ch=norm3(add(v,l)),ct,cb;ptRotatedBasis(coatN,s.coatRotation,&ct,&cb);float cnl=fmaxf(dot3(coatN,l),0.f),cnv=fmaxf(dot3(coatN,v),1e-6f),cnh=fmaxf(dot3(coatN,ch),0.f);F3 cAlb;F3 cComp=ptCoatComp(cnv,s.coatRoughness,coatF0,&cAlb);F3 cF=scale(fresnelSchlick(fmaxf(dot3(v,ch),0.f),coatF0),coatWeight);cF=mk(cF.x*cComp.x,cF.y*cComp.y,cF.z*cComp.z);
   float cs=ggxDAniso(cnh,dot3(ch,ct),dot3(ch,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(cnv,dot3(v,ct),dot3(v,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(fmaxf(cnl,1e-6f),dot3(l,ct),dot3(l,cb),s.coatRoughness,s.coatAnisotropy)/fmaxf(4.f*cnv*fmaxf(cnl,1e-6f),1e-6f);
@@ -1133,7 +1140,7 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
    * the diffuse base sits under the specular layer, attenuated by 1 - F(view);
    * the sheen attenuates what lies below it by its directional albedo;
    * the coat attenuates the whole base by 1 - coatWeight F_coat(view). */
-  F3 Fv=fresnelSchlick(nv,f0);
+  F3 Fv=ptFresnelBase(nv,f0,s.specularWeight,s.metal);
   float sheenAlb=(.5f+.5f*s.sheenRoughness)*(1.f/21.f);
   F3 sheenAtt=mk(1.f-fminf(sheenC.x*sheenAlb,1.f),1.f-fminf(sheenC.y*sheenAlb,1.f),1.f-fminf(sheenC.z*sheenAlb,1.f));
   F3 diffuse=mk((1.f-Fv.x)*sheenAtt.x*diffuseC.x*.31830988618f,(1.f-Fv.y)*sheenAtt.y*diffuseC.y*.31830988618f,(1.f-Fv.z)*sheenAtt.z*diffuseC.z*.31830988618f);

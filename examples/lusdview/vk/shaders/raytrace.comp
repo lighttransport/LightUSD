@@ -2373,6 +2373,13 @@ float ptPowerHeuristic(float a, float b) {
   return aa / max(aa + bb, 1.0e-20);
 }
 
+// Base-layer Fresnel with F90 = specular weight for dielectrics (1 for metals), as
+// LightRT's L.F90: a zero specular weight removes the grazing reflection too.
+vec3 ptFresnelBase(float c, vec3 f0, float specW, float metal) {
+  float f90 = 1.0 + (clamp(specW, 0.0, 1.0) - 1.0) * (1.0 - clamp(metal, 0.0, 1.0));
+  float q = pow(1.0 - clamp(c, 0.0, 1.0), 5.0);
+  return f0 + (vec3(f90) - f0) * q;
+}
 // OpenPBR coat directional albedo with Turquin compensation (LightRT
 // coat_substrate_attenuation): albedo = (a f0 + b) comp. The coat lobe is scaled
 // by comp and the base by 1 - coatWeight albedo.
@@ -2398,7 +2405,7 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
   if (nl <= 0.0) { pdf = 0.0; return vec3(0.0); }
   vec3 h = normalize(v + l);
   float nh = max(dot(s.n, h), 0.0), vh = max(dot(v, h), 0.0);
-  vec3 F = fresnelSchlick(vh, f0);
+  vec3 F = ptFresnelBase(vh, f0, s.specularWeight, s.metallic);
   vec3 t, b; ptRotatedBasis(s.n, s.anisotropyRotation, t, b);
   vec3 glossy = F * ggxDAniso(nh, dot(h, t), dot(h, b), s.roughness,
                               s.anisotropy) *
@@ -2434,7 +2441,7 @@ vec3 ptEvaluateReflection(PtSurface s, vec3 v, vec3 l,
   // diffuse base sits under the specular layer (1 - F(view)); the sheen attenuates
   // what lies below it by its directional albedo; the coat attenuates the whole
   // base by 1 - coatWeight F_coat(view).
-  vec3 Fv = fresnelSchlick(nv, f0);
+  vec3 Fv = ptFresnelBase(nv, f0, s.specularWeight, s.metallic);
   float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
   vec3 sheenAtt = vec3(1.0) - min(sheenCoefficient * sheenAlb, vec3(1.0));
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseCoefficient /

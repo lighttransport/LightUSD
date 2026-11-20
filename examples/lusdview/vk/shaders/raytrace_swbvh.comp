@@ -1733,6 +1733,13 @@ vec3 swPtHg(vec3 forward, float g, inout uint seed) {
                    normalize(forward) * ct);
 }
 
+// Base-layer Fresnel with F90 = specular weight for dielectrics (1 for metals), as
+// LightRT's L.F90: a zero specular weight removes the grazing reflection too.
+vec3 ptFresnelBase(float c, vec3 f0, float specW, float metal) {
+  float f90 = 1.0 + (clamp(specW, 0.0, 1.0) - 1.0) * (1.0 - clamp(metal, 0.0, 1.0));
+  float q = pow(1.0 - clamp(c, 0.0, 1.0), 5.0);
+  return f0 + (vec3(f90) - f0) * q;
+}
 // OpenPBR coat directional albedo with Turquin compensation (LightRT
 // coat_substrate_attenuation): albedo = (a f0 + b) comp. The coat lobe is scaled
 // by comp and the base by 1 - coatWeight albedo.
@@ -1756,7 +1763,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   vec3 h = normalize(v + l), t, b;
   swPtBasis(s.n, s.anisotropyRotation, t, b);
   float nh = max(dot(s.n, h), 0.0), vh = max(dot(v, h), 0.0);
-  vec3 F = swPtFresnel(vh, f0);
+  vec3 F = ptFresnelBase(vh, f0, s.specularWeight, s.metallic);
   float glossy = swPtGgxD(nh, dot(h, t), dot(h, b), s.roughness,
                            s.anisotropy) *
                  swPtGgxG1(s.n, v, t, b, s.roughness, s.anisotropy) *
@@ -1784,7 +1791,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   // raytrace.comp ptEvaluateReflection: diffuse under the specular layer
   // (1 - F(view)), sheen attenuates the diffuse by its albedo, the coat
   // attenuates the whole base by 1 - coatWeight F_coat(view).
-  vec3 Fv = swPtFresnel(nv, f0);
+  vec3 Fv = ptFresnelBase(nv, f0, s.specularWeight, s.metallic);
   float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
   vec3 sheenAtt = vec3(1.0) - min(sheenC * sheenAlb, vec3(1.0));
   vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
