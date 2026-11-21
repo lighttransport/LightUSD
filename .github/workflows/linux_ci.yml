@@ -136,6 +136,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libtbb12
+        # The downloaded OpenUSD binary links against libpython3.12.so.1.0,
+        # which is no longer in the runner's distro repos. Install the latest
+        # Ubuntu python3.12 runtime .deb directly so `usdcat --help` works.
+        pool="https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12"
+        deb="$(curl -fsSL "$pool/" | grep -o 'libpython3.12t64_[0-9][^" ]*ubuntu[^" ]*_amd64\.deb' | sort -V | tail -1)"
+        test -n "$deb"
+        curl -fsSL -o /tmp/libpython3.12t64.deb "$pool/$deb"
+        mkdir -p /tmp/libpython3.12
+        dpkg-deb -x /tmp/libpython3.12t64.deb /tmp/libpython3.12
+        echo "LD_LIBRARY_PATH=/tmp/libpython3.12/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
     - name: Download OpenUSD binary
       run: |
@@ -177,7 +187,7 @@ jobs:
 
         # Test 2: Convert with LightUSD, verify with OpenUSD
         if [ -f "models/suzanne.usdc" ]; then
-          ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
+          ./build/lusdcat -f models/suzanne.usdc > /tmp/lightusd.usda
           usdcat /tmp/lightusd.usda > /dev/null
           echo "✓ OpenUSD read LightUSD-generated USDA"
         fi
@@ -391,7 +401,7 @@ jobs:
           --target lusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_lusdview && ctest --output-on-failure -R "lusdview_lightrt_bridge|lusdview_lightrt_mtlx|lusdview_camera_nav|lusdview-vk-oit-validation"
+        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav"
 
   # The legacy implementation (src/legacy) is compiled but not tested: build
   # core + legacy (libraries, tools, examples, legacy test binaries) so it
@@ -637,7 +647,7 @@ jobs:
 
         # Test 2: Convert with LightUSD, verify with OpenUSD
         if [ -f "models/suzanne.usdc" ]; then
-          ./build/lusdcat models/suzanne.usdc > /tmp/lightusd.usda
+          ./build/lusdcat -f models/suzanne.usdc > /tmp/lightusd.usda
           usdcat /tmp/lightusd.usda > /dev/null
           echo "✓ OpenUSD read LightUSD-generated USDA"
         fi

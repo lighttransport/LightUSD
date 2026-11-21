@@ -1909,20 +1909,20 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       // Keep the split-sum environment specular consistent with that material:
       // the legacy TriInfo values do not include specular_weight, and its
       // roughness is diffuse roughness for MaterialX surfaces.
-      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
-      float dielectric_f0 = (p.specular_ior - 1.0f) /
-                            (p.specular_ior + 1.0f);
-      dielectric_f0 = dielectric_f0 * dielectric_f0 * p.specular_weight;
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      float dielectric_f0 = (pbr.specular_ior - 1.0f) /
+                            (pbr.specular_ior + 1.0f);
+      dielectric_f0 = dielectric_f0 * dielectric_f0 * pbr.specular_weight;
       const Vec3 dielectric_f0_color{
-          dielectric_f0 * p.specular_color.x,
-          dielectric_f0 * p.specular_color.y,
-          dielectric_f0 * p.specular_color.z};
-      const Vec3 base = Mul(FromMtlxV3(p.base_color), p.base_weight);
-      const float metal = p.conductor_lobe_count > 0 ? 0.0f : p.metalness;
-      f0 = p.specular_lobe_count > 0 ? Vec3{0.0f, 0.0f, 0.0f} : Lerp(dielectric_f0_color, base, metal);
+          dielectric_f0 * pbr.specular_color.x,
+          dielectric_f0 * pbr.specular_color.y,
+          dielectric_f0 * pbr.specular_color.z};
+      const Vec3 base = Mul(FromMtlxV3(pbr.base_color), pbr.base_weight);
+      const float metal = pbr.conductor_lobe_count > 0 ? 0.0f : pbr.metalness;
+      f0 = pbr.specular_lobe_count > 0 ? Vec3{0.0f, 0.0f, 0.0f} : Lerp(dielectric_f0_color, base, metal);
       kd_metal = 0.0f;
-      specular_f90 = p.specular_lobe_count > 0 ? 0.0f : std::clamp(p.specular_weight, 0.0f, 1.0f);
-      specular_roughness = p.specular_roughness;
+      specular_f90 = pbr.specular_lobe_count > 0 ? 0.0f : std::clamp(pbr.specular_weight, 0.0f, 1.0f);
+      specular_roughness = pbr.specular_roughness;
     } else {
       // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
       // bit-for-bit; only an authored non-default IOR takes the derived path.
@@ -1946,9 +1946,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // bsdf mode, so this stays material-correct.
     Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b * specular_f90);
     if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
-      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
-      for (int i = 0; i < p.conductor_lobe_count; ++i) {
-        const MtlxConductorLobe &lobe = p.conductor_lobes[i];
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i = 0; i < pbr.conductor_lobe_count; ++i) {
+        const MtlxConductorLobe &lobe = pbr.conductor_lobes[i];
         const v3 one = v3_splat(1.0f), em = v3_sub(lobe.ior, one), ep = v3_add(lobe.ior, one);
         const v3 k2 = v3_mul(lobe.extinction, lobe.extinction);
         const v3 num = v3_add(v3_mul(em, em), k2), den = v3_add(v3_mul(ep, ep), k2);
@@ -1992,9 +1992,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       }
     }
     if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
-      const OpenPBRParams p = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
-      for (int i=0; i<p.specular_lobe_count; ++i) {
-        const MtlxSpecularLobe &lobe=p.specular_lobes[i];
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i=0; i<pbr.specular_lobe_count; ++i) {
+        const MtlxSpecularLobe &lobe=pbr.specular_lobes[i];
         const MtlxConductorLobe &frame=lobe.frame;
         Vec3 ln=FromMtlxV3(frame.normal);
         const float len=Length(ln);
@@ -2009,12 +2009,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         const Vec3 direction=EnvDir(*ibl,frame.retroreflective ? view : Reflect(Mul(view,-1.0f),ln));
         const Vec3 env=SampleIblMip(ibl->prefiltered,direction,rough);
         float a=1.0f,b=0.0f; SampleBrdfLut(*ibl,nv,rough,&a,&b);
-        const Vec3 f0=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,1.0f));
+        const Vec3 lobe_f0=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,1.0f));
         const Vec3 fv=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,nv));
         const Vec3 f90=(lobe.model==MTLX_SPECULAR_SCHLICK && frame.thinfilm_thickness<=0.0f)
             ? Vec3{std::max(0.0f,lobe.color90.x),std::max(0.0f,lobe.color90.y),std::max(0.0f,lobe.color90.z)}
             : Vec3{1.0f,1.0f,1.0f};
-        Vec3 response=Mul(env,Add(Mul(f0,a),Mul(f90,b)));
+        Vec3 response=Mul(env,Add(Mul(lobe_f0,a),Mul(f90,b)));
         if (frame.thinfilm_thickness>0.0f || lobe.model==MTLX_SPECULAR_SCHLICK)
           response=Lerp(Mul(env,fv),response,rough);
         Vec3 tint=FromMtlxV3(frame.weight_color);
@@ -2540,7 +2540,7 @@ static Vec3 CompositeMixedVolumes(
   for (const VolumeData& vd : vols) {
     if (!vd.level_set || level_set_shading != Options::VolumeLevelSet::Surface) continue;
     const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
-    float a, b, hit;
+    float a, b, hit = 0.0f;
     if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b) ||
         b <= std::max(a, 0.0f) ||
         !TraceLevelSetSurface(vd, o, d, std::max(a, 0.0f), b, &hit) || hit >= far_t) continue;

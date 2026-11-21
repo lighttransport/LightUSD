@@ -125,10 +125,10 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
 
   // animationSource (rel skel:animationSource)
   {
-    const std::vector<Path>* targets =
-        prim.GetRelationship("skel:animationSource");
-    if (targets && !targets->empty()) {
-      out->animationSource = (*targets)[0].str();
+    std::vector<Path> targets;
+    if (prim.GetMappedRelationshipTargets("skel:animationSource", &targets) &&
+        !targets.empty()) {
+      out->animationSource = targets[0].str();
       out->hasAnimationSource = true;
     }
   }
@@ -345,20 +345,20 @@ bool GetSkelRootData(const Stage& stage, const UsdPrim& prim,
 
   // skel:skeleton
   {
-    const std::vector<Path>* targets =
-        prim.GetRelationship("skel:skeleton");
-    if (targets && !targets->empty()) {
-      out->skeleton = (*targets)[0].str();
+    std::vector<Path> targets;
+    if (prim.GetMappedRelationshipTargets("skel:skeleton", &targets) &&
+        !targets.empty()) {
+      out->skeleton = targets[0].str();
       out->hasSkeleton = true;
     }
   }
 
   // skel:animationSource
   {
-    const std::vector<Path>* targets =
-        prim.GetRelationship("skel:animationSource");
-    if (targets && !targets->empty()) {
-      out->animationSource = (*targets)[0].str();
+    std::vector<Path> targets;
+    if (prim.GetMappedRelationshipTargets("skel:animationSource", &targets) &&
+        !targets.empty()) {
+      out->animationSource = targets[0].str();
       out->hasAnimationSource = true;
     }
   }

@@ -10,6 +10,15 @@ endif()
 
 project(lightusd C CXX)
 
+# Clang 21+ / AppleClang tightens -Wthread-safety-negative under -Weverything.
+# Detect it once for the whole tree: the legacy product re-enters this file
+# separately, but core-only builds (the default) never run that detection and
+# would otherwise build lusdview/lusdrender with -Werror and fail on annotated
+# std::mutex headers.
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-Wthread-safety-negative"
+                        LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
+
 # A POSIX bash for shell-driven tests. On Windows, C:\Windows\System32ash.exe
 # is the WSL launcher (cannot read D:/... paths), so prefer Git for Windows' bash.
 if(WIN32)

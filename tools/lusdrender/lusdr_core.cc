@@ -1458,20 +1458,20 @@ void AddRTPreviewMeshCore(const lightusd::UsdPrim &prim,
       }
       if (geomprop_requests && tri_geomprops && tri_geomprops_valid) {
         for (size_t property = 0; property < geomprop_requests->size(); ++property) {
-          float p0[4], p1[4], p2[4];
+          float gp0[4], gp1[4], gp2[4];
           const bool valid =
-              geomprop_at(property, cursor + 0, i0, face, p0) &&
-              geomprop_at(property, corner1, i1, face, p1) &&
-              geomprop_at(property, corner2, i2, face, p2);
+              geomprop_at(property, cursor + 0, i0, face, gp0) &&
+              geomprop_at(property, corner1, i1, face, gp1) &&
+              geomprop_at(property, corner2, i2, face, gp2);
           tri_geomprops_valid->push_back(valid ? uint8_t(1) : uint8_t(0));
-          for (int c = 0; c < 4; ++c) {
-            tri_geomprops->push_back(valid ? p0[c] : 0.0f);
+          for (int comp = 0; comp < 4; ++comp) {
+            tri_geomprops->push_back(valid ? gp0[comp] : 0.0f);
           }
-          for (int c = 0; c < 4; ++c) {
-            tri_geomprops->push_back(valid ? p1[c] : 0.0f);
+          for (int comp = 0; comp < 4; ++comp) {
+            tri_geomprops->push_back(valid ? gp1[comp] : 0.0f);
           }
-          for (int c = 0; c < 4; ++c) {
-            tri_geomprops->push_back(valid ? p2[c] : 0.0f);
+          for (int comp = 0; comp < 4; ++comp) {
+            tri_geomprops->push_back(valid ? gp2[comp] : 0.0f);
           }
         }
       }

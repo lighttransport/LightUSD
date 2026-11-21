@@ -82,6 +82,7 @@ if(NOT TARGET lightusd_gpu_rt_common)
     ${LIGHTUSD_GPU_RT_VIEW_DIR}
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/external
+    ${PROJECT_SOURCE_DIR}/src/external/lightrt
     ${LIGHTUSD_GPU_RT_COMMON_DIR}
     ${LIGHTUSD_GPU_RT_COMMON_DIR}/cuew
     ${PROJECT_SOURCE_DIR}/src/external/hipew)

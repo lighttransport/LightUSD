@@ -18,7 +18,6 @@ mobile, WebAssembly, and sandboxed environments, with explicit resource limits
 for untrusted assets. MCP interface provided.
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/lighttransport)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/lightusd)
 [![PyPI version](https://img.shields.io/pypi/v/lightusd.svg)](https://pypi.org/project/lightusd/)
 [![npm version](https://img.shields.io/npm/v/lightusd.svg)](https://www.npmjs.com/package/lightusd)
 

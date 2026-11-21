@@ -1271,9 +1271,9 @@ class MaterialXSurfaceRuntime {
  public:
   MaterialXSurfaceRuntime(MtlxDoc* document, TextureCache* textureCache,
                           int node, uint64_t runtimeId,
-                          std::vector<tydra::MaterialXMipChain> mipChains = {})
+                          std::vector<tydra::MaterialXMipChain> mip_chains = {})
       : doc(document), tex(textureCache), surfaceNode(node), id(runtimeId),
-        mipChains(std::move(mipChains)) {}
+        mipChains(std::move(mip_chains)) {}
   ~MaterialXSurfaceRuntime() {
     texcache_free(tex);
     mtlx_free(doc);
@@ -1377,7 +1377,16 @@ struct MtlxThreadScratch {
 };
 
 std::atomic<uint64_t> gMtlxRuntimeId{1};
+// The per-thread scratch map is intentionally thread_local; its dynamic
+// initializer is expected (Clang -Weverything -Werror in CI).
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wglobal-constructors"
+#endif
 thread_local std::unordered_map<uint64_t, MtlxThreadScratch> gMtlxScratch;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 }  // namespace
 
 std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(

@@ -205,6 +205,74 @@ static const std::string kEmptyString;
 static const Path kEmptyPath;
 static const PrimMetadata kDefaultMeta;
 
+// Child specs of an instance come from its prototype's subtree. Normally the
+// mapping is prototype_root -> instance_root (the outer instance). But when a
+// proxy prim is itself an instance (nested native instancing), its children
+// live in the *nested* prototype's namespace: map them onto this prim's public
+// path instead. Using the outer mapping for those children gives every outer
+// instance after the first the first instance's child paths, so the nested
+// instances lose their children in composed/rendered scenes.
+static bool InstanceChildRoots(const Layer &layer, const PrimSpec *spec,
+                               const Path &public_path,
+                               const std::string &prototype_root,
+                               std::string *source_root,
+                               std::string *target_root) {
+  const std::string &nested = spec->meta().instance_prototype();
+  if (!nested.empty()) {
+    *source_root = nested;
+    *target_root = public_path.str();
+    return true;
+  }
+  // Holder-mode flattening stores the nested prototype as an internal
+  // reference instead of instance_prototype. A proxy inside an outer instance
+  // must rebase that holder's children onto its own public path too.
+  std::string holder;
+  if (FlattenedInstanceHolder(layer, *spec, &holder) &&
+      holder != prototype_root) {
+    *source_root = std::move(holder);
+    *target_root = public_path.str();
+    return true;
+  }
+  return false;
+}
+
+// Resolve the mapping used for a prim's children. A nested instance introduces
+// a new mapping that overrides the one inherited from its parent proxy; plain
+// descendants inherit it so grandchildren stay in the right namespace.
+static void EffectiveChildRoots(const Layer &layer, const PrimSpec *spec,
+                                const Path &public_path,
+                                const std::string &prototype_root,
+                                const std::string &instance_root,
+                                const std::string &inherited_source,
+                                const std::string &inherited_target,
+                                std::string *source_root,
+                                std::string *target_root) {
+  if (InstanceChildRoots(layer, spec, public_path, prototype_root,
+                         source_root, target_root)) {
+    return;
+  }
+  *source_root = inherited_source.empty() ? prototype_root : inherited_source;
+  *target_root = inherited_target.empty() ? instance_root : inherited_target;
+}
+
+static std::string MapPathPrefix(const std::string &path,
+                                 const std::string &from,
+                                 const std::string &to) {
+  if (from.empty() || to.empty() || path.size() < from.size() ||
+      path.compare(0, from.size(), from) != 0) {
+    return path;
+  }
+  if (path.size() == from.size()) return to;
+  if (path[from.size()] != '/' && path[from.size()] != '.') return path;
+  return to + path.substr(from.size());
+}
+
+static std::string InstanceChildPath(const PrimSpec *child,
+                                     const std::string &source_root,
+                                     const std::string &target_root) {
+  return MapPathPrefix(child->path().str(), source_root, target_root);
+}
+
 const std::string& UsdPrim::GetName() const {
   if (!spec_) return kEmptyString;
   return spec_->name();
@@ -585,14 +653,48 @@ const std::vector<Path>* UsdPrim::GetRelationship(const std::string& name) const
   return ChildSourceSpec()->relationship(name);
 }
 
+bool UsdPrim::GetMappedRelationshipTargets(
+    const std::string& name, std::vector<Path>* targets) const {
+  if (!targets) return false;
+  targets->clear();
+  if (!spec_ || !layer_) return false;
+  const std::vector<Path>* raw = GetRelationship(name);
+  if (!raw) return false;
+
+  std::string prototype_root = prototype_root_;
+  std::string instance_root = instance_root_;
+  if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
+    prototype_root = spec_->meta().instance_prototype();
+    instance_root = spec_->path().str();
+  }
+  if (prototype_root.empty()) {
+    std::string holder;
+    if (FlattenedInstanceHolder(*layer_, *spec_, &holder)) {
+      prototype_root = std::move(holder);
+      instance_root = GetPath().str();
+    }
+  }
+  std::string source_root, target_root;
+  EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                      child_source_root_, child_target_root_,
+                      &source_root, &target_root);
+  for (const Path& target : *raw) {
+    targets->emplace_back(
+        MapPathPrefix(target.str(), source_root, target_root));
+  }
+  return true;
+}
+
 bool UsdPrim::GetForwardedRelationshipTargets(
     const std::string& name, std::vector<Path>* targets) const {
   if (!targets) return false;
   targets->clear();
   if (!spec_ || !layer_ || !GetRelationship(name)) return false;
 
-  std::string prototype_root = prototype_root_;
-  std::string instance_root = instance_root_;
+  std::string prototype_root =
+      child_source_root_.empty() ? prototype_root_ : child_source_root_;
+  std::string instance_root =
+      child_target_root_.empty() ? instance_root_ : child_target_root_;
   const PrimSpec* root_owner = spec_;
   if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
     prototype_root = spec_->meta().instance_prototype();
@@ -602,17 +704,6 @@ bool UsdPrim::GetForwardedRelationshipTargets(
               layer_->prim_at_path(Path(prototype_root))) root_owner = prototype;
     }
   }
-  auto map_prefix = [](const std::string& path, const std::string& from,
-                       const std::string& to) {
-    if (from.empty() || to.empty()) return path;
-    if (path == from) return to;
-    if (path.size() > from.size() && path.compare(0, from.size(), from) == 0 &&
-        (path[from.size()] == '/' || path[from.size()] == '.')) {
-      return to + path.substr(from.size());
-    }
-    return path;
-  };
-
   std::unordered_set<std::string> visited_relationships;
   std::unordered_set<std::string> unique_targets;
 
@@ -637,9 +728,9 @@ bool UsdPrim::GetForwardedRelationshipTargets(
 
     const Path& target = (*raw)[f.target_pos++];
     const std::string lookup_string =
-        map_prefix(target.str(), instance_root, prototype_root);
+        MapPathPrefix(target.str(), instance_root, prototype_root);
     const std::string output_string =
-        map_prefix(target.str(), prototype_root, instance_root);
+        MapPathPrefix(target.str(), prototype_root, instance_root);
     const Path lookup_target(lookup_string);
     if (target.has_property()) {
       const PrimSpec* target_prim =
@@ -683,17 +774,30 @@ UsdPrim UsdPrim::GetParent() const {
     const size_t slash = proxy.rfind('/');
     if (slash == std::string::npos || slash == 0) return UsdPrim();
     const std::string proxy_parent = proxy.substr(0, slash);
-    if (proxy_parent == instance_root_) {
-      const uint32_t index = layer_->index_at_path(instance_root_);
-      const PrimSpec* instance = layer_->prim_at_path(Path(instance_root_));
-      return instance ? UsdPrim(instance, layer_, index) : UsdPrim();
+    std::string from = instance_root_;
+    std::string to = prototype_root_;
+    // Prefer the effective nested mapping: in holder mode the physical
+    // ancestor usually lives under the nested prototype, not the outer one.
+    if (!child_target_root_.empty() &&
+        (proxy_parent == child_target_root_ ||
+         (proxy_parent.size() > child_target_root_.size() &&
+          proxy_parent.compare(0, child_target_root_.size(),
+                               child_target_root_) == 0 &&
+          proxy_parent[child_target_root_.size()] == '/'))) {
+      from = child_target_root_;
+      to = child_source_root_;
+    }
+    if (from.empty() || proxy_parent.size() < from.size() ||
+        proxy_parent.compare(0, from.size(), from) != 0) {
+      return UsdPrim();
     }
     const std::string prototype_parent =
-        prototype_root_ + proxy_parent.substr(instance_root_.size());
+        to + proxy_parent.substr(from.size());
     const uint32_t index = layer_->index_at_path(prototype_parent);
     const PrimSpec* parent = layer_->prim_at_path(Path(prototype_parent));
     return parent ? UsdPrim(parent, layer_, index, Path(proxy_parent),
-                            prototype_root_, instance_root_)
+                            prototype_root_, instance_root_,
+                            child_source_root_, child_target_root_)
                   : UsdPrim();
   }
 
@@ -757,6 +861,10 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
       instance_root = GetPath().str();
     }
   }
+  std::string source_root, target_root;
+  EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                      child_source_root_, child_target_root_,
+                      &source_root, &target_root);
   std::vector<uint32_t> ordered;
   const auto& indices = layer_->ordered_child_indices(*src, &ordered);
   children.reserve(indices.size());
@@ -764,11 +872,11 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
   for (uint32_t idx : indices) {
     const PrimSpec* child = layer_->prim(idx);
     if (child) {
-      if (!prototype_root.empty()) {
-        children.emplace_back(
-            child, layer_, idx,
-            Path(instance_root + child->path().str().substr(prototype_root.size())),
-            prototype_root, instance_root);
+      if (!source_root.empty()) {
+        children.emplace_back(child, layer_, idx,
+                              Path(InstanceChildPath(child, source_root, target_root)),
+                              prototype_root, instance_root,
+                              source_root, target_root);
       } else {
         children.emplace_back(child, layer_, idx);
       }
@@ -805,11 +913,15 @@ UsdPrim UsdPrim::GetChildAt(size_t index) const {
       instance_root = GetPath().str();
     }
   }
-  if (!prototype_root.empty()) {
-    return UsdPrim(
-        child, layer_, idx,
-        Path(instance_root + child->path().str().substr(prototype_root.size())),
-        prototype_root, instance_root);
+  std::string source_root, target_root;
+  EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                      child_source_root_, child_target_root_,
+                      &source_root, &target_root);
+  if (!source_root.empty()) {
+    return UsdPrim(child, layer_, idx,
+                   Path(InstanceChildPath(child, source_root, target_root)),
+                   prototype_root, instance_root,
+                   source_root, target_root);
   }
   return UsdPrim(child, layer_, idx);
 }
@@ -835,12 +947,15 @@ UsdPrim UsdPrim::GetChild(const std::string& name) const {
           instance_root = GetPath().str();
         }
       }
-      if (!prototype_root.empty()) {
-        return UsdPrim(
-            child, layer_, idx,
-            Path(instance_root +
-                 child->path().str().substr(prototype_root.size())),
-            prototype_root, instance_root);
+      std::string source_root, target_root;
+      EffectiveChildRoots(*layer_, spec_, GetPath(), prototype_root, instance_root,
+                          child_source_root_, child_target_root_,
+                          &source_root, &target_root);
+      if (!source_root.empty()) {
+        return UsdPrim(child, layer_, idx,
+                       Path(InstanceChildPath(child, source_root, target_root)),
+                       prototype_root, instance_root,
+                       source_root, target_root);
       }
       return UsdPrim(child, layer_, idx);
     }
@@ -1001,8 +1116,42 @@ UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
     if (prototype_idx == UINT32_MAX) continue;
     const PrimSpec* prototype = root_layer_->prim(prototype_idx);
     if (prototype) {
+      // `prototype_root` is this instance's own prototype (native meta or
+      // holder-mode reference), so it is also the source for mapping the
+      // proxy's children into `instance_root`.
       return UsdPrim(prototype, root_layer_.get(), prototype_idx, Path(path),
+                     prototype_root, instance_root,
                      prototype_root, instance_root);
+    }
+  }
+  // The composed layer stores only prototype subtrees, so a public proxy path
+  // may have no physical ancestor at all (holder mode in particular). Fall
+  // back to walking the composed namespace through the proxy-aware child
+  // accessors; this is O(depth) for the paths that need it.
+  if (!path.empty() && path.front() == '/') {
+    const size_t first_slash = path.find('/', 1);
+    const std::string root_name = first_slash == std::string::npos
+                                      ? path.substr(1)
+                                      : path.substr(1, first_slash - 1);
+    UsdPrim current;
+    for (const UsdPrim& root : GetRootPrims()) {
+      if (root.GetName() == root_name) {
+        current = root;
+        break;
+      }
+    }
+    if (current.IsValid()) {
+      size_t pos = first_slash;
+      while (pos != std::string::npos && pos + 1 < path.size()) {
+        const size_t next = path.find('/', pos + 1);
+        const std::string name = next == std::string::npos
+                                     ? path.substr(pos + 1)
+                                     : path.substr(pos + 1, next - pos - 1);
+        current = current.GetChild(name);
+        if (!current.IsValid()) break;
+        pos = next;
+      }
+      if (current.IsValid() && current.GetPath().str() == path) return current;
     }
   }
   return UsdPrim();

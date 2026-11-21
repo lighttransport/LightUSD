@@ -1312,8 +1312,11 @@ endif()
 
 # Native MJCF -> USD converter on the core converter and writers.
 if(LIGHTUSD_BUILD_EXAMPLES AND LIGHTUSD_WITH_TYDRA)
+  # Use a distinct binary dir name: the executable is written to
+  # CMAKE_BINARY_DIR, so a same-named subdirectory collides in standalone
+  # `cmake -S src` builds.
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../examples/usd_to_gltf
-                   ${CMAKE_CURRENT_BINARY_DIR}/usd_to_gltf)
+                   ${CMAKE_CURRENT_BINARY_DIR}/usd_to_gltf-example)
     add_executable(urdf-to-usd
         ../examples/urdf-to-usd/main.cc)
     target_include_directories(urdf-to-usd PRIVATE
@@ -1407,8 +1410,22 @@ endif()
 if(LIGHTUSD_WITH_TYDRA)
   # Packaging must use actual target artifacts, including nested build dirs.
   # Searching by basename can select an obsolete archive after reconfiguration.
+  # tydra calls tydra::ResizeImage, which lives in lightusd_preview_images in
+  # the standalone core build. Python's static link needs that archive plus its
+  # image-codec dependencies (they define symbols image-loader.cc references).
+  set(LIGHTUSD_PY_PREVIEW_ARCHIVE "")
+  set(LIGHTUSD_PY_IMAGE_DEPS "$<TARGET_FILE:lightusd_tinyvdb>\n")
+  if(TARGET lightusd_preview_images)
+    set(LIGHTUSD_PY_PREVIEW_ARCHIVE "$<TARGET_FILE:lightusd_preview_images>\n")
+    set(LIGHTUSD_PY_IMAGE_DEPS "")
+    foreach(dep lightusd_exr_codec lightusd_tinyvdb lightusd_textools)
+      if(TARGET ${dep})
+        string(APPEND LIGHTUSD_PY_IMAGE_DEPS "$<TARGET_FILE:${dep}>\n")
+      endif()
+    endforeach()
+  endif()
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/lightusd-python-libraries-$<CONFIG>.txt"
-    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_core>\n$<TARGET_FILE:lightusd_obj_import>\n$<TARGET_FILE:lightusd_tinyvdb>\n$<TARGET_FILE:lightusd_core_c>\n")
+    CONTENT "$<TARGET_FILE:lightusd_validation_c>\n$<TARGET_FILE:lightusd_render_c>\n$<TARGET_FILE:lightusd_c>\n$<TARGET_FILE:tydra>\n$<TARGET_FILE:lightusd_asset_import>\n$<TARGET_FILE:lightusd_validation>\n$<TARGET_FILE:lightusd_core>\n$<TARGET_FILE:lightusd_obj_import>\n${LIGHTUSD_PY_PREVIEW_ARCHIVE}${LIGHTUSD_PY_IMAGE_DEPS}$<TARGET_FILE:lightusd_core_c>\n")
 endif()
 include(GNUInstallDirs)
 set_target_properties(lightusd_c PROPERTIES EXPORT_NAME c)
@@ -1494,6 +1511,7 @@ if(LIGHTUSD_BUILD_TESTS)
         add_executable(test_obj_reader ../tests/core/test_obj_reader.cc)
         target_link_libraries(test_obj_reader PRIVATE lightusd_core)
         add_test(NAME core_test_obj_reader COMMAND test_obj_reader)
+        if(LIGHTUSD_WITH_TYDRA)
         # OBJ subdivision tags vs OpenSubdiv (skipped unless OSD_ROOT is set).
         add_executable(obj_subd_dump ../tests/obj-subd/obj_subd_dump.cc)
         target_link_libraries(obj_subd_dump PRIVATE tydra lightusd_core)
@@ -1551,6 +1569,7 @@ if(LIGHTUSD_BUILD_TESTS)
             set_tests_properties(tool-obj-skin-ufbx tool-obj-skin-inline-rest tool-skel-skin-pxr
                 PROPERTIES LABELS "obj;skel")
         endif()
+        endif()  # LIGHTUSD_WITH_TYDRA
         add_executable(test_obj_large ../tests/core/test_obj_large.cc)
         target_link_libraries(test_obj_large PRIVATE lightusd_core)
         add_test(NAME core_test_obj_large COMMAND test_obj_large)
