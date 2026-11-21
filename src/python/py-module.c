@@ -289,6 +289,10 @@ static PyObject* load_from_buffer(lightusd_state* st, const uint8_t* data,
                                   int32_t max_threads, uint32_t input_policy) {
   lightusd_load_options opts;
   lightusd_load_options_init(&opts);
+  /* These Python helpers parse authored layers for editing and roundtripping.
+   * Preserve variants and unresolved sublayer metadata even though the C
+   * memory loader now composes by default. Use load() for composition. */
+  opts.composed = 0;
   opts.max_threads = max_threads;
   opts.input_policy = input_policy;
   if (parse_format(format, &opts.format) != 0) return NULL;
