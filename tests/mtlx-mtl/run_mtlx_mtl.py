@@ -41,7 +41,11 @@ def xml_part(dump):
 
 
 def pixels(path):
-    from PIL import Image
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP: Pillow (PIL) is required for PNG pixel comparison")
+        raise SystemExit(77)
     im = Image.open(path).convert("RGBA")
     return im.size, im.tobytes()
 

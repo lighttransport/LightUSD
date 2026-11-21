@@ -809,7 +809,8 @@ if(LIGHTUSD_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}/data/materialx/UsdPreviewSurface/usd_preview_surface_gold.mtlx
               ${PROJECT_SOURCE_DIR}/web/demo/public/assets/mtlx/open_pbr_red_metal.mtlx)
     set_tests_properties(tool-lusdrender-mtlx-mtl PROPERTIES
-                         TIMEOUT 300 LABELS "lusdrender;cpu;materialx;mtlx;obj")
+                         TIMEOUT 300 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;materialx;mtlx;obj")
 
     add_test(
       NAME tool-lusdrender-materialx-cpu-graph

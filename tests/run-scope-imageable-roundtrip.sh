@@ -23,11 +23,14 @@ LUSDCAT="${1:-${LUSDCAT:-$REPO_ROOT/build/lusdcat}}"
 # Detect core by its "loaded: N prims" summary. Override via LUSDCAT_LAYER_ARGS.
 if [ -z "${LUSDCAT_LAYER_ARGS+x}" ]; then
   LUSDCAT_LAYER_ARGS=""
-  _probe=$(mktemp --suffix=.usda); printf '#usda 1.0\n' > "$_probe"
+  # BSD mktemp has no --suffix; create a directory and put the probe inside.
+  _probe_dir=$(mktemp -d)
+  _probe="$_probe_dir/probe.usda"
+  printf '#usda 1.0\n' > "$_probe"
   if "$LUSDCAT" "$_probe" 2>/dev/null | head -1 | grep -q '^loaded:'; then
     LUSDCAT_LAYER_ARGS="--rewrite-layer --openusd-compat"
   fi
-  rm -f "$_probe"
+  rm -rf "$_probe_dir"
 fi
 
 
