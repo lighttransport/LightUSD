@@ -194,7 +194,13 @@ void TestStageAndAttributes(const std::string& usda_dir) {
 
   Server s2;
   s2.CreateContext("t");
-  r = Call(s2, "stage_load_data", {{"data", B64(usda)}, {"format", "usda"}});
+  // This is a raw serialization round-trip: the exported layer still carries
+  // external arc targets (e.g. p.usdc) that are not resolvable in memory.
+  // Load it uncomposed, as Authors/Editors expect from stage_load_data.
+  r = Call(s2, "stage_load_data",
+           {{"data", B64(usda)},
+            {"format", "usda"},
+            {"options", {{"doComposition", false}}}});
   assert(r["success"] == true && r["upAxis"] == "Z");
   r = Call(s2, "attr_get", {{"path", "/World/Mesh"}, {"attr_name", "points"}});
   assert(r["value"]["count"] == 3);
