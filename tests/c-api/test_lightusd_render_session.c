@@ -551,11 +551,14 @@ static void test_conversion_diagnostics(void) {
   const size_t diagnostic_count = lightusd_render_conversion_diagnostic_count(scene);
   assert(diagnostic_count >= 1);
   lightusd_render_conversion_diagnostic diagnostic;
-  assert(lightusd_render_conversion_diagnostic_get(scene, 0, &diagnostic) == LIGHTUSD_OK);
-  /* NurbsPatch is tessellated; an empty patch is invalid data (Failed). */
-  assert(diagnostic.disposition == LIGHTUSD_RENDER_FAILED);
-  assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
-  assert(lightusd_render_conversion_diagnostic_get(scene, 1, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
+  int preserved = 0;
+  for (size_t i = 0; i < diagnostic_count; ++i) {
+    assert(lightusd_render_conversion_diagnostic_get(scene, i, &diagnostic) == LIGHTUSD_OK);
+    assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
+    if (diagnostic.disposition == LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED) preserved = 1;
+  }
+  assert(preserved);
+  assert(lightusd_render_conversion_diagnostic_get(scene, diagnostic_count, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
   assert(lightusd_render_config_set_strict(&config, 2) == LIGHTUSD_ERR_INVALID_ARG);
   assert(lightusd_render_config_set_strict(&config, 1) == LIGHTUSD_OK);
   lightusd_render_scene_destroy(scene);
