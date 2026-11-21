@@ -14,6 +14,7 @@
 #include "schema/geom-boundable.hh"
 #include "layer/prim-spec.hh"
 #include "layer/property-index.hh"
+#include "math-trig.hh"
 #include "stage/stage.hh"
 #include "types/value-view.hh"
 
@@ -305,7 +306,7 @@ double ComputeLodScreenSize(const LodScreenSizeQuery& q, const LodFrustum& f,
       if (distance == 0.0) return std::numeric_limits<double>::max();
       radius = radius_w * f.reference_plane_depth / distance;
     }
-    const double area = M_PI * radius * radius;
+    const double area = math::constants<double>::pi() * radius * radius;
     const double window = f.window_size[0] * f.window_size[1];
     if (window == 0.0) return std::numeric_limits<double>::max();
     return area / window;
