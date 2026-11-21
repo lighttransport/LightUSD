@@ -437,10 +437,9 @@ bool RenderSceneConverter::Impl::ConvertGeomPrimitive(const UsdPrim& prim,
 
   const std::string type = prim.GetTypeName();
   if (type == "NurbsPatch") {
-    std::string err;
-    if (!TessellateNurbsPatch(prim, config_.time_code, &points, &face_counts,
-                              &face_indices, &normals, &uvs, &err)) {
-      SetLastError("NurbsPatch '" + prim.GetPath().str() + "': " + err);
+    if (!TessellateNurbsPatch(prim, &points, &face_counts, &face_indices,
+                              &uvs)) {
+      SetLastError("Invalid NurbsPatch '" + prim.GetPath().str() + "'");
       return false;
     }
   } else if (type == "TetMesh") {
