@@ -1462,6 +1462,134 @@ static void test_drive_instance_dofs() {
         "distance remains a valid LimitAPI instance");
 }
 
+// Gaussian splat ParticleField value rules (doc/gsplat-rendering-spec.md).
+static void test_gsplat_value_rules() {
+  const std::string good = R"(#usda 1.0
+def Xform "World"
+{
+    def ParticleField3DGaussianSplat "Deg0"
+    {
+        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+        quatf[] orientations = [(1, 0, 0, 0), (0.7071068, 0, 0.7071068, 0)]
+        float3[] scales = [(0.1, 0.1, 0.1), (0.2, 0.1, 0.05)]
+        float[] opacities = [0.5, 1]
+        int radiance:sphericalHarmonicsDegree = 0
+        float3[] radiance:sphericalHarmonicsCoefficients = [(1, 0, 0), (0, 1, 0)]
+    }
+    def ParticleField3DGaussianSplat "Deg1Tangential"
+    {
+        uniform token projectionModeHint = "tangential"
+        uniform token sortingModeHint = "rayHitDistance"
+        point3f[] positions = [(0, 0, 0)]
+        int radiance:sphericalHarmonicsDegree = 1
+        float3[] radiance:sphericalHarmonicsCoefficients = [(1, 1, 1), (0, 0, 0), (0, 0, 0), (0, 0, 0)]
+    }
+    def ParticleField3DGaussianSplat "Half"
+    {
+        point3h[] positionsh = [(0, 0, 0), (1, 0, 0)]
+        quath[] orientationsh = [(1, 0, 0, 0), (1, 0, 0, 0)]
+        half3[] scalesh = [(0.1, 0.1, 0.1), (0.1, 0.1, 0.1)]
+        half[] opacitiesh = [0.9, 0.75]
+    }
+    def ParticleField3DGaussianSplat "Motion"
+    {
+        point3f[] positions.timeSamples = {
+            1: [(0, 0, 0), (1, 0, 0)],
+            2: [(0, 1, 0), (1, 1, 0)],
+        }
+        quatf[] orientations.timeSamples = {
+            1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+            2: [(0, 1, 0, 0), (0, 0, 1, 0)],
+        }
+    }
+    def ParticleField "Surflet" (
+        prepend apiSchemas = ["ParticleFieldPositionAttributeAPI", "ParticleFieldKernelGaussianSurfletAPI"]
+    )
+    {
+        point3f[] positions = [(0, 0, 0)]
+    }
+}
+)";
+  ValidationOptions options;
+  options.geom = true;
+  USDValidationResult result;
+  CHECK(Validate(good, options, &result), "valid gsplat usda parses");
+  size_t gs_issues = 0;
+  for (const auto &issue : result.issues) {
+    if (issue.rule_id.rfind("vol.particleField", 0) == 0) gs_issues++;
+  }
+  CHECK(gs_issues == 0, "valid splats (deg 0/1, tangential, half, motion, "
+                        "surflet) raise no particleField issues");
+  if (g_fail) DumpIssues(result);
+
+  const std::string bad = R"(#usda 1.0
+def Xform "World"
+{
+    def ParticleField3DGaussianSplat "BadQuat"
+    {
+        point3f[] positions = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+        quatf[] orientations = [(0, 0, 0, 0), (2, 0, 0, 0), (1, 0, 0, 0)]
+    }
+    def ParticleField3DGaussianSplat "BadScaleOpacity"
+    {
+        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+        float3[] scales = [(0, 1, 1), (-1, 1, 1)]
+        float[] opacities = [1.5, -0.1]
+    }
+    def ParticleField3DGaussianSplat "NonFinite"
+    {
+        point3f[] positions = [(nan, 0, 0)]
+    }
+    def ParticleField3DGaussianSplat "BadHalfQuat"
+    {
+        point3h[] positionsh = [(0, 0, 0)]
+        quath[] orientationsh = [(0, 0, 0, 0)]
+    }
+    def ParticleField3DGaussianSplat "BadSh"
+    {
+        point3f[] positions = [(0, 0, 0), (1, 0, 0)]
+        int radiance:sphericalHarmonicsDegree = 1
+        float3[] radiance:sphericalHarmonicsCoefficients = [(1, 1, 1), (0, 0, 0)]
+    }
+    def ParticleField3DGaussianSplat "Deg4"
+    {
+        point3f[] positions = [(0, 0, 0)]
+        int radiance:sphericalHarmonicsDegree = 4
+    }
+    def ParticleField3DGaussianSplat "VaryingMotion"
+    {
+        point3f[] positions.timeSamples = {
+            1: [(0, 0, 0), (1, 0, 0)],
+            2: [(0, 1, 0)],
+        }
+        float[] opacities.timeSamples = {
+            1: [0.5, 0.5],
+            2: [0.5, 3],
+        }
+    }
+}
+)";
+  USDValidationResult bres;
+  CHECK(Validate(bad, options, &bres), "invalid gsplat usda parses");
+  CHECK(CountErrors(bres, "vol.particleField.orientation") == 2,
+        "zero quaternions (float and half) are errors");
+  CHECK(CountWarnings(bres, "vol.particleField.orientation") == 1,
+        "non-unit quaternions warn");
+  CHECK(CountWarnings(bres, "vol.particleField.scale") == 1,
+        "non-positive scales warn once per property");
+  CHECK(CountWarnings(bres, "vol.particleField.opacity") == 2,
+        "out-of-range opacities warn (default and time sample)");
+  CHECK(CountErrors(bres, "vol.particleField.nonFinite") == 1,
+        "NaN positions are errors");
+  CHECK(CountWarnings(bres, "vol.particleField.shCount") == 1,
+        "SH coefficient count must be N*(deg+1)^2");
+  CHECK(CountWarnings(bres, "vol.particleField.shDegree") == 1,
+        "SH degree above 3 warns");
+  CHECK(CountWarnings(bres, "vol.particleField.sampleCount") == 1,
+        "time samples with differing particle counts warn");
+  if (g_fail) DumpIssues(bres);
+}
+
 int main() {
   size_t rule_count = 0;
   const ValidationRuleInfo* rules = GetValidationRuleTable(&rule_count);
@@ -1510,6 +1638,7 @@ int main() {
   test_arkit_rules();
   test_parse_failure();
   test_vol_render_rules();
+  test_gsplat_value_rules();
   test_listop_rules();
   test_dict_duplicate_key();
   test_schema_family_rules();

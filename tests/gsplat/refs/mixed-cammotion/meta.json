@@ -1,0 +1,15 @@
+{
+ "VIS": {
+  "floor": 0.00823904827733978,
+  "mean": 0.7234766465711208
+ },
+ "EMI": {
+  "floor": 0.005119433213264941,
+  "mean": 0.04435748561261591
+ },
+ "spp": 256,
+ "width": 320,
+ "height": 180,
+ "blender": "5.3",
+ "note": "regenerate: check_mixed_scene.py LUSDRENDER [--motion|--camera-motion] --write-refs"
+}

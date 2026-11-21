@@ -132,6 +132,8 @@ add_library(lightrt_c STATIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.h
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.h
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_gsplat.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_gsplat.h
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.h
 )
@@ -197,6 +199,7 @@ add_executable(lusdrender
   lusdr_scene.cc
   lusdr_rt_lod.cc
   lusdr_gpu_common.cc
+  lusdr_gsplat_cycles.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
   lusdr_hip.cc
@@ -322,6 +325,7 @@ set(LUSDRENDER_CXX_SOURCES
   lusdr_scene.cc
   lusdr_rt_lod.cc
   lusdr_gpu_common.cc
+  lusdr_gsplat_cycles.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
   lusdr_hip.cc
@@ -389,7 +393,7 @@ if(LUSDRENDER_WITH_VULKAN)
     ${LIGHTRT_VK_SRC}/lightrt_vkew.h)
   target_include_directories(lightrt_c_vk PUBLIC ${LIGHTRT_VK_SRC})
   target_compile_definitions(lightrt_c_vk PRIVATE VKEW_IMPLEMENTATION)
-  target_link_libraries(lightrt_c_vk ${CMAKE_DL_LIBS})
+  target_link_libraries(lightrt_c_vk lightrt_c ${CMAKE_DL_LIBS})
   set_target_properties(lightrt_c_vk PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 
   target_sources(lusdrender PRIVATE ${LIGHTRT_VK_SRC}/lightrt_c_vk.c
@@ -412,6 +416,31 @@ if(LUSDRENDER_WITH_HIP AND NOT WIN32)
   target_compile_definitions(lusdrender PRIVATE HAVE_HIP=1)
   target_include_directories(lusdrender PRIVATE ${LIGHTRT_HIP_SRC} ${HIPEW_SRC})
   target_link_libraries(lusdrender ${CMAKE_DL_LIBS})
+endif()
+
+# LightRT 3D Gaussian splat primitive: CPU BVH vs brute force, chunking, and
+# the Vulkan / HIP kernels (each skipped at runtime when no device exists).
+if(LIGHTUSD_BUILD_TESTS)
+  add_executable(test_lightrt_gsplat
+    ${PROJECT_SOURCE_DIR}/src/external/lightrt/test_gsplat.c)
+  target_link_libraries(test_lightrt_gsplat PRIVATE lightrt_c)
+  if(TARGET lightrt_c_vk)
+    target_link_libraries(test_lightrt_gsplat PRIVATE lightrt_c_vk)
+    target_compile_definitions(test_lightrt_gsplat PRIVATE HAVE_VULKAN=1)
+  endif()
+  if(LUSDRENDER_WITH_HIP AND NOT WIN32)
+    target_sources(test_lightrt_gsplat PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_hip.c
+      ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c)
+    target_include_directories(test_lightrt_gsplat PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/external/hipew)
+    target_compile_definitions(test_lightrt_gsplat PRIVATE HAVE_HIP=1)
+    target_link_libraries(test_lightrt_gsplat PRIVATE ${CMAKE_DL_LIBS})
+  endif()
+  set_target_properties(test_lightrt_gsplat PROPERTIES C_STANDARD 11)
+  add_test(NAME lightrt-gsplat COMMAND test_lightrt_gsplat)
+  set_tests_properties(lightrt-gsplat PROPERTIES TIMEOUT 120
+                       LABELS "lightrt;gsplat;gpu")
 endif()
 
 # The viewer defines this GUI-free target before pulling lusdrender in for its
@@ -740,6 +769,150 @@ if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_WITH_QJS)
       set(LUSDR_SPARSE_QJS_ARG --with-qjs)
     endif()
+    # Blender Cycles Gaussian splat kernel port (--gsplat-kernel cycles).
+    # The compare test skips (77) unless LIGHTUSD_BLENDER names Blender 5.3+.
+    add_test(NAME tool-lusdrender-gsplat-cycles-smoke
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" smoke)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-smoke PROPERTIES
+                         TIMEOUT 120 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat")
+    add_test(NAME tool-lusdrender-gsplat-blender-roundtrip
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" roundtrip)
+    set_tests_properties(tool-lusdrender-gsplat-blender-roundtrip PROPERTIES
+                         TIMEOUT 900 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-cycles-blender
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" compare)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-blender PROPERTIES
+                         TIMEOUT 600 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-blender-variants
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" variants)
+    set_tests_properties(tool-lusdrender-gsplat-blender-variants PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    # Mixed mesh + splat scene: splat shadows, camera-ray transmittance and
+    # splat emission lighting a Lambert plane, against Blender direct light.
+    add_test(NAME tool-lusdrender-gsplat-blender-mixed
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-gsplat-blender-mixed PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-blender-mixed-motion
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+              "$<TARGET_FILE:lusdrender>" --motion)
+    set_tests_properties(tool-lusdrender-gsplat-blender-mixed-motion PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    add_test(NAME tool-lusdrender-gsplat-blender-mixed-camera-motion
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+              "$<TARGET_FILE:lusdrender>" --camera-motion)
+    set_tests_properties(tool-lusdrender-gsplat-blender-mixed-camera-motion PROPERTIES
+                         TIMEOUT 1800 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat;blender")
+    # Scene -> gsplat fast preset: cold hotel_01 conversion within 10 s and a
+    # non-blank render (skips unless -DLIGHTUSD_PRESET_SCENE names the scene).
+    # Serial: it is a timing budget.
+    # PointInstancer prototypes under an invisible scope are still drawn by the
+    # instancer (full Caldera terrain clutter).
+    if(TARGET lusdpreview)
+      add_test(NAME tool-lusdpreview-sharded-replay
+        COMMAND ${LUSDR_PYTHON}
+                "${PROJECT_SOURCE_DIR}/tools/lusdpreview/check-sharded-replay.py"
+                $<TARGET_FILE:lusdpreview>
+                "${PROJECT_SOURCE_DIR}/tests/usda/preview-instancer-invisible-protos.usda")
+      set_tests_properties(tool-lusdpreview-sharded-replay PROPERTIES
+                           TIMEOUT 180 LABELS "lusdpreview")
+      add_test(NAME tool-lusdpreview-instancer-invisible-protos
+        COMMAND sh -c "rm -rf \"$2\" && \"$1\" \"$3\" \"$2\" --preset fast --refresh --preview-cache-dir \"$2.cache\""
+                lusdpreview-protos
+                $<TARGET_FILE:lusdpreview>
+                "${CMAKE_CURRENT_BINARY_DIR}/preview-instancer-invisible-protos-out"
+                "${PROJECT_SOURCE_DIR}/tests/usda/preview-instancer-invisible-protos.usda")
+      set_tests_properties(tool-lusdpreview-instancer-invisible-protos PROPERTIES
+                           PASS_REGULAR_EXPRESSION "instances=3 samples=96 "
+                           FAIL_REGULAR_EXPRESSION "skipped:;preview failed"
+                           TIMEOUT 60 LABELS "lusdpreview")
+    endif()
+    set(LIGHTUSD_PRESET_SCENE "" CACHE FILEPATH
+        "Scene for the fast-preset timing test (Caldera hotel_01.usd)")
+    if(TARGET lusdpreview)
+      add_test(NAME tool-lusdpreview-fast-preset-timing
+        COMMAND ${CMAKE_COMMAND} -E env "LIGHTUSD_PRESET_SCENE=${LIGHTUSD_PRESET_SCENE}"
+                ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tools/lusdpreview/check-preset-timing.py
+                "$<TARGET_FILE:lusdpreview>" "$<TARGET_FILE:lusdrender>")
+      set_tests_properties(tool-lusdpreview-fast-preset-timing PROPERTIES
+                           TIMEOUT 600 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+                           LABELS "lusdpreview;timing")
+    endif()
+    # Mixed scenes against checked-in Blender references (no Blender).
+    foreach(_gs_mix "" "--motion" "--camera-motion")
+      string(REPLACE "--" "-" _gs_mix_name "${_gs_mix}")
+      add_test(NAME tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+                "$<TARGET_FILE:lusdrender>" ${_gs_mix} --refs)
+      set_tests_properties(tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;cpu;gsplat")
+      foreach(_backend vk hip)
+        add_test(NAME tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}-${_backend}
+          COMMAND ${LUSDR_PYTHON}
+                  ${PROJECT_SOURCE_DIR}/tests/gsplat/check_mixed_scene.py
+                  "$<TARGET_FILE:lusdrender>" ${_gs_mix} --refs --backend ${_backend})
+        set_tests_properties(tool-lusdrender-gsplat-mixed-refs${_gs_mix_name}-${_backend}
+                             PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                             LABELS "lusdrender;gpu;gsplat" RESOURCE_LOCK lightusd_gpu_device)
+      endforeach()
+    endforeach()
+    # The variants against checked-in Blender references (tests/gsplat/refs):
+    # runs without Blender. Regenerate the references with
+    # check_cycles_compare.py LUSDRENDER variants --write-refs --lusdcat LUSDCAT.
+    add_test(NAME tool-lusdrender-gsplat-cycles-refs
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+              "$<TARGET_FILE:lusdrender>" refs)
+    set_tests_properties(tool-lusdrender-gsplat-cycles-refs PROPERTIES
+                         TIMEOUT 900 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;gsplat")
+    # The same checks through the LightRT Vulkan / HIP splat kernels (skip
+    # when the backend has no device).
+    foreach(_gs_backend vk hip)
+      add_test(NAME tool-lusdrender-gsplat-cycles-refs-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" refs --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-cycles-refs-${_gs_backend}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat")
+      add_test(NAME tool-lusdrender-gsplat-cycles-smoke-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" smoke --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-cycles-smoke-${_gs_backend}
+                           PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat")
+      add_test(NAME tool-lusdrender-gsplat-blender-roundtrip-${_gs_backend}
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py
+                "$<TARGET_FILE:lusdrender>" roundtrip --backend ${_gs_backend})
+      set_tests_properties(tool-lusdrender-gsplat-blender-roundtrip-${_gs_backend}
+                           PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+                           LABELS "lusdrender;gpu;gsplat;blender")
+    endforeach()
     add_test(
       NAME tool-lusdrender-sparse-volume-cpu
       COMMAND ${LUSDR_PYTHON}

@@ -44,6 +44,13 @@ lightusd-only files (no upstream counterpart — never overwrite):
 - `vk/shaders/compile_shaders.sh` — relocated next to the shaders (upstream keeps
   it under `scripts/`); its `SH` path is adjusted accordingly
 - `README.lightusd.md` (this file), `test_indexed_build.c`
+- `lightrt_c_gsplat.{c,h}`, `vk/shaders/trace_gsplat.{comp,spv.h}`,
+  `hip/trace_gsplat_hip.h`, `test_gsplat.c`: the 3D Gaussian splat primitive
+  (Blender Cycles kernel port, chunked under a device-memory budget). Its
+  entry points `lrt_vk_gsplat_trace` (`lightrt_c_vk.c`, plus the
+  `vk_buffer_create_cached` helper) and `lrt_hip_gsplat_trace`
+  (`lightrt_c_hip.c`) are lightusd additions in shared files. Keep them on a
+  re-sync.
 
 ## Imported / tracked files
 

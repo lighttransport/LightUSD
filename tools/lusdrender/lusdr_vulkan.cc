@@ -16,6 +16,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "light3d/math.h"
 #include "lusdr_camera.hh"
+#include "lusdr_gsplat_cycles.hh"
 #include "lightrt_c_vk.h"
 #include "lusdr_context.hh"
 #include "lusdr_gpu_common.hh"
@@ -41,7 +42,7 @@ size_t GpuTriangleCount(
 bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
                       const Options &opt, const GpuTriScene &geometry,
                       const lusdview::DrawScene &scene,
-                      const CameraFrame &camera, int height) {
+                      const CameraFrame &camera, int height, const MixedGsplatFrame* splats) {
   const size_t material_count = std::max<size_t>(scene.materials.size(), 1u);
   std::vector<float> materials(
       material_count * static_cast<size_t>(lusdview::kLightRtOpenPBRFloats),
@@ -194,6 +195,24 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   const light3d::Mat4 inv_vp = (proj * view).inverse();
   lrt_vk_material_path_desc desc{};
   desc.vertices = geometry.flat_attrs.data();
+  std::vector<float> shutter_matrices;
+  if (splats) {
+    const auto& data = splats->data;
+    desc.gs_records = data.splats.data(); desc.gs_record_floats = data.splats.size();
+    desc.gs_nodes = data.nodes.data(); desc.gs_node_words = data.nodes.size();
+    desc.gs_chunks = data.chunks.data(); desc.gs_chunk_words = data.chunks.size();
+    desc.gs_sh = data.shData.data(); desc.gs_sh_floats = data.shData.size();
+    for (const auto& key : splats->cameras) {
+      const light3d::Vec3 o{key.origin.x,key.origin.y,key.origin.z};
+      const light3d::Vec3 d{key.forward.x,key.forward.y,key.forward.z};
+      const light3d::Vec3 u{key.up.x,key.up.y,key.up.z};
+      auto m = (CameraProjectionZeroOne(key, float(width) / float(h)) *
+                light3d::lookAt(o, o + d, u)).inverse();
+      shutter_matrices.insert(shutter_matrices.end(), m.m, m.m + 16);
+    }
+    desc.gs_camera_matrices = shutter_matrices.data();
+    desc.gs_camera_count = uint32_t(splats->cameras.size());
+  }
   desc.vertex_stride_floats = 10u;
   desc.nverts = static_cast<uint32_t>(geometry.flat_attrs.size() / 10u);
   desc.indices = geometry.flat_idx.data();
@@ -236,6 +255,9 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   desc.clear_color[1] = opt.bg.y; desc.clear_color[2] = opt.bg.z;
   desc.exposure = opt.exposure; desc.width = static_cast<uint32_t>(width);
   desc.display_transform = opt.srgb_display_transform ? 1u : 0u;
+  const bool linear_exr = splats && opt.output.size() >= 4 &&
+                          opt.output.substr(opt.output.size() - 4) == ".exr";
+  if (linear_exr) desc.display_transform = 2u;
   desc.scene_frame = std::isfinite(opt.timecode)
                          ? static_cast<float>(opt.timecode) : 0.0f;
   desc.scene_time = desc.scene_frame / 24.0f;
@@ -265,10 +287,17 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   }
   lightusd::Image out;
   out.width = width; out.height = h; out.channels = 4; out.bpp = 8;
-  out.data.resize(rgba.size());
-  for (size_t i = 0; i < rgba.size(); ++i)
-    out.data[i] = static_cast<uint8_t>(std::lround(
-        std::max(0.0f, std::min(1.0f, rgba[i])) * 255.0f));
+  if (linear_exr) {
+    out.bpp = 32;
+    out.format = lightusd::Image::PixelFormat::Float;
+    out.data.resize(rgba.size() * sizeof(float));
+    std::memcpy(out.data.data(), rgba.data(), out.data.size());
+  } else {
+    out.data.resize(rgba.size());
+    for (size_t i = 0; i < rgba.size(); ++i)
+      out.data[i] = static_cast<uint8_t>(std::lround(
+          std::max(0.0f, std::min(1.0f, rgba[i])) * 255.0f));
+  }
   lightusd::image::WriteOption write_opt;
   write_opt.format = lightusd::image::WriteImageFormat::Autodetect;
   auto written = lightusd::image::WriteImageToFile(opt.output, out, write_opt);
@@ -280,6 +309,7 @@ bool RunMaterialXPath(lrt_vk_engine *vk, lrt_vk_rtx_scene *rtx,
   if (opt.stats) {
     std::cerr << "triangles: " << geometry.ntris << "\n";
   }
+  if (splats) std::cerr << "Vulkan Cycles mixed path: " << splats->data.splatCount << " splats\n";
   std::cerr << "backend: LightRT VK (ray_query, descriptor MaterialX, "
             << (opt.path_trace ? "production path" : "OpenPBR preview")
             << ", samples=" << desc.samples << ")\n";
@@ -578,7 +608,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<ResolvedMat> &materials,
                       const std::vector<Texture> &textures,
                       const LightCache &lights,
-                      const CameraFrame &camera, int height) {
+                      const CameraFrame &camera, int height, MixedGsplatFrame* splats) {
   const size_t total_triangles = GpuTriangleCount(geos);
   const size_t chunk_limit = opt.gpu_triangle_chunk;
   const bool want_material_path =
@@ -642,6 +672,13 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
       }
     }
   }
+  if (splats && (!use_hw_rt || !have_shared_scene || opt.force_vkr_fallback ||
+                 opt.gpu_shade == Options::GpuShadeMode::Cpu ||
+                 opt.aov != CaptureAov::Color || opt.diagnostic_emission)) {
+    std::cerr << "Vulkan mixed Cycles path requires colour output and the descriptor ray-query pipeline.\n";
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
   GpuTriScene s;
   auto t0 = std::chrono::steady_clock::now();
   if (!BuildGpuTriScene(base_colors, geos, opt.threads, !use_hw_rt, &s,
@@ -663,16 +700,19 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   const int h = height;
   const int spp = std::max(1, opt.samples);
   size_t nrays = 0;
-  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan", &nrays)) {
+  if (!ValidateGpuFrameSize(w, h, splats ? 1 : spp, "Vulkan", &nrays)) {
     if (s.scene) lrt_tri_scene_free(s.scene);
     lrt_vk_engine_destroy(vk);
     return false;
   }
   const uint32_t ray_count = uint32_t(nrays);
   std::vector<lrt_ray> rays;
-  GenerateCameraRays(camera, w, h, spp, &rays);
-
-  std::vector<lrt_hit> hits(nrays);
+  std::vector<lrt_hit> hits;
+  // The mixed descriptor shader generates its own stochastic camera rays.
+  if (!splats) {
+    GenerateCameraRays(camera, w, h, spp, &rays);
+    hits.resize(nrays);
+  }
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
   double as_build_s = 0.0, trace_s = 0.0;
@@ -690,12 +730,18 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     lrt_vk_rtx_scene *rtx = lrt_vk_rtx_scene_build_indexed(
         vk, s.flat_verts.data(), nverts, s.flat_idx.data(), s.ntris, &trerr);
     as_build_s = SecsSince(t0);
+    if (!rtx && splats) {
+      std::cerr << "Vulkan mixed Cycles ray-query scene build failed.\n";
+      if (s.scene) lrt_tri_scene_free(s.scene);
+      lrt_vk_engine_destroy(vk);
+      return false;
+    }
     if (rtx) {
       if (opt.aov == CaptureAov::Color && !opt.diagnostic_emission &&
           !force_vkr_fallback && have_shared_scene &&
           opt.gpu_shade != Options::GpuShadeMode::Cpu) {
         const bool material_path_ok =
-            RunMaterialXPath(vk, rtx, opt, s, shared_scene, camera, height);
+            RunMaterialXPath(vk, rtx, opt, s, shared_scene, camera, height, splats);
         if (material_path_ok) {
           lrt_vk_rtx_scene_free(vk, rtx);
           if (s.scene) lrt_tri_scene_free(s.scene);

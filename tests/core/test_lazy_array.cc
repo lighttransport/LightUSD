@@ -103,7 +103,72 @@ static void TestSharedDeferredBudget() {
   assert(*bools.as_bool_array() == std::vector<uint8_t>({0, 1, 1, 1, 1}));
 }
 
+static void TestLazyFloat3Range() {
+  for (auto type : {CrateTypeId::Vec3f, CrateTypeId::Vec3h}) {
+    std::string bytes(16, '\0');
+    const uint64_t count = 2300;
+    bytes.append(reinterpret_cast<const char*>(&count), sizeof(count));
+    for (size_t i = 0; i < count * 3; ++i) {
+      const float sample = float(i % 1024);
+      if (type == CrateTypeId::Vec3f)
+        bytes.append(reinterpret_cast<const char*>(&sample), sizeof(sample));
+      else {
+        const uint16_t half = lu_float_to_half(sample);
+        bytes.append(reinterpret_cast<const char*>(&half), sizeof(half));
+      }
+    }
+    // After parsing, paged input has only the private snapshot descriptor.
+#if defined(__unix__) || defined(__APPLE__)
+    const std::string dir = LazyArrayScratchDirectory();
+    const std::string path = dir + "/coeffs.bin";
+    {
+      std::ofstream file(path, std::ios::binary);
+      file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+      assert(file.good());
+    }
+    bool unavailable = false;
+    std::string error;
+    auto paged = CrateDataSource::PagedFileSnapshot(path, bytes.size(), dir,
+                                                    &unavailable, &error);
+    std::remove(path.c_str());
+    if (!unavailable) {
+      assert(paged);
+      paged->set_version(CrateVersion{0, 8, 0});
+      LazyArrayRef paged_ref;
+      assert(ProbeArrayBlock(paged, ValueRep::Make(type, 16, true), count,
+                             &paged_ref));
+      paged->ReleaseParseBuffer();
+      Value coeffs = Value::MakeLazyArray(paged_ref);
+      float tail[3];
+      assert(ReadLazyFloat3Range(coeffs, count - 1, 1, tail));
+      for (size_t j = 0; j < 3; ++j)
+        assert(tail[j] == float(((count - 1) * 3 + j) % 1024));
+    }
+    if (dir != "/tmp") ::rmdir(dir.c_str());
+#endif
+    auto source = CrateDataSource::Adopt(std::move(bytes), CrateVersion{0, 8, 0});
+    LazyArrayRef ref;
+    assert(ProbeArrayBlock(source, ValueRep::Make(type, 16, true), count, &ref));
+    Value value = Value::MakeLazyArray(ref);
+    std::vector<float> range((count - 1) * 3);
+    assert(ReadLazyFloat3Range(value, 1, count - 1, range.data()));
+    assert(ReadLazyFloat3Range(value, count, 0, nullptr));
+    assert(!ReadLazyFloat3Range(value, count, 1, range.data()));
+    assert(!ReadLazyFloat3Range(value, SIZE_MAX, 1, range.data()));
+    assert(!ReadLazyFloat3Range(value, 0, 1, nullptr));
+    LazyArrayRef truncated = ref;
+    --truncated.block_len;
+    assert(!ReadLazyFloat3Range(Value::MakeLazyArray(truncated), 0, 1, range.data()));
+    LazyArrayRef shifted = ref;
+    --shifted.block_offset;
+    assert(!ReadLazyFloat3Range(Value::MakeLazyArray(shifted), 0, 1, range.data()));
+    const auto full = value.as_float_array();
+    assert(full && std::equal(range.begin(), range.end(), full->begin() + 3));
+  }
+}
+
 int main() {
+  TestLazyFloat3Range();
   TestSharedDeferredBudget();
   // Crate 0.4 arrays have a rank word before the count. Check the eager
   // decoder, lazy count, borrowed view and text printer against explicit bytes.

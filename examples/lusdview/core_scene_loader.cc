@@ -7950,6 +7950,31 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
                                   PublicFloatArray* array) {
     return array && array->open(stage_owner.get(), time, primPath, property);
   };
+  // Cycles splat motion blur: shutter of the requested camera (frames
+  // relative to `time`).
+  double motionShutterOpen = 0.0, motionShutterClose = 0.0;
+  const int motionSteps = opts.gaussianKernelData ? opts.gaussianMotionSteps : 1;
+  if (motionSteps > 1 && !opts.gaussianMotionCamera.empty()) {
+    const lightusd_prim cam = lightusd_stage_prim_at_path(
+        stage_owner.get(), opts.gaussianMotionCamera.c_str());
+    auto readScalar = [&](const char *name, double *out) {
+      if (!lightusd_prim_is_valid(cam)) return;
+      lightusd::api::Value v;
+      lightusd_value_view view{};
+      if (lightusd_attr_eval(stage_owner.get(), cam, name, time, v.put()) != LIGHTUSD_OK ||
+          lightusd_value_get_view(v.get(), &view) != LIGHTUSD_OK || view.is_array ||
+          !view.data)
+        return;
+      if (view.storage == LIGHTUSD_COMP_FLOAT64) *out = *static_cast<const double *>(view.data);
+      else if (view.storage == LIGHTUSD_COMP_FLOAT32)
+        *out = *static_cast<const float *>(view.data);
+    };
+    readScalar("shutter:open", &motionShutterOpen);
+    readScalar("shutter:close", &motionShutterClose);
+    if (motionShutterClose > motionShutterOpen)
+      LOGI("Cycles gsplat motion blur: shutter [%g, %g] frames, %d steps",
+           motionShutterOpen, motionShutterClose, motionSteps);
+  }
   const auto renderTraversalAt = std::chrono::steady_clock::now();
   if (timing)
     LOGI("core timing: render-stage traversal %.3f s",
@@ -8076,10 +8101,76 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
                                    ? opts.pointChunkSamples
                                    : size_t(64) * 1024;
       const size_t shStride = (haveSh && sh.size() >= n * 3) ? sh.size() / n : 0;
+      // Cycles kernel data: SH only when the stride is a whole (d+1)^2 RGB set.
+      const bool kernelData = opts.gaussianKernelData &&
+                              rec.type_name != "ParticleField";
+      int kernelShDegree = 0;
+      size_t kernelShFloats = 0;
+      for (int d = 3; d >= 0 && kernelData && shStride; --d)
+        if (shStride >= size_t((d + 1) * (d + 1) * 3)) {
+          kernelShDegree = d;
+          kernelShFloats = size_t((d + 1) * (d + 1) * 3);
+          break;
+        }
       const bool haveQ = haveOrientations && orientations.size() >= n * 4;
       double world[16];
       if (!ReadPublicWorldTransform(stage_owner.get(), rec.path, time, world)) {
         std::memcpy(world, rec.world, sizeof(world));
+      }
+      // Motion keys across the camera shutter (Cycles motion steps).
+      struct MotionKey {
+        PublicFloatArray pos, scl, rot, opa, sh;
+        bool haveRot = false, haveOpa = false, haveSh = false;
+        float world[16];
+      };
+      std::vector<MotionKey> mkeys;
+      if (kernelData && motionSteps > 1 && motionShutterClose > motionShutterOpen) {
+        mkeys.resize(size_t(motionSteps));
+        for (int k = 0; k < motionSteps && !mkeys.empty(); ++k) {
+          const double tk = time + motionShutterOpen +
+                            (motionShutterClose - motionShutterOpen) * double(k) /
+                                double(motionSteps - 1);
+          MotionKey &mk = mkeys[size_t(k)];
+          double wk[16];
+          if (!ReadPublicWorldTransform(stage_owner.get(), rec.path, tk, wk))
+            std::memcpy(wk, world, sizeof(wk));
+          // USD's row-vector row-major matrix is the column-vector
+          // column-major one DrawPointsCPU::world expects: copy as is.
+          for (int e = 0; e < 16; ++e) mk.world[e] = float(wk[e]);
+          const bool ok =
+              mk.pos.open(stage_owner.get(), tk, rec.path, field.positions_property) &&
+              mk.scl.open(stage_owner.get(), tk, rec.path, field.scales_property) &&
+              mk.pos.size() == positions.size() && mk.scl.size() == scales.size();
+          mk.haveRot = haveQ && mk.rot.open(stage_owner.get(), tk, rec.path,
+                                            field.orientations_property) &&
+                       mk.rot.size() == orientations.size();
+          mk.haveOpa = haveOpacities && mk.opa.open(stage_owner.get(), tk, rec.path,
+                                                    field.opacities_property) &&
+                       mk.opa.size() == opacities.size();
+          mk.haveSh = kernelShFloats != 0 &&
+                      mk.sh.open(stage_owner.get(), tk, rec.path,
+                                 field.spherical_harmonics_property) &&
+                      mk.sh.size() == sh.size();
+          if (!ok) {
+            LOGW("GaussianSplat '%s': splat count changes across the shutter; "
+                 "no motion blur", rec.path.c_str());
+            mkeys.clear();
+          }
+        }
+        // Like Cycles, colour/opacity are interpolated only for deforming
+        // splats: without geometry motion, use the frame-time values.
+        auto sameArr = [](const PublicFloatArray &a, const PublicFloatArray &b) {
+          return a.size() == b.size() &&
+                 std::equal(a.begin(), a.begin() + a.size(), b.begin());
+        };
+        bool deforms = false;
+        for (size_t k = 1; k < mkeys.size() && !deforms; ++k) {
+          const MotionKey &a = mkeys[0], &b = mkeys[k];
+          deforms = std::memcmp(a.world, b.world, sizeof(a.world)) != 0 ||
+                    !sameArr(a.pos, b.pos) || !sameArr(a.scl, b.scl) ||
+                    (a.haveRot && b.haveRot && !sameArr(a.rot, b.rot));
+        }
+        if (!deforms) mkeys.clear();
       }
       size_t emitted = 0;
       for (size_t first = 0; first < n; first += chunkSize) {
@@ -8092,6 +8183,7 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
         dp.materialId = resolveMaterialPath(rec.material_path, std::string(),
                                             std::string());
         dp.gaussian = true;
+        dp.gaussianShDegree = kernelShDegree;
         dp.colorsInterpolation = 1;   // vertex/per-point
         dp.opacitiesInterpolation = 1;
         dp.points.reserve((last - first) * 3);
@@ -8135,6 +8227,44 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           dp.ellipseNormals.insert(
               dp.ellipseNormals.end(),
               {float(r.m[2][0]), float(r.m[2][1]), float(r.m[2][2])});
+          if (!mkeys.empty()) {
+            for (MotionKey &mk : mkeys) {
+              dp.gaussianMotionPositions.insert(
+                  dp.gaussianMotionPositions.end(),
+                  {mk.pos.begin()[i * 3], mk.pos.begin()[i * 3 + 1],
+                   mk.pos.begin()[i * 3 + 2]});
+              dp.gaussianMotionScales.insert(
+                  dp.gaussianMotionScales.end(),
+                  {std::fabs(mk.scl.begin()[i * 3]), std::fabs(mk.scl.begin()[i * 3 + 1]),
+                   std::fabs(mk.scl.begin()[i * 3 + 2])});
+              if (mk.haveRot)
+                dp.gaussianMotionRotations.insert(
+                    dp.gaussianMotionRotations.end(),
+                    {mk.rot.begin()[i * 4], mk.rot.begin()[i * 4 + 1],
+                     mk.rot.begin()[i * 4 + 2], mk.rot.begin()[i * 4 + 3]});
+              else
+                dp.gaussianMotionRotations.insert(dp.gaussianMotionRotations.end(),
+                                                  {q.real, q.imag[0], q.imag[1], q.imag[2]});
+              dp.gaussianMotionOpacities.push_back(
+                  mk.haveOpa ? (mk.opa.size() > 1 ? mk.opa.begin()[i] : mk.opa.begin()[0])
+                             : opacity);
+              const float *dcs = mk.haveSh ? mk.sh.begin() + i * shStride
+                                           : (kernelShFloats ? sh.begin() + i * shStride
+                                                             : nullptr);
+              dp.gaussianMotionDc.insert(dp.gaussianMotionDc.end(),
+                                         {dcs ? dcs[0] : 0.0f, dcs ? dcs[1] : 0.0f,
+                                          dcs ? dcs[2] : 0.0f});
+            }
+          }
+          if (kernelData) {
+            dp.gaussianScales.insert(dp.gaussianScales.end(), {sx, sy, sz});
+            dp.gaussianRotations.insert(dp.gaussianRotations.end(),
+                                        {q.real, q.imag[0], q.imag[1], q.imag[2]});
+            if (kernelShFloats != 0)
+              dp.gaussianSh.insert(dp.gaussianSh.end(),
+                                   sh.begin() + i * shStride,
+                                   sh.begin() + i * shStride + kernelShFloats);
+          }
           if (shStride != 0 && i * shStride + 2 < sh.size()) {
             const float* c = sh.begin() + i * shStride;
             dp.colors.insert(dp.colors.end(), {
@@ -8147,7 +8277,17 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           dp.opacities.push_back(opacity);
         }
         if (dp.points.empty()) continue;
-        RowMatrixToColumnMajor(world, dp.world);
+        // `world` is USD row-vector row-major, i.e. the column-vector
+        // column-major layout of DrawPointsCPU::world (translation at
+        // [12..14]); RowMatrixToColumnMajor would transpose it and drop the
+        // field's translation.
+        for (int e = 0; e < 16; ++e) dp.world[e] = float(world[e]);
+        if (!mkeys.empty()) {
+          dp.gaussianMotionKeys = int(mkeys.size());
+          for (const MotionKey &mk : mkeys)
+            dp.gaussianMotionWorld.insert(dp.gaussianMotionWorld.end(), mk.world,
+                                          mk.world + 16);
+        }
         addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin, dp.aabbMax);
         emitted += dp.points.size() / 3;
         draw->points.push_back(std::move(dp));
@@ -8277,7 +8417,10 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
           dp.opacities.insert(dp.opacities.end(), opacities.begin() + first,
                               opacities.begin() + last);
       }
-      RowMatrixToColumnMajor(rec.world, dp.world);
+      // rec.world (USD row-vector, row-major) already is the column-major
+      // column-vector layout of DrawPointsCPU::world; transposing it dropped
+      // the prim's translation.
+      for (int e = 0; e < 16; ++e) dp.world[e] = float(rec.world[e]);
       addCarrierBounds(rec.world, dp.points, dp.widths, dp.aabbMin,
                        dp.aabbMax);
       emitted += last - first;
@@ -8539,7 +8682,7 @@ bool LoadUSDViaCore(const std::string& path, const LoadOptions& opts,
       }
     }
     curveStrandsRetained += dc.vertexCounts.size();
-    RowMatrixToColumnMajor(rec.world, dc.world);
+    for (int e = 0; e < 16; ++e) dc.world[e] = float(rec.world[e]);  // as points
     addCarrierBounds(rec.world, dc.points, dc.widths, dc.aabbMin, dc.aabbMax);
     draw->curves.push_back(std::move(dc));
     publishAvailableNonMeshes();

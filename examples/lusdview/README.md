@@ -326,6 +326,50 @@ python3 examples/lusdview/render-motion.py \
     sample per pixel with flat Lambertian + hard-shadow shading. Headless
     `--cpu-rt --screenshot` renders a one-shot CPU image, matching the CUDA/HIP
     capture workflow and making the CPU path usable in display-free tests.
+  - **Gaussian splat kernel** (`--gsplat-kernel disc|cycles`, default `disc`).
+    `cycles` traces `ParticleField3DGaussianSplat` prims with the Blender 5.3
+    Cycles kernel (`src/tydra/gsplat-kernel.hh`): full 3D ellipsoids, a
+    stochastic opacity test, and SH emission up to degree 3, composited with
+    mesh hits by depth. It runs on every ray tracer: `--cpu-rt`, Vulkan
+    `--rt` (ray-query pipeline), `--hip` and `--cuda`. Without a ray tracer
+    flag it selects `--cpu-rt`. The GPU backends upload the LightRT splat
+    encoding (`BuildGsplatGpuData`, `rt_scene_build.hh`) into the Gaussian
+    point buffers, capped at `LUSDVIEW_GSPLAT_VRAM_MB` (default 4096). Vulkan's
+    compute-BVH fallback (cold pipeline cache) has no Cycles path; it warns,
+    and `LUSDVIEW_RT_ALLOW_COLD_COMPILE=1` compiles the ray-query pipeline.
+    It is noisy at one sample: average with `--rt-samples N` (CPU/HIP/CUDA) or
+    `--frames N` (Vulkan accumulation).
+    As in Cycles, splats are full geometry. They block shadow rays on every
+    tracer: CPU, Vulkan, HIP and CUDA, in preview and `--path-trace`. In
+    `--path-trace` they also appear on bounce rays, so their emission lights
+    nearby surfaces. With `--pt-max-depth 2` (Cycles' direct-light setting),
+    the Blender mixed fixtures (`tests/usda/gsplat-mixed-*.usda`) give
+    visibility 0.7219 vs Cycles 0.7218 and plane emission 0.0599 vs 0.0601 on
+    Vulkan and HIP (`tests/check_gsplat_mixed.py`). Preview lighting is not
+    Cycles' (ambient/headlight fill), so its splat shadows are checked for
+    presence only. The preview tracers have no bounce rays.
+    Motion blur: with `--camera` on a camera whose `shutter:open` <
+    `shutter:close`, splats are sampled at `--gsplat-motion-steps N`
+    (default 3) times across the shutter. Each sample (accumulated frame on
+    Vulkan, `--rt-samples`/`--pt-samples` sample elsewhere) gets a shutter time
+    that its shadow and bounce rays share. On the motion fixtures
+    (`tests/usda/gsplat-mixed-motion-*.usda`, use `--time 1`), the path tracer
+    matches Blender's 10x10 block maps at 0.0032 (0.0116 without blur) on
+    Vulkan and HIP.
+    Animated splat colour (per-key DC colour) is interpolated at each
+    sample's shutter time on every tracer. Camera motion (and mesh motion)
+    is rendered by the app in shutter segments (`--pt-motion-segments`, default
+    16 with Cycles splats); splats are interpolated within each segment so they
+    stay in step with the camera. Blender splat-only variants through
+    `--path-trace`: 1.20-1.24x the noise floor, including motion, camera motion
+    and animated colour (`tests/gsplat/check_cycles_compare.py variants
+    --lusdview`). Adaptive convergence (`--pt-variance`) only stops after
+    whole shutter-segment cycles, so the segments stay equally weighted.
+    `--background black|white` sets
+    the viewport/RT environment colour, now also honoured by the CPU, CUDA and
+    HIP tracers.
+    `--gsplat-colorspace srgb` decodes SH radiance as sRGB (Blender's
+    convention); USD's default is linear.
 - **Responsive, non-freezing UI**: USD parse → Tydra convert → DrawScene build
   run on a **worker thread** with a live progress modal; the GPU upload happens
   on the render thread when the worker finishes. The window stays interactive

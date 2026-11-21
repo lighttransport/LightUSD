@@ -1,4 +1,5 @@
 #version 460
+#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_scalar_block_layout : require
 
@@ -20,6 +21,18 @@ layout(binding=9, scalar) writeonly buffer Output { float outputPixels[]; };
 // bit 0 fan triangle (0: corners 0,1,2; 1: corners 0,2,3); 0xFFFFFFFF = none. A
 // one-entry 0xFFFFFFFF dummy means the scene has no Ptex material.
 layout(binding=10, scalar) readonly buffer PtexTri { uint ptexTri[]; };
+
+#ifdef LRT_PATH_GSPLAT
+layout(binding=11, scalar) readonly buffer GaussianRecords { float gsS[]; };
+layout(binding=12, scalar) readonly buffer GaussianNodes { uint gsN[]; };
+layout(binding=13, scalar) readonly buffer GaussianChunks { int gsC[]; };
+layout(binding=14, scalar) readonly buffer GaussianSH { float gsF[]; };
+layout(binding=15, scalar) readonly buffer ShutterCameras { mat4 gsCameras[]; };
+uint gsChunkCount() { return uint(gsC.length()) / 2u; }
+uint gsKeyCount() { return max(1u, floatBitsToUint(gsF[3])); }
+#include "gsplat_cycles.glsl"
+#endif
+
 
 layout(push_constant, scalar) uniform Push {
   mat4 invViewProj;
@@ -472,11 +485,34 @@ void main(){
     ndc.y=-ndc.y; // Output rows use top-left image coordinates.
     vec4 n=pc.invViewProj*vec4(ndc,0,1); n/=n.w;
     vec4 f=pc.invViewProj*vec4(ndc,1,1); f/=f.w;
+#ifdef LRT_PATH_GSPLAT
+    if (gsChunkCount() > 0u || gsCameras.length() > 1)
+      g_gsTime = (float(s) + rnd(seed)) / float(max(pc.frame.z, 1u));
+    if (gsCameras.length() > 1) {
+      float t = g_gsTime * float(gsCameras.length() - 1);
+      int k = min(int(t), gsCameras.length() - 2);
+      mat4 a = gsCameras[k], b = gsCameras[k + 1];
+      vec4 na = a * vec4(ndc,0,1), nb = b * vec4(ndc,0,1);
+      vec4 fa = a * vec4(ndc,1,1), fb = b * vec4(ndc,1,1);
+      n = mix(na / na.w, nb / nb.w, t - float(k));
+      f = mix(fa / fa.w, fb / fb.w, t - float(k));
+    }
+#endif
     vec3 o=n.xyz,d=normalize(f.xyz-n.xyz);
     float primaryLimit=length(f.xyz-n.xyz);
     vec3 beta=vec3(1),radiance=vec3(0),mediumExt=vec3(0),mediumSigmaS=vec3(0),mediumEmission=vec3(0);float mediumIor=1.0,mediumG=0.0,previousPdf=0.0;int heroChannel=-1;bool previousDelta=true;
     for(uint depth=0u;depth<max(pc.frame.w,1u);++depth){
-      Hit h;if(!traceClosest(o,d,1e-4,depth==0u?primaryLimit:1e30,h)){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);if(depth==0u)updatePtexFootprint(o,d,vec2(px));
+      Hit h;
+      float limit = depth == 0u ? primaryLimit : 1e30;
+      bool meshHit = traceClosest(o,d,1e-4,limit,h);
+#ifdef LRT_PATH_GSPLAT
+      if (gsChunkCount() > 0u) {
+        int splat;
+        traceCyclesSplats(o, d, meshHit ? h.t : limit, hashU(seed ^ depth), splat);
+        if (splat >= 0) { radiance += beta * cyclesSplatRadiance(splat, d); break; }
+      }
+#endif
+      if(!meshHit){float mis=previousDelta?1.0:powerHeuristic(previousPdf,environmentPdf());radiance+=beta*environmentRadiance(d,depth==0u)*mis;break;}setPtexHit(h);if(depth==0u)updatePtexFootprint(o,d,vec2(px));
       if(mediumIor>1.0001){float sigmaT=max(mediumExt.r,max(mediumExt.g,mediumExt.b)),scatterT=sigmaT>1e-6?-log(max(1.0-rnd(seed),1e-6))/sigmaT:1e30,segment=min(scatterT,h.t);vec3 transmittance=exp(-mediumExt*segment);radiance+=beta*mediumEmission*(vec3(1)-transmittance)/max(mediumExt,vec3(1e-6));beta*=transmittance;if(scatterT<h.t&&max(mediumSigmaS.r,max(mediumSigmaS.g,mediumSigmaS.b))>1e-6){vec3 sp=o+d*scatterT;beta*=mediumSigmaS/max(sigmaT,1e-6);if(pc.path.w>0u){float selectionPdf;uint li=sampleLightIndex(seed,selectionPdf);vec3 l,lr;float lightT,lightConditional;bool lightDelta;int targetTri;if(sampleDirectLight(li,sp,seed,l,lr,lightT,lightConditional,lightDelta,targetTri)){Hit sh;bool blocked=traceClosest(sp+l*1e-4,l,1e-4,lightT,sh),visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(visible){float phase=hgPhase(dot(d,l),mediumG),lightPdf=lightConditional*selectionPdf,mis=lightDelta?1.0:powerHeuristic(lightPdf,phase);radiance+=beta*lr*phase*mis/max(lightPdf,1e-8);}}}float phasePdf;d=sampleHg(d,mediumG,seed,phasePdf);o=sp+d*1e-4;previousPdf=phasePdf;previousDelta=false;continue;}}
       bool front=dot(h.n,-d)>=0.0;if(!front)h.n=-h.n; uint mb=h.mat*MAT_STRIDE;
       vec3 base=max(vec3(materials[mb],materials[mb+1u],materials[mb+2u])*materials[mb+3u],vec3(0));
@@ -656,7 +692,15 @@ void main(){
       // the (already exact) emissive.
       vec3 dbgDiffuseLit=vec3(0.0),dbgSpecLit=vec3(0.0);
       uint deltaCount=pc.path.w>0u?deltaLightCount():0u;for(uint dk=0u;pc.path.w>0u&&dk<=deltaCount;++dk){float selectionPdf=1.0;uint li=0u;if(dk<deltaCount)li=deltaLightIndex(dk);else{li=sampleStochIndex(seed,selectionPdf);if(selectionPdf<=0.0)break;}vec3 l,lr;float lightT,conditionalPdf;bool lightDelta;int targetTri;if(sampleDirectLight(li,h.p,seed,l,lr,lightT,conditionalPdf,lightDelta,targetTri)){float nl=max(dot(h.n,l),0.0);Hit sh;// The host marks the UsdAppUtilsFrameRecorder camera light
-        bool noShadow=int(round(lights[li*LIGHT_STRIDE+3u]))==5&&lights[li*LIGHT_STRIDE+14u]<-1.5;bool blocked=!noShadow&&traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
+        bool noShadow=int(round(lights[li*LIGHT_STRIDE+3u]))==5&&lights[li*LIGHT_STRIDE+14u]<-1.5;bool blocked=!noShadow&&traceClosest(h.p+h.n*1e-4,l,1e-4,lightT,sh);bool visible=!blocked||(targetTri>=0&&sh.prim==uint(targetTri));
+#ifdef LRT_PATH_GSPLAT
+        if (visible && !noShadow && gsChunkCount() > 0u) {
+          int splat;
+          traceCyclesSplats(h.p+h.n*1e-4, l, lightT, hashU(seed ^ li), splat);
+          visible = splat < 0;
+        }
+#endif
+        if(nl>0.0&&visible){float lightPdf=conditionalPdf*selectionPdf,bsdfPdf=(wd/max(ws,1e-6))*nl/PI+(wg/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation)+(wc/max(ws,1e-6))*ggxPdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation),mis=lightDelta?1.0:powerHeuristic(lightPdf,bsdfPdf);vec3 spec=ggxBrdf(h.n,h.tangent,view,l,rough,aniso,anisoRotation,f0,f90,preview);vec3 coat=ggxBrdf(h.n,h.tangent,view,l,coatRough,coatAniso,coatRotation,coatF0,vec3(1),preview)*coatWeight;vec3 litScale=beta*lr*nl*mis/max(lightPdf,1e-8);dbgDiffuseLit+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI);dbgSpecLit+=litScale*(spec+coat);radiance+=litScale*((diffuseColor+subsurfaceBrdf+sheen)/PI+spec+coat);}}}
       if(depth==0u&&pc.context.w>7.5&&pc.context.w<9.5){radiance=pc.context.w<8.5?dbgDiffuseLit:dbgSpecLit;beta=vec3(0.0);break;}
       float xi=rnd(seed)*max(ws,1e-6),side=1.0;
       if(xi<wt){if(heroChannel<0&&dispersion>0.0&&dispersionAbbe>0.0){heroChannel=min(int(rnd(seed)*3.0),2);beta*=heroChannel==0?vec3(3,0,0):(heroChannel==1?vec3(0,3,0):vec3(0,0,3));}float spectral=spectralIor(ior,dispersionAbbe,dispersion,heroChannel<0?1:heroChannel),targetIor=front?spectral:1.0,eta=mediumIor/targetIor;vec3 q=refract(d,h.n,eta);bool tir=length(q)<0.1;if(tir)q=reflect(d,h.n);else{mediumIor=targetIor;if(front){vec3 absorption=transmissionDepth>0.0?-log(clamp(transmissionColor,vec3(1e-6),vec3(1)))/transmissionDepth:vec3(0);mediumSigmaS=transmissionScatter+volumeAlbedo*volumeDensity;mediumExt=absorption+mediumSigmaS+max(vec3(1)-volumeAlbedo,vec3(0))*volumeDensity;mediumEmission=volumeEmission*volumeEmissionScale;mediumG=transmissionScatterG;}else{mediumExt=vec3(0);mediumSigmaS=vec3(0);mediumEmission=vec3(0);mediumG=0.0;}}d=normalize(q);beta*=interfaceTransmission/max(wt/ws,1e-6);side=tir?1.0:-1.0;previousDelta=true;previousPdf=0.0;}
@@ -674,6 +718,7 @@ void main(){
   // encode (colorCorrectionMode=sRGB), 0 = the filmic beauty curve.
   vec3 c=(pc.context.w>12.5&&pc.context.w<13.5)?sum  // ptex AOV: exact, unclamped ids
         :pc.context.w>0.5?clamp(sum,0.0,1.0)
+        :pc.context.z>1.5?avg
         :pc.context.z>0.5?linearToSrgb(avg)
         :tonemap(avg*exp2(pc.clearColor.w)); uint dst=(px.y*pc.frame.x+px.x)*4u; outputPixels[dst]=c.r;outputPixels[dst+1u]=c.g;outputPixels[dst+2u]=c.b;outputPixels[dst+3u]=1.0;
 }

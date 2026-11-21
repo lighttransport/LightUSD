@@ -19,6 +19,7 @@
 #include "reader/usda-reader.hh"
 #include "reader/usdc-reader.hh"
 #include "reader/usdz-reader.hh"
+#include "reader/ply-reader.hh"
 #include "c/lightusd-mtlx.h"
 #include "external/filesystem/include/ghc/filesystem.hpp"
 
@@ -33,6 +34,12 @@ namespace lightusd {
 namespace pcp {
 
 namespace {
+bool IsPLYIdentifier(const std::string& key) {
+  std::string package, entry;
+  return EndsWithNoCase(
+      AssetResolver::ParsePackagePath(key, &package, &entry) ? entry : key,
+      ".ply");
+}
 #if defined(LIGHTUSD_WITH_USDOBJ)
 tydra::import_asset::Options OBJOptions(const LayerLoadOptions& options) {
   tydra::import_asset::Options obj;
@@ -421,6 +428,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
   }
 
   std::string ext = ToLowerExt(resolved_path);
+  if (ext == "ply") return LoadPLYLayerFromFile(resolved_path, warn, err);
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (ext == "obj")
     return LoadOBJLayerFromFile(resolved_path, OBJOptions(options), warn, err);
@@ -1034,6 +1042,8 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (LooksLikeMtlxXML(data, size)) {
     return LoadLayerFromMtlxMemory(key, data, size, warn, err);
   }
+  if (IsPLYIdentifier(key))
+    return LoadPLYLayerFromMemory(key, data, size, warn, err);
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (IsOBJIdentifier(key))
     return LoadOBJLayerFromMemory(key, data, size, OBJOptions(options), warn, err);
@@ -1059,6 +1069,9 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     if (err) *err += "Empty layer buffer for: " + key + "\n";
     return nullptr;
   }
+  if (IsPLYIdentifier(key))
+    return LoadLayerFromMemory(key, reinterpret_cast<const uint8_t*>(data.data()),
+                                data.size(), warn, err, options);
 #if defined(LIGHTUSD_WITH_USDOBJ)
   if (IsOBJIdentifier(key))
     return LoadLayerFromMemory(key, reinterpret_cast<const uint8_t*>(data.data()),

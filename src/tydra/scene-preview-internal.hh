@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include "eval/attribute-eval.hh"
 #include "layer/layer.hh"
@@ -49,33 +53,139 @@ struct KeyHash {
 struct Accum {
   Sample representative;
   uint64_t rank = UINT64_MAX;
+  uint64_t order = 0;  // First insertion of this cell, preserved across coarsening.
+};
+// Open-addressing Key -> Accum map for the sampling grid (hot path: one
+// lookup per emitted sample). Entries are contiguous; emplace may relocate
+// them, so iterators are invalidated by emplace/reserve like std::vector.
+class CellMap {
+ public:
+  using value_type = std::pair<Key, Accum>;
+  using iterator = value_type*;
+  using const_iterator = const value_type*;
+  size_t size() const { return entries_.size(); }
+  bool empty() const { return entries_.empty(); }
+  iterator begin() { return entries_.data(); }
+  iterator end() { return entries_.data() + entries_.size(); }
+  const_iterator begin() const { return entries_.data(); }
+  const_iterator end() const { return entries_.data() + entries_.size(); }
+  iterator find(const Key& k) {
+    if (slots_.empty()) return end();
+    const size_t mask = slots_.size() - 1;
+    for (size_t i = Slot(k) & mask;; i = (i + 1) & mask) {
+      const uint32_t e = slots_[i];
+      if (!e) return end();
+      if (entries_[e - 1].first == k) return &entries_[e - 1];
+    }
+  }
+  std::pair<iterator, bool> emplace(const Key& k, const Accum& a) {
+    iterator it = find(k);
+    if (it != end()) return {it, false};
+    if ((entries_.size() + 1) * 4 > slots_.size() * 3)
+      Rebuild(std::max<size_t>(64, slots_.size() * 2));
+    entries_.emplace_back(k, a);
+    Place(entries_.size() - 1);
+    return {&entries_.back(), true};
+  }
+  void reserve(size_t n) {
+    entries_.reserve(n);
+    size_t want = 64;
+    while (want * 3 < n * 4) want *= 2;
+    if (want > slots_.size()) Rebuild(want);
+  }
+  void clear() {
+    entries_.clear();
+    slots_.clear();
+  }
+  void rehash(size_t) {
+    entries_.shrink_to_fit();
+    slots_.shrink_to_fit();
+  }
+  void swap(CellMap& o) {
+    entries_.swap(o.entries_);
+    slots_.swap(o.slots_);
+  }
+
+ private:
+  static size_t Slot(const Key& k) {
+    uint64_t h = KeyHash()(k);
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdull;
+    h ^= h >> 33;
+    return static_cast<size_t>(h);
+  }
+  void Place(size_t index) {
+    const size_t mask = slots_.size() - 1;
+    size_t i = Slot(entries_[index].first) & mask;
+    while (slots_[i]) i = (i + 1) & mask;
+    slots_[i] = static_cast<uint32_t>(index + 1);
+  }
+  void Rebuild(size_t n) {
+    slots_.assign(n, 0);
+    for (size_t e = 0; e < entries_.size(); ++e) Place(e);
+  }
+  std::vector<value_type> entries_;
+  std::vector<uint32_t> slots_;  // entry index + 1; 0 = empty
+};
+struct CellGrid {
+  static constexpr size_t kShards = 16;
+  std::array<CellMap, kShards> shards;
+  size_t count = 0;
+  uint64_t next_order = 0;
+
+  static size_t shardIndex(const Key& key) {
+    const uint64_t hash = KeyHash()(key);
+    return (hash ^ (hash >> 32)) % kShards;
+  }
+  size_t size() const { return count; }
+  void place(const Key& key, const Sample& sample, uint64_t rank) {
+    count += placeInShard(shards[shardIndex(key)], key, sample, rank, next_order++);
+  }
+  static bool placeInShard(CellMap& shard, const Key& key, const Sample& sample,
+                           uint64_t rank, uint64_t order) {
+    auto entry = shard.emplace(key, Accum{sample, rank, order});
+    if (!entry.second && rank < entry.first->second.rank) {
+      entry.first->second.representative = sample;
+      entry.first->second.rank = rank;
+    }
+    return entry.second;
+  }
 };
 struct Material {
   RenderScene scene;
   RenderMaterial value;
 };
 struct GeometryBatch;
+// Output of one mesh sampled off the main thread (see Build::drain_meshes).
+struct MeshJobOut {
+  std::vector<Sample> samples;
+  uint64_t meshes = 0;
+  std::string error;
+};
 struct Build {
   const ScenePreviewOptions& opts;
   ScenePreviewResult& result;
   fs::path directory;
-  RenderSceneConverter converter;
   TextureDecoder decoder;
   std::map<std::string, Material> materials;
   std::map<std::string, usd::PrimSpec> material_specs;
   std::map<std::string, std::shared_ptr<DecodedImage>> images;
-  std::set<std::string> failed_images;
+  std::set<std::pair<std::string, bool>> failed_images;
+  void appendTextureWarnings();
   std::set<std::string> dependencies;
   std::set<std::string> prototypes;
   std::set<std::string> point_prototypes;
   std::map<std::string, std::string> native_prototypes;
   std::map<std::string, std::array<double, 16>> point_prototype_local;
+  // Placement targets never traversed as prototypes (pruned, inactive or
+  // absent): they render nothing, as in USD; reported in the warning.
+  std::set<std::string> missing_prototypes;
   std::string resolve_prototype(std::string) const;
   std::map<std::string, uint64_t> pending_prototype_placements;
   std::ofstream placements;
   std::unordered_map<std::string, std::array<double, 16>> prototype_inverse;
   std::map<std::string, std::vector<Sample>> prototype_buffers;
-  std::unordered_map<Key, Accum, KeyHash> cells;
+  CellGrid cells;
   std::map<std::string, uint32_t> source_material_ids;
   std::vector<std::string> source_material_paths;
   std::map<uint64_t, std::array<double, 6>> source_bounds;
@@ -113,8 +223,34 @@ struct Build {
   bool finish_plan();
   bool consume(usd::pcp::ComposedBatch&);
   bool insert(const Sample&, bool filter_region = true);
+  // Insert with a precomputed grid key and rank (valid for cell_size).
+  bool place(const Sample&, const Key&, uint64_t rank);
+  // Parallel replay of top-level placements (see finish_placements).
+  struct TopPlacement {
+    std::string key;
+    std::array<double, 16> world;
+  };
+  bool replay_top_batch(std::vector<TopPlacement>* batch);
+  std::map<std::string, std::vector<Sample>> prototype_sample_cache;
+  size_t prototype_sample_cache_bytes = 0;
+  std::map<std::string, size_t> prototype_sample_counts;
+  // out is set only by drain_meshes worker threads: samples are
+  // buffered in *out instead of emitted, and shared result fields untouched.
   bool mesh(const usd::Stage&, const usd::UsdPrim&, const double*,
-            const std::vector<std::pair<std::string, std::array<double, 16>>>&);
+            const std::vector<std::pair<std::string, std::array<double, 16>>>&,
+            MeshJobOut* out = nullptr);
+  // Deferred renderable prims of the current batch, sampled in parallel and
+  // emitted in traversal order by drain_meshes().
+  struct MeshJob {
+    uint32_t prim = 0;
+    std::array<double, 16> world{};
+    std::vector<std::pair<std::string, std::array<double, 16>>> ancestors;
+  };
+  std::vector<MeshJob> mesh_jobs;
+  std::vector<std::string> pending_flushes;  // popped prototype ancestors
+  std::mutex shade_mutex;
+  bool parallel_meshes();
+  bool drain_meshes(const usd::Stage&);
   bool emit(const Sample&,
             const std::vector<std::pair<std::string, std::array<double, 16>>>&);
   bool replay(

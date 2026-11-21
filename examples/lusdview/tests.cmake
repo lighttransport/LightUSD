@@ -858,6 +858,169 @@ if(UNIX AND NOT APPLE AND TARGET lusdview)
                                     LABELS "lusdview")
 
     add_test(
+      NAME lusdview-cpu-gsplat-cycles
+      COMMAND ${LIGHTUSD_BASH_CMD}
+              "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-gsplat-cycles.sh"
+              "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}"
+    )
+    set_tests_properties(lusdview-cpu-gsplat-cycles
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                    LABELS "lusdview;cpu;gsplat")
+    # Mixed mesh + splat scene: splat shadows on every preview tracer, and
+    # Cycles-matching visibility/emission (incl. bounce light) on the path
+    # tracers. Skips without the device or numpy.
+    find_program(LUSDVIEW_GSPLAT_PYTHON NAMES python3 python)
+    if(LUSDVIEW_GSPLAT_PYTHON)
+      foreach(_gs_mixed cpu rt hip cuda pt-vk pt-sw pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-mixed-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed})
+        set_tests_properties(lusdview-gsplat-mixed-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      # Camera motion blur (app shutter segments).
+      foreach(_gs_mixed pt-vk pt-sw pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-mixed-cammotion-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed} cammotion)
+        set_tests_properties(lusdview-gsplat-mixed-cammotion-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      # Splat-only Blender variants (SH degrees, transforms, ortho, motion,
+      # camera motion, animated colour) through the viewer's path tracer.
+      if(TARGET lusdrender)
+        foreach(_gs_lv vk hip)
+          add_test(
+            NAME lusdview-gsplat-blender-variants-${_gs_lv}
+            COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                    "${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py"
+                    "$<TARGET_FILE:lusdrender>" variants
+                    --lusdview "$<TARGET_FILE:lusdview>" --lusdview-backend ${_gs_lv})
+          set_tests_properties(lusdview-gsplat-blender-variants-${_gs_lv}
+                               PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3600
+                                          LABELS "lusdview;gsplat;blender"
+                                          RESOURCE_LOCK lusdview_gpu)
+        endforeach()
+      endif()
+      # The same variants against the checked-in references (no Blender).
+      if(TARGET lusdrender)
+        foreach(_gs_lv vk sw hip)
+          add_test(
+            NAME lusdview-gsplat-refs-${_gs_lv}
+            COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                    "${PROJECT_SOURCE_DIR}/tests/gsplat/check_cycles_compare.py"
+                    "$<TARGET_FILE:lusdrender>" refs
+                    --lusdview "$<TARGET_FILE:lusdview>" --lusdview-backend ${_gs_lv})
+          set_tests_properties(lusdview-gsplat-refs-${_gs_lv}
+                               PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1800
+                                          LABELS "lusdview;gsplat;gpu"
+                                          RESOURCE_LOCK lusdview_gpu)
+        endforeach()
+      endif()
+      # inputs:shadow:enable = 0 also disables splat shadows (path tracers).
+      foreach(_gs_se pt-vk pt-hip pt-cuda)
+        add_test(
+          NAME lusdview-gsplat-shadow-enable-${_gs_se}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_shadow_enable.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_se})
+        set_tests_properties(lusdview-gsplat-shadow-enable-${_gs_se}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
+                                        LABELS "lusdview;gsplat;gpu"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      # The shared CUDA/HIP kernel (incl. Cycles splats) must compile for CUDA
+      # even on machines without an NVIDIA GPU (skips without nvcc).
+      add_test(NAME lusdview-cuda-kernel-compile
+        COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_cuda_kernel_compile.py"
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/raytracer_kernel_src.txt")
+      set_tests_properties(lusdview-cuda-kernel-compile PROPERTIES
+                           SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "lusdview;compile")
+      # --gsplat-kernel cycles compiles the ray-query path-tracing pipeline
+      # even from a cold cache (the compute-BVH fallback has no splat path).
+      add_test(NAME lusdview-vk-gsplat-cold-cache
+        COMMAND sh -c "d=\"$1\"; rm -rf \"$d\" && mkdir -p \"$d\" && LUSDVIEW_VK_PIPELINE_CACHE_DIR=\"$d\" \"$2\" --headless --path-trace --pt-samples 4 --size 64x36 --gsplat-kernel cycles --camera /World/Cam \"$3\""
+                lusdview-cold
+                "${CMAKE_CURRENT_BINARY_DIR}/vk-cold-cache"
+                "$<TARGET_FILE:lusdview>"
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-full.usda")
+      set_tests_properties(lusdview-vk-gsplat-cold-cache PROPERTIES
+                           PASS_REGULAR_EXPRESSION "Vulkan RT: Cycles gsplat kernel"
+                           FAIL_REGULAR_EXPRESSION "interactive preview shader;compute-BVH fallback"
+                           TIMEOUT 600 LABELS "lusdview;gsplat;vulkan")
+      # Scene Preview Preset menu path (LUSDVIEW_PREVIEW_PRESET_SWITCH drives
+      # the same request): re-convert at quality and reload.
+      add_test(NAME lusdview-preview-preset-switch
+        COMMAND ${CMAKE_COMMAND} -E env LUSDVIEW_PREVIEW_PRESET_SWITCH=quality
+                $<TARGET_FILE:lusdview> --headless --frames 600 --size 160x90
+                --preview-preset fast
+                --preview-cache-dir "${CMAKE_CURRENT_BINARY_DIR}/preview-preset-cache"
+                --preview-refresh
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-plain.usda")
+      set_tests_properties(lusdview-preview-preset-switch PROPERTIES
+                           PASS_REGULAR_EXPRESSION "scene preview: preset quality"
+                           TIMEOUT 300 LABELS "lusdview;preview")
+      # An authored camera shutter raises the default motion segments to 16,
+      # with or without splats.
+      add_test(NAME lusdview-shutter-motion-segments
+        COMMAND $<TARGET_FILE:lusdview> --headless --path-trace --pt-samples 4
+                --size 64x36 --camera /World/Cam --time 1
+                "${PROJECT_SOURCE_DIR}/tests/usda/gsplat-mixed-cammotion-plain.usda")
+      set_tests_properties(lusdview-shutter-motion-segments PROPERTIES
+                           PASS_REGULAR_EXPRESSION "shutter \\[-0.25, 0.25\\]: 16 motion segments"
+                           TIMEOUT 120 LABELS "lusdview;camera;gpu")
+      # Points and BasisCurves honour their parent transform (they used to be
+      # transposed, dropping the translation).
+      foreach(_pts_be cpu vk)
+        add_test(
+          NAME lusdview-points-xform-${_pts_be}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_points_xform.py"
+                  "$<TARGET_FILE:lusdview>" ${_pts_be})
+        set_tests_properties(lusdview-points-xform-${_pts_be}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
+                                        LABELS "lusdview;points")
+      endforeach()
+      # Motion blur (animated splats, camera shutter) on the path tracers.
+      foreach(_gs_mixed pt-vk pt-sw pt-hip pt-cuda cpu)
+        add_test(
+          NAME lusdview-gsplat-mixed-motion-${_gs_mixed}
+          COMMAND ${LUSDVIEW_GSPLAT_PYTHON}
+                  "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/check_gsplat_mixed.py"
+                  "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_mixed} motion)
+        set_tests_properties(lusdview-gsplat-mixed-motion-${_gs_mixed}
+                             PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                                        LABELS "lusdview;gsplat"
+                                        RESOURCE_LOCK lusdview_gpu)
+      endforeach()
+      set_property(TEST lusdview-gsplat-mixed-pt-sw
+                        lusdview-gsplat-mixed-cammotion-pt-sw
+                        lusdview-gsplat-mixed-motion-pt-sw
+                   APPEND PROPERTY LABELS vulkan)
+    endif()
+    # The same check on the GPU ray tracers (skip without a device/runtime).
+    foreach(_gs_backend rt hip cuda)
+      add_test(
+        NAME lusdview-${_gs_backend}-gsplat-cycles
+        COMMAND ${LIGHTUSD_BASH_CMD}
+                "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-cpu-gsplat-cycles.sh"
+                "$<TARGET_FILE:lusdview>" "${PROJECT_SOURCE_DIR}" ${_gs_backend})
+      set_tests_properties(lusdview-${_gs_backend}-gsplat-cycles
+                           PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
+                                      LABELS "lusdview;gpu;gsplat"
+                                      RESOURCE_LOCK lusdview_gpu)
+    endforeach()
+
+    add_test(
       NAME lusdview-vk-gaussian-chunks
       COMMAND ${LIGHTUSD_BASH_CMD}
               "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-vk-gaussian-chunks.sh"

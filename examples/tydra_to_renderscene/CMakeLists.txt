@@ -20,3 +20,12 @@ if(LIGHTUSD_BUILD_TESTS)
     -DAPP=$<TARGET_FILE:tydra_to_renderscene> -DROOT=${CMAKE_CURRENT_SOURCE_DIR}/../..
     -P ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra_to_renderscene/c-api-smoke.cmake)
 endif()
+if(LIGHTUSD_BUILD_TESTS)
+  # UsdGeomNurbsPatch tessellates into one RenderMesh (render-converter-generated.cc).
+  add_test(NAME core_render_scene_nurbs_patch
+    COMMAND $<TARGET_FILE:tydra_to_renderscene>
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../models/lusdview-nurbs-patch.usda)
+  set_tests_properties(core_render_scene_nurbs_patch PROPERTIES LABELS "core;tydra"
+    PASS_REGULAR_EXPRESSION "num_meshes: 1"
+    FAIL_REGULAR_EXPRESSION "Failed to convert")
+endif()

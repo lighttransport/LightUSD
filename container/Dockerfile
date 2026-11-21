@@ -35,6 +35,4 @@ ENV PATH="/home/ubuntu/.npm-global/bin:$PATH"
 # Ensure the installed binary is on the `PATH`
 ENV PATH="/home/ubuntu/.local/bin/:$PATH"
 
-RUN claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project /workspace
-
 #CMD ["claude"]

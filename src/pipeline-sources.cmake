@@ -87,6 +87,7 @@ set(LIGHTUSD_PIPELINE_SOURCES
     reader/usda-reader.cc
     reader/usdc-reader.cc
     reader/usdz-reader.cc
+    reader/ply-reader.cc
     schema/geom-mesh.cc
     schema/geom-xform.cc
     schema/usd-shade.cc

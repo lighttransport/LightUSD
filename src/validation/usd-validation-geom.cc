@@ -9,11 +9,13 @@
 #include "schema/schema-registry.hh"
 #include "schema/usd-skel.hh"
 #include "types/value-view.hh"
+#include "c/lightusd-core-c.h"  // lu_half_to_float
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <set>
@@ -795,6 +797,108 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
   }
 }
 
+// Decode a numeric array Value (half/float/double scalars, vectors or quats)
+// into floats. *lanes = components per element. False for other types.
+static bool DecodeParticleFloats(const Value &v, std::vector<float> *out,
+                                 size_t *lanes) {
+  if (!v.is_array() || v.is_block()) return false;
+  const size_t n = v.array_size();
+  size_t bytes = 0;
+  const uint8_t *data = v.view().raw_bytes(&bytes);
+  if (!data && n) return false;
+  size_t lanes_t;
+  bool is_half = false;
+  switch (v.type_id()) {
+    case TypeId::Half: is_half = true; lanes_t = 1; break;
+    case TypeId::Float: case TypeId::Double: lanes_t = 1; break;
+    case TypeId::Half2: is_half = true; lanes_t = 2; break;
+    case TypeId::Float2: case TypeId::Double2: lanes_t = 2; break;
+    case TypeId::Half3: case TypeId::Point3h: case TypeId::Vector3h:
+      is_half = true; lanes_t = 3; break;
+    case TypeId::Float3: case TypeId::Double3: case TypeId::Point3f:
+    case TypeId::Point3d: case TypeId::Vector3f: case TypeId::Vector3d:
+      lanes_t = 3; break;
+    case TypeId::Half4: case TypeId::Quath: is_half = true; lanes_t = 4; break;
+    case TypeId::Float4: case TypeId::Double4: case TypeId::Quatf:
+    case TypeId::Quatd: lanes_t = 4; break;
+    default: return false;
+  }
+  *lanes = lanes_t;
+  if (n == 0) { out->clear(); return true; }
+  // Element width from storage (half arrays may be stored widened).
+  const size_t esize = bytes / (n * lanes_t);
+  if (esize != 2 && esize != 4 && esize != 8) return false;
+  if (esize == 2 && !is_half) return false;
+  const size_t count = n * lanes_t;
+  out->resize(count);
+  for (size_t i = 0; i < count; i++) {
+    const uint8_t *e = data + i * esize;
+    if (esize == 2) {
+      uint16_t h; std::memcpy(&h, e, 2); (*out)[i] = lu_half_to_float(h);
+    } else if (esize == 4) {
+      std::memcpy(&(*out)[i], e, 4);
+    } else {
+      double d; std::memcpy(&d, e, 8); (*out)[i] = float(d);
+    }
+  }
+  return true;
+}
+
+// Per-value checks of one particle array value (default or one time sample).
+static void ValidateParticleValues(const std::string &prop, const Value &v,
+                                   const std::string &where_suffix,
+                                   const std::string &location,
+                                   USDValidationResult *result) {
+  std::vector<float> f;
+  size_t lanes = 1;
+  if (!DecodeParticleFloats(v, &f, &lanes) || lanes == 0) return;
+  const size_t n = f.size() / lanes;
+  size_t nonfinite = 0, bad = 0, zero = 0;
+  for (size_t i = 0; i < n; i++) {
+    const float *e = &f[i * lanes];
+    bool finite = true;
+    for (size_t k = 0; k < lanes; k++) finite = finite && std::isfinite(e[k]);
+    if (!finite) { nonfinite++; continue; }
+    if (prop.rfind("orientations", 0) == 0 && lanes == 4) {
+      const double len = std::sqrt(double(e[0]) * e[0] + double(e[1]) * e[1] +
+                                   double(e[2]) * e[2] + double(e[3]) * e[3]);
+      if (len < 1e-12) zero++;
+      else if (std::fabs(len - 1.0) > 1e-3) bad++;
+    } else if (prop.rfind("scales", 0) == 0) {
+      for (size_t k = 0; k < lanes; k++) if (!(e[k] > 0.0f)) { bad++; break; }
+    } else if (prop.rfind("opacities", 0) == 0) {
+      if (e[0] < 0.0f || e[0] > 1.0f) bad++;
+    }
+  }
+  const std::string loc = MakePropertyLocation(location, prop);
+  const std::string tag = where_suffix.empty() ? "" : " (" + where_suffix + ")";
+  if (nonfinite) {
+    AddError(result, "vol.particleField.nonFinite", loc,
+             prop + tag + " has " + std::to_string(nonfinite) +
+                 " elements with NaN/Inf components");
+  }
+  if (zero) {
+    AddError(result, "vol.particleField.orientation", loc,
+             prop + tag + " has " + std::to_string(zero) +
+                 " zero-length quaternions (no rotation is defined)");
+  }
+  if (bad) {
+    if (prop.rfind("orientations", 0) == 0) {
+      AddWarning(result, "vol.particleField.orientation", loc,
+                 prop + tag + " has " + std::to_string(bad) +
+                     " non-unit quaternions; renderers normalize them");
+    } else if (prop.rfind("scales", 0) == 0) {
+      AddWarning(result, "vol.particleField.scale", loc,
+                 prop + tag + " has " + std::to_string(bad) +
+                     " particles with a non-positive scale (never visible)");
+    } else {
+      AddWarning(result, "vol.particleField.opacity", loc,
+                 prop + tag + " has " + std::to_string(bad) +
+                     " opacities outside [0, 1]; renderers clamp them");
+    }
+  }
+}
+
 void ValidateParticleField(
     const PrimSpec &ps, const std::vector<AppliedSchema> &applied_schemas,
     const std::string &prim_location, USDValidationResult *result) {
@@ -830,6 +934,36 @@ void ValidateParticleField(
                "ParticleField has no applied kernel API");
   }
 
+  // Value checks on defaults and every time sample, and per-sample particle
+  // counts: motion-blurred splats (Cycles) need a constant count per prim.
+  static const char *kValueProps[] = {"positions",    "positionsh",
+                                      "orientations", "orientationsh",
+                                      "scales",       "scalesh",
+                                      "opacities",    "opacitiesh"};
+  for (const char *prop : kValueProps) {
+    if (const Value *v = GetAttrValue(ps, prop)) {
+      ValidateParticleValues(prop, *v, "", prim_location, result);
+    }
+    const auto *samples = GetTimeSamplesOf(ps, prop);
+    if (!samples) continue;
+    size_t first_count = 0;
+    bool have_first = false, varying = false;
+    for (const auto &smp : *samples) {
+      const Value *sv = ps.time_sample_value(smp.second);
+      if (!sv || sv->is_block() || !sv->is_array()) continue;
+      ValidateParticleValues(prop, *sv, "time " + std::to_string(smp.first),
+                             prim_location, result);
+      if (!have_first) { first_count = sv->array_size(); have_first = true; }
+      else if (sv->array_size() != first_count) varying = true;
+    }
+    if (varying) {
+      AddWarning(result, "vol.particleField.sampleCount",
+                 MakePropertyLocation(prim_location, prop),
+                 std::string(prop) + " time samples have differing element "
+                 "counts; motion blur interpolates only equal-count samples");
+    }
+  }
+
   size_t particle_count = 0;
   bool have_positions = GetArrayLengthProperty(ps, "positions", &particle_count);
   if (!have_positions) {
@@ -862,6 +996,12 @@ void ValidateParticleField(
   int64_t degree = 3;
   if (const Value *v = GetAttrValue(ps, "radiance:sphericalHarmonicsDegree")) {
     if (const int32_t *i = v->as_int()) degree = *i;
+  }
+  if (degree > 3) {
+    AddWarning(result, "vol.particleField.shDegree",
+               MakePropertyLocation(prim_location, "radiance:sphericalHarmonicsDegree"),
+               "spherical harmonics degree " + std::to_string(degree) +
+                   " exceeds 3; renderers evaluate at most degree 3");
   }
   if (degree < 0) {
     AddWarning(result, "vol.particleField.shDegree",

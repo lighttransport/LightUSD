@@ -708,7 +708,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
                           size_t maxInstances, std::string* err,
                           float displacementScale, BuildProgress* progress,
                           bool retainForRefit,
-                          uint32_t purposeVisibleMask) {
+                          uint32_t purposeVisibleMask, GsplatGpuData* packedSplats) {
   previewAlbedo_=std::any_of(scene.points.begin(),scene.points.end(),[](const DrawPointsCPU& points){return points.previewAlbedo;});
 
   if (!ctx_) { if (err) *err = "CUDA not initialized"; return false; }
@@ -752,6 +752,44 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   }
   // Keep an oversized analytic-point field on the host and page one BVH chunk
   // at trace time. The normal path still keeps all records resident for speed.
+  // --gsplat-kernel cycles: the point arrays carry the LightRT splat encoding
+  // (rt_scene_build.hh GsplatGpuData); the kernel sees pointCount < 0.
+  gsActive_ = false;
+  int gsChunkCount = 0;
+  if (gsplatCycles_) {
+    GsplatGpuData localSplats;
+    GsplatGpuData& gs = packedSplats ? *packedSplats : localSplats;
+    if (packedSplats ? gs.splatCount != 0 : BuildGsplatGpuData(scene.points, gsplatSrgb_, &gs)) {
+      if (gs.bytes() > GsplatGpuBudgetBytes()) {
+        if (packedSplats) {
+          if (err) *err = "packed Cycles splats exceed the GPU buffer budget";
+          return false;
+        }
+        std::fprintf(stderr,
+                     "CUDA Cycles gsplat buffers %.1f MiB exceed the %.1f MiB "
+                     "budget (LUSDVIEW_GSPLAT_VRAM_MB); splats not traced\n",
+                     double(gs.bytes()) / (1024.0 * 1024.0),
+                     double(GsplatGpuBudgetBytes()) / (1024.0 * 1024.0));
+      } else {
+        hs.pointCenters = std::move(gs.splats);
+        hs.pointMajorAxes = std::move(gs.shData);
+        hs.pointRadii.resize(gs.nodes.size());
+        std::memcpy(hs.pointRadii.data(), gs.nodes.data(),
+                    gs.nodes.size() * sizeof(uint32_t));
+        hs.pointOrder.assign(gs.chunks.begin(), gs.chunks.end());
+        hs.pointNormals.clear();
+        hs.pointColors.clear();
+        hs.pointBvh.clear();
+        hs.pointChunks.clear();
+        hs.pointCount = gs.splatCount;
+        gsChunkCount = int(gs.chunkCount) |
+                       int(std::min<uint32_t>(gs.nkeys, 64u) << 24);
+        gsActive_ = true;
+        std::fprintf(stderr, "CUDA Cycles gsplat kernel: %u splat(s) in %u chunk(s)\n",
+                     gs.splatCount, gs.chunkCount);
+      }
+    }
+  }
   const uint64_t gaussianBytes =
       uint64_t(hs.pointCenters.size()) * sizeof(float) +
       uint64_t(hs.pointMajorAxes.size()) * sizeof(float) +
@@ -776,7 +814,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
       if (freeBytes > kHeadroom) gaussianBudget = freeBytes - kHeadroom;
     }
   }
-  if (gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
+  if (!gsActive_ && gaussianBudget != 0 && gaussianBytes > gaussianBudget) {
     pointPaging_ = true;
     pointHost_.reset(new HostScene());
     pointHost_->pointCenters = std::move(hs.pointCenters);
@@ -878,6 +916,10 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
     if (!up(hs.pointOrder.data(), hs.pointOrder.size() * sizeof(int), &dPointOrder_)) return false;
     if (!up(hs.pointBvh.data(), hs.pointBvh.size() * sizeof(Node), &dPointBvh_)) return false;
     pointChunkCount_ = static_cast<int>(hs.pointChunks.size());
+    if (gsActive_) {
+      pointCount_ = -pointCount_;
+      pointChunkCount_ = gsChunkCount;
+    }
     if (!up(hs.pointChunks.data(), hs.pointChunks.size() * sizeof(PointBvhChunk),
             &dPointChunks_)) return false;
   }
@@ -1470,6 +1512,11 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.context[0] = sceneTime;
   cam.context[1] = sceneFrame;
   cam.context[2] = previewAlbedo_?1.0f:0.0f;
+  // Cycles splat shutter segment: 4 * segments + centre (-1 = whole shutter).
+  cam.context[3] = gsSegCenter_ >= 0.0f
+                       ? 4.0f * std::round(1.0f / std::max(gsSegWidth_, 1e-3f)) +
+                             std::min(gsSegCenter_, 0.999f)
+                       : -1.0f;
   cam.camPos[3] = exposure;
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }

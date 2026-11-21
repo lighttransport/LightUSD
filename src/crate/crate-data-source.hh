@@ -173,6 +173,8 @@ class CrateDataSource : public LazyArraySource {
   CrateVersion version() const override { return version_; }
   void DiscardRange(uint64_t offset, uint64_t length) const override;
 
+  bool ReadBytes(uint64_t offset, size_t length, void* dst) const override;
+
   /// Read `[offset, offset+length)` from the retained snapshot. Only valid for
   /// paged sources; returns false for every other backing (and on short read).
   bool ReadRange(uint64_t offset, size_t length,

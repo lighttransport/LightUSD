@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_control_flow_attributes : enable
@@ -160,6 +161,14 @@ vec3 linearToSrgb(vec3 c) {
   vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
+
+layout(binding=27, std430) readonly buffer GaussianRecords { float gsS[]; };
+layout(binding=28, std430) readonly buffer GaussianNodes { uint gsN[]; };
+layout(binding=29, std430) readonly buffer GaussianChunks { int gsC[]; };
+layout(binding=30, std430) readonly buffer GaussianSH { float gsF[]; };
+uint gsChunkCount() { return uint(gsC.length()) / 2u; }
+uint gsKeyCount() { return max(floatBitsToUint(gsF[3]), 1u); }
+#include "../../../../src/external/lightrt/vk/shaders/gsplat_cycles.glsl"
 
 vec3 mtlxCorrectSampleTransfer(vec3 c, int correction) {
   if (correction == 0) return c;
@@ -1011,7 +1020,7 @@ vec3 swLayerTransmissionTint(int iid, int tri) {
 void swRayForPixel(ivec2 px, ivec2 size, out vec3 origin, out vec3 dir) {
   float seed = float(px.x * 1973 + px.y * 9277) +
                float(pc.sampleIndex) * 26699.0;
-  vec2 jitter = pc.accumEnabled != 0u
+  vec2 jitter = (pc.accumEnabled & 1u) != 0u
                     ? vec2(fract(sin(seed) * 43758.5453),
                            fract(sin(seed * 1.37) * 22578.1459)) - 0.5
                     : vec2(0.0);
@@ -1802,6 +1811,12 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
 
 vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,
                     uint lightIndex, int flags) {
+  if (gsChunkCount() > 0u) {
+    int splat;
+    traceCyclesSplats(s.p + s.n * 1e-4, direction, maxT,
+                      swHash(pc.sampleIndex ^ lightIndex), splat);
+    if (splat >= 0) return vec3(0.0);
+  }
   float cursor = 1.0e-4;
   vec3 visibility = vec3(1.0);
   [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
@@ -1948,7 +1963,13 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   }
   [[dont_unroll]] for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
     int iid, tri; vec2 bc; bool front; float hitT;
-    if (!swTraceAccepted(ro, rd, 1.0e-4, 1.0e30, iid, tri, bc, front, hitT)) {
+    bool meshHit = swTraceAccepted(ro, rd, 1.0e-4, 1.0e30, iid, tri, bc, front, hitT);
+    if (!inSubsurface && gsChunkCount() > 0u) {
+      int splat;
+      traceCyclesSplats(ro, rd, meshHit ? hitT : 1e30, seed ^ bounce, splat);
+      if (splat >= 0) { result += throughput * cyclesSplatRadiance(splat, rd); break; }
+    }
+    if (!meshHit) {
       if (!inSubsurface) {
         float envPdf = swPtEnvironmentPdf(rd);
         result += throughput * swPtEnvironment(rd) *
@@ -2185,6 +2206,13 @@ void main() {
   vec3 origin, dir;
   swRayForPixel(px, size, origin, dir);
 
+  uint gsSeed = swHash(uint(px.x) + uint(px.y) * uint(size.x) + pc.sampleIndex * 26699u);
+  g_gsTime = float(gsSeed >> 8) / 16777216.0;
+  if ((pc.accumEnabled & 2u) != 0u) {
+    float center = float((pc.accumEnabled >> 2u) & 32767u) / 32767.0;
+    float width = float(pc.accumEnabled >> 17u) / 32767.0;
+    g_gsTime = clamp(center + width * (g_gsTime - 0.5), 0.0, 1.0);
+  }
   vec3 bgc = srgbToLinear(pc.clearColor.rgb);
   bgc = swDomeBackground(dir, bgc);
   vec3 outc = bgc;
@@ -2199,7 +2227,7 @@ void main() {
     uint rrDepth = min((pc.pathParams >> 8u) & 0xffu, depth);
     uint sssEvents = max((pc.pathParams >> 23u) & 0xffu, 1u);
     outc = swProductionPath(origin, dir, seed, depth, rrDepth, sssEvents);
-    if (pc.accumEnabled != 0u) {
+    if ((pc.accumEnabled & 1u) != 0u) {
       vec4 sum = imageLoad(accumImg, px);
       sum.rgb = pc.sampleIndex == 0u ? outc : sum.rgb + outc;
       sum.a = 1.0;
@@ -2236,6 +2264,14 @@ void main() {
     hitT = candidateT;
     haveHit = true;
     break;
+  }
+  if (gsChunkCount() > 0u) {
+    int splat;
+    traceCyclesSplats(origin, dir, haveHit ? hitT : 1e30, gsSeed, splat);
+    if (splat >= 0) {
+      outc = cyclesSplatRadiance(splat, dir);
+      haveHit = false;
+    }
   }
   if (haveHit) {
     Inst inst = insts[hitInst];
@@ -2717,6 +2753,11 @@ void main() {
       float visibility = 1.0;
       if (renderMode == 0 && (flags & 2) != 0) {
         vec3 shadowOrigin = hit + N * 1e-3;
+        if (gsChunkCount() > 0u) {
+          int splat;
+          traceCyclesSplats(shadowOrigin, L, maxShadowT, gsSeed ^ li, splat);
+          if (splat >= 0) visibility = 0.0;
+        }
         float cursor = 1e-3;
         int blendLayers = 0;
         [[dont_unroll]] for (int pass = 0; pass < 32 && visibility > 1e-3; ++pass) {
@@ -2929,7 +2970,7 @@ void main() {
     }
   }
 
-  if (pc.accumEnabled != 0u) {
+  if ((pc.accumEnabled & 1u) != 0u) {
     vec4 sum = imageLoad(accumImg, px);
     sum.rgb = pc.sampleIndex == 0u ? outc : sum.rgb + outc;
     sum.a = 1.0;

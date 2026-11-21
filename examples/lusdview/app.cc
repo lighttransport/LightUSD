@@ -2,6 +2,7 @@
 #include "viewer_document.hh"
 #include "public_stage_queries.hh"
 #include "app.hh"
+#include "resolver/asset-resolver.hh"
 
 #include <glad/glad.h>
 //
@@ -359,6 +360,23 @@ InteractiveCameraSample MakeInteractiveCameraSample(
 }
 
 }  // anonymous namespace
+
+// --gsplat-kernel cycles: tell every RT backend which shutter segment the
+// next render covers, so motion-blurred splats move in step with the
+// segment's camera/mesh pose (count <= 1 or a closed shutter = whole shutter).
+void App::setGsplatSegment(double frameTime, double sampleTime, uint32_t count) {
+  float center = -1.0f, width = 1.0f;
+  if (gsplatCycles_ && count > 1 && cameraShutter_.enabled() &&
+      cameraShutter_.width() > 0.0) {
+    center = static_cast<float>((sampleTime - (frameTime + cameraShutter_.open)) /
+                                cameraShutter_.width());
+    width = 1.0f / static_cast<float>(count);
+  }
+  cpuTracer_.setGsplatShutterSegment(center, width);
+  cudaTracer_.setGsplatShutterSegment(center, width);
+  hipTracer_.setGsplatShutterSegment(center, width);
+  if (renderer_) renderer_->setGsplatShutterSegment(center, width);
+}
 
 std::vector<int> App::selectedTextureSlots() const {
   std::vector<int> slots;
@@ -1456,7 +1474,9 @@ bool CompileLiveVulkanShader(const std::string& source,
   const std::string compilerCommand =
       ShellQuote(compiler) + " --target-env=vulkan1.2 "
       "-fshader-stage=compute" + variantDefines + " -I" +
-      ShellQuote(include) + " " +
+      ShellQuote(include) + " -I" +
+      ShellQuote(std::filesystem::path(LUSDVIEW_DEFAULT_VK_SHADER_SOURCE)
+                     .parent_path().string()) + " " +
       ShellQuote(source) + " -o " + ShellQuote(output) + " >" +
       ShellQuote(logPath) + " 2>&1";
   bool timedOut = false;
@@ -3096,6 +3116,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
           campose.projection == CameraProjection::Perspective);
       cameraShutter_.open = campose.shutterOpen;
       cameraShutter_.close = campose.shutterClose;
+      // Path tracing only: raster / RT previews keep their 2-segment contract.
+      if (cameraShutter_.enabled() && pathTrace_.enabled &&
+          !pathTrace_.motionSegmentsExplicit &&
+          pathTrace_.motionSegments < PathTraceSettings::kShutterMotionSegments) {
+        pathTrace_.motionSegments = PathTraceSettings::kShutterMotionSegments;
+        LOGI("camera: shutter [%g, %g]: %u motion segments",
+             cameraShutter_.open, cameraShutter_.close, pathTrace_.motionSegments);
+        gui_.setPathTraceSettings(pathTrace_);  // per-frame source of truth
+      }
       gui_.setCameraClippingPlanes(campose.clippingPlanes);
       if (campose.clippingPlanes.size() / 4 >
           static_cast<size_t>(RenderFrameParams::kMaxClippingPlanes)) {
@@ -4689,6 +4718,17 @@ void App::stepScenePreviewLods() {
           std::future_status::ready) {
     const bool cancelled = previewRefinementCancel_->load();
     auto refined = previewRefinement_.get();
+    const int presetDone = previewPresetInFlight_;
+    previewPresetInFlight_ = -1;
+    if (!cancelled && refined.first.success && refined.second.success &&
+        presetDone >= 0) {
+      previewRequest_.options = previewPresetOptions_;
+      previewRequest_.preset = presetDone;
+      previewRefinementTried_ = false;  // refine again at the new preset
+      LOGI("scene preview: preset %s, %llu samples",
+           presetDone == 0 ? "fast" : presetDone == 1 ? "standard" : "quality",
+           static_cast<unsigned long long>(refined.first.samples));
+    }
     if (!cancelled && refined.first.success && refined.second.success &&
         refined.second.root_path != previewLods_.root_path) {
       previewRequest_.result = std::move(refined.first);
@@ -4705,6 +4745,49 @@ void App::stepScenePreviewLods() {
     }
     if (!cancelled && !refined.first.success)
       LOGW("source refinement: %s", refined.first.error.c_str());
+  }
+  // GUI preset change: cancel any refinement, then re-convert the source at
+  // the new preset in the background (loaded by the handler above).
+  if (pendingPreviewPreset_ >= 0 && previewRequest_.enabled) {
+    if (previewRefinement_.valid()) {
+      if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+      return;  // collect the cancelled job next frame
+    }
+    previewPresetInFlight_ = pendingPreviewPreset_;
+    pendingPreviewPreset_ = -1;
+    previewRefinementTried_ = true;
+    previewRefinementCancel_ = std::make_shared<std::atomic<bool>>(false);
+    auto request = previewRequest_;
+    lightusd::tydra::ApplyScenePreviewPreset(
+        static_cast<lightusd::tydra::ScenePreviewPreset>(previewPresetInFlight_),
+        &request.options);
+    request.options.region_enabled = false;
+    request.options.base_preview_path.clear();
+    previewPresetOptions_ = request.options;
+    const auto cancel = previewRefinementCancel_;
+    LOGI("scene preview: converting at preset %d", previewPresetInFlight_);
+    previewRefinement_ = std::async(std::launch::async, [request, cancel]() mutable {
+      request.options.progress = [cancel](const std::string&, uint64_t) {
+        return !cancel->load();
+      };
+      lightusd::AssetResolver resolver;
+      auto result = lightusd::tydra::ConvertScenePreview(request.source, resolver,
+                                                         request.options);
+      lightusd::tydra::ScenePreviewLods lods;
+      if (result.success && !cancel->load()) {
+        if (request.direct_volume &&
+            request.options.kind == lightusd::tydra::ScenePreviewKind::Volume) {
+          lods.success = true;
+          lods.root_path = result.render_usd_path;
+          lods.cell_size = result.voxel_size;
+          lods.gpu_budget_bytes = request.options.gpu_budget_bytes;
+        } else {
+          lods = lightusd::tydra::BuildScenePreviewLods(result, request.options);
+        }
+      }
+      return PreviewRefinement{std::move(result), std::move(lods)};
+    });
+    return;
   }
   if (previewRequest_.enabled && previewRequest_.source_refinement &&
       !previewRefinementTried_ && !previewRefinement_.valid()) {
@@ -5703,6 +5786,7 @@ bool App::createAndInitRenderer(Backend backend, std::string* err) {
 #if defined(HAVE_VULKAN)
   else if (backend == Backend::Vulkan) {
     renderer_ = CreateVulkanRenderer();
+    renderer_->setGsplatKernel(gsplatCycles_, gsplatSrgb_);
   }
 #endif
 #if defined(HAVE_METAL)
@@ -6083,7 +6167,8 @@ bool App::renderHipViewport() {
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -6154,6 +6239,7 @@ bool App::renderHipViewport() {
       camera_, cameraLens_, draw_, coreStageSnapshot_.get(), cameraName_,
       animTime_, cameraShutter_, pathTrace_.motionSegments,
       pathTrace_.enabled ? hipPathAccum_.samples : 0u);
+  setGsplatSegment(animTime_, hipCameraSample.time, pathTrace_.motionSegments);
   OrbitCamera hipTraceCamera = hipCameraSample.camera;
   hipTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 hipTracePv =
@@ -6216,6 +6302,7 @@ bool App::renderHipViewport() {
               camera_, cameraLens_, draw_, coreStageSnapshot_.get(),
               cameraName_, animTime_, cameraShutter_,
               pathTrace_.motionSegments, hipPathAccum_.samples);
+      setGsplatSegment(animTime_, asyncCameraSample.time, pathTrace_.motionSegments);
       OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
       asyncTraceCamera.setAspect(static_cast<float>(w) /
                                  static_cast<float>(h));
@@ -6404,7 +6491,8 @@ bool App::renderCudaViewport() {
   const light3d::Mat4 pv = camera_.proj(/*zeroToOneDepth=*/true) * camera_.view();
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -6467,6 +6555,7 @@ bool App::renderCudaViewport() {
       camera_, cameraLens_, draw_, coreStageSnapshot_.get(), cameraName_,
       animTime_, cameraShutter_, pathTrace_.motionSegments,
       pathTrace_.enabled ? accum.samples : 0u);
+  setGsplatSegment(animTime_, cudaCameraSample.time, pathTrace_.motionSegments);
   OrbitCamera cudaTraceCamera = cudaCameraSample.camera;
   cudaTraceCamera.setAspect(static_cast<float>(w) / static_cast<float>(h));
   const light3d::Mat4 cudaTracePv =
@@ -6524,6 +6613,7 @@ bool App::renderCudaViewport() {
               camera_, cameraLens_, draw_, coreStageSnapshot_.get(),
               cameraName_, animTime_, cameraShutter_,
               pathTrace_.motionSegments, accum.samples);
+      setGsplatSegment(animTime_, asyncCameraSample.time, pathTrace_.motionSegments);
       OrbitCamera asyncTraceCamera = asyncCameraSample.camera;
       asyncTraceCamera.setAspect(static_cast<float>(w) /
                                  static_cast<float>(h));
@@ -6683,7 +6773,8 @@ bool App::renderCpuViewport() {
   const float camPos[3] = {eye.x, eye.y, eye.z};
   float lightDir[3];
   CopyPreviewLightDir(draw_, lightDir);
-  const float clear[3] = {0.12f, 0.12f, 0.13f};
+  const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
   float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -7345,6 +7436,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #if defined(HAVE_VULKAN)
     else {
       renderer_ = CreateVulkanRenderer();
+      renderer_->setGsplatKernel(gsplatCycles_, gsplatSrgb_);
     }
 #endif
     if (!renderer_) {
@@ -7968,6 +8060,23 @@ int App::run(const std::string& initialFile, int maxFrames,
     const bool hasTechniqueRequest = gui_.hasTechniqueRequest();
     const RenderTechnique requestedTechnique = gui_.requestedTechnique();
     const bool hasCudaDeviceRequest = gui_.hasCudaDeviceRequest();
+    int presetReq = gui_.takeScenePreviewPresetRequest();
+    // Test hook: LUSDVIEW_PREVIEW_PRESET_SWITCH=fast|standard|quality requests
+    // one preset change after the first load, as the GUI menu would.
+    static bool presetSwitchEnvDone = false;
+    if (!presetSwitchEnvDone && loaded_.ok && !loadActive_) {
+      presetSwitchEnvDone = true;
+      lightusd::tydra::ScenePreviewPreset p;
+      if (const char* env = std::getenv("LUSDVIEW_PREVIEW_PRESET_SWITCH"))
+        if (lightusd::tydra::ParseScenePreviewPreset(env, &p))
+          presetReq = static_cast<int>(p);
+    }
+    if (presetReq >= 0 && previewRequest_.enabled && !previewRequest_.native_volume)
+      pendingPreviewPreset_ = presetReq;
+    gui_.setScenePreviewPresetState(
+        previewRequest_.enabled && !previewRequest_.native_volume,
+        previewRequest_.preset,
+        pendingPreviewPreset_ >= 0 || previewPresetInFlight_ >= 0);
     const bool hasHipDeviceRequest = gui_.hasHipDeviceRequest();
     const bool hasCudaRtBackendRequest = gui_.hasCudaRtBackendRequest();
     const CudaRtBackend requestedCudaRtBackend =
@@ -8213,6 +8322,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       }
       const uint32_t segment = accum.nextSegment % accum.segmentCount;
       const double sampleTime = vulkanRtMotion.sampleTime(segment);
+      setGsplatSegment(vulkanRtMotion.frameTime, sampleTime, accum.segmentCount);
       CoreCameraPose samplePose;
       if (FindCameraPoseAtTime(
               coreStageSnapshot_.get(),
@@ -8230,6 +8340,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       vulkanRtMotionFrame = true;
     } else {
       vulkanRtMotionAccum_.reset();
+      setGsplatSegment(0.0, 0.0, 0);
       gui_.setRtTemporalAccumulation(false, false);
     }
 
@@ -8800,10 +8911,19 @@ int App::run(const std::string& initialFile, int maxFrames,
       const uint32_t accepted =
           renderer_ ? renderer_->rayTracingAccumulatedSamples() : 0u;
       fixedFrameBudgetReached = accepted >= pathTrace_.targetSamples;
-      const uint32_t convergenceInterval =
-          std::max(8u, pathTrace_.minSamples / 4u);
+      // Shutter motion is rendered as one segment per accepted sample
+      // (round robin). Converging mid-cycle would weight the segments
+      // unequally and skew the motion blur, so only test (and stop) after
+      // whole cycles.
+      const uint32_t shutterSegments =
+          cameraShutter_.enabled() && !cameraName_.empty()
+              ? std::max(1u, pathTrace_.motionSegments) : 1u;
+      uint32_t convergenceInterval = std::max(8u, pathTrace_.minSamples / 4u);
+      convergenceInterval =
+          (convergenceInterval + shutterSegments - 1u) / shutterSegments *
+          shutterSegments;
       if (!fixedFrameBudgetReached && pathTrace_.varianceThreshold > 0.0f &&
-          accepted >= pathTrace_.minSamples &&
+          accepted >= pathTrace_.minSamples && accepted % shutterSegments == 0u &&
           accepted >= pathConvergenceLastSample + convergenceInterval) {
         std::vector<float> current;
         int convergenceW = 0, convergenceH = 0;
@@ -9006,7 +9126,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -9029,6 +9150,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < cudaMotionSamples;
            ++sampleIndex) {
         const double sampleTime = cudaMotion.sampleTime(sampleIndex);
+        setGsplatSegment(cudaMotion.frameTime, sampleTime, cudaMotionSamples);
         if (sampleIndex > 0) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
@@ -9210,7 +9332,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0}, sceneExtent[3] = {1, 1, 1};
@@ -9233,6 +9356,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < hipMotionSamples;
            ++sampleIndex) {
         const double sampleTime = hipMotion.sampleTime(sampleIndex);
+        setGsplatSegment(hipMotion.frameTime, sampleTime, hipMotionSamples);
         if (sampleIndex > 0) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);
@@ -9375,7 +9499,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       camera_.setAspect(static_cast<float>(w) / static_cast<float>(h));
       float lightDir[3];
       CopyPreviewLightDir(draw_, lightDir);
-      const float clear[3] = {0.12f, 0.12f, 0.13f};
+      const float clear[3] = {gui_.clearColorRgb()[0], gui_.clearColorRgb()[1],
+                           gui_.clearColorRgb()[2]};  // viewport background
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
       float sceneMin[3] = {0, 0, 0};
@@ -9408,6 +9533,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       for (uint32_t sampleIndex = 0; sampleIndex < motionSamples;
            ++sampleIndex) {
         const double sampleTime = cpuMotion.sampleTime(sampleIndex);
+        setGsplatSegment(cpuMotion.frameTime, sampleTime, motionSamples);
         if (coreStageSnapshot_) {
           restoreCoreDrawRestPose();
           UpdateCoreAnimatedMeshWorlds(animatedStage(), &draw_, sampleTime);

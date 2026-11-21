@@ -3,6 +3,7 @@
 //
 // LightUSD - High-level API Implementation
 
+#include "reader/ply-reader.hh"
 #include "load-usd.hh"
 #include "core/native-io.hh"
 #include "load-usd-internal.hh"
@@ -15,6 +16,8 @@
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
 #include "layer/asset-anchor.hh"
+#include <cctype>
+#include <cstring>
 #include <algorithm>
 #include <memory>
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -163,6 +166,17 @@ bool LoadUSD(const std::string& filename, Stage* stage,
   }
 
   if (!::lightusd::NativeIOAvailable(err)) return false;
+
+  if (filename.size() > 4) {
+    std::string ext = filename.substr(filename.size() - 4);
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (ext == ".ply") {
+      auto layer = LoadPLYLayerFromFile(filename, warn, err);
+      if (!layer) return false;
+      stage->SetRootLayer(std::move(*layer));
+      return true;
+    }
+  }
 
   if (AssetResolver::IsPackagePath(filename)) {
     AssetResolver resolver;
@@ -493,6 +507,14 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
   if (!data || size == 0) {
     if (err) *err = "input buffer is empty";
     return false;
+  }
+  // 3D Gaussian splat PLY (usdPly-style reader): one ParticleField prim.
+  if (size >= 4 && std::memcmp(data, "ply", 3) == 0 &&
+      (data[3] == '\n' || data[3] == '\r')) {
+    auto layer = LoadPLYLayerFromMemory("<memory>.ply", data, size, warn, err);
+    if (!layer) return false;
+    stage->SetRootLayer(std::move(*layer));
+    return true;
   }
   if (!options.limits.valid()) {
     if (err) *err = "invalid resource limits: zero is not unlimited";

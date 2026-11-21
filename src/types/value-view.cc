@@ -10,6 +10,7 @@
 #include "crate/lazy-array.hh"
 #include "crate/crate-data-source.hh"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 
@@ -95,6 +96,46 @@ bool FinishFloatBackedView(const Value& value, ArrayView<float>* out) {
 }
 
 }  // namespace
+
+bool ReadLazyFloat3Range(const Value& value, size_t first, size_t count,
+                         float* output) {
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->is_compressed ||
+      ref->element_count != value.array_size() ||
+      ref->element_count > ref->max_elements ||
+      first > ref->element_count || count > ref->element_count - first ||
+      (count && !output)) return false;
+  const bool half = ref->crate_type == CrateTypeId::Vec3h;
+  if (!half && ref->crate_type != CrateTypeId::Vec3f) return false;
+  if (ref->rep.type_id() != ref->crate_type || ref->rep.is_compressed() ||
+      ref->block_offset != ref->rep.payload() ||
+      GetComponentCount(value.type_id()) != 3 ||
+      ScalarComponent(value.type_id()) != (half ? TypeId::Half : TypeId::Float))
+    return false;
+  if (!ref->block_offset && !ref->rep.payload())
+    return ref->element_count == 0 && ref->block_len == 0;
+  const size_t stride = half ? 6 : 12;
+  const uint64_t header = CrateArrayCountHeaderBytes(ref->source->version());
+  if (ref->src_elem_stride != stride || ref->block_len < header ||
+      ref->element_count > (ref->block_len - header) / stride ||
+      ref->block_offset > ref->source->size() ||
+      ref->block_len > ref->source->size() - ref->block_offset ||
+      count > SIZE_MAX / (3 * sizeof(float))) return false;
+  uint64_t offset = ref->block_offset + header + first * uint64_t(stride);
+  const uint16_t endian = 1;
+  if (*reinterpret_cast<const uint8_t*>(&endian) != 1) return false;
+  if (!count) return true;
+  if (!half) return ref->source->ReadBytes(offset, count * stride, output);
+  uint16_t words[3 * 1024];
+  while (count) {
+    const size_t n = std::min(count, size_t(1024));
+    if (!ref->source->ReadBytes(offset, n * stride, words)) return false;
+    for (size_t j = 0; j < n * 3; ++j) *output++ = lu_half_to_float(words[j]);
+    offset += n * stride;
+    count -= n;
+  }
+  return true;
+}
 
 bool CanBorrowLazyFlat(const Value& value) {
   return CanBorrowLazyFlat(value.view());

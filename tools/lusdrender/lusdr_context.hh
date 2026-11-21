@@ -17,6 +17,8 @@
 
 namespace lusdr {
 
+struct MixedGsplatFrame;
+
 struct RenderContext {
   lightusd::Stage stage;  // keeps the lazy point/index arrays alive
   // Loader used by procedural/value-clip curves. It is populated while the
@@ -351,7 +353,8 @@ bool RunVulkanLightRT(const Options &opt,
                       const std::vector<ResolvedMat> &materials,
                       const std::vector<Texture> &textures,
                       const LightCache &lights,
-                      const CameraFrame &camera, int height);
+                      const CameraFrame &camera, int height,
+                      MixedGsplatFrame* splats = nullptr);
 bool RunVulkanGaussianLightRT(const Options &opt, DirectScene *direct,
                               const CameraFrame &camera, int height);
 #endif
@@ -374,7 +377,8 @@ bool RunHipSharedRT(const Options &opt,
                     const std::vector<ResolvedMat> &materials,
                     const std::vector<Texture> &textures,
                     const LightCache &lights,
-                    const CameraFrame &camera, int height);
+                    const CameraFrame &camera, int height,
+                      MixedGsplatFrame* splats = nullptr);
 bool RunHipGaussianLightRT(const Options &opt, DirectScene *direct,
                            const CameraFrame &camera, int height);
 #endif
@@ -417,9 +421,19 @@ bool ReadFloatArrayViewLazy(
     const lightusd::UsdPrim &prim, const char *name, double time,
     lightusd::tydra::ValueArrayRead<float> *out);
 
-// Large compressed SH payloads are optional for preview: only the DC RGB
-// coefficient is consumed, so avoid materializing an oversized array.
-bool AllowGaussianSHDecode(const lightusd::UsdPrim &prim);
+// Sequential access to DC coefficients in the preview renderer.
+class GaussianDcReader {
+ public:
+  GaussianDcReader(const lightusd::UsdPrim& prim, const std::string& name,
+                   double time, size_t particles);
+  const float* get(size_t particle);
+
+ private:
+  const lightusd::Value* ranged_ = nullptr;
+  lightusd::tydra::ValueArrayRead<float> full_;
+  std::vector<float> window_;
+  size_t stride_ = 0, first_ = 0, elements_ = 0;
+};
 
 std::vector<int32_t> ReadIntArrayLazy(const lightusd::UsdPrim &prim,
                                       const char *name, double time);

@@ -8,6 +8,7 @@
 // retaining the deliberately simple CPU fallback.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -17,6 +18,7 @@
 #include "rt_camera.hh"
 #include "rt_scene_build.hh"  // HostScene, BuildHostScene, BuildProgress
 #include "ptex-sample.hh"     // streamed per-face PTex pages
+#include "tydra/gsplat-tracer.hh"  // Cycles splat kernel (--gsplat-kernel cycles)
 
 typedef struct lrt_tri_scene lrt_tri_scene;  // src/external/lightrt/lightrt_c_tri.h
 typedef struct lrt_tlas lrt_tlas;
@@ -36,6 +38,13 @@ class CpuRayTracer {
   // with CudaRayTracer/HipRayTracer so App's dispatch code is uniform.
   bool init(std::string* /*err*/) { return true; }
   void setTextureBudgetBytes(size_t bytes) { textureBudgetBytes_ = bytes; }
+  // --gsplat-kernel cycles: trace Gaussian carriers (which must carry
+  // LoadOptions::gaussianKernelData) with the Blender Cycles kernel instead
+  // of triangle surflets. `srgb` treats SH radiance as sRGB-encoded.
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
 
   // Flatten `scene` (BuildHostScene) and build a BVH over the result. Replaces
   // any previously built scene. See CudaRayTracer::build for the parameter
@@ -97,6 +106,57 @@ class CpuRayTracer {
   void freeScene();
 
   HostScene hs_;             // retained (unlike CUDA/HIP, which discard it after device upload)
+  // --gsplat-kernel cycles: LightRT splat scene (motion keys across the camera
+  // shutter) + the render-time tracer for SH radiance.
+  struct CyclesSplats {
+    GsplatKeys keys;
+    std::shared_ptr<lrt_gsplat_scene> scene;
+    void Clear() { keys = GsplatKeys(); scene.reset(); }
+    bool empty() const { return !scene; }
+    size_t size() const { return keys.count; }
+    bool motion() const { return keys.nkeys > 1; }
+    bool Trace(lightusd::gsplat::Vec3 ro, lightusd::gsplat::Vec3 rd, float tmin,
+               float tmax, uint32_t seed,
+               lightusd::gsplat::GSplatTracer::Hit* hit, float time) const {
+      lrt_ray r{};
+      r.org[0] = ro.x; r.org[1] = ro.y; r.org[2] = ro.z; r.tmin = tmin;
+      r.dir[0] = rd.x; r.dir[1] = rd.y; r.dir[2] = rd.z; r.tmax = tmax;
+      lrt_hit h;
+      if (!lrt_gsplat_intersect1_time(scene.get(), &r, time, seed, &h)) return false;
+      hit->t = h.t;
+      hit->index = h.prim_id;
+      return true;
+    }
+    lightusd::gsplat::Vec3 Radiance(const lightusd::gsplat::GSplatTracer::Hit& h,
+                                    lightusd::gsplat::Vec3 rd,
+                                    lightusd::gsplat::GSplatColorSpace cs,
+                                    float time) const {
+      if (keys.dc.empty() || keys.nkeys < 2) return keys.center->Radiance(h, rd, cs);
+      // Animated DC colour interpolated at the sample's shutter time.
+      const uint32_t K = keys.nkeys;
+      float f = std::min(std::max(time, 0.0f), 1.0f) * float(K - 1);
+      const uint32_t st = std::min(uint32_t(f), K - 2);
+      const float t = f - float(st);
+      float dc[3];
+      for (int c = 0; c < 3; ++c)
+        dc[c] = keys.dc[(size_t(st) * keys.count + h.index) * 3 + c] * (1.0f - t) +
+                keys.dc[(size_t(st + 1) * keys.count + h.index) * 3 + c] * t;
+      return keys.center->Radiance(h, rd, cs, dc);
+    }
+  };
+  CyclesSplats gsplats_;
+  // App shutter segment (normalized centre, width); centre < 0 = whole shutter.
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};
+
+ public:
+  void setGsplatShutterSegment(float center, float width) {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
+
+ private:
+  bool gsplatCycles_{false};
+  bool gsplatSrgb_{false};
   // lightrt_c has no instance/TLAS traversal API. These are the expanded
   // world-space hit attributes corresponding one-to-one with scene_ triangles.
   std::vector<float> cpuTris_, cpuNrms_, cpuUv_, cpuUv1_, cpuTan_, cpuBin_;

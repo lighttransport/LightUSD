@@ -658,16 +658,13 @@ auto Cache::Impl::MergeSources(Impl &w, size_t seed_stack_count, size_t seed_poo
       if (m == UINT32_MAX) m = AdoptStack(w.layer_stacks[ws]);
       return m;
     };
-    std::vector<uint32_t> map_remap(
-        w.nm_pool_.size() > seed_pool_count ? w.nm_pool_.size() - seed_pool_count
-                                            : 0,
-        UINT32_MAX);
+    std::vector<uint32_t> map_remap(w.nm_pool_.size(), UINT32_MAX);
     auto remap_map = [&](uint32_t wm) -> uint32_t {
       if (wm < seed_pool_count) return wm;
       uint32_t &m = map_remap[wm - seed_pool_count];
       // The worker is discarded after this merge and each of its mappings is
       // interned at most once (memoized here): move instead of copying.
-      if (m == UINT32_MAX) m = InternMapping(std::move(w.nm_pool_[wm]));
+      if (m == UINT32_MAX) m = InternMapping(std::move(w.nm_pool_[wm - seed_pool_count]));
       return m;
     };
     // arc_chain / arc_sites are shared by whole subtrees, so remap each
@@ -1458,7 +1455,7 @@ auto Cache::Impl::GetOrCreateCachedSources(const std::string &key) -> std::vecto
 
 auto Cache::Impl::InternMapping(NamespaceMapping m) -> uint32_t {
     if (m.is_identity()) return 0;
-    uint32_t idx = static_cast<uint32_t>(nm_pool_.size());
+    uint32_t idx = static_cast<uint32_t>(nm_seed_count_ + nm_pool_.size());
     nm_pool_.push_back(std::move(m));
     return idx;
   }

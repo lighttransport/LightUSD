@@ -61,14 +61,14 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
     subdivision_level = level_it->second;
   }
   std::string subdivision_scheme;
-  const bool has_authored_subdivision =
-      GetPropToken(prim, "subdivisionScheme", &subdivision_scheme);
-  SkinBindingInfo subdivision_skin;
-  const bool subdivision_deformed =
-      GetSkinBinding(prim, &subdivision_skin) || !GetBlendShapes(prim).empty();
-  if (subdivision_level > 0 && has_authored_subdivision &&
-      subdivision_scheme != "none" &&
-      config_.mesh.retain_geometry && !subdivision_deformed) {
+  const bool subdivide = subdivision_level > 0 &&
+      GetPropToken(prim, "subdivisionScheme", &subdivision_scheme) &&
+      subdivision_scheme != "none";
+  SkinBindingInfo sb;
+  const bool has_skin_binding = GetSkinBinding(prim, &sb);
+  const auto blend_shapes = GetBlendShapes(prim);
+  const bool deformed = has_skin_binding || !blend_shapes.empty();
+  if (subdivide && config_.mesh.retain_geometry && !deformed) {
     ::lightusd::tsd::Options subdiv_options;
     subdiv_options.level = std::min(subdivision_level,
                                     ::lightusd::tsd::kMaxLevel);
@@ -282,17 +282,13 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
       AddWarning("Subdivision failed for '" + out->prim_path + "': " +
                  subdivision_error);
     }
-  } else if (subdivision_level > 0 && has_authored_subdivision &&
-             subdivision_scheme != "none" &&
-             subdivision_deformed) {
+  } else if (subdivide && deformed) {
     AddWarning("Subdivision skipped for deformed mesh '" + out->prim_path +
                "' (subdivision is not applied to deformed geometry)");
   }
 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).
   {
-    SkinBindingInfo sb;
-    const bool has_skin_binding = GetSkinBinding(prim, &sb);
     if (has_skin_binding && !sb.joint_indices.empty() &&
         sb.joint_indices.size() != sb.joint_weights.size()) {
       // e.g. one indexed skin primvar expanded while its pair stayed
@@ -494,7 +490,7 @@ bool RenderSceneConverter::Impl::ConvertMesh(const Stage& stage, const UsdPrim& 
   }
 
   // Blend shapes (skel:blendShapes names + skel:blendShapeTargets prims).
-  for (const BlendShapeInfo& bs : GetBlendShapes(prim)) {
+  for (const BlendShapeInfo& bs : blend_shapes) {
     UsdPrim bs_prim = stage.GetPrimAtPath(bs.path);
     if (!bs_prim.IsValid()) continue;
     ::lightusd::BlendShapeData bd;

@@ -540,6 +540,26 @@ def PointInstancer "Instances" {
   const auto missing_texture = td::ConvertScenePreview(
       (scratch / "color.usda").string(), resolver, options);
   Require(missing_texture.success, missing_texture.error);
+  {
+    // Shading reads colour before opacity. Diagnostics are emitted in path order.
+    std::string scene = colored;
+    scene.insert(scene.find("  token outputs:surface\n"),
+                 "  float inputs:opacity.connect=</Material/Alpha.outputs:r>\n");
+    scene.insert(scene.rfind('}'), R"USD(
+ def Shader "Alpha" {
+  uniform token info:id="UsdUVTexture"
+  asset inputs:file=@alpha-missing.ppm@
+  float outputs:r
+ }
+)USD");
+    const auto path = scratch / "unavailable-textures.usda";
+    Write(path, scene);
+    const auto missing = td::ConvertScenePreview(path.string(), resolver, options);
+    const auto alpha = missing.warning.find("alpha-missing.ppm");
+    const auto color = missing.warning.find("color.ppm");
+    Require(missing.success && color != std::string::npos && alpha < color,
+            "missing texture warnings are ordered by path");
+  }
   Write(scratch / "color.ppm",
         std::string("P6\n1 1\n255\n") + char(128) + char(128) + char(128));
   const auto added_texture = td::ConvertScenePreview(

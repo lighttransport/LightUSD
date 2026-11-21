@@ -147,6 +147,16 @@ void PrintUsage(const char *prog) {
       << "  -hideDefault           Hide default-purpose geometry.\n"
       << "  -timecode <value>      USD timecode to evaluate.\n"
       << "  -samples <N>           Deterministic supersamples per pixel (default 1).\n"
+      << "  --gsplat-kernel disc|cycles  Gaussian splat kernel (default disc).\n"
+      << "      cycles: Blender Cycles 3D ellipsoid + stochastic opacity via\n"
+      << "      LightRT on the CPU, or -vk/-vkr (Vulkan) / -hip (HIP) within\n"
+      << "      -maxVram GiB (default 4); -samples sets spp (16 if left at 1).\n"
+      << "      With meshes, CPU, Vulkan ray queries and HIP trace splats on camera,\n"
+      << "      bounce and shadow rays. CPU defaults to -materialShading lightrt-bsdf,\n"
+      << "      -ambient 0 and scene-linear .exr (as Blender's Cycles).\n"
+      << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
+      << "  --gsplat-motion-steps N  Motion-blur samples per splat across the camera\n"
+      << "      shutter (shutter:open/close), as Cycles motion steps (default 3, 1 = off).\n"
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
@@ -620,6 +630,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
+      opt->ambient_explicit = true;
     }
     OPT_MATCH(a == "-diagnosticEmission" || a == "--diagnostic-emission") {
       opt->diagnostic_emission = true;
@@ -753,6 +764,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
+      opt->material_shading_explicit = true;
       if (mode == "legacy") {
         opt->material_shading = Options::MaterialShading::Legacy;
       } else if (mode == "lightrt-bsdf") {
@@ -956,6 +968,35 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         opt->subdivision_level = 3;
       } else {
         std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatMotionSteps" || a == "--gsplat-motion-steps") {
+      const char *v = need_value(a.c_str());
+      int n = 0;
+      if (!v || !ParseIntStrict(v, &n) || n < 1 || n > 64) {
+        std::cerr << "--gsplat-motion-steps expects 1..64.\n";
+        return false;
+      }
+      opt->gsplat_motion_steps = n;
+    }
+    OPT_MATCH(a == "-gsplatKernel" || a == "--gsplat-kernel") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "cycles") opt->gsplat_cycles = true;
+      else if (k == "disc") opt->gsplat_cycles = false;
+      else {
+        std::cerr << "Invalid --gsplat-kernel. Expected disc|cycles.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatColorspace" || a == "--gsplat-colorspace") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "srgb") opt->gsplat_srgb = true;
+      else if (k == "linear") opt->gsplat_srgb = false;
+      else {
+        std::cerr << "Invalid --gsplat-colorspace. Expected linear|srgb.\n";
         return false;
       }
     }
@@ -1310,7 +1351,8 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     opt->input = positional[0];
     opt->output = positional.size() > 1 ? positional[1] : std::string();
   }
-  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
+  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt &&
+      !(opt->vulkan && opt->gsplat_cycles)) {
     std::cerr << "--path-trace requires --mtlx, -vkr, -cuda, or -hip.\n";
     return false;
   }

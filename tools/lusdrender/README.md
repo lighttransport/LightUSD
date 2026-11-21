@@ -415,6 +415,124 @@ analytic curve API is available.
   cleanly with an actionable message (raise `-maxMem`, narrow with `-mask`, or
   lower `-complexity`) instead of being OOM-killed.
 
+## Gaussian splats with the Cycles kernel
+
+`--gsplat-kernel cycles` renders `ParticleField3DGaussianSplat` prims (and
+`.ply` 3DGS files) with the Blender 5.3 Cycles splat kernel. The kernel lives
+in LightRT (`src/external/lightrt/lightrt_c_gsplat.{h,c}`), with CPU, Vulkan
+compute (`vk/shaders/trace_gsplat.comp`) and HIP
+(`hip/trace_gsplat_hip.h`) backends:
+
+```sh
+lusdrender scene.usda out.exr --gsplat-kernel cycles --gsplat-colorspace srgb \
+    -samples 256 -vk            # or -hip; no flag = CPU
+lusdrender scene.usda out.png --gsplat-kernel cycles -vk -maxVram 2
+```
+
+- The splats are split into spatially coherent chunks. Each chunk has its own
+  BVH and is uploaded one at a time, with each ray's `tmax` clamped to its
+  best hit so far. The result is bit-identical to a single-chunk trace on the
+  same device.
+- Device memory (chunk + ray/hit tile) stays under `-maxVram` GiB, which
+  defaults to **4 GiB** for this path so a shared GPU keeps most of its VRAM.
+- Ray `(y*w + x)*spp + s` uses that index as its stochastic seed on every
+  backend. Backends agree statistically; the GPU rounds hit positions
+  differently, so individual stochastic decisions differ.
+- `-cuda` and `-d3d` are not supported for this path; they fall back to the
+  CPU with a warning. A GPU trace failure also falls back to the CPU.
+
+Validation against Blender 5.3 Cycles (`tests/gsplat/check_cycles_compare.py
+roundtrip --backend cpu|vk|hip`, 320x180, 1024 spp, scene-linear EXR): every
+backend is at 0.94x Blender's seed-to-seed noise floor, with mean brightness
+within 0.3%. `test_lightrt_gsplat` checks the BVH against brute force, chunked
+against single-chunk, GPU against CPU, and rejection of an over-budget chunk.
+The default ctest run compares against Blender references checked in under
+`tests/gsplat/refs/` (no Blender needed); set `LIGHTUSD_BLENDER` to a Blender
+5.3 executable for the live `*-blender-*` tests or to regenerate the references
+(see [doc/gsplat-rendering-spec.md](../../doc/gsplat-rendering-spec.md)).
+
+| Scene (RX 9070 XT, shared GPU) | Splats | Backend | Chunks | Trace+shade |
+|---|---|---|---|---|
+| ALab preview, 960x540x16 | 1.48M | Vulkan, 4 GiB | 1 | 0.70 s |
+| | | Vulkan, 0.05 GiB | 32 | 6.5 s |
+| | | HIP, 4 GiB | 1 | 0.66 s |
+| | | HIP, 0.05 GiB | 32 | 3.4 s |
+| Hotel preview, 960x540x32 | 0.77M | CPU (32 threads) | 1 | 0.58 s |
+| | | Vulkan / HIP, 4 GiB | 1 | 1.4 / 1.2 s |
+
+These views are mostly background, so ray upload and readback dominate and
+the CPU is competitive. The GPU pays off when most rays hit splats.
+
+### Mixed scenes (meshes + splats)
+
+For mixed meshes and Gaussian splats, `--gsplat-kernel cycles` traces
+splats on camera, bounce and shadow rays. They occlude meshes, cast
+stochastic shadows and light nearby surfaces through BSDF-sampled bounce
+rays. The CPU integrator defaults to `-materialShading lightrt-bsdf` and
+`-ambient 0`. Select `-vk` for Vulkan hardware ray queries or `-hip` for
+the HIP path tracer. Both write scene-linear EXR and support splat and
+camera motion across the shutter.
+
+```sh
+lusdrender scene.usda mixed.exr --gsplat-kernel cycles --gsplat-colorspace srgb -vk --path-trace
+```
+
+The preview renderer reads the DC colour from static, uncompressed USDC
+float3 and half3 coefficients in windows of up to 8192 triples. It can
+borrow directly addressable float data and widen half data as needed.
+Compressed integer-coded and lookup-table coefficient streams require
+whole-array decoding. The deferred decode limit for those arrays is one
+eighth of physical memory, with a 128 MiB minimum. Animated interpolation
+checks the neighbouring samples against the same limit. Reading 16,777,216
+mapped half3 triples in 8192-element windows reached 99.8 MiB peak RSS,
+compared with 291.6 MiB for full float materialization. Both produced the
+same component sum.
+
+Validated by `tests/gsplat/check_mixed_scene.py` against Blender 5.3 direct
+light (Lambert plane, sun, 160 splats). The comparison cancels the mesh BRDF:
+- visibility = black-splat render / no-splat render (shadows and camera-ray
+  transmittance): 1.01x Blender's noise floor, mean 0.7213 vs 0.7218.
+- emission = splat render - black-splat render (including the lit plane):
+  1.05x the noise floor, mean 0.0442 vs 0.0444.
+
+Splat-only variants (`check_cycles_compare.py variants`: SH degree 0/1/2,
+non-uniform object scale, orthographic camera, world colour, motion blur) are
+each within 1.07x the noise floor and 0.7% mean brightness.
+
+### Motion blur
+
+When the camera's `shutter:open` < `shutter:close` (frames, relative to
+`-timecode`), each ParticleField is sampled at `--gsplat-motion-steps` times
+(default 3, as Cycles motion steps) across the shutter. Every sample includes
+positions, orientations, scales, opacities and the object transform. Each ray
+gets a stratified shutter time, and LightRT interpolates every splat linearly
+between its two neighbouring keys (`lrt_gsplat_scene_build_motion`), on the
+CPU, Vulkan and HIP. A splat whose count changes across the shutter stays
+static.
+
+Against Blender 5.3 (animated object, shutter 0.5, 17 exported transform
+samples), the result is 1.07x the noise floor with 3 or 9 steps on all three
+backends. With motion blur off it is 2.36x.
+
+Mixed mesh scenes are blurred too. The CPU integrator traces each camera
+sample, and its shadow and bounce rays, at the sample's shutter time.
+`check_mixed_scene.py --motion` (animated splats casting moving shadows)
+gives visibility 1.00x and emission 1.04x Blender's noise floor; without blur
+it fails at 1.81x.
+
+Camera motion blur: the camera is sampled at the same shutter keys, and each
+ray is generated from the interpolated camera. This applies to splat-only and
+mixed scenes; in mixed scenes the camera blurs even without splats. Blender
+5.3 `cammotion`: 1.02x the noise floor (1.42x without blur). Mixed scene with
+a moving camera: visibility 1.00x and emission 1.04x (3.6x without blur).
+
+Animated colour: per-key DC (SH band 0) colour, as Cycles' radiance_base
+motion, is interpolated at the hit's shutter time. Higher SH bands stay at
+the render time, as in Cycles. Blender `colourmotion` (Geometry Nodes moving
+and recolouring every splat): 1.00x the floor, 1.46x without colour
+interpolation. Cycles only interpolates radiance_base for deforming splats;
+here it is interpolated whenever the colour is animated.
+
 ## Validated benchmark — Activision Caldera maps
 
 All six maps rendered directly from their raw `.usd` (no pre-flatten), 320×180,

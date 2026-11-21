@@ -300,7 +300,8 @@ target_include_directories(lightusd_gpu_rt_common PUBLIC
     ${PROJECT_SOURCE_DIR}/src/external
     ${COMMON_DIR}
     ${COMMON_DIR}/cuew
-    ${PROJECT_SOURCE_DIR}/src/external/hipew)
+    ${PROJECT_SOURCE_DIR}/src/external/hipew
+    ${PROJECT_SOURCE_DIR}/src/external/lightrt)
 if(LUSDVIEW_HAVE_OPTIX)
   add_dependencies(lightusd_gpu_rt_common lusdview_optix_ir)
   target_include_directories(lightusd_gpu_rt_common PRIVATE
@@ -312,9 +313,11 @@ if(NOT MSVC)
   target_include_directories(lightusd_gpu_rt_common PRIVATE
       ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
+# lightrt_c (defined by tools/lusdrender, included below) provides the
+# LightRT Gaussian splat BVH used by BuildGsplatGpuData.
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
     lightusd_preview_images tydra lightusd_core
-    tydra
+    tydra lightrt_c
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(lightusd_gpu_rt_common PUBLIC Threads::Threads)
@@ -460,8 +463,10 @@ if(LIGHTUSD_BUILD_TESTS)
       ${CMAKE_CURRENT_SOURCE_DIR}
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt
       ${COMMON_DIR})
-  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra lightusd_preview_images)
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra lightusd_preview_images
+                        lightrt_c)
   if(MSVC)
     # main() keeps ~1 MB of locals; the Windows default stack is 1 MB (Linux: 8 MB).
     target_link_options(lusdview_lightrt_bridge_test PRIVATE /STACK:16777216)

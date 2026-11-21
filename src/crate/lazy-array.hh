@@ -15,6 +15,7 @@
 #include "types/type-id.hh"  // ::lightusd::TypeId
 
 #include <atomic>
+#include <cstring>
 #include <memory>
 #include <cstdint>
 
@@ -46,6 +47,13 @@ public:
   /// True when the source retains a private snapshot and serves array bytes by
   /// ranged reads rather than a resident contiguous buffer.
   virtual bool is_paged() const { return false; }
+  virtual bool ReadBytes(uint64_t offset, size_t length, void* dst) const {
+    const uint8_t* bytes = base();
+    if (offset > size() || length > size() - offset ||
+        (length && (!dst || !bytes))) return false;
+    if (length) std::memcpy(dst, bytes + offset, length);
+    return true;
+  }
   virtual void DiscardRange(uint64_t offset, uint64_t length) const {
     (void)offset;
     (void)length;
