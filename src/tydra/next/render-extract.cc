@@ -435,9 +435,9 @@ bool EvaluateSkinnedPoints(const ::lightusd::next::Stage& stage,
   };
   auto binding = [&](const char* name) {
     for (auto p = mesh; p.IsValid(); p = p.GetParent()) {
-      const auto* targets = p.GetRelationship(name);
-      if (targets && !targets->empty())
-        return stage.GetPrimAtPath((*targets)[0]);
+      std::vector<::lightusd::next::Path> targets;
+      if (p.GetMappedRelationshipTargets(name, &targets) && !targets.empty())
+        return stage.GetPrimAtPath(targets[0]);
     }
     return n::UsdPrim();
   };
@@ -499,9 +499,10 @@ bool EvaluateSkinnedPoints(const ::lightusd::next::Stage& stage,
   };
   auto animation = binding("skel:animationSource");
   for (auto p = skel; !animation.IsValid() && p.IsValid(); p = p.GetParent()) {
-    const auto* targets = p.GetRelationship("skel:animationSource");
-    if (targets && !targets->empty())
-      animation = stage.GetPrimAtPath((*targets)[0]);
+    std::vector<::lightusd::next::Path> targets;
+    if (p.GetMappedRelationshipTargets("skel:animationSource", &targets) &&
+        !targets.empty())
+      animation = stage.GetPrimAtPath(targets[0]);
   }
   n::SkelAnimationData sample;
   if (animation.IsValid() &&

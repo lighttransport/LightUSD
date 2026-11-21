@@ -565,8 +565,221 @@ static void test_conversion_diagnostics(void) {
   lightusd_stage_destroy(stage);
 }
 
+/* Regression for #295: nested native instances inside an instanceable prim
+ * must keep their own subtree in every outer instance. The render node tree
+ * previously reused the first outer instance's paths for the later ones, so
+ * the second nested instance's mesh was attached to its sibling and orphaned
+ * the sibling's own mesh. */
+static void test_nested_instance_node_paths(void) {
+  const char* leaf_path = "./lightusd-nested-inst-leaf.usda";
+  const char* rack_path = "./lightusd-nested-inst-rack.usda";
+  const char* root_path = "./lightusd-nested-inst-root.usda";
+  const char* leaf_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Mesh \"Box\" {\n"
+      "  int[] faceVertexCounts = [4]\n"
+      "  int[] faceVertexIndices = [0,1,2,3]\n"
+      "  point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\n"
+      " }\n"
+      "}\n";
+  const char* rack_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Mesh \"Frame\" {\n"
+      "  int[] faceVertexCounts = [3]\n"
+      "  int[] faceVertexIndices = [0,1,2]\n"
+      "  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n"
+      " }\n"
+      " def Xform \"Crate\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-inst-leaf.usda@) {}\n"
+      " def Xform \"Crate_01\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-inst-leaf.usda@) {}\n"
+      "}\n";
+  const char* root_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"A\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-inst-rack.usda@) {}\n"
+      " def Xform \"B\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-inst-rack.usda@) {}\n"
+      " def Xform \"C\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-inst-rack.usda@) {}\n"
+      "}\n";
+  const char* sources[3] = {leaf_source, rack_source, root_source};
+  const char* paths[3] = {leaf_path, rack_path, root_path};
+  for (size_t i = 0; i < 3; ++i) {
+    FILE* file = fopen(paths[i], "wb");
+    assert(file);
+    assert(fwrite(sources[i], 1, strlen(sources[i]), file) == strlen(sources[i]));
+    assert(fclose(file) == 0);
+  }
+
+  lightusd_stage* stage = NULL;
+  assert(lightusd_stage_load(root_path, NULL, &stage) == LIGHTUSD_OK);
+  lightusd_render_config config;
+  lightusd_render_config_init(&config);
+  lightusd_render_scene* scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+
+  lightusd_render_stats stats;
+  memset(&stats, 0, sizeof(stats));
+  assert(lightusd_render_scene_get_stats(scene, &stats) == LIGHTUSD_OK);
+  assert(stats.node_count == 19);
+  assert(lightusd_render_count(scene, LIGHTUSD_RENDER_MESH) == 9);
+
+  size_t reachable_meshes = 0;
+  for (int32_t id = 0; id < (int32_t)stats.node_count; ++id) {
+    lightusd_render_node_info node;
+    memset(&node, 0, sizeof(node));
+    assert(lightusd_render_node_get_info(scene, id, &node) == LIGHTUSD_OK);
+    const size_t path_len = node.prim_path.len;
+    const char* path = (const char*)node.prim_path.data;
+    if (node.data_id >= 0) {
+      ++reachable_meshes;
+      /* Also verify that each mesh node is indexed by its own prim path. */
+      int32_t mesh = lightusd_render_lookup(scene, LIGHTUSD_RENDER_MESH, path);
+      assert(mesh >= 0);
+      lightusd_render_mesh_info mesh_info;
+      memset(&mesh_info, 0, sizeof(mesh_info));
+      assert(lightusd_render_mesh_get_info(scene, mesh, &mesh_info) == LIGHTUSD_OK);
+      assert(mesh_info.prim_path.len == path_len &&
+             memcmp(mesh_info.prim_path.data, path, path_len) == 0);
+    }
+    if (node.parent_id >= 0) {
+      lightusd_render_node_info parent;
+      memset(&parent, 0, sizeof(parent));
+      assert(lightusd_render_node_get_info(scene, node.parent_id, &parent) == LIGHTUSD_OK);
+      assert(node.prim_path.len > parent.prim_path.len);
+      assert(memcmp(node.prim_path.data, parent.prim_path.data,
+                    parent.prim_path.len) == 0);
+      assert(((const char*)node.prim_path.data)[parent.prim_path.len] == '/');
+    }
+  }
+  assert(reachable_meshes == 9);
+
+  /* Every expected prim path is present exactly once with its own mesh. */
+  const char* expected[] = {"/World/A/Crate/Box", "/World/A/Crate_01/Box",
+                            "/World/B/Crate/Box", "/World/B/Crate_01/Box",
+                            "/World/C/Crate/Box", "/World/C/Crate_01/Box"};
+  for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+    const int32_t node = lightusd_render_lookup(scene, LIGHTUSD_RENDER_NODE, expected[i]);
+    assert(node >= 0);
+    lightusd_render_node_info info;
+    memset(&info, 0, sizeof(info));
+    assert(lightusd_render_node_get_info(scene, node, &info) == LIGHTUSD_OK);
+    assert(info.data_id >= 0);
+    assert(lightusd_render_lookup(scene, LIGHTUSD_RENDER_MESH, expected[i]) == info.data_id);
+  }
+  lightusd_render_scene_destroy(scene);
+  lightusd_stage_destroy(stage);
+  for (size_t i = 0; i < 3; ++i) remove(paths[i]);
+}
+
+/* Regression for PR #298 follow-up: a nested instance shared by two different
+ * outer prototypes (A references rack_a, B/C reference rack_b) must map its
+ * grandchild mesh through the nested prototype holder for BOTH outer groups.
+ * Mapping only the outer instance leaves C's mesh at A's path. */
+static void test_nested_instance_cross_prototype_paths(void) {
+  const char* leaf_path = "./lightusd-nested-cross-leaf.usda";
+  const char* rack_a_path = "./lightusd-nested-cross-rack-a.usda";
+  const char* rack_b_path = "./lightusd-nested-cross-rack-b.usda";
+  const char* root_path = "./lightusd-nested-cross-root.usda";
+  const char* leaf_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"Geo\" {\n"
+      "  def Mesh \"Box\" {\n"
+      "   int[] faceVertexCounts = [4]\n"
+      "   int[] faceVertexIndices = [0,1,2,3]\n"
+      "   point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\n"
+      "  }\n"
+      " }\n"
+      "}\n";
+  const char* rack_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"Crate\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-leaf.usda@) {}\n"
+      "}\n";
+  const char* root_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"A\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-a.usda@) {}\n"
+      " def Xform \"B\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-b.usda@) {}\n"
+      " def Xform \"C\" (instanceable = true\n"
+      "  prepend references = @./lightusd-nested-cross-rack-b.usda@) {}\n"
+      "}\n";
+  const char* paths[4] = {leaf_path, rack_a_path, rack_b_path, root_path};
+  const char* sources[4] = {leaf_source, rack_source, rack_source, root_source};
+  for (size_t i = 0; i < 4; ++i) {
+    FILE* file = fopen(paths[i], "wb");
+    assert(file);
+    assert(fwrite(sources[i], 1, strlen(sources[i]), file) == strlen(sources[i]));
+    assert(fclose(file) == 0);
+  }
+
+  lightusd_stage* stage = NULL;
+  assert(lightusd_stage_load(root_path, NULL, &stage) == LIGHTUSD_OK);
+  lightusd_render_config config;
+  lightusd_render_config_init(&config);
+  lightusd_render_scene* scene = NULL;
+  assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
+  lightusd_render_stats stats;
+  memset(&stats, 0, sizeof(stats));
+  assert(lightusd_render_scene_get_stats(scene, &stats) == LIGHTUSD_OK);
+  assert(stats.node_count == 13);
+  assert(lightusd_render_count(scene, LIGHTUSD_RENDER_MESH) == 3);
+
+  const char* expected[] = {"/World/A/Crate/Geo/Box",
+                            "/World/B/Crate/Geo/Box",
+                            "/World/C/Crate/Geo/Box"};
+  for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+    const int32_t node = lightusd_render_lookup(scene, LIGHTUSD_RENDER_NODE, expected[i]);
+    assert(node >= 0);
+    lightusd_render_node_info info;
+    memset(&info, 0, sizeof(info));
+    assert(lightusd_render_node_get_info(scene, node, &info) == LIGHTUSD_OK);
+    assert(info.data_id >= 0);
+    assert(lightusd_render_lookup(scene, LIGHTUSD_RENDER_MESH, expected[i]) ==
+           info.data_id);
+    const int32_t mesh = info.data_id;
+    lightusd_render_mesh_info mesh_info;
+    memset(&mesh_info, 0, sizeof(mesh_info));
+    assert(lightusd_render_mesh_get_info(scene, mesh, &mesh_info) == LIGHTUSD_OK);
+    assert(mesh_info.prim_path.len == strlen(expected[i]));
+    assert(memcmp(mesh_info.prim_path.data, expected[i],
+                  strlen(expected[i])) == 0);
+  }
+  lightusd_render_scene_destroy(scene);
+  lightusd_stage_destroy(stage);
+  for (size_t i = 0; i < 4; ++i) remove(paths[i]);
+}
+
 int main(void) {
   test_conversion_diagnostics();
+  test_nested_instance_node_paths();
+  test_nested_instance_cross_prototype_paths();
   test_resource_budget();
   test_converter_controls();
   test_clip_curve_query();

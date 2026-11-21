@@ -71,11 +71,15 @@ public:
       : spec_(spec), layer_(layer), index_(index) {}
   UsdPrim(const PrimSpec* spec, const Layer* layer, uint32_t index,
           Path proxy_path, std::string prototype_root,
-          std::string instance_root)
+          std::string instance_root,
+          std::string child_source_root = {},
+          std::string child_target_root = {})
       : spec_(spec), layer_(layer), index_(index),
         proxy_path_(std::move(proxy_path)),
         prototype_root_(std::move(prototype_root)),
-        instance_root_(std::move(instance_root)) {}
+        instance_root_(std::move(instance_root)),
+        child_source_root_(std::move(child_source_root)),
+        child_target_root_(std::move(child_target_root)) {}
 
   /// Check if this prim handle is valid
   bool IsValid() const { return spec_ != nullptr; }
@@ -185,6 +189,13 @@ public:
   /// Get relationship targets
   const std::vector<Path>* GetRelationship(const std::string& name) const;
 
+  /// Like GetRelationship(), but rebase targets authored in a prototype's
+  /// namespace onto this instance proxy's public namespace. Use this whenever
+  /// a target must address this particular instance rather than the shared
+  /// prototype (material/skeleton/light/physics bindings, shader connections).
+  bool GetMappedRelationshipTargets(const std::string& name,
+                                    std::vector<Path>* targets) const;
+
   /// Resolve relationship-to-relationship target chains. Terminal prim and
   /// attribute paths are returned in first-seen order with duplicates removed.
   /// Cycles are ignored after the first visit. Returns false when this prim has
@@ -247,6 +258,12 @@ private:
   Path proxy_path_;
   std::string prototype_root_;
   std::string instance_root_;
+  // Effective (source, target) prefix mapping for this proxy's children.
+  // Inherited from the parent proxy so nested instances several levels deep
+  // keep mapping against the right prototype namespace; prototype_root_ /
+  // instance_root_ stay at the outer instance for parent reconstruction.
+  std::string child_source_root_;
+  std::string child_target_root_;
 
   friend class Stage;
 };
