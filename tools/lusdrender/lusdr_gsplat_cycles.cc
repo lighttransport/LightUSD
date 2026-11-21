@@ -483,11 +483,11 @@ bool RenderGSplatCycles(const Options &opt, const GSplatCyclesScene &scene,
           if (timed) {
             // Stratified shutter time per pixel (Cramer-Patterson rotation).
             const uint32_t px = uint32_t(y) * uint32_t(w) + uint32_t(x);
-            uint32_t h = px * 0x9e3779b1u;
-            h ^= h >> 16;
-            h *= 0x85ebca6bu;
-            h ^= h >> 13;
-            const float rot = float(h >> 8) * (1.f / 16777216.f);
+            uint32_t hash = px * 0x9e3779b1u;
+            hash ^= hash >> 16;
+            hash *= 0x85ebca6bu;
+            hash ^= hash >> 13;
+            const float rot = float(hash >> 8) * (1.f / 16777216.f);
             const float tm = (float(s) + 0.5f) / float(spp) + rot;
             tau = tm - std::floor(tm);
             times[(size_t(y) * size_t(w) + size_t(x)) * size_t(spp) +

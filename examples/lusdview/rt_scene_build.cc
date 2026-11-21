@@ -2486,8 +2486,8 @@ bool BuildGsplatGpuData(const GsplatKeys& gk, bool srgb, GsplatGpuData* out) {
       const lrt_gsplat& g = sp[i];
       if (!gk.dc.empty() && i % K == 0)
         for (uint32_t k = 0; k < K; ++k)
-          for (int c = 0; c < 3; ++c)
-            dcRecords.push_back(gk.dc[(size_t(k) * gk.count + g.id) * 3 + c]);
+          for (int comp = 0; comp < 3; ++comp)
+            dcRecords.push_back(gk.dc[(size_t(k) * gk.count + g.id) * 3 + comp]);
       const uint32_t f = tracer.field_of(g.id);
       const uint32_t shOff = uint32_t(shBase + tracer.sh_offset(g.id));
       const uint32_t meta = uint32_t(tracer.field_degree(f) & 3) |
