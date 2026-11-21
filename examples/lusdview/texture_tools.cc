@@ -174,7 +174,10 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
     case DrawCompressedFormat::BC7: {
       tc_bc7_options o;
       tc_bc7_options_init(&o);
-      o.quality = TC_BC7_QUALITY_FAST;
+      // texcomp 96dabe5 turned FAST into a mode-6-only real-time path
+      // (~18x faster, ~9 dB worse on gradients). QUICKBC7 is what FAST used to
+      // produce: same quality and speed as lusdview's previous BC7 output.
+      o.quality = TC_BC7_QUALITY_QUICKBC7;
       o.srgb = srgb ? 1 : 0;
       o.threads = TexToolsThreads();
       size = tc_bc7_compressed_size(w, h);

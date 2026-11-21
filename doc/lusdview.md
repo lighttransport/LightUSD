@@ -1065,6 +1065,86 @@ while a separate encounter-order list preserves deterministic draw ordering.
 The follow-up hardware run measured 6.83 s mesh conversion/batching, 27.35 s
 full CPU conversion, 27.60 s full upload/presentation, and 4.07 GiB peak RSS.
 
+#### Merged batches for skinned and geometry-property meshes
+
+The batch key used to isolate every mesh that was skinned or carried a generic
+primvar, which on open-world content degenerates to one draw per mesh: a
+476k-mesh, 39.4M-triangle map composed to 50,424 draws and spent ~70 ms per
+frame recording them on the CPU.
+
+Neither feature actually needs that isolation:
+
+* Bone rows are absolute indices into the shared skinning palette, and the
+  append path already zero-fills the joint/weight lanes for vertices of an
+  unskinned mesh, so a batch can mix skinned and unskinned geometry.
+* Generic primvars only feed the ray-traced geometry-property lookup; the raster
+  shader never reads them. They are now grouped by a name/component *signature*
+  in the batch key, and their per-vertex values are appended alongside the
+  vertices so a merged batch stays parallel. The retained UV sets are also
+  excluded from that generic list now; they were being duplicated into it,
+  which doubled UV memory for every textured mesh.
+
+Two append-path costs had to be fixed before merging was viable, both of which
+only appear once a batch holds gigabytes instead of one mesh:
+
+* Batch arrays are reserved to the vertex cap in a single step once a batch is
+  clearly a bulk batch (`reserveVerts`), instead of doubling a
+  multi-hundred-megabyte vector repeatedly.
+* Extended-skin influence texels are written into one pre-sized range rather
+  than appended one influence at a time with `insert()`, which re-checked
+  capacity and re-touched the whole batch buffer per influence.
+
+Result on that scene: 50,424 draws -> 3,615, CPU record+submit ~70 ms -> <1 ms
+(GPU-bound afterwards, 17.4 ms at 1280x720 versus 26 ms before), mesh
+convert/flatten/batch unchanged at ~23 s, and total load 59.4 s -> 55 s. Draw
+counts for other large maps drop from 31k/40k/6.4k to 3.2k/3.6k/0.6k. Fewer
+draws also cuts the per-frame visibility mask rebuild from 3.4 ms to 0.1 ms.
+
+#### Chunked static culling and the lean static vertex stage
+
+Merging is a culling trade-off: one batch per scene has a scene-spanning AABB,
+so the per-mesh frustum/size test can only answer "all" or "nothing". Two
+changes give the static side its granularity and its vertex bandwidth back:
+
+* **Chunked indirect draws.** Each submesh of a world-baked, undeformed batch
+  is split into triangle runs of at most 4096 triangles (further bounded by a
+  world-AABB radius cap of 2 % of the batch extent, so a run stays a local
+  culling unit instead of spanning a district). The runs become one
+  `vkCmdDrawIndexedIndirect` list whose per-chunk `instanceCount` the renderer
+  zeroes for chunks the camera rejects. Frustum culling is always on; the
+  projected-size threshold follows the raster-LOD policy, so `--raster-lod` and
+  the large-scene profiles now also reach static geometry. The patch is skipped
+  entirely while the camera, viewport height, policy and chunk catalog are
+  unchanged. Projected-size tests use nearest view-space sphere depth and an
+  unsigned projection scale; orthographic cameras use constant pixel scale.
+  Devices without enabled multi-draw support retain direct draws, and command
+  lists are split at the device's `maxDrawIndirectCount`. Primitive-ID and
+  source-face-ID diagnostics, plus Ptex materials, retain direct draws because
+  each indirect command restarts `gl_PrimitiveID`.
+* **A lean vertex stage for static batches** (`mesh.vert` with
+  `LUSDVIEW_STATIC_BATCH`). The deform shader read the joint, weight, influence,
+  morph-offset and morph-influence vertex streams unconditionally, so every
+  static vertex fetched ~52 B of zeros on top of its 32 B vertex. The variant
+  drops those inputs (the pipeline keeps the bindings; unused ones cost nothing)
+  and skips the deform include.
+
+On the same scene at 1280x720 that takes the frame from 17.4 ms to 15.7 ms with
+no visual change at all (the render is pixel-identical), 10.5 ms to 7.7 ms from a
+close camera, and 9.7 ms to 7.6 ms under `--raster-lod`.
+
+Two things still keep the static pass above that: it streams ~3 GB/frame of
+vertices and indices at 1.5 vertices per triangle, and **GPU skinning**. A batch
+that carries joint/weight attributes cannot use the lean vertex stage or the
+chunk cull, and on that scene 77 % of the static triangles sit in such batches
+(24.9 M of 32.4 M) even though the pose never changes. `LUSDVIEW_DEBUG_STATIC=1`
+prints the per-batch breakdown (`tris / chunked / skinned`). Loading with
+`--skinning cpu` bakes the pose and drops those streams, which takes the same
+frame to 11.4 ms (88 fps). The baked geometry is identical to the GPU-skinned
+one (verified pixel-for-pixel from a fixed camera); only the auto-fit framing
+differs, because a skinned batch keeps a conservative scene box on purpose.
+Making that the automatic choice for skins whose SkelAnimation has no time
+samples is the obvious next step, followed by a packed static vertex format.
+
 The exact Caldera `superterrrain/st_main.usd` root is a materially larger
 workload: 2,175,050 composed prims and 851,543 mesh records, ultimately
 collapsing to 39 guide-purpose draws. Its cold full-fidelity path is therefore
@@ -1479,7 +1559,16 @@ three are off unless set, and cost nothing when off.
 
 The `submitted:` line counts the non-instanced mesh loop only; geometry drawn by
 the instanced pass is not tallied, so an instanced scene can legitimately report
-very few triangles.
+very few triangles. `LUSDVIEW_DEBUG_MDI=1` adds the instanced-pass tally
+(`[mdi] supported= active= cmds= | instMeshes= submeshes= eligible= ...`), which
+distinguishes "the scene really has this many draws" from "the per-mesh
+fallback is running instead of the multi-draw-indirect batch".
+
+`LUSDVIEW_DEBUG_BATCH=1` explains the loader's draw count from the other side:
+it counts the per-mesh features that force a batch of their own and prints
+`next: batch keys: plain=... skin=... geomProps=... -> N draws`. A scene that
+reports one draw per mesh there is a batching regression, not a renderer
+problem.
 
 Mesh geometry must live in VRAM: per-frame vertex fetch from host memory crosses
 PCIe on every draw, which cost 86ms versus 2ms on a 3.8M triangle scene. Buffers
@@ -1963,3 +2052,64 @@ scene that would not naturally need paging, set
 When authored mip levels are insufficient to keep every face represented, the
 fallback builder performs an additional bounded coarse resample; native source
 data remains available for requested-quality page upgrades.
+
+### AMD large-map hardware verification (2026-11-02)
+
+The current static-chunk audit was exercised on an AMD Radeon RX 9070 XT
+(16 GiB), RADV/Mesa 26.0.8, and Threadripper 1950X with host GPU device
+passthrough. A public Caldera map provided 476,100 mesh records, 39,402,788
+unique triangles and 162,715 instances, batched to 3,615 meshes. Tests used
+headless Vulkan at 1280×720, full payloads/full fidelity, profile and preview
+cache off, eight compose/conversion workers and 180 frames. The first 30 GPU
+samples were discarded; filesystem cache was uncontrolled.
+
+| Mode | Runs | Median GPU | Median loader | Median peak RSS |
+|---|---:|---:|---:|---:|
+| Default GPU skinning | 3 | 15.23 ms | 58.66 s | 15.09 GiB |
+| Raster LOD | 3 | 8.69 ms | 58.43 s | 14.71 GiB |
+| CPU skinning diagnostic | 1 | 22.68 ms | 64.20 s | 12.74 GiB |
+
+All seven benchmark processes completed with no truncation or swaps. Repeated
+captures within each three-run mode were identical. LOD substitutes proxies;
+its faster rendering trades detail. The auto-fit scene occupies a small part
+of the view because of conservative skin bounds, and this entry has one
+material/zero textures, so these numbers do not predict close-view or textured
+scene performance. CPU skinning was slower on this host; the older NVIDIA
+result alone does not justify baking every static skin automatically.
+These are current-tree measurements, not a before/after speedup measurement or
+progressive first-useful-frame timings. Local logs, exact commands, reports,
+images and binary metadata are in `build_ninja/bench-amd-20261102/`.
+
+A separate small-fixture CPU/GPU skinning comparison still fails its strict
+maximum-pixel threshold. With fixed 1280×800 dimensions, an empty config and no
+grid, only two pixels differ (mean 0.000154/255), but maximum channel delta is
+198 versus the allowed 128. Retain that unresolved gate instead of treating
+successful large-scene rendering as proof of complete hardware skinning parity.
+
+### Skin-only opaque draws (2026-11-02)
+
+Opaque skinned meshes without blendshapes now use a vertex variant that omits
+morph influence and sparse-morph offset/count inputs (12 bytes per vertex).
+It retains the existing skinning math and SkinWeights outputs. Morph-bearing,
+translucent and depth-only draws retain their corresponding pipelines; static
+and skin-only variants cannot override the wireframe depth fill. The omitted
+morph-influence AOV output is explicitly zero. Generated prototype LOD tails
+also skip per-mesh push constants and cull-state commands when no LOD will draw.
+
+A paired AMD RX 9070 XT/RADV run on the same 476,100-mesh-record map and
+1280×720 full-fidelity configuration above measured two runs per binary:
+
+| Metric | Before | After |
+|---|---:|---:|
+| Median GPU frame | 15.23 ms | 14.49 ms |
+| Median per-run GPU p95 | 15.33 ms | 14.58 ms |
+| Median CPU record/submit | 4.95 ms | 4.90 ms |
+
+GPU time falls 4.86%; all four captures are byte-identical with unchanged scene
+counts, no proxies, and GPU skinning retained. No material CPU-record, load-time
+or memory improvement is claimed. The baseline executable, exact commands,
+individual logs/reports/images and aggregation are retained locally under
+`build_ninja/bench-amd-draw-opt/`. The new `lusdview-wire-depth-fill` image gate
+fails on the baseline and passes on the candidate. The deformation parity
+harness now disables the bounds-dependent grid overlay, which had produced
+identical false failures on both binaries despite matching CPU/GPU geometry.

@@ -11,6 +11,8 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
+#include "tydra/next/scene-preview.hh"
+#include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,7 +27,7 @@
 #include <system_error>
 #include <utility>
 
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 #include "app.hh"
 #include "config.hh"
@@ -218,7 +220,10 @@ bool ParseFiniteNonNegativeFloat(const char* text, float* value) {
 // would size the stage/geometry limits far past anything sensible). Falls back
 // to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
 uint64_t HostMemoryCapacityBytes() {
-  constexpr uint64_t kTarget = (uint64_t{32} << 30);
+  // Default to half of the typical large-scene host (64 GiB on a 128 GiB
+  // Threadripper) rather than a hard 32 GiB ceiling, so Island-class scenes are
+  // not artificially capped while still bounding unbounded allocations.
+  constexpr uint64_t kTarget = (uint64_t{64} << 30);
   std::ifstream f("/proc/meminfo");
   std::string tok;
   while (f >> tok) {
@@ -236,6 +241,14 @@ uint64_t HostMemoryCapacityBytes() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  lusdview::PreviewGpuBudgetReport previewBudgetReport;
+  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  std::string scenePreviewError;
+  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+          &argc, argv, &scenePreview, &scenePreviewError)) {
+    std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
+    return 1;
+  }
   const std::string executableName =
       (argc > 0 && argv[0]) ? std::filesystem::path(argv[0]).filename().string()
                             : std::string();
@@ -354,6 +367,7 @@ int main(int argc, char** argv) {
   std::optional<size_t> curvePreviewPrims;
   std::optional<size_t> curvePreviewStrands;
   bool wantWireframe = false;  // --wireframe: start in wireframe render mode
+  bool wantWireframeXray = false;  // --wireframe-xray: draw edges through surfaces
   bool wantMaterialId = false;
   std::vector<std::pair<std::string, lusdview::RenderMode>> modeSweep;  // --mode-sweep
   std::optional<lusdview::RenderMode> wantMode;  // --mode <name>: any render mode
@@ -1126,6 +1140,9 @@ int main(int argc, char** argv) {
       if (rtMaxInstances < 0) rtMaxInstances = 0;
     } if (std::strcmp(argv[i], "--wireframe") == 0) {
       wantWireframe = true;
+    } if (std::strcmp(argv[i], "--wireframe-xray") == 0) {
+      wantWireframe = true;
+      wantWireframeXray = true;
     } if (std::strcmp(argv[i], "--material-id") == 0) {
       wantMaterialId = true;
     } if (std::strcmp(argv[i], "--mode") == 0 && (i + 1) < argc) {
@@ -1267,6 +1284,30 @@ int main(int argc, char** argv) {
           "  --stereo      Resolve authored stereoRole left/right cameras; "
           "headless raster screenshots are side-by-side (use --camera when "
           "multiple pairs exist).\n"
+          "  --scene-preview  Convert/cache a bounded scene preview before loading.\n"
+          "  --preview-kind gaussian|points|volume  Representation (default gaussian).\n"
+          "  --preview-budget-mib N  Total renderer budget (default 1/4 VRAM).\n"
+          "  --preview-resolution N  Explicit sampling resolution.\n"
+          "  --preview-cache-dir DIR  Reuse portable cached USD sidecars.\n"
+          "  --preview-refresh  Regenerate the cached preview.\n"
+          "  --preview-lod-pixels N  Camera LOD error (default 2 pixels).\n"
+          "  --preview-no-lod  Load the finest cached representation.\n"
+          "  --preview-compute auto|cpu|vulkan|cuda  Conversion compute backend.\n"
+          "  --preview-volume-grids  Open an existing UsdVol scene directly.\n"
+          "  --preview-volume-mode surface|medium  Direct-grid rendering mode.\n"
+          "  --preview-volume-cutoff F    Residual transmittance, [0,1] (default 1e-7; 0 disables).\n"
+          "  --preview-volume-steps N     Ray step budget, 1..65536 (default 4096).\n"
+          "  --preview-shadow-steps N     Shadow step budget, 1..65536 (default 1024).\n"
+          "  --preview-volume-step-size F  Step in voxel units, (0,2] (default .5).\n"
+          "  --preview-volume-error F     Relative quadrature error, [0,1] (default .001).\n"
+          "  --preview-volume-bounces N   Scattering orders, 1..256 (default 1).\n"
+          "  --preview-volume-samples N   Paths per pixel, 1..64 (default 2).\n"
+          "  --preview-light-samples N    Textured light samples, 1..64 (default 8).\n"
+          "  --preview-accumulation-frames N  Stable-camera frame cap, 1..4096 (default 64).\n"
+          "  --preview-volume-density/scattering/emission/anisotropy F  Medium controls.\n"
+          "  --preview-volume-headlight / --preview-volume-no-shadows  Lighting controls.\n"
+          "  --preview-no-source-refine  Keep the initial cached samples.\n"
+          "  --preview-volume-carrier  Use cached isosurface meshes.\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
           "loaded at runtime via cuew; falls back if no CUDA device).\n"
           "  --cuda-rt-backend MODE  CUDA traversal: auto, optix, or software.\n"
@@ -1346,6 +1387,8 @@ int main(int argc, char** argv) {
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
           "  --wireframe   Start in wireframe render mode (raster + both RT "
           "backends draw triangle edges only).\n"
+          "  --wireframe-xray  Start in wireframe mode with x-ray edges (all "
+          "edges drawn through surfaces; hidden-line removal off).\n"
           "  --material-id Start in material-id visualization (a distinct flat "
           "color per material; all backends).\n"
           "  --mode NAME   Start in a render mode: shaded, wireframe, normals, "
@@ -1493,6 +1536,28 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (scenePreview.enabled) {
+    scenePreview.options.time_code = timeCode.value_or(0.0);
+    scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
+    if (!lightusd::tydra::next::PrepareScenePreview(
+            &file, scenePreview, 0, &scenePreviewError)) {
+      LOGE("scene preview: %s", scenePreviewError.c_str());
+      return 1;
+    }
+    useNextLoader = true;
+    largeSceneProfile = LargeSceneProfile::Off;
+    largeSceneProfileExplicit = true;
+    dynamicLod = false;
+    const double budgetGiB = double(scenePreview.options.gpu_budget_bytes) /
+                             double(uint64_t(1) << 30);
+    vramBudgetGiB = budgetGiB;
+    vramBudgetExplicit = true;
+    maxGpuMemGiB = budgetGiB;
+    maxGpuMemExplicit = true;
+    lusdview::ScenePreviewGpuBudget().configure(scenePreview.options.gpu_budget_bytes);
+    textureOptions.textureBudgetMB = 32;
+    textureBudgetExplicit = true;
+  }
   LargeSceneProfile effectiveProfile = largeSceneProfile;
   // Large production assets should receive the interactive streaming budget
   // even when opened directly from the command line. Keep `--large-scene-
@@ -2103,6 +2168,9 @@ int main(int argc, char** argv) {
   }
   if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
   app.setUseNextLoader(useNextLoader);
+  app.setScenePreviewRequest(scenePreview);
+  if(scenePreview.enabled && scenePreview.camera_lod)
+    app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);
@@ -2161,6 +2229,7 @@ int main(int argc, char** argv) {
   app.setCameraConform(cameraConform);
   if (viewDirExplicit) app.setViewDirection(viewDir[0], viewDir[1], viewDir[2]);
   if (wantWireframe) app.setRenderMode(lusdview::RenderMode::Wireframe);
+  if (wantWireframeXray) app.setWireframeXray(true);
   if (wantMaterialId) app.setRenderMode(lusdview::RenderMode::MaterialId);
   if (wantMode) app.setRenderMode(*wantMode);
   if (!modeSweep.empty()) {

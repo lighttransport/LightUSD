@@ -12,7 +12,7 @@
 #include "expression-variables.hh"
 #include "../parser/parse-options.hh"
 #include "../resolver/asset-resolver.hh"
-#include "../../security-policy.hh"
+#include "core/security-policy.hh"
 #include <string>
 #include <vector>
 #include <map>

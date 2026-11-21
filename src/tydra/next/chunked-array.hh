@@ -177,6 +177,13 @@ class ChunkedArray {
   }
   bool copy_to(T* dest) const { return storage_.copy_to(dest, size()); }
   bool copy_to(T* dest, size_t count) const { return storage_.copy_to(dest, count); }
+  // Copy to a caller-owned byte buffer, including unaligned FFI destinations.
+  // Check capacity before touching it; the storage copies whole chunks using
+  // memcpy rather than indexing each element through the chunk table.
+  bool copy_bytes_to(void* dest, size_t capacity_bytes) const {
+    if (size() > capacity_bytes / sizeof(T)) return false;
+    return storage_.copy_to(dest, size());
+  }
   std::vector<T> flatten() const {
     std::vector<T> result(size());
     copy_to(result.data());

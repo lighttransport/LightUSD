@@ -705,9 +705,56 @@ void test_schema_registry_new_schemas() {
   assert(reg.InheritsFrom("ClipsAPI", "Typed"));
   std::cout << "  schema registry new schemas: PASSED" << std::endl;
 }
+void test_lazy_path_index_materialization_epoch() {
+  Layer layer;
+  layer.set_lazy_path_index(true);
+  LayerBuilder builder(layer);
+  builder.begin_prim("Root", "Xform");
+  builder.begin_prim("Mesh", "Mesh");
+  builder.end_prim();
+  builder.end_prim();
+  builder.finalize();
+  const size_t before_bytes = layer.memory_usage();
+  const size_t before_epoch = lu_storage_materialization_epoch();
+  assert(before_epoch != 0);
+  assert(layer.prim_at_path("/Root/Mesh"));
+  const size_t after_epoch = lu_storage_materialization_epoch();
+  assert(after_epoch == before_epoch + 1);
+  assert(layer.memory_usage() > before_bytes);
+  assert(layer.prim_at_path("/Root"));
+  assert(lu_storage_materialization_epoch() == after_epoch);
+}
+
+void test_authored_property_order_survives_lookup_sort_and_clone() {
+  PrimSpec prim("P");
+  prim.add_property("z", Value(int32_t(1)));
+  prim.add_relationship("r", Path("/Target"));
+  prim.add_property("a", Value(int32_t(2)));
+  prim.set_relationship_targets("s", {});
+  const std::vector<std::string> original{"z", "r", "a", "s"};
+  prim.finalize_properties();
+  assert(prim.authored_property_names() == original);
+  assert(prim.property("a"));
+  PrimSpec copy = prim.Clone();
+  assert(copy.authored_property_names() == original);
+  assert(copy.remove_property("z"));
+  assert(copy.remove_relationship("r"));
+  copy.add_property("z", Value(int32_t(3)));
+  copy.set_relationship_targets("r", {});
+  copy.finalize_properties();
+  assert((copy.authored_property_names() == std::vector<std::string>{"a", "s", "z", "r"}));
+  assert(prim.authored_property_names() == original);
+  PrimSpec attributes("Attributes");
+  attributes.add_property("z", Value(int32_t(1)));
+  attributes.add_property("a", Value(int32_t(2)));
+  attributes.finalize_properties();
+  assert((attributes.authored_property_names() == std::vector<std::string>{"z", "a"}));
+}
+
 int main() {
   std::cout << "=== Layer/PrimSpec Tests ===" << std::endl;
 
+  test_authored_property_order_survives_lookup_sort_and_clone();
   test_prop_name_table();
 #if defined(LIGHTUSD_ENABLE_THREAD)
   test_frozen_string_view_lookup_is_safe();
@@ -716,6 +763,7 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_lazy_path_index_materialization_epoch();
   test_finalize_does_not_allocate_cold_prim_metadata();
   test_layer_sort_rebuilds_hierarchy();
   test_metadata();

@@ -19,12 +19,12 @@
 #include "image-loader.hh"
 #include "image-types.hh"
 #include "io-util.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "texture-util.hh"
 #include "tiny-format.hh"
 #include "tydra/render-data.hh"
 #include "value-types.hh"
-#include "../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace tydra {

@@ -121,14 +121,30 @@ python3 examples/lusdview/render-motion.py \
     right-handed mouse navigation; `Up` / `Down` are aliases and `Shift`
     increases the step.
   - `V` cycles shaded, wireframe-only, and wireframe-with-shading views.
+    Wireframe is depth tested by default so hidden edges are occluded; `X`
+    toggles x-ray mode to draw every edge through surfaces.
   - `N` cycles the master navigation sensitivity through `0.25x`, `0.5x`,
     `1x`, and `1.5x`; the Camera panel also accepts a precise numeric scale.
-    Mouse orbit, pan, and dolly use a calmer 65% base response.
+    Orbit and dolly use a calmer, Maya-like per-pixel response.
   - **Navigation HUD** — an in-viewport cheatsheet/status overlay is shown by
     default and can be toggled with `F1`.
-  - **Click to pick** — a plain left click selects the nearest mesh under the
-    cursor (world-space ray vs. per-mesh AABB then ray/triangle), updating the
-    hierarchy highlight, inspector and selection bbox.
+  - **Click or drag to pick** — a plain left click or drag selects the nearest
+    prim under the cursor (world-space ray vs. per-mesh AABB then
+    ray/triangle, with alpha-cutout rejection), updating the hierarchy
+    highlight, inspector and selection bbox. A merged static batch resolves to
+    the individual prim under the cursor, not the batch's representative path.
+  - **Marquee (multi-prim) selection** — **`Shift` + left-drag** selects every
+    prim *visible* inside the rectangle (the marquee is sampled with the same
+    exact per-pixel picker, so occluded prims behind the surface are not
+    selected). The Selection panel lists every selected prim; the highlight
+    outlines each of them (up to 96 prims / 200k line vertices are outlined,
+    the list always holds them all).
+  - **Multi-selection in the Hierarchy** — `Ctrl`+click toggles a prim in the
+    selection; the right-click menu offers **Select group (descendants)** to
+    select every renderable prim under a group prim, and **Select parent prim**
+    to focus the containing group. The focused prim (first item) drives the
+    inspector, `F` framing (which frames the union of a multi-selection) and the
+    gizmo; the rest are highlighted together.
   - **Hierarchy sync** — viewport or MCP selection auto-expands and scrolls the
     hierarchy to the focused prim when possible.
   - **Selection stepping** — `[` / `]` move to the previous/next visible
@@ -597,7 +613,8 @@ Tools (`tools/list` for schemas):
 | `get_render_stats {}` | report UI/render FPS, threaded-render state, adaptive tier, render scale, and target FPS |
 | `screenshot {path}` | capture the current viewport as PNG, JPEG, or PPM (selected by extension) |
 | `mouse {type,x,y,...}` | inject viewport-local mouse movement or button events; `type` is `move` or `button`, with `button=0/1/2` and `down=true/false` |
-| `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select the prim covering the most depth-tested pixels in a region; returns USD path, carrier kind, and `covered_pixels` |
+| `pick {x,y,x1?,y1?,select?}` | query one pixel, or pass the opposite `x1,y1` corner to select every prim visible in the region (multi-selection); returns USD path, carrier kind, `selected_count`, and the `paths` array (`path`, `mesh_index`, `source_prim`) |
+| `select {op,path?}` | read or change the selection: `list`, `set`, `add`, `remove`, `group` (every renderable prim under `path`), `clear`; returns `count`, the focused `path`, and `items` |
 
 Example:
 

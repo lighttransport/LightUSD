@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // URDF frontend.
+#include "core/native-io.hh"
 #include "mjcf-internal.hh"
 
 namespace lightusd {
@@ -428,6 +429,7 @@ Json URDFCustomJson(const pugi::xml_node& node, std::initializer_list<const char
 // nearest ancestor ADIR for which ADIR/<relative path> exists (relative paths
 // with `..` are not searched). Explicit mappings always win.
 void DiscoverURDFPackages(const pugi::xml_node& root, const std::string& source) {
+  if (!::lightusd::NativeIOEnabled()) return;
   if (source.empty() || active_reader->options.open || active_reader->options.read) return;
   std::error_code ec;
   fs::path start = fs::path(source);

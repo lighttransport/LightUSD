@@ -1,11 +1,63 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "next/validation/validation-context.hh"
 #include "next/pcp/layer-registry.hh"
+#include "next/schema/schema-registry.hh"
 #include <cassert>
 #include <cstring>
 #include <iostream>
 using namespace lightusd::next;
+// AOUSD Core 1.1 "Schema Families and Versioning" (table rows + edges).
+static void TestSchemaFamilies() {
+  struct Case { const char* name; const char* family; uint32_t version; bool versioned; };
+  const Case cases[] = {
+      {"Mesh", "Mesh", 0, false},
+      {"Cylinder_1", "Cylinder", 1, true},
+      {"GaussianSplatting_2", "GaussianSplatting", 2, true},
+      {"Gaussian_Splatting", "Gaussian_Splatting", 0, false},
+      {"Gaussian_Splatting_3", "Gaussian_Splatting", 3, true},
+      {"MySchema_", "MySchema_", 0, false},
+      // Edges the table does not list (OpenUSD agrees unless noted).
+      {"Foo_01", "Foo", 1, true},
+      {"Foo__1", "Foo_", 1, true},
+      {"Foo_1_2", "Foo_1", 2, true},
+      {"Foo_1a", "Foo_1a", 0, false},
+      {"A_99999999999", "A", 4294967295u, true},
+      {"_1", "_1", 0, false},  // grammar needs a family; pxr says ('', 1)
+  };
+  for (const Case& c : cases) {
+    std::string family;
+    uint32_t version = 7;
+    bool versioned = true;
+    assert(ParseSchemaFamilyAndVersion(c.name, &family, &version, &versioned));
+    if (family != c.family || version != c.version || versioned != c.versioned) {
+      std::cerr << "schema family mismatch for " << c.name << ": " << family
+                << " " << version << " " << versioned << "\n";
+      assert(false);
+    }
+  }
+  std::string f;
+  uint32_t v = 0;
+  bool hv = false;
+  assert(!ParseSchemaFamilyAndVersion("", &f, &v, &hv));
+
+  // A versioned schema must not inherit from its own family, directly or
+  // through an intermediate schema; another family is fine.
+  ValidationRegistry r;
+  assert(!r.LoadSchemaDefinitions(R"({"formatVersion":1,"schemas":[
+      {"name":"Cyl","kind":"concrete","inherits":"Gprim","properties":[]},
+      {"name":"Cyl_2","kind":"concrete","inherits":"Cyl","properties":[]}]})"));
+  assert(!r.LoadSchemaDefinitions(R"({"formatVersion":1,"schemas":[
+      {"name":"Cyl_1","kind":"concrete","inherits":"Gprim","properties":[]},
+      {"name":"Mid","kind":"concrete","inherits":"Cyl_1","properties":[]},
+      {"name":"Cyl_3","kind":"concrete","inherits":"Mid","properties":[]}]})"));
+  assert(r.LoadSchemaDefinitions(R"({"formatVersion":1,"schemas":[
+      {"name":"Cyl_1","kind":"concrete","inherits":"Gprim","properties":[]},
+      {"name":"Cyl_2","kind":"concrete","inherits":"Gprim","properties":[]},
+      {"name":"Cyl","kind":"concrete","inherits":"Cyl_1","properties":[]}]})"));
+}
+
 int main() {
+  TestSchemaFamilies();
   ValidationRegistry a, b;
   assert(!a.FindSchema("VendorSchema"));
   const char* schema = R"({"formatVersion":1,"schemas":[{"name":"VendorSchema","kind":"concrete","inherits":"Sphere","properties":[{"name":"weights","type":"float[]","kind":"attribute"}]}]})";

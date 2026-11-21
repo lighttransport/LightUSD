@@ -118,6 +118,16 @@ int main() {
   const size_t min_fsi =
       MinLoadable(usdc, &CrateLimits::max_fieldset_indices, 1u << 20);
   std::cout << "fields=" << min_fields << " fieldset indices=" << min_fsi << "\n";
+  {
+    CrateLimits l;
+    l.max_fields = min_fields - 1;
+    std::string errors;
+    CHECK(!LoadsWith(usdc, l, &errors),
+          "max_fields below the table size must reject");
+    CHECK(errors.find("Too many fields: ") != std::string::npos &&
+              errors.find(" > ") != std::string::npos,
+          "rejection must name the field count and limit: " + errors);
+  }
   CHECK(min_fsi > min_fields,
         "fixture must have more fieldset indices than fields");
   {

@@ -2,6 +2,7 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
+#include "core/native-io.hh"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -89,6 +90,8 @@ namespace io {
 
 bool OpenInputFile(std::ifstream *file, const std::string &filepath,
                    std::ios_base::openmode mode) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   if (!file) return false;
 #ifdef _WIN32
 #if defined(__GLIBCXX__)
@@ -109,6 +112,8 @@ bool OpenInputFile(std::ifstream *file, const std::string &filepath,
 
 bool OpenOutputFile(std::ofstream *file, const std::string &filepath,
                     std::ios_base::openmode mode) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   if (!file) return false;
 #ifdef _WIN32
 #if defined(__GLIBCXX__) || defined(_MSC_VER) || defined(_LIBCPP_VERSION)
@@ -169,6 +174,8 @@ AAssetManager *asset_manager = nullptr;
 #endif
 
 bool IsMMapSupported() {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
 #if LIGHTUSD_MMAP_SUPPORTED
   return true;
 #else
@@ -213,42 +220,6 @@ static bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writabl
     return false;
   }
 
-  size_t prefetch = 0;
-  if (prefetch > 0) {
-#if _WIN32_WINNT >= 0x602
-    // PrefetchVirtualMemory is only present on Windows 8 and above, so we
-    // dynamically load it
-    BOOL(WINAPI * pPrefetchVirtualMemory)
-    (HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
-    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
-
-    // may fail on pre-Windows 8 systems
-    pPrefetchVirtualMemory = reinterpret_cast<decltype(pPrefetchVirtualMemory)>(
-        GetProcAddress(hKernel32, "PrefetchVirtualMemory"));
-
-    if (pPrefetchVirtualMemory) {
-      // advise the kernel to preload the mapped memory
-      WIN32_MEMORY_RANGE_ENTRY range;
-      range.VirtualAddress = addr;
-      range.NumberOfBytes = static_cast<SIZE_T>((std::min)(size_t(size), prefetch));
-      if (!pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
-        // warn
-        if (err) {
-          (*err) += "warning: PrefetchVirtualMemory failed: " +
-                    llama_format_win_err(GetLastError());
-        }
-      }
-    }
-#else
-    // lightusd is built with -fno-exceptions, so report via `err` instead of
-    // throwing.
-    if (err) {
-      (*err) += "PrefetchVirtualMemory unavailable";
-    }
-    return false;
-#endif
-  }
-
   handle->addr = reinterpret_cast<uint8_t *>(addr);
   handle->size = size;
   handle->writable = writable;
@@ -259,6 +230,8 @@ static bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writabl
 #endif
 
 bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
 
 #if LIGHTUSD_MMAP_SUPPORTED
 #if defined(_WIN32)
@@ -337,6 +310,8 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
 
 #if defined(_WIN32)
 bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool writable, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
 
 #if LIGHTUSD_MMAP_SUPPORTED
   //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
@@ -460,17 +435,19 @@ bool SimpleGlobMatch(const std::string &pattern, const std::string &name) {
 
 namespace {
 
-// POSIX-style leading '~' (-> $HOME) plus $VAR / ${VAR} environment-variable
+// POSIX-style leading '~' (-> HOME) plus $VAR / ${VAR} caller-variable
 // substitution. Pure string transform — no filesystem, no shell, no brace or
 // glob expansion — so it is safe on any input (this replaces the useful,
 // deterministic part of the old wordexp() call). Undefined variables expand to
 // empty (matching shell default).
-[[maybe_unused]] std::string ExpandEnvAndTilde(const std::string &in) {
+[[maybe_unused]] std::string ExpandEnvAndTilde(
+    const std::string &in, const std::map<std::string, std::string> &variables) {
   std::string out;
   out.reserve(in.size());
   size_t i = 0;
   if (!in.empty() && in[0] == '~' && (in.size() == 1 || in[1] == '/')) {
-    if (const char *home = std::getenv("HOME")) out += home;
+    const auto home = variables.find("HOME");
+    if (home != variables.end()) out += home->second;
     i = 1;  // skip the '~'; the following '/...' (if any) is copied below
   }
   for (; i < in.size(); ++i) {
@@ -491,7 +468,8 @@ namespace {
         }
       }
       if (!name.empty()) {
-        if (const char *val = std::getenv(name.c_str())) out += val;
+        const auto val = variables.find(name);
+        if (val != variables.end()) out += val->second;
         i = j - 1;  // -1: the for-loop's ++i re-advances
         continue;
       }
@@ -515,6 +493,8 @@ inline bool HasGlobWildcard(const std::string &s) {
 
 std::vector<std::string> SimpleGlob(const std::string &pattern,
                                     size_t max_results) {
+  if (!::lightusd::NativeIOEnabled()) return {};
+
   std::vector<std::string> results;
   if (max_results == 0) return results;
 
@@ -610,7 +590,9 @@ std::vector<std::string> SimpleGlob(const std::string &pattern,
 #endif
 }
 
-std::string ExpandFilePath(const std::string &_filepath, void *) {
+namespace {
+std::string ExpandPath(const std::string &_filepath,
+                       const std::map<std::string, std::string> *variables) {
   std::string filepath = _filepath;
   if (filepath.size() > 2048) {
     // file path too large.
@@ -619,25 +601,18 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   }
   if (filepath.empty()) return std::string();
 
-  // Step 1: environment-variable / tilde expansion (safe string transform;
-  // replaces the deterministic part of the old wordexp() call).
+  std::string expanded = variables ? ExpandEnvAndTilde(filepath, *variables) : filepath;
 #ifdef _WIN32
-  // Windows uses %VAR% expansion.
-  std::string expanded;
-  {
-    std::wstring wfilepath = UTF8ToWchar(filepath);
-    DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
-    if (wlen == 0) {
-      expanded = filepath;
-    } else {
-      std::wstring ws(static_cast<size_t>(wlen), 0);
-      ExpandEnvironmentStringsW(wfilepath.c_str(), &ws[0], wlen);
-      if (!ws.empty() && ws.back() == L'\0') ws.pop_back();
-      expanded = WcharToUTF8(ws);
+  if (variables) {
+    for (const auto &entry : *variables) {
+      const std::string key = "%" + entry.first + "%";
+      size_t pos = 0;
+      while ((pos = expanded.find(key, pos)) != std::string::npos) {
+        expanded.replace(pos, key.size(), entry.second);
+        pos += entry.second.size();
+      }
     }
   }
-#else
-  std::string expanded = ExpandEnvAndTilde(filepath);
 #endif
 
   // Step 2: simple glob. Only '*' and '?' are wildcards (no brace expansion,
@@ -656,6 +631,16 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
 #endif
   return std::string(expanded);
 }
+}  // namespace
+
+std::string ExpandFilePath(const std::string &filepath, void *) {
+  return ExpandPath(filepath, nullptr);
+}
+std::string ExpandFilePathWithVariables(
+    const std::string &filepath, const std::map<std::string, std::string> &variables) {
+  return ExpandPath(filepath, &variables);
+}
+
 
 #ifdef _WIN32
 std::wstring UTF8ToWchar(const std::string &str) {
@@ -680,6 +665,8 @@ std::string WcharToUTF8(const std::wstring &wstr) {
 bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, size_t filesize_max,
                    void *userdata) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   (void)userdata;
 
 #ifdef LIGHTUSD_ANDROID_LOAD_FROM_ASSETS
@@ -805,6 +792,8 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
 bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
                     const std::string &filepath, uint32_t max_read_bytes,
                     void *userdata) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   (void)userdata;
 
   // Hard limit to 1MB. Clamp to prevent overflow in downstream size_t casts.
@@ -931,6 +920,8 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
 
 bool WriteWholeFile(const std::string &filepath, const unsigned char *contents,
                     size_t content_bytes, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
 #ifdef _WIN32
 #if defined(__GLIBCXX__)  // mingw
   int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
@@ -968,6 +959,8 @@ bool WriteWholeFile(const std::string &filepath, const unsigned char *contents,
 #ifdef _WIN32
 bool WriteWholeFile(const std::wstring &filepath, const unsigned char *contents,
                     size_t content_bytes, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
 #if defined(__GLIBCXX__)  // mingw
   int file_descriptor =
       _wopen(filepath.c_str(), _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
@@ -1125,6 +1118,8 @@ std::string NormalizePath(const std::string &path) {
 }
 
 bool USDFileExists(const std::string &fpath) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   size_t read_len = 9;  // USD file must be at least 9 bytes or more.
 
   std::string err;
@@ -1174,6 +1169,8 @@ bool SplitUDIMPath(const std::string &path, std::string *pre,
 }
 
 bool FileExists(const std::string &filepath, void *userdata) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   (void)userdata;
 
   bool ret{false};
@@ -1335,13 +1332,21 @@ std::vector<std::string> AssetPathSuffixCandidates(
 //
 // Directory / temp-path utilities.
 //
-// GetTempDir is implemented with native OS APIs (Win32 GetTempPath / POSIX env)
+// GetTempDir accepts a caller path/provider, otherwise a portable fallback
 // per request; the remaining helpers wrap the vendored ghc::filesystem so that
 // callers never need <filesystem>.
 //
-std::string GetTempDir() {
-#if defined(_WIN32)
-  // GetTempPathW writes a path terminated with a backslash.
+std::string GetTempDir(const std::string &directory,
+    const std::shared_ptr<const HostServices> &services) {
+  if (!directory.empty()) return directory;
+  if (services && services->temporary_directory) {
+    const std::string result = services->temporary_directory();
+    if (!result.empty()) return result;
+  }
+#ifdef _WIN32
+  // GetTempPathW writes a path terminated with a backslash. The system
+  // temporary directory is the documented default; "." would make callers
+  // author relative paths (and is not a temp directory).
   wchar_t buf[MAX_PATH + 1];
   DWORD n = GetTempPathW(MAX_PATH + 1, buf);
   if (n == 0 || n > MAX_PATH) {
@@ -1353,17 +1358,6 @@ std::string GetTempDir() {
   }
   return s.empty() ? std::string(".") : s;
 #else
-  const char *names[] = {"TMPDIR", "TMP", "TEMP", "TEMPDIR"};
-  for (const char *name : names) {
-    const char *v = std::getenv(name);
-    if (v && v[0]) {
-      std::string s(v);
-      while (s.size() > 1 && s.back() == '/') {
-        s.pop_back();
-      }
-      return s;
-    }
-  }
   return "/tmp";
 #endif
 }
@@ -1376,20 +1370,17 @@ std::string GetTempDir() {
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-std::string GetCurrentDir() {
-#if defined(__wasi__)
-  return ".";
-#else
-  std::error_code ec;
-  ghc::filesystem::path p = ghc::filesystem::current_path(ec);
-  if (ec) {
-    return ".";
+std::string GetCurrentDir(const std::shared_ptr<const HostServices> &services) {
+  if (services && services->current_directory) {
+    const std::string result = services->current_directory();
+    if (!result.empty()) return result;
   }
-  return p.string();
-#endif
+  return ".";
 }
 
 bool IsDirectory(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
 #if defined(__wasi__)
   (void)path;
   return false;
@@ -1400,6 +1391,8 @@ bool IsDirectory(const std::string &path) {
 }
 
 bool CreateDirectories(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
 #if defined(__wasi__)
   (void)path;
   return false;
@@ -1418,6 +1411,8 @@ bool CreateDirectories(const std::string &path) {
 }
 
 bool RemoveFile(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
 #if defined(__wasi__)
   (void)path;
   return false;
@@ -1429,6 +1424,8 @@ bool RemoveFile(const std::string &path) {
 }
 
 bool RemoveAll(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
 #if defined(__wasi__)
   (void)path;
   return false;
@@ -1440,6 +1437,8 @@ bool RemoveAll(const std::string &path) {
 }
 
 std::string AbsPath(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return path;
+
 #if defined(__wasi__)
   return path;
 #else
@@ -1453,6 +1452,8 @@ std::string AbsPath(const std::string &path) {
 }
 
 std::string RelativePath(const std::string &path, const std::string &base) {
+  if (!::lightusd::NativeIOEnabled()) return path;
+
 #if defined(__wasi__)
   (void)base;
   return path;
@@ -1468,6 +1469,8 @@ std::string RelativePath(const std::string &path, const std::string &base) {
 }
 
 std::vector<std::string> ListDir(const std::string &dir, bool recursive) {
+  if (!::lightusd::NativeIOEnabled()) return {};
+
   std::vector<std::string> out;
 #if !defined(__wasi__)
   std::error_code ec;

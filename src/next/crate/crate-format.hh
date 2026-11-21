@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -366,6 +367,13 @@ std::vector<uint8_t> EncodeIntegers(const uint32_t* values, size_t count);
 /// Compress with CompressCrateBlob (adds prefix).
 /// Decompress with DecompressCrateBlob (strips prefix).
 CompressResult CompressCrateBlob(const uint8_t* src, size_t src_size);
+/// Compress and synchronously emit borrowed encoded bytes once. The bytes
+/// remain valid only during emit. On compression failure emit is never called;
+/// destination errors belong to the emitter. Avoids an intermediate result
+/// vector when the destination already owns its output buffer.
+bool CompressCrateBlobTo(const uint8_t* src, size_t src_size,
+                         const std::function<void(const uint8_t*, size_t)>& emit,
+                         std::string* error = nullptr);
 /// Decompress a crate blob whose header declares an exact uncompressed size.
 /// A valid-but-short LZ4 stream is rejected.
 DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
@@ -394,6 +402,12 @@ DecompressResult DecompressCrateBlobWithCapacityHint(
 /// Encode uint32_t values using pxrUSD delta-coding format.
 /// Returns the raw (uncompressed) delta-coded byte sequence.
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count);
+
+/// Encode an immutable projected column without materializing its u32 values.
+/// The accessor may be called concurrently, repeatedly, and out of order;
+/// its inputs must stay alive and unchanged until this call returns.
+std::vector<uint8_t> EncodeDeltaU32Projected(
+    size_t count, const std::function<uint32_t(size_t)>& value_at);
 
 /// Decode uint32_t values from pxrUSD delta-coded format.
 /// buffer points to the raw (already decompressed) delta-coded data.

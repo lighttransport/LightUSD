@@ -2266,7 +2266,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (t.isPtex && t.compressed.data.empty() && t.ptexRectTexelOffset <
                       static_cast<uint32_t>(t.image.width * t.image.height)) {
     size_t linear = t.ptexRectTexelOffset;
-    size_t remaining = t.ptexFaceRects.size() * 8u;
+    size_t remaining = t.ptexFaceRects.size() * 10u;
     while (remaining > 0) {
       const int x = static_cast<int>(linear % size_t(t.image.width));
       const int y = static_cast<int>(linear / size_t(t.image.width));
@@ -3565,7 +3565,8 @@ void GLRenderer::buildWireProgram() {
   }
 }
 
-void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3]) {
+void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wireColor[3],
+                               bool xray) {
   if (!wireProgram_ && !wireInstProgram_) return;
   // Do not apply a constant NDC lift: under perspective it can represent meters
   // of world-space pull at interior-scene distances and expose edges through
@@ -3575,6 +3576,11 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
   glDisable(GL_CULL_FACE);
+  // X-ray draws every edge regardless of the depth buffer. Otherwise keep the
+  // depth test on so hidden-line removal works against the depth prepass (wire
+  // only) or the shaded fill (wire over shaded).
+  if (xray) glDisable(GL_DEPTH_TEST);
+  else glEnable(GL_DEPTH_TEST);
   // The GS expands each edge into a thin screen-space quad and the FS feathers it
   // analytically, so we get sub-pixel-thin AA lines (no GL_LINE_SMOOTH). Alpha
   // blend for the feathered edge; LEQUAL accepts the edge's exact surface depth,
@@ -3659,6 +3665,7 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
   }
   glBindVertexArray(0);
   // Restore default state for the rest of the frame (ImGui / next passes).
+  glEnable(GL_DEPTH_TEST);
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
   glDisable(GL_BLEND);
@@ -5049,12 +5056,15 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   const float wireCol[3] = {0.04f, 0.24f, 0.10f};  // dark green
 
   if (wireMode == 1 && haveWire) {
-    // Wireframe only (hidden-line removed): render the fill into DEPTH ONLY so
-    // occluded edges are hidden, then draw the polygon edges over the background.
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    drawMeshes(params, /*wireframe=*/false, nullptr);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    drawWireframe(params, wireCol);
+    // Wireframe only. By default render the fill into DEPTH ONLY so occluded
+    // edges are hidden, then draw the polygon edges over the background. X-ray
+    // skips the depth fill and disables the depth test for the edges.
+    if (!params.wireXray) {
+      glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+      drawMeshes(params, /*wireframe=*/false, nullptr);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    drawWireframe(params, wireCol, params.wireXray);
   } else {
     // Shaded fill. In the lit mode (RenderMode 0), draw opaque geometry first,
     // then translucent (Blend) materials in a separate back-to-front, blended,
@@ -5079,13 +5089,19 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     } else {
       drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);
     }
-    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
+    if (wireMode == 2 && haveWire) drawWireframe(params, wireCol, params.wireXray);
   }
   if (wireMode != 1) drawNonMesh(params);
 
   // Highlight overlay (wireframe, emissive orange) on the selected mesh.
+  // Instanced selections are excluded: this overlay draws the prototype once at
+  // its mesh transform, not per placement, so the GUI provides world-space cage
+  // lines for every instance instead (drawn by the line path below).
   if (params.highlightMeshIndex >= 0 &&
-      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() && !wire) {
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      !wire &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount ==
+          0) {
     // drawNonMesh() leaves its own shader bound. Uniform locations below belong
     // to the material mesh program; without rebinding it the outline was drawn
     // by the helper shader from rest positions and all skin uniforms were
@@ -5241,8 +5257,14 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
   // same params also carry CPU-built world-space lines for Vulkan (which lacks
   // that overlay); drawing them here duplicates the highlight in rest pose for
   // skinned/morphed meshes. Keep this line path only for native Points/Curves,
-  // represented by highlightMeshIndex < 0.
-  if (params.highlightMeshIndex < 0 && params.highlightLines &&
+  // represented by highlightMeshIndex < 0, and for instanced selections (which
+  // the polygon overlay cannot draw per placement).
+  const bool highlightMeshInstanced =
+      params.highlightMeshIndex >= 0 &&
+      static_cast<size_t>(params.highlightMeshIndex) < meshes_.size() &&
+      meshes_[static_cast<size_t>(params.highlightMeshIndex)].instanceCount > 0;
+  if ((params.highlightMeshIndex < 0 || highlightMeshInstanced) &&
+      params.highlightLines &&
       params.highlightLineVertexCount > 0 && lineProgram_) {
     glUseProgram(lineProgram_);
     const light3d::Mat4 VP = ToMat4(params.proj) * ToMat4(params.view);
@@ -5295,6 +5317,40 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
 
 ViewportTexHandle GLRenderer::viewportTexture() const {
   return static_cast<ViewportTexHandle>(dofApplied_ ? dofTex_ : colorTex_);
+}
+
+ViewportTexHandle GLRenderer::comparisonImage(int slot, const light3d::Image* image) {
+  if (slot < 0 || slot >= 4) return 0;
+  auto& target = comparisonTextures_[static_cast<size_t>(slot)];
+  if (!image) return static_cast<ViewportTexHandle>(target);
+  if (image->width < 1 || image->height < 1 || image->width > 4096 || image->height > 4096 ||
+      image->channels != 4 || image->data.size() != static_cast<size_t>(image->width)*static_cast<size_t>(image->height)*4) return 0;
+  GLint previous = 0, unpack = 0, alignment = 0, rowLength = 0;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D,&previous);
+  glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack);
+  glGetIntegerv(GL_UNPACK_ALIGNMENT,&alignment);
+  glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);
+  GLuint texture = 0;
+  glGenTextures(1,&texture);
+  glBindTexture(GL_TEXTURE_2D,texture);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+  glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,image->width,image->height,0,GL_RGBA,GL_UNSIGNED_BYTE,image->data.data());
+  GLint width = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&width);
+  glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(previous));
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER,static_cast<GLuint>(unpack));
+  glPixelStorei(GL_UNPACK_ALIGNMENT,alignment);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH,rowLength);
+  if (width != image->width) { glDeleteTextures(1,&texture); return 0; }
+  if (target) glDeleteTextures(1,&target);
+  target = texture;
+  return static_cast<ViewportTexHandle>(target);
 }
 
 bool GLRenderer::uploadViewportImage(const uint8_t* rgba, int w, int h) {
@@ -5437,6 +5493,7 @@ bool GLRenderer::captureWindow(std::vector<uint8_t>* rgba, int* w, int* h) {
 }
 
 void GLRenderer::shutdown() {
+  for (auto& texture : comparisonTextures_) { if (texture) glDeleteTextures(1,&texture); texture = 0; }
   destroyScene();
   if (whiteTex_) { glDeleteTextures(1, &whiteTex_); whiteTex_ = 0; }
   if (boneTex_) { glDeleteTextures(1, &boneTex_); boneTex_ = 0; }

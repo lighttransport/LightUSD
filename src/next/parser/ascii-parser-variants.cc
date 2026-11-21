@@ -147,6 +147,50 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
           }
           Match(TokenType::CloseBrace);
         }
+      } else if (key == "variantSets") {
+        // Same list-op model as prim-level `variantSets`
+        // (PrimMetadata::variantSetNameEdits); a raw-text unknownMeta entry
+        // here could not be encoded as a crate field.
+        std::vector<std::string> names;
+        auto read_name = [&]() {
+          std::string n;
+          if (Check(TokenType::String) ? lexer_->expect(TokenType::String, n)
+                                       : lexer_->expect(TokenType::Identifier, n)) {
+            names.push_back(std::move(n));
+          }
+        };
+        if (Check(TokenType::None)) {
+          lexer_->next();
+        } else if (Match(TokenType::OpenBracket)) {
+          while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+            read_name();
+            Match(TokenType::Comma);
+          }
+          Match(TokenType::CloseBracket);
+        } else {
+          read_name();
+        }
+        StringListOps& edits = out->variantSetNameEdits;
+        if (arc_op != ArcOp::Bare && edits.is_explicit) edits = StringListOps();
+        edits.authored = true;
+        auto add_to = [&](std::vector<std::string>* dst) {
+          edits.is_explicit = false;
+          dst->insert(dst->end(), names.begin(), names.end());
+        };
+        switch (arc_op) {
+          case ArcOp::Bare:
+            edits = StringListOps();
+            edits.authored = true;
+            edits.is_explicit = true;
+            edits.explicit_items = names;
+            break;
+          case ArcOp::Prepend: add_to(&edits.prepended); break;
+          case ArcOp::Append:
+            add_to(add_spelling ? &edits.added : &edits.appended);
+            break;
+          case ArcOp::Delete: add_to(&edits.deleted); break;
+          case ArcOp::Reorder: add_to(&edits.ordered); break;
+        }
       } else if (key == "references" || key == "payload" ||
                  key == "inherits" || key == "specializes") {
         std::vector<std::string>* target =
@@ -234,8 +278,8 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
               case ArcOp::Reorder: qual_prefix = "reorder "; break;
               default: break;
             }
-            out->unknownMeta.emplace_back(
-                qual_prefix + key, std::string(base + vstart, vend - vstart));
+            StoreRawMetadataOpinion(&out->unknownMeta, qual_prefix + key,
+                                    std::string(base + vstart, vend - vstart));
           }
         }
       }
@@ -275,6 +319,10 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
       lexer_->next();
       std::string rel_name;
       if (!ParseNamespacedName(&rel_name, "relationship name")) break;
+      if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), rel_name) ==
+          out->authoredPropertyNames.end())
+        out->authoredPropertyNames.push_back(rel_name);
       SkipPropertyMetadata();
       if (Match(TokenType::Equals)) {
         if (Check(TokenType::None)) {
@@ -336,6 +384,10 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
           AddError("Failed to parse relationship name in variant option");
           return false;
         }
+        if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), rel_name) ==
+          out->authoredPropertyNames.end())
+          out->authoredPropertyNames.push_back(rel_name);
         SkipPropertyMetadata();
         if (Match(TokenType::Equals)) {
           if (Check(TokenType::None)) {
@@ -377,6 +429,10 @@ bool AsciiParser::Impl::ParseVariantOption(PrimVariantData* out, int depth) {
       if (is_array) vflags |= PropSlot::kFlagArray;
       std::string prop_name;
       if (!ParseNamespacedName(&prop_name, "attribute name")) break;
+      if (std::find(out->authoredPropertyNames.begin(),
+                    out->authoredPropertyNames.end(), prop_name) ==
+          out->authoredPropertyNames.end())
+        out->authoredPropertyNames.push_back(prop_name);
       SkipPropertyMetadata();
       if (Check(TokenType::Dot)) {
         lexer_->next();

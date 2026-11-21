@@ -2,7 +2,7 @@
 #include "collection-diff.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/reader/usdz-reader.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>

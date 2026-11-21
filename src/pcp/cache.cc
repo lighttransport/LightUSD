@@ -18,7 +18,7 @@
 #include "core/prim-spec.hh"
 #include "namespace-mapping.hh"
 #include "pcp/cache-impl.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "stage.hh"
 
 namespace lightusd {

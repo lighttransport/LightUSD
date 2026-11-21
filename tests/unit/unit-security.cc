@@ -6,10 +6,10 @@
 #include "acutest.h"
 
 #include "asset-resolution.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "unit-security.h"
 #include "json-to-usd.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "sha256.hh"
 #include "lightusd.hh"
 #include "tydra/render-data-internal.hh"

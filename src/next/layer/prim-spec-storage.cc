@@ -4,8 +4,10 @@
 // LightUSD Next - PrimSpec Implementation
 
 #include "prim-spec.hh"
+#include "layer.hh"
+#include "int64-listop.hh"
 #include "../prim/identifier.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <cstring>
 #include <list>
@@ -16,36 +18,27 @@
 namespace lightusd {
 namespace next {
 
-PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
+PrimMetadataRare::PrimMetadataRare(const PrimMetadataRare &o)
       : doc(o.doc),
         comment(o.comment),
         doc_authored(o.doc_authored),
         comment_authored(o.comment_authored),
-        kind(o.kind),
-        kind_authored(o.kind_authored),
         displayName(o.displayName),
         display_name_authored(o.display_name_authored),
         permission(o.permission),
         displayGroupOrder(o.displayGroupOrder),
         displayGroupOrderAuthored(o.displayGroupOrderAuthored),
-        instance_prototype(o.instance_prototype),
-        apiSchemas(o.apiSchemas),
-        apiSchemasAuthored(o.apiSchemasAuthored),
-        apiSchemaEdits(o.apiSchemaEdits),
-        apiSchemasQualifier(o.apiSchemasQualifier),
         variantSets(o.variantSets),
         variantSetNameEdits(o.variantSetNameEdits),
         variantSelections(o.variantSelections),
         variantSelectionsAuthored(o.variantSelectionsAuthored),
         relocates(o.relocates),
         relocatesAuthored(o.relocatesAuthored),
-        customData(o.customData),
         assetInfo(o.assetInfo),
         sdrMetadata(o.sdrMetadata),
         clips(o.clips),
         clipSetEdits(o.clipSetEdits),
         clipShadowedProps(o.clipShadowedProps),
-        customDataAuthored(o.customDataAuthored),
         assetInfoAuthored(o.assetInfoAuthored),
         sdrMetadataAuthored(o.sdrMetadataAuthored),
         clipsAuthored(o.clipsAuthored),
@@ -54,8 +47,25 @@ PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
         primOrderAuthored(o.primOrderAuthored),
         propertyOrderAuthored(o.propertyOrderAuthored),
         unknownMeta(o.unknownMeta),
-        unknownFields(o.unknownFields),
-        arc_edits(o.arc_edits ? new ArcListOps(*o.arc_edits) : nullptr) {}
+        unknownFields(o.unknownFields) {}
+
+PrimMetadataRare::PrimMetadataRare() = default;
+
+PrimMetadataRare::~PrimMetadataRare() = default;
+
+PrimMetadataCold::PrimMetadataCold(const PrimMetadataCold &o)
+      : kind(o.kind),
+        customData(o.customData),
+        instance_prototype(o.instance_prototype),
+        apiSchemas(o.apiSchemas),
+        kind_authored(o.kind_authored),
+        apiSchemasAuthored(o.apiSchemasAuthored),
+        customDataAuthored(o.customDataAuthored),
+        arc_edits(o.arc_edits ? new ArcListOps(*o.arc_edits) : nullptr),
+        api_schema_edits(o.api_schema_edits
+                             ? new ApiSchemaListOp(*o.api_schema_edits)
+                             : nullptr),
+        rare(o.rare ? new PrimMetadataRare(*o.rare) : nullptr) {}
 
 PrimMetadataCold::PrimMetadataCold() = default;
 
@@ -137,6 +147,140 @@ void MergeWeakerDictionaryValue(
   }
 }
 
+namespace {
+std::vector<int64_t> SortedIds(std::vector<int64_t> ids) {
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+  return ids;
+}
+
+// Deterministic O(n log n), avoiding attacker-selected integer hash collisions.
+// Most authored explicit ID lists are sorted and use the allocation-free path.
+void UniqueIds(std::vector<int64_t>* ids, const std::vector<int64_t>& last) {
+  if (std::is_sorted(ids->begin(), ids->end())) {
+    ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+    return;
+  }
+  std::vector<size_t> rank(ids->size());
+  for (size_t i = 0; i < rank.size(); ++i) rank[i] = i;
+  std::sort(rank.begin(), rank.end(), [&](size_t a, size_t b) {
+    return (*ids)[a] < (*ids)[b] || ((*ids)[a] == (*ids)[b] && a < b);
+  });
+  std::vector<uint8_t> keep(ids->size(), 0);
+  for (size_t i = 0; i < rank.size();) {
+    size_t end = i + 1;
+    while (end < rank.size() && (*ids)[rank[end]] == (*ids)[rank[i]]) ++end;
+    keep[std::binary_search(last.begin(), last.end(), (*ids)[rank[i]])
+             ? rank[end - 1] : rank[i]] = 1;
+    i = end;
+  }
+  size_t count = 0;
+  for (size_t i = 0; i < ids->size(); ++i)
+    if (keep[i]) (*ids)[count++] = (*ids)[i];
+  ids->resize(count);
+}
+
+std::vector<int64_t> ApplyInt64Op(const Int64ListOp& op,
+                                 const std::vector<int64_t>& base) {
+  auto run = [&](size_t i) {
+    auto a = op.items[i].as_int64_array();
+    std::vector<int64_t> values;
+    if (a && !a->empty()) {
+      values.resize(a->size());
+      std::copy_n(a->data(), values.size(), values.data());
+    }
+    return values;
+  };
+  if (op.is_explicit()) {
+    auto result = run(0);
+    UniqueIds(&result, {});
+    return result;
+  }
+  const auto deleted = SortedIds(run(4)), appended = run(3);
+  const auto move_back = SortedIds(appended);
+  const auto is_appended = [&](int64_t id) {
+    return std::binary_search(move_back.begin(), move_back.end(), id);
+  };
+  std::vector<int64_t> result;
+  for (int64_t id : run(2)) if (!is_appended(id)) result.push_back(id);
+  for (int64_t id : base)
+    if (!std::binary_search(deleted.begin(), deleted.end(), id) && !is_appended(id))
+      result.push_back(id);
+  for (int64_t id : run(1)) if (!is_appended(id)) result.push_back(id);
+  result.insert(result.end(), appended.begin(), appended.end());
+  UniqueIds(&result, move_back);
+
+  const auto order = run(5);
+  if (order.empty()) return result;
+  const auto ordered = SortedIds(order);
+  struct Block { int64_t id; size_t begin, end; };
+  std::vector<Block> blocks;
+  size_t prefix = result.size();
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (!std::binary_search(ordered.begin(), ordered.end(), result[i])) continue;
+    if (!blocks.empty()) blocks.back().end = i;
+    else prefix = i;
+    blocks.push_back({result[i], i, result.size()});
+  }
+  std::sort(blocks.begin(), blocks.end(),
+            [](const Block& a, const Block& b) { return a.id < b.id; });
+  std::vector<uint8_t> emitted(blocks.size(), 0);
+  std::vector<int64_t> reordered(result.begin(), result.begin() + static_cast<ptrdiff_t>(prefix));
+  for (int64_t id : order) {
+    auto block = std::lower_bound(blocks.begin(), blocks.end(), id,
+        [](const Block& b, int64_t value) { return b.id < value; });
+    if (block == blocks.end() || block->id != id) continue;
+    const size_t index = static_cast<size_t>(block - blocks.begin());
+    if (emitted[index]) continue;
+    emitted[index] = 1;
+    reordered.insert(reordered.end(), result.begin() + static_cast<ptrdiff_t>(block->begin),
+                     result.begin() + static_cast<ptrdiff_t>(block->end));
+  }
+  return reordered;
+}
+}  // namespace
+
+size_t Int64ListOpsMemoryUsage(const Int64ListOpStack& stack) {
+  size_t bytes = safe::saturating_add(sizeof(Int64ListOpStack),
+      safe::saturating_mul(stack.ops.capacity(), sizeof(Int64ListOp)));
+  for (const auto& op : stack.ops)
+    for (const auto& items : op.items)
+      bytes = safe::saturating_add(bytes, items.heap_memory_usage());
+  return bytes;
+}
+
+Value ApplyInt64ListOps(const Int64ListOpStack& stack) {
+  std::vector<int64_t> result;
+  for (auto op = stack.ops.rbegin(); op != stack.ops.rend(); ++op)
+    result = ApplyInt64Op(*op, result);
+  return Value::MakeInt64Array(result);
+}
+
+DecodedExtensionField MakeInt64ListOpField(std::string name, Int64ListOp op) {
+  for (size_t r = 0; r < op.items.size(); ++r)
+    if ((op.bits & kInt64ListOpBits[r]) && op.items[r].is_empty())
+      op.items[r] = Value::MakeInt64Array({});
+  DecodedExtensionField field;
+  field.name = std::move(name);
+  auto stack = std::make_shared<Int64ListOpStack>();
+  stack->ops.push_back(std::move(op));
+  field.value = ApplyInt64ListOps(*stack);
+  field.int64_list_op = std::move(stack);
+  return field;
+}
+
+void ResolveInt64ListOpFields(std::vector<DecodedExtensionField>* fields) {
+  for (auto& field : *fields) {
+    if (!field.int64_list_op) continue;
+    Int64ListOp op;
+    op.bits = 3;
+    op.items[0] = field.value;
+    auto resolved = std::make_shared<Int64ListOpStack>();
+    resolved->ops.push_back(std::move(op));
+    field.int64_list_op = std::move(resolved);
+  }
+}
+
 void MergeWeakerExtensionFields(
     std::vector<DecodedExtensionField>* stronger,
     const std::vector<DecodedExtensionField>& weaker) {
@@ -147,6 +291,16 @@ void MergeWeakerExtensionFields(
         [&](const DecodedExtensionField& own) { return own.name == field.name; });
     if (existing == stronger->end()) {
       stronger->push_back(field);
+    } else if (existing->int64_list_op && field.int64_list_op) {
+      if (std::any_of(existing->int64_list_op->ops.begin(),
+                      existing->int64_list_op->ops.end(),
+                      [](const Int64ListOp& op) { return op.is_explicit(); }))
+        continue;
+      auto stack = std::make_shared<Int64ListOpStack>(*existing->int64_list_op);
+      stack->ops.insert(stack->ops.end(), field.int64_list_op->ops.begin(),
+                        field.int64_list_op->ops.end());
+      existing->value = ApplyInt64ListOps(*stack);
+      existing->int64_list_op = std::move(stack);
     } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
       MergeWeakerDictionaryValue(&existing->value, field.value);
       // The authored source represented only the stronger dictionary. Force
@@ -154,6 +308,29 @@ void MergeWeakerExtensionFields(
       if (existing->unregistered) existing->unregistered_source.clear();
     }
   }
+}
+
+void StoreRawMetadataOpinion(
+    std::vector<std::pair<std::string, std::string>>* fields,
+    std::string name, std::string value) {
+  if (!fields) return;
+  const size_t separator = name.find(' ');
+  const bool explicit_value = separator == std::string::npos;
+  const std::string key = explicit_value ? name : name.substr(separator + 1);
+  if (explicit_value) {
+    fields->erase(std::remove_if(fields->begin(), fields->end(), [&](const auto& field) {
+      const size_t split = field.first.find(' ');
+      return field.first == key ||
+          (split != std::string::npos && field.first.substr(split + 1) == key);
+    }), fields->end());
+  } else {
+    if (std::any_of(fields->begin(), fields->end(),
+        [&](const auto& field) { return field.first == key; })) return;
+  }
+  const auto existing = std::find_if(fields->begin(), fields->end(),
+      [&](const auto& field) { return field.first == name; });
+  if (existing == fields->end()) fields->emplace_back(std::move(name), std::move(value));
+  else existing->second = std::move(value);
 }
 
 void MergeWeakerRawFields(
@@ -260,6 +437,7 @@ void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->doc = src.doc;
   dst->kind = src.kind;
   dst->properties = src.properties;
+  dst->authoredPropertyNames = src.authoredPropertyNames;
   dst->relationships = src.relationships;
   dst->relationshipFlags = src.relationshipFlags;
   dst->references = src.references;
@@ -267,6 +445,7 @@ void CopyVariantDataShallow(const PrimVariantData& src, PrimVariantData* dst) {
   dst->inherits = src.inherits;
   dst->specializes = src.specializes;
   dst->variantSelections = src.variantSelections;
+  dst->variantSetNameEdits = src.variantSetNameEdits;
   dst->unknownMeta = src.unknownMeta;
   dst->unknownFields = src.unknownFields;
   dst->content = src.content;
@@ -305,6 +484,23 @@ void CopyVariantSetsIterative(const std::vector<PrimVariantSetData>& src,
   }
 }
 
+
+std::vector<std::string> PrimVariantData::property_names() const {
+  std::vector<std::string> names = authoredPropertyNames;
+  auto add = [&](const std::string& name) {
+    if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+  };
+  for (const auto& property : properties) add(property.name);
+  std::vector<std::string> rels;
+  for (const auto& rel : relationships) rels.push_back(rel.first);
+  std::sort(rels.begin(), rels.end());
+  for (const auto& rel : rels) add(rel);
+  if (content) {
+    if (const PrimSpec* self = content->prim_at_path("/__self__"))
+      for (const auto& name : self->authored_property_names()) add(name);
+  }
+  return names;
+}
 
 PrimVariantData::PrimVariantData() = default;
 PrimVariantData::PrimVariantData(const PrimVariantData& other) {
@@ -345,27 +541,69 @@ PrimVariantData::~PrimVariantData() {
 // TypeNameTable
 // ============================================================
 
+#if defined(LIGHTUSD_ENABLE_THREAD)
+TypeNameTable::TypeNameTable()
+    : by_id_(new std::atomic<const std::string*>[UINT16_MAX]),
+      slots_(new std::atomic<uint32_t>[kSlots]) {
+  for (size_t i = 0; i < UINT16_MAX; ++i) by_id_[i].store(nullptr, std::memory_order_relaxed);
+  for (size_t i = 0; i < kSlots; ++i) slots_[i].store(0, std::memory_order_relaxed);
+}
+
+// Runs under the exclusive lock right after names_.push_back.
+void TypeNameTable::Publish(void* self) {
+  TypeNameTable& t = *static_cast<TypeNameTable*>(self);
+  const size_t id = t.names_.size() - 1;
+  const std::string* name = &t.names_[id];
+  t.by_id_[id].store(name, std::memory_order_release);
+  size_t i = std::hash<std::string>{}(*name) & (kSlots - 1);
+  while (t.slots_[i].load(std::memory_order_relaxed) != 0) i = (i + 1) & (kSlots - 1);
+  t.slots_[i].store(static_cast<uint32_t>(id + 1), std::memory_order_release);
+}
+
+TypeNameId TypeNameTable::find_published(const std::string& name) const {
+  for (size_t i = std::hash<std::string>{}(name) & (kSlots - 1);;
+       i = (i + 1) & (kSlots - 1)) {
+    const uint32_t v = slots_[i].load(std::memory_order_acquire);
+    if (v == 0) return TypeNameId{};
+    const std::string* p = by_id_[v - 1].load(std::memory_order_acquire);
+    if (p && *p == name) return make_id(v - 1);
+  }
+}
+#else
+TypeNameTable::TypeNameTable() = default;
+#endif
+
 TypeNameId TypeNameTable::intern(const std::string& name) {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  const TypeNameId hit = find_published(name);
+  if (hit.is_valid()) return hit;
+  return intern_locked(name, &TypeNameTable::Publish, this);
+#else
   return intern_locked(name);
+#endif
 }
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+  if (!id.is_valid()) return empty;
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  // names_ is a deque: elements never relocate on push_back, so the returned
-  // reference stays valid after the lock is released.
-  std::shared_lock<std::shared_mutex> rlk(mu_);
-#endif
-  if (!id.is_valid() || id.id >= names_.size()) return empty;
+  // Every id was published before intern() returned it.
+  const std::string* p = by_id_[id.id].load(std::memory_order_acquire);
+  return p ? *p : empty;
+#else
+  if (id.id >= names_.size()) return empty;
   return names_[id.id];
+#endif
 }
 
 TypeNameId TypeNameTable::find(const std::string& name) const {
 #if defined(LIGHTUSD_ENABLE_THREAD)
+  const TypeNameId hit = find_published(name);
+  if (hit.is_valid()) return hit;
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
-  const TypeNameId hit = find_live(name);
-  if (hit.is_valid()) return hit;
+  const TypeNameId h = find_live(name);
+  if (h.is_valid()) return h;
   return TypeNameId{};
 }
 
@@ -449,6 +687,8 @@ ValueBlockStorage::ValueBlockStorage() {
 }
 
 ValueBlockStorage::~ValueBlockStorage() = default;
+
+void ValueBlockStorage::reserve(size_t count) { values_.reserve(count); }
 
 uint32_t ValueBlockStorage::store(const Value& value) {
   uint32_t idx = static_cast<uint32_t>(values_.size());

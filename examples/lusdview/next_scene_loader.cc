@@ -535,6 +535,105 @@ void CollectPreviewBounds(const lightusd_stage* stage, lightusd_prim prim,
   }
 }
 
+// Drop optional per-vertex/per-instance streams whose size does not match the
+// mesh. A malformed optional primvar (e.g. a UV1 array that lost its
+// face-varying mapping) must not reject an otherwise valid scene at upload
+// time; the renderer simply falls back to the defaults for that stream.
+static void SanitizeOptionalMeshArrays(DrawMeshCPU* mesh) {
+  if (!mesh) return;
+  const size_t nv = mesh->vertices.size();
+  const char* meshName =
+      mesh->absPath.empty() ? mesh->name.c_str() : mesh->absPath.c_str();
+  auto mismatch = [&](size_t size, size_t components, const char* name) {
+    if (size == 0) return false;
+    size_t expected = 0;
+    bool bad = components == 0 ||
+               nv > std::numeric_limits<size_t>::max() / components;
+    if (!bad) {
+      expected = nv * components;
+      bad = size != expected;
+    }
+    if (bad) {
+      LOGW("next: mesh '%s': dropping malformed %s (%zu values, expected %zu)",
+           meshName, name, size, expected);
+    }
+    return bad;
+  };
+  if (mismatch(mesh->vertexColors.size(), 3, "vertexColors"))
+    mesh->vertexColors.clear();
+  if (mismatch(mesh->vertexAlpha.size(), 1, "vertexAlpha"))
+    mesh->vertexAlpha.clear();
+  if (mismatch(mesh->tangents.size(), 3, "tangents")) mesh->tangents.clear();
+  if (mismatch(mesh->binormals.size(), 3, "binormals")) mesh->binormals.clear();
+  if (mismatch(mesh->uv1.size(), 2, "uv1")) mesh->uv1.clear();
+  if (mismatch(mesh->morphInfluence.size(), 1, "morphInfluence"))
+    mesh->morphInfluence.clear();
+
+  const bool jointsOk = !mismatch(mesh->jointIdx.size(), 4, "jointIdx") &&
+                        !mismatch(mesh->jointWt.size(), 4, "jointWt");
+  if (!jointsOk) {
+    mesh->jointIdx.clear();
+    mesh->jointWt.clear();
+    mesh->influenceOffsetCount.clear();
+    mesh->influenceTexels.clear();
+  } else if (mismatch(mesh->influenceOffsetCount.size(), 2,
+                      "influenceOffsetCount")) {
+    mesh->influenceOffsetCount.clear();
+    mesh->influenceTexels.clear();
+  }
+
+  if (mismatch(mesh->morphOffsetCount.size(), 2, "morphOffsetCount") ||
+      (mesh->morphDeltaHalf.size() % 4) != 0 ||
+      (!mesh->morphChannelId.empty() &&
+       mesh->morphChannelId.size() != mesh->morphDeltaHalf.size() / 4)) {
+    if (mesh->morphOffsetCount.size() != 0 ||
+        mesh->morphDeltaHalf.size() != 0 ||
+        mesh->morphChannelId.size() != 0) {
+      LOGW("next: mesh '%s': dropping malformed morph arrays", meshName);
+    }
+    mesh->morphOffsetCount.clear();
+    mesh->morphDeltaHalf.clear();
+    mesh->morphChannelId.clear();
+  }
+  if (!mesh->sourceFaceId.empty() &&
+      mesh->sourceFaceId.size() != mesh->indices.size() / 3) {
+    LOGW("next: mesh '%s': dropping malformed sourceFaceId (%zu values, "
+         "expected %zu)",
+         meshName, mesh->sourceFaceId.size(), mesh->indices.size() / 3);
+    mesh->sourceFaceId.clear();
+  }
+  bool geomPropsOk = true;
+  for (const DrawGeomPropCPU& prop : mesh->geomProps) {
+    if (prop.components == 0 || mismatch(prop.values.size(), prop.components,
+                                         "geomProps")) {
+      geomPropsOk = false;
+      break;
+    }
+  }
+  if (!geomPropsOk) mesh->geomProps.clear();
+
+  const size_t ni = mesh->instanceCount();
+  auto instMismatch = [&](size_t size, size_t components, const char* name) {
+    if (size == 0) return false;
+    size_t expected = 0;
+    bool bad = components == 0 ||
+               ni > std::numeric_limits<size_t>::max() / components;
+    if (!bad) {
+      expected = ni * components;
+      bad = size != expected;
+    }
+    if (bad) {
+      LOGW("next: mesh '%s': dropping malformed %s (%zu values, expected %zu)",
+           meshName, name, size, expected);
+    }
+    return bad;
+  };
+  if (instMismatch(mesh->instanceColors.size(), 3, "instanceColors"))
+    mesh->instanceColors.clear();
+  if (instMismatch(mesh->instanceOpacities.size(), 1, "instanceOpacities"))
+    mesh->instanceOpacities.clear();
+}
+
 DrawScene BuildCheckpointPreview(const lightusd_stage* stageHandle, double time,
                                  size_t maxBoxes,
                                  const std::string& cameraName) {
@@ -616,6 +715,7 @@ DrawScene BuildCheckpointPreview(const lightusd_stage* stageHandle, double time,
   }
   draw.vertexCount = mesh.vertices.size();
   draw.triangleCount = mesh.indices.size() / 3;
+  SanitizeOptionalMeshArrays(&mesh);
   draw.meshes.push_back(std::move(mesh));
   return draw;
 }
@@ -699,7 +799,8 @@ bool HasPublicValueClipAncestor(const lightusd_stage* stage,
 
 void BuildAuthoredControlCage(const lightusd_stage* stage,
                               const std::string& primPath, double time,
-                              DrawMeshCPU* mesh) {
+                              const std::vector<uint32_t>& vertexToPoint,
+                              size_t numPoints, DrawMeshCPU* mesh) {
   if (!stage || !mesh) return;
   const lightusd_prim prim = lightusd_stage_prim_at_path(stage, primPath.c_str());
   const std::vector<float> points = ReadPublicArray<float>(
@@ -710,14 +811,13 @@ void BuildAuthoredControlCage(const lightusd_stage* stage,
       prim, "faceVertexIndices", time, LIGHTUSD_COMP_INT32);
   if (points.size() % 3u || points.empty() || counts.empty() || indices.empty())
     return;
-  mesh->wireframeVertices.assign(points.size() / 3u, DrawVertex{});
-  for (size_t i = 0; i < mesh->wireframeVertices.size(); ++i) {
-    mesh->wireframeVertices[i].px = points[i * 3u];
-    mesh->wireframeVertices[i].py = points[i * 3u + 1u];
-    mesh->wireframeVertices[i].pz = points[i * 3u + 2u];
-  }
-  mesh->wireframeIndices.clear();
+  const size_t pointCount = points.size() / 3u;
+
+  // Authored-point edge list (perimeter of each USD face, deduped).
+  std::vector<uint32_t> pointEdges;
+  pointEdges.reserve(indices.size() * 2u);
   std::unordered_set<uint64_t> seen;
+  seen.reserve(indices.size());
   size_t offset = 0;
   for (int32_t count : counts) {
     if (count < 2 || offset + size_t(count) > indices.size()) {
@@ -728,19 +828,71 @@ void BuildAuthoredControlCage(const lightusd_stage* stage,
     for (int32_t k = 0; k < count; ++k) {
       const int32_t ia = indices[offset + size_t(k)];
       const int32_t ib = indices[offset + size_t((k + 1) % count)];
-      if (ia < 0 || ib < 0 || ia == ib ||
-          size_t(ia) >= mesh->wireframeVertices.size() ||
-          size_t(ib) >= mesh->wireframeVertices.size()) continue;
-      uint32_t a = uint32_t(ia), b = uint32_t(ib);
+      if (ia < 0 || ib < 0 || ia == ib || size_t(ia) >= pointCount ||
+          size_t(ib) >= pointCount) continue;
+      const uint32_t a = uint32_t(ia), b = uint32_t(ib);
       const uint64_t key = a < b ? (uint64_t(a) << 32u) | b
                                  : (uint64_t(b) << 32u) | a;
       if (seen.insert(key).second) {
-        mesh->wireframeIndices.push_back(a);
-        mesh->wireframeIndices.push_back(b);
+        pointEdges.push_back(a);
+        pointEdges.push_back(b);
       }
     }
     offset += size_t(count);
   }
+
+  // When the render mesh still carries the authored points (a plain
+  // triangulated mesh, possibly welded into more vertices at UV/hard-normal
+  // seams), index the cage into the render vertex buffer instead of uploading a
+  // second, rest-pose-only vertex buffer. The render buffer is the one the
+  // vertex stage deforms (morph + skin) and the one world-baked static meshes
+  // were transformed into, so the active/highlight cage follows the displayed
+  // geometry. Refined subdivision meshes report more render points than authored
+  // points, so they keep the dedicated authored control-cage buffer.
+  std::vector<uint32_t> pointToVertex;
+  bool useRenderVertices = false;
+  if (numPoints == pointCount &&
+      vertexToPoint.size() == mesh->vertices.size()) {
+    pointToVertex.assign(pointCount, std::numeric_limits<uint32_t>::max());
+    for (size_t v = 0; v < vertexToPoint.size(); ++v) {
+      const size_t p = size_t(vertexToPoint[v]);
+      if (p < pointCount &&
+          pointToVertex[p] == std::numeric_limits<uint32_t>::max())
+        pointToVertex[p] = static_cast<uint32_t>(v);
+    }
+    useRenderVertices = true;
+  }
+
+  mesh->wireframeIndices.clear();
+  if (useRenderVertices) {
+    // Remap point indices -> their first welded render vertex and dedupe in that
+    // index space (a seam can make several vertices share one point).
+    mesh->wireframeVertices.clear();
+    std::unordered_set<uint64_t> seenRender;
+    seenRender.reserve(pointEdges.size() / 2u);
+    for (size_t i = 0; i + 1 < pointEdges.size(); i += 2) {
+      const uint32_t a = pointToVertex[pointEdges[i + 0u]];
+      const uint32_t b = pointToVertex[pointEdges[i + 1u]];
+      if (a == std::numeric_limits<uint32_t>::max() ||
+          b == std::numeric_limits<uint32_t>::max() || a == b)
+        continue;
+      const uint64_t key = a < b ? (uint64_t(a) << 32u) | b
+                                 : (uint64_t(b) << 32u) | a;
+      if (seenRender.insert(key).second) {
+        mesh->wireframeIndices.push_back(a);
+        mesh->wireframeIndices.push_back(b);
+      }
+    }
+    return;
+  }
+
+  mesh->wireframeVertices.assign(pointCount, DrawVertex{});
+  for (size_t i = 0; i < pointCount; ++i) {
+    mesh->wireframeVertices[i].px = points[i * 3u + 0u];
+    mesh->wireframeVertices[i].py = points[i * 3u + 1u];
+    mesh->wireframeVertices[i].pz = points[i * 3u + 2u];
+  }
+  mesh->wireframeIndices = std::move(pointEdges);
 }
 
 template <typename Ids>
@@ -960,7 +1112,16 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     }
     const bool hasData = !pv.float_data.empty() || !pv.int_data.empty() ||
                          !pv.uint_data.empty();
-    if (components == 0 || !hasData ||
+    // Skip the streams that already have a dedicated lane. The two retained UV
+    // sets are selected by NAME at conversion time (RenderMesh::
+    // texcoords_0_name/1_name), so the generic list must not carry a second
+    // copy of them: on real content that duplicated every mesh's UVs into the
+    // RT-only geometry-property arrays, doubling UV memory and forcing one
+    // draw per mesh.
+    const bool isRetainedUv =
+        (!m.texcoords_0_name.empty() && pv.name == m.texcoords_0_name) ||
+        (!m.texcoords_1_name.empty() && pv.name == m.texcoords_1_name);
+    if (components == 0 || !hasData || isRetainedUv ||
         pv.name == "displayColor" || pv.name == "displayOpacity" ||
         pv.name == "normals" || pv.name == "tangents" ||
         pv.name == "binormals") {
@@ -1023,19 +1184,30 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     return a && a.interp == tydn::Interpolation::Uniform;
   };
   std::vector<uint32_t> cornerToFace;
-  if (usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
+  // Authored corner id -> face index. Uniform attributes need the full table;
+  // `sourceFaceId` (Ptex intrinsic faces and the source-face AOV) only needs the
+  // per-face corner starts, which is cheaper on very large meshes.
+  std::vector<uint32_t> faceOffsets;
+  const bool needCornerToFace =
+      usesUniform(nrm) || usesUniform(uv0) || usesUniform(uv1) ||
       usesUniform(col) || usesUniform(opacity) || usesUniform(tan) ||
       std::any_of(genericProps.begin(), genericProps.end(),
-                  [&](const GenericGeomProp& p) { return usesUniform(p.attr); })) {
+                  [&](const GenericGeomProp& p) { return usesUniform(p.attr); });
+  if (haveCornerMap) {
     const size_t nfaces = m.face_vertex_counts.size();
-    size_t authoredCorners = 0;
-    for (size_t f = 0; f < nfaces; ++f) authoredCorners += m.face_vertex_counts[f];
-    cornerToFace.resize(authoredCorners);
+    faceOffsets.resize(nfaces + 1);
     size_t off = 0;
     for (size_t f = 0; f < nfaces; ++f) {
-      const uint32_t c = m.face_vertex_counts[f];
-      for (uint32_t k = 0; k < c && off < authoredCorners; ++k, ++off) {
-        cornerToFace[off] = static_cast<uint32_t>(f);
+      faceOffsets[f] = static_cast<uint32_t>(off);
+      off += m.face_vertex_counts[f];
+    }
+    faceOffsets[nfaces] = static_cast<uint32_t>(off);
+    if (needCornerToFace) {
+      cornerToFace.resize(off);
+      for (size_t f = 0; f < nfaces; ++f) {
+        for (uint32_t k = faceOffsets[f]; k < faceOffsets[f + 1]; ++k) {
+          cornerToFace[k] = static_cast<uint32_t>(f);
+        }
       }
     }
   }
@@ -1086,9 +1258,16 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
     }
     const uint32_t cornerId =
         haveCornerMap ? m.triangulated_face_vertex_indices[c] : pid;
-    const uint32_t faceId = (cornerToFace.empty() || cornerId >= cornerToFace.size())
-                                ? 0u
-                                : cornerToFace[cornerId];
+    uint32_t faceId = 0u;
+    if (!cornerToFace.empty() && cornerId < cornerToFace.size()) {
+      faceId = cornerToFace[cornerId];
+    } else if (faceOffsets.size() >= 2) {
+      const auto it = std::upper_bound(faceOffsets.begin(), faceOffsets.end(),
+                                       cornerId);
+      faceId = it == faceOffsets.begin()
+                   ? 0u
+                   : static_cast<uint32_t>(it - faceOffsets.begin() - 1);
+    }
     const uint32_t sourceFaceId =
         faceId < m.subdivision_face_source.size()
             ? m.subdivision_face_source[faceId]
@@ -1444,19 +1623,84 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
     return false;
   }
   const std::vector<uint32_t> counts = source.face_vertex_counts.flatten();
-  size_t authoredCorners = 0;
-  for (uint32_t count : counts) authoredCorners += count;
-  std::vector<uint8_t> cornerOrdinal(authoredCorners, 0);
-  std::vector<uint32_t> cornerFace(authoredCorners, 0);
-  size_t corner = 0;
-  for (size_t face = 0; face < counts.size(); ++face) {
-    if (counts[face] != 4) return false;
-    for (uint32_t ordinal = 0; ordinal < counts[face]; ++ordinal, ++corner) {
-      cornerOrdinal[corner] = static_cast<uint8_t>(ordinal);
-      cornerFace[corner] = static_cast<uint32_t>(face);
+  const size_t refinedFaces = counts.size();
+  if (refinedFaces == 0) return false;
+  for (uint32_t count : counts) {
+    if (count != 4) return false;
+  }
+
+  // Ptex faces are the authored level-0 quads. A subdivided mesh keeps one
+  // `subdivision_face_source` entry per refined face; each refined child covers
+  // a sub-rectangle of its base face's intrinsic UV square. Without the
+  // sub-rectangle every child would sample the whole face.
+  std::vector<uint32_t> baseFace(refinedFaces);
+  size_t baseFaces = refinedFaces;
+  size_t cells = 1;
+  if (source.subdivision_face_source.size() == refinedFaces) {
+    uint32_t maxBase = 0;
+    for (uint32_t b : source.subdivision_face_source) {
+      maxBase = std::max(maxBase, b);
+    }
+    baseFace.assign(source.subdivision_face_source.begin(),
+                    source.subdivision_face_source.end());
+    baseFaces = size_t(maxBase) + 1;
+    if (baseFaces == 0 || refinedFaces % baseFaces != 0) return false;
+    cells = refinedFaces / baseFaces;
+  } else {
+    for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+  }
+  uint32_t levels = 0;
+  while ((size_t(1) << (2 * levels)) < cells) ++levels;
+  if ((size_t(1) << (2 * levels)) != cells) {
+    // Non-uniform refinement cannot be expressed as a quadtree sub-rectangle;
+    // keep the full face and let the atlas clamp rather than sample wrong UVs.
+    levels = 0;
+    cells = 1;
+    for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+  }
+  // Ascending base ids with contiguous children (the refine driver emits the
+  // children of one parent together). Fall back to a scan if that is not true.
+  if (levels > 0) {
+    for (size_t b = 0; b < baseFaces; ++b) {
+      if (source.subdivision_face_source[b * cells] != b) {
+        levels = 0;
+        cells = 1;
+        for (size_t f = 0; f < refinedFaces; ++f) baseFace[f] = uint32_t(f);
+        break;
+      }
     }
   }
-  if (corner != authoredCorners) return false;
+  std::vector<uint32_t> localIndex(refinedFaces, 0);
+  if (levels > 0) {
+    for (size_t f = 0; f < refinedFaces; ++f) {
+      localIndex[f] = uint32_t(f - baseFace[f] * cells);
+    }
+  }
+
+  std::vector<uint8_t> cornerOrdinal(refinedFaces * 4, 0);
+  std::vector<uint32_t> cornerBaseFace(refinedFaces * 4, 0);
+  std::vector<float> faceU0(refinedFaces, 0.0f), faceV0(refinedFaces, 0.0f);
+  std::vector<float> faceU1(refinedFaces, 1.0f), faceV1(refinedFaces, 1.0f);
+  size_t corner = 0;
+  for (size_t face = 0; face < refinedFaces; ++face) {
+    float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+    uint32_t local = localIndex[face];
+    for (int level = int(levels) - 1; level >= 0; --level) {
+      const uint32_t digit = (local >> (2 * level)) & 3u;
+      const float um = (u0 + u1) * 0.5f;
+      const float vm = (v0 + v1) * 0.5f;
+      if (digit == 0) { u1 = um; v0 = vm; }        // top-left
+      else if (digit == 1) { u0 = um; v0 = vm; }   // top-right
+      else if (digit == 2) { u0 = um; v1 = vm; }   // bottom-right
+      else { u1 = um; v1 = vm; }                   // bottom-left
+    }
+    faceU0[face] = u0; faceV0[face] = v0;
+    faceU1[face] = u1; faceV1[face] = v1;
+    for (uint32_t ordinal = 0; ordinal < 4; ++ordinal, ++corner) {
+      cornerOrdinal[corner] = static_cast<uint8_t>(ordinal);
+      cornerBaseFace[corner] = baseFace[face];
+    }
+  }
 
   const size_t oldVertexCount = mesh->vertices.size();
   const bool hasColor = mesh->vertexColors.size() == oldVertexCount * 3;
@@ -1491,8 +1735,6 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
   expanded.vertices.reserve(corners);
   expanded.indices.reserve(corners);
 
-  const float intrinsic[4][2] = {
-      {0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}};
   std::vector<uint32_t> newToOld;
   newToOld.reserve(corners);
   for (size_t i = 0; i < corners; ++i) {
@@ -1501,18 +1743,24 @@ bool ExpandPtexCorners(const tydn::RenderMesh& source, DrawMeshCPU* mesh) {
     const uint32_t authored = source.triangulated_face_vertex_indices[i];
     if (authored >= cornerOrdinal.size()) return false;
     const uint8_t ordinal = cornerOrdinal[authored];
-    const uint32_t face = cornerFace[authored];
+    const uint32_t face = cornerBaseFace[authored];
     if (i / 3 >= mesh->sourceFaceId.size() ||
         face != mesh->sourceFaceId[i / 3]) {
       return false;
     }
+    // Map the refined face's corner into its sub-rectangle of the base face.
+    const size_t refinedFace = size_t(authored) / 4u;
+    const float su0 = faceU0[refinedFace], sv0 = faceV0[refinedFace];
+    const float su1 = faceU1[refinedFace], sv1 = faceV1[refinedFace];
+    const float corners[4][2] = {
+        {su0, sv1}, {su1, sv1}, {su1, sv0}, {su0, sv0}};
     expanded.indices.push_back(static_cast<uint32_t>(i));
     expanded.vertices.push_back(mesh->vertices[old]);
     // Ptex materials use intrinsic face coordinates, not an authored primvar.
     // Isolated Ptex batches therefore carry these in the ordinary UV0 lane so
     // every existing raster and RT interpolation path sees the same values.
-    expanded.vertices.back().u = intrinsic[ordinal][0];
-    expanded.vertices.back().v = intrinsic[ordinal][1];
+    expanded.vertices.back().u = corners[ordinal][0];
+    expanded.vertices.back().v = corners[ordinal][1];
     newToOld.push_back(old);
     if (hasColor) {
       for (size_t k = 0; k < 3; ++k)
@@ -2063,8 +2311,38 @@ struct NextSkinBinding {
 
 constexpr int kNextInfluenceTexWidth = 1024;
 
+// Skeleton joint names and their index order at a given time are identical for
+// every mesh bound to the same skeleton+animation, and building the name->index
+// map per mesh dominated skin setup on scenes with thousands of skinned meshes
+// (6916 meshes: 0.24 s of the 0.45 s resolve). Cache it per skeleton.
+struct SkinJointTable {
+  std::string skelPath;
+  std::string animPath;
+  double time{0.0};
+  size_t numJoints{0};
+  std::unordered_map<std::string, int> nameToIndex;
+};
+std::mutex g_skinJointTableMutex;
+std::vector<std::shared_ptr<const SkinJointTable>> g_skinJointTables;
+// Serializes the cache-miss path (skeleton sample read + joint-name table
+// build). Conversion workers resolve bindings in parallel, and the sample read
+// can lazily populate engine-side caches, so misses must not overlap.
+std::mutex g_skinSampleMutex;
+std::atomic<long> g_skinJointHits{0};
+std::atomic<long> g_skinJointMisses{0};
+
+// Bound the cache and drop entries from a previous load (a reloaded layer can
+// change the joint set for the same skeleton path).
+void ResetSkinJointTables() {
+  std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+  g_skinJointTables.clear();
+  g_skinJointHits.store(0);
+  g_skinJointMisses.store(0);
+}
+
 // false = not skinned, or the skin data is missing/inconsistent (callers then
 // leave the mesh in its rest pose).
+
 bool ResolveNextSkinBinding(const lightusd_stage* stage,
                             lightusd_prim meshPrim, double time,
                             size_t nv,
@@ -2088,13 +2366,59 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
   lightusd_prim skelPrim = FindBoundSkeletonPublic(stage, meshPrim);
   if (!lightusd_prim_is_valid(skelPrim)) return false;
   lightusd_prim animPrim = FindSkelAnimationPublic(stage, meshPrim, skelPrim);
-  lightusd::api::SkelSample sample;
-  if (lightusd_skel_sample_create(stage, skelPrim, animPrim, time,
-                                  sample.put()) != LIGHTUSD_OK) return false;
-  lightusd_skel_sample_info skelInfo{};
-  if (lightusd_skel_sample_get_info(sample.get(), &skelInfo) != LIGHTUSD_OK)
-    return false;
-  const size_t nj = skelInfo.joint_count;
+  const std::string skelPath = PublicString(lightusd_prim_path(skelPrim));
+  const std::string animPath = lightusd_prim_is_valid(animPrim)
+      ? PublicString(lightusd_prim_path(animPrim)) : std::string();
+  // Joint names + skeleton order come from the cached table when this skeleton
+  // was already resolved at this time; otherwise build and cache them once.
+  auto findJointTable = [&]() -> std::shared_ptr<const SkinJointTable> {
+    std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+    for (const auto& table : g_skinJointTables) {
+      if (table->numJoints != 0 && table->time == time &&
+          table->skelPath == skelPath && table->animPath == animPath) {
+        g_skinJointHits.fetch_add(1);
+        return table;
+      }
+    }
+    return nullptr;
+  };
+  std::shared_ptr<const SkinJointTable> joints = findJointTable();
+  if (!joints) {
+    std::lock_guard<std::mutex> missLock(g_skinSampleMutex);
+    joints = findJointTable();
+    if (!joints) {
+      lightusd::api::SkelSample sample;
+      if (lightusd_skel_sample_create(stage, skelPrim, animPrim, time,
+                                      sample.put()) != LIGHTUSD_OK)
+        return false;
+      lightusd_skel_sample_info skelInfo{};
+      if (lightusd_skel_sample_get_info(sample.get(), &skelInfo) != LIGHTUSD_OK)
+        return false;
+      if (skelInfo.joint_count == 0) return false;
+      g_skinJointMisses.fetch_add(1);
+      auto table = std::make_shared<SkinJointTable>();
+      table->skelPath = skelPath;
+      table->animPath = animPath;
+      table->time = time;
+      table->numJoints = skelInfo.joint_count;
+      table->nameToIndex.reserve(skelInfo.joint_count);
+      for (size_t j = 0; j < skelInfo.joint_count; ++j) {
+        lightusd_sv name{};
+        if (lightusd_skel_sample_joint_name(sample.get(), j, &name) !=
+            LIGHTUSD_OK)
+          return false;
+        table->nameToIndex[std::string(name.data, name.len)] =
+            static_cast<int>(j);
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_skinJointTableMutex);
+        if (g_skinJointTables.size() >= 64) g_skinJointTables.clear();
+        g_skinJointTables.push_back(table);
+      }
+      joints = std::move(table);
+    }
+  }
+  const size_t nj = joints->numJoints;
   if (nj == 0) return false;
 
   // Remap mesh-authored joint order into skeleton order (when authored).
@@ -2110,17 +2434,10 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
     meshJoints = ReadPublicTokens(meshPrim, "primvars:skel:joints", time);
   }
   if (!meshJoints.empty()) {
-    std::unordered_map<std::string, int> skelIdx;
-    for (size_t j = 0; j < nj; ++j) {
-      lightusd_sv name{};
-      if (lightusd_skel_sample_joint_name(sample.get(), j, &name) != LIGHTUSD_OK)
-        return false;
-      skelIdx[std::string(name.data, name.len)] = static_cast<int>(j);
-    }
     std::vector<int> remap(meshJoints.size(), -1);
     for (size_t i = 0; i < meshJoints.size(); ++i) {
-      auto it = skelIdx.find(meshJoints[i]);
-      if (it != skelIdx.end()) remap[i] = it->second;
+      auto it = joints->nameToIndex.find(meshJoints[i]);
+      if (it != joints->nameToIndex.end()) remap[i] = it->second;
     }
     for (int& v : idx) {
       v = (v >= 0 && v < static_cast<int>(remap.size())) ? remap[v] : -1;
@@ -2171,8 +2488,10 @@ bool ResolveNextSkinBinding(const lightusd_stage* stage,
 // Row-vector convention, matching tydra::SkinPointsLBS.
 bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
                       const std::string& animPath, double time,
-                      std::vector<matrix4d>* skinMat) {
-  if (!stage || !skinMat) return false;
+                      std::vector<matrix4d>* skinMat,
+                      std::vector<matrix4d>* jointWorlds = nullptr,
+                      std::vector<int>* parents = nullptr) {
+  if (!stage || (!skinMat && !jointWorlds)) return false;
   const lightusd_prim skelPrim =
       lightusd_stage_prim_at_path(stage, skelPath.c_str());
   const lightusd_prim animPrim = animPath.empty() ? lightusd_prim{} :
@@ -2191,7 +2510,7 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
   // use animated translations as deformation samples. Their authored rotation
   // and scale channels are exporter bookkeeping, not bone rotations; applying
   // them to the rest local transforms produces the characteristic exploded
-  // mesh seen in AnimFinal_LowRes. Keep this in sync with the legacy/Tydra
+  // mesh seen on such rigs. Keep this in sync with the legacy/Tydra
   // IsPointJointSkeleton heuristic.
   bool translationOnly = false;
   if (nj >= 512) {
@@ -2291,6 +2610,9 @@ bool PoseNextSkeleton(const lightusd_stage* stage, const std::string& skelPath,
       world.size() != nj) {
     return false;
   }
+  if (jointWorlds) *jointWorlds = world;
+  if (parents) *parents = topo;
+  if (!skinMat) return true;
   // Synthesize the bind pose from the rest world transform when bind is absent.
   if (!haveBind) {
     std::vector<matrix4d> restWorld;
@@ -2420,25 +2742,24 @@ bool BakeSkinning(const lightusd_stage* stageHandle, const std::string& meshPath
 //
 // The GPU attribute path carries the four strongest influences for the fast
 // common case and also retains the complete variable-length influence list in
-// DrawMeshCPU's influence texture stream. The latter is required for rigs such
-// as AnimFinal_LowRes, where a vertex may have dozens of meaningful weights.
+// DrawMeshCPU's influence texture stream. The latter is required for rigs with
+// many meaningful influences per vertex.
 // Returns false when the mesh is not skinned (caller leaves it alone).
-bool SetupGpuSkinNext(const lightusd_stage* stageHandle, const std::string& meshPath,
-                      double time, DrawMeshCPU* dm,
-                      const std::vector<uint32_t>& vertexToPoint,
-                      size_t numPoints, const double worldM[16],
-                      const double renderWorldM[16],
-                      const double outputSpaceWorldM[16],
-                      DrawScene* draw) {
+// Fill a mesh's GPU skinning attributes from an already-resolved binding. The
+// resolve itself is a read-only stage query (per-mesh primvar reads, skeleton
+// sample and joint-order remap) and is the expensive half, so the next loader
+// runs it in the conversion workers and only the bone-row-dependent writes stay
+// on the serial batching thread.
+bool BuildGpuSkinAttributes(const lightusd_stage* stageHandle,
+                            const std::string& meshPath, double time,
+                            const NextSkinBinding& bind, DrawMeshCPU* dm,
+                            const double worldM[16],
+                            const double renderWorldM[16],
+                            const double outputSpaceWorldM[16],
+                            DrawScene* draw) {
   if (!dm || dm->vertices.empty() || !draw) return false;
   const size_t nv = dm->vertices.size();
-  NextSkinBinding bind;
-  const lightusd_prim meshPrim = lightusd_stage_prim_at_path(stageHandle,
-                                                              meshPath.c_str());
-  if (!ResolveNextSkinBinding(stageHandle, meshPrim, time, nv, vertexToPoint,
-                              numPoints, &bind)) {
-    return false;
-  }
+
   // Keep conventional skeletons on the same GPU path as dense point-joint
   // rigs. PoseNextSkeleton selects the appropriate interpretation of the
   // animation (local TRS for ordinary rigs, translation samples for dense
@@ -2555,6 +2876,27 @@ bool SetupGpuSkinNext(const lightusd_stage* stageHandle, const std::string& mesh
   draw->nextSkels.push_back(std::move(nb));
   draw->boneMatrixCount = base + nj;
   return true;
+}
+
+// Resolve + fill in one call (prototype builds and the CPU-skinning paths).
+bool SetupGpuSkinNext(const lightusd_stage* stageHandle,
+                      const std::string& meshPath, double time, DrawMeshCPU* dm,
+                      const std::vector<uint32_t>& vertexToPoint,
+                      size_t numPoints, const double worldM[16],
+                      const double renderWorldM[16],
+                      const double outputSpaceWorldM[16],
+                      DrawScene* draw) {
+  if (!dm || dm->vertices.empty() || !draw) return false;
+  NextSkinBinding bind;
+  const lightusd_prim meshPrim = lightusd_stage_prim_at_path(stageHandle,
+                                                              meshPath.c_str());
+  if (!ResolveNextSkinBinding(stageHandle, meshPrim, time,
+                              dm->vertices.size(), vertexToPoint, numPoints,
+                              &bind)) {
+    return false;
+  }
+  return BuildGpuSkinAttributes(stageHandle, meshPath, time, bind, dm, worldM,
+                                renderWorldM, outputSpaceWorldM, draw);
 }
 
 // Build GPU-morph CSR channels for a prototype mesh, so the instanced raster
@@ -2748,8 +3090,11 @@ bool BuildProtoMesh(const lightusd_stage* stageHandle,
     rm.double_sided = true;
   std::vector<uint32_t> vertexToPoint;
   if (!FillFlatGeometry(rm, dm, &vertexToPoint)) return false;
-  BuildAuthoredControlCage(stageHandle, meshPath, time, dm);
   const size_t numPoints = rm.point_count();
+  BuildAuthoredControlCage(stageHandle, meshPath, time, vertexToPoint,
+                           numPoints, dm);
+  dm->hasWireframe = !dm->wireframeIndices.empty() ||
+                     !dm->wireframeVertices.empty();
   // Skinning is resolved by the CALLER (it alone knows the instance count, which
   // decides GPU-skin vs static bake), so hand the weld map back out.
   if (out_numPoints) *out_numPoints = numPoints;
@@ -3042,6 +3387,7 @@ void EmitInstancedProto(const lightusd_stage* stageHandle,
     std::memset(dm.world, 0, sizeof(dm.world));
     dm.world[0] = dm.world[5] = dm.world[10] = dm.world[15] = 1.0f;
     draw->triangleCount += dm.indices.size() / 3;
+    SanitizeOptionalMeshArrays(&dm);
     draw->meshes.push_back(std::move(dm));
   }
 
@@ -4673,6 +5019,11 @@ int BuildNextMaterial(const lightusd_stage* stageHandle,
     retainDiagnosticScalar("coat_anisotropy", s.coat_anisotropy);
     retainDiagnosticScalar("coat_roughness_anisotropy",
                            s.coat_roughness_anisotropy);
+    // The CPU coat lobe gates its base tint on coat_affect_color; without these
+    // the authored value never reaches the packed params and a MaterialX
+    // coat_color route is inert (measured: low/high rendered identically).
+    retainDiagnosticScalar("coat_affect_color", s.coat_affect_color);
+    retainDiagnosticScalar("coat_affect_roughness", s.coat_affect_roughness);
     retainDiagnosticScalar("transmission_dispersion",
                            s.transmission_dispersion);
     retainDiagnosticScalar("transmission_dispersion_scale",
@@ -4930,6 +5281,7 @@ static void AddNextBackPlates(const lightusd_stage* stage,
     mesh.submeshes.push_back(
         DrawSubmesh{0, static_cast<uint32_t>(mesh.indices.size()), materialId,
                     materialId});
+    SanitizeOptionalMeshArrays(&mesh);
     draw->meshes.push_back(std::move(mesh));
   }
 }
@@ -5287,6 +5639,34 @@ bool FindLegacyCameraAtTime(const lightusd::Stage& stage,
   return false;
 }
 
+bool BuildNextSkeletonOverlay(const lightusd_stage* stage, const std::string& path,
+                              double time, NextSkeletonOverlay* output) {
+  if (!stage || !output) return false;
+  output->positions.clear(); output->parents.clear();
+  const auto skeleton = lightusd_stage_prim_at_path(stage, path.c_str());
+  if (!lightusd_prim_is_valid(skeleton) || PublicPrimType(skeleton) != "Skeleton") return false;
+  for (auto prim = skeleton; lightusd_prim_is_valid(prim); prim = lightusd_prim_parent(prim)) {
+    if (!lightusd_prim_is_active(prim)) return true;
+    lightusd::api::Value visibility;
+    lightusd_sv value{};
+    if (lightusd_attr_eval(stage, prim, "visibility", time, visibility.put()) == LIGHTUSD_OK &&
+        lightusd::api::ValueString(visibility, &value) == LIGHTUSD_OK && PublicString(value) == "invisible") return true;
+  }
+  const auto animation = FindSkelAnimationPublic(stage, skeleton, skeleton);
+  const std::string animPath = lightusd_prim_is_valid(animation) ? PublicString(lightusd_prim_path(animation)) : std::string();
+  std::vector<matrix4d> joints;
+  if (!PoseNextSkeleton(stage, path, animPath, time, nullptr, &joints, &output->parents)) return false;
+  double world[16];
+  if (lightusd_prim_world_transform(stage, skeleton, time, world) != LIGHTUSD_OK) return false;
+  const matrix4d placement = Mat4dFromArray(world);
+  output->positions.reserve(joints.size() * 3);
+  for (const auto& joint : joints) {
+    const matrix4d placed = joint * placement;
+    for (int axis = 0; axis < 3; ++axis) output->positions.push_back(static_cast<float>(placed.m[3][axis]));
+  }
+  return true;
+}
+
 static bool ComputeNextBoneRows(const lightusd_stage* stage, const DrawScene& draw,
                                 double time, std::vector<matrix4d>* out) {
   if (!out || draw.boneMatrixCount <= 0 || draw.nextSkels.empty()) return false;
@@ -5331,7 +5711,8 @@ static bool ComputeNextBoneRows(const lightusd_stage* stage, const DrawScene& dr
 }
 
 bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
-                            double time, SkinningFrameCPU* frame) {
+                            double time, SkinningFrameCPU* frame,
+                            float* outMin, float* outMax) {
   if (!draw || !frame) return false;
   std::vector<matrix4d> bones;
   if (!ComputeNextBoneRows(stageHandle, *draw, time, &bones)) return false;
@@ -5342,7 +5723,9 @@ bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
   // so the per-vertex skin attributes are no longer resident here -- only the GL
   // buffers hold them.
   frame->matrixCount = draw->boneMatrixCount;
-  frame->rgba32f.assign(rows * 16, 0.0f);
+  // resize (not assign) so the existing capacity is reused; every element is
+  // overwritten by the packing loop below, so the zero-fill is wasted work.
+  frame->rgba32f.resize(rows * 16);
   frame->enabled = true;
   for (size_t row = 0; row < rows; ++row) {
     for (int r = 0; r < 4; ++r) {
@@ -5353,13 +5736,100 @@ bool BuildNextSkinningFrame(const lightusd_stage* stageHandle, DrawScene* draw,
       }
     }
   }
+  if (!outMin || !outMax) return true;
+
+  // Keep the caller's outputs defined even when no mesh contributed a box.
+  for (int k = 0; k < 3; ++k) {
+    outMin[k] = draw->aabbMin[k];
+    outMax[k] = draw->aabbMax[k];
+  }
+
+  // Conservative posed scene box from the SAME bone rows: transform each
+  // skinned mesh's padded rest box by every bone it references. This is orders
+  // of magnitude cheaper than skinning every vertex just to bound the scene,
+  // and is safe for auto-clip/grid sizing. The raster path uses it every frame;
+  // the exact (tight) box remains available for ray tracing via
+  // BuildNextPosedSceneBounds.
+  float mn[3] = {std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max()};
+  float mx[3] = {-std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max()};
+  bool has = false;
+  auto grow = [&](const float p[3]) {
+    for (int k = 0; k < 3; ++k) {
+      if (!has) { mn[k] = mx[k] = p[k]; continue; }
+      mn[k] = std::min(mn[k], p[k]);
+      mx[k] = std::max(mx[k], p[k]);
+    }
+    has = true;
+  };
+  for (DrawMeshCPU& m : draw->meshes) {
+    m.hasPosedPickAabb = false;
+    if (m.instanceCount() == 0 && m.boneLo >= 0 && m.boneHi >= m.boneLo &&
+        !bones.empty()) {
+      const float rlo[3] = {m.restAabbMin[0] - m.morphExtent[0],
+                            m.restAabbMin[1] - m.morphExtent[1],
+                            m.restAabbMin[2] - m.morphExtent[2]};
+      const float rhi[3] = {m.restAabbMax[0] + m.morphExtent[0],
+                            m.restAabbMax[1] + m.morphExtent[1],
+                            m.restAabbMax[2] + m.morphExtent[2]};
+      if (rlo[0] <= rhi[0]) {
+        bool meshHas = false;
+        for (int row = m.boneLo; row <= m.boneHi; ++row) {
+          if (static_cast<size_t>(row) >= bones.size()) break;
+          const matrix4d& B = bones[static_cast<size_t>(row)];
+          for (int c = 0; c < 8; ++c) {
+            const double p[3] = {(c & 1) ? rhi[0] : rlo[0],
+                                 (c & 2) ? rhi[1] : rlo[1],
+                                 (c & 4) ? rhi[2] : rlo[2]};
+            float q[3];  // row-vector p*B, as the vertex shader applies it
+            for (int k = 0; k < 3; ++k) {
+              q[k] = static_cast<float>(p[0] * B.m[0][k] +
+                                        p[1] * B.m[1][k] +
+                                        p[2] * B.m[2][k] + B.m[3][k]);
+            }
+            grow(q);
+            meshHas = true;
+          }
+        }
+        if (meshHas) {
+          // Deliberately do NOT publish this as `hasPosedPickAabb`: the
+          // bone-box union is a safe scene bound but can be looser/tighter
+          // than the actual posed mesh. Picking uses the conservative world
+          // box for deformed meshes and the exact posed triangles; the tight
+          // posed pick AABB remains the RT path's job.
+          continue;
+        }
+      }
+    }
+    // Static meshes, instanced prototypes and anything without a usable bone
+    // range already carry a world box (morph extent included).
+    if (m.aabbMax[0] >= m.aabbMin[0] && std::isfinite(m.aabbMin[0]) &&
+        std::isfinite(m.aabbMax[0])) {
+      grow(m.aabbMin);
+      grow(m.aabbMax);
+    }
+  }
+  if (has) {
+    for (int k = 0; k < 3; ++k) {
+      draw->aabbMin[k] = mn[k];
+      draw->aabbMax[k] = mx[k];
+      outMin[k] = mn[k];
+      outMax[k] = mx[k];
+    }
+    draw->hasBounds = true;
+  }
   return true;
 }
 
 bool BuildNextPosedSceneBounds(
     const lightusd_stage* stageHandle, DrawScene* draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
-    float outMin[3], float outMax[3]) {
+    float outMin[3], float outMax[3],
+    const std::vector<RtSkinnedMeshUpload>* precomputedPosed,
+    bool conservative) {
   // The box is taken from the POSED VERTICES, and from the same deform the ray
   // tracer uploads -- not from a cheaper conservative bound. It has to be the
   // tight box: the Tydra/CPU-bake path derives its box from posed vertices too,
@@ -5367,14 +5837,25 @@ bool BuildNextPosedSceneBounds(
   // auto-fit, so a looser box here would make the two paths render the same
   // geometry differently. (A bone-box union -- 8 rest corners through each bone
   // -- was tried first and is ~10% loose on a 60-degree bend, which was visible.)
-  std::vector<RtSkinnedMeshUpload> posed;
-  if (!draw ||
-      !BuildNextRtDeformedVertices(stageHandle, *draw, time, blendOverride, &posed)) {
-    return false;
+  // Raster playback passes `conservative=true` instead: the grid is frozen and
+  // auto-clip only needs a safe bound, so a full CPU vertex re-pose per frame is
+  // wasted work.
+  std::vector<RtSkinnedMeshUpload> ownedPosed;
+  const std::vector<RtSkinnedMeshUpload>* posedPtr = precomputedPosed;
+  if (!posedPtr && !conservative) {
+    if (!draw ||
+        !BuildNextRtDeformedVertices(stageHandle, *draw, time, blendOverride,
+                                     &ownedPosed)) {
+      return false;
+    }
+    posedPtr = &ownedPosed;
   }
+  if (!draw) return false;
   std::unordered_map<int, const std::vector<DrawVertex>*> posedByMesh;
-  for (const RtSkinnedMeshUpload& up : posed)
-    posedByMesh[up.meshIndex] = &up.vertices;
+  if (posedPtr) {
+    for (const RtSkinnedMeshUpload& up : *posedPtr)
+      posedByMesh[up.meshIndex] = &up.vertices;
+  }
 
   bool has = false;
   float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
@@ -5443,7 +5924,8 @@ bool BuildNextPosedSceneBounds(
       }
       continue;
     }
-    if (m.boneLo >= 0 && m.boneHi >= m.boneLo && m.vertices.empty()) {
+    if (m.boneLo >= 0 && m.boneHi >= m.boneLo &&
+        (conservative || m.vertices.empty())) {
       if (!bonesReady) {
         bonesOk = ComputeNextBoneRows(stageHandle, *draw, time, &bones);
         bonesReady = true;
@@ -5455,6 +5937,21 @@ bool BuildNextPosedSceneBounds(
                             m.restAabbMax[1] + m.morphExtent[1],
                             m.restAabbMax[2] + m.morphExtent[2]};
       if (bonesOk && rlo[0] <= rhi[0]) {
+        bool meshHas = false;
+        float meshMn[3] = {std::numeric_limits<float>::max(),
+                           std::numeric_limits<float>::max(),
+                           std::numeric_limits<float>::max()};
+        float meshMx[3] = {-std::numeric_limits<float>::max(),
+                           -std::numeric_limits<float>::max(),
+                           -std::numeric_limits<float>::max()};
+        auto growMesh = [&](const float p[3]) {
+          for (int k = 0; k < 3; ++k) {
+            if (!meshHas) { meshMn[k] = meshMx[k] = p[k]; continue; }
+            meshMn[k] = std::min(meshMn[k], p[k]);
+            meshMx[k] = std::max(meshMx[k], p[k]);
+          }
+          meshHas = true;
+        };
         for (int row = m.boneLo; row <= m.boneHi; ++row) {
           if (static_cast<size_t>(row) >= bones.size()) break;
           const matrix4d& B = bones[static_cast<size_t>(row)];
@@ -5468,7 +5965,15 @@ bool BuildNextPosedSceneBounds(
                                         p[2] * B.m[2][k] + B.m[3][k]);
             }
             grow(q);
+            growMesh(q);
           }
+        }
+        if (meshHas) {
+          for (int k = 0; k < 3; ++k) {
+            m.posedPickAabbMin[k] = meshMn[k];
+            m.posedPickAabbMax[k] = meshMx[k];
+          }
+          m.hasPosedPickAabb = true;
         }
         continue;
       }
@@ -6562,6 +7067,7 @@ bool BuildNextVolumes(
           FinalizeGeneratedMesh(&dm);
           if (draw) {
             draw->triangleCount += dm.indices.size() / 3;
+            SanitizeOptionalMeshArrays(&dm);
             draw->meshes.push_back(std::move(dm));
           }
           // Without field:density the first usable field is the medium.
@@ -6722,6 +7228,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     const std::string& reload_layer_id) {
   const auto loadBegin = std::chrono::steady_clock::now();
   const bool timing = opts.timing;
+  // A reload can change a skeleton's joint set; never reuse another load's map.
+  ResetSkinJointTables();
   const size_t previewMaxBoxes = opts.previewMaxBoxes != 0
       ? opts.previewMaxBoxes
       : kDefaultCheckpointPreviewMaxBoxes;
@@ -7714,7 +8222,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // backends receive the converter's evaluated widths/colors at `time` plus the
   // inherited world transform and material binding.
   for (const PublicRenderRecord& rec : extracted.points) {
-    const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat";
+    const bool gaussian = rec.type_name == "ParticleField3DGaussianSplat" || rec.type_name == "ParticleField";
     if (rec.type_name != "Points" && !gaussian) continue;
 
     // Gaussian fields are commonly millions of records. Read their numeric
@@ -7840,7 +8348,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           const auto r = lightusd::to_matrix3x3(q);
           dp.points.insert(dp.points.end(), {px, py, pz});
           dp.widths.push_back(2.0f * std::max(sx, std::max(sy, sz)));
-          dp.ellipseRadii.insert(dp.ellipseRadii.end(), {2.0f * sx, 2.0f * sy});
+          const float support = rec.type_name == "ParticleField" ? 1.0f : 2.0f;
+          dp.ellipseRadii.insert(dp.ellipseRadii.end(), {support * sx, support * sy});
           dp.ellipseMajorAxes.insert(
               dp.ellipseMajorAxes.end(),
               {float(r.m[0][0]), float(r.m[0][1]), float(r.m[0][2])});
@@ -8412,6 +8921,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // up with an EMPTY uv1 -- and every texture routed to the second UV set then
     // samples a constant instead of the crop it asked for.
     bool anyUv1 = false;
+    // Authored tangent basis (parallel arrays, like uv1). A batch gains them
+    // the first time a mesh with primvars:tangents joins; earlier vertices get
+    // zeros so the CPU/GPU can fall back to the derived frame per triangle.
+    bool anyTangent = false;
+    bool anyBinormal = false;
     // A batch gains skin attributes the first time a SKINNED mesh joins it; the
     // vertices already in it (and every unskinned mesh that joins later) get
     // zero weights, which the vertex shader passes through unskinned. Joint
@@ -8455,8 +8969,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
   // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
   // are per-mesh, so two morphed meshes must not share a batch.
-  using BatchKey =
-      std::tuple<std::string, bool, bool, bool, int, int, int, int, int>;
+  // geomPropId groups meshes by the *signature* of their per-vertex generic
+  // primvar set (name + component count, in order) instead of isolating every
+  // mesh that carries one. Those streams only feed the RT geometry-property
+  // lookup, so raster batches never read them; keeping the signature in the key
+  // lets a scene where every mesh carries the same primvar set share one draw
+  // while a mesh with a different (or no) set keeps its own batch.
+  using BatchKey = std::tuple<std::string, bool, bool, bool, int, int, int, int,
+                              int, int>;
   struct BatchKeyHash {
     size_t operator()(const BatchKey& key) const {
       size_t h = std::hash<std::string>{}(std::get<0>(key));
@@ -8471,6 +8991,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       mix(std::hash<int>{}(std::get<6>(key)));
       mix(std::hash<int>{}(std::get<7>(key)));
       mix(std::hash<int>{}(std::get<8>(key)));
+      mix(std::hash<int>{}(std::get<9>(key)));
       return h;
     }
   };
@@ -8482,6 +9003,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     return result.first->second;
   };
   int nextMorphBatchId = 0;
+  int nextGeomPropBatchId = 0;
+  std::unordered_map<std::string, int> geomPropBatchIds;
   int nextLightLinkBatchId = 0;
   int nextAnimatedWorldBatchId = 0;
 
@@ -8701,10 +9224,59 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              opts.uploadStagingBytes / bytesPerBatchVertex)
           : (size_t(8) << 20);
   const size_t kBatchVtxCap =
-      std::min<size_t>(stream ? (size_t(512) << 10) : (size_t(8) << 20),
+      std::min<size_t>(stream ? (size_t(4) << 20) : (size_t(8) << 20),
                        stagingVertexCap);
 
+  // Grow a batch array for `vertsAdded` more vertices. A merged batch reaches
+  // the vertex cap, and growing a multi-hundred-megabyte array by repeated
+  // doubling is expensive: every step copies the whole array into freshly
+  // faulted pages and unmaps the old one, which on a large scene added tens of
+  // seconds of memmove. Once a batch is clearly a bulk batch the array is
+  // reserved to the cap in a single step instead; small (per-mesh isolated)
+  // batches keep the ordinary doubling growth so they never over-allocate.
+  auto reserveVerts = [&](auto& vec, size_t vertsNow, size_t vertsAdded,
+                          size_t elemsPerVert, size_t capElems) {
+    const size_t need = (vertsNow + vertsAdded) * elemsPerVert;
+    if (need <= vec.capacity()) return;
+    size_t want = std::max(need, vec.capacity() * 2);
+    if (vertsNow >= kBatchVtxCap / 8) want = std::max(want, capElems);
+    vec.reserve(want);
+  };
+
+  static const bool timeBatch =
+      std::getenv("LUSDVIEW_TIME_BATCH") != nullptr;
+  // Batch-key diagnostics (LUSDVIEW_DEBUG_BATCH): which per-mesh feature forces
+  // a draw of its own. A scene that emits one draw per mesh cannot be drawn at
+  // interactive rates, so this reports what the batching has to isolate.
+  static const bool debugBatch =
+      std::getenv("LUSDVIEW_DEBUG_BATCH") != nullptr;
+  size_t dbgPlain = 0, dbgSkin = 0, dbgGeomProps = 0, dbgPtex = 0,
+         dbgLightLink = 0, dbgAnimatedWorld = 0, dbgMultiMat = 0, dbgMorph = 0,
+         dbgInstanced = 0;
+  using BatchClock = std::chrono::steady_clock;
+  double batchLoopSeconds = 0.0;
+  double batchStageSeconds = 0.0;
+  double batchSetupSeconds = 0.0;
+  double batchPlainSeconds = 0.0;
+  double batchMaterialSeconds = 0.0;
+  double batchSkinSeconds = 0.0;
+  double batchMorphSeconds = 0.0;
+  double batchAppendSeconds = 0.0;
+  double batchBoundsSeconds = 0.0;
+  double batchFlushSeconds = 0.0;
+  struct BatchScope {
+    BatchClock::time_point t0;
+    double* acc;
+    bool on;
+    ~BatchScope() {
+      if (on) {
+        *acc += std::chrono::duration<double>(BatchClock::now() - t0).count();
+      }
+    }
+  };
+
   auto flushBatch = [&](Batch& b) {
+    BatchScope flushTimer{BatchClock::now(), &batchFlushSeconds, timeBatch};
     if (b.dm.vertices.empty()) return;
     if (!b.anyColor) b.dm.vertexColors.clear();
     if (!b.anyAlpha) b.dm.vertexAlpha.clear();
@@ -8818,6 +9390,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
     }
     draw->triangleCount += b.dm.indices.size() / 3;
+    SanitizeOptionalMeshArrays(&b.dm);
     draw->meshes.push_back(std::move(b.dm));
     b = Batch();
     publishAvailableMeshes();
@@ -8834,7 +9407,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                const tydn::RenderMesh& sourceMesh,
                                const std::string& primPath) {
     Batch& b = getBatch({purpose, source.geometricNormal, proxyFallback,
-                         sourceMesh.double_sided, 0, -1, 0, 0, 0});
+                         sourceMesh.double_sided, 0, -1, 0, 0, 0, 0});
     if (!b.dm.vertices.empty() &&
         b.dm.vertices.size() + source.vertices.size() > kBatchVtxCap) {
       flushBatch(b);
@@ -8848,21 +9421,53 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.name = source.name;
     }
     const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
-    const size_t required = b.dm.vertices.size() + source.vertices.size();
-    if (required > b.dm.vertices.capacity()) {
-      b.dm.vertices.reserve(std::max(required, b.dm.vertices.capacity() * 2));
-    }
+    reserveVerts(b.dm.vertices, vbase, source.vertices.size(), 1,
+                 kBatchVtxCap);
     b.dm.vertices.insert(b.dm.vertices.end(), source.vertices.begin(),
                          source.vertices.end());
-    b.dm.indices.reserve(b.dm.indices.size() + source.indices.size());
-    for (uint32_t index : source.indices) b.dm.indices.push_back(vbase + index);
+    const uint32_t indexOffset =
+        static_cast<uint32_t>(b.dm.indices.size());
+    const size_t indexCount = source.indices.size();
+    reserveVerts(b.dm.indices, vbase, source.vertices.size(), 4,
+                 kBatchVtxCap * 4);
+    b.dm.indices.resize(indexOffset + indexCount);
+    {
+      uint32_t* dst = b.dm.indices.data() + indexOffset;
+      for (size_t i = 0; i < indexCount; ++i)
+        dst[i] = vbase + source.indices[i];
+    }
+    // A plain static mesh can share a batch with a mesh that already added
+    // material submeshes. The plain append must extend the submesh range too,
+    // otherwise its indices are present in the EBO but outside every drawn
+    // submesh (the shaded pass disappears while the wire pass still shows it).
+    appendLogicalSubmesh(&b, indexOffset,
+                         static_cast<uint32_t>(indexCount), 0, -1);
+    reserveVerts(b.dm.sourceFaceId, vbase, source.vertices.size(), 1,
+                 kBatchVtxCap);
     b.dm.sourceFaceId.insert(b.dm.sourceFaceId.end(), source.sourceFaceId.begin(),
                              source.sourceFaceId.end());
+    uint32_t wireBase = 0;
+    uint32_t wireCount = 0;
     if (!source.wireframeIndices.empty()) {
-      b.dm.wireframeIndices.reserve(b.dm.wireframeIndices.size() +
-                                    source.wireframeIndices.size());
-      for (uint32_t index : source.wireframeIndices)
-        b.dm.wireframeIndices.push_back(vbase + index);
+      b.dm.hasWireframe = true;
+      const size_t wireOffset = b.dm.wireframeIndices.size();
+      wireBase = static_cast<uint32_t>(wireOffset);
+      wireCount = static_cast<uint32_t>(source.wireframeIndices.size());
+      b.dm.wireframeIndices.resize(wireOffset + wireCount);
+      uint32_t* dst = b.dm.wireframeIndices.data() + wireOffset;
+      for (size_t i = 0; i < wireCount; ++i)
+        dst[i] = vbase + source.wireframeIndices[i];
+    }
+    // Record which source prim this vertex/cage range belongs to so a pick can
+    // report the real prim instead of the batch's representative path.
+    {
+      DrawMeshCPU::SourcePrimRange range;
+      range.vertexBase = vbase;
+      range.vertexCount = static_cast<uint32_t>(source.vertices.size());
+      range.wireBase = wireBase;
+      range.wireCount = wireCount;
+      range.path = source.absPath.empty() ? primPath : source.absPath;
+      b.dm.sourcePrims.push_back(std::move(range));
     }
     b.nextFaceId += static_cast<uint32_t>(sourceMesh.face_count());
   };
@@ -9228,6 +9833,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     DrawMeshCPU draw;
     std::vector<uint32_t> vertexToPoint;
     bool worldBaked{false};
+    // GPU skin binding resolved in the worker (read-only stage query). The
+    // serial batching thread only applies it, because the bone-row base it
+    // writes depends on the order meshes are consumed.
+    NextSkinBinding skinBind;
+    bool skinResolved{false};
+    bool hasSkinBind{false};
   };
   std::vector<std::unique_ptr<ConvertedMesh>> converted(meshPrims.size());
   // Persistent workers retain the low-memory 64 MiB wave without paying thread
@@ -9246,12 +9857,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   double parallelConvertSeconds = 0.0;
   size_t nextConvertEnd = 0;
   std::mutex convertMutex;
-  std::condition_variable convertWork;
-  std::condition_variable convertDone;
+  std::condition_variable convertWork;   // workers: window has work
+  std::condition_variable convertReady;  // consumer: a result is available
   std::atomic<size_t> convertNext{0};
   std::atomic<size_t> convertEnd{0};
-  size_t convertGeneration = 0;
-  unsigned convertFinished = 0;
+  // One "done" byte per mesh: set by the worker that claimed it, including
+  // meshes it skipped (zero-byte geometry, conversion failure, cancellation).
+  // The consumer waits on its own index instead of on a whole wave, so workers
+  // convert the next window while the serial loop appends the current one.
+  std::vector<uint8_t> convertDoneFlags(meshPrims.size(), 0);
   bool convertStop = false;
   std::vector<std::thread> convertWorkers;
   if (parallelConvert) {
@@ -9259,26 +9873,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     for (unsigned worker = 0; worker < convertThreads; ++worker) {
       convertWorkers.emplace_back([&, worker]() {
         (void)worker;
-        size_t seenGeneration = 0;
         for (;;) {
+          size_t i = 0;
           {
             std::unique_lock<std::mutex> lock(convertMutex);
             convertWork.wait(lock, [&]() {
-              return convertStop || convertGeneration != seenGeneration;
+              return convertStop || convertNext.load() < convertEnd.load();
             });
             if (convertStop) return;
-            seenGeneration = convertGeneration;
+            i = convertNext.fetch_add(1);
+            if (i >= convertEnd.load()) {
+              --convertNext;
+              continue;
+            }
           }
-          for (;;) {
-            if (ctrl && ctrl->cancel.load()) break;
-            const size_t i = convertNext.fetch_add(1);
-            if (i >= convertEnd.load()) break;
-            // GeometryInfo is the converter's authoritative lightweight
-            // topology preflight.  A zero estimate cannot produce a
-            // renderable mesh, so avoid reparsing its properties and running
-            // triangulation just to discard the empty result. Deferred payload
-            // roots are marker proxies and intentionally bypass this test.
-            if (!meshPrims[i].deferredProxy && geometryBytes[i] == 0) continue;
+          // GeometryInfo is the converter's authoritative lightweight topology
+          // preflight. A zero estimate cannot produce a renderable mesh, so
+          // skip reparsing its properties and triangulating just to discard the
+          // empty result. Deferred payload roots are marker proxies and
+          // intentionally bypass this test.
+          if (!meshPrims[i].deferredProxy && geometryBytes[i] == 0) {
+            {
+              std::lock_guard<std::mutex> lock(convertMutex);
+              convertDoneFlags[i] = 1;
+            }
+            convertReady.notify_one();
+            continue;
+          }
+          {
             auto result = std::make_unique<ConvertedMesh>();
             bool convertedMesh = false;
             if (meshPrims[i].deferredProxy) {
@@ -9301,43 +9923,74 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             if (convertedMesh &&
                 FillFlatGeometry(result->mesh, &result->draw,
                                  &result->vertexToPoint)) {
+              // Build the authored control cage here, in the conversion worker:
+              // it is a per-mesh read-only stage query, and doing it in the
+              // serial batching loop was a large part of the load time.
+              BuildAuthoredControlCage(
+                  stage_owner.get(), meshPrims[i].path, time,
+                  result->vertexToPoint, result->mesh.point_count(),
+                  &result->draw);
+              result->draw.hasWireframe =
+                  !result->draw.wireframeIndices.empty() ||
+                  !result->draw.wireframeVertices.empty();
               if (!result->mesh.has_skin() &&
                   !result->mesh.has_blend_shapes() &&
                   !meshPrims[i].animatedWorld) {
                 TransformDrawVertices(meshPrims[i].world, &result->draw);
                 result->worldBaked = true;
               }
+              // Resolve the GPU skin binding here: it is a read-only stage
+              // query (primvar reads, skeleton sample, joint-order remap) and
+              // was the largest serial cost left in the batching loop.
+              if (opts.gpuSkinning && result->mesh.has_skin()) {
+                result->skinResolved = true;
+                const lightusd_prim skinPrim = lightusd_stage_prim_at_path(
+                    stage_owner.get(), meshPrims[i].path.c_str());
+                result->hasSkinBind = ResolveNextSkinBinding(
+                    stage_owner.get(), skinPrim, time,
+                    result->draw.vertices.size(), result->vertexToPoint,
+                    result->mesh.point_count(), &result->skinBind);
+              }
               converted[i] = std::move(result);
             }
           }
           {
             std::lock_guard<std::mutex> lock(convertMutex);
-            if (++convertFinished == convertThreads) convertDone.notify_one();
+            convertDoneFlags[i] = 1;
           }
+          convertReady.notify_one();
         }
       });
     }
   }
+  // Publish a new window end. Workers pull from convertNext up to convertEnd,
+  // so extending the window is all that is needed to keep them busy.
   auto convertRange = [&](size_t begin, size_t end) {
-    const auto rangeStart = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(convertMutex);
       convertNext.store(begin);
       convertEnd.store(end);
-      convertFinished = 0;
-      ++convertGeneration;
     }
     convertWork.notify_all();
+  };
+  // Block until this mesh has been claimed and finished (converted, skipped or
+  // failed). Only the window that the consumer has already extended can be in
+  // flight, so this cannot deadlock.
+  auto waitForConverted = [&](size_t index) {
+    const auto waitStart = std::chrono::steady_clock::now();
     {
       std::unique_lock<std::mutex> lock(convertMutex);
-      convertDone.wait(lock, [&]() { return convertFinished == convertThreads; });
+      convertReady.wait(lock, [&]() {
+        return convertStop || convertDoneFlags[index] != 0;
+      });
     }
     parallelConvertSeconds += std::chrono::duration<double>(
-                                  std::chrono::steady_clock::now() - rangeStart)
+                                  std::chrono::steady_clock::now() - waitStart)
                                   .count();
   };
 
   for (size_t meshIndex = 0; meshIndex < meshPrims.size(); ++meshIndex) {
+    BatchScope loopTimer{BatchClock::now(), &batchLoopSeconds, timeBatch};
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
     if (opts.maxMeshConversions > 0 &&
@@ -9381,30 +10034,37 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       continue;
     }
 
-    if (parallelConvert && meshIndex >= nextConvertEnd) {
-      size_t end = meshIndex;
-      size_t bytes = 0;
-      size_t budgetRemaining =
-          opts.gpuGeometryBudgetBytes > 0
-              ? opts.gpuGeometryBudgetBytes - admittedGeometryBytes
-              : std::numeric_limits<size_t>::max();
-      while (end < meshPrims.size() && end - meshIndex < convertChunk) {
-        const size_t add = geometryBytes[end];
-        if (end > meshIndex && add > convertChunkBytes -
-                                             std::min(bytes, convertChunkBytes))
-          break;
-        // Do not launch work whose conservative estimate already exceeds the
-        // remaining geometry budget. Actual flattened sizes are checked again
-        // while consuming the bounded wave below.
-        if (add > budgetRemaining) break;
-        bytes += add;
-        budgetRemaining -= add;
-        ++end;
+    if (parallelConvert) {
+      // Sliding window: keep roughly one chunk of work queued ahead of the
+      // serial consumer instead of converting a whole wave and then idling
+      // while it drains. Extending from the published end (not from the
+      // consumer index) keeps the window monotonic.
+      if (meshIndex >= nextConvertEnd) {
+        size_t end = std::max(nextConvertEnd, meshIndex);
+        size_t bytes = 0;
+        size_t budgetRemaining =
+            opts.gpuGeometryBudgetBytes > 0
+                ? opts.gpuGeometryBudgetBytes - admittedGeometryBytes
+                : std::numeric_limits<size_t>::max();
+        while (end < meshPrims.size() && end - meshIndex < convertChunk) {
+          const size_t add = geometryBytes[end];
+          if (end > meshIndex &&
+              add > convertChunkBytes - std::min(bytes, convertChunkBytes))
+            break;
+          // Do not launch work whose conservative estimate already exceeds the
+          // remaining geometry budget. Actual flattened sizes are checked again
+          // while consuming the window.
+          if (add > budgetRemaining) break;
+          bytes += add;
+          budgetRemaining -= add;
+          ++end;
+        }
+        // The current mesh passed the same remaining-budget test above, so the
+        // window always contains at least that one item.
+        nextConvertEnd = end;
+        convertRange(meshIndex, nextConvertEnd);
       }
-      // The current mesh passed the same remaining-budget test above, so the
-      // range always contains at least that one item.
-      nextConvertEnd = end;
-      convertRange(meshIndex, nextConvertEnd);
+      waitForConverted(meshIndex);
     }
     // Move the record out so its strings and prim handle are released at the end
     // of this iteration instead of all surviving until the full scene finishes.
@@ -9414,6 +10074,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     DrawMeshCPU loc;
     std::vector<uint32_t> vertexToPoint;
     bool worldBaked = false;
+    NextSkinBinding skinBind;
+    bool skinResolved = false;
+    bool hasSkinBind = false;
     if (parallelConvert) {
       if (!converted[meshIndex]) {
         releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
@@ -9423,6 +10086,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       loc = std::move(converted[meshIndex]->draw);
       vertexToPoint = std::move(converted[meshIndex]->vertexToPoint);
       worldBaked = converted[meshIndex]->worldBaked;
+      skinBind = std::move(converted[meshIndex]->skinBind);
+      skinResolved = converted[meshIndex]->skinResolved;
+      hasSkinBind = converted[meshIndex]->hasSkinBind;
       converted[meshIndex].reset();
     } else {
       bool convertedMesh = false;
@@ -9446,12 +10112,17 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
         continue;
       }
+      BuildAuthoredControlCage(stage_owner.get(), meshPath, time,
+                               vertexToPoint, m.point_count(), &loc);
+      loc.hasWireframe = !loc.wireframeIndices.empty() ||
+                         !loc.wireframeVertices.empty();
     }
     if (loc.vertices.empty()) {
       releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
       continue;
     }
-    BuildAuthoredControlCage(stage_owner.get(), meshPath, time, &loc);
+    const auto stageStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     const std::string backMaterialPath = cachedBackMaterialPath(meshPath);
     bool hasSubsetMaterialBindings = false;
     const lightusd_prim meshPrim =
@@ -9475,6 +10146,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
       if (hasSubsetMaterialBindings) break;
     }
+    if (timeBatch) {
+      batchStageSeconds +=
+          std::chrono::duration<double>(BatchClock::now() - stageStart).count();
+    }
     const bool plainStatic =
         worldBaked && !m.has_skin() && !m.has_blend_shapes() &&
         meshRecord.materialPath.empty() && backMaterialPath.empty() &&
@@ -9485,7 +10160,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.influenceOffsetCount.empty() && loc.influenceTexels.empty() &&
         loc.morphOffsetCount.empty() && loc.morphDeltaHalf.empty() &&
         loc.instanceCount() == 0;
+    if (debugBatch) {
+      if (loc.instanceCount() > 0) ++dbgInstanced;
+      if (m.has_skin()) ++dbgSkin;
+      if (m.has_blend_shapes()) ++dbgMorph;
+      if (!loc.geomProps.empty()) ++dbgGeomProps;
+      if (hasAuthoredLightLinks) ++dbgLightLink;
+      if (meshRecord.animatedWorld) ++dbgAnimatedWorld;
+      if (hasSubsetMaterialBindings) ++dbgMultiMat;
+    }
     if (plainStatic) {
+      if (debugBatch) ++dbgPlain;
+      BatchScope plainTimer{BatchClock::now(), &batchPlainSeconds, timeBatch};
       ++convertedSourceMeshCount;
       weldedVertices += loc.vertices.size();
       sourcePoints += m.point_count();
@@ -9512,6 +10198,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
       continue;
     }
+    const auto setupStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     ++convertedSourceMeshCount;
     weldedVertices += loc.vertices.size();
     sourcePoints += m.point_count();
@@ -9524,6 +10212,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.tangents.size() * sizeof(float) +
         loc.binormals.size() * sizeof(float);
     const std::string& purpose = meshRecord.purpose;
+    const auto materialStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
     int wholeMat = resolveMaterialPath(meshRecord.materialPath,
                                        m.texcoords_0_name,
                                        m.texcoords_1_name);
@@ -9571,6 +10261,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       return e && e[0] == '1';
     }();
       if (m.has_blend_shapes()) {
+      BatchScope morphTimer{BatchClock::now(), &batchMorphSeconds, timeBatch};
       if (kBakeMorphStatic || !opts.gpuSkinning) {
         // As in BuildProtoMesh, these vertices are already at the sampled
         // morph pose. Do not add the live-GPU morphExtent padding again.
@@ -9589,6 +10280,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // geometry. Both no-op for unskinned meshes.
     bool cpuSkinned = false;
     if (m.has_skin()) {
+      BatchScope skinTimer{BatchClock::now(), &batchSkinSeconds, timeBatch};
       if (opts.gpuSkinning) {
         double skinWorld[16];
         double renderWorld[16];
@@ -9601,12 +10293,27 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           std::memcpy(skinWorld, mw16, sizeof(skinWorld));
           std::memcpy(renderWorld, ident, sizeof(renderWorld));
         }
-        SetupGpuSkinNext(stage_owner.get(), meshPath, time, &loc, vertexToPoint, m.point_count(),
-                         skinWorld, renderWorld, ident, draw);
+        if (skinResolved) {
+          // The worker already resolved the binding; only the bone-row base is
+          // order dependent, so applying it is the only serial work left.
+          if (hasSkinBind) {
+            BuildGpuSkinAttributes(stage_owner.get(), meshPath, time, skinBind,
+                                   &loc, skinWorld, renderWorld, ident, draw);
+          }
+        } else {
+          SetupGpuSkinNext(stage_owner.get(), meshPath, time, &loc,
+                           vertexToPoint, m.point_count(), skinWorld,
+                           renderWorld, ident, draw);
+        }
       } else {
         cpuSkinned =
             BakeSkinning(stage_owner.get(), meshPath, time, &loc, vertexToPoint, m.point_count());
       }
+    }
+    if (timeBatch) {
+      batchMaterialSeconds += std::chrono::duration<double>(
+                                  BatchClock::now() - materialStart)
+                                  .count();
     }
     // A morphed mesh must not share a batch with anything else: its channel ids
     // and its bound animation are its own. 0 = poolable with other static meshes.
@@ -9784,6 +10491,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     const bool hasAlpha = loc.vertexAlpha.size() == loc.vertices.size();
     const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
     const bool hasGeomProps = !loc.geomProps.empty();
+    // Batch-group id for the generic primvar signature (see BatchKey): meshes
+    // carrying the same per-vertex primvar set still share a draw. 0 = none,
+    // which is a group of its own.
+    const int geomPropBatchId = [&]() -> int {
+      if (!hasGeomProps) return 0;
+      std::string sig;
+      for (const DrawGeomPropCPU& prop : loc.geomProps) {
+        sig += prop.name;
+        sig.push_back('\x1f');
+        sig += std::to_string(prop.components);
+        sig.push_back('\x1e');
+      }
+      auto it = geomPropBatchIds.find(sig);
+      if (it != geomPropBatchIds.end()) return it->second;
+      const int id = ++nextGeomPropBatchId;
+      geomPropBatchIds.emplace(std::move(sig), id);
+      return id;
+    }();
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
     const bool hasExtendedSkin =
@@ -9871,28 +10596,41 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.morphOffsetCount.push_back(cnt);
     };
 
+    const auto appendStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
+    if (timeBatch) {
+      batchSetupSeconds +=
+          std::chrono::duration<double>(BatchClock::now() - setupStart).count();
+    }
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
       // A Ptex file's face ids are local to one source mesh. Isolate that mesh
       // from ordinary static batching so face ids are never rebased into a
-      // different texture's namespace.
+      // different texture's namespace. Skinned meshes need no isolation: their
+      // bone rows are absolute indices into the shared skinning palette, so a
+      // batch can mix them (unskinned vertices simply carry zero weights).
       const int batchIsolationId =
           morphBatchId != 0
               ? morphBatchId
-              : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
+              : (needsPtex ? ++nextMorphBatchId : 0);
       Batch& b = getBatch({purpose, loc.geometricNormal,
                            meshRecord.proxyFallback, m.double_sided,
                            canonicalMaterialId(wholeMat),
                            canonicalMaterialId(wholeBackMat), batchIsolationId,
-                           lightLinkBatchId, animatedWorldBatchId});
+                           lightLinkBatchId, animatedWorldBatchId,
+                           geomPropBatchId});
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
         flushBatch(b);  // resets b in the map slot
       }
       b.matId = wholeMat;
       b.backMatId = wholeBackMat;
-      if (hasGeomProps && b.dm.vertices.empty())
+      // Geometry-property descriptors only; the per-vertex values are appended
+      // with the vertices so a batch that already holds geometry stays parallel.
+      if (hasGeomProps && b.dm.geomProps.empty()) {
         b.dm.geomProps = loc.geomProps;
+        for (DrawGeomPropCPU& prop : b.dm.geomProps) prop.values.clear();
+      }
       b.dm.purpose = purpose;
       b.dm.proxyFallback = meshRecord.proxyFallback;
       b.dm.geometricNormal = loc.geometricNormal;
@@ -9934,14 +10672,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
         b.anyUv1 = true;
       }
+      if (!loc.tangents.empty() && !b.anyTangent) {
+        b.dm.tangents.assign(b.dm.vertices.size() * 3, 0.0f);
+        b.anyTangent = true;
+      }
+      if (!loc.binormals.empty() && !b.anyBinormal) {
+        b.dm.binormals.assign(b.dm.vertices.size() * 3, 0.0f);
+        b.anyBinormal = true;
+      }
       openSkin(b);
       openMorph(b);
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
       // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
       const bool plainBatch = !b.anySkin && !b.anyMorph && !b.anyColor &&
-                               !b.anyAlpha && !b.anyUv1 && !hasSkin &&
-                               !hasMorph && !hasC && !hasAlpha && !hasUv1;
+                               !b.anyAlpha && !b.anyUv1 && !b.anyTangent &&
+                               !b.anyBinormal && !hasSkin && !hasMorph &&
+                               !hasC && !hasAlpha && !hasUv1 &&
+                               loc.tangents.empty() && loc.binormals.empty() &&
+                               b.dm.geomProps.empty();
       if (plainBatch) {
         const size_t required = b.dm.vertices.size() + loc.vertices.size();
         if (required > b.dm.vertices.capacity()) {
@@ -9952,32 +10701,191 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                              std::make_move_iterator(loc.vertices.begin()),
                              std::make_move_iterator(loc.vertices.end()));
       } else {
-        for (size_t i = 0; i < loc.vertices.size(); ++i) {
-          b.dm.vertices.push_back(loc.vertices[i]);
-          pushSkin(b, i);
-          pushMorph(b, i);
-          if (b.anyColor) {
-            if (hasC) {
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 1]);
-              b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 2]);
-            } else {
-              b.dm.vertexColors.push_back(1.0f);
-              b.dm.vertexColors.push_back(1.0f);
-              b.dm.vertexColors.push_back(1.0f);
-            }
+        // Dense per-vertex attributes are appended with one resize + memcpy per
+        // array. The old per-vertex push_back loop copied a vertex plus up to
+        // eight skin floats and six color/UV floats for every vertex, and
+        // dominated batching time on skinned scenes. Only the variable-length
+        // influence and morph streams still need a per-vertex loop.
+        const size_t n = loc.vertices.size();
+        const size_t vb = vbase;
+        // Reserve every dense per-vertex array this batch carries before the
+        // append: see reserveVerts (one allocation per array, not one per
+        // doubling).
+        reserveVerts(b.dm.vertices, vb, n, 1, kBatchVtxCap);
+        if (b.anySkin) {
+          reserveVerts(b.dm.jointIdx, vb, n, 4, kBatchVtxCap * 4);
+          reserveVerts(b.dm.jointWt, vb, n, 4, kBatchVtxCap * 4);
+        }
+        if (b.anyColor) reserveVerts(b.dm.vertexColors, vb, n, 3, kBatchVtxCap * 3);
+        if (b.anyAlpha) reserveVerts(b.dm.vertexAlpha, vb, n, 1, kBatchVtxCap);
+        if (b.anyUv1) reserveVerts(b.dm.uv1, vb, n, 2, kBatchVtxCap * 2);
+        if (b.anyTangent) reserveVerts(b.dm.tangents, vb, n, 3, kBatchVtxCap * 3);
+        if (b.anyBinormal)
+          reserveVerts(b.dm.binormals, vb, n, 3, kBatchVtxCap * 3);
+        reserveVerts(b.dm.indices, vb, n, 4, kBatchVtxCap * 4);
+        b.dm.vertices.resize(vb + n);
+        std::memcpy(b.dm.vertices.data() + vb, loc.vertices.data(),
+                    n * sizeof(DrawVertex));
+        // Generic primvar (RT geometry-property) streams are per-vertex and
+        // parallel to the batch vertices, so they grow with the batch.
+        for (size_t pi = 0; pi < b.dm.geomProps.size(); ++pi) {
+          DrawGeomPropCPU& dst = b.dm.geomProps[pi];
+          const uint32_t comps = dst.components;
+          if (comps == 0) continue;
+          dst.values.resize((vb + n) * comps, 0.0f);
+          if (!hasGeomProps || pi >= loc.geomProps.size()) continue;
+          const DrawGeomPropCPU& src = loc.geomProps[pi];
+          if (src.components != comps || src.values.size() < n * comps) continue;
+          std::memcpy(dst.values.data() + vb * comps, src.values.data(),
+                      n * comps * sizeof(float));
+        }
+        if (b.anySkin) {
+          b.dm.jointIdx.resize((vb + n) * 4);
+          b.dm.jointWt.resize((vb + n) * 4);
+          if (hasSkin) {
+            std::memcpy(b.dm.jointIdx.data() + vb * 4, loc.jointIdx.data(),
+                        n * 4 * sizeof(uint32_t));
+            std::memcpy(b.dm.jointWt.data() + vb * 4, loc.jointWt.data(),
+                        n * 4 * sizeof(float));
+          } else {
+            std::fill(b.dm.jointIdx.begin() + static_cast<ptrdiff_t>(vb * 4),
+                      b.dm.jointIdx.end(), 0u);
+            std::fill(b.dm.jointWt.begin() + static_cast<ptrdiff_t>(vb * 4),
+                      b.dm.jointWt.end(), 0.0f);
           }
-          if (b.anyAlpha)
-            b.dm.vertexAlpha.push_back(hasAlpha ? loc.vertexAlpha[i] : 1.0f);
-          if (b.anyUv1) {
-            b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 0] : 0.0f);
-            b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 1] : 0.0f);
+        }
+        if (b.anyColor) {
+          b.dm.vertexColors.resize((vb + n) * 3);
+          if (hasC) {
+            std::memcpy(b.dm.vertexColors.data() + vb * 3,
+                        loc.vertexColors.data(), n * 3 * sizeof(float));
+          } else {
+            std::fill(
+                b.dm.vertexColors.begin() + static_cast<ptrdiff_t>(vb * 3),
+                b.dm.vertexColors.end(), 1.0f);
+          }
+        }
+        if (b.anyTangent) {
+          b.dm.tangents.resize((vb + n) * 3);
+          if (loc.tangents.size() == n * 3) {
+            std::memcpy(b.dm.tangents.data() + vb * 3, loc.tangents.data(),
+                        n * 3 * sizeof(float));
+          } else {
+            std::fill(b.dm.tangents.begin() + static_cast<ptrdiff_t>(vb * 3),
+                      b.dm.tangents.end(), 0.0f);
+          }
+        }
+        if (b.anyBinormal) {
+          b.dm.binormals.resize((vb + n) * 3);
+          if (loc.binormals.size() == n * 3) {
+            std::memcpy(b.dm.binormals.data() + vb * 3, loc.binormals.data(),
+                        n * 3 * sizeof(float));
+          } else {
+            std::fill(b.dm.binormals.begin() + static_cast<ptrdiff_t>(vb * 3),
+                      b.dm.binormals.end(), 0.0f);
+          }
+        }
+        if (b.anyAlpha) {
+          b.dm.vertexAlpha.resize(vb + n);
+          if (hasAlpha) {
+            std::memcpy(b.dm.vertexAlpha.data() + vb, loc.vertexAlpha.data(),
+                        n * sizeof(float));
+          } else {
+            std::fill(b.dm.vertexAlpha.begin() + static_cast<ptrdiff_t>(vb),
+                      b.dm.vertexAlpha.end(), 1.0f);
+          }
+        }
+        if (b.anyUv1) {
+          b.dm.uv1.resize((vb + n) * 2);
+          if (hasUv1) {
+            std::memcpy(b.dm.uv1.data() + vb * 2, loc.uv1.data(),
+                        n * 2 * sizeof(float));
+          } else {
+            std::fill(b.dm.uv1.begin() + static_cast<ptrdiff_t>(vb * 2),
+                      b.dm.uv1.end(), 0.0f);
+          }
+        }
+        if (b.anyExtendedSkin) {
+          b.dm.influenceOffsetCount.resize((vb + n) * 2);
+          if (hasExtendedSkin) {
+            // Count the texels this mesh contributes (validating each vertex's
+            // range exactly as the copy below does), grow the batch array once,
+            // then write straight into it. Appending one influence at a time
+            // re-checked capacity and re-touched the batch buffer -- which can
+            // be gigabytes once batches are merged -- for every influence of
+            // every vertex, and that dominated load time on large skinned
+            // scenes.
+            size_t extra = 0;
+            for (size_t i = 0; i < n; ++i) {
+              const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
+              const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
+              for (uint32_t k = 0; k < count; ++k) {
+                const size_t e = static_cast<size_t>(src + k) * 4;
+                if (e + 3 >= loc.influenceTexels.size()) break;
+                ++extra;
+              }
+            }
+            const size_t texelStart = b.dm.influenceTexels.size();
+            b.dm.influenceTexels.resize(texelStart + extra * 4);
+            float* dst = b.dm.influenceTexels.data() + texelStart;
+            size_t written = 0;
+            for (size_t i = 0; i < n; ++i) {
+              const uint32_t texelBase =
+                  static_cast<uint32_t>(texelStart / 4 + written);
+              const uint32_t src = loc.influenceOffsetCount[i * 2 + 0];
+              const uint32_t count = loc.influenceOffsetCount[i * 2 + 1];
+              uint32_t actual = 0;
+              for (uint32_t k = 0; k < count; ++k) {
+                const size_t e = static_cast<size_t>(src + k) * 4;
+                if (e + 3 >= loc.influenceTexels.size()) break;
+                std::memcpy(dst + written * 4, loc.influenceTexels.data() + e,
+                            4 * sizeof(float));
+                ++written;
+                ++actual;
+              }
+              b.dm.influenceOffsetCount[(vb + i) * 2 + 0] = texelBase;
+              b.dm.influenceOffsetCount[(vb + i) * 2 + 1] = actual;
+              b.dm.maxInfluencesPerVertex = std::max(
+                  b.dm.maxInfluencesPerVertex, static_cast<int>(actual));
+            }
+          } else {
+            std::fill(b.dm.influenceOffsetCount.begin() +
+                          static_cast<ptrdiff_t>(vb * 2),
+                      b.dm.influenceOffsetCount.end(), 0u);
+          }
+        }
+        if (b.anyMorph) {
+          b.dm.morphOffsetCount.resize((vb + n) * 2);
+          for (size_t i = 0; i < n; ++i) {
+            const uint32_t morphBase =
+                static_cast<uint32_t>(b.dm.morphDeltaHalf.size() / 4);
+            const uint32_t src =
+                hasMorph ? loc.morphOffsetCount[i * 2 + 0] : 0u;
+            const uint32_t cnt =
+                hasMorph ? loc.morphOffsetCount[i * 2 + 1] : 0u;
+            for (uint32_t k = 0; k < cnt; ++k) {
+              const size_t e = size_t(src + k);
+              if (e * 4 + 3 >= loc.morphDeltaHalf.size()) break;
+              for (int c = 0; c < 4; ++c)
+                b.dm.morphDeltaHalf.push_back(
+                    loc.morphDeltaHalf[e * 4 + size_t(c)]);
+              b.dm.morphChannelId.push_back(
+                  e < loc.morphChannelId.size() ? loc.morphChannelId[e]
+                                                : uint16_t{0});
+            }
+            b.dm.morphOffsetCount[(vb + i) * 2 + 0] = morphBase;
+            b.dm.morphOffsetCount[(vb + i) * 2 + 1] = cnt;
           }
         }
       }
       const uint32_t logicalIndexOffset =
           static_cast<uint32_t>(b.dm.indices.size());
-      for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+      const size_t indexCount = loc.indices.size();
+      b.dm.indices.resize(static_cast<size_t>(logicalIndexOffset) + indexCount);
+      {
+        uint32_t* dst = b.dm.indices.data() + logicalIndexOffset;
+        for (size_t i = 0; i < indexCount; ++i) dst[i] = vbase + loc.indices[i];
+      }
       appendLogicalSubmesh(
           &b, logicalIndexOffset,
           static_cast<uint32_t>(b.dm.indices.size()) - logicalIndexOffset,
@@ -9987,8 +10895,22 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.sourceFaceId.push_back(faceBase + face);
       if (!needsPtex)
         b.nextFaceId += static_cast<uint32_t>(m.face_count());
-      for (uint32_t widx : loc.wireframeIndices)
+      const uint32_t wireBase =
+          static_cast<uint32_t>(b.dm.wireframeIndices.size());
+      for (uint32_t widx : loc.wireframeIndices) {
         b.dm.wireframeIndices.push_back(vbase + widx);
+        b.dm.hasWireframe = true;
+      }
+      {
+        DrawMeshCPU::SourcePrimRange range;
+        range.vertexBase = vbase;
+        range.vertexCount = static_cast<uint32_t>(loc.vertices.size());
+        range.wireBase = wireBase;
+        range.wireCount =
+            static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase;
+        range.path = loc.absPath.empty() ? meshPath : loc.absPath;
+        b.dm.sourcePrims.push_back(std::move(range));
+      }
     } else {
       // --- Multi-material (GeomSubset) path: route each triangle to its
       //     material's batch, appending only the vertices that batch references
@@ -10000,12 +10922,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         const int batchIsolationId =
             morphBatchId != 0
                 ? morphBatchId
-                : ((needsPtex || hasSkin || hasGeomProps) ? ++nextMorphBatchId : 0);
+                : (needsPtex ? ++nextMorphBatchId : 0);
         Batch& b = getBatch({purpose, loc.geometricNormal,
                              meshRecord.proxyFallback, m.double_sided,
                              canonicalMaterialId(gm.first),
                              canonicalMaterialId(gm.second), batchIsolationId,
-                             lightLinkBatchId, animatedWorldBatchId});
+                             lightLinkBatchId, animatedWorldBatchId,
+                             geomPropBatchId});
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
           flushBatch(b);
@@ -10040,12 +10963,47 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
           b.anyUv1 = true;
         }
+        if (!loc.tangents.empty() && !b.anyTangent) {
+          b.dm.tangents.assign(b.dm.vertices.size() * 3, 0.0f);
+          b.anyTangent = true;
+        }
+        if (!loc.binormals.empty() && !b.anyBinormal) {
+          b.dm.binormals.assign(b.dm.vertices.size() * 3, 0.0f);
+          b.anyBinormal = true;
+        }
         if (hasGeomProps && b.dm.geomProps.empty()) {
           b.dm.geomProps = loc.geomProps;
           for (DrawGeomPropCPU& prop : b.dm.geomProps) prop.values.clear();
         }
         openSkin(b);
         openMorph(b);
+        // Upper bound for this group (groups only ever use a subset), so the
+        // per-vertex push_backs below do not reallocate repeatedly.
+        {
+          const size_t vb = b.dm.vertices.size();
+          reserveVerts(b.dm.vertices, vb, loc.vertices.size(), 1, kBatchVtxCap);
+          if (b.anySkin) {
+            reserveVerts(b.dm.jointIdx, vb, loc.vertices.size(), 4,
+                         kBatchVtxCap * 4);
+            reserveVerts(b.dm.jointWt, vb, loc.vertices.size(), 4,
+                         kBatchVtxCap * 4);
+          }
+          if (b.anyColor)
+            reserveVerts(b.dm.vertexColors, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
+          if (b.anyAlpha)
+            reserveVerts(b.dm.vertexAlpha, vb, loc.vertices.size(), 1,
+                         kBatchVtxCap);
+          if (b.anyUv1)
+            reserveVerts(b.dm.uv1, vb, loc.vertices.size(), 2,
+                         kBatchVtxCap * 2);
+          if (b.anyTangent)
+            reserveVerts(b.dm.tangents, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
+          if (b.anyBinormal)
+            reserveVerts(b.dm.binormals, vb, loc.vertices.size(), 3,
+                         kBatchVtxCap * 3);
+        }
         const uint32_t faceBase = needsPtex ? 0u : b.nextFaceId;
         std::vector<int> remap(loc.vertices.size(), -1);
         auto vtx = [&](uint32_t vi) -> uint32_t {
@@ -10071,6 +11029,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
               b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
             }
+            if (b.anyTangent) {
+              const bool have = loc.tangents.size() == loc.vertices.size() * 3;
+              for (int c = 0; c < 3; ++c)
+                b.dm.tangents.push_back(have ? loc.tangents[3 * vi + c] : 0.0f);
+            }
+            if (b.anyBinormal) {
+              const bool have =
+                  loc.binormals.size() == loc.vertices.size() * 3;
+              for (int c = 0; c < 3; ++c)
+                b.dm.binormals.push_back(have ? loc.binormals[3 * vi + c]
+                                              : 0.0f);
+            }
             for (size_t pi = 0; pi < b.dm.geomProps.size(); ++pi) {
               const DrawGeomPropCPU& source = loc.geomProps[pi];
               const size_t begin = size_t(vi) * source.components;
@@ -10090,6 +11060,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         };
         const uint32_t logicalIndexOffset =
             static_cast<uint32_t>(b.dm.indices.size());
+        // vtx() appends each group's vertices contiguously into this batch, so
+        // the range is just the growth of the vertex array over this loop.
+        const uint32_t groupVertexBase =
+            static_cast<uint32_t>(b.dm.vertices.size());
         for (size_t t = 0; t < numTris; ++t) {
           if (triMat[t] != gm) continue;
           b.dm.indices.push_back(vtx(loc.indices[3 * t + 0]));
@@ -10106,15 +11080,43 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             gm.first, gm.second);
         // Attach the mesh's wireframe once (to the first group's batch, mapped
         // through vtx so its vertices exist there) -- avoids cross-batch dupes.
+        uint32_t wireBase = 0;
+        uint32_t wireCount = 0;
         if (firstGroup) {
-          for (uint32_t widx : loc.wireframeIndices)
+          wireBase = static_cast<uint32_t>(b.dm.wireframeIndices.size());
+          for (uint32_t widx : loc.wireframeIndices) {
             b.dm.wireframeIndices.push_back(vtx(widx));
+            b.dm.hasWireframe = true;
+          }
+          wireCount =
+              static_cast<uint32_t>(b.dm.wireframeIndices.size()) - wireBase;
           firstGroup = false;
+        }
+        // Record the source prim for this group's vertex/cage range so a pick
+        // can report the real prim instead of the batch's representative path.
+        {
+          DrawMeshCPU::SourcePrimRange range;
+          range.vertexBase = groupVertexBase;
+          range.vertexCount =
+              static_cast<uint32_t>(b.dm.vertices.size()) - groupVertexBase;
+          range.wireBase = wireBase;
+          range.wireCount = wireCount;
+          range.path = loc.absPath.empty() ? meshPath : loc.absPath;
+          b.dm.sourcePrims.push_back(std::move(range));
         }
         if (!needsPtex)
           b.nextFaceId += static_cast<uint32_t>(m.face_count());
       }
     }
+    if (timeBatch) {
+      const auto appendEnd = BatchClock::now();
+      batchAppendSeconds +=
+          std::chrono::duration<double>(appendEnd - appendStart).count();
+      // Provisional bounds + truncation bookkeeping after the append.
+      batchBoundsSeconds += 0.0;
+    }
+    const auto boundsStart =
+        timeBatch ? BatchClock::now() : BatchClock::time_point{};
 
     // Provisional scene bounds, from the 8 local-bbox corners pushed through the
     // world matrix. Loose once the mesh is rotated (the axis-aligned hull of a
@@ -10152,6 +11154,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       capped = true;
     }
     releasePendingPrim(meshRecord.path, meshRecord.rootLayerResourceId);
+    if (timeBatch) {
+      batchBoundsSeconds += std::chrono::duration<double>(
+                                BatchClock::now() - boundsStart)
+                                .count();
+    }
   }
   if (parallelConvert) {
     {
@@ -10196,6 +11203,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
            static_cast<double>(released.stage_bytes_after) /
                (1024.0 * 1024.0));
     }
+  }
+  if (debugBatch) {
+    LOGI("next: batch keys: plain=%zu skin=%zu morph=%zu geomProps=%zu "
+         "ptex=%zu lightLink=%zu animatedWorld=%zu multiMaterial=%zu "
+         "instanced=%zu -> %zu draws",
+         dbgPlain, dbgSkin, dbgMorph, dbgGeomProps, dbgPtex, dbgLightLink,
+         dbgAnimatedWorld, dbgMultiMat, dbgInstanced, draw->meshes.size());
   }
   if (parallelConvert) {
     LOGI("next: converted %zu meshes with %u workers in %.2f s "
@@ -10571,6 +11585,24 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       stream->pushFailed(err ? *err : "next: no renderable geometry produced");
     return false;
   }
+  if (timeBatch) {
+    std::fprintf(stderr,
+                 "[batch] loop=%.3fs wait=%.3fs stage=%.3fs plain=%.3fs "
+                 "mat=%.3fs skin=%.3fs morph=%.3fs append=%.3fs bounds=%.3fs "
+                 "flush=%.3fs other=%.3fs\n",
+                 batchLoopSeconds, parallelConvertSeconds, batchStageSeconds,
+                 batchPlainSeconds, batchMaterialSeconds, batchSkinSeconds,
+                 batchMorphSeconds, batchAppendSeconds, batchBoundsSeconds,
+                 batchFlushSeconds,
+                 batchLoopSeconds - parallelConvertSeconds - batchStageSeconds -
+                     batchPlainSeconds - batchMaterialSeconds -
+                     batchSkinSeconds - batchMorphSeconds -
+                     batchAppendSeconds - batchBoundsSeconds);
+  }
+  if (std::getenv("LUSDVIEW_TIME_SKIN")) {
+    LOGI("skin joint table: %ld hits, %ld misses",
+         g_skinJointHits.load(), g_skinJointMisses.load());
+  }
   if (timing) {
     LOGI("next timing: ptex atlas build %.3f s (%zu file(s))",
          texCache.ptexBuildSeconds, texCache.ptexBuildCount);
@@ -10581,6 +11613,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                                       loadBegin).count());
     LogProcessMemory("after finalize");
   }
+  for (DrawMeshCPU& mesh : draw->meshes) SanitizeOptionalMeshArrays(&mesh);
   if (stream) {
     publishAvailableMeshes(/*force=*/true);
     publishAvailableNonMeshes();

@@ -22,7 +22,7 @@ run() {
   # materialization and release, rather than only the single-chunk fast path.
   # The eight-triangle GPU cap also makes the mixed fallback flush its distinct
   # Gaussian color buckets through one global pending budget.
-  LUSDR_GAUSSIAN_CHUNK=1 LUSDR_GPU_TRIANGLE_CHUNK=8 "$LUSDRENDER" "$1" "$2" \
+  "$LUSDRENDER" -gaussianChunk 1 -gpuTriangleChunk 8 "$1" "$2" \
     -vkr -w 32 -height 32 -autoframe -stats \
     >"$3" 2>&1
 }
@@ -58,8 +58,7 @@ if ! grep -q "triangles: 144" "$TMP/mixed.log"; then
   exit 1
 fi
 
-LUSDR_GAUSSIAN_CHUNK=1 LUSDR_GPU_TRIANGLE_CHUNK=8 \
-  "$LUSDRENDER" "$REPO_ROOT/tests/usda/lusdview-gaussian-splat.usda" \
+"$LUSDRENDER" -gaussianChunk 1 -gpuTriangleChunk 8 "$REPO_ROOT/tests/usda/lusdview-gaussian-splat.usda" \
   "$TMP/pure-hip.png" -hip -w 32 -height 32 -autoframe -stats \
   >"$TMP/pure-hip.log" 2>&1
 if [ "$?" -ne 0 ]; then

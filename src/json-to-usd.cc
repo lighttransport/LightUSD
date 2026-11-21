@@ -2,8 +2,8 @@
 
 #include "layer.hh"
 #include "ascii-parser.hh"
-#include "minijson.hh"
-#include "security-policy.hh"
+#include "core/minijson.hh"
+#include "core/security-policy.hh"
 #include "str-util.hh"
 #include "common-macros.inc"
 #include "composition.hh"

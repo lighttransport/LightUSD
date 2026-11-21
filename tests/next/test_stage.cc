@@ -8,8 +8,14 @@
 #include <cassert>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "next/stage/stage.hh"
+#include "next/stage/stage-session.hh"
+#include "next/pcp/prim-index.hh"
 #include "next/eval/attribute-eval.hh"
 
 using namespace lightusd::next;
@@ -625,6 +631,140 @@ void test_name_table_registration() {
   std::cout << "  Name-table registration completeness: PASSED" << std::endl;
 }
 
+// Hardening for #295 / PR #298: an instance proxy must carry its effective
+// namespace mapping through direct path lookup, parent walks, and relationship
+// target queries. Both native and holder-mode flattening are exercised.
+static void test_instance_proxy_mapping() {
+  const std::string base = "/tmp/lightusd-stage-instance-mapping";
+  const std::string leaf = base + "-leaf.usda";
+  const std::string rack_a = base + "-rack-a.usda";
+  const std::string rack_b = base + "-rack-b.usda";
+  const std::string root = base + "-root.usda";
+  {
+    std::ofstream f(leaf);
+    f << "#usda 1.0\n"
+         "(\n"
+         " defaultPrim = \"World\"\n"
+         ")\n"
+         "def Xform \"World\" {\n"
+         " def Xform \"Geo\" {\n"
+         "  def Mesh \"Box\" {\n"
+         "   int[] faceVertexCounts = [3]\n"
+         "   int[] faceVertexIndices = [0,1,2]\n"
+         "   point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n"
+         "   rel test:target = </World/Geo/Box>\n"
+         "  }\n"
+         " }\n"
+         "}\n";
+  }
+  const char* rack_source =
+      "#usda 1.0\n"
+      "(\n"
+      " defaultPrim = \"World\"\n"
+      ")\n"
+      "def Xform \"World\" {\n"
+      " def Xform \"Crate\" (instanceable = true\n"
+      "  prepend references = @./lightusd-stage-instance-mapping-leaf.usda@) {}\n"
+      "}\n";
+  { std::ofstream f(rack_a); f << rack_source; }
+  { std::ofstream f(rack_b); f << rack_source; }
+  {
+    std::ofstream f(root);
+    f << "#usda 1.0\n"
+         "(\n"
+         " defaultPrim = \"World\"\n"
+         ")\n"
+         "def Xform \"World\" {\n"
+         " def Xform \"A\" (instanceable = true\n"
+         "  prepend references = @./lightusd-stage-instance-mapping-rack-a.usda@) {}\n"
+         " def Xform \"B\" (instanceable = true\n"
+         "  prepend references = @./lightusd-stage-instance-mapping-rack-b.usda@) {}\n"
+         " def Xform \"C\" (instanceable = true\n"
+         "  prepend references = @./lightusd-stage-instance-mapping-rack-b.usda@) {}\n"
+         "}\n";
+  }
+
+  for (bool holder_mode : {true, false}) {
+    StageSessionOptions options;
+    options.composition.flatten_instances = true;
+    options.composition.instance_flatten_mode =
+        holder_mode ? pcp::InstanceFlattenMode::Holder
+                    : pcp::InstanceFlattenMode::Native;
+    StageSession session;
+    auto opened = session.OpenFile(root, options);
+    if (!opened.success) {
+      std::cerr << "OpenFile failed (holder=" << holder_mode
+                << "): " << static_cast<int>(opened.status)
+                << " error=" << opened.error << std::endl;
+    }
+    assert(opened.success);
+    const Stage& stage = *session.GetSnapshot();
+
+    const std::vector<std::string> expected = {
+        "/World/A/Crate/Geo/Box", "/World/B/Crate/Geo/Box",
+        "/World/C/Crate/Geo/Box"};
+    std::unordered_set<std::string> traversed;
+    std::vector<UsdPrim> stack;
+    for (const UsdPrim& r : stage.GetRootPrims()) stack.push_back(r);
+    while (!stack.empty()) {
+      UsdPrim p = stack.back();
+      stack.pop_back();
+      traversed.insert(p.GetPath().str());
+      for (const UsdPrim& c : p.GetChildren()) stack.push_back(c);
+    }
+    for (const std::string& path : expected) {
+      assert(traversed.count(path) == 1 &&
+             "mesh path must be reachable exactly once from the root");
+      UsdPrim direct = stage.GetPrimAtPath(path);
+      if (!direct.IsValid() || direct.GetPath().str() != path) {
+        std::cerr << "lookup mode=" << holder_mode << " want=" << path
+                  << " got=" << (direct.IsValid() ? direct.GetPath().str()
+                                                  : std::string("<invalid>"))
+                  << std::endl;
+      }
+      assert(direct.IsValid() && direct.GetPath().str() == path &&
+             "direct proxy lookup must preserve the public path");
+      UsdPrim parent = direct.GetParent();
+      if (!parent.IsValid() ||
+          parent.GetPath().str() != path.substr(0, path.rfind('/'))) {
+        std::cerr << "parent mode=" << holder_mode << " want="
+                  << path.substr(0, path.rfind('/')) << " got="
+                  << (parent.IsValid() ? parent.GetPath().str()
+                                       : std::string("<invalid>"))
+                  << std::endl;
+      }
+      assert(parent.IsValid() &&
+             parent.GetPath().str() == path.substr(0, path.rfind('/')));
+      std::vector<Path> raw, mapped;
+      assert(direct.GetRelationship("test:target") != nullptr);
+      assert(direct.GetMappedRelationshipTargets("test:target", &mapped));
+      if (mapped.empty() || mapped[0].str() != path) {
+        std::cerr << "mapping mode=" << holder_mode << " path=" << path
+                  << " raw="
+                  << (direct.GetRelationship("test:target")
+                          ? direct.GetRelationship("test:target")->at(0).str()
+                          : "<none>")
+                  << " mapped=" << (mapped.empty() ? "<empty>" : mapped[0].str())
+                  << std::endl;
+      }
+      assert(!mapped.empty() && mapped[0].str() == path &&
+             "relationship target must be rebound to the instance namespace");
+      (void)raw;
+    }
+
+    // No two distinct meshes may share a composed path.
+    std::unordered_set<std::string> mesh_paths;
+    for (const std::string& path : expected) {
+      assert(mesh_paths.insert(path).second);
+    }
+  }
+  std::remove(leaf.c_str());
+  std::remove(rack_a.c_str());
+  std::remove(rack_b.c_str());
+  std::remove(root.c_str());
+  std::cout << "  instance proxy mapping: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Stage Tests ===" << std::endl;
 
@@ -635,6 +775,7 @@ int main() {
   test_stage_traversal();
   test_stage_relationships();
   test_stage_stats();
+  test_instance_proxy_mapping();
   test_attribute_eval();
   test_attribute_eval_convenience();
   test_stage_move();

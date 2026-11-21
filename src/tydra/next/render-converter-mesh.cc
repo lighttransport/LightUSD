@@ -3,7 +3,7 @@
 // Tydra Next - Mesh conversion orchestration
 #include "render-converter-internal.hh"
 #include "render-converter-prop-read.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <cstring>
 #include "next/schema/usd-skel.hh"
 #include "tsd/tinysubdiv.hh"

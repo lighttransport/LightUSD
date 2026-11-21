@@ -17,20 +17,32 @@ static lightusd::api::Stage Load(const char* source) {
 }
 int main() {
   auto stage = Load(R"(#usda 1.0
-(defaultPrim = "Root"
- upAxis = "Z"
- metersPerUnit = 2
- startTimeCode = -3
- endTimeCode = 72
- framesPerSecond = 30
- documentation = "test doc"
- comment = "test comment"
- timeCodesPerSecond = 48)
-def Xform "Root" {
- def Scope "A" { def Scope "Nested" {} }
- def Scope "Disabled" (active = false) {}
+(
+    defaultPrim = "Root"
+    upAxis = "Z"
+    metersPerUnit = 2
+    startTimeCode = -3
+    endTimeCode = 72
+    framesPerSecond = 30
+    documentation = "test doc"
+    comment = "test comment"
+    timeCodesPerSecond = 48
+)
+def Xform "Root"
+{
+ def Scope "A"
+ {
+  def Scope "Nested"
+  {
+  }
+ }
+ def Scope "Disabled" (active = false)
+ {
+ }
 }
-def Scope "Last" {}
+def Scope "Last"
+{
+}
 )");
   lusdview::PublicStageInfo info;
   assert(lusdview::ReadPublicStageInfo(stage.get(), &info));
@@ -64,7 +76,7 @@ def Scope "Last" {}
   assert(lusdview::ReadPublicStageInfo(empty.get(), &info));
   assert(info.defaultPrim.empty() && info.primCount == 0);
   assert(!info.startTimeCodeAuthored && !info.endTimeCodeAuthored);
-  auto zero = Load("#usda 1.0\n(startTimeCode = 0)\n");
+  auto zero = Load("#usda 1.0\n(\n    startTimeCode = 0\n)\n");
   assert(lusdview::ReadPublicStageInfo(zero.get(), &info));
   assert(info.startTimeCode == 0 && info.startTimeCodeAuthored && !info.endTimeCodeAuthored);
   auto properties = Load(R"(#usda 1.0
@@ -98,8 +110,14 @@ def Cube "Cube" {
   assert(lightusd_attr_inspect_default(prim, "visibility", &array, nullptr) == LIGHTUSD_ERR_NOT_FOUND);
 
   auto extents = Load(R"(#usda 1.0
-def Scope "Float" { float3[] extent = [(-1,-2,-3),(4,5,6)] }
-def Scope "Double" { double3[] extentsHint = [(-2,-3,-4),(5,6,7),(8,9,10)] }
+def Scope "Float"
+{
+ float3[] extent = [(-1,-2,-3),(4,5,6)]
+}
+def Scope "Double"
+{
+ double3[] extentsHint = [(-2,-3,-4),(5,6,7),(8,9,10)]
+}
 def Scope "Short" {
  float3[] extent = [(1,2,3)]
  float3[] extentsHint = [(0,0,0),(9,9,9)]
@@ -108,8 +126,14 @@ def Scope "Blocked" {
  float3[] extent = None
  float3[] extentsHint = [(-3,-4,-5),(6,7,8)]
 }
-def Scope "Wrong" { int3[] extent = [(1,2,3),(4,5,6)] }
-def Scope "Sampled" { float3[] extent.timeSamples = {0: [(-1,-1,-1),(1,1,1)]} }
+def Scope "Wrong"
+{
+ int3[] extent = [(1,2,3),(4,5,6)]
+}
+def Scope "Sampled"
+{
+ float3[] extent.timeSamples = {0: [(-1,-1,-1),(1,1,1)]}
+}
 )");
   float min[3] = {}, max[3] = {};
   auto extent = [&](const char* path) {
@@ -138,17 +162,29 @@ def SkelRoot "Rig" {
  }
  def Scope "Parent" (active = false) {
   rel skel:animationSource = </External>
-  def Mesh "Explicit" {}
+  def Mesh "Explicit"
+{
+}
  }
- def Mesh "FallbackMesh" { rel skel:animationSource = </Missing> }
- def SkelRoot "Nested" { def Mesh "Mesh" {} }
+ def Mesh "FallbackMesh"
+{
+ rel skel:animationSource = </Missing>
+}
+ def SkelRoot "Nested"
+ {
+  def Mesh "Mesh"
+  {
+  }
+ }
 }
 def SkelRoot "Mismatch" {
  def SkelAnimation "Animation" {
   string[] blendShapes = ["only"]
   float[] blendShapeWeights.timeSamples = {0: [0.25], 2: [1, 2]}
  }
- def Mesh "Mesh" {}
+ def Mesh "Mesh"
+{
+}
 }
 def SkelRoot "EmptyNames" {
  def SkelAnimation "Animation" {
@@ -156,9 +192,13 @@ def SkelRoot "EmptyNames" {
   token[] blendShapes.timeSamples = {0: []}
   float[] blendShapeWeights = [0.5]
  }
- def Mesh "Mesh" {}
+ def Mesh "Mesh"
+{
 }
-def Mesh "Unbound" {}
+}
+def Mesh "Unbound"
+{
+}
 )");
   auto blend = [&](const char* path, double time) {
     return lusdview::ReadPublicBlendWeights(blends.get(),

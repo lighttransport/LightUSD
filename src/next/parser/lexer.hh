@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include <vector>
 
 namespace lightusd {
 namespace next {
@@ -109,6 +110,18 @@ public:
     // short metadata string (typical caller) the cost is negligible.
     line_ = 1;
     column_ = 1;
+  }
+
+  /// True when a newline (or line comment) separates the previously scanned
+  /// token from the current (peeked) one. USDA statements in metadata lists
+  /// and dictionaries are separated by a newline or `;` (pxr grammar).
+  bool newline_before_current() {
+    (void)peek_view();
+    const size_t end = token_start_ < length_ ? token_start_ : length_;
+    for (size_t i = prev_token_end_; i < end; ++i) {
+      if (data_[i] == '\n' || data_[i] == '\r') return true;
+    }
+    return false;
   }
 
   /// Peek at current token without consuming
@@ -266,6 +279,11 @@ public:
   /// Reject invalid AOUSD paths and malformed Unicode immediately.
   bool strict_aousd_conformance = false;
 
+  /// Recoverable diagnostics raised by the stateless value parsers (which only
+  /// receive the lexer), e.g. a duplicate dictionary key. Each entry is a
+  /// complete warning line; the USDA parser drains them into its warning list.
+  std::vector<std::string> diagnostics;
+
 private:
   const char* data_;
   size_t length_;
@@ -281,6 +299,9 @@ private:
   bool fatal_ = false;
   bool position_reset_ = false;
   size_t token_start_ = 0;
+  // Byte position right after the previously scanned token (before the
+  // whitespace/comments preceding the current one).
+  size_t prev_token_end_ = 0;
 
   // Per-byte primitives, inline: they sit in every scanning loop.
   void advance() {

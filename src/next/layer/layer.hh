@@ -8,6 +8,7 @@
 
 #include "prim-spec.hh"
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <memory>
@@ -115,6 +116,22 @@ struct LayerMeta {
 /// - Path-to-index map for O(1) lookup
 /// - Root prims stored by index
 /// - Children stored as indices (no pointer chasing)
+class Layer;
+
+/// On-demand opinion composition for a layer whose prims are a skeleton
+/// (name, path, children) -- the experimental deferred fill
+/// (LIGHTUSD_NEXT_DEFERRED_FILL). Fill(i) composes prim i's opinions into the
+/// layer; Release(i) drops them again (back to the skeleton). Each prim is
+/// filled at most once (its composition sources are freed after the fill).
+class PrimFiller {
+ public:
+  virtual ~PrimFiller() = default;
+  virtual void Fill(Layer& layer, uint32_t index) = 0;
+  virtual void Release(Layer& layer, uint32_t index) = 0;
+  /// Whatever the filler composes from (e.g. the composition cache).
+  std::shared_ptr<void> keepalive;
+};
+
 class Layer {
 public:
   Layer();
@@ -135,6 +152,10 @@ public:
 
   /// Add a new PrimSpec and return its index
   uint32_t add_prim(PrimSpec&& spec);
+  /// Grow the prim array to `count` default-constructed prims (for callers
+  /// that fill prims by index, e.g. the parallel composition walk); existing
+  /// prims are kept. Link children / roots afterwards as usual.
+  void resize_prims(size_t count);
 
   /// Set parent-child relationship
   void set_parent(uint32_t child_index, uint32_t parent_index);
@@ -145,11 +166,32 @@ public:
   /// Finalize layer (build path index, sort properties)
   void finalize();
 
+  /// Free every prim (and the path index); the metadata stays. For a source
+  /// layer no reader will touch again while its owners still hold it.
+  void release_prims();
+
   /// (Re)build only the path->index map from current prim paths. Unlike
   /// finalize() this is not guarded and does not sort properties, so it can be
   /// called mid-mutation (e.g. composition pass 2 needs prim_at_path lookups
   /// before the layer is finalized, and after prims are added/renamed).
   void build_path_index();
+
+  /// Defer the path index: finalize() then leaves it unbuilt and the first
+  /// path lookup (prim_at_path / index_at_path / the mutators) builds it,
+  /// thread-safely. For a composed stage that is only written out, the
+  /// 10M-entry string map is never built. Default off: ordinary layers keep
+  /// the eager index (their lookups run inside parallel compose workers).
+  void set_lazy_path_index(bool lazy) { lazy_path_index_ = lazy; }
+  void set_instance_holder_links(bool enabled) {
+    instance_holder_links_ = enabled;
+  }
+  bool instance_holder_links() const { return instance_holder_links_; }
+
+  /// Deferred-fill hook (see PrimFiller); null for an ordinary layer.
+  PrimFiller* prim_filler() const { return prim_filler_.get(); }
+  void set_prim_filler(std::shared_ptr<PrimFiller> filler) {
+    prim_filler_ = std::move(filler);
+  }
 
   /// Sort prims so every ancestor precedes its descendants and subtrees are
   /// contiguous (lexicographic full-path order). The crate writer's
@@ -157,8 +199,16 @@ public:
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
 
-  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  /// Explicitly bake authored namespace restatements into hierarchy vectors.
+  /// Finalization preserves the original authored vectors for composition.
   void apply_namespace_ordering();
+
+  /// Ordered stage views without mutating authored hierarchy vectors. Scratch
+  /// is used only when a nonempty restatement exists; returned refs otherwise
+  /// point directly at the layer/spec, avoiding an allocation in the common case.
+  const std::vector<uint32_t>& ordered_root_indices(std::vector<uint32_t>* scratch) const;
+  const std::vector<uint32_t>& ordered_child_indices(
+      const PrimSpec& prim, std::vector<uint32_t>* scratch) const;
 
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed
@@ -257,6 +307,10 @@ public:
 
   const LayerMeta& meta() const;
   LayerMeta& meta();
+  // Runtime source provenance, including empty package root layers. Not USD
+  // metadata and never serialized into authored data.
+  uint32_t source_asset_anchor_id() const { return source_asset_anchor_id_; }
+  void set_source_asset_anchor_id(uint32_t id) { source_asset_anchor_id_ = id; }
 
   /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
   /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
@@ -282,11 +336,25 @@ public:
   Stats stats() const;
 
 private:
+  // Build the deferred path index on first use (see set_lazy_path_index).
+  void ensure_path_index() const;
+
   std::vector<PrimSpec> prims_;
   std::vector<uint32_t> root_indices_;
   std::unordered_map<std::string, uint32_t> path_to_index_;
   LayerMeta meta_;
   bool finalized_ = false;
+  bool lazy_path_index_ = false;
+  // Holder-mode instance flattening leaves instance members referencing the
+  // de-instanced holder prim instead of duplicating its subtree. Child
+  // enumeration and proxy lookup expand that link. ExtractedPrototypes keeps
+  // members orphaned on purpose so a writer preserves explicit prototype
+  // references, so this is a per-layer runtime flag, not model metadata.
+  bool instance_holder_links_ = false;
+  uint32_t source_asset_anchor_id_ = 0;
+  // Set by finalize() when the index was deferred; cleared by the build.
+  mutable std::atomic<bool> path_index_dirty_{false};
+  std::shared_ptr<PrimFiller> prim_filler_;
 };
 
 /// Layer builder - helper for constructing layers from parsed data

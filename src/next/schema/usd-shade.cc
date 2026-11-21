@@ -182,9 +182,10 @@ std::string GetValidBoundMaterialPath(const Stage& stage, const UsdPrim& prim,
     const char* rel = (purpose.empty() || standardPurpose)
                           ? bindingOrder[i]
                           : purpose_rel.c_str();
-    const std::vector<Path>* targets = prim.GetRelationship(rel);
-    if (!targets || targets->empty()) continue;
-    const std::string path = (*targets)[0].str();
+    std::vector<Path> targets;
+    if (!prim.GetMappedRelationshipTargets(rel, &targets) || targets.empty())
+      continue;
+    const std::string path = targets[0].str();
     if (!IsMaterial(stage.GetPrimAtPath(path))) continue;
     if (stronger && spec) {
       if (const PropMeta* pm = spec->property_meta(rel)) {
@@ -234,6 +235,19 @@ static std::string GetTerminalShaderPath(const UsdPrim& material,
 std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
   return GetTerminalShaderPath(material, "outputs:surface");
+}
+
+std::string GetSurfaceShaderWithRenderContextFallback(
+    const Stage& /* stage */, const UsdPrim& material) {
+  if (!IsMaterial(material)) return "";
+  std::string path = GetTerminalShaderPath(material, "outputs:surface");
+  if (path.empty()) {
+    // RenderMan-authored production layers commonly expose only the ri render
+    // context. Renderer adapters use this to translate a supported PxrDisney
+    // graph instead of treating the material as unbound.
+    path = GetTerminalShaderPath(material, "outputs:ri:surface");
+  }
+  return path;
 }
 
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {

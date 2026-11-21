@@ -3,6 +3,8 @@
 //
 // LightUSD Next - USDA ASCII Parser implementation
 
+#include "core/native-io.hh"
+#include "../layer/int64-listop.hh"
 #include "ascii-parser-internal.hh"
 #include "../crate/crate-timing.hh"
 #include "../safe-file-size.hh"
@@ -152,6 +154,8 @@ void AsciiParser::Impl::RunSubtreeParse(
     }
   }
   if (ok) {
+    for (std::string& d : sub.lexer_->diagnostics)
+      sub.warnings_.push_back(std::move(d));
     fragment->warnings = std::move(sub.warnings_);
     fragment->layer = std::move(sub.layer_);
   } else {
@@ -516,6 +520,8 @@ bool AsciiParser::Impl::ParseAttempt(const char* data, size_t length,
   }
 
   timer.lap("join_stitch");
+  for (std::string& d : lexer_->diagnostics) warnings_.push_back(std::move(d));
+  lexer_->diagnostics.clear();
   // Finalize the layer
   builder_->finalize();
   timer.lap("finalize");
@@ -556,6 +562,8 @@ bool AsciiParser::Impl::ParseOwned(std::string&& data) {
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) { AddError(::lightusd::NativeIOUnavailableMessage()); return false; }
+
   if (!filename || !*filename) {
     AddError("Invalid USDA filename");
     return false;
@@ -629,6 +637,7 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
 // optional token does not eat the next one. Returns false if no arc token.
 bool AsciiParser::Impl::ReadArcRef(std::string* out) {
   std::string ref;
+  std::string prim_path;
   if (Check(TokenType::String)) {
     std::string asset;
     lexer_->expect(TokenType::String, asset);
@@ -636,13 +645,22 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
     if (Check(TokenType::PathRef)) {
       std::string pr;
       lexer_->expect(TokenType::PathRef, pr);
+      prim_path = pr;
       ref += "<" + pr + ">";
     }
   } else if (Check(TokenType::PathRef)) {
     std::string pr;
     lexer_->expect(TokenType::PathRef, pr);
+    prim_path = pr;
     ref = "<" + pr + ">";
   } else {
+    return false;
+  }
+  // Arc targets are prim paths without variant selections, even when the
+  // arc itself is authored inside a selected variant. Check the path token,
+  // not the asset identifier (which may legitimately contain braces).
+  if (prim_path.find('{') != std::string::npos) {
+    AddError("Composition-arc paths cannot contain variant selections");
     return false;
   }
   // Optional per-arc layer offset: `(offset = N; scale = M)`. Encoded into the
@@ -746,7 +764,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
   enum class ArcField { References, Payloads, Inherits, Specializes };
   auto SelectArc = [](PrimMetadata& meta,
-                      ArcField f) -> std::vector<std::string>& {
+                      ArcField f) -> LazyStringList& {
     switch (f) {
       case ArcField::References: return meta.references;
       case ArcField::Payloads: return meta.payloads;
@@ -774,6 +792,11 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
                          PrimMetadata& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
     if (Check(TokenType::None)) {
+      if (qual != ArcQual::Explicit) {
+        AddError("None is only valid for an explicit composition-arc list");
+        lexer_->next();
+        return;
+      }
       // `references = None`: an explicit-clear list op. Consume the token
       // (leaving it un-consumed desynchronizes the metadata loop) and record
       // an authored empty explicit edit.
@@ -831,7 +854,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         break;
     }
 
-    std::vector<std::string>* target = &SelectArc(meta, field);
+    std::vector<std::string>* target = &SelectArc(meta, field).mut();
     switch (qual) {
       case ArcQual::Explicit:
         *target = std::move(items);
@@ -862,8 +885,23 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     }
   };
 
+  bool need_sep = false;
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
-    if (Match(TokenType::Semicolon)) continue;
+    if (Match(TokenType::Semicolon)) {
+      need_sep = false;
+      continue;
+    }
+    // Entries need a newline or `;` between them (pxr grammar; OpenUSD
+    // rejects `( kind = "a" active = true )`).
+    if (need_sep && !lexer_->newline_before_current()) {
+      // Spec/pxr reject it; lenient mode keeps loading (warns).
+      if (options_.strict_aousd_conformance) {
+        AddError("Expected newline or ';' between prim metadata entries");
+        return false;
+      }
+      AddWarning("Expected newline or ';' between prim metadata entries" " (OpenUSD rejects this)");
+    }
+    need_sep = true;
     // A bare (often triple-quoted) string is the prim COMMENT — pxr's only
     // accepted spelling (26.x rejects `comment = "..."` as a non-metadata
     // field; the bare string maps to `comment`, not `doc`).
@@ -897,6 +935,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
     if (!Match(TokenType::Equals)) {
       AddError("Expected '=' after metadata key");
+      return false;
+    }
+    if (arc_qual != ArcQual::Explicit &&
+        !CheckQualifiedEmptyList(key.c_str())) {
       return false;
     }
 
@@ -971,17 +1013,55 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (!lexer_->expect(TokenType::PathRef, src)) break;
           if (!Match(TokenType::Colon)) break;
           if (!lexer_->expect(TokenType::PathRef, dst)) break;
+          if (src.find('{') != std::string::npos || dst.find('{') != std::string::npos) {
+            AddError("Relocates paths cannot contain variant selections");
+            return false;
+          }
           if (prim) {
-            auto abs = [&](const std::string& p) {
-              if (p.empty() || p[0] == '/') return p;
-              return prim->path().str() + "/" + p;
-            };
-            prim->meta().relocates().emplace_back(abs(src), abs(dst));
+            std::string absolute_source, absolute_target;
+            if (!ResolveRelocatePath(src, prim->path().str(), &absolute_source) ||
+                !ResolveRelocatePath(dst, prim->path().str(), &absolute_target)) return false;
+            prim->meta().relocates().emplace_back(std::move(absolute_source), std::move(absolute_target));
           }
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBrace);
       }
+    } else if (key == "inactiveIds") {
+      Value ids;
+      const bool clear = Check(TokenType::None);
+      if (clear) { lexer_->next(); ids = Value::MakeInt64Array({}); }
+      else {
+        ParseArrayContext context;
+        context.max_usda_lazy_array_elements = options_.max_usda_lazy_array_elements;
+        context.num_threads = options_.num_threads;
+        ParseResult parsed = ParseArrayValue(*lexer_, TypeId::Int64, context);
+        if (!parsed.success) { AddError("Invalid inactiveIds int64 list"); return false; }
+        ids = std::move(parsed.value);
+      }
+      auto& fields = prim->meta().unknownFields();
+      auto existing = std::find_if(fields.begin(), fields.end(),
+          [](const DecodedExtensionField& f) { return f.name == "inactiveIds"; });
+      Int64ListOp op;
+      if (existing != fields.end() && existing->int64_list_op &&
+          existing->int64_list_op->ops.size() == 1)
+        op = existing->int64_list_op->ops[0];
+      size_t run = 0;
+      switch (arc_qual) {
+        case ArcQual::Add: run = 1; break;
+        case ArcQual::Prepend: run = 2; break;
+        case ArcQual::Append: run = 3; break;
+        case ArcQual::Delete: run = 4; break;
+        case ArcQual::Reorder: run = 5; break;
+        default: break;
+      }
+      if (run == 0 || op.is_explicit()) { op = Int64ListOp(); op.bits = 0; }
+      if (run == 0) op.bits = clear ? 1 : 3;
+      else op.bits |= kInt64ListOpBits[run];
+      op.items[run] = std::move(ids);
+      auto field = MakeInt64ListOpField("inactiveIds", std::move(op));
+      if (existing == fields.end()) fields.push_back(std::move(field));
+      else *existing = std::move(field);
     } else if (key == "apiSchemas") {
       prim->meta().setApiSchemasAuthored();
       std::vector<std::string> schemas;
@@ -1080,24 +1160,63 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "customData") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().customData() = std::move(r.value);
         prim->meta().setCustomDataAuthored();
       }
     } else if (key == "assetInfo") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().assetInfo() = std::move(r.value);
         prim->meta().setAssetInfoAuthored();
       }
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().sdrMetadata() = std::move(r.value);
         prim->meta().setSdrMetadataAuthored();
       }
+    } else if (key == "uiHints") {
+      // AOUSD Core 1.1 "User Interface Fields": domain-authored UI hints live
+      // in an extension `uiHints` dictionary that takes precedence over the
+      // deprecated core displayName/hidden fields. Keep it a typed dictionary
+      // extension field so USDC writes a real dictionary (not the private
+      // raw-text blob used for unknown prim metadata).
+      ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
+      if (r.success) {
+        auto& fields = prim->meta().unknownFields();
+        fields.erase(std::remove_if(fields.begin(), fields.end(),
+                                    [](const DecodedExtensionField& f) {
+                                      return f.name == "uiHints";
+                                    }),
+                     fields.end());
+        DecodedExtensionField field;
+        field.name = "uiHints";
+        field.value = std::move(r.value);
+        fields.push_back(std::move(field));
+      }
     } else if (key == "clips") {
       ParseResult r = ParseDict(*lexer_);
+      if (!r.success) {
+        AddError(r.error);
+        return false;
+      }
       if (r.success) {
         prim->meta().clips() = std::move(r.value);
         prim->meta().setClipsAuthored();
@@ -1338,8 +1457,8 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
             case ArcQual::Reorder: qual_prefix = "reorder "; break;
             default: break;
           }
-          prim->meta().unknownMeta().emplace_back(
-              qual_prefix + key, std::string(base + vstart, vend - vstart));
+          StoreRawMetadataOpinion(&prim->meta().unknownMeta(), qual_prefix + key,
+                                  std::string(base + vstart, vend - vstart));
         }
       }
       AddWarning("Unknown prim metadata (preserved): " + key);

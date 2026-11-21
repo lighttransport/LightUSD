@@ -17,6 +17,54 @@
   serialized LRTS BVH bit-for-bit identically to the Vulkan compute path
   (`-hip` ≈ `-vk`). Verified on AMD Radeon RX 9070 XT (gfx1201).
 
+## Analytic geometry regression
+
+The next-loader CPU and GPU paths tessellate Cube, Sphere, Cone, Cylinder,
+Capsule, and Plane primitives through the shared Tydra converter. Schema defaults,
+time-sampled dimensions, generated normals/UVs, payload transforms, and native
+and point instancing are preserved. Animated dimensions invalidate CPU geometry
+between frames.
+
+Run the bounded regression without loading external large scenes:
+
+```sh
+ctest --test-dir build_ninja -R '^tool-lusdrender-analytic-primitives$' --output-on-failure
+python3 tools/lusdrender/check_analytic_primitives.py \
+  build_ninja/lusdview_lightrt_c_build/lusdrender /tmp/analytic-gpu \
+  --backends vk,vkr --require-hardware
+```
+
+The hardware check requires GPU device access and runs without a display.
+Generated UV texture sampling is checked on CPU, compute, and descriptor
+ray queries. The regression also covers authored textured Meshes and rotated UVs.
+CPU and descriptor paths additionally check packed-channel roughness sampling
+with scale/bias against an equivalent constant material. Legacy compute preview
+uses constant roughness and does not evaluate that scalar texture check.
+
+For material debugging, `-diagnosticMaterial roughness` or `metallic` outputs
+the resolved native preview field from the original scene, including scalar
+texture channel, scale/bias and UV selection. CPU preview (`-rtPreview`) and
+flat Vulkan (`-vkr`, CPU material sampling after GPU intersections) support this
+mode. Output uses sRGB without tone mapping, with the same bounded opacity
+compositing as `-diagnosticEmission`. Instanced GPU, CUDA/HIP, path tracing and
+data-AOV combinations are rejected. This does not compare BRDF integration.
+RGB scalar outputs honor authored texture color space; alpha stays linear.
+Unspecified/auto scalar texture color space defaults to raw data.
+
+Diagnostic transparency supports hardware Vulkan ray-query chunks. One chunk's
+acceleration structure stays resident at a time; CPU indexed positions are kept
+for continuation rebuilds and texture footprints. This costs extra builds and
+CPU storage. Compute-only chunked transparency remains unsupported. CPU and
+Vulkan diagnostics fail explicitly when their 16-layer limit is exhausted,
+without writing a partial image. Ordinary preview keeps its own recursion limit.
+
+The streamed material adapter translates resolved semantic texture slots into
+bounded graph routes for descriptor shading, including base color, metalness,
+roughness, opacity, emission, normal, specular color, and coat inputs. Existing
+retained MaterialX routes take precedence; shared UV coordinates are reused to
+stay within the graph node budget. A capacity diagnostic identifies any route
+that cannot fit.
+
 ## Shared lusdview RT materials (Vulkan, CUDA, and HIP)
 
 `-cuda`, `-vkr`, and the default `-hip` mode use the GUI-free RT core shared with
@@ -105,7 +153,7 @@ Successful `-vkr` ray-query renders log `ray_query, indexed Vulkan AS, CPU BVH
 skipped`, which the GPU regression script checks. If the driver reports ray-query
 support but AS build/trace fails, `-vkr` logs `compute trace, ray_query fallback`
 and renders through the Vulkan compute path instead of returning a blank/failure.
-Set `LUSDR_FORCE_VKR_FALLBACK=1` to exercise that fallback path in local tests.
+Set `-forceVkrFallback` to exercise that fallback path in local tests.
 
 ## Fixed (was: "GPU backends mis-render") — 2026-06-28
 
@@ -250,7 +298,7 @@ normal by that instance's normal matrix (cofactor of the 3×4, so non-uniform sc
 is exact).
 
 A prototype larger than the per-BLAS chunk limit (8M triangles; overridable via
-`LUSDR_INST_CHUNK_TRIS` for testing) is **chunk-split** into sub-prototypes of ≤
+`-instChunkTris` for testing) is **chunk-split** into sub-prototypes of ≤
 chunk triangles (vertices remapped per chunk, shading slices carried along), and a
 placement of it is emitted once per sub-proto. Each sub-proto is just a smaller
 prototype, so the `pid` encoding and hit decode are unchanged; this works around
@@ -295,3 +343,38 @@ The GPU-instancing path is now feature-complete: render PointInstancer + native
 instances, per-prototype BLAS sharing, per-instance LOD (flatten-side and
 two-level), displacement, and >8M-triangle prototype chunking — all reusing
 LightRT's existing ray-query shader (no SPIR-V change).
+
+## Coding-agent headless comparison with usdrecord
+
+[`tools/view_control/control.py headless`](../tools/view_control/HEADLESS.md)
+provides one-shot and MCP control for same-state lusdrender/usdrecord renders,
+including rolled/shifted orthographic cameras, purposes, time, sparse edits,
+readable bone/selection diagnostics and image diffs. The fork's usdrecord EGL
+path uses no desktop or display server; the controller records its actual GL
+vendor/device. Batch wall times include startup/load/build/render/write and are
+reported separately from image comparison. The existing resident `lusdrender -mcp`
+interface remains available for its native CPU render context.
+
+Raw CPU normal diagnostics distinguish `--aov geometricNormal` (triangle winding)
+from `--aov shadingNormal` (authored/interpolated normals before material normal
+maps). Both require `.pfm` output and preserve signed world-space float values.
+`shadingNormal` enables authored normal extraction automatically. Normals use the
+inverse transpose under nonuniform instance transforms. The older `worldNormal`
+channel preserves its existing selected-shading behavior and may include normal
+maps; use the explicit channels for diagnostics. These CPU captures do not certify
+the GPU backend. `tool-lusdrender-capture-normals` checks the two channels against
+an analytic nonuniformly scaled plane.
+
+### Explicit large-array load limits
+
+The native CLI fails when a referenced layer cannot be loaded, including parser
+and resource-limit errors. Ordinary layer-relative paths remain supported.
+`-maxMem` bounds the loader's input, dependency and resident byte budgets;
+`-maxArrayElements N` independently raises the decoded-array count ceiling from
+its finite default of16,777,216. For trusted Island validation use
+`-maxMem 30 -maxArrayElements 67108864`, with the external RSS/VRAM supervisor.
+A successful render with an omitted dependency cannot establish scene coverage.
+
+Validation job JSON accepts `native_load_limits` globally or on a scene:
+`{"max_memory_gib":30,"max_array_elements":67108864}`. A scene object overrides
+the global object. The recorded renderer command retains both explicit values.

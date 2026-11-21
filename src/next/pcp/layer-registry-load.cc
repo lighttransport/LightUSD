@@ -3,6 +3,7 @@
 //
 // LightUSD Next - PCP LayerRegistry implementation
 
+#include "core/native-io.hh"
 #include "layer-registry.hh"
 #if defined(LIGHTUSD_WITH_USDOBJ)
 #include "../reader/obj-reader.hh"
@@ -15,7 +16,7 @@
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
-#include "../../mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "../../external/filesystem/include/ghc/filesystem.hpp"
 
 #include <algorithm>
@@ -68,6 +69,19 @@ std::string NormalizeEntryName(std::string name) {
   return name;
 }
 
+// `.usd` can hold either USDA text or a crate binary. The USDA parser accepts
+// leading whitespace before the magic, so sniff past it instead of requiring
+// `#usda` at byte 0.
+bool HasUSDAMagic(const uint8_t *data, size_t size) {
+  size_t pos = 0;
+  while (pos < size &&
+         (data[pos] == ' ' || data[pos] == '\t' || data[pos] == '\r' ||
+          data[pos] == '\n')) {
+    ++pos;
+  }
+  return size - pos >= 5 && std::memcmp(data + pos, "#usda", 5) == 0;
+}
+
 
 std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
                                          const std::string &label,
@@ -87,13 +101,18 @@ std::shared_ptr<Layer> ConvertLoadedUSDA(LoadResult &&r,
 
 std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
                                          const std::string &label,
-                                         std::string *err) {
+                                         std::string *warn, std::string *err) {
   if (!r.success) {
     if (err) {
       *err += "Failed to load USDC layer: " + label + " : " +
               r.error_summary + "\n";
     }
     return nullptr;
+  }
+  // Forward reader warnings like the USDA path does: a field the reader
+  // could not decode is dropped from the layer, and the caller must see it.
+  for (const auto &w : r.warnings) {
+    if (warn) *warn += "USDC layer " + label + ": " + w + "\n";
   }
   return r.stage.ReleaseRootLayer();
 }
@@ -206,11 +225,18 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     return LoadOBJLayerFromMemory(label, data, size, obj_options, warn, err);
   }
 #endif
-  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
-  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
-  if (!is_usdc && !is_usda && size >= 8 &&
-      std::memcmp(data, "PXR-USDC", 8) == 0) {
-    is_usdc = true;
+  const std::string entry = reader.EntryName(static_cast<size_t>(idx));
+  bool is_usdc = EndsWithNoCase(entry, ".usdc");
+  bool is_usda = EndsWithNoCase(entry, ".usda");
+  if (!is_usdc && !is_usda) {
+    if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+      is_usdc = true;
+    } else if (EndsWithNoCase(entry, ".usd") || HasUSDAMagic(data, size)) {
+      // `.usd` is encoding-agnostic: without crate magic it is USDA, exactly
+      // as the filesystem loader treats it. Other ambiguous entry names need
+      // an explicit `#usda` header before we hand bytes to the USDA parser.
+      is_usda = true;
+    }
   }
   if (is_usdc) {
     USDCLoadOptions lopts;
@@ -225,14 +251,18 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
+    auto layer = ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, warn, err);
+    StampPackageAssetAnchor(layer.get(), label);
+    return layer;
   }
   if (is_usda) {
     LoadOptions lopts;
     lopts.parse_options = MakeUSDAParseOptions(options);
-    return ConvertLoadedUSDA(
+    auto layer = ConvertLoadedUSDA(
         LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
         label, warn, err);
+    StampPackageAssetAnchor(layer.get(), label);
+    return layer;
   }
 
   if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
@@ -242,7 +272,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
 std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
                                          const std::string &entry_name,
                                          const LayerLoadOptions &options,
-                                         std::string *warn, std::string *err) {
+                                         std::string *warn, std::string *err,
+                                         const std::string& identifier = {}) {
   USDZReadOptions zopts;
   zopts.max_archive_size = options.max_memory;
   zopts.max_entry_size = options.max_memory;
@@ -257,7 +288,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     return nullptr;
   }
 
-  return LoadLayerFromUSDZEntry(reader, package_file, entry_name, options,
+  return LoadLayerFromUSDZEntry(reader, identifier.empty() ? package_file : identifier,
+                                entry_name, options,
                                 warn, err);
 }
 
@@ -270,9 +302,8 @@ namespace {
 // from many layers into one, so without this the authoring layer -- and with it
 // the only correct anchor for `@../tex/foo.png@` -- is lost. See asset-anchor.hh.
 //
-// USDZ is deliberately excluded: paths inside a package are package-relative and
-// are resolved against the archive, not the filesystem, so they must keep
-// anchor 0 (the consumer's existing package handling takes over).
+// Package layers receive their full package-layer anchor when decoded. They
+// must not be overwritten by the outer archive's filesystem directory.
 void StampAssetAnchor(Layer *layer, const std::string &resolved_path) {
   if (!layer) return;
   const size_t slash = resolved_path.find_last_of("/\\");
@@ -298,10 +329,62 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          const LayerLoadOptions &options) {
   std::shared_ptr<Layer> layer =
       LoadLayerFromFileUnstamped(resolved_path, warn, err, options);
-  // Package entries resolve inside the archive; leave them at anchor 0.
-  if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
+  // Package layers already carry their archive-aware anchor.
+  if (layer && !AssetResolver::IsPackagePath(resolved_path) &&
+      !EndsWithNoCase(resolved_path, ".usdz")) {
     StampAssetAnchor(layer.get(), resolved_path);
   }
+  return layer;
+}
+
+std::shared_ptr<Layer> LoadLayerFromSourceSnapshot(
+    const std::string& identifier, const std::string& storage_path,
+    std::string* warn, std::string* err, const LayerLoadOptions& options,
+    bool content_dispatch) {
+  if (!::lightusd::NativeIOAvailable(err)) return {};
+  char magic[8] = {};
+  std::ifstream input(storage_path, std::ios::binary);
+  input.read(magic, sizeof(magic));
+  const size_t got = static_cast<size_t>(input.gcount());
+  const bool crate_magic = got == 8 && std::memcmp(magic, "PXR-USDC", 8) == 0;
+  const bool zip_magic = got >= 4 && std::memcmp(magic, "PK\x03\x04", 4) == 0;
+  const std::string ext = ToLowerExt(identifier);
+  const bool crate = content_dispatch ? crate_magic
+      : !AssetResolver::IsPackagePath(identifier) &&
+          (ext == "usdc" || (ext == "usd" && crate_magic));
+  const bool zip = content_dispatch ? zip_magic
+      : ext == "usdz" || AssetResolver::IsPackagePath(identifier);
+  std::shared_ptr<Layer> layer;
+  if (crate) {
+    USDCLoadOptions opts;
+    opts.crate_options.strict_aousd_conformance = options.strict_aousd_conformance;
+    opts.crate_options.max_memory = options.max_memory;
+    static_cast<CrateLimits&>(opts.crate_options) = options.usdc_limits;
+    opts.crate_options.max_array_elements = options.max_array_elements;
+    opts.crate_options.progress_callback = options.progress_callback;
+    opts.crate_options.num_threads = options.parse_num_threads;
+    opts.crate_options.min_parallel_parse_bytes = options.min_parallel_parse_bytes;
+    opts.crate_options.enable_timing = options.enable_timing;
+    opts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
+    opts.crate_options.use_mmap = options.usdc_use_mmap;
+    // `storage_path` is already the loader's private, write-once snapshot.
+    // Re-snapshotting it would copy the closure twice; keep the owned replay.
+    opts.crate_options.paged_snapshot = false;
+    layer = ConvertLoadedUSDC(LoadUSDCFromFile(storage_path, opts),
+                             identifier, warn, err);
+  } else if (zip) {
+    std::string package, entry;
+    AssetResolver::ParsePackagePath(identifier, &package, &entry);
+    layer = LoadLayerFromUSDZ(storage_path, entry, options, warn, err,
+                              package.empty() ? identifier : package);
+  } else {
+    LoadOptions opts;
+    opts.parse_options = MakeUSDAParseOptions(options);
+    layer = ConvertLoadedUSDA(LoadUSDAFromFile(storage_path, opts),
+                             identifier, warn, err);
+  }
+  if (layer && !zip && !AssetResolver::IsPackagePath(identifier))
+    StampAssetAnchor(layer.get(), identifier);
   return layer;
 }
 
@@ -310,6 +393,7 @@ namespace {
 std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     const std::string &resolved_path, std::string *warn, std::string *err,
     const LayerLoadOptions &options) {
+  if (!::lightusd::NativeIOAvailable(err)) return {};
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;
@@ -367,7 +451,7 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.use_mmap = options.usdc_use_mmap;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
-                             resolved_path, err);
+                             resolved_path, warn, err);
   }
 
   if (ext == "usdz") {
@@ -758,7 +842,7 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
     lopts.crate_options.lazy_arrays = options.usdc_lazy_arrays;
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, warn, err);
   }
 
   if (size >= 4 && std::memcmp(data, "PK\x03\x04", 4) == 0) {
@@ -834,7 +918,7 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     lopts.crate_options.strict_aousd_conformance =
         options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
-                             key, err);
+                             key, warn, err);
   }
 
   if (data.size() >= 4 && std::memcmp(data.data(), "PK\x03\x04", 4) == 0) {

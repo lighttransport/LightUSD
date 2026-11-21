@@ -21,10 +21,10 @@ std::string FirstValidBoundMaterialPath(const Stage& stage,
                                                        : kPreviewOrder;
   for (size_t i = 0; i < 3; ++i) {
     const char* rel = bindingOrder[i];
-    const std::vector<::lightusd::next::Path>* targets =
-        prim.GetRelationship(rel);
-    if (!targets || targets->empty()) continue;
-    const std::string p = (*targets)[0].str();
+    std::vector<::lightusd::next::Path> targets;
+    if (!prim.GetMappedRelationshipTargets(rel, &targets) || targets.empty())
+      continue;
+    const std::string p = targets[0].str();
     if (!p.empty() && ::lightusd::tydra::next::IsMaterial(
                           stage.GetPrimAtPath(p))) {
       return p;

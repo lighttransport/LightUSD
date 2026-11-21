@@ -11,7 +11,7 @@
 #include "lightusd.hh"
 #include "value-clip-utils.hh"
 #include "value-pprint.hh"
-#include "spline-eval.hh"
+#include "core/spline-eval.hh"
 
 #include <memory>
 #include <mutex>

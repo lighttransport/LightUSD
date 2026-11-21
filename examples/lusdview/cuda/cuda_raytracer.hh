@@ -127,6 +127,7 @@ class CudaRayTracer {
   const char* deviceName() const { return deviceName_.c_str(); }
 
  private:
+  bool previewAlbedo_{false};
   void freeScene();
   void freeRuntime();
 

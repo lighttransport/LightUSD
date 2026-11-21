@@ -212,6 +212,19 @@ lightusd_status lightusd_asset_resolver_unregister_memory(
   return LIGHTUSD_OK;
 }
 
+lightusd_status lightusd_asset_resolver_set_filesystem_access(
+    lightusd_asset_resolver* resolver, uint8_t enabled) {
+  if (!resolver || enabled > 1)
+    return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid filesystem access setting");
+#ifdef LIGHTUSD_NO_NATIVE_RESOLVER_IO
+  if (enabled) return Fail(LIGHTUSD_ERR_UNSUPPORTED, "native filesystem resolver was not built");
+#endif
+  auto config = resolver->resolver.GetConfig();
+  config.allow_filesystem = enabled != 0;
+  resolver->resolver.SetConfig(config);
+  return LIGHTUSD_OK;
+}
+
 lightusd_status lightusd_asset_resolver_set_memory_limit(
     lightusd_asset_resolver* resolver, size_t limit_bytes) {
   if (!resolver) return Fail(LIGHTUSD_ERR_INVALID_ARG, "resolver is null");

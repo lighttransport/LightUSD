@@ -6,7 +6,9 @@ SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BIN="${LUSDVIEW:-$ROOT/build_ninja/lusdview}"
-[ -x "$BIN" ] || { echo "SKIP: lusdview not found"; exit "$SKIP"; }
+if [ "${LUSDVIEW_SEMANTIC_GENERATE_ONLY:-0}" != 1 ]; then
+  [ -x "$BIN" ] || { echo "SKIP: lusdview not found"; exit "$SKIP"; }
+fi
 command -v python3 >/dev/null || { echo "SKIP: python3 missing"; exit "$SKIP"; }
 command -v zip >/dev/null || { echo "SKIP: zip missing"; exit "$SKIP"; }
 VK_DEVICE_ARGS=()

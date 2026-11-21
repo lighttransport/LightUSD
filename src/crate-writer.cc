@@ -2,6 +2,7 @@
 // Copyright 2025, Light Transport Entertainment Inc.
 //
 // Experimental USDC (Crate) File Writer Implementation
+#include "core/native-io.hh"
 #include "crate-writer.hh"
 
 #include <algorithm>
@@ -38,7 +39,7 @@
 // Direct LZ4 API for OpenUSD compatibility
 #include "lz4/lz4.h"
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "spline-binary.hh"  // SplineBinaryFormatVersion
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
 
@@ -101,6 +102,8 @@ class FileOutputStream : public IOutputStream {
 public:
   explicit FileOutputStream(const std::string& filepath) : filepath_(filepath) {}
   bool Open(std::string* err) override {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
     file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
     if (!file_.is_open()) {
       if (err) *err = "Failed to open file: " + filepath_;
@@ -512,11 +515,11 @@ bool CrateWriter::Finalize(std::string* err) {
     return false;
   }
 
-  // Finalize phase profiling (LIGHTUSD_CRATE_PROFILE=1): stderr report of the
+  // Caller-controlled finalize phase profiling: stderr report of the
   // sort / path-rebuild / field-pack split, with PackValue further split into
   // inline/dedup/write/other. Timer overhead inflates the profiled run; use
   // the shares, not the absolute wall.
-  profile_finalize_ = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
+  profile_finalize_ = options_.profile_crate;
   const auto prof_now = []() { return std::chrono::steady_clock::now(); };
   const auto prof_ns = [](std::chrono::steady_clock::time_point a,
                           std::chrono::steady_clock::time_point b) -> uint64_t {

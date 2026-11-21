@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <string>
 
 namespace lusdchecker {

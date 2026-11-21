@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -291,6 +292,41 @@ static int test_authoring_roundtrip(void) {
   CHECK(memcmp(usdc_sv.data, "PXR-USDC", 8) == 0);
   CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
                                        usdc_sv.len, &raw_opts, &re));
+  {
+    /* Large trusted crates can raise the structural-table caps explicitly. */
+    lightusd_load_options limited;
+    lightusd_load_options_init(&limited);
+    limited.composed = 0;
+    limited.max_crate_elements = 1;
+    lightusd_stage* re_limited = NULL;
+    CHECK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                          usdc_sv.len, &limited,
+                                          &re_limited) != LIGHTUSD_OK);
+    CHECK(strstr(lightusd_last_error(), "Too many") != NULL);
+    if (re_limited) lightusd_stage_destroy(re_limited);
+
+    /* A struct that predates the field must ignore it (struct_size guard). */
+    lightusd_load_options legacy;
+    lightusd_load_options_init(&legacy);
+    legacy.struct_size =
+        (uint32_t)offsetof(lightusd_load_options, max_crate_elements);
+    legacy.composed = 0;
+    legacy.max_crate_elements = 1;
+    lightusd_stage* re_test = NULL;
+    CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                             usdc_sv.len, &legacy, &re_test));
+    lightusd_stage_destroy(re_test);
+    re_test = NULL;
+
+    lightusd_load_options generous;
+    lightusd_load_options_init(&generous);
+    generous.composed = 0;
+    generous.max_crate_elements = 100000000;
+    CHECK_OK(lightusd_stage_load_from_memory((const uint8_t*)usdc_sv.data,
+                                             usdc_sv.len, &generous,
+                                             &re_test));
+    lightusd_stage_destroy(re_test);
+  }
   lightusd_string_destroy(usdc);
   regrid = lightusd_stage_prim_at_path(re, "/World/Geo/Grid");
   CHECK(lightusd_prim_is_valid(regrid));
@@ -598,10 +634,10 @@ static int test_package_resolver_callback(void* userdata,
 static int test_dependency_boundary(void) {
   static const char source[] =
       "#usda 1.0\n(defaultPrim = \"World\")\n"
-      "def Xform \"World\" { asset info:readme = @readme.txt@ }\n";
+      "def Xform \"World\" { asset info:readme = @readme.txt@; }\n";
   static const char missing_source[] =
       "#usda 1.0\n(defaultPrim = \"World\")\n"
-      "def Xform \"World\" { asset info:readme = @missing.txt@ }\n";
+      "def Xform \"World\" { asset info:readme = @missing.txt@; }\n";
   static const uint8_t note[] = {'a', 0, 'b'};
   lightusd_asset_resolver* resolver = NULL;
   CHECK_OK(lightusd_asset_resolver_create(&resolver));
@@ -730,7 +766,7 @@ static int test_dependency_boundary(void) {
   {
     static const char dep_source[] =
         "#usda 1.0\n(defaultPrim = \"Base\")\n"
-        "def Xform \"Base\" { def Xform \"Child\" {} }\n";
+        "def Xform \"Base\" { def Xform \"Child\" {}\n }\n";
     static const char root_source[] =
         "#usda 1.0\ndef Xform \"Root\" (references = @dep.usda@) {}\n";
     const char* root_path = "resolver-load-root.usda";
@@ -880,10 +916,20 @@ static int test_dependency_boundary(void) {
   lightusd_asset_resolver_destroy(resolver);
 
   CHECK_OK(lightusd_asset_resolver_create(&resolver));
+  CHECK_OK(lightusd_asset_resolver_set_filesystem_access(resolver, 0));
+  CHECK(lightusd_asset_resolver_set_filesystem_access(NULL, 0) == LIGHTUSD_ERR_INVALID_ARG);
+  CHECK(lightusd_asset_resolver_set_filesystem_access(resolver, 2) == LIGHTUSD_ERR_INVALID_ARG);
+  asset = NULL;
+  CHECK(lightusd_asset_resolver_read(resolver, __FILE__, &asset) == LIGHTUSD_ERR_IO);
+  CHECK(asset == NULL);
   const uint8_t small[] = {1, 2, 3};
   const uint8_t replacement[] = {4, 5, 6, 7, 8};
   CHECK_OK(lightusd_asset_resolver_register_memory(resolver, "budget:a",
                                                     small, sizeof(small)));
+  CHECK_OK(lightusd_asset_resolver_read(resolver, "budget:a", &asset));
+  text = lightusd_string_view(asset);
+  CHECK(text.len == sizeof(small) && memcmp(text.data, small, sizeof(small)) == 0);
+  lightusd_string_destroy(asset);
   size_t asset_count = 0, bytes_used = 0, limit_bytes = 0;
   CHECK_OK(lightusd_asset_resolver_get_memory_stats(
       resolver, &asset_count, &bytes_used, &limit_bytes));
@@ -982,6 +1028,33 @@ static int test_native_instance_load(const char* path) {
                 native, "/InstancingTests/Forest/Tree1"))
             .len == 0);
   CHECK(lightusd_prim_instance_prototype_path((lightusd_prim){0}).len == 0);
+  /* Shared storage must not leak the prototype's namespace into picks,
+   * children, parent navigation or repeated direct lookup. */
+  lightusd_prim trunk = lightusd_prim_child_by_name(secondary, "Trunk");
+  CHECK(lightusd_prim_is_valid(trunk));
+  const char* logical_path = "/InstancingTests/Forest/Tree2/Trunk";
+  lightusd_sv borrowed_path = lightusd_prim_path(trunk);
+  CHECK(borrowed_path.len == strlen(logical_path));
+  CHECK(memcmp(borrowed_path.data, logical_path, borrowed_path.len) == 0);
+  lightusd_prim direct = lightusd_stage_prim_at_path(native, logical_path);
+  CHECK(lightusd_prim_is_valid(direct));
+  CHECK(lightusd_prim_path(direct).data == borrowed_path.data);
+  lightusd_sv parent_path = lightusd_prim_path(lightusd_prim_parent(trunk));
+  CHECK(parent_path.len == strlen("/InstancingTests/Forest/Tree2"));
+  CHECK(memcmp(parent_path.data, "/InstancingTests/Forest/Tree2", parent_path.len) == 0);
+  for (size_t i = 0; i < lightusd_prim_child_count(secondary); ++i) {
+    lightusd_prim child = lightusd_prim_child(secondary, i);
+    lightusd_sv child_path = lightusd_prim_path(child);
+    CHECK(child_path.len > parent_path.len);
+    CHECK(memcmp(child_path.data, parent_path.data, parent_path.len) == 0);
+  }
+  CHECK(memcmp(borrowed_path.data, logical_path, borrowed_path.len) == 0);
+  CHECK_OK(lightusd_stage_define_prim(native, "/NewPrim", "Xform", 0, NULL));
+  CHECK(!lightusd_prim_is_valid(trunk));
+  CHECK(lightusd_prim_path(trunk).len == 0);
+  lightusd_prim refreshed = lightusd_stage_prim_at_path(native, logical_path);
+  CHECK(lightusd_prim_is_valid(refreshed));
+  CHECK(lightusd_prim_path(refreshed).len == strlen(logical_path));
   lightusd_stage_destroy(holder);
   lightusd_stage_destroy(native);
   return 0;
@@ -1430,7 +1503,10 @@ static int test_buffer_pins(void) {
   const lightusd_abi_info abi = lightusd_abi_get();
   float replacement[] = {90, 91, 92};
   CHECK(abi.major == 5 && abi.core.major == 2);
+  CHECK(abi.core.layout_revision == LU_CORE_C_LAYOUT_REVISION);
   CHECK(abi.core.pointer_bits == sizeof(void*) * 8);
+  CHECK(abi.core.value_size == sizeof(lu_value));
+  CHECK(abi.core.value_store_offset == offsetof(lu_value, store));
   CHECK(abi.value_view_size == sizeof(lightusd_value_view));
   CHECK(abi.value_view_data_offset == offsetof(lightusd_value_view, data));
   CHECK_OK(lightusd_stage_create(&stage));
@@ -1509,7 +1585,7 @@ int main(int argc, char** argv) {
   if (test_resolved_property_inspection()) return 1;
   CHECK(lightusd_api_version() == ((LIGHTUSD_API_VERSION_MAJOR << 16) |
       (LIGHTUSD_API_VERSION_MINOR << 8) | LIGHTUSD_API_VERSION_PATCH));
-  CHECK(strcmp(lightusd_version_string(), "1.0.0-rc4") == 0);
+  CHECK(strcmp(lightusd_version_string(), "1.0.0") == 0);
   CHECK(strcmp(lightusd_type_name(LIGHTUSD_TYPE_POINT3F), "point3f") == 0);
   CHECK(lightusd_type_from_name("float3") == LIGHTUSD_TYPE_FLOAT3);
   CHECK(lightusd_type_component_count(LIGHTUSD_TYPE_MATRIX4D) == 16);

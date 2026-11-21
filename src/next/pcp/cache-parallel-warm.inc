@@ -96,6 +96,10 @@
     uint32_t depth = 0;
     WarmOrder order;
     std::shared_ptr<const std::vector<Path>> protos;
+    // On the last child of a parent whose inert sources a worker drops once
+    // its children are derived: the parent's composed child names (see
+    // WarmSubtree / DropInertSources).
+    std::shared_ptr<const std::vector<std::string>> parent_children;
   };
 
   // State shared by the parallel-warm walk: the task queue (frontier roots,
@@ -117,10 +121,12 @@
     size_t busy = 0;
     std::atomic<int> idle{0};
     std::unordered_map<std::string, WarmOrder> first_member;  // key -> order
+    size_t claims = 0;  // Claim calls: instanceable prims reached
 
     // True when `order` is the earliest member of `key` seen so far.
     bool Claim(std::string key, const WarmOrder &order) {
       std::lock_guard<std::mutex> lk(mu);
+      ++claims;
       auto ins = first_member.emplace(std::move(key), order);
       if (ins.second) return true;
       if (!(order < ins.first->second)) return false;
@@ -195,7 +201,7 @@
   // identifiers. Fills a cache only; missed paths still resolve identically in the
   // serial BuildStage.
   //
-  // Load balancing: subtrees are very uneven (one Island element holds a
+  // Load balancing: subtrees are very uneven (one reference scene element holds a
   // quarter of the namespace, one tree prototype 15k prims), so while another
   // worker is idle a busy worker donates its shallowest pending subtree to the
   // shared queue. The taker re-derives the donated prim's ancestors into its

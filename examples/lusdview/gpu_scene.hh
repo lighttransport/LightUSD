@@ -287,11 +287,38 @@ struct DrawMeshCPU {
   // triangulated from), parallel to the triangles of `indices` (grouped order).
   // Empty when triangulation face counts were unavailable. Drives SourceFaceId.
   std::vector<uint32_t> sourceFaceId;
+  // Merged static/material batches collapse many source prims into one draw.
+  // One entry per contributing source prim records the vertex range (and the
+  // authored-cage index range) it appended, so picking can report the prim
+  // actually under the cursor instead of the batch's representative path, and
+  // highlight only that prim's geometry. Vertex ranges never overlap: each
+  // source prim's vertices are appended as one contiguous block per batch.
+  struct SourcePrimRange {
+    uint32_t vertexBase{0};
+    uint32_t vertexCount{0};
+    uint32_t wireBase{0};
+    uint32_t wireCount{0};
+    std::string path;
+  };
+  std::vector<SourcePrimRange> sourcePrims;
+  // Lazy ray-picking acceleration: object-space bounds of fixed-size triangle
+  // runs. A merged static batch holds hundreds of thousands of triangles, and a
+  // pick used to test every one of them; with these boxes it tests only the runs
+  // the ray crosses. Built on first pick, 6 floats per run.
+  mutable std::vector<float> pickChunkBounds;
+  mutable uint32_t pickChunkTriangles{0};  // triangles per run (0 = not built)
+  // Time code the run bounds were built for when they came from posed vertices
+  // (skinned/morphed meshes); -1e30 = built from the static vertex array.
+  mutable double pickChunkPoseTime{-1.0e30};
   // Original-polygon wireframe edges as GL_LINES vertex-index pairs (perimeter of
   // each USD face, deduped). Built from the pre-triangulation topology so the
   // wireframe shows quads/ngons -- correct even for double-sided (doubled-tri)
   // meshes where a per-triangle approach fails. Empty => fall back to tri edges.
   std::vector<uint32_t> wireframeIndices;
+  // True when the backend has an authored/derived wireframe stream for this
+  // mesh. Retained after the CPU index arrays are freed so selection rendering
+  // can use the GPU wire pass instead of rebuilding CPU edge lines.
+  bool hasWireframe{false};
   // Authored control points used by wireframeIndices when subdivision rewrites
   // the render mesh. Empty means the main vertex buffer owns the indices.
   std::vector<DrawVertex> wireframeVertices;
@@ -437,6 +464,7 @@ struct DrawTexSampleCPU {
   // uint16 x/y/width/height), so it survives sRGB texture uploads unchanged.
   uint32_t ptexRectTexelOffset{0};
   uint32_t ptexFaceCount{0};
+  uint32_t ptexMipLevels{1};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
@@ -627,6 +655,11 @@ struct MaterialXGraphRuntimeCPU {
   }();
   bool valid{false};
   bool hasImages{false};
+  // UV set (0/1) that feeds the normal route's tangent basis. The beauty path
+  // packs this into the graph header's reserved float; the shader uses the
+  // matching per-vertex tangent when perturbing the shading normal. 0 keeps the
+  // historical primary-set tangent for graphs without normal maps.
+  int normal_uv_set{0};
 };
 
 // Baked constant fallback for raster/RT backends. Texture-connected inputs keep
@@ -791,6 +824,9 @@ struct DrawPtexFaceRectCPU {
   uint32_t height{0};
   uint16_t mipLevel{0};
   uint16_t reserved{0};
+  // Absolute Ptex level of the chain's base placement. The descriptor table
+  // stores this so the shader can map a chosen level to a chain index.
+  uint16_t baseMip{0};
 };
 
 struct DrawUdimTileCPU {
@@ -854,6 +890,7 @@ struct DrawTextureCPU {
   uint32_t ptexTileEdge{0};
   uint32_t ptexGutter{0};
   uint32_t ptexRectTexelOffset{0};
+  uint32_t ptexMipLevels{1};
   uint32_t ptexPhysicalCacheOffsetY{0};
   uint32_t ptexPhysicalCacheSlotEdge{0};
   uint32_t ptexPhysicalCacheSlots{0};
@@ -1064,9 +1101,10 @@ struct DrawPointsCPU {
   std::vector<float> widths;   // empty, constant, or per-point
   std::vector<float> colors;   // empty, constant rgb, or per-point rgb
   std::vector<float> opacities;  // empty, constant, or per-point
-  // Gaussian splat covariance carrier. Radii are diameters in local space;
+  // Gaussian splat covariance carrier. Radii are semi-axes in local space;
   // normals/major_axes are optional and parallel to points.
   bool gaussian{false};
+  bool previewAlbedo{false};  // Converted previews bake color, not scene lighting.
   std::vector<float> ellipseRadii;
   std::vector<float> ellipseNormals;
   std::vector<float> ellipseMajorAxes;

@@ -37,7 +37,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       const Value empty = Value::MakeDictionary();
       const ExpressionEvaluation expression = EvaluateAssetPathExpression(
           arc.asset_path,
-          src.expression_variables ? *src.expression_variables : empty);
+          src.expression_variables() ? *src.expression_variables() : empty);
       if (expression.is_expression && !expression.success) {
         AddIssue(ErrorCode::ExpressionVariableError, arc.asset_path,
                  expression.error,
@@ -78,7 +78,27 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
                warn);
       return;
     }
-    if ((arc.is_internal || evaluated_asset_path.empty()) &&
+    bool needs_implied_ancestor_variants = false;
+    if (IsClassBasedArc(kind) && !arc.prim_path.empty()) {
+      const std::string root_target = Mapping(src.map_idx).Apply(arc.prim_path);
+      for (const auto& node : chain) {
+        if (node.first == src.stack_idx) continue;
+        const std::string expressing_target =
+            Mapping(node.second).ReverseApply(root_target);
+        const std::string expressing_parent = Mapping(node.second).Apply(
+            Path(expressing_target).parent().str());
+        const std::string destination = Mapping(src.map_idx).Apply(src.site);
+        if (!IsPathAtOrUnder(destination, expressing_parent) &&
+            AncestorAuthorsVariantSet(node.first, expressing_target)) {
+          needs_implied_ancestor_variants = true;
+          break;
+        }
+      }
+    }
+    // Reusing only the already-composed direct target would bypass propagation
+    // into expressing stacks with independent ancestor variant selections.
+    if (!needs_implied_ancestor_variants &&
+        (arc.is_internal || evaluated_asset_path.empty()) &&
         !arc.prim_path.empty() &&
         (Specs(src.stack_idx, arc.prim_path).empty() ||
          PathInRelocateTarget(src.stack_idx, arc.prim_path) ||
@@ -113,10 +133,10 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
             remapped.map_idx = InternMapping(NamespaceMapping::Compose(
                 NamespaceMapping{composed_path, destination},
                 Mapping(target_src.map_idx)));
-            remapped.offset = src.offset.Compose(target_src.offset);
+            remapped.set_offset(src.offset().Compose(target_src.offset()));
             remapped.arc_kind = kind;
             remapped.ancestral = false;  // reached via this prim's own arc
-            remapped.expression_variables = src.expression_variables;
+            remapped.set_expression_variables(src.expression_variables());
             target->push_back(std::move(remapped));
           }
           return;
@@ -170,8 +190,8 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       memo_key += '\1';
       memo_key += evaluated_asset_path;
       memo_key += '\1';
-      if (src.expression_variables) {
-        AppendExpressionVarsFingerprint(src.expression_variables->view(), &memo_key);
+      if (src.expression_variables()) {
+        AppendExpressionVarsFingerprint(src.expression_variables()->view(), &memo_key);
       }
 
       std::shared_ptr<Layer> arc_layer;
@@ -201,7 +221,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         if (!arc_layer) {
           if (options.error_when_asset_not_found) {
             AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
-                     "Arc asset not found: " + arc.asset_path, err);
+                     "Failed to load arc asset: " + arc.asset_path, err);
           }
           return;
         }
@@ -211,7 +231,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         // the target stack's IDENTITY (pxr: (identifier, expression variables))
         // and feed its sublayer path expressions.
         arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err,
-                                         src.expression_variables);
+                                         src.expression_variables());
         if (arc_stack_idx == kInvalidStack) return;
         arc_target_memo_.emplace(
             std::move(memo_key), ArcTargetEntry{arc_layer, arc_id, arc_stack_idx});
@@ -249,7 +269,18 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       return;
     }
 
-    if (frame && frame->Contains(arc_stack_idx, arc_site)) {
+    // Re-entering an ancestor of a site on this arc branch also closes a
+    // cycle: /Parent/Child -> other.usda:/Model -> /Parent would otherwise
+    // graft Child beneath itself. Exact site equality misses that return.
+    bool closes_cycle = false;
+    for (const ExpansionFrame* ancestor = frame; ancestor; ancestor = ancestor->prev) {
+      if (ancestor->stack_idx == arc_stack_idx &&
+          IsPathAtOrUnder(*ancestor->site, arc_site)) {
+        closes_cycle = true;
+        break;
+      }
+    }
+    if (closes_cycle) {
       const std::string site =
           layer_stacks[arc_stack_idx].identifier + ":" + arc_site;
       AddIssue(ErrorCode::ArcCycle, site,
@@ -348,17 +379,17 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         arc_off = arc_off.Compose(LayerOffset{0.0, parent_tcps / child_tcps});
       }
     }
-    arc_src.offset = src.offset.Compose(arc_off);
+    arc_src.set_offset(src.offset().Compose(arc_off));
     arc_src.arc_kind = kind;
     if (arc_stack_idx == src.stack_idx) {
-      arc_src.expression_variables = src.expression_variables;
+      arc_src.set_expression_variables(src.expression_variables());
     } else {
-      const Value inherited = src.expression_variables
-                                  ? *src.expression_variables
+      const Value inherited = src.expression_variables()
+                                  ? *src.expression_variables()
                                   : Value::MakeDictionary();
-      arc_src.expression_variables = std::make_shared<const Value>(
+      arc_src.set_expression_variables(std::make_shared<const Value>(
           ComposeExpressionVariables(
-              layer_stacks[arc_stack_idx].expression_variables, inherited));
+              layer_stacks[arc_stack_idx].expression_variables, inherited)));
     }
 
     // A specialize subtree is globally weakest: it (and everything beneath it)
@@ -390,7 +421,29 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         const std::string implied_site =
             Mapping(ancestor_map_idx).ReverseApply(root_implied_site);
         const std::vector<SpecRef>& implied_specs = Specs(as, implied_site);
-        if (implied_specs.empty()) continue;
+        std::vector<Src> implied_targets;
+        const std::string implied_destination = Mapping(src.map_idx).Apply(src.site);
+        const std::string expressing_parent = Mapping(ancestor_map_idx).Apply(
+            Path(implied_site).parent().str());
+        if (!IsPathAtOrUnder(implied_destination, expressing_parent) &&
+            AncestorAuthorsVariantSet(as, implied_site)) {
+          // Re-evaluate ancestor variants in the expressing stack. The target
+          // may exist only inside that stack's selected ancestor option; a raw
+          // Specs lookup cannot see it, and the introducing stack's ancestor
+          // selection must not override the expressing stack's own selection.
+          // A shared ancestor of the inheriting prim instead keeps the current
+          // prim-index selection context (e.g. modelComplexity=full).
+          const Path path(implied_site);
+          const auto& parents = SourcesForSite(as, path.parent(), warn, err);
+          implied_targets = DeriveChildSources(parents, path.name(), implied_site,
+                                               warn, err);
+        } else if (!implied_specs.empty()) {
+          Src seed;
+          seed.stack_idx = as;
+          seed.site = implied_site;
+          implied_targets.push_back(std::move(seed));
+        }
+        if (implied_targets.empty()) continue;
         // An implied class opinion in a closer-to-root layer stack is stronger
         // than selections authored at the referenced site that introduced the
         // inherit. Record that ancestor stack independently (strong-first),
@@ -398,7 +451,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
         std::map<std::string, std::string> ancestor_selections;
         for (const SpecRef& implied_spec : implied_specs) {
           RecordSelections(*implied_spec.spec, &ancestor_selections,
-                           arc_src.expression_variables, warn, err);
+                           arc_src.expression_variables(), warn, err);
         }
         // A variant selection the INHERITING prim (instance) authors on ITS OWN
         // path in this same ancestor stack beats the class's implied selection
@@ -415,12 +468,19 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
               Mapping(ancestor_map_idx).ReverseApply(dest);
           for (const SpecRef& own_spec : Specs(as, dest_in_as)) {
             RecordSelections(*own_spec.spec, &own_selections,
-                             arc_src.expression_variables, warn, err);
+                             arc_src.expression_variables(), warn, err);
           }
         }
         for (const auto& selection : ancestor_selections) {
           if (own_selections.count(selection.first)) continue;  // instance wins
-          (*sels)[selection.first] = selection.second;
+          // Specializes remain weaker than selections already contributed by
+          // the specializing prim, including those across a reference. An
+          // implied specialize cannot promote its ancestor-stack selection
+          // above that context as an implied inherit can.
+          if (kind == ArcType::Specialize)
+            sels->emplace(selection.first, selection.second);
+          else
+            (*sels)[selection.first] = selection.second;
         }
         Src implied = arc_src;
         implied.stack_idx = as;
@@ -473,10 +533,21 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
           }
           implied.map_idx = InternMapping(std::move(im));
         }
-        const ArcChain ichain{{as, implied.map_idx}};
-        const ExpansionFrame iframe{as, implied.map_idx, &implied.site, frame,
-                                    frame ? frame->depth + 1 : 0};
-        ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
+        for (const Src& target_src : implied_targets) {
+          if (frame && frame->Contains(target_src.stack_idx, target_src.site)) continue;
+          Src expanded = implied;
+          expanded.stack_idx = target_src.stack_idx;
+          expanded.site = target_src.site;
+          expanded.variant = target_src.variant;
+          expanded.suppress_site_specs = target_src.suppress_site_specs;
+          expanded.map_idx = InternMapping(NamespaceMapping::Compose(
+              Mapping(implied.map_idx), Mapping(target_src.map_idx)));
+          expanded.set_offset(implied.offset().Compose(target_src.offset()));
+          const ArcChain ichain{{as, expanded.map_idx}};
+          const ExpansionFrame iframe{expanded.stack_idx, expanded.map_idx,
+              &expanded.site, frame, frame ? frame->depth + 1 : 0};
+          ExpandArcs(expanded, &iframe, target, spec_out, sels, ichain, warn, err);
+        }
       }
 
       // Same-stack implied class/specialize: this arc's target may map (through
@@ -618,18 +689,26 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       // flag, the source's specs and children leak into the referencing prim
       // (ErrorInvalidReferenceToRelocationSource /Good_RefToRelocated).
       s.suppress_site_specs = target_src.suppress_site_specs;
+      // A subroot target's inherited sources may already contain class
+      // opinions implied into an expressing ancestor stack. Preserve that
+      // strength anchor across the reference/payload graft. An enclosing
+      // implied block keeps its own anchor for the entire subtree. Specializes
+      // retain their weak position rather than being promoted with inherits.
+      if (s.implied_anchor == UINT32_MAX &&
+          target_src.arc_kind != ArcType::Specialize)
+        s.implied_anchor = target_src.implied_anchor;
       // target_src's mapping is expressed in the TARGET STACK's namespace (it
       // maps its own site to `arc_site`); compose it under this arc's mapping.
       s.map_idx = InternMapping(NamespaceMapping::Compose(
           Mapping(arc_src.map_idx), Mapping(target_src.map_idx)));
-      s.offset = arc_src.offset.Compose(target_src.offset);
+      s.set_offset(arc_src.offset().Compose(target_src.offset()));
       if (s.stack_idx != arc_stack_idx) {
-        const Value inherited = arc_src.expression_variables
-                                    ? *arc_src.expression_variables
+        const Value inherited = arc_src.expression_variables()
+                                    ? *arc_src.expression_variables()
                                     : Value::MakeDictionary();
-        s.expression_variables = std::make_shared<const Value>(
+        s.set_expression_variables(std::make_shared<const Value>(
             ComposeExpressionVariables(
-                layer_stacks[s.stack_idx].expression_variables, inherited));
+                layer_stacks[s.stack_idx].expression_variables, inherited)));
       }
 
       // Reference/payload arcs descend into a new layer stack -> extend the chain.
@@ -640,7 +719,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       if (s.stack_idx != src.stack_idx) {
         child_chain.emplace_back(s.stack_idx, s.map_idx);
       }
-      s.arc_chain = std::make_shared<const ArcChain>(child_chain);
+      s.set_arc_chain(std::make_shared<const ArcChain>(child_chain));
 
       // Extend the persisted arc-site trail with EVERY arc hop (cross-stack
       // references AND same-stack internal inherits/specializes), so both an
@@ -652,9 +731,9 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
       // hit means the arc genuinely re-enters its own derivation path.
       {
         auto sites = std::make_shared<std::vector<std::pair<uint32_t, std::string>>>();
-        if (src.arc_sites) *sites = *src.arc_sites;
+        if (src.arc_sites()) *sites = *src.arc_sites();
         sites->emplace_back(s.stack_idx, s.site);
-        s.arc_sites = std::move(sites);
+        s.set_arc_sites(std::move(sites));
       }
 
       const ExpansionFrame cframe{s.stack_idx, s.map_idx, &s.site, frame,
@@ -690,7 +769,7 @@ void Cache::Impl::ProcessArc(const Src &src, const CompositionArc &arc_in, ArcTy
           s.map_idx = InternMapping(NamespaceMapping::Compose(
               NamespaceMapping{composed_path, destination},
               Mapping(composed_src.map_idx)));
-          s.offset = src.offset.Compose(composed_src.offset);
+          s.set_offset(src.offset().Compose(composed_src.offset()));
           s.arc_kind = kind;
           s.ancestral = false;  // reached via this prim's own arc
           target->push_back(std::move(s));

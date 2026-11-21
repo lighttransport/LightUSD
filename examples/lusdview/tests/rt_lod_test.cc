@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "rt_lod.hh"
+#include "static_chunk_cull.hh"
 
 #include <cmath>
 #include <cstdio>
@@ -16,6 +17,29 @@ int failures = 0;
       ++failures;                                                            \
     }                                                                        \
   } while (false)
+
+void TestStaticChunkProjection() {
+  float view[16]{};
+  view[0] = view[5] = view[10] = view[15] = 1.0f;
+  float proj[16]{};
+  proj[5] = -2.0f;
+  proj[11] = -1.0f;
+  const float center[3] = {100.0f, 0.0f, -10.0f};
+  CHECK(std::fabs(lusdview::StaticChunkProjectedRadiusPx(
+      center, 1.0f, view, proj, 900) - 100.0f) < 1e-5f);
+  proj[5] = 2.0f;
+  CHECK(std::fabs(lusdview::StaticChunkProjectedRadiusPx(
+      center, 1.0f, view, proj, 1800) - 200.0f) < 1e-5f);
+  CHECK(std::isinf(lusdview::StaticChunkProjectedRadiusPx(
+      center, 11.0f, view, proj, 900)));
+  proj[11] = 0.0f;
+  proj[15] = 1.0f;
+  CHECK(lusdview::StaticChunkProjectedRadiusPx(
+      center, 1.0f, view, proj, 900) == 900.0f);
+  proj[5] = 0.0f;
+  CHECK(std::isinf(lusdview::StaticChunkProjectedRadiusPx(
+      center, 1.0f, view, proj, 900)));
+}
 
 void TestSubpixelAggregateBound() {
   lusdview::RtLodGridCell cell{};
@@ -65,6 +89,7 @@ void TestGridTracksMaximumInstanceRadius() {
 }  // namespace
 
 int main() {
+  TestStaticChunkProjection();
   TestSubpixelAggregateBound();
   TestGridTracksMaximumInstanceRadius();
   return failures == 0 ? 0 : 1;

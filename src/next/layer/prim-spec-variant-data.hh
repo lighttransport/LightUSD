@@ -12,6 +12,7 @@
 struct PrimVariantData;
 struct PrimVariantSetData;
 class Layer;  // for PrimVariantData::content (variant subtree)
+struct Int64ListOpStack;
 
 /// Generic decodable extension field retained from USDC. Unregistered fields
 /// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
@@ -21,6 +22,25 @@ struct DecodedExtensionField {
   Value value;
   bool unregistered = false;
   std::string unregistered_source;
+  // Optional structured metadata; ordinary fields do not allocate a list-op.
+  std::shared_ptr<const Int64ListOpStack> int64_list_op = nullptr;
+};
+
+/// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
+/// addition to the effective PrimVariantSetData vector: delete/order operations
+/// may be inert locally yet remain authored data, and explicit-empty must not
+/// collapse to an unauthored field.
+struct StringListOps {
+  bool authored = false;
+  bool is_explicit = false;
+  std::vector<std::string> explicit_items;
+  std::vector<std::string> added;
+  std::vector<std::string> prepended;
+  std::vector<std::string> appended;
+  std::vector<std::string> deleted;
+  std::vector<std::string> ordered;
+
+  bool has_nonexplicit_items() const;
 };
 
 /// One attribute authored inside a variant option. Carries the property flags
@@ -57,6 +77,8 @@ struct PrimVariantData {
   std::string doc;
   std::string kind;  // option-authored `kind` composes onto the host
   std::vector<VariantProperty> properties;
+  std::vector<std::string> authoredPropertyNames;
+  std::vector<std::string> property_names() const;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   std::unordered_map<std::string, uint16_t> relationshipFlags;
   // Composition arcs authored in the variant OPTION's metadata block, e.g.
@@ -74,6 +96,10 @@ struct PrimVariantData {
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<PrimVariantSetData> variantSets;
+  // `variantSets` list-op authored in the option's metadata block
+  // (`"b" ( prepend variantSets = "sub" ) {...}`), kept exactly like the
+  // prim-level PrimMetadata::variantSetNameEdits.
+  StringListOps variantSetNameEdits;
   // Unknown (unmodeled) variant-option metadata: raw authored source text
   // (USDA, re-emitted verbatim) and decoded typed extension fields (USDC via
   // the materialized holder prim). Variant specs previously had NO generic
@@ -155,21 +181,5 @@ struct ArcListOps {
   ArcListOp specializes;
 };
 
-/// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
-/// addition to the effective PrimVariantSetData vector: delete/order operations
-/// may be inert locally yet remain authored data, and explicit-empty must not
-/// collapse to an unauthored field.
-struct StringListOps {
-  bool authored = false;
-  bool is_explicit = false;
-  std::vector<std::string> explicit_items;
-  std::vector<std::string> added;
-  std::vector<std::string> prepended;
-  std::vector<std::string> appended;
-  std::vector<std::string> deleted;
-  std::vector<std::string> ordered;
-
-  bool has_nonexplicit_items() const;
-};
 
 

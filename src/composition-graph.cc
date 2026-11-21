@@ -18,7 +18,7 @@
 #include "hash-util.hh"
 #include "layer.hh"
 #include "namespace-mapping.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "lightusd.hh"

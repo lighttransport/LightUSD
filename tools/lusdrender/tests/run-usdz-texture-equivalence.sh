@@ -3,7 +3,7 @@
 # lusdrender texture resolver regression: a texture referenced from the
 # filesystem and the same texture embedded in a USDZ package must render to the
 # same pixels through the next-loader path.
-set -uo pipefail
+set -euo pipefail
 
 SKIP=77
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,6 +93,11 @@ scene, tex, usdz = sys.argv[1:]
 with zipfile.ZipFile(usdz, "w", compression=zipfile.ZIP_STORED) as z:
     z.write(scene, "scene.usda")
     z.write(tex, "tex.png")
+from pathlib import Path
+with zipfile.ZipFile(Path(usdz).with_name('nested.usdz'), "w", compression=zipfile.ZIP_STORED) as z:
+    z.writestr('nested/root.usda', '#usda 1.0\n(subLayers = [@model.usda@])\n')
+    z.writestr('nested/model.usda', Path(scene).read_text().replace('@tex.png@','@../images/tex.png@'))
+    z.write(tex, 'images/tex.png')
 PY
 
 render() {
@@ -118,9 +123,15 @@ render() {
 }
 
 render "$SCENE" "$EXT_OUT" "$EXT_LOG"
+# No unpacked neighbor may rescue an incorrect package anchor.
+mv "$TEX" "$TMP/hidden-texture.png"
 render "$USDZ" "$PKG_OUT" "$PKG_LOG"
+printf '#usda 1.0\n(subLayers = [@scene.usdz@])\n' > "$TMP/overlay.usda"
+render "$TMP/overlay.usda" "$TMP/overlay.png" "$TMP/overlay.log"
+printf '#usda 1.0\n(subLayers = [@nested.usdz@])\n' > "$TMP/nested-overlay.usda"
+render "$TMP/nested-overlay.usda" "$TMP/nested-overlay.png" "$TMP/nested-overlay.log"
 
-python3 - "$EXT_OUT" "$PKG_OUT" <<'PY'
+python3 - "$EXT_OUT" "$PKG_OUT" "$TMP/overlay.png" "$TMP/nested-overlay.png" <<'PY'
 import struct
 import sys
 import zlib
@@ -178,12 +189,13 @@ def decode_png(path):
     return width, height, b"".join(rows)
 
 a = decode_png(sys.argv[1])
-b = decode_png(sys.argv[2])
-if a != b:
-    if a[:2] != b[:2]:
-        raise SystemExit(f"dimension mismatch: {a[:2]} vs {b[:2]}")
-    diff = sum(1 for x, y in zip(a[2], b[2]) if x != y)
-    raise SystemExit(f"pixel mismatch: {diff} byte(s) differ")
+for path in sys.argv[2:]:
+    b = decode_png(path)
+    if a != b:
+        if a[:2] != b[:2]:
+            raise SystemExit(f"dimension mismatch: {a[:2]} vs {b[:2]}")
+        diff = sum(1 for x, y in zip(a[2], b[2]) if x != y)
+        raise SystemExit(f"pixel mismatch: {diff} byte(s) differ for {path}")
 PY
 
-echo "PASS: filesystem and USDZ-embedded textures render identically"
+echo "PASS: filesystem, USDZ, composed and nested-package textures render identically"

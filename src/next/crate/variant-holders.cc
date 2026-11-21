@@ -5,7 +5,12 @@
 
 #include "variant-holders.hh"
 
+#include <algorithm>
 #include <string>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
 #include <vector>
 
 namespace lightusd {
@@ -50,7 +55,9 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
       dst->add_property_slot(slot.name_id,
                              static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = src.property_type_name(pname)) {
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      dst->set_property_type_name(slot.name_id, TypeNameId{slot.type_name_id});
+    } else if (const std::string* tn = src.property_type_name(slot.name_id)) {
       dst->set_property_type_name(pname, *tn);
     }
     if (const PropMeta* pm = src.property_meta(slot.name_id)) {
@@ -116,6 +123,7 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
       holder.set_relationship_flags(rel.first, fit->second);
     }
   }
+  holder.set_authored_property_names(vd.property_names());
   holder.meta().active = vd.active;
   holder.meta().hidden = vd.hidden;
   if (!vd.active || vd.active_authored) holder.meta().active_authored = true;
@@ -143,6 +151,9 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
   // materializes them recursively (the holder becomes an owning prim).
   if (!vd.variantSets.empty()) {
     holder.meta().variantSets() = vd.variantSets;
+  }
+  if (vd.variantSetNameEdits.authored) {
+    holder.meta().variantSetNameEdits() = vd.variantSetNameEdits;
   }
 
   // Content subtree: the content layer's "/__self__" root carries opinions
@@ -198,7 +209,32 @@ bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
 }  // namespace
 
 bool LayerNeedsVariantHolders(const Layer& layer) {
-  for (const PrimSpec& prim : layer.prims()) {
+  const auto& prims = layer.prims();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // Every write asks this up front; on a composed 10 M-prim stage the serial
+  // scan stood alone between the compose and the write. Slices stop once any
+  // prim needs holders (prim_at_path builds the lazy index thread-safely).
+  const size_t n = prims.size();
+  const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+  const size_t T = n >= 262144 ? std::min<size_t>(hw, 16) : 1;
+  if (T > 1) {
+    std::atomic<bool> found{false};
+    std::vector<std::thread> pool;
+    pool.reserve(T);
+    for (size_t t = 0; t < T; ++t) {
+      pool.emplace_back([&, t] {
+        for (size_t i = n * t / T, hi = n * (t + 1) / T;
+             i < hi && !found.load(std::memory_order_relaxed); ++i) {
+          if (PrimNeedsHolders(layer, prims[i]))
+            found.store(true, std::memory_order_relaxed);
+        }
+      });
+    }
+    for (std::thread& th : pool) th.join();
+    return found.load();
+  }
+#endif
+  for (const PrimSpec& prim : prims) {
     if (PrimNeedsHolders(layer, prim)) return true;
   }
   return false;

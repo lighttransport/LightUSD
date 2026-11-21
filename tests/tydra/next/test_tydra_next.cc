@@ -819,8 +819,84 @@ void TestDeepSceneAccess() {
   std::cout << "  Deep Scene Access: PASSED\n";
 }
 
+void TestSkinnedPointEvaluation() {
+  std::string source = R"(#usda 1.0
+ def SkelRoot "Rig" {
+  rel skel:skeleton = </Rig/Skeleton>
+  def Skeleton "Skeleton" {
+   double3 xformOp:translate = (3,0,0)
+   uniform token[] xformOpOrder = ["xformOp:translate"]
+   uniform token[] joints = ["root"]
+   uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   uniform matrix4d[] restTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]
+   rel skel:animationSource = </Rig/Animation>
+  }
+  def SkelAnimation "Animation" {
+   uniform token[] joints = ["root"]
+   float3[] translations = [(2,0,0)]
+   quatf[] rotations = [(0.70710678,0,0,0.70710678)]
+   half3[] scales = [(1,1,1)]
+  }
+  def Mesh "Mesh" {
+   point3f[] points = [(1,0,0),(0,1,0)]
+   int[] primvars:skel:jointIndices = [0] (elementSize = 1 interpolation = "constant")
+   float[] primvars:skel:jointWeights = [1] (elementSize = 1 interpolation = "constant")
+  }
+ }
+)";
+  auto loaded = LoadUSDAFromString(source);
+  assert(loaded.success);
+  auto prim = loaded.stage.GetPrimAtPath("/Rig/Mesh");
+  ValueArrayRead<float> points;assert(ReadFloatArray(prim,"points",0,&points));
+  std::vector<float> result;std::vector<double> normals;std::string error;
+  assert(EvaluateSkinnedPoints(loaded.stage,prim,0,points,&result,&error,&normals));
+  assert(result.size()==6);
+  // Scalar-first quaternion, inherited binding, constant influences and the
+  // skeleton-to-mesh transform each affect this independently derived result.
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  assert(std::abs(result[3]-4)<1e-5 && std::abs(result[4])<1e-5);
+  assert(normals.size()==18 && std::abs(normals[0])<1e-5 && std::abs(normals[1]-1)<1e-5);
+  auto replace = [&](const std::string& from,const std::string& to) {
+    const size_t at=source.find(from);assert(at!=std::string::npos);source.replace(at,from.size(),to);
+  };
+  replace("jointIndices = [0]", "jointIndices = [99,0]");
+  replace("jointWeights = [1]", "jointWeights = [0,1]");
+  replace("point3f[] points", "int[] primvars:skel:jointIndices:indices = [1]\n int[] primvars:skel:jointWeights:indices = [1]\n point3f[] points");
+  auto indexed=LoadUSDAFromString(source);assert(indexed.success);
+  assert(EvaluateSkinnedPoints(indexed.stage,indexed.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  assert(std::abs(result[0]-5)<1e-5 && std::abs(result[1]-1)<1e-5);
+  replace("jointIndices:indices = [1]", "jointIndices:indices = [-1]");
+  auto invalid=LoadUSDAFromString(source);assert(invalid.success);
+  assert(!EvaluateSkinnedPoints(invalid.stage,invalid.stage.GetPrimAtPath("/Rig/Mesh"),0,points,&result,&error));
+  std::cout << "  Standard linear skinning: PASSED\n";
+}
+
 void TestRenderExtract() {
   std::cout << "Testing RenderExtract...\n";
+  {
+    auto parsed = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "M" {
+   texCoord2f[] primvars:st0 = [(0, 0), (1, 0), (0, 1)] (interpolation = "faceVarying")
+   int[] primvars:st0:indices = [2, 0, 1]
+   normal3f[] normals = [(0, 0, 1)] (interpolation = "uniform")
+ }
+)");
+    assert(parsed.success);
+    auto prim = parsed.stage.GetPrimAtPath("/M");
+    EvalOptions options;
+    options.follow_connections = false;
+    MeshFloatAttribute uv, normal;
+    assert(ReadMeshFloatAttribute(prim, "primvars:st0", options, 2, 3, 3, &uv));
+    size_t tuple = 0;
+    assert(uv.TupleIndex(1, 0, 0, &tuple) && tuple == 2);
+    assert(uv.values[tuple * 2] == 0 && uv.values[tuple * 2 + 1] == 1);
+    assert(!uv.TupleIndex(0, 3, 0, &tuple));
+    assert(ReadMeshFloatAttribute(prim, "normals", options, 3, 3, 3, &normal));
+    assert(normal.TupleIndex(2, 2, 0, &tuple) && tuple == 0);
+    assert(!normal.TupleIndex(0, 0, 1, &tuple));
+    // Reading another attribute must preserve the first reader's storage.
+    assert(uv.values[4] == 0 && uv.values[5] == 1);
+  }
   // Instance proxy expansion can outgrow the authored prim estimate. Every
   // pointer view must still address its record after storage growth.
   {
@@ -1100,6 +1176,44 @@ class SelectiveStreamSink : public RetainedStreamSink {
   bool aborted = false;
   std::vector<GeometryInfo> inspected;
 };
+
+void TestAnalyticPrimitiveTime() {
+  std::cout << "Testing analytic primitive time evaluation...\n";
+  const char* usda = R"(#usda 1.0
+def Sphere "Ball" {
+    double radius = 0.75
+    double radius.timeSamples = {1: 0.5, 3: 1.5}
+}
+def Cube "Box" {
+    double size.timeSamples = {1: 2, 3: 4}
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  const double times[] = {std::numeric_limits<double>::quiet_NaN(), 1, 2, 3};
+  const double radii[] = {0.75, 0.5, 1, 1.5};
+  const double half_sizes[] = {1, 1, 1.5, 2};
+  for (size_t sample = 0; sample < 4; ++sample) {
+    ConverterConfig config;
+    config.time_code = times[sample];
+    config.mesh.sphere_subdivisions = 0;
+    RenderSceneConverter converter(config);
+    RenderMesh sphere, cube;
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Ball"), &sphere));
+    assert(converter.ConvertRenderableMesh(
+        loaded.stage, loaded.stage.GetPrimAtPath("/Box"), &cube));
+    assert(!sphere.points.empty() && !cube.points.empty());
+    for (size_t i = 0; i + 2 < sphere.points.size(); i += 3) {
+      const double x = sphere.points[i], y = sphere.points[i + 1],
+                   z = sphere.points[i + 2];
+      assert(std::fabs(std::sqrt(x * x + y * y + z * z) - radii[sample]) < 1e-5);
+    }
+    for (float coordinate : cube.points)
+      assert(std::fabs(std::fabs(coordinate) - half_sizes[sample]) < 1e-5);
+  }
+  std::cout << "  Analytic primitive time evaluation: PASSED\n";
+}
 
 void TestRenderConverter() {
   std::cout << "Testing RenderConverter...\n";
@@ -3072,6 +3186,214 @@ def Xform "Scene"
 // winding, holeIndices, GeomSubset material bindings, NodeGraph texture
 // indirection, UsdTransform2d + primvar-reader varname, purpose bindings,
 // surface-output shader selection, spot lights, generic/indexed primvars.
+void TestForwardedTextureAssetAnchor() {
+  std::cout << "Testing forwarded texture asset anchoring...\n";
+
+  // A look layer owns the texture shader; the referencing material owns the
+  // asset value. The relative path must anchor to the layer that authored the
+  // value, not to the referenced look layer. This is the Island PTex material
+  // shape (`inputs:file.connect = </Mat.inputs:surfaceMap>`).
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path fixture =
+      fs::absolute("next_tydra_forwarded_anchor_test", ec);
+  assert(!ec);
+  fs::remove_all(fixture, ec);
+  ec.clear();
+  fs::create_directories(fixture / "looks", ec);
+  fs::create_directories(fixture / "textures", ec);
+  assert(!ec);
+
+  const char* look = R"(#usda 1.0
+(
+    defaultPrim = "BaseMaterial"
+)
+def Material "BaseMaterial"
+{
+    token outputs:surface.connect = </BaseMaterial/Surface.outputs:surface>
+
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </BaseMaterial/Tex.outputs:rgb>
+        token outputs:surface
+    }
+
+    def Shader "Tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file.connect = </BaseMaterial.inputs:surfaceMap>
+        float3 outputs:rgb
+    }
+}
+)";
+  const char* root = R"(#usda 1.0
+(
+    defaultPrim = "Scene"
+)
+def Xform "Scene"
+{
+    def Material "M" (
+        prepend references = @looks/material.usda@</BaseMaterial>
+    )
+    {
+        asset inputs:surfaceMap = @./textures/albedo.png@
+    }
+}
+)";
+  {
+    std::ofstream ofs(fixture / "looks" / "material.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << look;
+  }
+  {
+    std::ofstream ofs(fixture / "root.usda",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << root;
+  }
+  {
+    std::ofstream ofs(fixture / "textures" / "albedo.png",
+                      std::ios::out | std::ios::binary);
+    assert(ofs);
+    ofs << "x";
+  }
+
+  Stage stage;
+  AssetResolver resolver;
+  std::string warn;
+  std::string err;
+  const bool composed = pcp::ComposeStageFromFile(
+      (fixture / "root.usda").string(), resolver, &stage, {}, &warn, &err);
+  if (!composed) std::abort();
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  config.asset_base_dir = fixture.string();
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(stage);
+  assert(result.success);
+
+  const auto material_it = result.scene.material_by_path.find("/Scene/M");
+  assert(material_it != result.scene.material_by_path.end());
+  const RenderMaterial& material =
+      result.scene.materials[static_cast<size_t>(material_it->second)];
+  assert(material.preview_surface);
+  assert(material.preview_surface->diffuse_color.is_texture());
+  const int32_t texture_id = material.preview_surface->diffuse_color.texture_id;
+  assert(texture_id >= 0);
+  assert(static_cast<size_t>(texture_id) < result.scene.textures.size());
+  const RenderTexture& texture =
+      result.scene.textures[static_cast<size_t>(texture_id)];
+  assert(texture.image_id >= 0);
+  assert(static_cast<size_t>(texture.image_id) < result.scene.images.size());
+  const std::string resolved =
+      result.scene.images[static_cast<size_t>(texture.image_id)].resolved_path;
+  const std::string expected = (fixture / "textures" / "albedo.png").string();
+  if (resolved != expected) {
+    std::cout << "  resolved=" << resolved << " expected=" << expected << "\n";
+  }
+  assert(resolved == expected);
+  assert(texture.asset_path == "./textures/albedo.png");
+
+  std::cout << "  Forwarded texture asset anchoring: PASSED\n";
+}
+
+void TestPxrDisneyRiSurfaceMaterial() {
+  std::cout << "Testing PxrDisney ri:surface material mapping...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Material "DisneyOnly"
+    {
+        token outputs:ri:surface.connect = </World/DisneyOnly/PxrDisney.outputs:bxdf_out>
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.2, 0.4, 0.6)
+            float inputs:metallic = 0.35
+            float inputs:roughness = 0.45
+            float inputs:ior = 1.7
+            float inputs:clearcoat = 0.25
+            float inputs:clearcoatGloss = 0.8
+            float inputs:opacity = 0.9
+            token outputs:bxdf_out
+        }
+    }
+
+    def Material "Both"
+    {
+        token outputs:surface.connect = </World/Both/Preview.outputs:surface>
+        token outputs:ri:surface.connect = </World/Both/PxrDisney.outputs:bxdf_out>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.3)
+            token outputs:surface
+        }
+
+        def Shader "PxrDisney"
+        {
+            uniform token info:id = "PxrDisneyBsdf"
+            color3f inputs:baseColor = (0.9, 0.8, 0.7)
+            token outputs:bxdf_out
+        }
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse material USDA: "
+              << load_result.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+
+  // A material that only exposes the RenderMan terminal is mapped onto the
+  // OpenPBR preview instead of degrading to the default material.
+  auto disney_it = result.scene.material_by_path.find("/World/DisneyOnly");
+  assert(disney_it != result.scene.material_by_path.end());
+  const RenderMaterial& disney =
+      result.scene.materials[static_cast<size_t>(disney_it->second)];
+  assert(disney.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(disney.openpbr);
+  assert(std::fabs(disney.openpbr->base_color.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.y - 0.4f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_color.value.z - 0.6f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->base_metalness.value.x - 0.35f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_roughness.value.x - 0.45f) <
+         1.0e-6f);
+  assert(std::fabs(disney.openpbr->specular_ior.value.x - 1.7f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->coat_weight.value.x - 0.25f) < 1.0e-6f);
+  // clearcoatGloss 0.8 (sharp) becomes coat roughness 0.2.
+  assert(std::fabs(disney.openpbr->coat_roughness.value.x - 0.2f) < 1.0e-6f);
+  assert(std::fabs(disney.openpbr->opacity.value.x - 0.9f) < 1.0e-6f);
+  assert(disney.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  // The universal surface terminal still wins when both render contexts are
+  // authored (the Island material shape), so previews do not change.
+  auto both_it = result.scene.material_by_path.find("/World/Both");
+  assert(both_it != result.scene.material_by_path.end());
+  const RenderMaterial& both =
+      result.scene.materials[static_cast<size_t>(both_it->second)];
+  assert(both.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(both.preview_surface);
+  assert(std::fabs(both.preview_surface->diffuse_color.value.x - 0.1f) <
+         1.0e-6f);
+
+  std::cout << "  PxrDisney ri:surface mapping: PASSED\n";
+}
+
 void TestAudit2026_07() {
   std::cout << "TestAudit2026_07..." << std::endl;
 
@@ -4004,6 +4326,9 @@ def Xform "World"
         uniform token wrap = "nonperiodic"
         int[] curveVertexCounts = [4]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+        normal3f[] normals = [(0, 1, 0)] (interpolation = "constant")
+        normal3f[] primvars:normals = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+        int[] primvars:normals:indices = [0, 1, 2, 3]
     }
 
     def HermiteCurves "Hermite"
@@ -4208,6 +4533,12 @@ def Xform "World"
   assert(std::fabs(bezier.tessellated_points[8] - 0.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
   assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
+
+  assert(bezier.tessellated_normals.size() == 9);
+  // Cubic midpoint weights are 1/8, 3/8, 3/8, 1/8; primvar wins.
+  assert(std::fabs(bezier.tessellated_normals[3] - .125f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[4] - .375f) < 1e-6f);
+  assert(std::fabs(bezier.tessellated_normals[5] - .5f) < 1e-6f);
 
   const RenderCurves& hermite = curve("/World/Hermite");
   assert(hermite.is_hermite);
@@ -4511,13 +4842,13 @@ def Xform "Root" (
       {"clip_0.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (1, 2, 3)
+    double3 xformOp:translate.timeSamples = {0: (1, 2, 3)}
 }
 )"},
       {"clip_1.usda", R"(#usda 1.0
 def Xform "Root"
 {
-    double3 xformOp:translate = (5, 6, 7)
+    double3 xformOp:translate.timeSamples = {2: (5, 6, 7)}
 }
 )"}};
 
@@ -4556,7 +4887,7 @@ def Xform "Root"
   assert(channel.target_prim_path == "/Root");
   assert(channel.keyframes.size() == 3);
   assert(std::fabs(channel.keyframes[0].value.x - 1.0f) < 0.001f);
-  assert(std::fabs(channel.keyframes[1].value.x - 1.0f) < 0.001f);
+  assert(std::fabs(channel.keyframes[1].value.x - 3.0f) < 0.001f);
   assert(std::fabs(channel.keyframes[2].value.x - 5.0f) < 0.001f);
 
   std::cout << "  Next value-clip baking: PASSED\n";
@@ -8551,7 +8882,81 @@ static void TestFieldFallbackAndDenseBox() {
 #endif
 }
 
+static void TestAuthoredPlaneTextureDomain() {
+  auto loaded = LoadUSDAFromString(R"(#usda 1.0
+ def Plane "Plane" {
+  uniform token axis = "Z"
+  double width = 2
+  double length = 2
+  texCoord2f[] primvars:st = [(2,3),(5,7),(11,13),(17,19)] (interpolation = "vertex")
+ }
+)");
+  assert(loaded.success);
+  lightusd::tydra::next::ConverterConfig config;
+  config.mesh.triangulate = false;
+  lightusd::tydra::next::RenderSceneConverter converter(config);
+  lightusd::tydra::next::RenderMesh mesh;
+  assert(converter.ConvertRenderableMesh(loaded.stage,
+      loaded.stage.GetPrimAtPath("/Plane"), &mesh));
+  assert(mesh.face_vertex_indices.size() == 4 && mesh.texcoords_0.size() == 8);
+  const float expected[4][2] = {{2,3},{5,7},{11,13},{17,19}};
+  for (size_t corner = 0; corner < 4; ++corner) {
+    const size_t index = mesh.face_vertex_indices[corner];
+    const float x = mesh.points[index * 3], y = mesh.points[index * 3 + 1];
+    const size_t canonical = y > 0 ? (x > 0 ? 0 : 1) : (x > 0 ? 3 : 2);
+    assert(mesh.texcoords_0[corner * 2] == expected[canonical][0]);
+    assert(mesh.texcoords_0[corner * 2 + 1] == expected[canonical][1]);
+  }
+}
+
+static void TestGeneratedSmoothNormals() {
+  using namespace lightusd::tydra::next;
+  auto policy = LoadUSDAFromString(R"(#usda 1.0
+ def Mesh "Default" {}
+ def Mesh "Polygon" { uniform token subdivisionScheme = "none" }
+ def Mesh "Loop" { uniform token subdivisionScheme = "loop" }
+ def Mesh "Bilinear" { uniform token subdivisionScheme = "bilinear" }
+)");
+  assert(policy.success);
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesAuthoredNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Default")));
+  assert(MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Loop")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Polygon")));
+  assert(!MeshUsesGeneratedSmoothNormals(policy.stage.GetPrimAtPath("/Bilinear")));
+  const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 4, 4, 4};
+  const int32_t face_counts[] = {3, 3};
+  const int32_t face_indices[] = {0, 1, 2, 0, 1, 3};
+  ValueArrayRead<float> points;
+  points.view = {positions, 15, false};
+  ValueArrayRead<int32_t> counts;
+  counts.view = {face_counts, 2, false};
+  ValueArrayRead<int32_t> indices;
+  indices.view = {face_indices, 6, false};
+  std::vector<float> normals;
+  assert(ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  const float inv = 1.0f / std::sqrt(5.0f);
+  for (size_t point : {size_t(0), size_t(1)}) {
+    assert(std::abs(normals[point * 3]) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 1] + 2 * inv) < 1e-6f);
+    assert(std::abs(normals[point * 3 + 2] - inv) < 1e-6f);
+  }
+  assert(normals[8] == 1.0f && normals[10] == -1.0f);
+  assert(normals[12] == 0 && normals[13] == 0 && normals[14] == 0);
+  assert(ComputeMeshSmoothNormals(points, counts, indices, true, &normals));
+  assert(std::abs(normals[1] - 2 * inv) < 1e-6f);
+  const int32_t invalid[] = {0, -1, 2, 0, 1, 3};
+  indices.view = {invalid, 6, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+  assert(normals.empty());
+  indices.view = {face_indices, 5, false};
+  assert(!ComputeMeshSmoothNormals(points, counts, indices, false, &normals));
+}
+
 int main() {
+  TestAuthoredPlaneTextureDomain();
+  TestGeneratedSmoothNormals();
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
   // ChunkedArray tests
@@ -8587,11 +8992,13 @@ int main() {
   // Scene Access tests
   TestSceneAccess();
   TestDeepSceneAccess();
+  TestSkinnedPointEvaluation();
   TestRenderExtract();
 
   std::cout << "\n";
 
   // Converter tests
+  TestAnalyticPrimitiveTime();
   TestRenderConverter();
   TestLowMemoryCustomPrimvarRetention();
   TestRenderConverterHalfGaussian();
@@ -8606,6 +9013,8 @@ int main() {
   TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
   TestExternalMaterialXImageGraph();
+  TestForwardedTextureAssetAnchor();
+  TestPxrDisneyRiSurfaceMaterial();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();

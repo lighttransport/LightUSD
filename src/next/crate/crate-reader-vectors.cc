@@ -5,7 +5,7 @@
 
 #include "crate-reader-internal.hh"
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace next {

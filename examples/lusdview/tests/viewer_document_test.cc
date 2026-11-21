@@ -53,20 +53,37 @@ int main() {
   {
     std::ofstream file(root);
     file << R"(#usda 1.0
-def Xform "Source" { def Mesh "Child" {
- point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
- int[] faceVertexCounts = [3]
- int[] faceVertexIndices = [0,1,2]
- float3[] extent = [(0,0,0),(1,1,0)]
-} }
+def Xform "Source"
+{
+ def Mesh "Child"
+ {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  float3[] extent = [(0,0,0),(1,1,0)]
+ }
+}
 def Xform "Root" (
  prepend payload = </Source>
- variants = { string look = "low" }
+ variants = {
+  string look = "low"
+ }
  prepend variantSets = "look"
-) {
+)
+{
  variantSet "look" = {
-  "low" { def Scope "Low" {} }
-  "high" { def Scope "High" {} }
+  "low"
+  {
+   def Scope "Low"
+   {
+   }
+  }
+  "high"
+  {
+   def Scope "High"
+   {
+   }
+  }
  }
 }
 )";

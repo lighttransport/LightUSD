@@ -38,14 +38,14 @@ void RestorePtexRectMetadata(light3d::Image* image,
   const size_t texelCount = static_cast<size_t>(image->width) *
                             static_cast<size_t>(image->height);
   const size_t first = tex.ptexRectTexelOffset;
-  const size_t count = tex.ptexFaceRects.size() * 8u;
+  const size_t count = tex.ptexFaceRects.size() * 10u;
   if (first > texelCount || count > texelCount - first) return;
-  for (uint32_t face = 0;
-       face < static_cast<uint32_t>(tex.ptexFaceRects.size()); ++face) {
-    uint8_t encoded[8u * 4u];
-    EncodePtexFaceRectTexels(tex.ptexFaceRects[face], encoded);
-    for (size_t byte = 0; byte < 8u; ++byte) {
-      const size_t linear = first + static_cast<size_t>(face) * 8u + byte;
+  for (uint32_t entry = 0;
+       entry < static_cast<uint32_t>(tex.ptexFaceRects.size()); ++entry) {
+    uint8_t encoded[10u * 4u];
+    EncodePtexFaceRectTexels(tex.ptexFaceRects[entry], encoded);
+    for (size_t byte = 0; byte < 10u; ++byte) {
+      const size_t linear = first + static_cast<size_t>(entry) * 10u + byte;
       image->data[linear * 4u + 3u] = encoded[byte * 4u + 3u];
     }
   }
@@ -152,7 +152,7 @@ void AppendMove(std::vector<T>& dst, std::vector<T>& src) {
 // Per-mesh build result (leaf-order geometry + a LOCAL-ref BLAS + placements).
 struct MeshBuild {
   bool valid = false;
-  std::vector<float> tris, nrms, cols, uv, uv1, infl, domw;
+  std::vector<float> tris, nrms, cols, uv, uv1, infl, domw, tan, bin;
   std::vector<HostGeomProp> geomProps;
   std::vector<uint8_t> geo, emask;
   std::vector<int> mat, backMat, face, domj;
@@ -173,6 +173,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   const bool hasVtxCol = m.vertexColors.size() == m.vertices.size() * 3;
   const bool hasVtxAlpha = m.vertexAlpha.size() == m.vertices.size();
   const bool hasUV1 = m.uv1.size() == m.vertices.size() * 2;
+  const bool hasTangents = m.tangents.size() == m.vertices.size() * 3;
+  const bool hasBinormals = m.binormals.size() == m.vertices.size() * 3;
   const bool hasInfl = m.morphInfluence.size() == m.vertices.size();
   const bool hasSkin = m.jointIdx.size() == m.vertices.size() * 4 &&
                        m.jointWt.size() == m.vertices.size() * 4;
@@ -221,7 +223,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       wireSet.insert(edgeKey(m.wireframeIndices[e], m.wireframeIndices[e + 1]));
   }
 
-  std::vector<float> lt, ln, lc, luv, luv1, linfl, ldomw;
+  std::vector<float> lt, ln, lc, luv, luv1, ltan, lbin, linfl, ldomw;
   std::vector<uint8_t> lg, le;
   std::vector<int> lm, lmb, lf, ldomj;
   bool anyBackMaterial = false;
@@ -250,7 +252,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   const bool worldNormalInvertible = !worldIsIdentity &&
       (Mat4ToO2W(W, worldO2W), Affine3x4Inverse(worldO2W, worldW2O));
   for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
-    float wp[9], wn[9], wc[12], wuv[6], wuv1[6], winfl[3], wdomw[3];
+    float wp[9], wn[9], wc[12], wuv[6], wuv1[6], wtan[9], wbin[9];
+    float winfl[3], wdomw[3];
     int domJoint = -1;
     for (int k = 0; k < 3; ++k) {
       const uint32_t vidx = m.indices[t + k];
@@ -282,6 +285,10 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
       wuv[k * 2 + 0] = vtx.u; wuv[k * 2 + 1] = vtx.v;
       wuv1[k * 2 + 0] = hasUV1 ? m.uv1[vidx * 2 + 0] : 0.0f;
       wuv1[k * 2 + 1] = hasUV1 ? m.uv1[vidx * 2 + 1] : 0.0f;
+      for (int c = 0; c < 3; ++c) {
+        wtan[k * 3 + c] = hasTangents ? m.tangents[vidx * 3 + c] : 0.0f;
+        wbin[k * 3 + c] = hasBinormals ? m.binormals[vidx * 3 + c] : 0.0f;
+      }
       winfl[k] = hasInfl ? m.morphInfluence[vidx] : 0.0f;
       int dj = -1; float dw = 0.0f;
       if (hasSkin)
@@ -340,6 +347,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     lc.insert(lc.end(), wc, wc + 12);
     luv.insert(luv.end(), wuv, wuv + 6);
     luv1.insert(luv1.end(), wuv1, wuv1 + 6);
+    ltan.insert(ltan.end(), wtan, wtan + 9);
+    lbin.insert(lbin.end(), wbin, wbin + 9);
     linfl.insert(linfl.end(), winfl, winfl + 3);
     ldomw.insert(ldomw.end(), wdomw, wdomw + 3);
     ldomj.push_back(domJoint);
@@ -409,6 +418,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   // Emit per-tri arrays in BVH leaf order (so the local blas leaf refs are valid).
   mb.tris.reserve(ltc * 9); mb.nrms.reserve(ltc * 9); mb.cols.reserve(ltc * 12);
   mb.uv.reserve(ltc * 6); mb.uv1.reserve(ltc * 6); mb.infl.reserve(ltc * 3);
+  mb.tan.reserve(ltc * 9); mb.bin.reserve(ltc * 9);
   mb.domw.reserve(ltc * 3); mb.geo.reserve(ltc); mb.mat.reserve(ltc);
   if (anyBackMaterial) mb.backMat.reserve(ltc);
   mb.face.reserve(ltc); mb.domj.reserve(ltc); mb.emask.reserve(ltc);
@@ -419,6 +429,8 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     mb.cols.insert(mb.cols.end(), &lc[s * 12], &lc[s * 12] + 12);
     mb.uv.insert(mb.uv.end(), &luv[s * 6], &luv[s * 6] + 6);
     mb.uv1.insert(mb.uv1.end(), &luv1[s * 6], &luv1[s * 6] + 6);
+    mb.tan.insert(mb.tan.end(), &ltan[s * 9], &ltan[s * 9] + 9);
+    mb.bin.insert(mb.bin.end(), &lbin[s * 9], &lbin[s * 9] + 9);
     mb.infl.insert(mb.infl.end(), &linfl[s * 3], &linfl[s * 3] + 3);
     mb.domw.insert(mb.domw.end(), &ldomw[s * 3], &ldomw[s * 3] + 3);
     mb.geo.push_back(lg[s]);
@@ -937,7 +949,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
       td.ptexRows = tex.ptexAtlasRows;
       td.ptexTileEdge = static_cast<int>(tex.ptexTileEdge);
       td.ptexRectTexelOffset = static_cast<int>(tex.ptexRectTexelOffset);
-      td.ptexFaceCount = static_cast<int>(tex.ptexFaceRects.size());
+      td.ptexFaceCount = static_cast<int>(tex.ptexFaces);
+      td.ptexMipLevels = static_cast<int>(tex.ptexMipLevels);
       td.mipCount = static_cast<int>(levels.size() - level);
       td.firstMip = td.mipCount > 1 ? id + static_cast<int>(level) + 1 : -1;
       td.imageSlot = tex.isPtex ? sourceSlot : -1;
@@ -1121,7 +1134,7 @@ size_t RtProxyTriangleLimit() {
 
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact,
-                                                  size_t maxTriangles) {
+                                                  size_t maxTriangles, bool tessellateAnalytic) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
@@ -1140,7 +1153,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
         src.ellipseMajorAxes.size() >= pointCount * 3;
     const bool analytic_points =
         !src.gaussian && src.normals.size() >= pointCount * 3;
-    if (native_gaussian || analytic_points) {
+    if (!tessellateAnalytic && (native_gaussian || analytic_points)) {
       continue;  // native ellipse carrier is uploaded by CUDA/HIP/Vulkan RT paths
     }
     DrawMeshCPU mesh;
@@ -1188,8 +1201,8 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
         float minor[3] = {normal[1] * major[2] - normal[2] * major[1],
                           normal[2] * major[0] - normal[0] * major[2],
                           normal[0] * major[1] - normal[1] * major[0]};
-        const float rx = 0.5f * src.ellipseRadii[i * 2] * majorLen;
-        const float ry = 0.5f * src.ellipseRadii[i * 2 + 1] *
+        const float rx = src.ellipseRadii[i * 2] * majorLen;
+        const float ry = src.ellipseRadii[i * 2 + 1] *
                          std::sqrt(minor[0] * minor[0] + minor[1] * minor[1] +
                                    minor[2] * minor[2]);
         float color[3] = {1.0f, 1.0f, 1.0f};
@@ -1421,7 +1434,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress, RefitMap* refitOut,
                     size_t textureBudgetBytes,
                     const std::vector<uint8_t>* meshVisible,
-                    uint32_t purposeVisibleMask) {
+                    uint32_t purposeVisibleMask, bool nativePointCarriers) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1454,7 +1467,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // Keep Gaussian splats and authored-normal Points as analytic ellipses. The
   // carrier stores local-space radii and axes; bake only the affine placement
   // here so CUDA/HIP RT does not expand disk/oval point clouds into triangles.
-  for (const DrawPointsCPU& src : scene.points) {
+  if (nativePointCarriers) for (const DrawPointsCPU& src : scene.points) {
     const size_t n = src.points.size() / 3;
     const bool gaussian =
         src.gaussian && src.ellipseRadii.size() >= n * 2 &&
@@ -1680,9 +1693,11 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // the carrier data in the bounded analytic representation above while
   // preserving meshes as the higher-priority input.
   std::vector<DrawMeshCPU> nonMeshProxies;
-  const bool compactNonMeshProxies = maxTris > 0 && maxTris <= 64000000;
+  const bool compactNonMeshProxies = nativePointCarriers && maxTris > 0 && maxTris <= 64000000;
   if (!compactNonMeshProxies)
-    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, false, 0);
+    nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, !nativePointCarriers,
+                                              nativePointCarriers ? 0 : maxTris,
+                                              !nativePointCarriers);
   if (compactNonMeshProxies) {
     LOGI("RT geometry: compact analytic point/curve carriers enabled "
          "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);
@@ -1791,6 +1806,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     const int blasRoot = static_cast<int>(nodeOff);
     AppendMove(out->tris, mb.tris);
     AppendMove(out->nrms, mb.nrms);
+    AppendMove(out->tan, mb.tan);
+    AppendMove(out->bin, mb.bin);
     AppendMove(out->cols, mb.cols);
     AppendMove(out->uv, mb.uv);
     AppendMove(out->uv1, mb.uv1);
@@ -2064,6 +2081,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   }
   out->texels = std::move(textureTable.texels);
   out->textures = std::move(textureTable.textures);
+  out->sourceToTable = textureTable.sourceToTable;
   out->matTex = std::move(textureTable.matTex);
   out->matTexParam = std::move(textureTable.matTexParam);
   out->numTextures = static_cast<int>(out->textures.size());

@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "profile": "dataset-gap-closure",
+  "resources": {
+    "max_rss_mib": 30720,
+    "reserve_mib": 4096,
+    "gpu_budget_mib": 12288,
+    "timeout_s": 1800,
+    "gpu_concurrency": 1
+  },
+  "measurement": {
+    "warmups": 1,
+    "repetitions": 5,
+    "cache_policy": "fresh-process-warm-filesystem",
+    "require_comparable_work": true
+  },
+  "cases": [
+    {
+      "id": "caldera/skinning",
+      "job": "caldera",
+      "required": [
+        "native_deformation",
+        "geometry"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "usd-assets/animation-materials",
+      "job": "usd-assets",
+      "required": [
+        "native_deformation",
+        "uv_sets",
+        "material_channels"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "alab/original-shot-remi",
+      "job": "alab",
+      "required": [
+        "coherent_time_evaluation",
+        "native_topology",
+        "geometry",
+        "normal_semantics",
+        "material_channels"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "island/full",
+      "job": "island",
+      "required": [
+        "bounded_instancing",
+        "original_geometry",
+        "curve_coverage",
+        "visible_material_coverage"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "island/subsets",
+      "job": "island-subsets",
+      "required": [
+        "normal_semantics",
+        "visible_material_coverage"
+      ],
+      "status": "open"
+    },
+    {
+      "id": "menagerie/multiview",
+      "job": "menagerie-multiview-storm",
+      "required": [
+        "geometry",
+        "material_channels",
+        "beauty"
+      ],
+      "status": "pass"
+    },
+    {
+      "id": "menagerie/physics",
+      "job": "menagerie",
+      "required": [
+        "authored_fidelity",
+        "effective_semantics",
+        "source_mapping",
+        "bounded_dynamics"
+      ],
+      "status": "open"
+    }
+  ],
+  "attribution": [
+    "lightusd",
+    "openusd",
+    "external_consumer",
+    "harness",
+    "dataset",
+    "expected_representation",
+    "unresolved"
+  ],
+  "oracle_policy": "Assertions require declared contracts and evidence. Shared decoder consumers are not independent votes. Controls, unsupported coverage and lossy profiles cannot establish original-source fidelity."
+}

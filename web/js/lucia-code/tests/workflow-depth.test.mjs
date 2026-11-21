@@ -44,7 +44,7 @@ test('localization rewrites resolver-fetched layers and rejects destination coll
   await assert.rejects(() => localizeProjectDependencies(source, new Map([['layers/a.usda', { bytes: encoder.encode('existing') }]]), mapping, resolve), { code: 'LUCIA_ASSET_COLLISION' });
 });
 test('typed generic primvars validate constant, uniform and indexed corner cardinality', async () => {
-  const session = fakeSession('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)] int[] faceVertexCounts = [3] int[] faceVertexIndices = [0,1,2] }');
+  const session = fakeSession('#usda 1.0\ndef Mesh "M" {\n point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n}');
   await session.setPrimvar('/M', { name: 'label', itemSize: 1, array: new Int32Array([4]), interpolation: 'constant' });
   await session.setPrimvar('/M', { name: 'face', itemSize: 1, array: new Float64Array([1.123456789]), interpolation: 'uniform' });
   await session.setPrimvar('/M', { name: 'corners', itemSize: 2, array: new Int32Array([1, 2, 3, 4]), indices: new Uint32Array([0, 1, 0]), interpolation: 'faceVarying' });
@@ -77,7 +77,7 @@ test('rig frame diagnostics bound samples and require ordered times', () => {
   assert.throws(() => analyzeRigPoseSequence({ ...input, poses: [...input.poses].reverse() }), /increasing/);
 });
 test('native property history can undo and redo a typed attribute without whole source snapshots', async () => {
-  const session = fakeSession('#usda 1.0\ndef Scope "P" { int value = 1 }');
+  const session = fakeSession('#usda 1.0\ndef Scope "P" {\n int value = 1\n}');
   await session.nativeAttributeEdits([{ args: { path: '/P', attr_name: 'value', value: { type: 'int', value: 1 } } }], 'canonicalize');
   const history = new LuciaCommandStack();
   await history.execute(sessionCommand(session, 'value', ['/P'], () => session.nativeAttributeEdits([{ args: { path: '/P', attr_name: 'value', value: { type: 'int', value: 2 } } }], 'value')));

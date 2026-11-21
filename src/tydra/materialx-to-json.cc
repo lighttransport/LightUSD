@@ -9,7 +9,7 @@
 #include <sstream>
 #include <cstdio>
 
-#include "mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "core/prim.hh"
 #include "stage.hh"
 #include "usdShade.hh"  // For NodeGraph, Shader, ShaderNode

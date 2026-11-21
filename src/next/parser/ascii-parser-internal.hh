@@ -152,11 +152,17 @@ private:
   bool ParseOrderList(std::vector<std::string>* out);
   bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
+  /// pxr and the AOUSD grammar reject an empty `[]` after a list-op
+  /// qualifier (`prepend apiSchemas = []`). Call with the lexer positioned
+  /// at the value; returns false (error) in strict mode, warns otherwise.
+  bool CheckQualifiedEmptyList(const char* what);
   void SkipPropertyMetadata();
   void ParsePropertyMetadata(const std::string& prop_name);
 
   void AddError(const std::string& message);
   void AddWarning(const std::string& message);
+  bool ResolveRelocatePath(const std::string& path, const std::string& anchor,
+                           std::string* output);
   bool ReportProgress(const char* phase, size_t current, size_t total);
 
   // Token helpers

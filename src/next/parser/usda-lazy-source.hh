@@ -14,7 +14,7 @@
 #include <string>
 #include <utility>
 
-#if !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+#if !defined(LIGHTUSD_NO_NATIVE_IO) && !defined(LIGHTUSD_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
     !defined(__wasi__) &&                                             \
     (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
 #include <fcntl.h>

@@ -20,7 +20,7 @@
     size_t blob_size = 0;
     if (!safe::mul(count, size_t(4), &items_bytes) ||
         !safe::add(size_t(9), items_bytes, &blob_size)) {
-      result_.error = "PathListOp payload size overflow";
+      WSetError("PathListOp payload size overflow");
       return 0;
     }
     std::vector<uint8_t> blob(blob_size);
@@ -32,7 +32,7 @@
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    return InternBlock(std::move(block));
+    return InternBlock(std::move(block), kBlobPathListOp);
   }
 
   // Build a VariantSelectionMap value_data_ block (CrateTypeId 45):
@@ -45,7 +45,7 @@
     size_t blob_size = 0;
     if (!safe::mul(count, size_t(8), &items_bytes) ||
         !safe::add(size_t(8), items_bytes, &blob_size)) {
-      result_.error = "VariantSelectionMap payload size overflow";
+      WSetError("VariantSelectionMap payload size overflow");
       return 0;
     }
     std::vector<uint8_t> blob(blob_size);
@@ -59,7 +59,7 @@
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    return InternBlock(std::move(block));
+    return InternBlock(std::move(block), kBlobVarSel);
   }
 
   // Encode an SdfReferenceListOp / SdfPayloadListOp in pxr's on-disk layout:
@@ -104,9 +104,10 @@
       block.type = TypeId::Invalid;
       block.data = std::move(blob);
       block.embedded_value_rep_offsets = std::move(embedded_reps);
+      const uint8_t bl_tag = is_payload ? kBlobPayloadItems : kBlobRefItems;
       return block.embedded_value_rep_offsets.empty()
-                 ? InternBlock(std::move(block))
-                 : PushValueBlock(std::move(block));
+                 ? InternBlock(std::move(block), bl_tag)
+                 : PushValueBlock(std::move(block), bl_tag);
     }
     if (arcs.empty()) {
       // Explicit-clear (`references = None`): pxr's form is IsExplicit with
@@ -121,9 +122,10 @@
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
     block.embedded_value_rep_offsets = std::move(embedded_reps);
+    const uint8_t bl_tag = is_payload ? kBlobPayloadItems : kBlobRefItems;
     return block.embedded_value_rep_offsets.empty()
-               ? InternBlock(std::move(block))
-               : PushValueBlock(std::move(block));
+               ? InternBlock(std::move(block), bl_tag)
+               : PushValueBlock(std::move(block), bl_tag);
   }
 
   // Encode a single SdfReference/SdfPayload item from next's canonical arc
@@ -173,7 +175,7 @@
           ParseResult parsed = ParseValue(lexer, TypeId::Dictionary);
           if (!parsed.success || !parsed.value.is_dictionary() ||
               lexer.peek().type != TokenType::Eof) {
-            result_.error = "Cannot encode reference customData dictionary";
+            WSetError("Cannot encode reference customData dictionary");
           } else {
             dictionary = std::move(parsed.value);
           }
@@ -186,7 +188,7 @@
           const int64_t recursive_offset = 8;
           const ValueRep rep = EncodeValue(entry.second);
           if (rep.type_id() == CrateTypeId::Invalid && !entry.second.is_empty())
-            result_.error = "Cannot encode reference customData value";
+            WSetError("Cannot encode reference customData value");
           put_bytes(&key, 4);
           put_bytes(&recursive_offset, 8);
           embedded_reps->push_back(blob->size());
@@ -256,7 +258,7 @@
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
-    return InternBlock(std::move(block));
+    return InternBlock(std::move(block), kBlobPathListOp);
   }
 
   // Build a StringListOp field ([u8 header=0x03][u64 n][u32 string_idx]*n) --
@@ -271,7 +273,8 @@
       uint32_t idx = InternString(names[i]);
       std::memcpy(raw.data() + 9 + i * 4, &idx, 4);
     }
-    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)},
+                                    kBlobStringListOp);
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep =
@@ -317,7 +320,7 @@
       if (!edits.ordered.empty()) put_run(edits.ordered);
     }
     const uint64_t data_idx =
-        InternBlock({TypeId::Invalid, std::move(raw)});
+        InternBlock({TypeId::Invalid, std::move(raw)}, kBlobStringListOp);
     CrateField field;
     field.token_index.value = InternToken(field_name);
     field.value_rep =
@@ -363,7 +366,7 @@
       if (!edits.ordered.empty()) put_run(edits.ordered);
     }
     const uint64_t data_idx =
-        InternBlock({TypeId::Invalid, std::move(raw)});
+        InternBlock({TypeId::Invalid, std::move(raw)}, kBlobTokenListOp);
     CrateField field;
     field.token_index.value = InternToken(field_name);
     field.value_rep =
@@ -382,11 +385,28 @@
       uint32_t idx = InternString(items[i]);
       std::memcpy(raw.data() + 8 + i * 4, &idx, 4);
     }
-    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)},
+                                    kBlobStringVec);
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep =
         ValueRep::Make(CrateTypeId::StringVector, data_idx, false, false);
+    return f;
+  }
+
+  // TokenVector field from already-interned name tokens.
+  CrateField MakeTokenVectorFieldFromTokens(uint32_t field_token,
+                                            const std::vector<uint32_t>& toks) {
+    const size_t n = toks.size();
+    std::vector<uint8_t> raw(8 + n * 4);
+    const uint64_t cnt = n;
+    std::memcpy(raw.data(), &cnt, 8);
+    if (n) std::memcpy(raw.data() + 8, toks.data(), n * 4);
+    const uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)},
+                                          kBlobTokenVec);
+    CrateField f;
+    f.token_index.value = field_token;
+    f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
     return f;
   }
 
@@ -402,7 +422,8 @@
       uint32_t tok = InternToken(names[i]);
       std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
     }
-    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)},
+                                    kBlobTokenVec);
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);
@@ -423,6 +444,39 @@
     return name;
   }
 
+  // Slot-resident declared type name: one vector index instead of a cold-map
+  // lookup plus a string hash per property.
+  uint32_t TypeNameToken(const PrimSpec& prim, const PropSlot& slot,
+                         const Value* val) {
+    if (slot.type_name_id != PropSlot::kNoTypeName) {
+      const size_t id = slot.type_name_id;
+      if (WorkerCtx* w = WorkerTLS()) {  // chunk-local cache
+        if (id >= w->decl_type_cache.size())
+          w->decl_type_cache.resize(id + 1, UINT32_MAX);
+        uint32_t& token = w->decl_type_cache[id];
+        if (token != UINT32_MAX) return token;
+        const std::string& tn =
+            GetTypeNameTable().get(TypeNameId{slot.type_name_id});
+        if (!tn.empty()) {
+          token = InternToken(tn);
+          return token;
+        }
+        return TypeNameToken(prim, slot.name_id, val, slot.flags);
+      }
+      if (id >= declared_type_token_cache_.size())
+        declared_type_token_cache_.resize(id + 1, UINT32_MAX);
+      uint32_t& token = declared_type_token_cache_[id];
+      if (token != UINT32_MAX) return token;
+      const std::string& tn =
+          GetTypeNameTable().get(TypeNameId{slot.type_name_id});
+      if (!tn.empty()) {
+        token = InternToken(tn);
+        return token;
+      }
+    }
+    return TypeNameToken(prim, slot.name_id, val, slot.flags);
+  }
+
   uint32_t TypeNameToken(const PrimSpec& prim, PropNameId prop_id,
                          const Value* val, uint16_t slot_flags) {
     if (const std::string* tn = prim.property_type_name(prop_id)) {
@@ -433,6 +487,17 @@
     // Keep the existing fallback for an unrecognized API-authored type.
     if (type >= static_cast<size_t>(TypeId::Count))
       return InternToken(AttrTypeName(prim, prop_id, val, slot_flags));
+    if (WorkerCtx* w = WorkerTLS()) {  // chunk-local cache
+      const bool array =
+          (slot_flags & PropSlot::kFlagArray) || (val && val->is_array());
+      if (w->type_cache.empty())
+        w->type_cache.assign(2 * static_cast<size_t>(TypeId::Count),
+                             UINT32_MAX);
+      uint32_t& token = w->type_cache[type * 2 + (array ? 1u : 0u)];
+      if (token == UINT32_MAX)
+        token = InternToken(AttrTypeName(prim, prop_id, val, slot_flags));
+      return token;
+    }
     if (type_name_token_cache_.empty())
       type_name_token_cache_.assign(2 * static_cast<size_t>(TypeId::Count), UINT32_MAX);
     const bool array = (slot_flags & PropSlot::kFlagArray) || (val && val->is_array());
@@ -455,7 +520,7 @@
     std::string serr;
     if (!ParseSplineText(spline_text, &sd, &serr)) {
       if (options_.strict_aousd_conformance) {
-        result_.error = "Cannot encode malformed spline " + prop_path + ": " + serr;
+        WSetError("Cannot encode malformed spline " + prop_path + ": " + serr);
       }
       return false;
     }
@@ -468,7 +533,7 @@
     std::vector<uint8_t> blob;
     if (!EncodeSplineBinary(sd, &blob, &serr)) {
       if (options_.strict_aousd_conformance) {
-        result_.error = "Cannot encode spline " + prop_path + ": " + serr;
+        WSetError("Cannot encode spline " + prop_path + ": " + serr);
       }
       return false;
     }
@@ -494,8 +559,8 @@
       AsciiParser parser;
       if (!parser.Parse(wrapper.data(), wrapper.size())) {
         if (options_.strict_aousd_conformance) {
-          result_.error = "Cannot encode spline knot customData for " +
-                          prop_path;
+          WSetError("Cannot encode spline knot customData for " +
+                          prop_path);
         }
         return false;
       }
@@ -505,8 +570,8 @@
       const PropMeta* meta = prim ? prim->property_meta("x") : nullptr;
       if (!meta || !meta->customData.is_dictionary()) {
         if (options_.strict_aousd_conformance) {
-          result_.error = "Spline knot customData is not a dictionary for " +
-                          prop_path;
+          WSetError("Spline knot customData is not a dictionary for " +
+                          prop_path);
         }
         return false;
       }
@@ -535,12 +600,13 @@
       }
     }
     spline_block.data = std::move(raw);
-    const uint64_t data_idx = PushValueBlock(std::move(spline_block));
+    const uint64_t data_idx = PushValueBlock(std::move(spline_block),
+                                             kBlobSpline);
 
     // A version-2 blob (tangent algorithms) needs crate 0.13.0; version 1
     // needs 0.12.0.
     const int need = (SplineBinaryVersion(sd) >= 2) ? 13 : 12;
-    if (required_version_minor_ < need) required_version_minor_ = need;
+    WRequireMinor(static_cast<uint8_t>(need));
 
     out->token_index.value = InternToken("spline");
     out->value_rep = ValueRep::Make(CrateTypeId::Spline, data_idx, false, false);
@@ -555,7 +621,7 @@
     size_t times_total = 0;
     if (!safe::mul(num_samples, size_t(8), &times_bytes) ||
         !safe::add(size_t(8), times_bytes, &times_total)) {
-      result_.error = "timeSamples times payload size overflow";
+      WSetError("timeSamples times payload size overflow");
       return CrateField{};
     }
     std::vector<uint8_t> times_data(times_total);
@@ -591,7 +657,7 @@
     size_t header_size = 0;
     if (!safe::mul(num_samples, size_t(8), &reps_bytes) ||
         !safe::add(size_t(32), reps_bytes, &header_size)) {
-      result_.error = "timeSamples header payload size overflow";
+      WSetError("timeSamples header payload size overflow");
       return CrateField{};
     }
     std::vector<uint8_t> header_data(header_size, 0);
@@ -611,10 +677,11 @@
     // Header embeds the times rep + per-sample reps built above: staged block
     // indices get relocated by _PatchTimeSamplesBlock; streamed blocks already
     // carry their absolute offsets.
-    uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)});
+    uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)},
+                                         kBlobTimeSamples);
 
     CrateField ts_field;
-    ts_field.token_index.value = InternToken("timeSamples");
+    ts_field.token_index.value = FieldToken(kTokTimeSamples);
     ts_field.value_rep =
         ValueRep::Make(CrateTypeId::TimeSamples, header_idx, false, false);
     return ts_field;
@@ -622,18 +689,7 @@
 
   void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const std::vector<CrateField>& field_list) {
-    const uint32_t fs_idx = BeginFieldset(field_list.size());
-    if (!result_.error.empty()) return;
-    for (const auto& f : field_list) {
-      flat_fieldsets_.push_back(static_cast<uint32_t>(fields_.size()));
-      fields_.push_back(f);
-    }
-    flat_fieldsets_.push_back(UINT32_MAX);
-    CrateSpec spec;
-    spec.path_index.value = path_index;
-    spec.fieldset_index.value = fs_idx;
-    spec.spec_type = st;
-    specs_.push_back(spec);
+    WEmitPropertySpec(path_index, st, field_list);
   }
 
   // Emit every authored PropMeta field as a property-spec crate field, with
@@ -740,8 +796,8 @@
       f.value_rep = EncodeExtensionField(field);
       if (f.value_rep.type_id() == CrateTypeId::Invalid) {
         if (options_.strict_aousd_conformance && result_.error.empty()) {
-          result_.error = "Cannot encode extension property field '" +
-                          field.name + "'";
+          WSetError("Cannot encode extension property field '" +
+                          field.name + "'");
         }
         continue;
       }
@@ -750,13 +806,30 @@
   }
 
   // Returns the emitted property names (views into the PropNameTable, which
-  // outlives the write), in spec order.
-  std::vector<std::string_view> EmitPrimProperties(const PrimSpec& prim) {
-    std::vector<std::string_view> prop_names;
+  // outlives the write) and their tokens, in spec order.
+  struct EmittedProps {
+    std::vector<std::string_view> names;
+    std::vector<uint32_t> tokens;
+    void push(std::string_view n, uint32_t t) {
+      names.push_back(n);
+      tokens.push_back(t);
+    }
+  };
+  EmittedProps EmitPrimProperties(const PrimSpec& prim, std::string_view stable_base) {
+    EmittedProps out;
     PropNameTable& name_table = GetPropNameTable();
     const std::string& base = prim.path().str();
-    // Emitted attribute names, by interned id (one id per name).
+    // Emitted attribute names, by interned id (one id per name). A finalized
+    // index is sorted by name, so a duplicate id is adjacent to its first
+    // occurrence and the set is only needed for an unsorted index.
+    const auto& slots = prim.properties().slots();
+    const bool slots_sorted = prim.properties().is_sorted();
     std::unordered_set<uint32_t> emitted;
+    uint32_t prev_emitted_id = UINT32_MAX;
+    auto was_emitted = [&](PropNameId id) -> bool {
+      if (slots_sorted) return prim.properties().find(id) != nullptr;
+      return emitted.count(id.id) != 0;
+    };
     // Property spec paths: (prim path, property name) views interned
     // directly; the concatenated text is only built for irregular prim paths.
     const bool clean_prop_paths = PropPathSplitsCleanly(base);
@@ -764,7 +837,7 @@
     auto prop_path_index = [&](std::string_view stable_name) -> uint32_t {
       if (clean_prop_paths && !stable_name.empty() &&
           stable_name.find('/') == std::string_view::npos) {
-        return InternPropPath(base, base_hash, stable_name);
+        return InternPropPath(stable_base, base_hash, stable_name);
       }
       return InternPath(base + "." + std::string(stable_name));
     };
@@ -772,21 +845,32 @@
     // reuse this scratch vector instead of allocating one for every property.
     std::vector<CrateField> flds;
 
-    for (const auto& slot : prim.properties().slots()) {
+    for (size_t si = 0; si < slots.size(); ++si) {
+      const PropSlot& slot = slots[si];
       const std::string_view prop_name = name_table.get(slot.name_id);
       // Defense against duplicate slots for one property (the parser now
       // upserts, but crate-read or API-built layers could still carry them):
       // two Attribute specs with the same path make pxr reject the layer.
-      if (emitted.count(slot.name_id.id)) continue;
+      if (slots_sorted ? slot.name_id.id == prev_emitted_id
+                       : emitted.count(slot.name_id.id) != 0) {
+        continue;
+      }
+      if (clean_prop_paths && si + 1 < slots.size()) {
+        PrefetchPathSlot(HashPathKey(
+            base_hash, name_table.get(slots[si + 1].name_id)));
+      }
       const Value* val = prim.property_value(slot.name_id);
-      const bool has_ts = prim.has_time_samples(slot.name_id);
+      // An authored-but-empty `timeSamples = {}` keeps the slot flag with no
+      // samples; pxr round-trips it as an empty TimeSamples field.
+      const bool has_ts = prim.has_time_samples(slot.name_id) ||
+                          slot.is_time_sampled();
       flds.clear();
 
       CrateField tf;
       tf.token_index.value = type_name_token_;
       tf.value_rep =
           ValueRep::Make(CrateTypeId::Token,
-                        TypeNameToken(prim, slot.name_id, val, slot.flags), false, true);
+                        TypeNameToken(prim, slot, val), false, true);
       flds.push_back(tf);
 
       if (slot.flags & PropSlot::kFlagUniform) {
@@ -798,7 +882,7 @@
 
       if (slot.flags & PropSlot::kFlagCustom) {
         CrateField cf;
-        cf.token_index.value = InternToken("custom");
+        cf.token_index.value = FieldToken(kTokCustom);
         cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
         flds.push_back(cf);
       }
@@ -838,7 +922,7 @@
                              ? StorePathArcListOp(targets, edit)
                              : StorePathListOp(targets);
           CrateField cf;
-          cf.token_index.value = InternToken("connectionPaths");
+          cf.token_index.value = FieldToken(kTokConnectionPaths);
           cf.value_rep =
               ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
           flds.push_back(cf);
@@ -853,8 +937,8 @@
         if (BuildSplineField(base + "." + std::string(prop_name), tn,
                              *spline_text, &sf)) {
           flds.push_back(sf);
-        } else if (!result_.error.empty()) {
-          return prop_names;  // strict mode: abort on unencodable spline
+        } else if (WHaveError()) {
+          return out;  // strict mode: abort on unencodable spline
         }
       }
 
@@ -863,13 +947,14 @@
       }
 
       EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
-      prop_names.push_back(prop_name);
-      emitted.insert(slot.name_id.id);
+      out.push(prop_name, PropNameToken(slot.name_id));
+      if (slots_sorted) prev_emitted_id = slot.name_id.id;
+      else emitted.insert(slot.name_id.id);
     }
 
     for (auto prop_id : prim.time_sampled_properties()) {
       const std::string_view prop_name = name_table.get(prop_id);
-      if (emitted.count(prop_id.id)) continue;
+      if (was_emitted(prop_id)) continue;
       flds.clear();
       const Value* sv = nullptr;
       if (auto* s = prim.time_samples(prop_id))
@@ -885,8 +970,8 @@
         EmitPropMetaFields(*pm, flds);
       }
       EmitPropertySpec(prop_path_index(prop_name), SpecType::Attribute, flds);
-      prop_names.push_back(prop_name);
-      emitted.insert(prop_id.id);
+      out.push(prop_name, PropNameToken(prop_id));
+      if (!slots_sorted) emitted.insert(prop_id.id);
     }
 
     for (const auto& rel_name : prim.relationship_names()) {
@@ -900,7 +985,7 @@
       flds.push_back(vf);
       if (prim.relationship_flags(rel_name) & PropSlot::kFlagCustom) {
         CrateField cf;
-        cf.token_index.value = InternToken("custom");
+        cf.token_index.value = FieldToken(kTokCustom);
         cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
         flds.push_back(cf);
       }
@@ -920,7 +1005,7 @@
       if (rel_edit) {
         uint64_t blk = StorePathArcListOp({}, rel_edit);
         CrateField rf;
-        rf.token_index.value = InternToken("targetPaths");
+        rf.token_index.value = FieldToken(kTokTargetPaths);
         rf.value_rep =
             ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
         flds.push_back(rf);
@@ -931,7 +1016,7 @@
         if (!targets.empty()) {
           uint64_t blk = StorePathListOp(targets);
           CrateField rf;
-          rf.token_index.value = InternToken("targetPaths");
+          rf.token_index.value = FieldToken(kTokTargetPaths);
           rf.value_rep =
               ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
           flds.push_back(rf);
@@ -942,12 +1027,12 @@
               prim.property_meta(GetPropNameTable().intern(rel_name))) {
         EmitPropMetaFields(*pm, flds);
       }
-      const std::string_view stable_rel_name =
-          name_table.get(name_table.intern(rel_name));
+      const PropNameId rel_id = name_table.intern(rel_name);
+      const std::string_view stable_rel_name = name_table.get(rel_id);
       EmitPropertySpec(prop_path_index(stable_rel_name),
                        SpecType::Relationship, flds);
-      prop_names.push_back(stable_rel_name);
+      out.push(stable_rel_name, PropNameToken(rel_id));
     }
 
-    return prop_names;
+    return out;
   }

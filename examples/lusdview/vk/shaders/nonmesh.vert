@@ -69,14 +69,14 @@ void main() {
     vLocal = corner;
     vColor = aColor0;
     vTangent = camUp;
-  } else if (pc.ids.x == 2) {
+  } else if (pc.ids.x == 2 || pc.ids.x == 3) {
     // Gaussian carrier: aPrev/aNext contain the transformed major/minor
-    // covariance axes (full diameters). This preserves the authored 3-D
+    // covariance semi-axes. This preserves the authored 3-D
     // orientation while perspective projection turns the disk into an ellipse.
-    p = aP0 + (aPrev * corner.x + aNext * corner.y) * 0.5;
+    p = aP0 + (aPrev * corner.x + aNext * corner.y);
     vLocal = corner;
     vColor = aColor0;
-    vTangent = normalize(aPrev);
+    vTangent = pc.ids.x == 3 ? normalize(cross(aPrev, aNext)) : normalize(aPrev);
   } else {
     // Curve ribbon: derive endpoint sides from neighbouring samples. Adjacent
     // records therefore calculate the same edge at their shared endpoint,

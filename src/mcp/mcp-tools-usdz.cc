@@ -4,6 +4,7 @@
 // USDZ packaging tools of the next MCP server. usdz_convert packages the
 // input's relative asset references as they are; texture processing
 // (resize / re-encode / budget fit) is not part of the next MCP product.
+#include "core/native-io.hh"
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -93,6 +94,8 @@ bool SetStageUnits(lightusd_stage* stage, const json& args, std::string* err) {
 }  // namespace
 
 bool USDZConvert(Context&, const json& args, json& result, std::string& err) {
+  if (!::lightusd::NativeIOAvailable(&err)) return false;
+
 #if defined(__EMSCRIPTEN__)
   (void)args;
   (void)result;
@@ -192,6 +195,8 @@ bool USDZConvert(Context&, const json& args, json& result, std::string& err) {
 }
 
 bool USDZPack(Context& ctx, const json& args, json& result, std::string& err) {
+  if (!::lightusd::NativeIOAvailable(&err)) return false;
+
   if (!RequireStage(ctx, &err)) return false;
   if (!SetStageUnits(ctx.stage.stage, args, &err)) return false;
   if (args.contains("uri") && args["uri"].is_string()) {

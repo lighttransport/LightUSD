@@ -12,15 +12,24 @@
 namespace lightusd {
 namespace next {
 
-// Upper bound for any next/tydra worker pool (auto = hardware_concurrency,
-// clamped here). Was 16, which idled half of a 32-thread workstation: with a
-// scalable allocator the pcp opinion fill still gains going 16 -> 32 threads
-// on Island. The bound stays because per-worker state is not free -- each pcp
-// warm worker is a seeded Impl copying the layer-stack table, and the serial
+// Upper bound for any next/tydra worker pool that a caller sizes explicitly
+// (clamped here). Was 16: with a scalable allocator the pcp opinion fill still
+// gained going 16 -> 32 threads on Island when a caller asks for that width.
+// The bound stays because per-worker state is not free -- each pcp warm worker
+// is a seeded Impl copying the layer-stack table, and the serial
 // structure/merge passes cap the useful parallelism (Amdahl) -- so 64 covers
 // current 32-64 thread machines without letting a 128+ thread host fan out
 // hundreds of mostly-idle workers.
 constexpr int kMaxExecutionThreads = 64;
+
+// Automatic composition loading uses fewer workers than the arena bound.
+// Measurements on a 32-thread workstation put the whole-load optimum at 16 for
+// ALab (0.718 s vs 0.832 s), Caldera (0.199 s vs 0.228 s) and Island (3.438 s
+// vs 4.004 s): the parallel phases are memory-bandwidth bound, so the extra
+// workers only add contention. Every scene produced an identical composed work
+// hash at both counts. Explicit >16 requests are still honored up to
+// kMaxExecutionThreads.
+constexpr int kAutoCompositionThreads = 16;
 
 #if defined(LIGHTUSD_ENABLE_THREAD)
 constexpr bool kExecutionThreadsEnabled = true;

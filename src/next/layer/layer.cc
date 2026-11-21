@@ -3,12 +3,15 @@
 //
 // LightUSD Next - Layer Implementation
 
+#include "int64-listop.hh"
 #include "layer.hh"
+#include "../memory-trim.hh"
 #include "../prim/identifier.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <unordered_set>
 #if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
 #include <thread>
 #include <vector>
 #include "../execution.hh"
@@ -93,14 +96,87 @@ void LayerMeta::FillAbsentStageMetaFrom(const LayerMeta& weaker) {
 // ============================================================
 
 Layer::Layer() = default;
-Layer::~Layer() = default;
+Layer::~Layer() {
+  // A composed stage's layer holds millions of prims whose destructors
+  // (metadata, property values, cold data) are independent of each other;
+  // freeing them serially took tens of seconds at the end of a large flatten.
+  // Large layers release each prim's contents in parallel (moving in an empty
+  // PrimSpec), then the vector frees the empty shells. Shared payloads
+  // (buffers, lazy-array sources) are refcounted atomically. Same threshold
+  // as the parallel finalize below, so small and per-worker layers stay
+  // serial.
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // (hardware_concurrency() reads sysfs on every call: ask only for a
+  // layer large enough to split; parsers destroy many small fragments.)
+  const size_t workers =
+      prims_.size() < 65536
+          ? 1
+          : std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()),
+                             static_cast<size_t>(kMaxExecutionThreads));
+  if (workers > 1) {
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    const size_t n = prims_.size();
+    for (size_t t = 0; t < workers; ++t) {
+      const size_t lo = n * t / workers;
+      const size_t hi = n * (t + 1) / workers;
+      pool.emplace_back([this, lo, hi]() {
+        for (size_t i = lo; i < hi; ++i) prims_[i] = PrimSpec();
+      });
+    }
+    for (std::thread& th : pool) th.join();
+  }
+#endif
+}
 
-Layer::Layer(Layer&&) noexcept = default;
-Layer& Layer::operator=(Layer&&) noexcept = default;
+// Hand-written moves: the deferred-index flag is an atomic (not movable by
+// default); everything else moves member-wise.
+Layer::Layer(Layer&& other) noexcept
+    : prims_(std::move(other.prims_)),
+      root_indices_(std::move(other.root_indices_)),
+      path_to_index_(std::move(other.path_to_index_)),
+      meta_(std::move(other.meta_)),
+      finalized_(other.finalized_),
+      lazy_path_index_(other.lazy_path_index_),
+      instance_holder_links_(other.instance_holder_links_),
+      source_asset_anchor_id_(other.source_asset_anchor_id_),
+      path_index_dirty_(other.path_index_dirty_.load()),
+      prim_filler_(std::move(other.prim_filler_)) {
+  other.path_index_dirty_.store(false);
+}
+Layer& Layer::operator=(Layer&& other) noexcept {
+  if (this != &other) {
+    prims_ = std::move(other.prims_);
+    root_indices_ = std::move(other.root_indices_);
+    path_to_index_ = std::move(other.path_to_index_);
+    meta_ = std::move(other.meta_);
+    finalized_ = other.finalized_;
+    lazy_path_index_ = other.lazy_path_index_;
+    instance_holder_links_ = other.instance_holder_links_;
+    source_asset_anchor_id_ = other.source_asset_anchor_id_;
+    path_index_dirty_.store(other.path_index_dirty_.load());
+    other.path_index_dirty_.store(false);
+    prim_filler_ = std::move(other.prim_filler_);
+  }
+  return *this;
+}
 
 void Layer::reserve(size_t count) {
   prims_.reserve(count);
   root_indices_.reserve(count / 4);  // Estimate ~25% are roots
+}
+
+void Layer::resize_prims(size_t count) {
+  if (count <= prims_.size()) return;
+  // A composed stage's prim array is GBs: default-constructing it serially
+  // also takes every first-touch page fault on one thread. Populate the
+  // reserved pages from several threads first (no object is touched).
+  if (count >= (size_t(1) << 20) && count > prims_.capacity()) {
+    prims_.reserve(count);
+    PopulatePagesParallel(prims_.data() + prims_.size(),
+                          (count - prims_.size()) * sizeof(PrimSpec));
+  }
+  prims_.resize(count);
 }
 
 uint32_t Layer::add_prim(PrimSpec&& spec) {
@@ -235,6 +311,20 @@ void Layer::build_path_index() {
       path_to_index_[path_str] = static_cast<uint32_t>(i);
     }
   }
+  path_index_dirty_.store(false, std::memory_order_release);
+  lu_storage_note_materialization();
+}
+
+void Layer::ensure_path_index() const {
+  if (!path_index_dirty_.load(std::memory_order_acquire)) return;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // One process-wide lock: a deferred index is built once per layer, so the
+  // serialization is irrelevant and the Layer stays trivially movable.
+  static std::mutex mu;
+  std::lock_guard<std::mutex> lk(mu);
+  if (!path_index_dirty_.load(std::memory_order_acquire)) return;
+#endif
+  const_cast<Layer*>(this)->build_path_index();
 }
 
 void Layer::sort_prims_by_path() {
@@ -268,47 +358,56 @@ void Layer::sort_prims_by_path() {
       prims_[parent_it->second].add_child_index(static_cast<uint32_t>(i));
     }
   }
-  apply_namespace_ordering();
+}
+
+namespace {
+const std::vector<uint32_t>& OrderedIndices(
+    const std::vector<uint32_t>& indices, const std::vector<std::string>& order,
+    const std::vector<PrimSpec>& prims, std::vector<uint32_t>* scratch) {
+  if (order.empty() || indices.empty() || !scratch) return indices;
+  std::vector<std::string> names;
+  std::unordered_map<std::string, uint32_t> by_name;
+  names.reserve(indices.size());
+  by_name.reserve(indices.size());
+  for (uint32_t idx : indices) {
+    if (idx < prims.size()) {
+      names.push_back(prims[idx].name());
+      by_name.emplace(names.back(), idx);
+    }
+  }
+  ApplyStringListOrder(order, &names);
+  scratch->clear();
+  scratch->reserve(names.size());
+  for (const std::string& name : names) {
+    const auto found = by_name.find(name);
+    if (found != by_name.end()) scratch->push_back(found->second);
+  }
+  return *scratch;
+}
+}  // namespace
+
+const std::vector<uint32_t>& Layer::ordered_root_indices(
+    std::vector<uint32_t>* scratch) const {
+  return OrderedIndices(root_indices_, meta_.rootPrimOrder, prims_, scratch);
+}
+
+const std::vector<uint32_t>& Layer::ordered_child_indices(
+    const PrimSpec& prim, std::vector<uint32_t>* scratch) const {
+  return OrderedIndices(prim.child_indices(), prim.meta().primOrder(), prims_, scratch);
 }
 
 void Layer::apply_namespace_ordering() {
-  auto apply = [](std::vector<uint32_t>* indices,
-                  const std::vector<std::string>& order,
-                  const std::vector<PrimSpec>& prims) {
-    if (!indices || order.empty() || indices->empty()) return;
-    std::vector<uint32_t> result;
-    std::unordered_set<uint32_t> in_result;
-    result.reserve(indices->size());
-    in_result.reserve(indices->size());
-    for (const std::string& wanted : order) {
-      for (uint32_t idx : *indices) {
-        if (idx < prims.size() && prims[idx].name() == wanted &&
-            !in_result.count(idx)) {
-          result.push_back(idx);
-          in_result.insert(idx);
-          break;
-        }
-      }
-    }
-    for (uint32_t idx : *indices) {
-      if (!in_result.count(idx)) {
-        result.push_back(idx);
-        in_result.insert(idx);
-      }
-    }
-    *indices = std::move(result);
-  };
-  apply(&root_indices_, meta_.rootPrimOrder, prims_);
+  std::vector<uint32_t> scratch;
+  if (!meta_.rootPrimOrder.empty() && !root_indices_.empty()) {
+    ordered_root_indices(&scratch);
+    root_indices_.swap(scratch);
+  }
   for (PrimSpec& prim : prims_) {
-    std::vector<uint32_t> children = prim.child_indices();
-    // Namespace ordering is a read-only finalization pass.  Bind metadata as
-    // const so overload resolution cannot select the mutable cold-field
-    // accessor, which materializes a PrimMetadataCold for otherwise ordinary
-    // prims.
-    const PrimMetadata& meta = prim.meta();
-    apply(&children, meta.primOrder(), prims_);
+    if (static_cast<const PrimSpec&>(prim).meta().primOrder().empty() ||
+        prim.child_indices().empty()) continue;
+    ordered_child_indices(prim, &scratch);
     prim.clear_child_indices();
-    for (uint32_t child : children) prim.add_child_index(child);
+    for (uint32_t child : scratch) prim.add_child_index(child);
   }
 }
 
@@ -320,7 +419,9 @@ Layer Layer::Clone() const {
   }
   out.root_indices_ = root_indices_;
   out.meta_ = meta_;
+  out.source_asset_anchor_id_ = source_asset_anchor_id_;
   out.finalized_ = finalized_;
+  out.instance_holder_links_ = instance_holder_links_;
   out.build_path_index();
   return out;
 }
@@ -352,6 +453,7 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
   }
 
   // The incremental updates below rely on the path index being current.
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -400,6 +502,7 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
 }
 
 bool Layer::remove_prim_at_path(const std::string& path) {
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -441,6 +544,7 @@ bool Layer::remove_prim_at_path(const std::string& path) {
 bool Layer::rename_prim_at_path(const std::string& path,
                                 const std::string& new_name) {
   if (!IsValidIdentifier(new_name)) return false;
+  ensure_path_index();
   if (path_to_index_.empty() && !prims_.empty()) {
     build_path_index();
   }
@@ -473,11 +577,21 @@ bool Layer::rename_prim_at_path(const std::string& path,
   return true;
 }
 
+void Layer::release_prims() {
+  std::vector<PrimSpec>().swap(prims_);
+  std::vector<uint32_t>().swap(root_indices_);
+  std::unordered_map<std::string, uint32_t>().swap(path_to_index_);
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 
-  // Build path-to-index map
-  build_path_index();
+  // Build path-to-index map (or defer it to the first lookup).
+  if (lazy_path_index_) {
+    path_index_dirty_.store(true, std::memory_order_release);
+  } else {
+    build_path_index();
+  }
 
   // Finalize each prim's properties (sort for binary search). Each prim's
   // sort orders only its own slots, so large layers (a composed stage) sort in
@@ -485,10 +599,14 @@ void Layer::finalize() {
   // layers -- including per-worker layers finalized during a parallel scene
   // load -- on the serial path, avoiding nested thread fan-out.
 #if defined(LIGHTUSD_ENABLE_THREAD)
-  const unsigned hw = std::thread::hardware_concurrency();
+  // (hardware_concurrency() reads sysfs on every call: ask only for a
+  // layer large enough to split; parsers destroy many small fragments.)
   const size_t workers =
-      std::min<size_t>(hw ? hw : 1, static_cast<size_t>(kMaxExecutionThreads));
-  if (prims_.size() >= 65536 && workers > 1) {
+      prims_.size() < 65536
+          ? 1
+          : std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()),
+                             static_cast<size_t>(kMaxExecutionThreads));
+  if (workers > 1) {
     std::vector<std::thread> pool;
     pool.reserve(workers);
     const size_t n = prims_.size();
@@ -508,7 +626,6 @@ void Layer::finalize() {
     }
   }
 
-  apply_namespace_ordering();
 
   finalized_ = true;
 }
@@ -528,18 +645,21 @@ const PrimSpec* Layer::prim_at_path(const Path& path) const {
 }
 
 const PrimSpec* Layer::prim_at_path(const std::string& path) const {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   if (it == path_to_index_.end()) return nullptr;
   return prim(it->second);
 }
 
 PrimSpec* Layer::prim_at_path_mutable(const std::string& path) {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   if (it == path_to_index_.end()) return nullptr;
   return prim(it->second);
 }
 
 uint32_t Layer::index_at_path(const std::string& path) const {
+  ensure_path_index();
   auto it = path_to_index_.find(path);
   return it == path_to_index_.end() ? UINT32_MAX : it->second;
 }
@@ -648,6 +768,7 @@ size_t Layer::memory_usage() const {
     for (const DecodedExtensionField& field : meta.unknownFields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
+      if (field.int64_list_op) add(Int64ListOpsMemoryUsage(*field.int64_list_op));
       add_value(field.value);
     }
   }
@@ -704,12 +825,17 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   // Build path based on parent stack
   std::string path_str;
   if (prim_stack_.empty()) {
-    path_str = path_prefix_ + "/" + name;  // prefix empty for a real root
+    // Exact-size joins (`a + "/" + b` doubles its temporary; every prim keeps
+    // its path). The prefix is empty for a real root.
+    path_str.reserve(path_prefix_.size() + 1 + name.size());
+    path_str.append(path_prefix_).append(1, '/').append(name);
   } else {
     // Get parent path
     const PrimSpec* parent = layer_.prim(prim_stack_.back());
     if (parent) {
-      path_str = parent->path().str() + "/" + name;
+      const std::string& pp = parent->path().str();
+      path_str.reserve(pp.size() + 1 + name.size());
+      path_str.append(pp).append(1, '/').append(name);
     } else {
       path_str = "/" + name;
     }

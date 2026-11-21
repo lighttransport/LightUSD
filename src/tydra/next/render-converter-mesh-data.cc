@@ -69,9 +69,15 @@ bool RenderSceneConverter::Impl::ExtractMeshTopology(const UsdPrim& prim, Render
 
 bool RenderSceneConverter::Impl::ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh) {
   ValueArrayRead<float> points;
-  if (!ReadFloatArray(prim, "points", config_.time_code, &points)) {
+  ::lightusd::next::EvalOptions evaluation;
+  evaluation.time = ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+  evaluation.follow_connections = false;
+  evaluation.clip_stage_loader = config_.animation.clip_stage_loader;
+  if (!ReadFloatArray(prim, "points", evaluation, &points)) {
+    // Public per-mesh conversion may receive a raw layer, whose descendant
+    // does not carry PCP-injected ancestor clip metadata.
     ReadFloatArrayFromValueClips(prim, "points", config_.time_code,
-                                config_.animation.clip_stage_loader, &points);
+        config_.animation.clip_stage_loader, &points);
   }
   if (points.empty()) {
     SetLastError("Invalid points data");

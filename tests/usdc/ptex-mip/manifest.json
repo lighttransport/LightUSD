@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "source": "island/textures/isMountainA/Color/mountain_geo.ptx",
+  "source_sha256": "9cdedfb99ab4462b934e125e196a8be08a079ad30c8b2e7896cd0b648d1c11c8",
+  "decoder": {
+    "project": "OpenPtex",
+    "version": "2.4.3",
+    "commit": "4aa2c35f9f25f025014fbbbf41cef669881b4172",
+    "build": "Debug"
+  },
+  "semantics": "Raw face/mip texels as returned by OpenPtex PtexTexture::getData; rows begin at v=0, channels interleaved, no filtering or color conversion.",
+  "samples": [
+    {"face": 0, "mip": 1, "width": 16, "height": 8, "channels": 3,
+     "file": "mountain-face0-mip1.rgba",
+     "sha256": "2d4f35e31be08cd20c0be0206aadd2a7549317ff58cfd7645cdaadeafa378b18"},
+    {"face": 0, "mip": 2, "width": 8, "height": 4, "channels": 3,
+     "file": "mountain-face0-mip2.rgba",
+     "sha256": "5d32f88599529780ce1ef32a631d8ae4cf7ed3c5367b0de4f129680cc392448e"}
+  ]
+}

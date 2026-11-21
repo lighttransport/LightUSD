@@ -44,6 +44,9 @@ public:
   virtual CrateVersion version() const = 0;
   virtual bool is_mmapped() const = 0;
   virtual bool can_borrow() const { return false; }
+  /// True when the source retains a private snapshot and serves array bytes by
+  /// ranged reads rather than a resident contiguous buffer.
+  virtual bool is_paged() const { return false; }
   virtual void DiscardRange(uint64_t offset, uint64_t length) const {
     (void)offset;
     (void)length;
@@ -59,8 +62,8 @@ public:
 };
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.
-/// The on-disk block at `block_offset` is `[count][data...]`; the count header
-/// is u64 for crate >= 0.7.0 and u32 for older versions.
+/// The on-disk block at `block_offset` is `[header][data...]`: header is
+/// [u32 rank=1,u32 count] before 0.5, u32 count in 0.5/0.6, u64 from 0.7.
 struct LazyArrayRef {
   std::shared_ptr<LazyArraySource> source;  // keeps the backing source alive
   ValueRep rep;                             // original on-disk rep (flags+payload)

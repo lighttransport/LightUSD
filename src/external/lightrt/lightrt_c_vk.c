@@ -153,6 +153,11 @@ static int vk_buffer_create_ex(lrt_vk_engine *e, VkDeviceSize size,
     memset(out, 0, sizeof(*out));
     if (size == 0) size = 16;
     out->size = size;
+    /* BLAS/TLAS addresses are queried after building (including compacted and
+     * pooled structures). Their backing storage must support device addresses,
+     * not only the build inputs and scratch buffers. VUID-pInfo-09542. */
+    if (usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR)
+        device_addr = 1;
     if (device_addr) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     VkBufferCreateInfo bi;
     memset(&bi, 0, sizeof(bi));
@@ -1625,16 +1630,18 @@ static int vk_cmd_end_submit(lrt_vk_engine *e, VkCommandBuffer cb) {
             vk_set_err(e, "GPU command timed out after 5 s (device lost or "
                           "misconfigured acceleration-structure build)");
             e->device_lost = 1;
-            vkDestroyFence(e->device, fence, NULL);
-            vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &cb);
+            /* The command may still be pending. Keep its fence and command
+             * buffer with the abandoned device, just like the AS buffers. */
             return 0;
         }
     }
     if (r != VK_SUCCESS) {
         vk_set_errf(e, "vkQueueSubmit/vkWaitForFences", r);
         if (r == VK_ERROR_DEVICE_LOST || r == VK_TIMEOUT) e->device_lost = 1;
-        vkDestroyFence(e->device, fence, NULL);
-        vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &cb);
+        if (!e->device_lost) {
+            vkDestroyFence(e->device, fence, NULL);
+            vkFreeCommandBuffers(e->device, e->cmd_pool, 1, &cb);
+        }
         return 0;
     }
     vkDestroyFence(e->device, fence, NULL);
@@ -1673,8 +1680,10 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
                           uint32_t prim_count, uint32_t prim_offset,
                           uint32_t first_vertex, vk_accel *out) {
     memset(out, 0, sizeof(*out));
-    const int compact = (type == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR) &&
-                        rtx_compact_enabled();
+    const char *tlas_compact = getenv("LRT_VK_TLAS_COMPACT");
+    const int compact = rtx_compact_enabled() &&
+        (type == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR ||
+         (tlas_compact && tlas_compact[0] == '1'));
     VkAccelerationStructureBuildGeometryInfoKHR bgi;
     memset(&bgi, 0, sizeof(bgi));
     bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -1822,16 +1831,19 @@ static int vk_build_accel(lrt_vk_engine *e, VkAccelerationStructureTypeKHR type,
                         cas = 0;
                     }
                 }
-                if (cas) vkDestroyAccelerationStructureKHR(e->device, cas, NULL);
+                if (e->device_lost) ok = 0;
+                if (cas && !e->device_lost)
+                    vkDestroyAccelerationStructureKHR(e->device, cas, NULL);
                 if (cstore.buf) vk_buffer_destroy(e, &cstore);
             }
         }
     }
-    if (qp) vkDestroyQueryPool(e->device, qp, NULL);
+    if (qp && !e->device_lost) vkDestroyQueryPool(e->device, qp, NULL);
 
     if (!ok) {
         vk_set_err(e, "acceleration-structure build submit failed");
-        vkDestroyAccelerationStructureKHR(e->device, full_as, NULL);
+        if (!e->device_lost)
+            vkDestroyAccelerationStructureKHR(e->device, full_as, NULL);
         vk_buffer_destroy(e, &full_store);
         return 0;
     }
@@ -1991,6 +2003,11 @@ struct lrt_vk_rtx_scene {
     vk_accel *extra_tlas; /* ntlas-1 additional TLAS slices, or NULL */
     uint32_t *tlas_base;  /* ntlas global base instance indices */
     uint32_t ntlas;       /* number of TLAS slices (>=1) */
+    /* Optional bounded-residency offline tracing: own the placement records and
+     * rebuild one TLAS slice at a time, merging all hits without dropping any. */
+    lrt_vk_instance *stream_insts;
+    uint32_t stream_ninsts, stream_nprotos, stream_slice, stream_current;
+
     /* BLAS suballocation pools (see vk_subpool). A scene with ~100k prototypes
      * would otherwise do ~6 vkAllocateMemory per BLAS -> hundreds of thousands of
      * allocations (NVIDIA's allocator is ~O(live allocs); also a per-device count
@@ -2588,6 +2605,15 @@ static int build_protos_pooled_compact(lrt_vk_engine *e, const lrt_vk_proto *pro
             s->blas[p + i].address =
                 vkGetAccelerationStructureDeviceAddressKHR(e->device, &ai);
         }
+        if (ok) {
+            /* Only this completed wave needed these build inputs. Releasing
+             * them here bounds upload residency independently of scene size. */
+            vk_subpool_free(e, s->blas_input_pool);
+            vk_subpool_init(
+                s->blas_input_pool,
+                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                /*host_visible=*/1, /*device_addr=*/1, BLOCK);
+        }
         p += count;
     }
 
@@ -2740,6 +2766,10 @@ static int build_protos_pooled(lrt_vk_engine *e, const lrt_vk_proto *protos,
         ai.accelerationStructure = s->blas[p].as;
         s->blas[p].address =
             vkGetAccelerationStructureDeviceAddressKHR(e->device, &ai);
+        /* The previous build has completed. Reuse its input allocations for
+         * the next prototype instead of retaining every source vertex/index. */
+        for (uint32_t b = 0; b < s->blas_input_pool->nblocks; ++b)
+            s->blas_input_pool->blocks[b].used = 0;
     }
     vk_buffer_destroy(e, &scratch);
     return ok;
@@ -2811,7 +2841,7 @@ static int build_tlas_slice(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t npro
 static lrt_vk_rtx_scene *rtx_build_instanced_core(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
     const lrt_vk_instance *insts, uint32_t ninsts, int wide,
-    uint32_t max_per_tlas, uint32_t *out_tri_stride, lrt_result *err) {
+    uint32_t max_per_tlas, int force_stream, uint32_t *out_tri_stride, lrt_result *err) {
     if (!e || !protos || nprotos == 0 || !insts || ninsts == 0) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
         return NULL;
@@ -2873,7 +2903,25 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
         }
     }
     const uint32_t slice = (cap && cap < ninsts) ? cap : ninsts;
-    const uint32_t ntlas = (ninsts + slice - 1u) / slice;
+    const uint32_t ntlas = 1u + (ninsts - 1u) / slice;
+    const char *stream_env = getenv("LRT_VK_STREAM_TLAS");
+    const int stream = wide && ntlas > 1u && (force_stream || (stream_env && stream_env[0] == '1'));
+    if (stream) {
+        if ((uint64_t)ninsts * sizeof(lrt_vk_instance) > SIZE_MAX) {
+            free(s->blas); free(s);
+            if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+            return NULL;
+        }
+        s->stream_insts = (lrt_vk_instance *)malloc((size_t)ninsts * sizeof(lrt_vk_instance));
+        if (!s->stream_insts) {
+            free(s->blas); free(s);
+            if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+            return NULL;
+        }
+        memcpy(s->stream_insts, insts, (size_t)ninsts * sizeof(lrt_vk_instance));
+        s->stream_ninsts = ninsts; s->stream_nprotos = nprotos;
+        s->stream_slice = slice; s->stream_current = 0;
+    }
 
     int ok = 0;
     int gpu_fail = 0;  /* a GPU build (not a host alloc) failed -> driver may be faulted */
@@ -2884,14 +2932,32 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
          * and faults the driver. */
         if (!build_protos_pooled(e, protos, nprotos, s)) { gpu_fail = 1; break; }
 
+        /* These immutable BLAS have completed their build/compaction submits.
+         * Traversal uses AS storage, not the original vertex/index inputs.
+         * Release those upload pools before allocating the TLAS slices; keeping
+         * both live needlessly adds the whole unique source geometry to VRAM. */
+        if (s->blas_input_pool) {
+            vk_subpool_free(e, s->blas_input_pool);
+            free(s->blas_input_pool);
+            s->blas_input_pool = NULL;
+        }
+        if (getenv("LRT_VK_AS_STATS")) {
+            uint64_t bytes = 0;
+            for (uint32_t b = 0; b < s->blas_store_pool->nblocks; ++b)
+                bytes += s->blas_store_pool->blocks[b].buf.size;
+            fprintf(stderr, "[lightrt-AS] BLAS complete: prototypes=%u storage=%llu bytes; TLAS instances=%u slices=%u\n",
+                    nprotos, (unsigned long long)bytes, ninsts, ntlas);
+        }
+
         s->tlas_base = (uint32_t *)calloc(ntlas, sizeof(uint32_t));
         if (!s->tlas_base) break;
-        if (ntlas > 1u) {
+        for (uint32_t k = 0; k < ntlas; ++k) s->tlas_base[k] = k * slice;
+        if (ntlas > 1u && !stream) {
             s->extra_tlas = (vk_accel *)calloc(ntlas - 1u, sizeof(vk_accel));
             if (!s->extra_tlas) break;
         }
         int slices_ok = 1;
-        for (uint32_t k = 0; k < ntlas; k++) {
+        for (uint32_t k = 0; k < (stream ? 1u : ntlas); k++) {
             const uint32_t off = k * slice;
             const uint32_t count = (off + slice <= ninsts) ? slice : (ninsts - off);
             s->tlas_base[k] = off;
@@ -2900,6 +2966,10 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
                 slices_ok = 0;
                 break;
             }
+            if (getenv("LRT_VK_AS_STATS"))
+                fprintf(stderr, "[lightrt-AS] TLAS %u/%u complete: instances=%u storage=%llu bytes\n",
+                        k + 1u, ntlas, count,
+                        (unsigned long long)rtx_scene_tlas(s, k)->storage.size);
         }
         if (!slices_ok) { gpu_fail = 1; break; }
         s->ntlas = ntlas;
@@ -2929,6 +2999,7 @@ static lrt_vk_rtx_scene *rtx_build_instanced_core(
             free(s->blas_store_pool);
         }
         free(s->extra_tlas);
+        free(s->stream_insts);
         free(s->tlas_base);
         free(s->blas);
         free(s);
@@ -2945,7 +3016,7 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced(
     const lrt_vk_instance *insts, uint32_t ninsts, uint32_t *out_tri_stride,
     lrt_result *err) {
     return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
-                                    /*wide=*/0, /*max_per_tlas=*/0, out_tri_stride,
+                                    /*wide=*/0, /*max_per_tlas=*/0, 0, out_tri_stride,
                                     err);
 }
 
@@ -2953,7 +3024,7 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_wide(
     lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
     const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
     return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
-                                    /*wide=*/1, /*max_per_tlas=*/0, NULL, err);
+                                    /*wide=*/1, /*max_per_tlas=*/0, 0, NULL, err);
 }
 
 lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_multi(
@@ -2961,7 +3032,14 @@ lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_multi(
     const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
     return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
                                     /*wide=*/1, /*max_per_tlas=*/LRT_VK_TLAS_SLICE,
-                                    NULL, err);
+                                    0, NULL, err);
+}
+
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_streamed(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err) {
+    return rtx_build_instanced_core(e, protos, nprotos, insts, ninsts,
+                                    1, 1000000u, 1, NULL, err);
 }
 
 /* Grow the device-local + staging trace buffers to hold at least n rays. */
@@ -3098,11 +3176,29 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                           rays, n, out, err);
 }
 
+static int rtx_prepare_stream_slice(lrt_vk_engine *e, lrt_vk_rtx_scene *s, uint32_t k) {
+    if (!s->stream_insts || s->stream_current == k) return 1;
+    vk_accel_destroy(e, &s->tlas);
+    s->stream_current = UINT32_MAX;
+    const uint32_t off = s->tlas_base[k];
+    const uint32_t remaining = s->stream_ninsts - off;
+    const uint32_t count = remaining < s->stream_slice ? remaining : s->stream_slice;
+    if (!build_tlas_slice(e, s, s->stream_nprotos, s->stream_insts, off, count, &s->tlas))
+        return 0;
+    s->stream_current = k;
+    return 1;
+}
+
 int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
                                 const lrt_ray *rays, uint32_t n, lrt_hit_wide *out,
                                 lrt_result *err) {
-    if (!s || s->hit_words != 5u) {  /* not built wide */
+    if (!e || !s || s->hit_words != 5u || (n && (!rays || !out))) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    if (!n) { if (err) *err = LRT_RESULT_OK; return 0; }
+    if (!rtx_prepare_stream_slice(e, s, 0)) {
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
         return -1;
     }
     vk_pipeline *pipe = rtx_get_pipeline_wide(e);
@@ -3123,8 +3219,13 @@ int lrt_vk_rtx_scene_trace_wide(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
         return -1;
     }
     for (uint32_t k = 1; k < s->ntlas; k++) {
-        if (rtx_trace_impl(e, s, pipe, s->extra_tlas[k - 1u].as, rays, n, tmp, err) <
-            0) {
+        if (!rtx_prepare_stream_slice(e, s, k)) {
+            if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+            free(tmp); return -1;
+        }
+        const VkAccelerationStructureKHR tlas = s->stream_insts
+            ? s->tlas.as : s->extra_tlas[k - 1u].as;
+        if (rtx_trace_impl(e, s, pipe, tlas, rays, n, tmp, err) < 0) {
             free(tmp);
             return -1;
         }
@@ -3152,13 +3253,13 @@ typedef struct material_path_push {
 } material_path_push;
 
 static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e) {
-    VkDescriptorType types[10];
+    VkDescriptorType types[11];
     uint32_t i;
     if (e->material_path_pipe.valid) return &e->material_path_pipe;
     types[0] = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 1; i < 10; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    for (i = 1; i < 11; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     if (!vk_pipeline_build(e, trace_materialx_path_spv,
-                           sizeof(trace_materialx_path_spv), 10, types,
+                           sizeof(trace_materialx_path_spv), 11, types,
                            (uint32_t)sizeof(material_path_push), NULL,
                            &e->material_path_pipe)) return NULL;
     return &e->material_path_pipe;
@@ -3172,15 +3273,15 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     VkDescriptorPoolSize ps[2];
     VkDescriptorPoolCreateInfo pci;
     VkDescriptorSetAllocateInfo ai;
-    VkDescriptorBufferInfo bi[9];
-    VkWriteDescriptorSet w[10];
+    VkDescriptorBufferInfo bi[10];
+    VkWriteDescriptorSet w[11];
     VkWriteDescriptorSetAccelerationStructureKHR asw;
     uint32_t i;
     memset(ps, 0, sizeof(ps));
     ps[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     ps[0].descriptorCount = 1;
     ps[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps[1].descriptorCount = 9;
+    ps[1].descriptorCount = 10;
     memset(&pci, 0, sizeof(pci));
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 1; pci.poolSizeCount = 2; pci.pPoolSizes = ps;
@@ -3199,21 +3300,21 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[0].pNext = &asw;
     w[0].dstSet = *out_set; w[0].dstBinding = 0; w[0].descriptorCount = 1;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 0; i < 9; ++i) {
+    for (i = 0; i < 10; ++i) {
         bi[i].buffer = buffers[i].buf; bi[i].offset = 0; bi[i].range = VK_WHOLE_SIZE;
         w[i+1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i+1].dstSet = *out_set; w[i+1].dstBinding = i+1;
         w[i+1].descriptorCount = 1; w[i+1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[i+1].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(e->device, 10, w, 0, NULL);
+    vkUpdateDescriptorSets(e->device, 11, w, 0, NULL);
     return 1;
 }
 
 int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *d, float *out_rgba, lrt_result *err) {
-    vk_buffer b[9]; size_t sizes[9]; const void *data[9];
+    vk_buffer b[10]; size_t sizes[10]; const void *data[10];
     VkDescriptorPool pool = VK_NULL_HANDLE; VkDescriptorSet set;
     material_path_push pc; vk_pipeline *pipe; uint32_t i, pixels; int ok = 0;
     const char *stage = "validate";
@@ -3229,7 +3330,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
         if (err) *err = LRT_RESULT_NOT_BUILT; return -1;
     }
     pixels = d->width * d->height; memset(b, 0, sizeof(b));
-    sizes[0]=(size_t)d->nverts*8u*sizeof(float); data[0]=d->vertices;
+    sizes[0]=(size_t)d->nverts*(d->vertex_stride_floats?d->vertex_stride_floats:8u)*sizeof(float); data[0]=d->vertices;
     sizes[1]=(size_t)d->ntris*3u*sizeof(uint32_t); data[1]=d->indices;
     sizes[2]=(size_t)d->ntris*sizeof(uint32_t); data[2]=d->triangle_materials;
     sizes[3]=(size_t)d->nmaterials*d->material_stride_floats*sizeof(float); data[3]=d->materials;
@@ -3244,7 +3345,14 @@ int lrt_vk_rtx_scene_render_materialx_path(
     sizes[7]=(size_t)d->nlights*LRT_VK_MATERIAL_PATH_LIGHT_FLOATS*sizeof(float);
     data[7]=d->lights;
     sizes[8]=(size_t)pixels*4u*sizeof(float); data[8]=NULL;
-    stage = "buffers"; for (i=0;i<9;++i) {
+    /* Per-triangle Ptex reference; a one-entry 0xFFFFFFFF dummy when absent. */
+    {
+        static const uint32_t no_ptex = 0xFFFFFFFFu;
+        const int have = d->ptex_tri && d->nptex_tri;
+        sizes[9]=have?(size_t)d->nptex_tri*sizeof(uint32_t):sizeof(no_ptex);
+        data[9]=have?(const void *)d->ptex_tri:(const void *)&no_ptex;
+    }
+    stage = "buffers"; for (i=0;i<10;++i) {
         size_t n=sizes[i]?sizes[i]:4u;
         if(!vk_buffer_create(e,n,&b[i])) goto done;
         if(sizes[i]&&data[i]&&!vk_buffer_write(e,&b[i],data[i],sizes[i])) goto done;
@@ -3255,6 +3363,8 @@ int lrt_vk_rtx_scene_render_materialx_path(
     memcpy(pc.camera,d->camera,3u*sizeof(float)); memcpy(pc.clear_color,d->clear_color,3u*sizeof(float));
     pc.clear_color[3]=d->exposure; pc.frame[0]=d->width; pc.frame[1]=d->height;
     pc.context[0]=d->scene_time; pc.context[1]=d->scene_frame;
+    pc.context[3]=(float)d->debug_aov;
+    pc.context[2]=(float)d->display_transform;
     pc.frame[2]=d->samples?d->samples:1u; pc.frame[3]=d->max_depth?d->max_depth:1u;
     pc.path[0]=d->rr_depth; pc.path[1]=d->seed; pc.path[2]=d->nmaterials; pc.path[3]=d->nlights;
     stage = "dispatch";
@@ -3264,7 +3374,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
 done:
     if (!ok && e->err[0] == '\0') vk_set_err(e, stage);
     if(pool!=VK_NULL_HANDLE&&!e->device_lost)vkDestroyDescriptorPool(e->device,pool,NULL);
-    for(i=0;i<9;++i)vk_buffer_destroy(e,&b[i]);
+    for(i=0;i<10;++i)vk_buffer_destroy(e,&b[i]);
     if(err)*err=ok?LRT_RESULT_OK:LRT_RESULT_OUT_OF_MEMORY;
     return ok?0:-1;
 }
@@ -3286,6 +3396,7 @@ void lrt_vk_rtx_scene_free(lrt_vk_engine *e, lrt_vk_rtx_scene *s) {
             vk_accel_destroy(e, &s->extra_tlas[k - 1u]);
         free(s->extra_tlas);
     }
+    free(s->stream_insts);
     free(s->tlas_base);
     if (s->blas) {
         /* Destroys only the AS handles; the underlying storage is pool-owned. */

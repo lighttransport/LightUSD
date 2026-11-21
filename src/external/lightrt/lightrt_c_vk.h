@@ -240,6 +240,9 @@ int lrt_vk_rtx_scene_trace(lrt_vk_engine *e, lrt_vk_rtx_scene *s,
 typedef struct lrt_vk_material_path_desc {
     const float *vertices;
     uint32_t nverts;
+    /* Floats per vertex in `vertices`: pos3, nrm3, uv2 and, when the stride is
+     * 10, a second uv set (uv2). 0 keeps the historical 8-float layout. */
+    uint32_t vertex_stride_floats;
     const uint32_t *indices;
     const uint32_t *triangle_materials;
     uint32_t ntris;
@@ -254,6 +257,13 @@ typedef struct lrt_vk_material_path_desc {
     uint32_t ntextures;
     const float *lights;
     uint32_t nlights;
+    /* Optional per-triangle Ptex reference, one uint32 per triangle in triangle
+     * order: bits 31..2 face id, bit 1 winding swapped, bit 0 fan triangle;
+     * 0xFFFFFFFF = none. NULL / 0 = no Ptex; the shader then sees a one-entry
+     * dummy of 0xFFFFFFFF. Textures flagged Ptex in texture_descs (reserved ints:
+     * rect-table texel offset + 1, face count) sample their atlas through this. */
+    const uint32_t *ptex_tri;
+    uint32_t nptex_tri;
     float inv_view_proj[16];
     float camera[3];
     float clear_color[3];
@@ -262,6 +272,12 @@ typedef struct lrt_vk_material_path_desc {
     float scene_frame;
     uint32_t width, height;
     uint32_t samples, max_depth, rr_depth, seed;
+    /* Diagnostic AOV written instead of shaded radiance (0 = colour):
+     * 1 = material id, 2 = first texture id of the material, 3 = UV. */
+    uint32_t debug_aov;
+    /* Display transform: 0 = filmic beauty curve, 1 = plain sRGB encode
+     * (usdrecord's colorCorrectionMode=sRGB). */
+    uint32_t display_transform;
 } lrt_vk_material_path_desc;
 
 /* Packed light ABI consumed by trace_materialx_path.comp. */
@@ -271,6 +287,15 @@ int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *desc, float *out_rgba,
     lrt_result *err);
+
+/* Offline, bounded GPU residency: share every prototype BLAS, retain an owned
+ * host copy of placements, and build/trace one <=1M-instance TLAS at a time.
+ * All placements participate in nearest-hit merging. Repeated wide traces are
+ * supported, rebuilding the slices each time. LRT_VK_TLAS_SLICE can override the
+ * slice size for diagnostics. Use trace_wide even for a small scene. */
+lrt_vk_rtx_scene *lrt_vk_rtx_scene_build_instanced_streamed(
+    lrt_vk_engine *e, const lrt_vk_proto *protos, uint32_t nprotos,
+    const lrt_vk_instance *insts, uint32_t ninsts, lrt_result *err);
 
 /* Wide-id hit: like lrt_hit but the single 32-bit prim_id is replaced by the two
  * fields the wide trace stores separately. `inst` is the TLAS instance (placement)

@@ -347,6 +347,11 @@ typedef struct lightusd_load_options {
    * composition workers inherit the context. Requires struct_size to cover
    * this field. */
   struct lightusd_asset_resolver* resolver;
+  /* Optional override for USDC crate structural-table caps (tokens, strings,
+   * fields, fieldset indices, specs, paths). Zero keeps the secure defaults;
+   * set a larger value for large trusted datasets. Requires struct_size to
+   * cover this field. */
+  uint64_t max_crate_elements;
 } lightusd_load_options;
 
 LIGHTUSD_API void lightusd_load_options_init(lightusd_load_options* opts);
@@ -433,6 +438,12 @@ typedef struct lightusd_asset_resolver lightusd_asset_resolver;
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_create(
     lightusd_asset_resolver** out);
 LIGHTUSD_API void lightusd_asset_resolver_destroy(lightusd_asset_resolver* resolver);
+/* Enable/disable native filesystem fallback, existence probes and timestamps.
+ * Memory assets and application readers remain available. Change configuration
+ * only between loads, after resolver users have joined. A build without the
+ * native resolver backend rejects requests to enable it. */
+LIGHTUSD_API lightusd_status lightusd_asset_resolver_set_filesystem_access(
+    lightusd_asset_resolver* resolver, uint8_t enabled);
 LIGHTUSD_API lightusd_status lightusd_asset_resolver_register_memory(
     lightusd_asset_resolver* resolver, const char* identifier,
     const uint8_t* data, size_t size);
@@ -648,7 +659,8 @@ LIGHTUSD_API double lightusd_stage_end_timecode(const lightusd_stage* stage);
  * Prim access & traversal
  * ============================================================ */
 
-/* Borrowed, generation-checked prim handle. No allocation, no destroy.
+/* Borrowed, generation-checked prim handle. No destroy. Instance-proxy
+ * identity is interned on demand by the owner.
  * The owner must remain alive. Structural mutation invalidates the handle;
  * access then returns invalid/empty or LIGHTUSD_ERR_INVALID_ARG.
  * Never touch the members directly. */
@@ -681,6 +693,13 @@ LIGHTUSD_API uint64_t lightusd_prim_root_layer_resource_id(lightusd_prim p);
 /* 0 = def, 1 = over, 2 = class */
 LIGHTUSD_API uint8_t lightusd_prim_specifier(lightusd_prim p);
 LIGHTUSD_API int lightusd_prim_is_active(lightusd_prim p);
+/* Effective default traversal predicate: active, loaded, defined and
+ * non-abstract, including ancestor state. Instance proxies retain logical paths. */
+LIGHTUSD_API int lightusd_prim_matches_default_predicate(lightusd_prim p);
+/* Local flags only, for a root-first traversal that prunes rejected ancestors.
+ * Equivalent to the effective predicate when all ancestors already matched;
+ * avoids repeatedly walking the same ancestry for every descendant. */
+LIGHTUSD_API int lightusd_prim_matches_local_default_predicate(lightusd_prim p);
 /* Whether this prim has authored payload arcs in the current stage view.
  * Resolved composition may consume these arcs. Invalid handles return zero. */
 LIGHTUSD_API int lightusd_prim_has_payload(lightusd_prim p);

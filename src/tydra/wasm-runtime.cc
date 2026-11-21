@@ -1,5 +1,6 @@
 #ifdef LIGHTUSD_WITH_WAMR
 
+#include "core/native-io.hh"
 #include "wasm-runtime.hh"
 
 #include <fstream>
@@ -162,6 +163,8 @@ WasmExecutionResult WasmRuntime::loadAndExecuteWasmFromFile(
     const std::string& wasm_file_path,
     const std::string& function_name,
     const std::vector<uint8_t>& input_data) {
+  if (!::lightusd::NativeIOEnabled()) { WasmExecutionResult r; r.error_message = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
 
   WasmExecutionResult result;
 

@@ -10,7 +10,7 @@
 #include "io-util.hh"
 #include "value-pprint.hh"
 #include "str-util.hh"
-#include "logger.hh"
+#include "core/logger.hh"
 #include "tiny-format.hh"
 
 namespace lightusd {

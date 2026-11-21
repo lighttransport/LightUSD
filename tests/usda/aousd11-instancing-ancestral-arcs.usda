@@ -1,0 +1,14 @@
+#usda 1.0
+# AOUSD Core 1.1.0 "Instancing" (ancestral-arcs); verified identical to OpenUSD 26.11 flatten.
+
+def "LeftGroup" (
+    references = @./aousd11-instancing-ancestral-arcs-group_1.usda@
+)
+{
+}
+
+def "RightGroup" (
+    references = @./aousd11-instancing-ancestral-arcs-group_2.usda@
+)
+{
+}

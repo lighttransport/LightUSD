@@ -1,0 +1,1095 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
+//
+// LightUSD Next - batched composition (see batched-compose.hh).
+
+#include "batched-compose.hh"
+#include "../memory-trim.hh"
+
+#include "cache-internal.hh"
+#include "../composition/composition.hh"
+#include "../stage/stage.hh"
+
+#include <algorithm>
+#include <chrono>
+#include <string_view>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#endif
+
+namespace lightusd {
+namespace next {
+namespace pcp {
+
+// Cache internals the batch driver needs (Cache is otherwise opaque).
+struct BatchedComposeAccess {
+  static Cache::Impl *impl(Cache &cache) { return cache.impl_.get(); }
+
+  // Only the one-shot file-flatten driver uses this: public composers retain
+  // their registry for dependency queries and possible repeated Plan calls.
+  static void ReleaseKeptSources(BatchedComposer &composer);
+  static void EnablePreparedPlan(BatchedComposer& composer);
+  static std::vector<std::string> ClearedPreparedPrototypes(BatchedComposer& composer);
+
+  // Cache::Open over a caller-owned registry shared by every batch, so each
+  // layer is parsed once for the whole build.
+  static expected<Cache, std::string> Open(AssetResolver &resolver,
+                                           std::shared_ptr<Layer> root_layer,
+                                           const std::string &root_identifier,
+                                           const CompositionOptions &options,
+                                           LayerRegistry *registry) {
+    Cache cache;
+    Cache::Impl *im = cache.impl_.get();
+    im->reg_ = registry;
+    im->resolver = &resolver;
+    im->options = options;
+    if (im->options.strict_aousd_conformance)
+      im->options.usda_parse_options.strict_aousd_conformance = true;
+    if (im->options.flatten_instances &&
+        im->options.instance_flatten_mode == InstanceFlattenMode::Native)
+      im->options.instance_flatten_mode = InstanceFlattenMode::Holder;
+    im->root_layer = root_layer;
+    im->root_identifier = root_identifier;
+    std::string warn, err;
+    if (im->InternLayerStack(root_layer, root_identifier, &warn, &err) ==
+        Cache::Impl::kInvalidStack) {
+      return make_unexpected(err.empty()
+                                 ? std::string("batched compose: failed to "
+                                               "build root layer stack")
+                                 : err);
+    }
+    return cache;
+  }
+};
+
+namespace {
+
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// Runs a pass's per-batch callback on its own thread, one batch behind the
+// composition: batch b + 1 composes while batch b is consumed. A batch is
+// handed over only once the previous one was consumed and freed, so at most
+// two batches are alive.
+class BatchConsumer {
+ public:
+  explicit BatchConsumer(const std::function<bool(ComposedBatch &)> &fn)
+      : fn_(fn), thread_([this] { Loop(); }) {}
+  ~BatchConsumer() { Finish(); }
+
+  // False once a callback has failed (nothing more is consumed).
+  bool Push(ComposedBatch &&batch) {
+    std::unique_lock<std::mutex> lk(mu_);
+    cv_.wait(lk, [this] { return !has_ || failed_; });
+    if (failed_) return false;
+    pending_ = std::move(batch);
+    has_ = true;
+    cv_.notify_all();
+    return true;
+  }
+  // Waits for the last batch; true when every callback succeeded.
+  bool Finish() {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      done_ = true;
+    }
+    cv_.notify_all();
+    if (thread_.joinable()) thread_.join();
+    return !failed_;
+  }
+  double busy_ms() const { return busy_ms_; }
+
+ private:
+  void Loop() {
+    for (;;) {
+      {
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(lk, [this] { return has_ || done_; });
+        if (!has_) return;
+      }
+      const auto t0 = std::chrono::steady_clock::now();
+      const bool ok = fn_(pending_);
+      pending_ = ComposedBatch();
+      busy_ms_ += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - t0).count();
+      {
+        std::lock_guard<std::mutex> lk(mu_);
+        has_ = false;
+        if (!ok) failed_ = true;
+      }
+      cv_.notify_all();
+    }
+  }
+
+  std::function<bool(ComposedBatch &)> fn_;
+  std::mutex mu_;
+  std::condition_variable cv_;
+  ComposedBatch pending_;
+  bool has_ = false;
+  bool done_ = false;
+  bool failed_ = false;
+  double busy_ms_ = 0;
+  std::thread thread_;
+};
+#endif
+
+std::string_view ParentPathView(std::string_view path) {
+  const size_t slash = path.rfind('/');
+  if (slash == std::string_view::npos || slash == 0) return "/";
+  return path.substr(0, slash);
+}
+
+// Pass-1 batches kept for writing are merged into groups of about this many
+// prims (see Impl::kept).
+constexpr size_t kKeptGroupPrims = 65536;
+
+// Concatenates consecutive batches into larger ones, in the order and with
+// the links one whole compose gives: a spine prim repeated by a later batch
+// of the same group is kept once and gains that batch's children. A spine
+// prim an earlier group produced stays a repeated prim. Each group keeps its
+// batches' spine flags and full child lists.
+class BatchMerger {
+ public:
+  void set_holder_links(bool enabled) { holder_links_ = enabled; }
+
+  size_t prims() const { return out_.layer ? out_.layer->prims().size() : 0; }
+
+  void Add(ComposedBatch &batch) {
+    if (!batch.layer) return;
+    Layer &src = *batch.layer;
+    if (!out_.layer) {
+      out_.layer.reset(new Layer());
+      out_.layer->meta() = src.meta();
+    }
+    Layer &merged = *out_.layer;
+    const size_t n = src.prims().size();
+    std::vector<uint32_t> parent(n, UINT32_MAX);
+    for (size_t i = 0; i < n; ++i)
+      for (uint32_t c : src.prims()[i].child_indices()) parent[c] = uint32_t(i);
+    std::vector<uint32_t> map(n, UINT32_MAX);
+    for (size_t i = 0; i < n; ++i) {
+      PrimSpec &p = *src.prim(uint32_t(i));
+      const bool spine = batch.spine[i] != 0;
+      if (batch.repeated[i]) {
+        auto it = spine_index_.find(p.path().str());
+        if (it != spine_index_.end()) {
+          map[i] = it->second;
+          continue;
+        }
+      }
+      if (spine) spine_index_.emplace(p.path().str(), uint32_t(merged.prims().size()));
+      p.clear_child_indices();
+      const uint32_t idx = merged.add_prim(std::move(p));
+      map[i] = idx;
+      if (parent[i] == UINT32_MAX) merged.add_root(idx);
+      else merged.set_parent(idx, map[parent[i]]);
+      out_.spine.push_back(spine ? 1 : 0);
+      out_.repeated.push_back(batch.repeated[i]);
+    }
+    for (auto &kv : batch.full_children)
+      out_.full_children.emplace(kv.first, std::move(kv.second));
+    batch = ComposedBatch();
+  }
+
+  // The current group, finalized; without a layer when nothing was added.
+  ComposedBatch Take() {
+    if (out_.layer) {
+      out_.layer->set_lazy_path_index(true);
+      out_.layer->set_instance_holder_links(holder_links_);
+      out_.layer->finalize();
+    }
+    spine_index_.clear();
+    ComposedBatch group = std::move(out_);
+    out_ = ComposedBatch();
+    return group;
+  }
+
+ private:
+  ComposedBatch out_;
+  std::unordered_map<std::string, uint32_t> spine_index_;
+  bool holder_links_ = false;
+};
+
+}  // namespace
+
+struct BatchedComposer::Impl {
+  AssetResolver *resolver = nullptr;
+  CompositionOptions options;
+  BatchedComposeOptions batch_options;
+  std::string root_identifier;
+  std::shared_ptr<Layer> root;
+  LayerRegistry registry;
+  bool whole = false;  // no batching: the stage composes in one piece
+
+  // Frontier roots in namespace pre-order, and every expanded prim above them.
+  std::vector<std::string> frontier;
+  std::unordered_set<std::string> spine;
+  // Nonzero only when discovery reached all leaves without an opaque
+  // instance subtree. Incomplete discovery supplies no small-stage guess.
+  size_t discovered_prims = 0;
+  // Batch b covers frontier[bounds[b], bounds[b + 1]); pass 1 extends it as
+  // it goes. Composed prims under each frontier root (pass 1).
+  std::vector<size_t> bounds;
+  std::vector<size_t> root_prims;
+  // Pass 1 records, for each root over the batch target, its composed
+  // children and their subtree sizes (recursively for heavy expandable
+  // children); pass 2 splits those roots into their children.
+  struct RefineChild {
+    std::string name;
+    size_t prims = 0;
+  };
+  std::unordered_map<std::string, std::vector<RefineChild>> refine;
+  void RefineFrontier();
+  // Pass 2 root -> its pass-1 frontier index (heavy roots split in pass 2).
+  std::vector<size_t> root_origin;
+  // Layer (registry id) -> the last pass-1 frontier root whose batch used it.
+  // Pass 2 drops a layer from the registry once the batches are past it (a
+  // later use reloads it).
+  std::unordered_map<std::string, size_t> layer_last_root;
+  size_t layers_released = 0;
+  size_t snapshot_layers_evicted = 0;
+  // Per-pass time split (enable_timing): cache open, BuildStage, batch
+  // bookkeeping, cache teardown, the caller's callback.
+  double t_open = 0, t_build = 0, t_post = 0, t_drop = 0, t_callback = 0;
+
+  // Cross-batch instancing state.
+  bool planned = false;
+  bool prepared_plan = false;
+  std::unordered_set<std::string> holders_with_peers;
+  // Pass 1 keeps its batches, merged into groups of kKeptGroupPrims, while
+  // all of them fit one pass-2 batch. If the whole plan does, Run() writes
+  // these groups instead of composing the stage again. `lone_protos` are the
+  // prototypes whose instance groups had no other member in their batch,
+  // fixed up once all peers are known.
+  std::vector<ComposedBatch> kept;
+  std::vector<std::string> lone_protos;
+  void FixKeptHolders();
+
+  // Every batch re-composes its ancestors, and both passes compose every
+  // prim: report each composition diagnostic line once.
+  std::unordered_set<std::string> reported;
+  void Report(const std::string &lines, std::string *out);
+
+  bool Discover(std::string *warn, std::string *err);
+  bool ComposeBatch(size_t b, std::vector<std::pair<std::string, std::string>> *protos,
+                    std::unordered_set<std::string> *proto_keys,
+                    std::unordered_set<std::string> *peers, ComposedBatch *out,
+                    std::unordered_set<std::string> *emitted_spine,
+                    const std::unordered_set<std::string> *releasable_layers,
+                    std::string *warn, std::string *err);
+  bool Pass(bool plan, const std::function<bool(ComposedBatch &)> &on_batch,
+            std::string *warn, std::string *err);
+};
+
+void BatchedComposeAccess::ReleaseKeptSources(BatchedComposer &composer) {
+  BatchedComposer::Impl &d = *composer.impl_;
+  if (!d.planned || d.whole || (!d.prepared_plan && d.kept.empty())) return;
+  // Pass has joined the consumer and confirmed the complete plan is retained.
+  // Run will consume only owning composed groups, never a source layer. Free
+  // registry ownership before the writer allocates its initial output state.
+  // Root ownership and array/imported-resource owners in the groups survive.
+  const std::vector<std::string> ids = d.registry.identifiers();
+  if (d.prepared_plan) d.registry.Clear();
+  else for (const std::string &id : ids) d.registry.Drop(id);
+  if (d.options.enable_timing)
+    LIGHTUSD_LOG_I("[next_batched] kept_registry_layers_dropped=" +
+                   std::to_string(ids.size()));
+}
+
+bool BatchedComposer::Impl::Discover(std::string *warn, std::string *err) {
+  auto opened = BatchedComposeAccess::Open(*resolver, root, root_identifier,
+                                           options, &registry);
+  if (!opened) {
+    if (err) *err += opened.error() + "\n";
+    return false;
+  }
+  Cache cache = std::move(*opened);
+  Cache::Impl *im = BatchedComposeAccess::impl(cache);
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // The walk below loads each arc target on first touch, serially: load
+  // them on background threads meanwhile (into the shared registry, so the
+  // batches find them too). Stopped, not drained, when the walk ends: the
+  // rest load on demand as before, and pass 1 drops whatever no batch read.
+  // Composition never reads the prefetch itself, so no result changes.
+  Cache::Impl::ArcLayerPrefetch prefetch;
+  int nt = options.num_threads;
+  if (nt < 0) nt = static_cast<int>(std::thread::hardware_concurrency());
+  nt = std::min(nt, kMaxExecutionThreads);
+  if (nt > 1) im->StartArcLayerPrefetch(&prefetch, nt);
+#endif
+  // Expand whole levels while the next one fits max_frontier: a leaf stays
+  // a root, so the deep branches (where the prims are) keep splitting. Only an
+  // active, non-instanceable prim is expanded (an instance's subtree depends on
+  // which member claims the prototype, which is the walk's decision).
+  std::vector<std::string> level;
+  for (const std::string &name : im->ComposeRootNames())
+    level.push_back("/" + name);
+  spine.insert("/");
+  std::vector<uint8_t> done(level.size(), 0);  // leaf / not expandable
+  bool complete = false;
+  bool opaque_instance = false;
+  for (uint32_t d = 1; d < options.max_namespace_depth; ++d) {
+    std::vector<std::string> next;
+    std::vector<uint8_t> next_done;
+    std::vector<std::string> expanded;
+    bool overflow = false;
+    for (size_t i = 0; i < level.size(); ++i) {
+      std::vector<std::string> children;
+      if (!done[i]) {
+        const std::vector<Src> &srcs =
+            im->SourcesForPath(Path(level[i]), warn, err);
+        if (im->ComposedActive(srcs)) {
+          if (im->IsInstanceableSources(srcs)) opaque_instance = true;
+          else children = im->ComposeChildNames(srcs);
+        }
+      }
+      if (children.empty()) {
+        next.push_back(level[i]);
+        next_done.push_back(1);
+        continue;
+      }
+      // Every remaining root contributes at least one entry (even a leaf).
+      // Reject before joining child paths or resolving later roots' arcs.
+      // Subtract each term separately so a near-SIZE_MAX cap cannot wrap.
+      const size_t remaining = level.size() - i - 1;
+      if (next.size() > batch_options.max_frontier ||
+          children.size() > batch_options.max_frontier - next.size() ||
+          remaining > batch_options.max_frontier - next.size() - children.size()) {
+        overflow = true;
+        break;
+      }
+      expanded.push_back(level[i]);
+      for (const std::string &cn : children) {
+        next.push_back(level[i] + "/" + cn);
+        next_done.push_back(0);
+      }
+    }
+    if (overflow) break;
+    if (expanded.empty()) {
+      complete = true;
+      break;
+    }
+    for (std::string &p : expanded) spine.insert(std::move(p));
+    level = std::move(next);
+    done = std::move(next_done);
+  }
+  frontier = std::move(level);
+  // Every retained path is either an expanded ancestor or a frontier leaf.
+  // The pseudo-root is in spine but is not a composed prim. Callback-driven
+  // policies/resolvers can return different contents on the next build, so
+  // retain the conservative ramp for them as well as for incomplete trees.
+  discovered_prims = 0;
+  if (complete && !opaque_instance && !resolver->RequiresResolverReads() &&
+      !options.payload_policy && !options.payload_policy_with_prim &&
+      !options.payload_load_callback && !spine.empty() &&
+      frontier.size() <= SIZE_MAX - (spine.size() - 1)) {
+    discovered_prims = spine.size() - 1 + frontier.size();
+  }
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  im->StopArcLayerPrefetch(&prefetch, warn);
+#endif
+  return true;
+}
+
+bool BatchedComposer::Impl::ComposeBatch(
+    size_t b, std::vector<std::pair<std::string, std::string>> *protos,
+    std::unordered_set<std::string> *proto_keys,
+    std::unordered_set<std::string> *peers, ComposedBatch *out,
+    std::unordered_set<std::string> *emitted_spine,
+    const std::unordered_set<std::string> *releasable_layers, std::string *warn,
+    std::string *err) {
+  using Clock = std::chrono::steady_clock;
+  auto since = [](Clock::time_point t) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - t).count();
+  };
+  auto t0 = Clock::now();
+  CompositionOptions build_options = options;
+  // The batch's Cache dies right after its BuildStage.
+  build_options.release_build_sources = true;
+  auto opened = BatchedComposeAccess::Open(*resolver, root, root_identifier,
+                                           build_options, &registry);
+  if (!opened) {
+    if (err) *err += opened.error() + "\n";
+    return false;
+  }
+  std::unique_ptr<Cache> cache(new Cache(std::move(*opened)));
+  Cache::Impl *im = BatchedComposeAccess::impl(*cache);
+
+  BatchScope scope;
+  for (size_t f = bounds[b]; f < bounds[b + 1]; ++f) {
+    scope.roots.insert(frontier[f]);
+    // These prefix views borrow the fixed frontier; the scope set constructs
+    // its own strings directly, avoiding an extra owning temporary per level.
+    for (std::string_view p = ParentPathView(frontier[f]);; p = ParentPathView(p)) {
+      if (!scope.spine.emplace(p).second || p == "/") break;
+    }
+  }
+  // The pass already owns the complete seed vector/key set. Lend those
+  // containers to this cache without duplicating every key/path per batch;
+  // restore them (including newly found prototypes) on every return path.
+  struct SeedState {
+    BatchScope& scope;
+    std::vector<std::pair<std::string, std::string>>& protos;
+    std::unordered_set<std::string>& keys;
+    SeedState(BatchScope& s,
+              std::vector<std::pair<std::string, std::string>>& p,
+              std::unordered_set<std::string>& k) : scope(s), protos(p), keys(k) {
+      scope.seeded_protos.swap(protos);
+      scope.seeded_keys.swap(keys);
+    }
+    SeedState(const SeedState&) = delete;
+    SeedState& operator=(const SeedState&) = delete;
+    ~SeedState() {
+      scope.seeded_protos.swap(protos);
+      scope.seeded_keys.swap(keys);
+    }
+  } seeds(scope, *protos, *proto_keys);
+  for (const auto &kp : scope.seeded_protos) {
+    scope.seeded_proto_paths.insert(kp.second);
+  }
+  if (planned) scope.holders_with_peers = &holders_with_peers;
+  // Pass 2: the layers pass 1 saw last in this batch's roots are released
+  // during its fill (the registry drops them after the batch).
+  scope.releasable_layers = releasable_layers;
+  im->batch_scope_ = &scope;
+
+  Stage stage;
+  std::string batch_warn, batch_err;
+  t_open += since(t0);
+  t0 = Clock::now();
+  const bool ok = cache->BuildStage(&stage, &batch_warn, &batch_err);
+  t_build += since(t0);
+  t0 = Clock::now();
+  im->batch_scope_ = nullptr;
+  Report(batch_warn, warn);
+  Report(batch_err, err);
+  if (!ok) return false;
+
+  // Prototypes this batch claimed seed the later batches; a group with a
+  // member other than its prototype is a Holder with peers.
+  for (const auto &kp : im->prototype_by_key) {
+    if (scope.seeded_keys.insert(kp.first).second)
+      scope.seeded_protos.emplace_back(kp.first, kp.second.str());
+  }
+  const bool plan_pass = !planned;
+  for (const auto &grp : im->instances_by_prototype) {
+    bool lone = true;
+    for (const PathStr &m : grp.second) {
+      if (m.str() != grp.first) {
+        peers->insert(grp.first);
+        lone = false;
+        break;
+      }
+    }
+    if (lone && plan_pass) lone_protos.push_back(grp.first);
+  }
+
+  out->index = b;
+  out->layer = stage.ReleaseRootLayer();
+  if (plan_pass) {
+    const size_t last = bounds[b + 1] - 1;
+    for (const LayerStack &st : im->layer_stacks) {
+      for (const std::string &id : st.layer_identifiers) {
+        size_t &l = layer_last_root[id];
+        l = std::max(l, last);
+      }
+    }
+  }
+  if (out->layer && plan_pass) {
+    const auto &prims = out->layer->prims();
+    const size_t n = prims.size();
+    std::unordered_map<std::string, size_t> root_at;
+    for (size_t f = bounds[b]; f < bounds[b + 1]; ++f) root_at[frontier[f]] = f;
+    // Subtree sizes (pre-order: children follow their parent).
+    std::vector<size_t> size(n, 1);
+    for (size_t i = n; i-- > 0;)
+      for (uint32_t c : prims[i].child_indices()) size[i] += size[c];
+    const size_t target = std::max<size_t>(1, batch_options.target_batch_prims);
+    // A heavy prim splits into its children when it can be a spine prim:
+    // it has children and is no instance (registered in no group).
+    auto expandable = [&](size_t i) {
+      return !prims[i].child_indices().empty() &&
+             im->prototype_of.find(prims[i].path().str()) == im->prototype_of.end();
+    };
+    for (size_t i = 0; i < n; ++i) {
+      const std::string &p = prims[i].path().str();
+      auto it = root_at.find(p);
+      if (it == root_at.end()) continue;
+      root_prims[it->second] = size[i];
+      std::vector<size_t> heavy;
+      if (size[i] > target && expandable(i)) heavy.push_back(i);
+      while (!heavy.empty()) {
+        const size_t h = heavy.back();
+        heavy.pop_back();
+        std::vector<RefineChild> &kids = refine[prims[h].path().str()];
+        for (uint32_t c : prims[h].child_indices()) {
+          kids.push_back({prims[c].name(), size[c]});
+          if (size[c] > target && expandable(c)) heavy.push_back(c);
+        }
+      }
+    }
+  }
+  out->full_children = std::move(scope.full_children);
+  const size_t n = out->layer ? out->layer->prims().size() : 0;
+  out->spine.assign(n, 0);
+  out->repeated.assign(n, 0);
+  for (size_t i = 0; i < n; ++i) {
+    const std::string &p = out->layer->prims()[i].path().str();
+    if (!scope.spine.count(p)) continue;
+    out->spine[i] = 1;
+    if (!emitted_spine->insert(p).second) out->repeated[i] = 1;
+  }
+  t_post += since(t0);
+  t0 = Clock::now();
+  cache.reset();
+  t_drop += since(t0);
+  return true;
+}
+
+bool BatchedComposer::Impl::Pass(
+    bool plan, const std::function<bool(ComposedBatch &)> &on_batch,
+    std::string *warn, std::string *err) {
+  std::vector<std::pair<std::string, std::string>> protos;
+  std::unordered_set<std::string> proto_keys;
+  std::unordered_set<std::string> peers;
+  std::unordered_set<std::string> emitted_spine;
+  const size_t target = std::max<size_t>(1, batch_options.target_batch_prims);
+  struct RootStat {
+    size_t roots = 0, prims = 0;
+  };
+  // Frontier strings do not move during pass 1. Borrow their parent prefixes
+  // instead of allocating a parent string for every sizing probe/update.
+  std::unordered_map<std::string_view, RootStat> by_parent;
+  std::unordered_map<size_t, RootStat> by_depth;
+  // Roots under not-yet-seen parents per pass-1 batch: starts small (cousins
+  // can differ by orders of magnitude) and doubles after each batch that
+  // filled under half the target, so a scene of many small subtrees is not
+  // planned in thousands of tiny batches. Only while everything planned so
+  // far fits one pass-2 batch: pass 1 records a layer's last use per batch,
+  // and coarse batches past that point would keep layers loaded longer in
+  // pass 2 (full45: +1 GiB at the peak).
+  constexpr size_t kNewParentRoots = 4;
+  size_t fresh_cap = kNewParentRoots;
+  if (plan) {
+    root_prims.assign(frontier.size(), 0);
+    if (batch_options.roots_per_batch == 0) {
+      // Only a completed discovery can justify skipping the cautious ramp;
+      // a small frontier alone says nothing about its hidden subtrees.
+      bounds = {0, discovered_prims && discovered_prims <= target
+                       ? frontier.size() : size_t(1)};
+    }
+  } else if (batch_options.roots_per_batch) {
+    root_origin.resize(frontier.size());
+    for (size_t f = 0; f < frontier.size(); ++f) root_origin[f] = f;
+  } else {
+    RefineFrontier();
+    // Cut at the target from pass 1's exact counts.
+    bounds = {0};
+    size_t sum = 0;
+    for (size_t f = 0; f < frontier.size(); ++f) {
+      if (sum && sum + root_prims[f] > target) {
+        bounds.push_back(f);
+        sum = 0;
+      }
+      sum += root_prims[f];
+    }
+    bounds.push_back(frontier.size());
+  }
+  const auto t0 = std::chrono::steady_clock::now();
+  size_t max_batch = 0, total = 0;
+  // The completed plan's keys stay alive and immutable throughout pass 2.
+  std::vector<std::pair<size_t, const std::string *>> by_last;
+  std::unordered_set<std::string> releasable;
+  size_t release_at = 0, eligible_at = 0;
+  if (!plan) {
+    by_last.reserve(layer_last_root.size());
+    for (const auto &kv : layer_last_root) by_last.emplace_back(kv.second, &kv.first);
+    std::sort(by_last.begin(), by_last.end(), [](const auto &a, const auto &b) {
+      return a.first < b.first || (a.first == b.first && *a.second < *b.second);
+    });
+  }
+  // Pass 1 merges its batches (after the callback) until their prims pass
+  // the target, on the callback's thread: only that thread touches `merger`
+  // and `kept`. Each WriteBatch fills and drains the writer's chunk pipeline
+  // (and one under 8 K prims encodes serially), so pass 1's small batches are
+  // written as larger groups; a group is freed once written (Island: one
+  // whole-plan group peaks 0.17 GiB higher).
+  bool keeping = plan && !prepared_plan && batch_options.roots_per_batch == 0;
+  size_t kept_prims = 0;
+  std::unique_ptr<BatchMerger> merger;
+  kept.clear();
+  lone_protos.clear();
+  std::function<bool(ComposedBatch &)> fn = on_batch;
+  if (keeping) {
+    merger.reset(new BatchMerger());
+    merger->set_holder_links(options.instance_flatten_mode ==
+                             InstanceFlattenMode::Holder);
+    fn = [&](ComposedBatch &batch) {
+      if (on_batch && !on_batch(batch)) return false;
+      if (!keeping) return true;
+      kept_prims += batch.layer ? batch.layer->prims().size() : 0;
+      if (kept_prims > target) {
+        keeping = false;
+        merger.reset();
+      } else {
+        merger->Add(batch);
+        if (merger->prims() >= kKeptGroupPrims) kept.push_back(merger->Take());
+      }
+      return true;
+    };
+  }
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  // The callback (the writer) overlaps the next batch's composition.
+  std::unique_ptr<BatchConsumer> consumer;
+  if (fn && batch_options.pipeline && options.num_threads != 1)
+    consumer.reset(new BatchConsumer(fn));
+#endif
+  for (size_t b = 0; b + 1 < bounds.size(); ++b) {
+    // Without immutable source snapshots, pass 1 cannot infer final use from
+    // roots seen so far. Later roots may back-reference any earlier layer.
+    const bool release = !plan && !root_origin.empty();
+    if (release) {
+      const size_t next = bounds[b + 1] < frontier.size()
+                              ? root_origin[bounds[b + 1]] : SIZE_MAX;
+      // Namespace order makes this cutoff nondecreasing, including refined
+      // roots with the same origin. Retain older eligible ids too: a layer
+      // reloaded after its recorded last use must still be releasable.
+      while (eligible_at < by_last.size() && by_last[eligible_at].first < next) {
+        releasable.insert(*by_last[eligible_at].second);
+        ++eligible_at;
+      }
+    }
+    ComposedBatch batch;
+    if (!ComposeBatch(b, &protos, &proto_keys, &peers, &batch, &emitted_spine,
+                      release ? &releasable : nullptr, warn, err))
+      return false;
+    if (!batch_options.source_snapshot_directory.empty())
+      snapshot_layers_evicted += registry.EvictSnapshottedLayers();
+    const size_t batch_total = batch.layer ? batch.layer->prims().size() : 0;
+    max_batch = std::max(max_batch, batch_total);
+    total += batch_total;
+    if (release) {
+      // Layers no later batch uses (per pass 1) leave the registry before the
+      // batch goes to the writer, which reads only the composed batch (its
+      // values keep their own array sources).
+      while (release_at < eligible_at) {
+        registry.Drop(*by_last[release_at].second);
+        ++release_at;
+        ++layers_released;
+      }
+    }
+    // The batch's composition cache was just freed; the allocator would keep
+    // its pages through the write that grows next to it.
+    if (!plan) ReturnFreeMemoryToOS();
+    const auto tc = std::chrono::steady_clock::now();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (consumer) {
+      if (!consumer->Push(std::move(batch))) return false;
+    } else
+#endif
+    if (fn && !fn(batch)) {
+      return false;
+    }
+    t_callback += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - tc).count();
+    if (!plan) batch = ComposedBatch();
+    if (plan && batch_options.roots_per_batch == 0 &&
+        bounds.back() < frontier.size()) {
+      // Next batch: roots up to the target, each estimated by the mean of the
+      // composed roots under its parent (siblings are alike). A root under a
+      // new parent is estimated by the mean at its depth, and at most
+      // `fresh_cap` such roots join one batch.
+      if (batch_total > target || total > target)
+        fresh_cap = kNewParentRoots;
+      else if (batch_total < target / 2 && fresh_cap < frontier.size())
+        fresh_cap *= 2;
+      for (size_t f = bounds[b]; f < bounds[b + 1]; ++f) {
+        RootStat &ps = by_parent[ParentPathView(frontier[f])];
+        ps.roots += 1;
+        ps.prims += root_prims[f];
+        RootStat &ds = by_depth[std::count(frontier[f].begin(), frontier[f].end(), '/')];
+        ds.roots += 1;
+        ds.prims += root_prims[f];
+      }
+      size_t f = bounds.back(), sum = 0, fresh = 0;
+      while (f < frontier.size()) {
+        size_t est = 1;
+        auto pit = by_parent.find(ParentPathView(frontier[f]));
+        if (pit != by_parent.end()) {
+          est = pit->second.prims / pit->second.roots;
+        } else {
+          if (fresh == fresh_cap) break;
+          ++fresh;
+          auto dit = by_depth.find(std::count(frontier[f].begin(), frontier[f].end(), '/'));
+          if (dit != by_depth.end()) est = dit->second.prims / dit->second.roots;
+        }
+        if (f > bounds.back() && sum + est > target) break;
+        sum += est;
+        ++f;
+      }
+      bounds.push_back(f);
+    }
+  }
+  double consumer_ms = 0;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  if (consumer) {
+    const auto tc = std::chrono::steady_clock::now();
+    const bool consumed = consumer->Finish();
+    t_callback += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - tc).count();
+    consumer_ms = consumer->busy_ms();
+    if (!consumed) return false;
+  }
+#endif
+  if (options.enable_timing) {
+    const double ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t0).count();
+    LIGHTUSD_LOG_I(std::string("[next_batched] ") + (plan ? "plan" : "run") +
+                   "=" + std::to_string(ms) + "ms batches=" +
+                   std::to_string(bounds.size() - 1) + " roots=" +
+                   std::to_string(frontier.size()) + " prims=" +
+                   std::to_string(total) + " max_batch_prims=" +
+                   std::to_string(max_batch) + " layers_released=" +
+                   std::to_string(layers_released) + " snapshot_layers_evicted=" +
+                   std::to_string(snapshot_layers_evicted) + " open=" +
+                   std::to_string(t_open) + "ms build=" + std::to_string(t_build) +
+                   "ms post=" + std::to_string(t_post) + "ms drop=" +
+                   std::to_string(t_drop) + "ms callback_wait=" +
+                   std::to_string(t_callback) + "ms consumer=" +
+                   std::to_string(consumer_ms) + "ms");
+    t_open = t_build = t_post = t_drop = t_callback = 0;
+  }
+  if (plan) {
+    holders_with_peers = std::move(peers);
+    planned = true;
+    if (keeping) {
+      if (merger->prims()) kept.push_back(merger->Take());
+      FixKeptHolders();
+    } else {
+      std::vector<ComposedBatch>().swap(kept);
+    }
+    merger.reset();
+    if (!prepared_plan) std::vector<std::string>().swap(lone_protos);
+    // Layers no batch read (loaded by the discovery's prefetch) would stay
+    // resident through pass 2, which drops layers only by their last use.
+    for (const std::string &id : registry.identifiers())
+      if (!layer_last_root.count(id)) registry.Drop(id);
+  }
+  return true;
+}
+
+// A prototype whose peers are all in later batches was left instanceable by
+// its batch's FlattenInstances; with the peers known it gets the edits pass 2
+// would make (FlattenInstances: a Holder is a plain reference target).
+void BatchedComposer::Impl::FixKeptHolders() {
+  for (const std::string &path : lone_protos) {
+    if (!holders_with_peers.count(path)) continue;
+    PrimSpec *proto = nullptr;
+    for (ComposedBatch &group : kept)
+      if (group.layer && (proto = group.layer->prim_at_path_mutable(path))) break;
+    if (proto) {
+      proto->meta().instanceable = false;
+      proto->meta().instance_prototype().clear();
+    }
+  }
+}
+
+void BatchedComposer::Impl::Report(const std::string &lines, std::string *out) {
+  if (!out || lines.empty()) return;
+  size_t start = 0;
+  while (start < lines.size()) {
+    size_t end = lines.find('\n', start);
+    if (end == std::string::npos) end = lines.size();
+    std::string line = lines.substr(start, end - start);
+    if (!line.empty() && reported.insert(line).second) {
+      *out += line;
+      *out += '\n';
+    }
+    start = end + 1;
+  }
+}
+
+void BatchedComposer::Impl::RefineFrontier() {
+  if (refine.empty()) {
+    root_origin.resize(frontier.size());
+    for (size_t f = 0; f < frontier.size(); ++f) root_origin[f] = f;
+    return;
+  }
+  std::vector<std::string> out;
+  std::vector<size_t> out_prims;
+  root_origin.clear();
+  struct Item {
+    std::string path;
+    size_t prims;
+  };
+  for (size_t f = 0; f < frontier.size(); ++f) {
+    std::vector<Item> stack{{frontier[f], root_prims[f]}};
+    while (!stack.empty()) {
+      Item it = std::move(stack.back());
+      stack.pop_back();
+      auto r = refine.find(it.path);
+      if (r == refine.end()) {
+        out.push_back(std::move(it.path));
+        out_prims.push_back(it.prims);
+        root_origin.push_back(f);
+        continue;
+      }
+      spine.insert(it.path);
+      for (auto c = r->second.rbegin(); c != r->second.rend(); ++c)
+        stack.push_back({it.path + "/" + c->name, c->prims});
+    }
+  }
+  frontier = std::move(out);
+  root_prims = std::move(out_prims);
+  refine.clear();
+}
+
+BatchedComposer::BatchedComposer() : impl_(new Impl()) {}
+BatchedComposer::~BatchedComposer() = default;
+
+void BatchedComposeAccess::EnablePreparedPlan(BatchedComposer& composer) {
+  composer.impl_->prepared_plan = true;
+}
+std::vector<std::string> BatchedComposeAccess::ClearedPreparedPrototypes(
+    BatchedComposer& composer) {
+  std::vector<std::string> cleared;
+  for (const auto& path : composer.impl_->lone_protos)
+    if (composer.impl_->holders_with_peers.count(path)) cleared.push_back(path);
+  return cleared;
+}
+
+bool BatchedComposer::Open(const std::string &filename, AssetResolver &resolver,
+                           const CompositionOptions &options,
+                           const BatchedComposeOptions &batch_options,
+                           std::string *warn, std::string *err) {
+  Impl &d = *impl_;
+  d.resolver = &resolver;
+  d.options = options;
+  d.batch_options = batch_options;
+  d.root_identifier = filename;
+  if (!batch_options.source_snapshot_directory.empty() &&
+      !d.registry.EnableSourceSnapshots(batch_options.source_snapshot_directory,
+                                       batch_options.source_snapshot_bytes, err))
+    return false;
+  LayerLoadOptions lopts;
+  lopts.max_memory = options.max_layer_memory;
+  lopts.max_array_elements = options.max_array_elements;
+  lopts.usdc_limits = options.usdc_limits;
+  lopts.max_archive_entries = options.max_archive_entries;
+  lopts.usdc_lazy_arrays = options.usdc_lazy_arrays;
+  lopts.usdc_use_mmap = options.usdc_use_mmap;
+  lopts.strict_aousd_conformance = options.strict_aousd_conformance;
+  lopts.usda_parse_options = options.usda_parse_options;
+  lopts.parse_num_threads = options.usda_parse_options.num_threads;
+  if (options.strict_aousd_conformance)
+    lopts.usda_parse_options.strict_aousd_conformance = true;
+  d.root = LoadLayerFromFile(filename, warn, err, lopts);
+  if (!d.root) return false;
+  // ExtractedPrototypes numbers its prototypes over the whole stage, so it
+  // composes in one piece (as does a layer with nothing to compose).
+  d.whole = !LayerNeedsComposition(*d.root) ||
+            options.instance_flatten_mode ==
+                InstanceFlattenMode::ExtractedPrototypes;
+  if (!d.whole) {
+    const auto t0 = std::chrono::steady_clock::now();
+    if (!d.Discover(warn, err)) return false;
+    if (!batch_options.source_snapshot_directory.empty())
+      d.snapshot_layers_evicted += d.registry.EvictSnapshottedLayers();
+    if (options.enable_timing)
+      LIGHTUSD_LOG_I("[next_batched] discover=" +
+                     std::to_string(std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - t0).count()) +
+                     "ms roots=" + std::to_string(d.frontier.size()) +
+                     " spine=" + std::to_string(d.spine.size()) +
+                     " discovered_prims=" + std::to_string(d.discovered_prims));
+    if (d.frontier.empty()) d.whole = true;
+  }
+  if (d.whole) {
+    d.bounds = {0, 1};
+    return true;
+  }
+  if (batch_options.roots_per_batch) {
+    for (size_t f = 0; f < d.frontier.size(); f += batch_options.roots_per_batch)
+      d.bounds.push_back(f);
+    d.bounds.push_back(d.frontier.size());
+  }
+  return true;
+}
+
+bool BatchedComposer::whole() const { return impl_->whole; }
+size_t BatchedComposer::frontier_size() const { return impl_->frontier.size(); }
+size_t BatchedComposer::batch_count() const { return impl_->bounds.size() - 1; }
+std::vector<std::string> BatchedComposer::source_identifiers() const {
+  auto result = impl_->registry.identifiers();
+  const auto snapshots = impl_->registry.snapshot_identifiers();
+  result.insert(result.end(), snapshots.begin(), snapshots.end());
+  result.push_back(impl_->root_identifier);
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
+bool BatchedComposer::Plan(std::string *warn, std::string *err,
+                           const std::function<bool(ComposedBatch &)> &on_batch) {
+  if (impl_->whole) {
+    impl_->planned = true;
+    return true;
+  }
+  return impl_->Pass(true, on_batch, warn, err);
+}
+
+bool BatchedComposer::Run(const std::function<bool(ComposedBatch &)> &on_batch,
+                          std::string *warn, std::string *err) {
+  Impl &d = *impl_;
+  if (!d.planned) {
+    if (err) *err += "batched compose: Run() before Plan()\n";
+    return false;
+  }
+  if (d.whole) {
+    Stage stage;
+    if (!ComposeStageFromLayer(d.root, *d.resolver, &stage, d.root_identifier,
+                               d.options, warn, err))
+      return false;
+    ComposedBatch batch;
+    batch.layer = stage.ReleaseRootLayer();
+    batch.spine.assign(batch.layer ? batch.layer->prims().size() : 0, 0);
+    batch.repeated = batch.spine;
+    return on_batch(batch);
+  }
+  if (!d.kept.empty()) {
+    // Pass 1 kept the whole plan: no layer is read again. They leave the
+    // registry while the groups are written.
+    auto release = [&d] {
+      for (const std::string &id : d.registry.identifiers()) d.registry.Drop(id);
+      ReturnFreeMemoryToOS();
+    };
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::thread releaser;
+    if (d.options.num_threads != 1) releaser = std::thread(release);
+    else
+#endif
+      release();
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<ComposedBatch> kept = std::move(d.kept);
+    d.kept.clear();
+    bool ok = true;
+    for (ComposedBatch &group : kept) {
+      if (ok) ok = on_batch(group);
+      group = ComposedBatch();
+    }
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    if (releaser.joinable()) releaser.join();
+#endif
+    if (d.options.enable_timing)
+      LIGHTUSD_LOG_I("[next_batched] run=" +
+                     std::to_string(std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - t0).count()) +
+                     "ms kept_groups=" + std::to_string(kept.size()));
+    return ok;
+  }
+  return d.Pass(false, on_batch, warn, err);
+}
+
+bool ComposeStageBatched(const std::string &filename, AssetResolver &resolver,
+                         Stage *out_stage, const CompositionOptions &options,
+                         const BatchedComposeOptions &batch_options,
+                         std::string *warn, std::string *err) {
+  BatchedComposer composer;
+  if (!composer.Open(filename, resolver, options, batch_options, warn, err))
+    return false;
+  if (!composer.Plan(warn, err)) return false;
+  if (options.enable_timing)
+    LIGHTUSD_LOG_I("[next_batched] frontier=" + std::to_string(composer.frontier_size()) +
+                   " plan_batches=" + std::to_string(composer.batch_count()));
+  std::unique_ptr<Layer> whole;
+  BatchMerger merger;
+  merger.set_holder_links(options.instance_flatten_mode ==
+                          InstanceFlattenMode::Holder);
+  const bool ok = composer.Run(
+      [&](ComposedBatch &batch) {
+        if (composer.whole()) whole = std::move(batch.layer);
+        else merger.Add(batch);
+        return true;
+      },
+      warn, err);
+  if (!ok) return false;
+  std::unique_ptr<Layer> merged =
+      composer.whole() ? std::move(whole) : merger.Take().layer;
+  if (!merged) merged.reset(new Layer());
+  out_stage->SetRootLayer(std::move(*merged));
+  return true;
+}
+
+bool FlattenToUSDCFileBatched(const std::string &filename,
+                              AssetResolver &resolver,
+                              const std::string &out_path,
+                              const CompositionOptions &options,
+                              const BatchedComposeOptions &batch_options,
+                              const CrateWriteOptions &write_options,
+                              CrateWriteResult *result, std::string *warn,
+                              std::string *err) {
+  CrateWriteResult local;
+  CrateWriteResult &res = result ? *result : local;
+  BatchedComposer composer;
+  if (!composer.Open(filename, resolver, options, batch_options, warn, err))
+    return false;
+  CrateWriter writer(write_options);
+  if (composer.whole()) {
+    // Nothing to batch: one regular compose and write.
+    if (!composer.Plan(warn, err)) return false;
+    bool ok = true;
+    if (!composer.Run(
+            [&](ComposedBatch &batch) {
+              res = writer.WriteLayerToFile(out_path.c_str(), *batch.layer);
+              ok = res.success;
+              return ok;
+            },
+            warn, err))
+      return false;
+    return ok;
+  }
+  if (batch_options.overlap_plan_write) {
+    BatchedComposeAccess::EnablePreparedPlan(composer);
+    if (!composer.Plan(warn, err, [&](ComposedBatch& batch) {
+          return writer.PrepareBatch(*batch.layer, batch.spine, batch.repeated,
+                                     batch.full_children);
+        })) {
+      // Preserve the encoder's concrete error without publishing a final file.
+      res = writer.WritePreparedFile(nullptr, {});
+      return false;
+    }
+    const auto cleared = BatchedComposeAccess::ClearedPreparedPrototypes(composer);
+    BatchedComposeAccess::ReleaseKeptSources(composer);
+    ReturnFreeMemoryToOS();
+    res = writer.WritePreparedFile(out_path.c_str(), cleared);
+    return res.success;
+  }
+  // Pass 1 fixes the writer's token/string table order; pass 2 writes.
+  if (!composer.Plan(warn, err, [&](ComposedBatch &batch) {
+        writer.AddBatchTables(*batch.layer, batch.repeated);
+        return true;
+      }))
+    return false;
+  BatchedComposeAccess::ReleaseKeptSources(composer);
+  // Pass 1's batches are freed, but the allocator keeps their pages (dirty
+  // decay takes seconds): return them before pass 2 composes on top.
+  ReturnFreeMemoryToOS();
+  if (!writer.BeginBatchedFile(out_path.c_str())) {
+    res = writer.FinishBatched();
+    if (res.error.empty()) res.error = "cannot open output file: " + out_path;
+    return false;
+  }
+  const bool ran = composer.Run(
+      [&](ComposedBatch &batch) {
+
+        return writer.WriteBatch(*batch.layer, batch.spine, batch.repeated,
+                                 batch.full_children);
+      },
+      warn, err);
+  res = writer.FinishBatched();
+  return ran && res.success;
+}
+
+}  // namespace pcp
+}  // namespace next
+}  // namespace lightusd

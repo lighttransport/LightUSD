@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "cache-internal.hh"
+#include <tuple>
 namespace lightusd {
 namespace next {
 namespace pcp {
@@ -118,7 +119,7 @@ void Cache::Impl::ProcessDeferredVariants(std::vector<Src> *main_list,
           vsrc.site = holder;
           vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
               Mapping(e.src.map_idx), NamespaceMapping{holder, e.src.site}));
-          vsrc.offset = e.src.offset;
+          vsrc.set_offset(e.src.offset());
           vsrc.arc_kind = ArcType::Variant;
           vsrc.implied_anchor = e.src.implied_anchor;
           ExpandArcs(vsrc, nullptr, &tmp_main, &tmp_spec, sels, e.chain, warn,
@@ -171,8 +172,27 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                           std::vector<Src> *out, std::vector<Src> *spec_out,
                           std::map<std::string, std::string> *sels,
                           const ArcChain &chain, std::string *warn,
-                          std::string *err) {
+                          std::string *err,
+                          const std::string &selection_prefix) {
+          // pxr spelling of this option's site relative to the host:
+          // enclosing nested selections first (`{outer=a}{set=name}`).
+          const std::string selection =
+              selection_prefix + "{" + set_name + "=" + vd->name + "}";
+          // Layer that authored the option, for diagnostics: a nested option
+          // lives in the synthetic variant-content layer of its owner, so
+          // resolve through the owner chain to the real file.
+          const std::string &authoring_layer =
+              layer_stacks[src.stack_idx].variant_owner_stack != 0xFFFFFFFFu
+                  ? layer_stacks[src.stack_idx].variant_authoring_layer
+                  : (layer_id.empty() ? layer_stacks[src.stack_idx].identifier
+                                      : layer_id);
+          applied_variants_[AppliedVariantKey(src)].push_back(
+              AppliedVariant{set_name, vd->name, selection, authoring_layer});
 
+          // Option-authored arcs retain their variant node in the persisted
+          // chain. Descendant expansion needs that origin to place ancestral
+          // variant opinions before the descendant's direct references.
+          ArcChain option_chain = chain;
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
@@ -185,18 +205,27 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                                   : layer_id);
             const std::string vid = "variant:" +
                                     variant_anchor + "\x1f" +
-                                    layer_stacks[src.stack_idx].identifier +
+                                    layer_stacks[src.stack_idx].cache_key +
                                     ":" + src.site + ":" + set_name + ":" +
                                     vd->name;
             uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
             if (cstack == kInvalidStack) return;
+            layer_stacks[cstack].variant_owner_key =
+                layer_stacks[src.stack_idx].cache_key;
+            layer_stacks[cstack].variant_owner_site = src.site;
+            layer_stacks[cstack].variant_owner_stack = src.stack_idx;
+            layer_stacks[cstack].variant_set_name = set_name;
+            layer_stacks[cstack].variant_name = vd->name;
+            layer_stacks[cstack].variant_selection = selection;
+            layer_stacks[cstack].variant_authoring_layer = authoring_layer;
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
             vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
                 Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
-            vsrc.offset = src.offset;
+            vsrc.set_offset(src.offset());
             vsrc.arc_kind = ArcType::Variant;
+            option_chain.emplace_back(cstack, vsrc.map_idx);
             const ExpansionFrame vframe{cstack, vsrc.map_idx, &vsrc.site, frame,
                                         frame ? frame->depth + 1 : 0};
             ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
@@ -222,11 +251,11 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           // relative `@./geo.usd@` resolves correctly.
           for (const std::string &s : vd->inherits) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
           for (const std::string &s : vd->references) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
           if (!vd->payloads.empty()) {
             const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
@@ -239,7 +268,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                 continue;
               }
               ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                         chain, warn, err, layer_id);
+                         option_chain, warn, err, layer_id);
             }
             // insert-only here: another arc group's loaded payloads must not
             // clear a deferral recorded for this option's payloads.
@@ -247,7 +276,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
           }
           for (const std::string &s : vd->specializes) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+                       frame, out, spec_out, sels, option_chain, warn, err, layer_id);
           }
 
           // Nested variant sets authored on this option (inline / USDA
@@ -265,7 +294,7 @@ void Cache::Impl::ApplyVariantOption(const Src &src, const ExpansionFrame *frame
                 if (nvd.name == chosen) {
                   ApplyVariantOption(src, frame, nvs.name, &nvd, owner,
                                      vdepth + 1, layer_id, out, spec_out, sels,
-                                     chain, warn, err);
+                                     chain, warn, err, selection);
                   break;
                 }
               }
@@ -278,6 +307,18 @@ bool Cache::Impl::PathInRelocateSource(uint32_t stack, const std::string &path) 
     if (rel.empty()) return false;
     for (const auto &r : rel.src_to_dst) {
       if (IsPathAtOrUnder(path, r.first)) return true;
+    }
+    // src_to_dst is normalized into the pre-ancestral-relocation namespace.
+    // An arc may instead name a source beneath an ancestral arrival, e.g.
+    // /P/After/Gone deleted after /P/Before moved to /P/After. Departures retain
+    // that authored/composed spelling, including deletions with no arrival.
+    for (const auto& departure : rel.departed) {
+      const std::string& parent = departure.first;
+      if (path.size() <= parent.size() ||
+          path.compare(0, parent.size(), parent) != 0 || path[parent.size()] != '/') continue;
+      const size_t start = parent.size() + 1;
+      const size_t end = path.find('/', start);
+      if (departure.second.count(path.substr(start, end - start))) return true;
     }
     return false;
   }
@@ -309,20 +350,25 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
                   std::vector<Src> *out, std::vector<Src> *spec_out,
                   std::map<std::string, std::string> *sels,
                   const ArcChain &chain, std::string *warn,
-                  std::string *err) {
+                  std::string *err, void (*before_references)(void*),
+                  void* before_references_data) {
     out->push_back(src);
 
     // A relocation-source anchor: its own specs (and thus their arcs and
     // variant selections) are prohibited opinions — expand nothing.
-    if (src.suppress_site_specs) return;
+    if (src.suppress_site_specs || src.arcs_expanded) return;
 
     const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
+    // Stamp the copy just pushed (local vector, no sharing): the structure
+    // walk and the fill then answer "has specs?" without re-probing.
+    out->back().spec_state.v =
+        specs.empty() ? SpecState::kNone : SpecState::kSome;
     if (specs.empty()) return;
     // Record this source's variant selections (strong-first wins) so a selection
     // authored on a stronger source applies to a variantSet defined on a weaker
     // one (cross-source selection).
     for (const SpecRef &sr : specs) {
-      RecordSelections(*sr.spec, sels, src.expression_variables, warn, err);
+      RecordSelections(*sr.spec, sels, src.expression_variables(), warn, err);
     }
 
     // Phase 7 (S5): with apply_list_ops, gather each arc field once across the
@@ -419,7 +465,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
           vsrc.site = holder;
           vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
               Mapping(src.map_idx), NamespaceMapping{holder, src.site}));
-          vsrc.offset = src.offset;
+          vsrc.set_offset(src.offset());
           vsrc.arc_kind = ArcType::Variant;
           const ExpansionFrame vframe{src.stack_idx, vsrc.map_idx, &vsrc.site, frame,
                                       frame ? frame->depth + 1 : 0};
@@ -429,6 +475,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
 
       if (merge) continue;  // merged refs/payloads/specializes handled below
 
+      if (before_references) before_references(before_references_data);
       // References. Anchor relative asset paths to THIS spec's authoring layer.
       for (const std::string &ref_str : spec->meta().references) {
         ProcessArc(src, Compositor::ParseReference(ref_str), ArcType::Reference,
@@ -464,6 +511,7 @@ void Cache::Impl::ExpandArcs(const Src &src, const ExpansionFrame *frame,
     }
 
     if (merge) {
+      if (before_references) before_references(before_references_data);
       // Cross-layer-merged references / payloads / specializes, processed once
       // in LIVRPS order (all inherits already emitted above, before variants).
       for (const auto &s : MergeArcField(specs, ArcSel::References)) {
@@ -530,7 +578,60 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
     if (scoped != options.variant_overrides_by_path.end()) {
       for (const auto &ov : scoped->second) sels[ov.first] = ov.second;
     }
-    for (const Src &s : base) {
+    // An ancestor variant's opinions on this child precede the child's own
+    // references/payloads, but follow its direct inherits and variants. Expand
+    // those base sources at the reference boundary instead of letting an early
+    // child reference install weaker selections before the ancestor is visited.
+    const auto related_variant = [&](const Src& candidate, const Src& owner) {
+      const auto related_stack = [&](uint32_t stack) {
+        for (size_t depth = 0; depth <= layer_stacks.size(); ++depth) {
+          const LayerStack& current = layer_stacks[stack];
+          if (current.variant_owner_key.empty()) return false;
+          if (current.variant_owner_key == layer_stacks[owner.stack_idx].cache_key &&
+              IsPathAtOrUnder(owner.site, current.variant_owner_site)) return true;
+          auto parent = stack_by_id.find(current.variant_owner_key);
+          if (parent == stack_by_id.end()) return false;
+          stack = parent->second;
+        }
+        return false;
+      };
+      if (related_stack(candidate.stack_idx)) return true;
+      if (candidate.arc_chain()) {
+        for (const auto& node : *candidate.arc_chain())
+          if (related_stack(node.first)) return true;
+      }
+      // USDC variants use bracketed holders in the owner's layer stack.
+      if (candidate.stack_idx == owner.stack_idx) {
+        for (size_t pos = 0; (pos = candidate.site.find("/{", pos)) != std::string::npos; ++pos) {
+          const std::string host = candidate.site.substr(0, pos);
+          if (IsPathAtOrUnder(owner.site, host) &&
+              owner.site.compare(pos, 2, "/{") != 0) return true;
+        }
+      }
+      return false;
+    };
+    bool has_ancestral_variants = false;
+    for (const Src& source : base) {
+      if (source.arc_kind == ArcType::Variant ||
+          source.site.find("/{") != std::string::npos ||
+          !layer_stacks[source.stack_idx].variant_owner_key.empty()) {
+        has_ancestral_variants = true;
+        break;
+      }
+      if (source.arc_chain()) {
+        for (const auto& node : *source.arc_chain()) {
+          if (!layer_stacks[node.first].variant_owner_key.empty()) {
+            has_ancestral_variants = true;
+            break;
+          }
+        }
+        if (has_ancestral_variants) break;
+      }
+    }
+    std::vector<bool> consumed;
+    if (has_ancestral_variants) consumed.resize(base.size(), false);
+    const auto expand_base = [&](auto&& self, size_t index) -> void {
+      const Src& s = base[index];
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
@@ -541,7 +642,7 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       // stack AND in every intermediate stack of the arc chain -- an override
       // authored on the class path at any of those levels composes.
       ArcChain chain;
-      if (s.arc_chain) chain = *s.arc_chain;
+      if (s.arc_chain()) chain = *s.arc_chain();
       if (chain.empty() || chain.front().first != 0) {
         chain.insert(chain.begin(), {0u, 0u});
       }
@@ -558,16 +659,37 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       // live in s.arc_sites (held for this call), so the pointers stay valid.
       std::vector<ExpansionFrame> anc_frames;
       const ExpansionFrame *anc = nullptr;
-      if (s.arc_sites && !s.arc_sites->empty()) {
-        anc_frames.reserve(s.arc_sites->size());
-        for (const auto &hop : *s.arc_sites) {
+      if (s.arc_sites() && !s.arc_sites()->empty()) {
+        anc_frames.reserve(s.arc_sites()->size());
+        for (const auto &hop : *s.arc_sites()) {
           anc_frames.push_back(
               ExpansionFrame{hop.first, 0u, &hop.second, anc, 0u});
           anc = &anc_frames.back();
         }
       }
       const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, anc, 0};
-      ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
+      auto promote_ancestral_variants = [&] {
+        for (size_t next = index + 1; next < base.size(); ++next) {
+          if (consumed[next] || !related_variant(base[next], s)) continue;
+          consumed[next] = true;
+          self(self, next);
+        }
+      };
+      if (consumed.empty()) {
+        ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
+      } else {
+        ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err,
+            [](void* context) {
+              (*static_cast<decltype(promote_ancestral_variants)*>(context))();
+            }, &promote_ancestral_variants);
+      }
+    };
+    for (size_t index = 0; index < base.size(); ++index) {
+      if (!consumed.empty()) {
+        if (consumed[index]) continue;
+        consumed[index] = true;
+      }
+      expand_base(expand_base, index);
     }
     // Variant sets whose selection was authored at a WEAKER site graft now,
     // at their recorded strength position (pxr resolves selections across the
@@ -646,6 +768,44 @@ std::vector<Src> Cache::Impl::ExpandList(const std::vector<Src> &base,
       i = k;
     }
     main.insert(main.end(), spec.begin(), spec.end());
+    // A class can be reached through more than one class-arc branch. Pcp
+    // composes an identical source node once at its strongest occurrence;
+    // emitting duplicate class nodes duplicates its property opinions. The
+    // specializes key is restricted to the class subtree (A -> [B, C],
+    // B -> D, C -> D); inherit nodes merge only for identical full mappings.
+    // Repeated reference/payload sites retain multiplicity.
+    const auto mapping_key = [&](const NamespaceMapping& mapping,
+                                 const std::string& site, bool class_subtree_only) {
+      std::string key = mapping.crosses_arc ? "1" : "0";
+      key += mapping.intra_stack ? "1" : "0";
+      const std::string destination = mapping.Apply(site);
+      key += std::to_string(destination.size()) + ":" + destination;
+      for (const auto& pair : mapping.pairs) {
+        const std::string& from = pair.first.str();
+        const std::string& to = pair.second.str();
+        if (class_subtree_only && !NamespaceMapping::AtOrUnder(from, site)) continue;
+        const std::string suffix = class_subtree_only
+                                       ? from.substr(site.size())
+                                       : from;
+        key += std::to_string(suffix.size()) + ":" + suffix;
+        key += std::to_string(to.size()) + ":" + to;
+      }
+      return key;
+    };
+    std::set<std::tuple<uint32_t, std::string, std::string, uint32_t, uint8_t>> class_sites;
+    main.erase(std::remove_if(main.begin(), main.end(), [&](const Src& source) {
+      if (!IsClassBasedArc(source.arc_kind)) return false;
+      const bool specializes = source.arc_kind == ArcType::Specialize;
+      // Specializes class identity is local to the target subtree; an inherit
+      // source is coalesced only when its complete namespace mapping matches.
+      // Inherit anchors are omitted because the same class opinion may be
+      // reached both directly and as an implied class.
+      const uint32_t anchor = specializes ? source.implied_anchor : 0u;
+      const auto key = std::make_tuple(source.stack_idx, source.site,
+          mapping_key(Mapping(source.map_idx), source.site, specializes), anchor,
+          static_cast<uint8_t>(source.arc_kind));
+      return !class_sites.insert(key).second;
+    }), main.end());
     return main;
   }
 

@@ -285,11 +285,19 @@ LIGHTUSD_API lightusd_status lightusd_render_scene_warnings(const lightusd_rende
  * paths already stored in the scene. `max_output_bytes` must be nonzero.
  * On success, `glb` owns binary bytes (including NULs) accessible through
  * lightusd_string_view. `losses` includes converter warnings and is returned
- * even for a strict-mode refusal. */
+ * even for a strict-mode refusal. This entry point performs no texture file
+ * I/O; use the resolver-aware entry point below to supply texture bytes. */
 LIGHTUSD_API lightusd_status lightusd_render_export_glb(
     const lightusd_render_scene* scene, const char* source_path,
     uint8_t strict, uint64_t max_output_bytes, lightusd_string** glb,
     lightusd_strlist** losses);
+
+/* Explicit texture source for self-contained GLB export. All reads and package
+ * inspection obey this resolver, including its filesystem-access policy. */
+LIGHTUSD_API lightusd_status lightusd_render_export_glb_with_resolver(
+    const lightusd_render_scene* scene, const char* source_path,
+    lightusd_asset_resolver* resolver, uint8_t strict, uint64_t max_output_bytes,
+    lightusd_string** glb, lightusd_strlist** losses);
 
 /* ============================================================
  * Persistent conversion session
@@ -988,6 +996,45 @@ LIGHTUSD_API size_t lightusd_render_light_link_count(
 LIGHTUSD_API lightusd_status lightusd_render_light_link_copy(
     const lightusd_render_scene* scene, int32_t id, uint8_t which,
     size_t index, char* out, size_t cap, size_t* required);
+
+/* ============================================================
+ * Portable light-filter registry
+ * ============================================================ */
+
+/* Authored parameters handed to a custom filter parser. `values` exposes
+ * lightusd:filter:value0..7 (default 0) so a custom kind can carry up to eight
+ * scalars without new schema. Parsers return the receiver-independent
+ * intensity/color multiplier; a zero return rejects the filter prim. */
+typedef struct lightusd_light_filter_params {
+  const char* kind;
+  const char* prim_path;
+  float intensity;
+  float color[3];
+  float values[8];
+  uint32_t value_count;
+} lightusd_light_filter_params;
+
+typedef int (*lightusd_light_filter_parse_fn)(
+    const lightusd_light_filter_params* params, void* user,
+    float* intensity, float* color3);
+
+/* Registers a custom kind. Fails with INVALID_ARG for an empty/duplicate kind
+ * or a null parser. Registered kinds participate in every conversion that uses
+ * the shared registry (render scene, previews, caches). */
+LIGHTUSD_API lightusd_status lightusd_register_light_filter(
+    const char* kind, lightusd_light_filter_parse_fn parse, void* user);
+LIGHTUSD_API lightusd_status lightusd_unregister_light_filter(const char* kind);
+LIGHTUSD_API size_t lightusd_light_filter_kind_count(void);
+/* Copies a NUL-terminated kind name. Pass out=NULL to query `required`
+ * (bytes including the terminator) only. */
+LIGHTUSD_API lightusd_status lightusd_light_filter_kind(
+    size_t index, char* out, size_t capacity, size_t* required);
+
+/* Parses one filter prim through the registry (built-ins and custom kinds) and
+ * returns its receiver-independent multiplier. */
+LIGHTUSD_API lightusd_status lightusd_light_filter_parse(
+    const lightusd_stage* stage, lightusd_prim prim, double time,
+    float* intensity, float* color3);
 
 typedef struct lightusd_render_camera_info {
   lightusd_sv name;

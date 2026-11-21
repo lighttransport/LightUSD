@@ -456,6 +456,13 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       if (tydra_id < 0 || size_t(tydra_id) >= scene.textures.size()) return 0;
       return ScalarChannel(scene.textures[size_t(tydra_id)]);
     };
+    // Remember which UV primvar each textured lane samples. The mesh export
+    // stores one `texcoords[slot]` per referenced primvar, so this is what lets
+    // AddMeshTriangles pick the right slot per lane instead of always slot 0.
+    auto note_uv = [&](uint32_t lane, int32_t tydra_id) {
+      if (tydra_id < 0 || size_t(tydra_id) >= scene.textures.size()) return;
+      b.uv_names[lane] = scene.textures[size_t(tydra_id)].varname_uv;
+    };
     if (mat.surfaceShader.has_value()) {
       const lightusd::tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
       b.diffuse = resolve(s.diffuseColor.texture_id);
@@ -469,6 +476,13 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       b.metallic_ch = chan(s.metallic.texture_id);
       b.occlusion_ch = chan(s.occlusion.texture_id);
       b.opacity_ch = chan(s.opacity.texture_id);
+      note_uv(kUvLaneDiffuse, s.diffuseColor.texture_id);
+      note_uv(kUvLaneEmissive, s.emissiveColor.texture_id);
+      note_uv(kUvLaneNormal, s.normal.texture_id);
+      note_uv(kUvLaneRough, s.roughness.texture_id);
+      note_uv(kUvLaneMetal, s.metallic.texture_id);
+      note_uv(kUvLaneOcc, s.occlusion.texture_id);
+      note_uv(kUvLaneOpacity, s.opacity.texture_id);
     } else if (mat.openPBRShader.has_value()) {
       // MaterialX/OpenPBR textures use the same renderer slots as their
       // Preview Surface counterparts. Previously only constants were read from
@@ -483,6 +497,11 @@ std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
       b.roughness_ch = chan(s.base_roughness.texture_id);
       b.metallic_ch = chan(s.base_metalness.texture_id);
       b.opacity_ch = chan(s.opacity.texture_id);
+      note_uv(kUvLaneDiffuse, s.base_color.texture_id);
+      note_uv(kUvLaneNormal, s.normal.texture_id);
+      note_uv(kUvLaneRough, s.base_roughness.texture_id);
+      note_uv(kUvLaneMetal, s.base_metalness.texture_id);
+      note_uv(kUvLaneOpacity, s.opacity.texture_id);
     }
   }
   return bindings;
@@ -508,6 +527,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       LightCache *lights, std::vector<float> *tri_uvs,
+                      std::vector<float> *tri_uvs1,
                       const std::vector<LegacyMaterialTex> *mat_tex,
                       const PurposeVisibilityMap *pv) {
   // Resolved purpose/visibility (BuildLegacyPurposeVisibility): value 0 means an
@@ -527,29 +547,64 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
   const std::vector<uint32_t> &counts = mesh.faceVertexCounts();
   std::vector<int> material_ids = FaceMaterialIds(mesh);
 
-  // Primary UV set. tydra converts texcoords to FACEVARYING (one per face
-  // corner), but a vertex-varying set is still possible, so index accordingly.
-  const lightusd::tydra::VertexAttribute *uv_attr = nullptr;
+  // UV streams. tydra exports each mesh UV primvar as `texcoords[slot]`; slot 0
+  // is the first UV name the bound material references. A textured lane whose
+  // UsdPrimvarReader names the second primvar samples `tri_uvs1`; every other
+  // lane (and all lanes when no second set exists) samples `tri_uvs`.
+  const lightusd::tydra::VertexAttribute *uv_attrs[2] = {nullptr, nullptr};
   if (tri_uvs) {
-    auto it = mesh.texcoords.find(0);
-    if (it != mesh.texcoords.end()) uv_attr = &it->second;
-    else if (!mesh.texcoords.empty()) uv_attr = &mesh.texcoords.begin()->second;
-    if (uv_attr && uv_attr->empty()) uv_attr = nullptr;
+    for (uint32_t slot = 0; slot < 2; ++slot) {
+      auto it = mesh.texcoords.find(slot);
+      if (it != mesh.texcoords.end() && !it->second.empty())
+        uv_attrs[slot] = &it->second;
+    }
+    if (!uv_attrs[0]) {
+      // Defensive: a mesh whose first primvar landed in a higher slot still
+      // renders with that set rather than dropping every lookup to (0, 0).
+      for (const auto &kv : mesh.texcoords) {
+        if (!kv.second.empty()) {
+          uv_attrs[0] = &kv.second;
+          break;
+        }
+      }
+    }
   }
-  const bool uv_facevarying = uv_attr && uv_attr->is_facevarying();
+  const bool uv_facevarying[2] = {uv_attrs[0] && uv_attrs[0]->is_facevarying(),
+                                  uv_attrs[1] && uv_attrs[1]->is_facevarying()};
   // `fv` is the face-corner ordinal, `pi` the point index; pick whichever the
   // attribute is indexed by. Returns raw USD UVs — Texture::sample() does the
   // v-flip, so do not pre-flip here (matches the `next` path).
-  auto uv_at = [&](size_t fv, uint32_t pi) -> std::pair<float, float> {
-    if (!uv_attr) return {0.0f, 0.0f};
-    const size_t i = uv_facevarying ? fv : size_t(pi);
-    if (i >= uv_attr->vertex_count()) return {0.0f, 0.0f};
-    const size_t esz = uv_attr->format_size();
-    const std::vector<uint8_t> &d = uv_attr->get_data();
+  auto uv_at = [&](uint32_t stream, size_t fv,
+                   uint32_t pi) -> std::pair<float, float> {
+    const lightusd::tydra::VertexAttribute *attr = uv_attrs[stream];
+    if (!attr) return {0.0f, 0.0f};
+    const size_t i = uv_facevarying[stream] ? fv : size_t(pi);
+    if (i >= attr->vertex_count()) return {0.0f, 0.0f};
+    const size_t esz = attr->format_size();
+    const std::vector<uint8_t> &d = attr->get_data();
     if ((i + 1) * esz > d.size() || esz < 2 * sizeof(float)) return {0.0f, 0.0f};
     float uv[2];
     std::memcpy(uv, d.data() + i * esz, sizeof(uv));
     return {uv[0], uv[1]};
+  };
+  // Lane -> texcoord slot for one material, cached per mesh. A lane whose UV
+  // primvar is not the second slot stays on the primary stream.
+  std::unordered_map<int, uint32_t> lane_slot_cache;
+  auto lane_slots = [&](int mat_id) -> uint32_t {
+    auto found = lane_slot_cache.find(mat_id);
+    if (found != lane_slot_cache.end()) return found->second;
+    uint32_t bits = 0;
+    if (mat_tex && mat_id >= 0 && size_t(mat_id) < mat_tex->size()) {
+      const LegacyMaterialTex &mt = (*mat_tex)[size_t(mat_id)];
+      for (uint32_t lane = 0; lane < uint32_t(kUvLaneCount); ++lane) {
+        if (mt.uv_names[lane].empty() || !uv_attrs[0]) continue;
+        const uint32_t slot =
+            (uv_attrs[1] && uv_attrs[1]->name == mt.uv_names[lane]) ? 1u : 0u;
+        SetUvLaneSlot(&bits, lane, slot);
+      }
+    }
+    lane_slot_cache.emplace(mat_id, bits);
+    return bits;
   };
   float mesh_area = 0.0f;
   if (mesh.is_area_light) {
@@ -575,6 +630,10 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       area_cursor += nverts;
     }
   }
+  // True once the second UV stream has been allocated. A previous mesh may
+  // already have allocated it, in which case every later triangle must append
+  // to stay parallel to `tris` even when it only uses the primary set.
+  bool second_emitted = tri_uvs1 && !tri_uvs1->empty();
   size_t cursor = 0;
   for (size_t face = 0; face < counts.size(); face++) {
     uint32_t nverts = counts[face];
@@ -613,6 +672,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       tri.metallic = MaterialMetallic(scene, mat_id);
       tri.opacity = MaterialOpacity(scene, mesh, mat_id);
       tri.opacity_threshold = MaterialOpacityThreshold(scene, mat_id);
+      tri.uv_lane_slot = lane_slots(mat_id);
       if (mesh.is_area_light) {
         tri.emission = MeshLightEmission(scene, mesh, mat_id, mesh_area);
       }
@@ -641,11 +701,28 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       }
       if (tri_uvs) {
         // 6 floats/tri, parallel to *tris, in the same fan order as i0/i1/i2.
-        const auto uv0 = uv_at(cursor + 0, i0);
-        const auto uv1 = uv_at(cursor + size_t(k), i1);
-        const auto uv2 = uv_at(cursor + size_t(k) + 1, i2);
+        const auto uv0 = uv_at(0, cursor + 0, i0);
+        const auto uv1 = uv_at(0, cursor + size_t(k), i1);
+        const auto uv2 = uv_at(0, cursor + size_t(k) + 1, i2);
         tri_uvs->insert(tri_uvs->end(), {uv0.first, uv0.second, uv1.first,
                                          uv1.second, uv2.first, uv2.second});
+        if (tri_uvs1) {
+          // Lazily allocate so scenes that never reference a second UV set pay
+          // no extra memory. `assign` backfills earlier triangles with zeros;
+          // the flag (not emptiness) tracks allocation, since the very first
+          // triangle assigns zero elements.
+          if (!second_emitted && tri.uv_lane_slot != 0) {
+            tri_uvs1->assign(tris->size() * 6, 0.0f);
+            second_emitted = true;
+          }
+          if (second_emitted) {
+            const auto s0 = uv_at(1, cursor + 0, i0);
+            const auto s1 = uv_at(1, cursor + size_t(k), i1);
+            const auto s2 = uv_at(1, cursor + size_t(k) + 1, i2);
+            tri_uvs1->insert(tri_uvs1->end(), {s0.first, s0.second, s1.first,
+                                               s1.second, s2.first, s2.second});
+          }
+        }
       }
       vertices->push_back(p0.x);
       vertices->push_back(p0.y);
@@ -690,6 +767,7 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
                      LightCache *lights, std::vector<float> *tri_uvs,
+                     std::vector<float> *tri_uvs1,
                      const std::vector<LegacyMaterialTex> *mat_tex,
                      const PurposeVisibilityMap *pv) {
   if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
@@ -697,12 +775,12 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
     const RenderMesh &mesh = scene.meshes[size_t(node.id)];
     if (!skip_paths || !skip_paths->count(mesh.abs_path)) {
       AddMeshTriangles(scene, mesh, node.global_matrix, vertices, tris, bounds,
-                       lights, tri_uvs, mat_tex, pv);
+                       lights, tri_uvs, tri_uvs1, mat_tex, pv);
     }
   }
   for (const Node &child : node.children) {
     CollectGeometry(scene, child, vertices, tris, bounds, skip_paths, lights,
-                    tri_uvs, mat_tex, pv);
+                    tri_uvs, tri_uvs1, mat_tex, pv);
   }
 }
 
@@ -710,18 +788,19 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
                         LightCache *lights, std::vector<float> *tri_uvs,
+                        std::vector<float> *tri_uvs1,
                         const std::vector<LegacyMaterialTex> *mat_tex,
                         const PurposeVisibilityMap *pv) {
   for (const Node &root : scene.nodes) {
     CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights,
-                    tri_uvs, mat_tex, pv);
+                    tri_uvs, tri_uvs1, mat_tex, pv);
   }
   for (const lightusd::tydra::RenderInstance &inst : scene.instances) {
     if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < scene.meshes.size() &&
         inst.visible) {
       const RenderMesh &mesh = scene.meshes[size_t(inst.mesh_id)];
       AddMeshTriangles(scene, mesh, inst.global_matrix, vertices, tris, bounds,
-                       lights, tri_uvs, mat_tex, pv);
+                       lights, tri_uvs, tri_uvs1, mat_tex, pv);
     }
   }
 }
@@ -1229,8 +1308,13 @@ bool CameraFrameFromGeomCamera(const lightusd::Stage &stage,
   frame->forward = Normalize(TransformVector(world, Vec3{0.0f, 0.0f, -1.0f}));
   frame->yfov = 2.0f * std::atan(0.5f * vertical_aperture /
                                  std::max(1.0e-6f, focal_length));
-  frame->xmag = horizontal_aperture;
-  frame->ymag = vertical_aperture;
+  frame->xmag = horizontal_aperture * 0.1f;
+  frame->ymag = vertical_aperture * 0.1f;
+  float offset_x=0, offset_y=0;
+  EvalAnimFallback(stage,cam.horizontalApertureOffset,"horizontalApertureOffset",time,&offset_x);
+  EvalAnimFallback(stage,cam.verticalApertureOffset,"verticalApertureOffset",time,&offset_y);
+  frame->shift_x=2.0f*offset_x/std::max(1.0e-6f,horizontal_aperture);
+  frame->shift_y=2.0f*offset_y/std::max(1.0e-6f,vertical_aperture);
   frame->znear = std::max(1.0e-5f, clipping_range[0]);
   frame->zfar = std::max(frame->znear, clipping_range[1]);
   frame->ortho = projection == lightusd::GeomCamera::Projection::Orthographic;

@@ -70,7 +70,7 @@
 
 #include "image-writer.hh"
 #include "io-util.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "imageio/png-stream.hh"
 #include "str-util.hh"
 

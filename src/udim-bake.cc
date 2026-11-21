@@ -8,7 +8,7 @@
 
 #include "image-loader.hh"
 #include "image-writer.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace udim {

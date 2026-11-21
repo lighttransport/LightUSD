@@ -1,3 +1,4 @@
+#include "core/native-io.hh"
 #include "usdz-writer.hh"
 #include "../writer/usdc-writer.hh"
 
@@ -358,6 +359,8 @@ USDZWriteResult WriteUSDZToMemory(std::vector<uint8_t>& buffer, const Stage& sta
 
 USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage,
                                 const USDZWriteOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { USDZWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   USDZWriteResult result;
   std::vector<uint8_t> usdc;
   USDCWriteOptions write_options;
@@ -643,6 +646,8 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
                                          const uint8_t* usdc_data,
                                          size_t usdc_size,
                                          const USDZWriteOptions& options) {
+  if (!::lightusd::NativeIOEnabled()) { USDZWriteResult r; r.error = ::lightusd::NativeIOUnavailableMessage(); return r; }
+
   USDZWriteResult result;
   std::ofstream ofs(filename, std::ios::binary);
   if (!ofs) {

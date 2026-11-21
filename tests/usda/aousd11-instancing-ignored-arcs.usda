@@ -1,0 +1,14 @@
+#usda 1.0
+# AOUSD Core 1.1.0 "Instancing" (ignored-arcs); verified identical to OpenUSD 26.11 flatten.
+
+def "Asset_1" (
+    instanceable = True
+    references = @./aousd11-instancing-ignored-arcs-asset.usda@
+)
+{
+    over "Sphere" (
+        references = @./aousd11-instancing-ignored-arcs-extra.usda@
+    )
+    {
+    }
+}

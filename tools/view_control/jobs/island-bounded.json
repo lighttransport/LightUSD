@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "assets_root": "/mnt/nvme02/data",
+  "size": [
+    640,
+    480
+  ],
+  "backend": "vkr-streamed",
+  "data_backend": "vkr-streamed",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "explicit",
+    "values": [
+      0
+    ]
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal"
+  ],
+  "scenes": [
+    {
+      "path": "island/usd/island.usda",
+      "camera_path": "/island/cam/beachCam"
+    }
+  ],
+  "native_curve_segments": 1,
+  "native_load_limits": {
+    "max_memory_gib": 30,
+    "max_array_elements": 67108864
+  },
+  "process_limits": {
+    "max_rss_mib": 30720,
+    "reserve_mib": 4096
+  }
+}

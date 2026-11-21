@@ -5,7 +5,7 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
-#include "logger.hh"
+#include "core/logger.hh"
 #include "unit-logger.h"
 
 void logger_test(void) {

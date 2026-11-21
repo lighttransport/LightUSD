@@ -17,7 +17,7 @@
 # For each shape this asserts:
 #
 #   1. a penumbra: markedly more mid-gradient pixels than the punctual fallback
-#      (LUSDR_LIGHT_NEE=0), and fewer hard steps; and
+#      (-noLightNee), and fewer hard steps; and
 #   2. ENERGY: a SMALL, DISTANT light -- exactly where the punctual approximation
 #      is valid -- must render to within a few percent of the punctual result.
 #      Without this an estimator can produce a beautiful penumbra and still be off
@@ -127,10 +127,11 @@ far_scene '  def DiskLight "Key" {
     uniform token[] xformOpOrder = ["xformOp:translate"]
   }' "$TMP/far_disk.usda"
 
-render() {  # $1 = scene, $2 = out, $3 = LUSDR_LIGHT_NEE, $4.. = extra flags
+render() {  # $1 = scene, $2 = out, $3 = NEE enabled, $4.. = extra flags
   local scene="$1" out="$2" nee="$3"
   shift 3
-  LUSDR_LIGHT_NEE="$nee" "$LUSDRENDER" "$scene" "$out" -rtPreview \
+  if [ "$nee" = 0 ]; then set -- -noLightNee "$@"; fi
+  "$LUSDRENDER" "$scene" "$out" -rtPreview \
     -viewDir 0,0,1 -bg 0,0,0 -ambient 0 \
     -materialShading lightrt-bsdf -materialResolver tydra-next "$@" \
     > "$out.log" 2>&1

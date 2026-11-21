@@ -6,7 +6,7 @@
 
 #include "usd-validation-internal.hh"
 
-#include "../../color-transform.hh"
+#include "core/color-transform.hh"
 
 #include <array>
 #include <cmath>

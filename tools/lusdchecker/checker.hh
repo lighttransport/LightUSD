@@ -2,7 +2,7 @@
 #pragma once
 #include "next/validation/validation-context.hh"
 #include "next/resolver/asset-resolver.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <functional>
 namespace lusdchecker {
 // Optional run-local I/O for embedders. Named asset reads (including dependencies and

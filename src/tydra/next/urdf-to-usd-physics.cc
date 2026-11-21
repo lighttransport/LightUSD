@@ -290,10 +290,22 @@ void AssignJointBase(tn::PrimSpec *prim, const Json &joint,
       Set(prim, name, tn::Value(static_cast<float>(v)), "float");
       newton_joint = true;
     };
-    if (dyn && ReadNumber(*dyn, "armature", &value)) newton("newton:armature", value);
-    if (dyn && ReadNumber(*dyn, "friction", &value)) newton("newton:friction", value);
-    if (dyn && ReadNumber(*dyn, "damping", &value))
+    // openusd: MjcJointAPI's armature/frictionloss/damping in MJCF units
+    // (per radian), which MuJoCo's decoder reads when no NewtonJointAPI is
+    // present.
+    const bool mjc_only = profile.MjcOnly();
+    if (dyn && ReadNumber(*dyn, "armature", &value)) {
+      if (mjc_only) Set(prim, "mjc:armature", tn::Value(value), "double", true);
+      newton("newton:armature", value);
+    }
+    if (dyn && ReadNumber(*dyn, "friction", &value)) {
+      if (mjc_only) Set(prim, "mjc:frictionloss", tn::Value(value), "double", true);
+      newton("newton:friction", value);
+    }
+    if (dyn && ReadNumber(*dyn, "damping", &value)) {
+      if (mjc_only) Set(prim, "mjc:damping", tn::Value(value), "double", true);
       newton("newton:damping", angular ? value * kPi / 180.0 : value);
+    }
     if (const Json *limit = JsonObject(joint, "limit")) {
       // URDF <limit velocity> is rad/s (or m/s); NewtonJointAPI uses deg/s.
       if (ReadNumber(*limit, "velocity", &value) && value > 0.0)
@@ -436,7 +448,8 @@ void ApplyMjcSceneOptions(tn::PrimSpec *scene, const Json &root) {
   // mjc:flag:gravity for newton:timeStepsPerSecond/maxSolverIterations/
   // gravityEnabled, which AddPhysicsScene writes; non-legacy profiles omit
   // them (a timestep newton:timeStepsPerSecond cannot hold is kept there).
-  const bool legacy = ActiveProfile().legacy;
+  // openusd has no newton:* scene attributes, so it keeps the mjc:* forms.
+  const bool legacy = ActiveProfile().legacy || ActiveProfile().MjcOnly();
   if (const Json *o = JsonObject(*ms, "option")) {
     const std::string p = "mjc:option:";
     for (const char *key : {"timestep", "impratio", "density", "viscosity",
@@ -512,7 +525,7 @@ void AddPhysicsScene(tn::Layer *layer, const Json &root) {
   const bool legacy = ActiveProfile().legacy;
   if (ReadNumber(root, "timestep", &timestep)) {
     const double steps = timestep > 0.0 ? std::round(1.0 / timestep) : 0.0;
-    if (legacy || !(steps > 0.0) || std::fabs(1.0 / steps - timestep) > 1e-12 * timestep)
+    if (legacy || ActiveProfile().MjcOnly() || !(steps > 0.0) || std::fabs(1.0 / steps - timestep) > 1e-12 * timestep)
       Set(scene, "mjc:option:timestep", tn::Value(timestep), "double", true);
   }
   // next-only: the solver timestep also under the flat mjc:timestep name.

@@ -22,7 +22,7 @@ namespace {
 
 enum class Arc { Reference, Payload, Inherit, Specialize };
 
-std::vector<std::string>& ArcList(next::PrimMetadata& m, Arc arc) {
+next::LazyStringList& ArcList(next::PrimMetadata& m, Arc arc) {
   switch (arc) {
     case Arc::Reference: return m.references;
     case Arc::Payload: return m.payloads;

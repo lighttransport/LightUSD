@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "nonstd/expected.hpp"
 #include "nonstd/span.hpp"
 // NOTE: logger.hh is intentionally NOT included here. typed-array.hh uses no

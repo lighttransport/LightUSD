@@ -185,9 +185,12 @@ bool TestClipTimings(const std::string& assets_root) {
   CHECK_VALUE(c, "/Model", "size", 15.0, 17.5);
   CHECK_VALUE(c, "/Model", "size", 30.0, 15.0);
   CHECK_VALUE(c, "/Model", "size", 40.0, 20.0);
-  // Out of the authored times range: boundary stage time -> clip sample clamp.
-  CHECK_VALUE(c, "/Model", "size", 50.0, 25.0);
-  CHECK_VALUE(c, "/Model", "size", -1.0, 0.0);
+  // Out of the authored times range the stage time clamps to the boundary
+  // CLIP time (spec L6983-6990; OpenUSD 26.11 gives 20 / 10). The corpus's
+  // python reference instead maps to the boundary STAGE time (25 / 0); we
+  // follow pxr and the spec here (Lean clip vectors, LEAN_CLIP_TIME).
+  CHECK_VALUE(c, "/Model", "size", 50.0, 20.0);
+  CHECK_VALUE(c, "/Model", "size", -1.0, 10.0);
   return true;
 }
 

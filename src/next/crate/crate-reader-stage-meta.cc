@@ -4,6 +4,7 @@
 #include "../parser/lexer.hh"
 #include "../parser/value-parser.hh"
 #include <utility>
+#include <algorithm>
 
 namespace lightusd {
 namespace next {
@@ -18,11 +19,12 @@ Value ParseDictText(const std::string& text) {
 }
 
 DecodedExtensionField MakeTypedExtensionField(std::string name,
-                                                   Value value) {
+                                                   Value value, bool unregistered) {
   DecodedExtensionField extension;
   extension.name = std::move(name);
   extension.value = std::move(value);
-  extension.unregistered = true;
+  extension.unregistered = unregistered;
+  if (!unregistered) return extension;
   if (auto source = extension.value.as_string()) {
     extension.unregistered_source = *source;
     Value dictionary = ParseDictText(*source);
@@ -59,8 +61,9 @@ void CrateReader::Impl::DecodeStageMetadata(
     if (spec.spec_type != SpecType::PseudoRoot) continue;
     if (spec.path_index.value >= paths_.size()) continue;
 
-    std::vector<std::pair<std::string, Value>> fields;
-    if (!ResolveFieldset(spec.fieldset_index.value, fields)) {
+    std::vector<DecodedExtensionField> integer_fields;
+    std::vector<std::pair<std::string_view, Value>> fields;
+    if (!ResolveFieldset(spec.fieldset_index.value, fields, &integer_fields)) {
       AddWarning("Failed to resolve pseudo-root fieldset");
     }
 
@@ -201,12 +204,25 @@ void CrateReader::Impl::DecodeStageMetadata(
         if (const bool* value = field.second.as_bool()) {
           layer.meta().autoPlay = *value;
           layer.meta().autoPlay_set = true;
+        } else {
+          // Older (legacy LightUSD) writers stored autoPlay as a token
+          // "true"/"false"; pxr reads and prints the token value verbatim.
+          auto t = field.second.as_token();
+          if (!t) t = field.second.as_string();
+          if (t && (*t == "true" || *t == "false")) {
+            layer.meta().autoPlay = *t == "true";
+            layer.meta().autoPlay_set = true;
+          }
         }
       } else if (field.first == "playbackMode") {
         auto value = field.second.as_token();
         if (!value) value = field.second.as_string();
         if (value) {
-          layer.meta().playbackMode = *value == "loop" ? "loop" : "none";
+          // Legacy writers stored the token with its USDA quotes ("\"loop\"").
+          std::string v = *value;
+          if (v.size() >= 2 && v.front() == '"' && v.back() == '"')
+            v = v.substr(1, v.size() - 2);
+          layer.meta().playbackMode = v == "loop" ? "loop" : "none";
           layer.meta().playbackMode_set = true;
         }
       } else if (field.first == "__lightusd_unknownMeta") {
@@ -260,8 +276,13 @@ void CrateReader::Impl::DecodeStageMetadata(
         // Preserve decodable extension metadata as a typed field. ResolveFields
         // has already unpacked this ValueRep, so retaining it is lossless for
         // every type the writer can encode.
-        layer.meta().unknownFields.push_back(
-            MakeTypedExtensionField(field.first, field.second));
+        auto integer = std::find_if(integer_fields.begin(), integer_fields.end(),
+            [&](const DecodedExtensionField& f) { return f.name == field.first; });
+        if (integer != integer_fields.end())
+          layer.meta().unknownFields.push_back(std::move(*integer));
+        else layer.meta().unknownFields.push_back(
+            MakeTypedExtensionField(std::string(field.first), field.second,
+                FieldType(spec.fieldset_index.value, field.first) == CrateTypeId::UnregisteredValue));
       }
     }
     break; // Only process first PseudoRoot

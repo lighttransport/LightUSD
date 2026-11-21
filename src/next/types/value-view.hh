@@ -34,6 +34,7 @@ struct ArrayScratch {
 /// Get*ArrayView borrow path returns a pointer into the source with no decode, so
 /// independent element ranges may be formatted concurrently from one shared view.
 bool CanBorrowLazyFlat(const Value& value);
+bool CanBorrowLazyFlat(ValueView value);
 
 bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
                        ArrayView<float>* out);

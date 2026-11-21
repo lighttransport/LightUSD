@@ -214,20 +214,23 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
 
+  ::lightusd::next::EvalOptions evaluation;
+  evaluation.time = ::lightusd::next::TimeQuery::Numeric(config_.time_code);
+  evaluation.follow_connections = false;
+  evaluation.clip_stage_loader = config_.animation.clip_stage_loader;
+  evaluation.clip_stage_cache = std::make_shared<::lightusd::next::ValueClipStageCache>();
   ValueArrayRead<int32_t> counts;
-  if (!ReadIntArray(prim, "curveVertexCounts", config_.time_code, &counts) ||
+  if (!ReadIntArray(prim, "curveVertexCounts", evaluation, &counts) ||
       counts.empty()) {
     SetLastError("Invalid curves.curveVertexCounts data");
     return false;
   }
   ValueArrayRead<float> points;
-  bool have_points = ReadFloatArray(prim, "points", config_.time_code,
-                                    &points);
-  if (!have_points) {
-    have_points = ReadFloatArrayFromValueClips(
-        prim, "points", config_.time_code,
-        config_.animation.clip_stage_loader, &points);
-  }
+  bool have_points = ReadFloatArray(prim, "points", evaluation, &points);
+  // Raw RenderStream layers have no PCP-injected descendant clip metadata.
+  // Retain the ancestor lookup only when full composed evaluation has no value.
+  if (!have_points) have_points = ReadFloatArrayFromValueClips(
+      prim, "points", config_.time_code, config_.animation.clip_stage_loader, &points);
   if (!have_points || points.empty() || (points.view.size % 3) != 0) {
     SetLastError("Invalid curves.points data");
     return false;
@@ -462,11 +465,37 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
   size_t varying_total = 0;
   for (const CurveTessPlan& plan : plans) varying_total += plan.varying_count;
 
+  ValueArrayRead<float> normals;
+  ValueArrayRead<int32_t> normal_indices;
+  std::string normal_name = prim.GetPropertyValue("primvars:normals") ? "primvars:normals" : "normals";
+  const bool have_normals = ReadFloatArray(prim, normal_name.c_str(), evaluation, &normals) && !normals.empty();
+  std::string normal_interp = "vertex";
+  if (const auto* spec = prim.GetPrimSpec())
+    if (const auto* meta = spec->property_meta(normal_name))
+      if (!meta->interpolation.empty()) normal_interp=meta->interpolation;
+  ReadIntArray(prim,(normal_name+":indices").c_str(),evaluation,&normal_indices);
+  const size_t normal_tuples=normal_indices.empty()?normals.size()/3:normal_indices.size();
+  if (have_normals && (normals.size()%3 ||
+      (normal_interp=="constant"?normal_tuples!=1:
+       normal_interp=="uniform"?normal_tuples!=ncurves:
+       normal_interp=="vertex"?normal_tuples!=total_cp:
+       normal_interp=="varying"?normal_tuples!=varying_total:true))) {
+    SetLastError("Invalid curve normals interpolation/count");return false;
+  }
+  auto normal_component = [&](size_t tuple,size_t component,float* value) {
+    if(!normal_indices.empty()) {
+      if(tuple>=normal_indices.size() || normal_indices[tuple]<0)return false;
+      tuple=size_t(normal_indices[tuple]);
+    }
+    if(tuple>=normals.size()/3)return false;
+    *value=normals[tuple*3+component];return std::isfinite(*value);
+  };
+
   //
   // widths (classified by element count; default schema interp is vertex).
   //
   ValueArrayRead<float> widths;
-  if (ReadFloatArray(prim, "widths", config_.time_code, &widths) &&
+  if (ReadFloatArray(prim, "widths", evaluation, &widths) &&
       !widths.empty()) {
     const size_t m = widths.view.size;
     if (m == 1) {
@@ -703,6 +732,43 @@ bool RenderSceneConverter::Impl::ConvertCurves(const UsdPrim& prim,
     out->tessellated_vertex_counts.push_back(
         static_cast<uint32_t>(emit_count));
     out->tessellated_points.append_exact(emitted.data(), emitted.size());
+
+    if (have_normals) {
+      for(size_t k=0;k<emit_count;++k) {
+        float normal[3]={};
+        const float u=emit_count>1?float(k)/float(emit_count-1):0;
+        for(size_t component=0;component<3;++component) {
+          if(normal_interp=="constant" || normal_interp=="uniform") {
+            if(!normal_component(normal_interp=="constant"?0:ci,component,&normal[component]))return false;
+          } else if(normal_interp=="vertex" && !plan.linear && !out->is_nurbs && !out->is_hermite) {
+            const size_t sample=plan.periodic && k+1==emit_count?0:k;
+            const uint32_t span=std::min(uint32_t(sample/segs),plan.nsegs-1);
+            const float t=float(sample-size_t(span)*segs)/float(segs);
+            float weights[4];EvalCubicBasisWeights(out->basis,t,weights);
+            const uint32_t step=out->basis==CurveBasis::Bezier?3u:1u;
+            const int dup=plan.pinned?(out->basis==CurveBasis::BSpline?2:1):0;
+            for(int c=0;c<4;++c) {
+              int index=int(span*step)+c-dup;
+              if(plan.periodic)index%=int(n);else index=std::max(0,std::min(int(n)-1,index));
+              float value=0;if(!normal_component(cp_offset+size_t(index),component,&value))return false;
+              normal[component]+=weights[c]*value;
+            }
+          } else {
+            if(out->is_nurbs && normal_interp=="vertex") {
+              SetLastError("NURBS vertex normals interpolation unsupported");return false;
+            }
+            const size_t count=normal_interp=="vertex"?n:plan.varying_count;
+            const size_t base=normal_interp=="vertex"?cp_offset:var_offset;
+            const float index=u*float(plan.periodic?count:count-1);
+            const size_t lo=std::min(size_t(index),count-1);
+            const size_t hi=plan.periodic?(lo+1)%count:std::min(lo+1,count-1);
+            float a=0,b=0;if(!normal_component(base+lo,component,&a)||!normal_component(base+hi,component,&b))return false;
+            normal[component]=a+(b-a)*(index-float(lo));
+          }
+        }
+        out->tessellated_normals.append_exact(normal,3);
+      }
+    }
 
     if (emit_widths) {
       const float* wvals = nullptr;

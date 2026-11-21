@@ -213,7 +213,7 @@ void TestBc7Roundtrip() {
   mse /= double(back.size());
   const double psnr = 10.0 * std::log10(255.0 * 255.0 / (mse > 0 ? mse : 1e-9));
   if (psnr <= 30.0) std::printf("BC7 roundtrip PSNR = %.2f dB\n", psnr);
-  CHECK(psnr > 30.0);  // FAST-quality BC7 on this gradient measures ~32 dB
+  CHECK(psnr > 30.0);  // QUICKBC7 BC7 on this gradient measures ~34 dB
 }
 #endif
 

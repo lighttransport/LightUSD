@@ -4,7 +4,7 @@
 #pragma once
 
 #include "../stage/stage.hh"
-#include "color-transform.hh"
+#include "core/color-transform.hh"
 
 #include <string>
 

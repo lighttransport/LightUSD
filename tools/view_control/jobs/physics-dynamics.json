@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "freefall",
+      "kind": "freefall",
+      "dt": 0.0001,
+      "steps": 2000,
+      "sample_every": 200,
+      "position_atol": 0.0005,
+      "velocity_atol": 0.0002
+    },
+    {
+      "id": "torque-inertia",
+      "kind": "torque",
+      "dt": 0.0001,
+      "steps": 2000,
+      "sample_every": 200,
+      "position_atol": 0.0001,
+      "velocity_atol": 0.0002
+    },
+    {
+      "id": "slide-spring",
+      "kind": "slide_spring",
+      "dt": 0.0001,
+      "steps": 2000,
+      "sample_every": 200,
+      "position_atol": 0.0002,
+      "velocity_atol": 0.0003
+    },
+    {
+      "id": "revolute-pendulum",
+      "kind": "revolute",
+      "dt": 0.0001,
+      "steps": 1000,
+      "sample_every": 100,
+      "position_atol": 0.0001,
+      "velocity_atol": 0.0003
+    },
+    {
+      "id": "frictionless-contact",
+      "kind": "contact",
+      "dt": 0.0001,
+      "steps": 10000,
+      "sample_every": 200,
+      "penetration_max": 0.02,
+      "horizontal_drift_max": 0.0001
+    }
+  ]
+}

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <string>
 
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   lightusd::minijson::ParseOptions parse_options;

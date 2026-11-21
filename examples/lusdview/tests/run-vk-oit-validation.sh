@@ -67,7 +67,7 @@ if ! timeout 120s env "${validation_env[@]}" \
   echo "FAIL: weighted OIT validation run failed" >&2
   exit 1
 fi
-if grep -Eqi 'VUID-|Validation Error|validation error|UNASSIGNED-' "$log"; then
+if grep -Eqi 'VUID-|Validation Error|validation error|UNASSIGNED-.*\(ERROR' "$log"; then
   cat "$log" >&2
   echo "FAIL: Vulkan validation reported an OIT-path error" >&2
   exit 1

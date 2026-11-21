@@ -52,6 +52,12 @@ bool ResolveShaderPortValue(const Stage& stage, const UsdPrim& prim,
 /// Get material surface shader path
 std::string GetSurfaceShader(const Stage& stage, const UsdPrim& material);
 
+/// Renderer-only variant: like GetSurfaceShader, but falls back to the
+/// RenderMan `outputs:ri:surface` terminal when the universal one is absent.
+/// Public/export paths must keep using GetSurfaceShader.
+std::string GetSurfaceShaderWithRenderContextFallback(const Stage& stage,
+                                                      const UsdPrim& material);
+
 /// Get material displacement shader path
 std::string GetDisplacementShader(const Stage& stage, const UsdPrim& material);
 

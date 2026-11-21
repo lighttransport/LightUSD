@@ -6,7 +6,7 @@
 #include "usdMtlx.hh"
 #include "usdShade.hh"
 #include "usdLux.hh"  // SphereLight/RectLight (no longer re-exported by lightusd.hh)
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 // Use built-in MaterialX parser instead of pugixml
 #include "mtlx-usd-adapter.hh"
@@ -17,7 +17,7 @@
 #include "common-macros.inc"
 #include "io-util.hh"
 #include "pprint-enum.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "str-util.hh"  // For dragonbox-based dtos()
 #include "tiny-format.hh"
 #include "value-pprint.hh"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Geometry foundation (extent/size estimation) shared by the retained and
 // streaming conversion drivers. Split from render-converter.cc.
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../../next/layer/prim-spec.hh"
 #include "next/core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"

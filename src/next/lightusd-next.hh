@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-#include "../security-policy.hh"
+#include "core/security-policy.hh"
 #include "execution.hh"
 #include "operation-status.hh"
 #include "resource-limits.hh"
@@ -94,7 +94,7 @@ namespace next {
 constexpr int version_major = 1;
 constexpr int version_minor = 0;
 constexpr int version_micro = 0;
-constexpr const char* version_string = "1.0.0-rc4";
+constexpr const char* version_string = "1.0.0";
 
 
 }  // namespace next

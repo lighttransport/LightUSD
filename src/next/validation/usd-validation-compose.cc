@@ -7,7 +7,10 @@
 #include "usd-validation-internal.hh"
 
 #include "../composition/composition.hh"
+#include "../layer/listop-field-table.hh"
 #include "../prim/identifier.hh"
+#include "../prim/relocate-path.hh"
+#include "../schema/schema-registry.hh"
 #include "validation-context.hh"
 
 #include "../../external/fast_float/include/fast_float/fast_float.h"
@@ -252,27 +255,63 @@ void ValidateVariantSetsAndSelections(const PrimSpec &ps,
   }
 }
 
-// next-core stores relocates per-prim (PrimMetadata::relocates); validated
-// under the legacy core.layer.layerRelocates rule ids at the prim location.
-void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
+// Core v1.1.0 L2494-2510, L2861-2897: names may be speculative, but
+// should be valid prim/property names. No local child-membership requirement.
+void ValidateNameOrder(const std::vector<std::string> &names, bool properties,
+                       const std::string &rule, const std::string &location,
                        USDValidationResult *result) {
-  std::set<std::string> relocated_sources;
-  for (const auto &entry : ps.meta().relocates()) {
-    const std::string &source = entry.first;
-    const std::string &target = entry.second;
-
-    std::string source_err;
-    if (!IsValidAbsolutePrimTargetPathString(source, &source_err)) {
-      AddError(result, "core.layer.layerRelocates.source", prim_location,
-               "layerRelocates source `" + source +
-                   "` must be a valid absolute prim path");
+  for (size_t i = 0; i < names.size(); ++i) {
+    const bool valid = properties ? IsValidNamespacedIdentifier(names[i])
+                                  : IsValidIdentifier(names[i]);
+    if (!valid) {
+      AddWarning(result, rule, location,
+                 "order entry " + std::to_string(i) + " `" + names[i] +
+                     "` should be a valid " + (properties ? "property" : "prim") +
+                     " name");
     }
-    std::string target_err;
-    if (!target.empty() &&
-        !IsValidAbsolutePrimPathString(target, &target_err)) {
+  }
+}
+
+// Both layer relocates and legacy per-prim relocates retain authored entries.
+void ValidateRelocates(const std::vector<std::pair<std::string, std::string>> &entries,
+                       const std::string &prim_location, const std::string &anchor,
+                       USDValidationResult *result) {
+  const auto anchored = [&](const std::string& path) {
+    std::string result = path;
+    AnchorRelocatePath(path, anchor, &result);
+    return result;
+  };
+  // These are local authoring constraints, not selection across sublayers.
+  std::set<std::string> relocated_sources, valid_sources;
+  std::map<std::string, std::string> first_targets, first_sources;
+  std::set<std::string> reported_sources, reported_targets;
+  const auto below = [](const std::string& path, const std::string& parent) {
+    return path.size() > parent.size() && path.compare(0, parent.size(), parent) == 0 &&
+           path[parent.size()] == '/';
+  };
+  for (const auto &entry : entries) {
+    const std::string source = anchored(entry.first);
+    const std::string target = anchored(entry.second);
+    std::string source_err, target_err;
+    const bool source_valid = IsValidAbsolutePrimTargetPathString(source, &source_err);
+    const bool target_valid = target.empty() ||
+        IsValidAbsolutePrimTargetPathString(target, &target_err);
+    if (!source_valid) {
+      AddError(result, "core.layer.layerRelocates.source", prim_location,
+               "layerRelocates source `" + source + "` must be a valid absolute prim path");
+    } else {
+      valid_sources.insert(source);
+    }
+    if (!target_valid) {
       AddError(result, "core.layer.layerRelocates.target", prim_location,
                "layerRelocates target `" + target +
                    "` must be empty or a valid absolute prim path");
+    }
+    if (source == "/" || target == "/" ||
+        (source_valid && source.find('/', 1) == std::string::npos)) {
+      AddError(result, "core.layer.layerRelocates.root", prim_location,
+               "relocate sources must be below a root prim and targets must not be the pseudo-root; "
+               "root-prim targets are allowed by OpenUSD compatibility (LEAN-515)");
     }
     if (!source.empty() && !target.empty() && source == target) {
       AddError(result, "core.layer.layerRelocates.identity", prim_location,
@@ -282,6 +321,218 @@ void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
       AddError(result, "core.layer.layerRelocates.source", prim_location,
                "layerRelocates contains duplicate source `" + source + "`");
     }
+    if (!source_valid || !target_valid) continue;
+    const auto source_opinion = first_targets.emplace(source, target);
+    if (!source_opinion.second && source_opinion.first->second != target &&
+        reported_sources.insert(source).second) {
+      AddError(result, "core.layer.layerRelocates.duplicateSource", prim_location,
+               "relocate source `" + source + "` has different targets in this authored field");
+    }
+    if (target.empty()) continue;
+    if (below(source, target)) {
+      AddError(result, "core.layer.layerRelocates.ancestor", prim_location,
+               "relocate target `" + target + "` is an ancestor of source `" + source + "`");
+    }
+    if (below(target, source)) {
+      AddError(result, "core.layer.layerRelocates.targetUnderSource", prim_location,
+               "relocate target `" + target + "` is below its source `" + source + "`");
+    }
+    const auto target_opinion = first_sources.emplace(target, source);
+    if (!target_opinion.second && target_opinion.first->second != source &&
+        reported_targets.insert(target).second) {
+      AddError(result, "core.layer.layerRelocates.duplicateTarget", prim_location,
+               "relocate target `" + target + "` has different sources in this authored field");
+    }
+  }
+  std::set<std::string> reported_nested;
+  for (const auto& entry : entries) {
+    const std::string source = anchored(entry.first);
+    const std::string target = anchored(entry.second);
+    if (!valid_sources.count(source)) continue;
+    // Parent lookup respects component boundaries: /P/A is not above /P/AB.
+    std::string parent = source;
+    while (parent.rfind('/') != 0 && parent.rfind('/') != std::string::npos) {
+      parent.resize(parent.rfind('/'));
+      if (valid_sources.count(parent)) {
+        if (reported_nested.insert(source).second)
+          AddError(result, "core.layer.layerRelocates.nestedSource", prim_location,
+                   "relocate source `" + source + "` uses the unrelocated namespace below `" + parent + "`");
+        break;
+      }
+    }
+    std::string target_err;
+    if (target.empty() || !IsValidAbsolutePrimTargetPathString(target, &target_err)) continue;
+    if (target != source && valid_sources.count(target)) {
+      AddError(result, "core.layer.layerRelocates.targetIsSource", prim_location,
+               "relocate target `" + target + "` is another source (OpenUSD compatibility, LEAN-514)");
+    }
+    parent = target;
+    while (parent.rfind('/') != 0 && parent.rfind('/') != std::string::npos) {
+      parent.resize(parent.rfind('/'));
+      if (parent != source && valid_sources.count(parent)) {
+        AddError(result, "core.layer.layerRelocates.targetUnderOtherSource", prim_location,
+                 "relocate target `" + target + "` is below another source `" + parent +
+                     "` (OpenUSD compatibility)");
+        break;
+      }
+    }
+  }
+}
+
+void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
+                       USDValidationResult *result) {
+  ValidateRelocates(ps.meta().relocates(), prim_location, ps.path().str(), result);
+}
+
+// ---------------------------------------------------------------------------
+// List-op field integrity (AOUSD 6.6.3, L1308-1337 unique sequences;
+// L1699-1708 deprecated add/reorder). Lean: UsdSpec.Composable (Nodup) and
+// UsdSpec.ListOp.Legacy.applyLegacy.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Report every repeated item of one list-op sequence under
+// core.listop.duplicateItems. `field` names the metadata field and `sequence`
+// the sub-list (explicit/prepended/...); duplicates are reported once each.
+void CheckSequenceUnique(const std::vector<std::string> &items,
+                         const std::string &field, const char *sequence,
+                         const std::string &location,
+                         USDValidationResult *result) {
+  if (items.size() < 2) return;
+  std::set<std::string> seen, reported;
+  for (const std::string &item : items) {
+    if (seen.insert(item).second || !reported.insert(item).second) continue;
+    AddError(result, "core.listop.duplicateItems", location,
+             field + " " + sequence + " sequence repeats `" + item + "`");
+  }
+}
+
+void CheckDeprecatedOps(const std::vector<std::string> &added,
+                        const std::vector<std::string> &ordered,
+                        const std::string &field, const std::string &location,
+                        USDValidationResult *result) {
+  if (!added.empty()) {
+    AddWarning(result, "core.listop.deprecatedAdd", location,
+               field + " uses the deprecated `add` list operation; author "
+                       "`append` instead");
+  }
+  if (!ordered.empty()) {
+    AddWarning(result, "core.listop.deprecatedReorder", location,
+               field + " uses the deprecated `reorder` list operation");
+  }
+}
+
+// `explicit_items` is the field's bare/explicit list (the inline arc vector,
+// relationship targets, ...). It is only a list-op sequence when no
+// composable edit is authored for the field.
+void CheckArcListOp(const std::vector<std::string> &explicit_items,
+                    const ArcListOp *edit, const std::string &field,
+                    const std::string &location, USDValidationResult *result) {
+  if (!edit || !edit->authored || edit->is_explicit) {
+    CheckSequenceUnique(explicit_items, field, "explicit", location, result);
+    return;
+  }
+  CheckSequenceUnique(edit->prepended, field, "prepended", location, result);
+  CheckSequenceUnique(edit->appended, field, "appended", location, result);
+  CheckSequenceUnique(edit->deleted, field, "deleted", location, result);
+  CheckSequenceUnique(edit->added, field, "added", location, result);
+  CheckSequenceUnique(edit->ordered, field, "ordered", location, result);
+  CheckDeprecatedOps(edit->added, edit->ordered, field, location, result);
+}
+
+void CheckStringListOp(const StringListOps &edits, const std::string &field,
+                       const std::string &location,
+                       USDValidationResult *result) {
+  if (!edits.authored) return;
+  if (edits.is_explicit) {
+    CheckSequenceUnique(edits.explicit_items, field, "explicit", location,
+                        result);
+    return;
+  }
+  CheckSequenceUnique(edits.prepended, field, "prepended", location, result);
+  CheckSequenceUnique(edits.appended, field, "appended", location, result);
+  CheckSequenceUnique(edits.deleted, field, "deleted", location, result);
+  CheckSequenceUnique(edits.added, field, "added", location, result);
+  CheckSequenceUnique(edits.ordered, field, "ordered", location, result);
+  CheckDeprecatedOps(edits.added, edits.ordered, field, location, result);
+}
+
+std::vector<std::string> PathStrings(const std::vector<Path> *paths) {
+  std::vector<std::string> out;
+  if (!paths) return out;
+  out.reserve(paths->size());
+  for (const Path &p : *paths) out.push_back(p.str());
+  return out;
+}
+
+// AOUSD 1.1 schema-name grammar (L8252-8270): ASCII identifier
+// `[A-Za-z_][A-Za-z0-9_]*` split into Family ('_' Version)?. Prim identifiers
+// may be Unicode; schema names may not. Lean: UsdSpec.Schema.parseFamilyVersion.
+bool MatchesSchemaNameGrammar(const std::string &name) {
+  if (name.empty()) return false;
+  for (size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(name[i]);
+    const bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                       c == '_';
+    const bool digit = c >= '0' && c <= '9';
+    if (!(alpha || (i > 0 && digit))) return false;
+  }
+  std::string family;
+  uint32_t version = 0;
+  bool has_version = false;
+  return ParseSchemaFamilyAndVersion(name, &family, &version, &has_version) &&
+         !family.empty();
+}
+
+}  // namespace
+
+void ValidateSchemaNameGrammar(const std::string &name, const char *what,
+                               const std::string &location,
+                               USDValidationResult *result) {
+  if (name.empty() || MatchesSchemaNameGrammar(name)) return;
+  AddError(result, "core.schema.familyVersion", location,
+           std::string(what) + " `" + name +
+               "` does not match the schema family/version grammar "
+               "(`Family(_Version)?`, ASCII identifier)");
+}
+
+void ValidateListOpFields(const PrimSpec &ps, const std::string &prim_location,
+                          USDValidationResult *result) {
+  const PrimMetadata &m = ps.meta();
+  const ArcListOps *edits = m.arc_edits();
+  CheckArcListOp(m.references, edits ? &edits->references : nullptr,
+                 "references", prim_location, result);
+  CheckArcListOp(m.payloads, edits ? &edits->payloads : nullptr, "payload",
+                 prim_location, result);
+  CheckArcListOp(m.inherits, edits ? &edits->inherits : nullptr, "inherits",
+                 prim_location, result);
+  CheckArcListOp(m.specializes, edits ? &edits->specializes : nullptr,
+                 "specializes", prim_location, result);
+
+  // apiSchemas: a bare list or legacy qualifier is normalized to an op.
+  CheckStringListOp(listop_field_detail::ApiSchemasNormalizedEdits(m),
+                    "apiSchemas", prim_location, result);
+  CheckStringListOp(m.variantSetNameEdits(), "variantSets", prim_location,
+                    result);
+  CheckStringListOp(m.clipSetEdits(), "clipSets", prim_location, result);
+
+  // Relationship targets (SdfPathListOp).
+  const auto &rel_edits = ps.relationship_edits();
+  for (const std::string &name : ps.relationship_names()) {
+    const auto it = rel_edits.find(name);
+    CheckArcListOp(PathStrings(ps.relationship(name)),
+                   it == rel_edits.end() ? nullptr : &it->second,
+                   "relationship " + name,
+                   MakePropertyLocation(prim_location, name), result);
+  }
+  // Attribute connections (connectionPaths SdfPathListOp).
+  for (const auto &slot : ps.properties().slots()) {
+    if (!slot.is_connection()) continue;
+    const std::string name(GetPropNameTable().get(slot.name_id));
+    CheckArcListOp(PathStrings(ps.connection(slot.name_id)),
+                   ps.connection_edit(slot.name_id), "connection " + name,
+                   MakePropertyLocation(prim_location, name), result);
   }
 }
 
@@ -291,6 +542,8 @@ void ValidateCompositionMetadata(const PrimSpec &ps,
                                  USDValidationResult *result) {
   const PrimMetadata &m = ps.meta();
   const ArcListOps *edits = m.arc_edits();
+
+  ValidateListOpFields(ps, prim_location, result);
 
   // NOTE: invalid list-edit qualifiers are unrepresentable in next-core
   // (ArcListOp qualifiers are typed), so the legacy "invalid list-edit
@@ -376,6 +629,8 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                "apiSchemas entry `" + schema.name +
                    "` is not a valid schema identifier");
     }
+    ValidateSchemaNameGrammar(schema.name, "apiSchemas entry", prim_location,
+                              result);
     if (!schema.instance_name.empty() &&
         !IsValidNamespacedIdentifier(schema.instance_name)) {
       AddError(result, "core.apiSchema.instance", prim_location,
@@ -421,6 +676,12 @@ void ValidatePrimMetadata(const PrimSpec &ps, const std::string &prim_location,
                           const std::vector<AppliedSchema> &applied_schemas,
                           USDValidationResult *result, const ValidationRegistry& registry) {
   const PrimMetadata &m = ps.meta();
+
+  ValidateNameOrder(m.primOrder(), false, "core.prim.primOrder", prim_location, result);
+  ValidateNameOrder(m.propertyOrder(), true, "core.prim.propertyOrder", prim_location, result);
+
+  ValidateSchemaNameGrammar(ps.type_name(), "prim typeName", prim_location,
+                            result);
 
   if (!m.kind().empty() && !IsValidNamespacedIdentifier(m.kind())) {
     AddError(result, "core.prim.kind", prim_location,

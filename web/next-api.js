@@ -6328,7 +6328,7 @@ def Xform "root"
       }
       const data = Number(volumeCall('_lightusd_next_render_volume_sample',
           [state.handle, volume, field, count ? Number(pts) : 0, count >>> 0, flags,
-           Number(info)], [3, 4, 6]));
+           Number(info)], [3, 6]));
       const view = new DataView(Module.HEAPU8.buffer, Number(info), infoSize);
       const outCount = view.getUint32(0, true);
       const components = view.getUint32(4, true);
@@ -7933,59 +7933,79 @@ def Xform "root"
     }
     if (meshId < 0 || meshId >= this.numMeshes()) return {error: 'invalid mesh index'};
 
-    const streams = [
-      ['points', 0, 'meshPointsBuffer'], ['indices', 1, 'meshIndicesBuffer'],
-      ['normals', 2, 'meshNormalsBuffer'], ['uv0', 3, 'meshUVBuffer'],
-      ['tangents', 4, 'meshTangentsBuffer'], ['colors', 5, 'meshColorsBuffer'],
-      ['opacities', 6, 'meshOpacitiesBuffer'],
-      ['jointIndices', 7, 'meshJointIndicesBuffer'],
-      ['jointWeights', 8, 'meshJointWeightsBuffer'],
-      ['secondaryUVs', 9, 'meshSecondaryUVBuffer']
-    ];
-    let aggregateBytes = 0;
+    // One synchronous operation may query the same ten streams repeatedly.
+    // Keep geometry preparation local to it; never retain a cross-call cache.
+    const copyScope = Module['_lightusd_next_render_mesh_copy_scope'];
+    let scoped = false;
     ++state.busy;
     try {
-      for (const [, kind] of streams) {
-        let bytes;
-        try {
-          bytes = Module['_lightusd_next_render_mesh_buffer'](state.handle, meshId, kind, 0, 0);
-        } catch (error) {
-          if (!(error instanceof TypeError)) throw error;
-          bytes = Module['_lightusd_next_render_mesh_buffer'](
-            state.handle, meshId, kind, BigInt(0), 0);
+      if (typeof copyScope === 'function') {
+        if (copyScope(state.handle, meshId, 1) !== 0) {
+          throw new RangeError('getMeshCopy: unable to begin copy scope');
         }
-        const elementBytes = kind === 7 ? 2 : 4;
-        if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes % elementBytes !== 0) {
-          throw new RangeError('getMeshCopy: mesh buffer size query failed');
-        }
-        aggregateBytes += bytes;
-        if (aggregateBytes > 512 * 1024 * 1024) {
-          throw new RangeError('getMeshCopy: aggregate payload exceeds 512 MiB limit');
-        }
+        scoped = true;
       }
-      let remaining;
-      try { remaining = Module['_lightusd_next_render_remaining_memory_bytes'](state.handle); }
-      catch (error) {
-        if (!(error instanceof TypeError)) throw error;
-        remaining = Module['_lightusd_next_render_remaining_memory_bytes'](state.handle);
-      }
-      if (!Number.isSafeInteger(remaining) || remaining < 0 || aggregateBytes > remaining) {
-        throw new RangeError('getMeshCopy: aggregate payload exceeds remaining memory limit');
-      }
-    } finally {
-      --state.busy;
-    }
 
-    const out = this.getMesh(meshId);
-    if (out.error) return out;
-    for (const [name, , method] of streams) {
-      const data = this[method](meshId);
-      if (name === 'points' || data.length !== 0) out[name] = data;
+      const streams = [
+        ['points', 0, 'meshPointsBuffer'], ['indices', 1, 'meshIndicesBuffer'],
+        ['normals', 2, 'meshNormalsBuffer'], ['uv0', 3, 'meshUVBuffer'],
+        ['tangents', 4, 'meshTangentsBuffer'], ['colors', 5, 'meshColorsBuffer'],
+        ['opacities', 6, 'meshOpacitiesBuffer'],
+        ['jointIndices', 7, 'meshJointIndicesBuffer'],
+        ['jointWeights', 8, 'meshJointWeightsBuffer'],
+        ['secondaryUVs', 9, 'meshSecondaryUVBuffer']
+      ];
+      let aggregateBytes = 0;
+      ++state.busy;
+      try {
+        for (const [, kind] of streams) {
+          let bytes;
+          try {
+            bytes = Module['_lightusd_next_render_mesh_buffer'](state.handle, meshId, kind, 0, 0);
+          } catch (error) {
+            if (!(error instanceof TypeError)) throw error;
+            bytes = Module['_lightusd_next_render_mesh_buffer'](
+              state.handle, meshId, kind, BigInt(0), 0);
+          }
+          const elementBytes = kind === 7 ? 2 : 4;
+          if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes % elementBytes !== 0) {
+            throw new RangeError('getMeshCopy: mesh buffer size query failed');
+          }
+          aggregateBytes += bytes;
+          if (aggregateBytes > 512 * 1024 * 1024) {
+            throw new RangeError('getMeshCopy: aggregate payload exceeds 512 MiB limit');
+          }
+        }
+        let remaining;
+        try { remaining = Module['_lightusd_next_render_remaining_memory_bytes'](state.handle); }
+        catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+          remaining = Module['_lightusd_next_render_remaining_memory_bytes'](state.handle);
+        }
+        if (!Number.isSafeInteger(remaining) || remaining < 0 || aggregateBytes > remaining) {
+          throw new RangeError('getMeshCopy: aggregate payload exceeds remaining memory limit');
+        }
+      } finally {
+        --state.busy;
+      }
+
+      const out = this.getMesh(meshId);
+      if (out.error) return out;
+      for (const [name, , method] of streams) {
+        const data = this[method](meshId);
+        if (name === 'points' || data.length !== 0) out[name] = data;
+      }
+      // Keep the common legacy spelling as an alias over the same owned bytes.
+      out.faceVertexIndices = out.indices;
+      out.absPath = out.primPath;
+      return out;
+    } finally {
+      try {
+        if (scoped) copyScope(state.handle, meshId, 0);
+      } finally {
+        --state.busy;
+      }
     }
-    // Keep the common legacy spelling as an alias over the same owned bytes.
-    out.faceVertexIndices = out.indices;
-    out.absPath = out.primPath;
-    return out;
   }});
   const renderMaterialFields = [
     ['materialShaderType', 0], ['materialAlphaMode', 1],

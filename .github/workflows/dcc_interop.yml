@@ -38,7 +38,7 @@ jobs:
           --timeout 900
       - name: Upload Blender report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: lightusd-blender-5.2-report
           path: ${{ runner.temp }}/lightusd-blender-report.json
@@ -59,7 +59,7 @@ jobs:
             -OutRoot "$env:RUNNER_TEMP\lightusd-ue-regressions"
       - name: Upload UE reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: lightusd-ue-5.8-reports
           path: ${{ runner.temp }}\lightusd-ue-regressions

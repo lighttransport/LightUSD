@@ -4,7 +4,7 @@
 #include "../schema/schema-registry.hh"
 #include "../types/spline.hh"
 #include "../prim/identifier.hh"
-#include "../../minijson.hh"
+#include "core/minijson.hh"
 #include "../c/lightusd-core-c.h"
 #include <algorithm>
 #include <cmath>
@@ -244,9 +244,25 @@ expected<bool, std::string> ValidationRegistry::LoadSchemaDefinitions(
   for (const auto& pair : candidate) {
     std::set<std::string> seen;
     std::string name = pair.first;
+    // AOUSD Core 1.1: a VERSIONED schema must not inherit from any schema in
+    // its own family (`Cylinder_2` may not inherit `Cylinder_1`/`Cylinder`).
+    std::string own_family;
+    uint32_t own_version = 0;
+    bool versioned = false;
+    ParseSchemaFamilyAndVersion(pair.first, &own_family, &own_version, &versioned);
     while (!name.empty()) {
       if (!seen.insert(name).second)
         return make_unexpected(std::string("cyclic schema inheritance: ") + name);
+      if (versioned && name != pair.first) {
+        std::string family;
+        uint32_t version = 0;
+        bool has_version = false;
+        ParseSchemaFamilyAndVersion(name, &family, &version, &has_version);
+        if (family == own_family)
+          return make_unexpected(std::string("versioned schema ") + pair.first +
+                                 " inherits from its own schema family (" +
+                                 name + ")");
+      }
       auto i = candidate.find(name);
       if (i == candidate.end()) {
         if (const auto builtin = BuiltinSchema(name)) { name = builtin->parent; continue; }
@@ -323,7 +339,11 @@ bool ValidationRegistry::InheritsFrom(const std::string& name, const std::string
 }
 std::optional<ValidationPropertyView> ValidationRegistry::FindProperty(
     const PrimSpec& prim, const std::string& name) const {
-  std::vector<std::pair<std::string, std::string>> schemas = {{prim.type_name(), ""}};
+  std::vector<std::pair<std::string, std::string>> schemas;
+  // Core 1.1 "Typed Schemas": a typeName naming an abstract typed schema or a
+  // non-typed (API) schema leaves the composed prim typeless.
+  const auto typed = FindSchema(prim.type_name());
+  if (!typed || typed->kind == "concrete") schemas.emplace_back(prim.type_name(), "");
   for (const auto& api : prim.meta().apiSchemas()) {
     const size_t colon = api.find(':');
     schemas.emplace_back(api.substr(0, colon), colon == std::string::npos ? "" : api.substr(colon + 1));
@@ -761,10 +781,41 @@ USDValidationResult ValidateStageSamples(const Stage& stage,
   return result;
 }
 
+// Rule id -> Lean declaration (usdspec-conformance verif/lean/UsdSpec/**). Kept
+// sorted by rule id; that repository's scripts/check-lean-reflection.py
+// (--lightusd <this checkout>) parses this table and verifies every declaration
+// exists in the Lean sources. Keep the BEGIN/END markers intact.
+// BEGIN LEAN_REFLECTION_TABLE
+static const std::pair<const char*, const char*> kLeanReflectionTable[] = {
+    {"core.dict.duplicateKey", "UsdSpec.Dict.WellFormed"},
+    {"core.layer.layerRelocates.ancestor", "UsdSpec.Relocates.OkAncestor"},
+    {"core.layer.layerRelocates.duplicateSource", "UsdSpec.Relocates.OkSourcesUnique"},
+    {"core.layer.layerRelocates.duplicateTarget", "UsdSpec.Relocates.OkTargetsUnique"},
+    {"core.layer.layerRelocates.identity", "UsdSpec.Relocates.OkSame"},
+    {"core.layer.layerRelocates.nestedSource", "UsdSpec.Relocates.OkAncestral"},
+    {"core.layer.layerRelocates.root", "UsdSpec.Relocates.OkRootOpenUsd"},
+    {"core.layer.layerRelocates.targetIsSource", "UsdSpec.Relocates.OkOtherSourceOpenUsd"},
+    {"core.layer.layerRelocates.targetUnderOtherSource", "UsdSpec.Relocates.OkTargetNamespaceOpenUsd"},
+    {"core.layer.layerRelocates.targetUnderSource", "UsdSpec.Relocates.OkBelow"},
+    {"core.layer.subLayerOffset", "UsdSpec.LayerOffset.valid"},
+    {"core.listop.deprecatedAdd", "UsdSpec.ListOp.applyLegacy"},
+    {"core.listop.deprecatedReorder", "UsdSpec.ListOp.applyLegacy"},
+    {"core.listop.duplicateItems", "UsdSpec.Composable"},
+    {"core.schema.familyVersion", "UsdSpec.Schema.parseFamilyVersion"},
+    {"core.schema.selfFamilyInherit", "UsdSpec.Schema.versionedMayInherit"},
+};
+// END LEAN_REFLECTION_TABLE
+
+std::string GetValidationRuleLeanRef(const std::string& rule) {
+  for (const auto& row : kLeanReflectionTable)
+    if (rule == row.first) return row.second;
+  return std::string();
+}
+
 ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
   ValidationRuleMetadata m;
   m.category = "recommendation";
-  const std::string spec = "https://github.com/aousd/specifications-public/blob/main/core/1.0.1/core_spec.md";
+  const std::string spec = "https://github.com/aousd/specifications-public/blob/main/core/1.1.0/core_spec.md";
   if (Starts(rule, "checker.")) m.category = "coverage";
   else if (Starts(rule, "arkit.")) m.category = "profile";
   else if (Starts(rule, "geom.") || Starts(rule, "shade.") || Starts(rule, "physics.") ||
@@ -787,13 +838,26 @@ ValidationRuleMetadata GetValidationRuleMetadata(const std::string& rule) {
       "core.layer.customLayerData", "core.layer.expressionVariables",
       "core.layer.subLayers", "core.layer.subLayerOffset",
       "core.layer.timeCodesPerSecond", "core.layer.framesPerSecond",
+      "core.layer.layerRelocates.ancestor", "core.layer.layerRelocates.duplicateSource",
+      "core.layer.layerRelocates.duplicateTarget", "core.layer.layerRelocates.identity",
+      "core.layer.layerRelocates.nestedSource", "core.layer.layerRelocates.root",
+      "core.layer.layerRelocates.targetUnderSource",
       "core.layer.layerRelocates.source", "core.layer.layerRelocates.target",
       "core.composition.inherits", "core.composition.specializes",
       "core.composition.reference", "core.composition.payload",
       "core.composition.variantSet", "core.composition.variantCycle",
-      "core.composition.propertyKindMismatch", "core.composition.error"};
+      "core.composition.propertyKindMismatch", "core.composition.error",
+      "core.listop.duplicateItems", "core.dict.duplicateKey",
+      "core.schema.familyVersion", "core.schema.selfFamilyInherit"};
     if (normative.count(rule)) { m.category = "normative"; m.specification = spec; }
   }
+  // These policies intentionally differ from the literal per-entry reading.
+  if (rule == "core.layer.layerRelocates.targetIsSource" ||
+      rule == "core.layer.layerRelocates.targetUnderOtherSource") {
+    m.category = "compatibility";
+    m.specification = spec;
+  }
+  m.lean_ref = GetValidationRuleLeanRef(rule);
   // Rule -> specification reference errors, from the C11 core (binary search
   // over the rule-sorted rows).
   size_t ref_index = 0, ref_count = 0;

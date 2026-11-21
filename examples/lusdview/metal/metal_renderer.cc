@@ -472,6 +472,49 @@ void MetalRenderer::renderFrame(const RenderFrameParams& p) {
   std::copy_n(p.clippingPlanes, 32, u.planes);
   u.planeCount = std::clamp(p.clippingPlaneCount, 0, 8);
   u.mode = int(p.mode);
+  const bool wirePass = p.wireMode != 0 || p.mode == RenderMode::Wireframe;
+  const bool wireOnly = p.wireMode == 1 || p.mode == RenderMode::Wireframe;
+  // Wireframe-only hidden-line prepass: fill depth with color writes disabled,
+  // then let the line pass below reject occluded edges. X-ray skips this pass
+  // and disables depth testing for the lines.
+  if (wireOnly && !p.wireXray) {
+    enc->setColorWriteMask(MTL::ColorWriteMaskNone);
+    enc->setTriangleFillMode(MTL::TriangleFillModeFill);
+    enc->setDepthStencilState(depthState_.get());
+    enc->setFragmentBytes(&u, sizeof(u), 1);
+    enc->setFragmentTexture(white_.get(), 0);
+    for (size_t i = 0; i < meshes_.size(); ++i) {
+      auto& m = meshes_[i];
+      if (!m.vertices || !m.indices || !m.instances || !m.indexCount ||
+          !m.instanceCount ||
+          (p.meshVisible && i < size_t(std::max(0, p.meshVisibleCount)) &&
+           !p.meshVisible[i]))
+        continue;
+      enc->setVertexBuffer(m.vertices.get(), 0, 0);
+      enc->setVertexBuffer(m.instances.get(), 0, 2);
+      enc->setCullMode(m.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
+      enc->setVertexBytes(&u, sizeof(u), 1);
+      if (m.submeshes.empty()) {
+        enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, m.indexCount,
+                                   MTL::IndexTypeUInt32, m.indices.get(), 0,
+                                   m.instanceCount);
+      } else {
+        for (const auto& sub : m.submeshes) {
+          if (sub.indexOffset > m.indexCount ||
+              sub.indexCount > m.indexCount - sub.indexOffset)
+            continue;
+          enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle,
+                                     sub.indexCount, MTL::IndexTypeUInt32,
+                                     m.indices.get(),
+                                     size_t(sub.indexOffset) * 4,
+                                     m.instanceCount);
+        }
+      }
+    }
+    enc->setColorWriteMask(MTL::ColorWriteMaskAll);
+  }
+  enc->setDepthStencilState(wirePass && p.wireXray ? nullptr
+                                                   : depthState_.get());
   for (size_t i = 0; i < meshes_.size(); ++i) {
     auto& m = meshes_[i];
     if (!m.vertices || !m.indices || !m.instances || !m.indexCount ||
@@ -482,9 +525,8 @@ void MetalRenderer::renderFrame(const RenderFrameParams& p) {
     enc->setVertexBuffer(m.vertices.get(), 0, 0);
     enc->setVertexBuffer(m.instances.get(), 0, 2);
     enc->setCullMode(m.doubleSided ? MTL::CullModeNone : MTL::CullModeBack);
-    enc->setTriangleFillMode(p.wireMode || p.mode == RenderMode::Wireframe
-                                 ? MTL::TriangleFillModeLines
-                                 : MTL::TriangleFillModeFill);
+    enc->setTriangleFillMode(wirePass ? MTL::TriangleFillModeLines
+                                      : MTL::TriangleFillModeFill);
     u.geometricNormal = m.geometricNormal;
     auto draw = [&](const DrawSubmesh& sub) {
       if (sub.indexOffset > m.indexCount ||

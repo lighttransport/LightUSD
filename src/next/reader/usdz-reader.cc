@@ -1,3 +1,4 @@
+#include "core/native-io.hh"
 #include "usdz-reader.hh"
 #include "../safe-file-size.hh"
 #include "../c/lightusd-core-c.h"
@@ -98,6 +99,8 @@ bool IsSafeEntryName(const std::string& name) {
 
 bool USDZReader::OpenFile(const std::string& filename,
                           const USDZReadOptions& options) {
+  if (!::lightusd::NativeIOAvailable(&error_)) return false;
+
   error_.clear();
   entries_.clear();
   data_ = nullptr;

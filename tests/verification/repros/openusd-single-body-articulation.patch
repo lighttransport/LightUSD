@@ -1,0 +1,28 @@
+diff --git a/pxr/usd/usdPhysics/parseUtils.cpp b/pxr/usd/usdPhysics/parseUtils.cpp
+index 761965a92..e2182c810 100644
+--- a/pxr/usd/usdPhysics/parseUtils.cpp
++++ b/pxr/usd/usdPhysics/parseUtils.cpp
+@@ -2322,6 +2322,13 @@ void _FinalizeArticulations(const UsdStageWeakPtr stage,
+     {
+         // construct the BodyJointMap
+         bodyJointMap.reserve(rigidBodyMap.size());
++        // An enabled isolated body is still an articulation link. Retain it
++        // even when no joint contributes an adjacency entry.
++        for (RigidBodyMap::const_reference& bodyIt : rigidBodyMap)
++        {
++            if (bodyIt.second->rigidBodyEnabled)
++                bodyJointMap[bodyIt.first];
++        }
+         for (JointMap::const_reference& jointIt : jointMap)
+         {
+             const UsdPhysicsJointDesc* desc = jointIt.second;
+@@ -2512,6 +2519,9 @@ void _FinalizeArticulations(const UsdStageWeakPtr stage,
+             const ArticulationLinkMap& map = articulationLinkMaps[i].second;
+             for (ArticulationLinkMap::const_reference& linkIt : map)
+             {
++                // Adjacency alone omits the sole real link in a one-body
++                // articulation (its only neighbor can be the world sentinel).
++                articulatedBodies.insert(linkIt.first);
+                 articulatedBodies.insert(linkIt.second.children.begin(), 
+                                          linkIt.second.children.end());
+             }

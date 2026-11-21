@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 
+#include "core/native-io.hh"
 #include "texture-cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/safe-file-size.hh"
@@ -17,7 +18,7 @@
 #include "image-loader.hh"
 #include "ptx-loader.hh"
 #include "next/reader/usdz-reader.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tydra/resize-image.hh"  // ResizeImage / ResizeFilter only
 #include "next/crate/crate-format.hh"  // HalfToFloat
 
@@ -50,10 +51,41 @@ bool SourceImageWithinLimit(const TextureDecodeOptions& opt,
   return static_cast<uint64_t>(estimate) <= opt.max_source_bytes;
 }
 
+bool ReadExplicitPackageBytes(const TextureDecodeOptions& opt,
+                              const std::string& asset,
+                              std::vector<uint8_t>* out) {
+  std::string package, entry;
+  if (!out || !::lightusd::next::AssetResolver::ParsePackagePath(asset, &package, &entry))
+    return false;
+  if (!::lightusd::next::AssetResolver::IsAbsolutePath(package) && !opt.base_dir.empty())
+    package = ::lightusd::next::AssetResolver::JoinPath(opt.base_dir, package);
+  ::lightusd::next::USDZReadOptions limits;
+  ::lightusd::next::USDZReader reader;
+  if (!reader.OpenFile(package, limits)) return false;
+  for (size_t i = 0; i < reader.NumEntries(); ++i) {
+    if (reader.EntryName(i) != entry) continue;
+    const size_t size = reader.EntrySize(i);
+    const auto* bytes = reader.EntryData(i);
+    if (!bytes || !size || (opt.max_source_bytes && size > opt.max_source_bytes)) return false;
+    out->assign(bytes, bytes + size);
+    return true;
+  }
+  return false;
+}
+
 bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
                      const std::vector<size_t>* usdz_candidates,
                      ::lightusd::Image* out) {
   if (asset.empty()) return false;
+  if (::lightusd::next::AssetResolver::IsPackagePath(asset)) {
+    std::vector<uint8_t> bytes;
+    if (!ReadExplicitPackageBytes(opt, asset, &bytes) ||
+        !SourceImageWithinLimit(opt, bytes.data(), bytes.size(), asset)) return false;
+    auto result = ::lightusd::image::LoadImageFromMemory(bytes.data(), bytes.size(), asset);
+    if (!result) return false;
+    *out = std::move(result.value().image);
+    return true;
+  }
   if (opt.usdz && usdz_candidates) {
     // Candidates are in entry order, so the first match is the same entry the
     // full scan used to pick.
@@ -72,6 +104,7 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
       return true;
     }
   }
+  if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
   if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {
@@ -112,6 +145,8 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
                      const std::vector<size_t>* usdz_candidates,
                      std::vector<uint8_t>* out) {
   if (asset.empty() || !out) return false;
+  if (::lightusd::next::AssetResolver::IsPackagePath(asset))
+    return ReadExplicitPackageBytes(opt, asset, out);
   if (opt.usdz && usdz_candidates) {
     for (size_t i : *usdz_candidates) {
       if (!UsdzEntryMatches(opt.usdz->EntryName(i), asset)) continue;
@@ -126,6 +161,7 @@ bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
       return true;
     }
   }
+  if (!::lightusd::NativeIOEnabled()) return false;
   std::string path = asset;
   if (!::lightusd::next::AssetResolver::IsAbsolutePath(path) &&
       !opt.base_dir.empty()) {

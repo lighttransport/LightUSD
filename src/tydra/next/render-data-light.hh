@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "light-filter.hh"
 #include "render-data-enums.hh"
 #include "render-data-math.hh"
 #include <string>
@@ -37,6 +38,9 @@ struct RenderLight {
   std::vector<std::string> light_link_targets;
   std::vector<std::string> shadow_link_targets;
   std::vector<std::string> filter_targets;
+  // Parsed portable filters (rel light:filters). Receiver-independent kinds are
+  // folded into the effective intensity/color at each backend's light setup.
+  std::vector<LightFilter> filters;
 
   // Light/shadow linking resolved to RenderScene mesh indices (CollectionAPI
   // collection:lightLink / collection:shadowLink relationship form). When the

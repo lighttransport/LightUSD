@@ -304,13 +304,16 @@ struct RenderFrameParams {
   int clippingPlaneCount{0};
   PathTraceSettings pathTrace;
   RenderMode mode{RenderMode::Shaded};
-  // Wireframe overlay state, cycled with the 'v' key (GL backend):
+  // Wireframe overlay state, cycled with the 'v' key:
   //   0 = off (shaded fill only)
   //   1 = wireframe only (hidden-line: depth-only fill, then polygon edges)
   //   2 = wireframe + shading (shaded fill, then polygon edges on top)
   // Edges are the ORIGINAL polygon edges of the base (pre-tessellation) mesh --
   // triangulation diagonals are dropped via per-triangle source face ids.
   int wireMode{0};
+  // false: wireframe obeys the depth buffer (hidden lines removed). true: draw
+  // every edge through surfaces (x-ray). Applies to modes 1 and 2.
+  bool wireXray{false};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
   float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float lightColor[3]{1.0f, 1.0f, 1.0f};
@@ -454,6 +457,12 @@ class Renderer {
   // Progressive surface-first upload. The default preserves existing behavior;
   // GL defers wireframe/source-face buffers until uploadMeshAux.
   virtual void appendMeshSurface(const DrawMeshCPU& mesh) { appendMesh(mesh); }
+  // Cull merged static batches at triangle-run granularity. `cullPx` 0 keeps the
+  // frustum test only (visually identical to the per-batch test it replaces);
+  // > 0 additionally drops chunks whose projected radius is below that many
+  // pixels, matching the raster-LOD policy applied to unmerged meshes. Backends
+  // that draw per source mesh have nothing to gain and keep the default.
+  virtual void setStaticChunkCullPx(float /*cullPx*/) {}
   virtual void uploadMeshAux(size_t /*meshIndex*/, const DrawMeshCPU& /*mesh*/) {}
   // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
   // support yet; GL implements raymarching, VK/CUDA are placeholders).
@@ -664,6 +673,10 @@ class Renderer {
 
   // Texture handle of the offscreen color target for ImGui::Image.
   virtual ViewportTexHandle viewportTexture() const = 0;
+
+  // Four renderer-owned RGBA8 comparison previews, independent of scene textures.
+  // Uploads run on the GPU owner between frames. A null image queries the handle.
+  virtual ViewportTexHandle comparisonImage(int, const light3d::Image* = nullptr) { return 0; }
 
   // Composite: draw the current ImGui draw data to the window and present/swap.
   // Must be called after ImGui::Render().

@@ -645,6 +645,11 @@ int32_t lightusd_next_render_mesh_primvar_buffer(uint32_t handle, int32_t mesh_i
 int32_t lightusd_next_render_mesh_buffer(uint32_t handle, int32_t mesh_id,
                                          uint8_t kind, uint8_t* out,
                                          uint32_t cap);
+/* Internal getMeshCopy scope: begin=1 starts, begin=0 ends. Returns 0 on
+ * success, -1 for invalid/nested/mismatched scopes. No payload is retained
+ * beyond the existing one-mesh scratch; all ordinary calls remain unscoped. */
+int32_t lightusd_next_render_mesh_copy_scope(uint32_t handle, int32_t mesh_id,
+                                             uint8_t begin);
 /* Legacy computeMeshTangents: makes the tangent stream (kind 4) available for
  * a normal-mapped mesh while tangents are deferred. Returns 1 for a valid mesh
  * id, 0 for an invalid one, and -1 for an invalid handle. */

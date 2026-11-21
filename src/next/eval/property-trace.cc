@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "property-trace.hh"
 #include "../writer/value-printer.hh"
-#include "../../minijson.hh"
+#include "core/minijson.hh"
 #include <algorithm>
 #include <set>
 

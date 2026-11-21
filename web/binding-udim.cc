@@ -12,7 +12,7 @@
 #include <string>
 
 #include "image-loader.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include "sha256.hh"
 #include "udim-bake.hh"
 

@@ -2197,6 +2197,7 @@ int main() {
   directPtex.image.channels = 4;
   directPtex.image.data.assign(4 * 4 * 4, 192);
   directPtex.ptexRectTexelOffset = 0;
+  directPtex.ptexFaces = 1;
   directPtex.ptexFaceRects.push_back({0, 0, 4, 4, 0, 0});
   directPtex.compressed.format = lusdview::DrawCompressedFormat::BC7;
   directPtex.compressed.width = 4;

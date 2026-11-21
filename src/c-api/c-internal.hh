@@ -20,7 +20,9 @@
 namespace lightusd {
 namespace next {
 class AssetResolver;
+struct LoadUSDOptions;
 struct ImportedAssets;
+struct ValueClipStageCache;
 }
 }  // namespace lightusd
 
@@ -77,9 +79,25 @@ struct lightusd_stage {
   // uncomposed layer so variant and arc provenance is not lost in a flattened
   // stage snapshot.
   std::string source_filename;
+  // File-backed clip evaluation must retain the caller's finite load limits.
+  // Custom resolvers remain borrowed only during the original load call.
+  std::shared_ptr<const lightusd::next::LoadUSDOptions> file_eval_options;
+  // Value-clip stages are parsed on demand. Keep one stage-lifetime cache so
+  // repeated time queries reuse them instead of reloading per attribute.
+  mutable std::mutex clip_cache_mutex;
+  mutable std::shared_ptr<lightusd::next::ValueClipStageCache> clip_stage_cache;
   // Bumped by structural mutations (define/remove prim) so bindings can
   // detect stale lightusd_prim handles.
   std::atomic<uint64_t> generation{0};
+  // Instance proxies share physical specs but retain logical path/parent and
+  // relationship remapping. Intern only queried proxies; _pad is a 1-based ID.
+  // std::map nodes keep borrowed path views stable until structural mutation.
+  mutable std::mutex proxy_mutex;
+  mutable uint64_t proxy_generation = 0;
+  mutable std::map<std::string, lightusd::next::UsdPrim> proxy_prims;
+  mutable std::vector<const lightusd::next::UsdPrim*> proxy_ids;
+  mutable std::map<std::string, uint32_t> proxy_path_ids;
+
 };
 
 namespace lightusd_internal {

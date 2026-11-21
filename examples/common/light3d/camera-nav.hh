@@ -124,11 +124,16 @@ class OrbitCamera {
 
   // Absolute camera placement (e.g. driven by the MCP viewport tool). Pitch is
   // clamped like orbit(); distance kept positive.
+  // Rigid camera-to-world pose, column-major; retains roll and pole views.
+  bool setPose(const float transform[16], float pivotDistance);
   void setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,
                 float dist);
 
  private:
   light3d::Vec3 target_{0.0f, 0.0f, 0.0f};
+  bool havePose_{false};
+  light3d::Vec3 poseBackward_{0, 0, 1};
+  light3d::Vec3 poseUp_{0, 1, 0};
   float yaw_{0.6f};       // radians, azimuth around the up axis
   float pitch_{0.35f};    // radians, elevation, clamped to (-89deg, 89deg)
   float distance_{5.0f};
@@ -153,9 +158,9 @@ class OrbitCamera {
   float orbitSensitivity_{1.0f};
   float panSensitivity_{1.0f};
   float dollySensitivity_{1.0f};
-  // Master interactive-motion multiplier. The 0.65 base below makes the
-  // historical 1.0 setting less twitchy; this remains a user-facing relative
-  // scale with convenient 0.25/0.5/1/1.5 presets.
+  // Master interactive-motion multiplier. Each gesture has its own tuned,
+  // Maya-like base response below; this remains a user-facing relative scale
+  // with convenient 0.25/0.5/1/1.5 presets.
   float navigationScale_{1.0f};
   bool invertYaw_{true};
   bool invertDolly_{false};

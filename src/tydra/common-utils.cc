@@ -7,7 +7,7 @@
 #include <limits>
 #include "../str-util.hh"
 #include "tiny-format.hh"
-#include "../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace tydra {

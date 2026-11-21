@@ -33,6 +33,10 @@ struct PtexAtlasOptions {
   // Test/diagnostic override. Normal builds reserve slots only when the atlas
   // budget forced at least one face below its requested mip.
   bool forcePhysicalCache{false};
+  // Number of absolute mip levels packed per face, starting at the static fit
+  // mip. 1 preserves the historical single-level atlas. The descriptor path
+  // uses >1 for per-face minification.
+  uint32_t mipLevels{1};
 };
 
 struct PtexPageCacheStats {
@@ -120,6 +124,7 @@ struct PtexAtlasBuildStats {
   uint32_t physicalCacheOffsetY{0};
   uint32_t physicalCacheSlotEdge{0};
   uint32_t physicalCacheSlots{0};
+  uint32_t mipLevels{1};
   PtexPageCacheStats pageCache;
 };
 
@@ -141,9 +146,9 @@ bool BuildPtexPage(const lightusd::ptx::Reader& reader, uint32_t face,
                    light3d::Image* page, DrawPtexFaceRectCPU* inner,
                    std::string* err);
 
-// Encode one face-table entry as eight RGBA texels (payload in alpha), matching
-// the shader's two-byte little-endian x/y/width/height representation.
+// Encode one face-table entry as ten RGBA texels (payload in alpha), matching
+// the shader's two-byte little-endian x/y/width/height/baseMip representation.
 void EncodePtexFaceRectTexels(const DrawPtexFaceRectCPU& rect,
-                              uint8_t texels[8u * 4u]);
+                              uint8_t texels[10u * 4u]);
 
 }  // namespace lusdview

@@ -3,7 +3,7 @@
 
 set_xmakever("2.7.0")
 set_project("lightusd")
-set_version("1.0.0-rc4")
+set_version("1.0.0")
 
 set_languages("c11", "c++17")
 
@@ -184,7 +184,7 @@ target("lightusd_static")
         "src/usdLux.cc",
         "src/mtlx-xml-tokenizer.cc",
         "src/mtlx-xml-parser.cc",
-        "src/mtlx-dom.cc",
+        "src/core/mtlx-dom.cc",
         "src/mtlx-simple-parser.cc",
         "src/usdMtlx.cc",
         "src/usdMtlx-write.cc",

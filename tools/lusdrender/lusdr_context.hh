@@ -4,6 +4,7 @@
 // as the monolith is split into per-module .cc files).
 #pragma once
 
+#include <atomic>
 #include <functional>
 
 #include "next/eval/value-clip.hh"
@@ -297,7 +298,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
            bool indirect = false,
            const std::vector<TriangleSceneChunk> *triangle_chunks = nullptr,
-           float *primary_hit_t = nullptr);
+           float *primary_hit_t = nullptr,
+           std::atomic<bool>* diagnostic_exhausted = nullptr);
 
 uint8_t ToSRGB8(float linear);
 
@@ -317,6 +319,7 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             int height,
                             const std::vector<Texture> *textures = nullptr,
                             const std::vector<float> *tri_uvs = nullptr,
+                            const std::vector<float> *tri_uvs1 = nullptr,
                             const lrt_tlas *tlas = nullptr,
                             const std::vector<Blas> *blas = nullptr,
                             const std::vector<InstanceRT> *instances = nullptr,
@@ -405,7 +408,8 @@ bool RunCudaSharedRT(const Options &opt,
                      const std::vector<ResolvedMat> &materials,
                      const std::vector<Texture> &textures,
                      const LightCache &lights,
-                     const CameraFrame &camera, int height);
+                     const CameraFrame &camera, int height,
+                     const std::vector<EllipseSceneChunk>* ellipses = nullptr);
 #endif
 
 // ---- lusdr_next.cc (next loader + driver) ----
@@ -572,7 +576,8 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 bool BuildNextFlatCurveMeshes(
     const std::vector<CurveJobNext> &jobs, double time,
     const lightusd::next::ValueClipStageLoader &clip_loader,
-    const CameraFrame &camera, std::vector<RTPreviewStats::MeshGeometry> *geos,
+    const CameraFrame &camera, const Options &opt,
+    std::vector<RTPreviewStats::MeshGeometry> *geos,
     std::vector<Vec3> *base_colors);
 
 bool BuildNextFlatCurveBounds(
@@ -669,6 +674,12 @@ lightusd::next::UsdPrim FindDomeLightRec(const lightusd::next::UsdPrim &prim);
 bool BuildNextIbl(const lightusd::next::Stage &stage, const Options &opt,
                   const std::string &base_dir, double time, IblCache *ibl);
 
+// Vulkan descriptor path: add the stage DomeLight as an analytic dome entry
+// (plus its latlong texture) instead of IBL. No-op if one is already present.
+bool CollectDomeLightForGpu(const lightusd::next::Stage &stage, double time,
+                            LightCache *cache,
+                            std::vector<Texture> *textures);
+
 bool ParseFrameSpec(const std::string &spec, std::vector<double> *times);
 
 std::string SubstituteFrame(const std::string &path, long frame);
@@ -760,6 +771,10 @@ struct LegacyMaterialTex {
   uint8_t metallic_ch{0};
   uint8_t occlusion_ch{0};
   uint8_t opacity_ch{0};
+  // UV primvar each textured lane reads (UsdPrimvarReader inputs:varname).
+  // Empty = the lane has no texture. `AddMeshTriangles` matches these against
+  // the mesh's texcoord slot names to select the per-lane UV set.
+  std::array<std::string, kUvLaneCount> uv_names;
 };
 
 // Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
@@ -785,6 +800,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       LightCache *lights = nullptr,
                       std::vector<float> *tri_uvs = nullptr,
+                      std::vector<float> *tri_uvs1 = nullptr,
                       const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                       const PurposeVisibilityMap *pv = nullptr);
 
@@ -794,6 +810,7 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      const std::unordered_set<std::string> *skip_paths,
                      LightCache *lights,
                      std::vector<float> *tri_uvs = nullptr,
+                     std::vector<float> *tri_uvs1 = nullptr,
                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                      const PurposeVisibilityMap *pv = nullptr);
 
@@ -802,6 +819,7 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         const std::unordered_set<std::string> *skip_paths,
                         LightCache *lights,
                         std::vector<float> *tri_uvs = nullptr,
+                        std::vector<float> *tri_uvs1 = nullptr,
                         const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
                         const PurposeVisibilityMap *pv = nullptr);
 

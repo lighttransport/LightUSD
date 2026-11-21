@@ -3,15 +3,15 @@
 // main loop.
 #pragma once
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
-#include <future>
 #include <functional>
+#include <future>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -23,27 +23,32 @@
 #include <unordered_set>
 #include <vector>
 
-#include "frame_packet.hh"
+#include "../vchar/autorigger_client.hh"
+
 #include "viewer_document.hh"
 #include "lightusd-render-cpp.hh"
 
 #include "light3d/camera-nav.hh"
 #include "cpu/cpu_raytracer.hh"
 #include "cuda/cuda_raytracer.hh"
+#include "frame_packet.hh"
 #include "gpu_scene.hh"
-#include "hip/hip_raytracer.hh"
-#include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "gui.hh"
+#include "hip/hip_raytracer.hh"
+#include "lightusd-render-cpp.hh"
 #include "load_control.hh"
 #include "parametric_tess.hh"
-#include "ptex_atlas.hh"
 #include "prototype_lod.hh"
+#include "ptex_atlas.hh"
 #include "renderer.hh"
 #include "rt_camera.hh"
-#include "tydra/rb-dynamics.hh"
+#include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
-#include "../vchar/autorigger_client.hh"
+#include "tydra/next/scene-preview-compute.hh"
+#include "tydra/next/scene-preview.hh"
+#include "tydra/rb-dynamics.hh"
+#include "viewer_document.hh"
 #if defined(LUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
@@ -77,7 +82,11 @@ class App
 {
  public:
   explicit App(Backend backend);
-  ~App() override;
+  ~App()
+#if defined(LUSDVIEW_HAVE_MCP)
+      override
+#endif
+      ;
 
   // Optional render budget (for scripting/testing). maxTris==0 keeps the default.
   void setLoadBudget(std::size_t maxTris, double convertTimeBudgetSec) {
@@ -115,6 +124,15 @@ class App
     rasterLodEnabled_ = enabled;
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
+  }
+  void setScenePreviewLods(const lightusd::tydra::next::ScenePreviewLods& lods,
+                           double pixelError) {
+    previewLods_ = lods;
+    previewLodPixelError_ = pixelError;
+  }
+  void setScenePreviewRequest(
+      const lightusd::tydra::next::ScenePreviewRequest& request) {
+    previewRequest_ = request;
   }
   void setDynamicPrototypeLod(bool enabled) {
     dynamicPrototypeLodEnabled_ = enabled;
@@ -303,6 +321,7 @@ class App
     modeSweepPattern_ = pattern;
   }
   void setRenderMode(RenderMode m) { gui_.setRenderMode(m); }
+  void setWireframeXray(bool on) { gui_.setWireXray(on); }
   void setBlendWeight(const std::string& name, float w) {
     gui_.setBlendWeight(name, w);
   }
@@ -355,6 +374,7 @@ class App
   nlohmann::json mcpInput(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpMouse(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpPick(const nlohmann::json& a, std::string& e) override;
+  nlohmann::json mcpSelect(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpListPrims(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpLoadPayloads(const nlohmann::json& a, std::string& e) override;
   nlohmann::json mcpReloadLayer(const nlohmann::json& a,
@@ -675,6 +695,28 @@ class App
   float rasterLodFullPx_{8.0f};
   float rasterLodCullPx_{1.5f};
   bool dynamicPrototypeLodEnabled_{false};
+  void stepScenePreviewLods();
+  bool renderScenePreviewVolume(std::vector<uint8_t>*, int*, int*,
+                                std::string*, bool advance = true);
+  std::unique_ptr<lightusd::tydra::next::PreviewVolumeRenderer>
+      previewVolumeRenderer_;
+  std::string previewVolumeRoot_;
+  lightusd::tydra::next::ScenePreviewLods previewLods_;
+  double previewLodPixelError_ = 2;
+  lightusd::tydra::next::ScenePreviewRequest previewRequest_;
+  using PreviewRefinement = std::pair<lightusd::tydra::next::ScenePreviewResult,
+                                      lightusd::tydra::next::ScenePreviewLods>;
+  std::future<PreviewRefinement> previewRefinement_;
+  std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
+  bool previewRefinementTried_ = false;
+  bool previewLodReloadPending_ = false;
+  bool previewLodHaveCamera_ = false;
+  double previewLodLastFocalPixels_ = 0;
+  int previewLodLastWidth_ = 0, previewLodLastHeight_ = 0;
+  uint64_t previewLodUpdates_ = 0;
+  light3d::Vec3 previewLodLastEye_{0, 0, 0}, previewLodLastForward_{0, 0, -1};
+  std::chrono::steady_clock::time_point previewLodStillSince_{};
+
   struct PendingPrototypeLod {
     std::future<PrototypeLodBuildResult> future;
   };
@@ -1158,6 +1200,17 @@ class App
   std::uint64_t sceneGen_{0};
 #if defined(LUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
+  double mcpCpuFrameSeconds_{0.0};
+  double mcpRenderedTime_{0.0};
+  uint64_t mcpFrameSerial_{0};
+  nlohmann::json mcpRenderedCamera_;
+  std::string mcpCompareWindowPath_;
+  nlohmann::json mcpCompareWindowResult_;
+  std::string mcpBarrierRequest_;
+  nlohmann::json mcpBarrierSubmitting_;
+  nlohmann::json mcpBarrier_;
+  std::vector<uint8_t> mcpBarrierPixels_;
+  int mcpBarrierWidth_{0}, mcpBarrierHeight_{0};
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.

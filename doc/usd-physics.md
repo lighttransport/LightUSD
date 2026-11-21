@@ -44,20 +44,20 @@ in one of three profiles, selected with `profile=` (Python), `"profile"` in the 
 
 | | `newton` (default) | `openusd` | `legacy` |
 |---|---|---|---|
-| Target consumers | Newton 1.8, MuJoCo 3.16 USD decoder, OpenUSD 26.08 | any UsdPhysics consumer | historical output |
-| Engine schemas | UsdPhysics + MjcPhysics + Newton (newton-usd-schemas 0.6.0) | UsdPhysics/UsdGeom/UsdShade only; engine-only records omitted with a warning | as before |
+| Target consumers | Newton 1.8, MuJoCo 3.16 USD decoder, OpenUSD 26.08 | any UsdPhysics consumer; MuJoCo's USD decoder | historical output |
+| Engine schemas | UsdPhysics + MjcPhysics + Newton (newton-usd-schemas 0.6.0) | UsdPhysics/UsdGeom/UsdShade + MjcPhysics (`mjc:*`); Newton/PhysX/LightUSD records omitted with a warning | as before |
 | Variability | from generated descriptors | from generated descriptors | historical (several `uniform` mismatches) |
 | Revolute/prismatic limits | `physics:lower/upperLimit` | same | also non-standard `physics:limit:<dof>:low/high` |
 | World link | static Xform; joints to the world omit `physics:body0` | same | disabled rigid body |
-| Sites | Gprims under their body, `MjcSiteAPI` + `NewtonSiteAPI` | under their body | `/World/Sites` |
-| Friction | `Material` + `PhysicsMaterialAPI` (static = dynamic = mu0), `newton:torsional/rollingFriction`, `newton:contactStiffness/contactDamping` from geom `solref` (Newton's `solref_to_stiffness_damping`), deduplicated by friction and solref, `material:binding:physics` | `PhysicsMaterialAPI` only | `mjc:geomFriction` |
-| Joint dynamics | `NewtonJointAPI` (`newton:armature`, `newton:friction`, `newton:damping` per degree for angular joints, `newton:velocityLimit`); `MjcJointAPI` `ref/springref/margin/stiffness/sol*` | omitted | `mjc:*` + `physxJoint/physxLimit` aliases |
+| Sites | Gprims under their body, `MjcSiteAPI` + `NewtonSiteAPI` | under their body, `MjcSiteAPI` | `/World/Sites` |
+| Friction | `Material` + `PhysicsMaterialAPI` (static = dynamic = mu0), `newton:torsional/rollingFriction`, `newton:contactStiffness/contactDamping` from geom `solref` (Newton's `solref_to_stiffness_damping`), deduplicated by friction and solref, `material:binding:physics` | `PhysicsMaterialAPI` + `MjcMaterialAPI` torsional/rolling friction | `mjc:geomFriction` |
+| Joint dynamics | `NewtonJointAPI` (`newton:armature`, `newton:friction`, `newton:damping` per degree for angular joints, `newton:velocityLimit`); `MjcJointAPI` `ref/springref/margin/stiffness/sol*` | `MjcJointAPI` `mjc:armature/frictionloss/damping` (MJCF units) plus the same `mjc:*` | `mjc:*` + `physxJoint/physxLimit` aliases |
 | Inertia | `diagonalInertia` + `principalAxes` + `NewtonMassAPI` `newton:inertia`; MJCF bodies without `<inertial>` get MuJoCo's `inertiafromgeom` result | diagonal + axes | as authored only |
 | Multi-joint bodies | stacked joints between the body pair (`newton:jointsAddMobility`) | stacked | massless intermediate links |
-| MJCF actuators | `MjcActuator` with MuJoCo's compiled gain/bias/dynamics expansion (Newton maps position/velocity shapes to joint targets) | omitted | `NewtonActuator` PD for joint motors/position/velocity |
-| MJCF equalities | connect → `PhysicsSphericalJoint`, weld → `PhysicsFixedJoint` (excluded from articulation, `active` → `jointEnabled`, site forms supported); joint → `NewtonMimicAPI` + `MjcEqualityJointAPI` on the follower (`mimicCoef0` in degrees) | spherical/fixed joints only | `Xform` + `MjcEquality*API` |
+| MJCF actuators | `MjcActuator` with MuJoCo's compiled gain/bias/dynamics expansion (Newton maps position/velocity shapes to joint targets) | same | `NewtonActuator` PD for joint motors/position/velocity |
+| MJCF equalities | connect → `PhysicsSphericalJoint`, weld → `PhysicsFixedJoint` (excluded from articulation, `active` → `jointEnabled`, site forms supported); joint → `NewtonMimicAPI` + `MjcEqualityJointAPI` on the follower (`mimicCoef0` in degrees) | spherical/fixed joints; joint → `MjcEqualityJointAPI` (`mjc:target`, `mjc:coef0..4`) | `Xform` + `MjcEquality*API` |
 | MJCF collision | collides iff `contype|conaffinity != 0`; a visible collider is one prim (collision APIs, look material, `displayColor`; as mujoco-usd-converter, so MuJoCo's decoder reads one geom); colliders in groups 3+ are `purpose = guide`; group 3+ non-colliders become guide visuals | same | group-based split, separate visual and guide collider |
-| Mocap / gravcomp | `physics:kinematicEnabled`, `mjc:gravcomp` | kinematic only | `mjc:mocap` |
+| Mocap / gravcomp | `physics:kinematicEnabled`, `mjc:gravcomp` | same | `mjc:mocap` |
 | URDF `planar` | D6 `PhysicsJoint`, `transX/rotY/rotZ` locked (`low > high`), `transY/transZ/rotX` unlimited (`-inf`/`inf`; Newton creates a D6 DOF only for an axis with a LimitAPI) | same | error |
 | URDF effort | `urdf:limit:effort` + `mjc:actuatorfrcrange` (±effort) with `mjc:actuatorfrclimited` | `urdf:limit:effort` | `urdf:limit:effort` |
 | MJCF `ref` | `mjc:ref` only (Newton measures joint coordinates from it) | omitted | also `state:*:physics:position` |
@@ -1004,7 +1004,7 @@ default `newton` profile; [Output profiles](#output-profiles) lists the
 | MJCF `<tendon>` (fixed, spatial) | `MjcTendon` under `/World/Tendons`; spatial routing through sites, native `Sphere`/`Cylinder` wrap geoms and pulleys (see [Output profiles](#output-profiles)); other wrap geom types skip the tendon (`mjcf.tendon_wrap_type`) |
 | MJCF `<site>` | a gprim under its body with `MjcSiteAPI` + `NewtonSiteAPI` |
 | MJCF `<equality>` connect/weld | `PhysicsSphericalJoint` / `PhysicsFixedJoint` excluded from the articulation (`active` → `physics:jointEnabled`); unsupported equality types are reported (`mjcf.equality_unsupported`) |
-| MJCF `<contact><exclude>` / `<pair>` | `PhysicsFilteredPairsAPI` on the first body / an `Xform` under `/World/Contacts` with `mjc:geom1`/`mjc:geom2` tokens and the pair's `condim`/`margin`/`gap`/`friction`/`sol*` (no MjcPhysics schema covers pairs; `openusd` omits it) |
+| MJCF `<contact><exclude>` / `<pair>` | `PhysicsFilteredPairsAPI` on the first body / an `Xform` under `/World/Contacts` with `mjc:geom1`/`mjc:geom2` tokens and the pair's `condim`/`margin`/`gap`/`friction`/`sol*` (no MjcPhysics schema covers pairs; `openusd` keeps these `mjc:` attributes) |
 | MJCF `<flexcomp>`, raw `<flex>` | UsdPhysics deformables; reduced flexcomp DOFs are approximated as full-dof and reported, while interpolated raw flexes are skipped and reported |
 
 For converted flexcomps, the importer recognizes MuJoCo's `full`, `radial`,

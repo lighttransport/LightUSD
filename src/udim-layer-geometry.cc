@@ -10,7 +10,7 @@
 #include <cmath>
 #include <set>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "tsd/tinysubdiv.hh"
 namespace lightusd::udim {
 namespace {

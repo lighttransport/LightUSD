@@ -9,6 +9,7 @@
 #include "next/types/value.hh"
 #include "next/reader/obj-reader.hh"
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -36,10 +37,12 @@ static bool ConvertPayloadLayer(
     return false;
   }
   ProfileScope profile_scope(profile);
-  // The openusd profile has no schema for MuJoCo/Newton-only records; say
-  // what was omitted instead of authoring empty engine-typed prims.
+  // The openusd profile keeps MjcPhysics records (tendons, MjcActuator,
+  // keyframes, sensors, contact pairs) but has no schema for Newton-only
+  // ones; say what was omitted instead of authoring empty engine-typed prims.
   auto engine_section = [&](const char *key, const char *what) {
     if (profile.engine) return true;
+    if (profile.mjc && std::strcmp(key, "actuators") != 0) return true;
     const Json *items = JsonArray(root, key);
     if (items && !items->empty())
       AppendWarn(warn, "openusd profile omits " + std::to_string(items->size()) + " " +
@@ -172,6 +175,19 @@ static bool ConvertPayloadLayer(
   std::set<std::string> static_links;                          // by source name
   std::map<std::string, urdf_detail::Matrix4> link_worlds;                 // by source name
   std::map<std::string, std::set<std::string>> link_children;  // by USD name
+  // The articulation root API belongs on the root BODY, including a fixed
+  // base. MuJoCo's USD decoder treats any prim carrying the API as a body, so
+  // authoring it on the world-anchoring joint created a zero-mass body and
+  // failed compilation. The reference MuJoCo converter also applies it to the
+  // top-level body. `author_articulation` is shared by both base kinds.
+  const auto author_articulation = [&](tn::PrimSpec* target, const Json& link) {
+    AddAPIs(target, {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
+    if (self_collision_authored)
+      Set(target, "newton:selfCollisionEnabled", tn::Value(self_collision_enabled), "bool");
+    bool adds_mobility = false;
+    if (profile.newton && ReadBool(link, "jointsAddMobility", &adds_mobility) && adds_mobility)
+      Set(target, "newton:jointsAddMobility", tn::Value(true), "bool");
+  };
   std::set<std::string> used_links;
   // layout="nested": each dynamic link is a child prim of its parent link
   // (the kinematic tree, as the reference converters write it), with a
@@ -282,17 +298,8 @@ static bool ConvertPayloadLayer(
         Set(prim, "mjc:gravcomp", tn::Value(gravcomp), "double");
       bool articulation_root = false;
       ReadBool(link, "articulationRoot", &articulation_root);
-      if (!is_static && (!child_links.count(source) || articulation_root)) {
-        AddAPIs(prim,
-                {"PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"});
-        if (self_collision_authored)
-          Set(prim, "newton:selfCollisionEnabled",
-              tn::Value(self_collision_enabled), "bool");
-        bool adds_mobility = false;
-        if (profile.newton && ReadBool(link, "jointsAddMobility", &adds_mobility) &&
-            adds_mobility)
-          Set(prim, "newton:jointsAddMobility", tn::Value(true), "bool");
-      }
+      if (!is_static && (!child_links.count(source) || articulation_root))
+        author_articulation(prim, link);
       if (const Json* inertial = JsonObject(link, "inertial")) {
         float mass = 0.0f;
         bool zero_mass = false;
@@ -736,7 +743,7 @@ static bool ConvertPayloadLayer(
 
   // MJCF <custom><numeric|text> -> /World/MjcCustom (model metadata / MJX
   // knobs), authored only when it carries at least one entry.
-  if (const Json *custom = profile.engine ? JsonObject(root, "custom") : nullptr) {
+  if (const Json *custom = (profile.engine || profile.mjc) ? JsonObject(root, "custom") : nullptr) {
     std::vector<std::pair<std::string, const Json *>> numeric, text;
     if (const Json *items = JsonArray(*custom, "numeric")) {
       for (const Json &n : *items) {
@@ -766,7 +773,7 @@ static bool ConvertPayloadLayer(
   // MJCF <extension><plugin><instance><config> -> /World/MjcPlugins; the
   // instance config (e.g. a PID actuator's kp/ki/kd) is referenced by an
   // MjcActuator's mjc:instance.
-  if (const Json *plugins = profile.engine ? JsonArray(root, "plugins") : nullptr) {
+  if (const Json *plugins = (profile.engine || profile.mjc) ? JsonArray(root, "plugins") : nullptr) {
     std::vector<std::pair<std::string, std::string>> tokens;
     for (const Json &p : *plugins) {
       const std::string inst = JsonString(p, "instance");

@@ -1,9 +1,307 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
+#include "../layer/int64-listop.hh"
+#include <algorithm>
+#include <unordered_set>
+#include <string_view>
 #include "cache-internal.hh"
 namespace lightusd {
 namespace next {
 namespace pcp {
+
+std::string Cache::Impl::SpellSitePath(uint32_t stack,
+                                       const std::string &site) const {
+  static const char kSelf[] = "/__self__";
+  static const size_t kSelfLen = sizeof(kSelf) - 1;
+  // Walk owner chain leaf -> outermost (the suffixes stack inside-out).
+  std::string suffix;
+  uint32_t cur = stack;
+  std::string cur_site = site;
+  for (size_t depth = 0; depth < 64; ++depth) {
+    if (cur >= layer_stacks.size()) break;
+    const LayerStack &st = layer_stacks[cur];
+    if (st.variant_owner_stack == 0xFFFFFFFFu) break;
+    // Rest of the path below the content root: "/__self__/a/b" -> "a/b",
+    // "/__self__" -> "". A site outside the sentinel keeps its spelling.
+    std::string rest;
+    if (cur_site.compare(0, kSelfLen, kSelf) == 0 &&
+        (cur_site.size() == kSelfLen || cur_site[kSelfLen] == '/')) {
+      rest = cur_site.size() > kSelfLen + 1 ? cur_site.substr(kSelfLen + 1)
+                                            : std::string();
+    } else {
+      rest = cur_site;
+    }
+    suffix = st.variant_selection + rest + suffix;
+    cur_site = st.variant_owner_site;
+    cur = st.variant_owner_stack;
+  }
+  const std::string internal = cur_site + suffix;
+  std::string spelled;
+  spelled.reserve(internal.size());
+  for (size_t i = 0; i < internal.size(); ++i) {
+    if (internal[i] == '/' &&
+        ((i + 1 < internal.size() && internal[i + 1] == '{') ||
+         (i > 0 && internal[i - 1] == '}'))) continue;
+    spelled.push_back(internal[i]);
+  }
+  return spelled;
+}
+
+std::vector<std::string> Cache::GetRootLayerStackIdentifiers() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  if (impl_->layer_stacks.empty()) return {};
+  return impl_->layer_stacks[0].layer_identifiers;
+}
+
+std::vector<PrimStackEntry> Cache::GetPrimStack(const Path& path,
+                                                std::string* warn,
+                                                std::string* err) {
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  std::vector<PrimStackEntry> out;
+  const auto& sources = impl_->SourcesForPath(path, warn, err);
+  auto variant_property_names = [](const PrimVariantData& vd) {
+    return vd.property_names();
+  };
+  // Locate the spec authoring `vd` among `specs` and spell its site suffix.
+  auto locate_option = [&](const std::vector<SpecRef>& specs,
+                           const PrimVariantData* vd, std::string* layer,
+                           std::string* suffix) -> bool {
+    auto walk = [&](auto&& self, const std::vector<PrimVariantSetData>& sets,
+                    std::string* out_suffix, size_t depth) -> bool {
+      if (depth > 256) return false;
+      for (const auto& set : sets) for (const auto& variant : set.variants) {
+        const std::string component = "{" + set.name + "=" + variant.name + "}";
+        if (&variant == vd) { *out_suffix = component; return true; }
+        std::string nested;
+        if (self(self, variant.variantSets, &nested, depth + 1)) {
+          *out_suffix = component + nested; return true;
+        }
+      }
+      return false;
+    };
+    for (const auto& spec : specs) {
+      if (walk(walk, spec.spec->meta().variantSets(), suffix, 0)) {
+        *layer = spec.layer_id();
+        return true;
+      }
+    }
+    return false;
+  };
+  // Host key of a variant-arc source: the (stack, site) whose option it
+  // carries (inline opinions sit on the host itself; subtree content lives in
+  // a stack that records its owner).
+  auto variant_host_key = [&](const Src& s) -> std::string {
+    if (s.variant) return impl_->AppliedVariantKey(s);
+    const size_t holder = s.site.rfind("/{");
+    if (holder != std::string::npos && !s.site.empty() && s.site.back() == '}')
+      return impl_->AppliedVariantKey(s.stack_idx, s.site.substr(0, holder),
+                                      impl_->Mapping(s.map_idx).Apply(s.site));
+    const LayerStack& st = impl_->layer_stacks[s.stack_idx];
+    if (st.variant_owner_stack == 0xFFFFFFFFu) return std::string();
+    return impl_->AppliedVariantKey(st.variant_owner_stack, st.variant_owner_site,
+                                    impl_->Mapping(s.map_idx).Apply("/__self__"));
+  };
+  // pxr orders a site's arcs L, I, V, R, P, S: its variant nodes follow the
+  // inherit subtree. A host's applied-variant record is therefore held back
+  // past the inherit sources that follow it and flushed at the host's own
+  // first variant-arc source, at the first reference/payload/specialize
+  // source after it, or at the end (an option that authored nothing has no
+  // source of its own).
+  auto emit_applied = [&](const std::string& key, uint32_t stack_idx,
+                          const std::string& site,
+                          const std::vector<SpecRef>& specs) {
+    const auto rec = impl_->applied_variants_.find(key);
+    if (rec == impl_->applied_variants_.end()) return;
+    const std::string host = impl_->SpellSitePath(stack_idx, site);
+    for (const auto& applied : rec->second) {
+      // Prefer actual selected variant sources. Applied records also retain
+      // empty options, but a record is not an extra opinion alongside its
+      // inline/content source. Records keyed by a shared host may contain
+      // selections used by another instance; an actual source for this set
+      // is the authoritative selection for this query.
+      bool represented = false;
+      for (const Src& candidate : sources) {
+        if (!candidate.variant && candidate.stack_idx == stack_idx &&
+            impl_->SpellSitePath(candidate.stack_idx, candidate.site) == host + applied.selection &&
+            impl_->AppliedVariantKey(stack_idx, site,
+                impl_->Mapping(candidate.map_idx).Apply(candidate.site)) == key) {
+          represented = true;
+          break;
+        }
+        if (candidate.variant && candidate.stack_idx == stack_idx && candidate.site == site) {
+          std::string layer, suffix;
+          if (locate_option(impl_->SpecsFor(candidate), candidate.variant, &layer, &suffix) &&
+              suffix == applied.selection) {
+            represented = true;
+            break;
+          }
+        } else if (!candidate.variant && candidate.site == "/__self__") {
+          const LayerStack& variant_stack = impl_->layer_stacks[candidate.stack_idx];
+          if (variant_stack.variant_owner_stack == stack_idx &&
+              variant_stack.variant_owner_site == site &&
+              variant_stack.variant_selection == applied.selection) {
+            represented = true;
+            break;
+          }
+        }
+      }
+      if (represented) continue;
+      PrimStackEntry item;
+      item.layer_identifier = applied.authoring_layer;
+      item.prim_path = host + applied.selection;
+      item.arc = "variant";
+      // Inline names of the option, located through the authoring spec.
+      for (const auto& spec : specs) {
+        bool found = false;
+        for (const auto& set : spec.spec->meta().variantSets()) {
+          if (set.name != applied.set_name) continue;
+          for (const auto& variant : set.variants) {
+            if (variant.name != applied.variant_name) continue;
+            item.property_names = variant_property_names(variant);
+            found = true;
+            break;
+          }
+          if (found) break;
+        }
+        if (found) break;
+      }
+      out.push_back(std::move(item));
+    }
+  };
+  struct PendingHost {
+    std::string key;
+    uint32_t stack_idx;
+    std::string site;
+    const std::vector<SpecRef>* specs;
+    size_t arc_depth;
+  };
+  std::vector<PendingHost> pending;  // in host order
+  auto flush_pending = [&](size_t first) {
+    // Hosts arrive in depth-first source order. Emit their pending records in
+    // postorder: inherited variants precede their host's variants, but sibling
+    // inherits keep their authored strength order.
+    std::vector<size_t> ancestors;
+    const auto emit = [&](size_t index) {
+      const PendingHost& host = pending[index];
+      emit_applied(host.key, host.stack_idx, host.site, *host.specs);
+    };
+    for (size_t i = first; i < pending.size(); ++i) {
+      while (!ancestors.empty() &&
+             pending[ancestors.back()].arc_depth >= pending[i].arc_depth) {
+        emit(ancestors.back());
+        ancestors.pop_back();
+      }
+      ancestors.push_back(i);
+    }
+    while (!ancestors.empty()) {
+      emit(ancestors.back());
+      ancestors.pop_back();
+    }
+    pending.resize(first);
+  };
+  for (size_t si = 0; si < sources.size(); ++si) {
+    const Src& source = sources[si];
+    if (!pending.empty()) {
+      if (source.arc_kind == ArcType::Variant) {
+        // Before a host's variant, emit pending variants of the inherited
+        // hosts visited since it. An empty class option may select this host's
+        // variant without creating a source of its own, so flushing only this
+        // host would incorrectly place that class option after its dependent
+        // variant. Keep stronger hosts pending when visiting a class variant.
+        const std::string key = variant_host_key(source);
+        size_t host_index = pending.size();
+        for (size_t i = 0; i < pending.size(); ++i) {
+          if (pending[i].key == key) { host_index = i; break; }
+        }
+        flush_pending(host_index == pending.size() ? 0 : host_index);
+      } else if (source.arc_kind == ArcType::Inherit) {
+        // A sibling inherit starts after the preceding inherit's whole
+        // subtree, including empty variant records. Same-stack class arcs are
+        // recorded in arc_sites (arc_chain only counts crossed layer stacks).
+        const size_t depth = source.arc_sites() ? source.arc_sites()->size() : 0;
+        for (size_t i = 0; i < pending.size(); ++i) {
+          if (pending[i].arc_depth >= depth) {
+            flush_pending(i);
+            break;
+          }
+        }
+      } else {
+        flush_pending(0);
+      }
+    }
+    if (source.variant) {
+      // Inline option opinions on the host prim. The applied-record fallback
+      // skips options represented by these actual selected sources.
+      PrimStackEntry item;
+      std::string suffix;
+      if (!locate_option(impl_->SpecsFor(source), source.variant,
+                         &item.layer_identifier, &suffix)) {
+        continue;
+      }
+      item.prim_path = impl_->SpellSitePath(source.stack_idx, source.site) + suffix;
+      item.arc = "variant";
+      item.property_names = variant_property_names(*source.variant);
+      // The parser splits an option's inline opinions and child subtree into
+      // two sources. They describe one authored variant node. Merge only that
+      // pair, identified by its mapped host, selection and authoring layer;
+      // distinct reference arcs may legitimately repeat the same spec site.
+      bool content_pair = false;
+      for (const Src& candidate : sources) {
+        if (candidate.variant || candidate.site != "/__self__") continue;
+        const LayerStack& content = impl_->layer_stacks[candidate.stack_idx];
+        if (content.variant_owner_stack == source.stack_idx &&
+            content.variant_owner_site == source.site &&
+            content.variant_selection == suffix &&
+            content.variant_authoring_layer == item.layer_identifier &&
+            variant_host_key(candidate) == variant_host_key(source)) {
+          content_pair = true;
+          break;
+        }
+      }
+      if (!content_pair) out.push_back(std::move(item));
+      continue;
+    }
+    if (source.suppress_site_specs) continue;
+    const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+    const bool variant_content = st.variant_owner_stack != 0xFFFFFFFFu;
+    const std::vector<SpecRef>& specs = impl_->SpecsFor(source);
+    for (const auto& spec : specs) {
+      PrimStackEntry item;
+      // A variant-content layer is synthetic: pxr attributes the site to the
+      // layer that authored the option.
+      item.layer_identifier = variant_content ? st.variant_authoring_layer
+                                              : spec.layer_id();
+      item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                            spec.spec->path().str());
+      item.arc = ArcTypeName(source.arc_kind);
+      if (variant_content && source.site == "/__self__") {
+        for (const Src& candidate : sources) {
+          if (!candidate.variant || candidate.stack_idx != st.variant_owner_stack ||
+              candidate.site != st.variant_owner_site ||
+              variant_host_key(candidate) != variant_host_key(source)) continue;
+          std::string layer, suffix;
+          if (locate_option(impl_->SpecsFor(candidate), candidate.variant, &layer, &suffix) &&
+              suffix == st.variant_selection && layer == item.layer_identifier) {
+            item.property_names = variant_property_names(*candidate.variant);
+            break;
+          }
+        }
+      }
+      const auto authored_names = spec.spec->authored_property_names();
+      item.property_names.insert(item.property_names.end(), authored_names.begin(),
+                                 authored_names.end());
+      out.push_back(std::move(item));
+    }
+    // Variant nodes of this host site, including options that author
+    // nothing: held back until the flush rule above places them.
+    const std::string key = impl_->AppliedVariantKey(source);
+    if (!impl_->applied_variants_.count(key)) continue;
+    pending.push_back(PendingHost{key, source.stack_idx, source.site, &specs,
+        source.arc_sites() ? source.arc_sites()->size() : 0});
+  }
+  flush_pending(0);
+  return out;
+}
 
 std::vector<PropertyOpinion> Cache::GetPropertyStack(
     const Path& path, const std::string& property, size_t limit,
@@ -12,14 +310,30 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
   if (truncated) *truncated = false;
   std::vector<PropertyOpinion> out;
   const auto& sources = impl_->SourcesForPath(path, warn, err);
+  // Pcp property indices retain the strongest property kind. A weaker
+  // relationship cannot contribute to an attribute (or vice versa); value
+  // type and variability disagreements do not remove attribute specs.
+  int property_kind = -1;  // unset, attribute (0), relationship (1)
+  auto accepts_kind = [&](bool relationship) {
+    const int kind = relationship ? 1 : 0;
+    if (property_kind < 0) property_kind = kind;
+    return property_kind == kind;
+  };
   auto append = [&](PropertyOpinion opinion) {
     if (out.size() == limit) { if (truncated) *truncated = true; return; }
     out.push_back(std::move(opinion));
   };
   for (const auto& source : sources) {
     if (source.variant) {
+      // Inline attribute opinions, plus relationships authored on the option
+      // (no value; targets compose separately).
+      const VariantProperty* attr = nullptr;
       for (const auto& p : source.variant->properties) {
-        if (p.name != property) continue;
+        if (p.name == property) { attr = &p; break; }
+      }
+      const bool rel = !attr &&
+                       source.variant->relationships.count(property) != 0;
+      if ((attr || rel) && accepts_kind(rel)) {
         PropertyOpinion item;
         // Inline variants keep a pointer to their authored option. Locate its
         // owning spec instead of attributing a weak-layer option to the root.
@@ -36,7 +350,7 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
           }
           return false;
         };
-        item.prim_path = source.site;
+        item.prim_path = impl_->SpellSitePath(source.stack_idx, source.site);
         for (const auto& spec : impl_->SpecsFor(source)) {
           std::string suffix;
           if (locate(locate, spec.spec->meta().variantSets(), &suffix, 0)) {
@@ -46,30 +360,66 @@ std::vector<PropertyOpinion> Cache::GetPropertyStack(
           }
         }
         item.arc = "variant";
-        item.offset = source.offset.offset;
-        item.scale = source.offset.scale;
-        if (source.expression_variables) {
-          item.expression_variables = *source.expression_variables;
+        item.offset = source.offset().offset;
+        item.scale = source.offset().scale;
+        if (source.expression_variables()) {
+          item.expression_variables = *source.expression_variables();
         }
-        item.has_default = !p.value.is_empty();
-        item.default_value = p.value;
+        if (attr) {
+          item.has_default = !attr->value.is_empty();
+          item.default_value = attr->value;
+        }
         append(std::move(item));
       }
       continue;
     }
     for (const auto& spec : impl_->SpecsFor(source)) {
       const auto* slot = spec.spec->property(property);
-      if (!slot) continue;
+      if (!slot) {
+        // A relationship authored here (targets, list-op edits, or an empty
+        // declaration) is an opinion too, without a value or samples.
+        const bool is_relationship =
+            spec.spec->has_relationship_data() &&
+            (spec.spec->relationship(property) != nullptr ||
+             spec.spec->relationship_edits().count(property) != 0);
+        if (!is_relationship || !accepts_kind(true)) continue;
+        PropertyOpinion item;
+        const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+        item.layer_identifier = st.variant_owner_stack != 0xFFFFFFFFu
+                                    ? st.variant_authoring_layer
+                                    : spec.layer_id();
+        item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                              spec.spec->path().str());
+        item.arc = ArcTypeName(source.arc_kind);
+        const LayerOffset time = source.offset().Compose(spec.layer_offset);
+        item.offset = time.offset;
+        item.scale = time.scale;
+        item.suppressed = source.suppress_site_specs;
+        if (source.expression_variables()) {
+          item.expression_variables = *source.expression_variables();
+        }
+        append(std::move(item));
+        continue;
+      }
+      if (!accepts_kind(false)) continue;
       PropertyOpinion item;
-      item.layer_identifier = spec.layer_id();
-      item.prim_path = spec.spec->path().str();
+      {
+        const LayerStack& st = impl_->layer_stacks[source.stack_idx];
+        // Variant-content layers are synthetic: report the authoring layer
+        // and the pxr `/Owner{set=name}child` site spelling.
+        item.layer_identifier = st.variant_owner_stack != 0xFFFFFFFFu
+                                    ? st.variant_authoring_layer
+                                    : spec.layer_id();
+        item.prim_path = impl_->SpellSitePath(source.stack_idx,
+                                              spec.spec->path().str());
+      }
       item.arc = ArcTypeName(source.arc_kind);
-      const LayerOffset time = source.offset.Compose(spec.layer_offset);
+      const LayerOffset time = source.offset().Compose(spec.layer_offset);
       item.offset = time.offset;
       item.scale = time.scale;
       item.suppressed = source.suppress_site_specs;
-      if (source.expression_variables) {
-        item.expression_variables = *source.expression_variables;
+      if (source.expression_variables()) {
+        item.expression_variables = *source.expression_variables();
       }
       if (const auto* value = spec.spec->property_value(slot->name_id)) {
         item.has_default = !value->is_empty();
@@ -117,7 +467,10 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     bool clips_snapshot_taken = false;
     std::vector<PropNameId> pre_clip_props;
     const auto snapshot_pre_clip_props = [&]() {
-      if (clips_snapshot_taken || !out->meta().clips().is_dictionary()) return;
+      // Read through a const view: the mutable accessor would allocate the
+      // metadata ext (~1.3 KB) on every composed prim.
+      const PrimMetadata &out_meta = out->meta();
+      if (clips_snapshot_taken || !out_meta.clips().is_dictionary()) return;
       clips_snapshot_taken = true;
       for (const PropSlot &sl : out->properties().slots()) {
         if (sl.is_relationship()) continue;
@@ -155,7 +508,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
           out->meta().doc() = s.variant->doc;
         }
         if (!s.variant->kind.empty() && !out->meta().kindAuthored() &&
-            out->meta().kind().empty()) {
+            static_cast<const PrimMetadata &>(out->meta()).kind().empty()) {
           out->meta().kind() = s.variant->kind;
           out->meta().setKindAuthored();
         }
@@ -180,7 +533,85 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
       }
 
       if (s.suppress_site_specs) continue;  // relocation-source opinions
-      const std::vector<SpecRef> &specs = SpecsFor(s);
+      const std::vector<SpecRef> &local_specs = SpecsFor(s);
+      std::vector<SpecRef> clip_specs;
+      std::vector<std::unique_ptr<PrimSpec>> inherited_clips;
+      const LayerStack& stack = layer_stacks[s.stack_idx];
+      if (stack.has_value_clips) {
+        // Interleave inherited clips at their authoring layer's strength,
+        // rather than copying the composed parent's clips after all child
+        // values have merged. The latter loses which defaults clips shadow.
+        size_t local = 0;
+        for (size_t li = 0; li < stack.layers.size(); ++li) {
+          const Layer* layer = stack.layers[li].get();
+          const PrimSpec* child = nullptr;
+          if (local < local_specs.size() && local_specs[local].layer == layer) {
+            child = local_specs[local].spec;
+            clip_specs.push_back(local_specs[local++]);
+          }
+          if (!stack.layer_has_value_clips[li] ||
+              (child && child->meta().clips().is_dictionary())) continue;
+          std::string ancestor = s.site;
+          while (true) {
+            const size_t slash = ancestor.rfind('/');
+            if (slash == std::string::npos || slash == 0) break;
+            ancestor.resize(slash);
+            const PrimSpec* owner = layer->prim_at_path(ancestor);
+            if (!owner || !owner->meta().clips().is_dictionary()) continue;
+            auto inherited = std::make_unique<PrimSpec>();
+            inherited->set_specifier(PrimSpecifier::Over);
+            Value clips = Value::MakeDictionary();
+            for (const auto& entry : owner->meta().clips().as_dictionary().entries()) {
+              Value set = entry.second;
+              if (set.is_dictionary()) {
+                // Anchor each clip to the metadata's authoring layer. Searching
+                // dependency directories by basename can choose another cache
+                // with identically named per-frame files.
+                const auto assets = set.as_dictionary().find("assetPaths");
+                if (assets && assets->as_token_array()) {
+                  std::vector<std::string> paths;
+                  for (const std::string& asset : assets->as_token_array()) {
+                    const std::string resolved = resolver->ResolvePath(
+                        asset, stack.layer_identifiers[li], false);
+                    paths.push_back(resolved.empty() ? asset : resolved);
+                  }
+                  set.as_dictionary().set("assetPaths",
+                      Value::MakeStringLikeArray(paths, TypeId::AssetPath));
+                }
+                for (const char* field : {"manifestAssetPath", "manifestPath"}) {
+                  const auto asset = set.as_dictionary().find(field);
+                  if (!asset) continue;
+                  auto path = asset->as_asset_path();
+                  if (!path) path = asset->as_string();
+                  if (!path) continue;
+                  const std::string resolved = resolver->ResolvePath(
+                      std::string(*path), stack.layer_identifiers[li], false);
+                  if (!resolved.empty()) set.as_dictionary().set(
+                      field, Value::MakeAssetPath(resolved));
+                }
+                const auto path = set.as_dictionary().find("primPath");
+                if (path && path->as_string()) {
+                  set.as_dictionary().set("primPath", Value::MakeStringLike(
+                      std::string(*path->as_string()) + s.site.substr(ancestor.size()),
+                      TypeId::String));
+                }
+              }
+              clips.as_dictionary().set(entry.first, set);
+            }
+            inherited->meta().clips() = std::move(clips);
+            inherited->meta().clipSetEdits() = owner->meta().clipSetEdits();
+            SpecRef ref;
+            ref.spec = inherited.get();
+            ref.layer = layer;
+            ref.layer_identifier = &stack.layer_identifiers[li];
+            ref.layer_offset = stack.layer_offsets[li];
+            clip_specs.push_back(ref);
+            inherited_clips.push_back(std::move(inherited));
+            break;
+          }
+        }
+      }
+      const std::vector<SpecRef>& specs = stack.has_value_clips ? clip_specs : local_specs;
       if (specs.empty()) continue;
 
       // A relocate authored in a layer stack does NOT remap the TARGET paths of
@@ -235,7 +666,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
         // asset's internal targets (e.g. material:binding, .connect) resolve to
         // their flattened paths. Identity for local opinions. The time offset
       // composes the arc's offset with the spec layer's sublayer offset.
-      const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+      const LayerOffset spec_off = s.offset().Compose(sr.layer_offset);
       const bool remap_opinion_targets = !s_target_map->pairs.empty();
       if (!remap_opinion_targets) {
         // Most local opinions do not cross an arc or relocation. Avoid
@@ -256,7 +687,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                 return Mapping(s.map_idx).Apply(p);
               }
               std::string r = s_target_map->ApplyTarget(p);
-              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain)
+              if (!r.empty() || s.arc_kind != ArcType::Inherit || !s.arc_chain())
                 return r;
               // A connection/relationship target authored in an inherited local
               // CLASS that points OUTSIDE the class namespace (at a SIBLING
@@ -271,7 +702,7 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
                   Path(Mapping(s.map_idx).Apply(s.site)).parent().str();
               const std::string prim =
                   p.substr(0, p.find_first_of(".["));  // strip .prop / [target]
-              for (auto it = s.arc_chain->rbegin(); it != s.arc_chain->rend();
+              for (auto it = s.arc_chain()->rbegin(); it != s.arc_chain()->rend();
                    ++it) {
                 const NamespaceMapping &cm = Mapping(it->second);
                 if (!cm.crosses_arc) continue;
@@ -353,6 +784,16 @@ void Cache::Impl::ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
       std::string apply_err;
       Compositor::ResolveArrayEditsOnPrim(out, &apply_err);
     }
+
+    // Free what the merges touched but left at defaults (the stripped
+    // variant-set list op above leaves an empty rare metadata tier on every
+    // prim that references a variant-set asset), and share plain property
+    // metadata now rather than at the layer's finalize, after every prim of
+    // a ~10M-prim stage has been filled.
+    if (!static_cast<const PrimSpec*>(out)->meta().unknownFields().empty())
+      ResolveInt64ListOpFields(&out->meta().unknownFields());
+    out->meta().trim_ext();
+    out->share_property_metas();
   }
 
 }  // namespace pcp
@@ -385,6 +826,32 @@ auto Cache::Impl::SelectArcEdit(const PrimMetadata &m, ArcSel f) -> const ArcLis
 auto Cache::Impl::MergeArcField(
       const std::vector<SpecRef> &specs, ArcSel f) const -> std::vector<std::pair<std::string, std::string>> {
     std::vector<std::pair<std::string, std::string>> result;
+    // Reference identity includes the asset anchored at its authoring layer.
+    // Retain the authored text/tag for expansion and payload policy callbacks.
+    auto compute_identity = [&](const std::string& text, const std::string& layer) {
+      if (!resolver || (f != ArcSel::References && f != ArcSel::Payloads))
+        return text;
+      const CompositionArc arc = f == ArcSel::References
+          ? Compositor::ParseReference(text) : Compositor::ParsePayload(text);
+      if (arc.asset_path.empty() || arc.asset_path.front() == '`') return text;
+      const std::string marker = "@" + arc.asset_path + "@";
+      const size_t pos = text.find(marker);
+      if (pos == std::string::npos) return text;
+      const std::string anchored = resolver->CreateIdentifier(
+          arc.asset_path, RealAnchorOf(layer));
+      if (anchored.empty()) return text;
+      return text.substr(0, pos) + "@" + anchored + "@" +
+             text.substr(pos + marker.size());
+    };
+    std::map<std::pair<std::string, std::string>, std::string> identities;
+    auto identity = [&](const std::string& text, const std::string& layer)
+        -> const std::string& {
+      if (f != ArcSel::References && f != ArcSel::Payloads) return text;
+      auto key = std::make_pair(text, layer);
+      auto found = identities.find(key);
+      if (found != identities.end()) return found->second;
+      return identities.emplace(std::move(key), compute_identity(text, layer)).first->second;
+    };
     for (auto it = specs.rbegin(); it != specs.rend(); ++it) {
       const PrimMetadata &m = it->spec->meta();
       const std::string &lid = it->layer_id();
@@ -406,7 +873,9 @@ auto Cache::Impl::MergeArcField(
       auto removeAll = [&](const std::vector<std::string> &rm) {
         for (const std::string &x : rm) {
           result.erase(std::remove_if(result.begin(), result.end(),
-                                      [&](const auto &p) { return p.first == x; }),
+                                      [&](const auto &p) {
+                                        return identity(p.first, p.second) == identity(x, lid);
+                                      }),
                        result.end());
         }
       };
@@ -416,7 +885,7 @@ auto Cache::Impl::MergeArcField(
       for (const auto &added : tag(e->added)) {
         const bool present = std::find_if(
             result.begin(), result.end(), [&](const auto &p) {
-              return p.first == added.first;
+              return identity(p.first, p.second) == identity(added.first, added.second);
             }) != result.end();
         if (!present) result.push_back(added);
       }
@@ -436,14 +905,17 @@ auto Cache::Impl::MergeArcField(
         const auto tagged = result;
         std::vector<std::string> keys;
         keys.reserve(result.size());
-        for (const auto &item : result) keys.push_back(item.first);
-        ApplyStringListOrder(e->ordered, &keys);
+        for (const auto &item : result) keys.push_back(identity(item.first, item.second));
+        std::vector<std::string> order;
+        order.reserve(e->ordered.size());
+        for (const auto& item : e->ordered) order.push_back(identity(item, lid));
+        ApplyStringListOrder(order, &keys);
         result.clear();
         result.reserve(keys.size());
         for (const std::string &key : keys) {
           const auto found = std::find_if(
               tagged.begin(), tagged.end(), [&](const auto &item) {
-                return item.first == key;
+                return identity(item.first, item.second) == key;
               });
           if (found != tagged.end()) result.push_back(*found);
         }
@@ -481,7 +953,37 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
     // physically lives.
     const ChildRelocations edits = RelocationsAt(srcs);
     std::vector<std::string> child_names;
-    std::set<std::string> seen_child;
+    // Dedup without a node allocation per child: a linear scan while the list
+    // is short (the common case), a hash set of views once it grows. Views
+    // point into child_names' strings; the set is rebuilt if those move.
+    std::unordered_set<std::string_view> seen_big;
+    auto first_seen = [&](const std::string &name) -> bool {
+      if (child_names.size() < 32) {
+        for (const std::string &c : child_names)
+          if (c == name) return false;
+        child_names.push_back(name);
+        if (child_names.size() == 32) {
+          seen_big.reserve(128);
+          for (const std::string &c : child_names) seen_big.insert(c);
+        }
+        return true;
+      }
+      if (seen_big.count(name)) return false;
+      const std::string *old_data = child_names.data();
+      child_names.push_back(name);
+      if (child_names.data() != old_data) {
+        seen_big.clear();
+        for (const std::string &c : child_names) seen_big.insert(c);
+      } else {
+        seen_big.insert(child_names.back());
+      }
+      return true;
+    };
+    auto rebuild_seen = [&]() {
+      seen_big.clear();
+      if (child_names.size() >= 32)
+        for (const std::string& name : child_names) seen_big.insert(name);
+    };
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
       const Src &s = *sit;
       if (s.variant) continue;  // variant child prims not modeled yet
@@ -492,6 +994,41 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
       // source (ErrorInvalidReferenceToRelocationSource PreReloChild) leaked
       // while arc-delivered children (model.usd ModelChild) correctly follow.
       if (s.suppress_site_specs) continue;
+      // Relocates operate at this node, before its local names and ordering
+      // opinions. Same-parent renames retain the old name's position; arrivals
+      // from another parent append in lexical order before this site's names.
+      const StackRelocates& rel = layer_stacks[s.stack_idx].relocates;
+      const auto* departed = rel.DepartedAt(s.site);
+      const auto* arrivals = rel.ArrivalsAt(s.site);
+      std::map<std::string, std::string> replacements;
+      std::set<std::string> additions;
+      if (arrivals) {
+        for (const auto& arrival : *arrivals) {
+          const Path source(arrival.src_site);
+          if (source.parent().str() == s.site)
+            replacements[source.name()] = arrival.name;
+          else
+            additions.insert(arrival.name);
+        }
+      }
+      if (departed) {
+        std::set<std::string> present(child_names.begin(), child_names.end());
+        std::vector<std::string> retained;
+        retained.reserve(child_names.size());
+        for (const std::string& name : child_names) {
+          const auto replacement = replacements.find(name);
+          if (replacement != replacements.end()) {
+            present.erase(name);
+            if (present.insert(replacement->second).second)
+              retained.push_back(replacement->second);
+          } else if (!departed->count(name)) {
+            retained.push_back(name);
+          }
+        }
+        child_names.swap(retained);
+        rebuild_seen();
+      }
+      for (const std::string& name : additions) first_seen(name);
       const std::vector<SpecRef> &specs = SpecsFor(s);
       for (auto rit = specs.rbegin(); rit != specs.rend(); ++rit) {
         const PrimSpec *spec = rit->spec;
@@ -504,21 +1041,21 @@ auto Cache::Impl::ComposeChildNames(const std::vector<Src> &srcs) -> std::vector
           // onto the host as a Variant source (see ExpandArcs). Skip the markers
           // so they never leak into the composed child list.
           if (!cs->name().empty() && cs->name().front() == '{') continue;
-          if (edits.departed.count(cs->name())) continue;
-          if (seen_child.insert(cs->name()).second) {
-            child_names.push_back(cs->name());
-          }
+          first_seen(cs->name());
+        }
+        // A restatement orders the accumulated weaker names too, not merely
+        // this layer's own children. Preserve raw layer vectors until here.
+        if (!spec->meta().primOrder().empty()) {
+          ApplyStringListOrder(spec->meta().primOrder(), &child_names);
+          rebuild_seen();
         }
       }
     }
-    for (const std::string &name : edits.arrived) {
-      // A name that one stack relocates IN and another relocates OUT is a
-      // chained-relocation pass-through (CHARACTER -> Character -> Model): the
-      // content flows to the final destination, so the intermediate name must
-      // NOT materialize (pxr collapses the chain). TrickyMultipleRelocations5.
-      if (edits.departed.count(name)) continue;
-      if (seen_child.insert(name).second) child_names.push_back(name);
-    }
+    // A chained-relocation intermediate remains prohibited even if another
+    // node later names it. Filtering does not alter the surviving order.
+    child_names.erase(std::remove_if(child_names.begin(), child_names.end(),
+        [&](const std::string& name) { return edits.departed.count(name) != 0; }),
+        child_names.end());
     return child_names;
   }
 
@@ -583,7 +1120,7 @@ auto Cache::Impl::ComputePrimIndex_locked(const Path &prim_path,
       n.layer_stack_idx = s.stack_idx;
       n.site_path_idx = InternPath(s.site);
       n.map_to_root = Mapping(s.map_idx);
-      n.offset = s.offset;
+      n.offset = s.offset();
       const std::vector<SpecRef> &specs = SpecsFor(s);
       if (!specs.empty()) {
         n.flags |= NodeFlags::HasSpecs;
@@ -773,7 +1310,83 @@ auto Cache::Impl::BuildPreviewLayer(const Layer &structure) -> Layer {
     return preview;
   }
 
-auto Cache::Impl::FillOpinions(Layer *out) -> void {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+// For release_layers_during_fill: the fill batch after which each source
+// layer is no longer read. A source reads specs (and variant content) from the
+// layers of its layer stack, so every layer of every stack a record's sources
+// use counts as read by that record. Root-stack layers (possibly the caller's)
+// are never released.
+auto Cache::Impl::PlanLayerRelease(size_t opinion_batch, int nt) -> LayerReleasePlan {
+  const auto t0 = std::chrono::steady_clock::now();
+  LayerReleasePlan plan;
+  const size_t nstacks = layer_stacks.size();
+  const size_t n = fill_.size();
+  const size_t workers = std::max<size_t>(1, std::min<size_t>(nt, 16));
+  // Last record per stack, per worker slice (records ascend within a slice).
+  std::vector<std::vector<uint32_t>> last(workers,
+                                          std::vector<uint32_t>(nstacks, UINT32_MAX));
+  {
+    std::vector<std::thread> pool;
+    for (size_t t = 0; t < workers; ++t) {
+      pool.emplace_back([&, t] {
+        std::vector<uint32_t> &mine = last[t];
+        const size_t lo = n * t / workers, hi = n * (t + 1) / workers;
+        for (size_t i = lo; i < hi; ++i) {
+          const std::vector<Src> *srcs = fill_[i].second;
+          if (!srcs) continue;
+          for (const Src &s : *srcs)
+            if (s.stack_idx < nstacks) mine[s.stack_idx] = static_cast<uint32_t>(i);
+        }
+      });
+    }
+    for (std::thread &th : pool) th.join();
+  }
+  std::unordered_set<const Layer *> keep;
+  if (!layer_stacks.empty())
+    for (const auto &l : layer_stacks[0].layers) keep.insert(l.get());
+  std::unordered_map<Layer *, uint32_t> layer_last;
+  for (size_t st = 0; st < nstacks; ++st) {
+    uint32_t lst = UINT32_MAX;
+    for (size_t t = 0; t < workers; ++t)
+      if (last[t][st] != UINT32_MAX && (lst == UINT32_MAX || last[t][st] > lst))
+        lst = last[t][st];
+    if (lst == UINT32_MAX) continue;  // stack read by no record
+    const LayerStack &stack = layer_stacks[st];
+    for (size_t li = 0; li < stack.layers.size(); ++li) {
+      const auto &l = stack.layers[li];
+      if (!l || keep.count(l.get())) continue;
+      if (batch_scope_) {
+        // A batch releases only the layers no later batch reads.
+        const std::string &id = li < stack.layer_identifiers.size()
+                                    ? stack.layer_identifiers[li]
+                                    : stack.identifier;
+        if (!batch_scope_->releasable_layers ||
+            !batch_scope_->releasable_layers->count(id)) {
+          keep.insert(l.get());
+          layer_last.erase(l.get());
+          continue;
+        }
+      }
+      uint32_t &v = layer_last[l.get()];
+      if (lst + 1 > v) v = lst + 1;  // stored +1: 0 = unset
+    }
+  }
+  // A layer some stack keeps but no record reads stays (not in the map).
+  const size_t nbatches = (n + opinion_batch - 1) / opinion_batch;
+  plan.by_batch.resize(nbatches);
+  for (const auto &kv : layer_last) {
+    plan.by_batch[(kv.second - 1) / opinion_batch].push_back(kv.first);
+    ++plan.layers;
+  }
+  plan.ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count();
+  return plan;
+}
+#endif
+
+auto Cache::Impl::FillOpinions(
+    Layer *out,
+    const std::vector<const std::vector<Src> *>& shared_srcs) -> void {
     // The serial structure pass has parsed every referenced layer, so the full
     // set of property names is now interned. Freeze the name table: the parallel
     // fill below does heavy find() (and intern() that all HIT) on it, and the
@@ -783,28 +1396,57 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
     GetPropNameTable().freeze();
     // With release_build_sources, free each slot's composition sources the
     // moment its opinions are composed, so the transient compose state (~600
-    // MB of Src vectors on Island) drains as the output fills in instead of
+    // MB of Src vectors on reference scene) drains as the output fills in instead of
     // coexisting in full with the finished stage. The structure walk is done,
     // so nothing resolves sources again during the fill, and the caller drops
     // sources_cache right after it (those emptied entries must never be read
     // back as "no sources"). A vector shared by several slots (one source path
     // placed at two output paths) is left for the final drop.
     const bool release = options.release_build_sources;
-    std::vector<const std::vector<Src> *> shared_srcs;
-    if (release) {
-      std::vector<const std::vector<Src> *> seen;
-      seen.reserve(fill_.size());
-      for (const auto &record : fill_) {
-        if (record.second) seen.push_back(record.second);
+    auto release_shared = [&] {
+      if (!release) return;
+      const size_t n = shared_srcs.size();
+      if (shared_srcs.empty()) {
+        if (options.enable_timing)
+          LIGHTUSD_LOG_I("[next_fill] shared_vectors=0 shared_release=0ms");
+        return;
       }
-      std::sort(seen.begin(), seen.end());
-      for (size_t i = 1; i < seen.size(); ++i) {
-        if (seen[i] == seen[i - 1] &&
-            (shared_srcs.empty() || shared_srcs.back() != seen[i])) {
-          shared_srcs.push_back(seen[i]);
+      const auto start = std::chrono::steady_clock::now();
+#if defined(LIGHTUSD_ENABLE_THREAD)
+      int nt = options.num_threads;
+      if (nt < 0)
+        nt = std::min<int>(static_cast<int>(std::thread::hardware_concurrency()),
+                           kMaxExecutionThreads);
+      nt = std::max(1, std::min(nt, kMaxExecutionThreads));
+      if (nt > 1 && n >= 2048) {
+        const size_t workers = std::min<size_t>(static_cast<size_t>(nt), n);
+        std::vector<std::thread> pool;
+        pool.reserve(workers);
+        for (size_t t = 0; t < workers; ++t) {
+          const size_t lo = n * t / workers;
+          const size_t hi = n * (t + 1) / workers;
+          pool.emplace_back([&, lo, hi] {
+            for (size_t i = lo; i < hi; ++i)
+              std::vector<Src>().swap(
+                  *const_cast<std::vector<Src> *>(shared_srcs[i]));
+          });
         }
+        for (std::thread &th : pool) th.join();
+      } else
+#endif
+      {
+        for (const std::vector<Src> *srcs : shared_srcs)
+          std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
       }
-    }
+      if (options.enable_timing) {
+        const double elapsed = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        LIGHTUSD_LOG_I("[next_fill] shared_vectors=" +
+                       UIntToStr(n) + " shared_release=" +
+                       FormatMilliseconds(elapsed) + "ms");
+      }
+    };
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         const std::vector<Src> *srcs = fill_[i].second;
@@ -813,7 +1455,8 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
           ComposeOpinions(*srcs, ps);
         }
         if (release &&
-            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs)) {
+            !std::binary_search(shared_srcs.begin(), shared_srcs.end(), srcs,
+                                std::less<const std::vector<Src> *>{})) {
           // sources_cache owns the vector (address-stable deque storage);
           // fill_ only borrows it read-only for the structure pass.
           std::vector<Src>().swap(*const_cast<std::vector<Src> *>(srcs));
@@ -838,6 +1481,48 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
                                                     (static_cast<size_t>(nt) *
                                                      static_cast<size_t>(32)));
       std::atomic<size_t> next{0};
+      // release_layers_during_fill: a source layer's prims are freed once
+      // every batch up to the last record reading it is done.
+      LayerReleasePlan plan;
+      if (release && options.release_layers_during_fill &&
+          (!batch_scope_ || batch_scope_->releasable_layers))
+        plan = PlanLayerRelease(opinion_batch, nt);
+      const size_t nbatches = (fill_.size() + opinion_batch - 1) / opinion_batch;
+      std::unique_ptr<std::atomic<uint8_t>[]> batch_done;
+      std::mutex watermark_mu;
+      size_t watermark = 0;  // every batch below is done
+      std::atomic<size_t> released_prims{0};
+      std::atomic<size_t> purged_at{0};
+      if (!plan.by_batch.empty()) {
+        batch_done.reset(new std::atomic<uint8_t>[nbatches]);
+        for (size_t k = 0; k < nbatches; ++k) batch_done[k].store(0);
+      }
+      auto finish_batch = [&](size_t k) {
+        if (!batch_done) return;
+        batch_done[k].store(1, std::memory_order_release);
+        std::vector<Layer *> free_now;
+        {
+          std::lock_guard<std::mutex> lk(watermark_mu);
+          while (watermark < nbatches &&
+                 batch_done[watermark].load(std::memory_order_acquire)) {
+            for (Layer *l : plan.by_batch[watermark]) free_now.push_back(l);
+            ++watermark;
+          }
+        }
+        size_t freed = 0;
+        for (Layer *l : free_now) {
+          freed += l->prims().size();
+          l->release_prims();
+        }
+        if (!freed) return;
+        // Hand the freed pages back in steps, not per layer (a purge walks
+        // every arena).
+        const size_t total = released_prims.fetch_add(freed) + freed;
+        size_t last = purged_at.load();
+        if (trimmer_ && total - last >= (size_t(1) << 20) &&
+            purged_at.compare_exchange_strong(last, total))
+          trimmer_->Request();
+      };
       std::vector<std::thread> pool;
       pool.reserve(nt);
       for (int t = 0; t < nt; ++t) {
@@ -847,14 +1532,23 @@ auto Cache::Impl::FillOpinions(Layer *out) -> void {
                                             std::memory_order_relaxed);
             if (b >= fill_.size()) break;
             do_range(b, std::min(fill_.size(), b + opinion_batch));
+            finish_batch(b / opinion_batch);
           }
         });
       }
       for (std::thread &th : pool) th.join();
+      release_shared();
+      if (batch_done && trimmer_) trimmer_->Request();
+      if (options.enable_timing && !plan.by_batch.empty())
+        LIGHTUSD_LOG_I("[next_fill] layers_released=" +
+                       UIntToStr(plan.layers) + " layer_prims_released=" +
+                       UIntToStr(released_prims.load()) + " plan=" +
+                       FormatMilliseconds(plan.ms) + "ms");
       return;
     }
 #endif
     do_range(0, fill_.size());
+    release_shared();
   }
 
 }}} // namespace lightusd::next::pcp

@@ -41,8 +41,12 @@ from ._core import (  # noqa: F401  (re-exports)
     VariantSet,
     VariantSets,
     flatten_file,
+    light_filter_effective,
+    light_filter_kinds,
+    register_light_filter,
     type_from_name,
     type_name,
+    unregister_light_filter,
 )
 
 try:
@@ -65,6 +69,10 @@ __all__ = [
     "ValueBlock",
     "VariantSet",
     "VariantSets",
+    "light_filter_effective",
+    "light_filter_kinds",
+    "register_light_filter",
+    "unregister_light_filter",
     "load",
     "import_obj",
     "import_urdf",
@@ -93,7 +101,12 @@ def load(
     variants: Optional[dict] = None,
     load_payloads: bool = True,
     max_memory: int = 0,
+    max_crate_elements: int = 0,
+    max_array_elements: int = 0,
+    max_threads: int = 0,
+    input_policy: str = "untrusted",
     resolver: Optional[AssetResolver] = None,
+    preserve_native_instances: bool = False,
     up_axis: str = "Z",
     asset_dirs: Sequence[_PathLike] = (),
     packages: Optional[dict[str, _PathLike]] = None,
@@ -110,8 +123,20 @@ def load(
     ``variants`` maps variant-set names to selections, overriding authored
     selections. A positive ``max_memory`` caps input, asset, and aggregate
     resident estimates in bytes. Zero keeps the library's finite safe defaults.
+    ``max_crate_elements`` raises the USDC structural-table caps (tokens,
+    strings, fields, fieldsets, specs, paths) for large trusted crates; zero
+    keeps the secure defaults.
+    ``max_threads`` is zero for bounded automatic workers, one for serial, or
+    a positive fixed worker hint. ``input_policy`` defaults to ``"untrusted"``;
+    explicit ``"trusted"`` enables the C API compatibility/mmap policy for
+    known immutable inputs, including relaxed missing-dependency behavior.
+
+    ``max_array_elements`` caps decoded array element counts independently of
+    byte budgets; zero keeps the secure default (16 million).
     ``resolver`` supplies asset resolution for composition arcs; its active
     context is snapshotted for composition workers.
+    ``preserve_native_instances`` keeps shared in-memory prototypes for logical
+    traversal; use the default holder representation for self-contained export.
 
     Native imports resolve assets relative to the source file, with optional
     ``asset_dirs`` and URDF ``packages`` roots. ``allow_missing`` converts
@@ -128,6 +153,14 @@ def load(
     if format in ("obj", "urdf", "mjcf") or (format in (None, "auto") and extension in (".obj", ".urdf", ".xml", ".mjcf")):
         if variants:
             raise ValueError("variant selections apply to USD input only")
+        if preserve_native_instances:
+            raise ValueError("preserve_native_instances applies to USD input only")
+        if max_threads or input_policy != "untrusted":
+            raise ValueError("max_threads and input_policy apply to USD input only")
+        if max_array_elements:
+            raise ValueError("max_array_elements applies to USD input only")
+        if max_crate_elements:
+            raise ValueError("max_crate_elements applies to USDC input only")
         return _import(path=path, format=format or "auto", max_memory=max_memory,
                        resolver=resolver, up_axis=up_axis, asset_dirs=asset_dirs,
                        packages=packages, allow_missing=allow_missing,
@@ -143,7 +176,12 @@ def load(
         variants=variants,
         load_payloads=load_payloads,
         max_memory=max_memory,
+        max_crate_elements=max_crate_elements,
+        max_array_elements=max_array_elements,
+        max_threads=max_threads,
+        input_policy=input_policy,
         resolver=resolver,
+        preserve_native_instances=preserve_native_instances,
     )
 
 
@@ -157,6 +195,10 @@ def load_bytes(
     *,
     format: Optional[str] = None,
     max_memory: int = 0,
+    max_crate_elements: int = 0,
+    max_array_elements: int = 0,
+    max_threads: int = 0,
+    input_policy: str = "untrusted",
     source: _PathLike = "",
     resolver: Optional[AssetResolver] = None,
     **import_options,
@@ -167,11 +209,20 @@ def load_bytes(
     without filesystem access. Other import options match :func:`load`.
     """
     if format in ("obj", "urdf", "mjcf"):
+        if max_threads or input_policy != "untrusted":
+            raise ValueError("max_threads and input_policy apply to USD input only")
+        if max_array_elements:
+            raise ValueError("max_array_elements applies to USD input only")
+        if max_crate_elements:
+            raise ValueError("max_crate_elements applies to USDC input only")
         return _import(data=data, source=_os.fspath(source), format=format,
                        max_memory=max_memory, resolver=resolver, **import_options)
     if import_options or source or resolver is not None:
         raise ValueError("source, resolver and import options require obj, urdf or mjcf format")
-    return _core.load_bytes(data, format=format, max_memory=max_memory)
+    return _core.load_bytes(data, format=format, max_memory=max_memory,
+                            max_crate_elements=max_crate_elements,
+                            max_array_elements=max_array_elements,
+                            max_threads=max_threads, input_policy=input_policy)
 
 
 def is_usd(path: _PathLike) -> bool:

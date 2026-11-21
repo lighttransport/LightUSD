@@ -39,7 +39,7 @@
 #include "value-types.hh"
 #include "tiny-format.hh"
 #include "str-util.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 //
 #ifdef __clang__

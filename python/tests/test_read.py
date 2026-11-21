@@ -155,7 +155,10 @@ def Xform "root" (
 def test_custom_data():
     st = lightusd.loads('''#usda 1.0
 def Xform "a" (
-    customData = { string owner = "me"  int version = 3 }
+    customData = {
+        string owner = "me"
+        int version = 3
+    }
 )
 {
 }

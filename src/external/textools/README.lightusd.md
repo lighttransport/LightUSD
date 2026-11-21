@@ -7,8 +7,13 @@ Four pure-C11 texture libraries imported as a **pristine snapshot** (not a
 fork, not a submodule). Initial import at upstream commit
 `8b89eea948b221321df19773968d38735a611257` on 2026-07-05.
 
-Re-synced 2026-07-15 from upstream **`release`** commit `1b10661` (PR #259
-merged). This adds Zstd-supercompressed KTX2 writing through callback-based
+Re-synced 2026-11-04 from upstream **`release`** commit `96dabe5`. This brings
+texcomp's two faster BC7 speed profiles (`3cf96ad` fast, `88b6d7d` fastest) and
+the `7ac2417` input-validation hardening across texcomp. No new library files
+(only the skipped CLIs were added upstream).
+
+The previous 2026-07-15 re-sync was from upstream **`release`** commit `1b10661`
+(PR #259 merged). This adds Zstd-supercompressed KTX2 writing through callback-based
 `tp_ktx2_write_uni_zstd`, strict shared validation for raw/Zstd uni mip chains,
 and an explicit standard ASTC KTX2 carrier (`TP_UNI_ASTC_KTX2`). The default
 carrier remains TinyEXR-private and now uses an UNSPECIFIED DFD model so genuine
@@ -100,7 +105,12 @@ four `include/` dirs public. Notes:
 
 ## lightusd-local patches (must survive a re-sync)
 
-None.
+- `texcomp/src/texcomp_astc.c`, `tc_astc_bitmap_mismatch_popcnt`: call
+  `tc_popcount64()` instead of a bare `__builtin_popcountll`. The function is
+  compiled whenever `TC_X86` is defined and `TC_TARGET` compiles away on MSVC,
+  so upstream does not build with MSVC (lightusd `6a2e6f9f2`; still needed at
+  upstream `96dabe5`). Under GCC/Clang `tc_popcount64` is the same builtin, so
+  the POPCNT-targeted body is unchanged. Upstream fix pending.
 
 ## Re-sync procedure
 

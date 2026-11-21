@@ -2,7 +2,8 @@
  * Copyright 2024-Present Light Transport Entertainment Inc.
  *
  * unicode-xid-c.c -- Unicode XID_Start / XID_Continue membership (UAX #31,
- * Unicode 5.1.0 tables).
+ * Unicode 15.1.0 tables, independently verified against the official UCD by
+ * usdspec-conformance scripts/generate-lean-xid-table.py).
  *
  * These tables were a 1450-line C++ header included by every translation unit
  * that validated identifiers. As C11 data they are parsed once for the whole

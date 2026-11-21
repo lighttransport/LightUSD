@@ -696,11 +696,9 @@ bool CrateWriter::ConvertRootPrimsParallel(const Stage& stage,
     }
   }
 
-  if (const char* e = ::getenv("LIGHTUSD_FLATTEN_TIMING")) {
-    if (e[0] == '1') {
-      std::cerr << "[lightusd] parallel stage->specs: " << units.size()
-                << " units\n";
-    }
+  if (options_.profile_crate) {
+    std::cerr << "[lightusd] parallel stage->specs: " << units.size()
+              << " units\n";
   }
 
   // Run units on workers. Each worker redirects AddSpec into the unit's own

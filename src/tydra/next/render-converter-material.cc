@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Tydra Next - Preview-surface material extraction
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../../next/layer/prim-spec.hh"
 #include "next/core/path-expression-eval.hh"
 #include "next/schema/usd-vol.hh"
@@ -389,6 +389,7 @@ std::string BuildNextMaterialXGraphJson(const Stage& stage,
 bool IsStandardSurfaceShaderId(const std::string& id) { return id == "ND_standard_surface_surfaceshader" || id == "standard_surface" || id == "AutodeskStandardSurface" || id == "MtlxAutodeskStandardSurface"; }
 bool IsOpenPBRShaderId(const std::string& id) { return id == "ND_open_pbr_surface_surfaceshader" || id == "open_pbr_surface" || id == "OpenPBRSurface" || id == "MtlxOpenPBRSurface"; }
 bool IsSurfaceUnlitShaderId(const std::string& id) { return id == "ND_surface_unlit_surfaceshader" || id == "surface_unlit" || id == "SurfaceUnlit" || id == "MtlxSurfaceUnlit"; }
+bool IsPxrDisneyShaderId(const std::string& id) { return id == "PxrDisneyBsdf" || id == "PxrDisney"; }
 
 bool ReadStringLikeProperty(const UsdPrim& prim, const char* name,
                             std::string* out) {
@@ -553,7 +554,8 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
       }
     }
     const std::string surf =
-        ::lightusd::next::GetSurfaceShader(stage, prim);
+        ::lightusd::next::GetSurfaceShaderWithRenderContextFallback(stage,
+                                                                    prim);
     if (!surf.empty()) {
       UsdPrim sp = stage.GetPrimAtPath(surf);
       if (sp.IsValid() &&
@@ -690,6 +692,24 @@ bool RenderSceneConverter::Impl::ConvertMaterial(const Stage& stage,
         ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
         out->openpbr->nodegraph_json =
             BuildNextMaterialXGraphJson(stage, child);
+        if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        found_shader = true;
+      } else if (IsPxrDisneyShaderId(shader_id)) {
+        // RenderMan layers that expose only `outputs:ri:surface` would other-
+        // wise degrade to the default material. Map the Disney lobes that have
+        // an OpenPBR preview counterpart; the conversion is documented as an
+        // approximation, not a RenderMan-compatible evaluation.
+        out->shader_type = RenderMaterial::ShaderType::OpenPBR;
+        out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
+        ExtractPxrDisneyAsOpenPBR(stage, child, out->openpbr.get(), scene);
+        // The RenderMan network (PxrPtexture/PxrColorCorrect/...) is not a
+        // MaterialX graph, so it must not be handed to the MaterialX graph
+        // compiler: its unknown node categories made every such material fall
+        // back to flat color. The extracted OpenPBR parameters carry the
+        // texture bindings through the ordinary texture-sample route.
         if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;

@@ -74,12 +74,8 @@ bool RunD3D11LightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     hit.t = std::numeric_limits<float>::infinity();
   }
 
-  size_t chunk_limit = 262144;
-  if (const char *env = std::getenv("LUSDR_GPU_TRIANGLE_CHUNK")) {
-    char *end = nullptr;
-    const unsigned long long parsed = std::strtoull(env, &end, 10);
-    if (end != env && parsed > 0) chunk_limit = size_t(parsed);
-  }
+  const size_t chunk_limit = opt.gpu_triangle_chunk;
+
   size_t mesh_index = 0, tri_index = 0, global_first = 0, chunk_count = 0;
   std::vector<Vec3> chunk_colors;
   std::vector<RTPreviewStats::MeshGeometry> chunk_geos;

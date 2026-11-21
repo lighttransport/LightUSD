@@ -4,16 +4,15 @@
 // LightUSD Next - asset-path anchors.
 
 #include "asset-anchor.hh"
+#include "layer.hh"
+#include "../resolver/asset-resolver.hh"
 
+#include <algorithm>
 #include <deque>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
-#if defined(_WIN32)
-#include <direct.h>
-#elif !defined(__EMSCRIPTEN__)
-#include <unistd.h>
-#endif
 
 namespace lightusd {
 namespace next {
@@ -27,26 +26,11 @@ bool IsAbsoluteDir(const std::string& p) {
   return p.size() >= 2 && p[1] == ':';
 }
 
-// An anchor must be unambiguous: consumers re-anchor a path they consider
-// relative against their OWN base (lusdview's texture decoder uses the scene
-// file's directory), so handing them a CWD-relative anchor would double-prefix
-// it. Absolutize once, here, and every consumer gets a path it can just open.
-std::string AbsolutizeDir(const std::string& dir) {
-  if (dir.empty() || IsAbsoluteDir(dir)) return dir;
-#if defined(__EMSCRIPTEN__)
-  return dir;  // no filesystem; getcwd aborts under -sFILESYSTEM=0
-#else
-  char buf[4096];
-#if defined(_WIN32)
-  if (!_getcwd(buf, sizeof(buf))) return dir;
-#else
-  if (!getcwd(buf, sizeof(buf))) return dir;
-#endif
-  std::string cwd(buf);
-  if (cwd.empty() || cwd == ".") return dir;
-  if (cwd.back() == '/' || cwd.back() == '\\') cwd.pop_back();
-  return cwd + "/" + dir;
-#endif
+// Resolve only against an explicitly supplied base. Interning never queries CWD.
+std::string AbsolutizeDir(const std::string& dir, const std::string& base) {
+  if (dir.empty() || base.empty() || IsAbsoluteDir(dir) ||
+      !AssetResolver::GetIdentifierScheme(dir).empty()) return dir;
+  return AssetResolver::NormalizePath(AssetResolver::JoinPath(base, dir));
 }
 
 struct AnchorTable {
@@ -65,10 +49,11 @@ AnchorTable& Table() {
 
 }  // namespace
 
-uint32_t InternAssetAnchor(const std::string& dir) {
+uint32_t InternAssetAnchor(const std::string& dir,
+                           const std::string& working_directory) {
   if (dir.empty()) return 0;
 
-  const std::string abs = AbsolutizeDir(dir);
+  const std::string abs = AbsolutizeDir(dir, working_directory);
 
   AnchorTable& t = Table();
   std::lock_guard<std::mutex> lk(t.mu);
@@ -86,6 +71,46 @@ const std::string& AssetAnchorPath(uint32_t id) {
   std::lock_guard<std::mutex> lk(t.mu);
   if (id == 0 || id >= t.paths.size()) return t.paths[0];  // == ""
   return t.paths[id];
+}
+
+std::string ResolveAssetAnchorPath(const std::string& asset, uint32_t id) {
+  if (asset.empty() || AssetResolver::IsAbsolutePath(asset) ||
+      !AssetResolver::GetIdentifierScheme(asset).empty()) return asset;
+  const std::string& anchor = AssetAnchorPath(id);
+  if (anchor.empty()) return asset;
+  std::string package, entry;
+  if (AssetResolver::ParsePackagePath(anchor, &package, &entry)) {
+    const std::string directory = AssetResolver::GetDirectory(entry);
+    std::string joined = AssetResolver::NormalizePath(
+        directory == "." ? asset : AssetResolver::JoinPath(directory, asset));
+    std::replace(joined.begin(), joined.end(), '\\', '/');
+    if (joined.empty() || AssetResolver::IsAbsolutePath(joined) || joined == ".." ||
+        joined.compare(0, 3, "../") == 0 ||
+        (joined.size() >= 2 && joined[1] == ':')) return {};
+    return package + "[" + joined + "]";
+  }
+  return AssetResolver::NormalizePath(AssetResolver::JoinPath(anchor, asset));
+}
+
+void StampPackageAssetAnchor(Layer* layer, const std::string& identifier) {
+  if (!layer || !AssetResolver::IsPackagePath(identifier)) return;
+  const uint32_t id = InternAssetAnchor(identifier);
+  std::vector<Layer*> pending{layer};
+  std::unordered_set<Layer*> visited;
+  while (!pending.empty()) {
+    Layer* current = pending.back();
+    pending.pop_back();
+    if (!visited.insert(current).second) continue;
+    current->set_source_asset_anchor_id(id);
+    for (size_t i = 0; i < current->prim_count(); ++i) {
+      auto* prim = current->prim_mutable(static_cast<uint32_t>(i));
+      if (!prim) continue;
+      prim->set_asset_anchor_id(id);
+      for (const auto& set : static_cast<const PrimSpec*>(prim)->meta().variantSets())
+        for (const auto& variant : set.variants)
+          if (variant.content) pending.push_back(variant.content.get());
+    }
+  }
 }
 
 }  // namespace next

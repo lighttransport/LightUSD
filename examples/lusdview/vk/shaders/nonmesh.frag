@@ -96,7 +96,7 @@ float hairLobe(vec3 T, vec3 V, vec3 L, float shift, float width) {
 void shadeFragment() {
   vec3 N;
   float edgeCoverage = 1.0;
-  if (pc.ids.x == 0 || pc.ids.x == 2) {
+  if (pc.ids.x == 0 || pc.ids.x == 2 || pc.ids.x == 3) {
     // Point billboard: circular discard + spherical normal proxy
     float rr = dot(vLocal, vLocal);
     if (rr > 1.0) discard;
@@ -104,6 +104,7 @@ void shadeFragment() {
     vec3 camUp = normalize(pc.cameraUp.xyz);
     N = normalize(camRight * vLocal.x + camUp * vLocal.y +
                   normalize(vView) * sqrt(max(0.0, 1.0 - rr)));
+    if (pc.ids.x == 3) N = normalize(vTangent);
   } else {
     // Curve ribbon: view direction as normal
     N = normalize(vView);
@@ -132,6 +133,22 @@ void shadeFragment() {
   if (pc.mode.x == 7) { fragColor = vec4(vColor.rgb, 1); return; }
   if (pc.mode.x == 12) { fragColor = vec4(vec3(vColor.a), 1); return; }
   if (pc.mode.x != 0) { fragColor = vec4(0.18, 0.18, 0.18, 1); return; }
+
+  // Oriented ParticleField/Gaussian carriers carry authored SH radiance.
+  // Applying the scene lights again can saturate an entire interior preview.
+  if (pc.ids.x == 2 || pc.ids.x == 3) {
+    float alpha = clamp(vColor.a, 0.0, 1.0);
+    vec3 display = vColor.rgb * exp2(fr.iblParams.y);
+    // Converted surface previews use a camera light to reveal otherwise
+    // uniformly colored walls; authored SH radiance remains unlit.
+    if (pc.ids.x == 3)
+      display *= 0.25 + 0.75 * abs(dot(N, normalize(vView)));
+#ifndef LUSDVIEW_OIT
+    display = linearToSrgb(display) * alpha;
+#endif
+    fragColor = vec4(display, alpha);
+    return;
+  }
 
   vec3 V = normalize(vView);
   vec3 T = normalize(vTangent);
@@ -251,7 +268,7 @@ void shadeFragment() {
   float ambientWeight = pc.ids.x == 1 ? 0.35 : 0.20;
   vec3 col = vColor.rgb * ambientWeight + direct;
   float alpha = clamp(vColor.a * edgeCoverage, 0.0, 1.0);
-  vec3 display = col * exp2(fr.camPos.w);
+  vec3 display = col * exp2(fr.iblParams.y);
 #ifndef LUSDVIEW_OIT
   display = linearToSrgb(display);
   display *= alpha;

@@ -166,7 +166,12 @@ static void lazy_values(void) {
   data[0] = 3; data[1] = 4; data[2] = 5;
   assert(lu_value_set_lazy(&a, LU_TYPE_FLOAT, 3, data, &callbacks, NULL));
   lu_value_copy(&b, &a);
+  const size_t before = lu_storage_materialization_epoch();
+  assert(before != 0);
   assert(lu_value_materialize(&b));
+  assert(lu_storage_materialization_epoch() == before + 1);
+  assert(lu_value_materialize(&b));
+  assert(lu_storage_materialization_epoch() == before + 1);
   assert(a.kind == LU_VALUE_LAZY_ARRAY && b.kind == LU_VALUE_ARRAY && destroyed == 0);
   assert(((const float*)lu_value_data(&b))[1] == 4);
   lu_value_destroy(&a); lu_value_destroy(&b);
@@ -174,7 +179,9 @@ static void lazy_values(void) {
   callbacks.decode = fail_lazy;
   data = (float*)malloc(sizeof(float));
   assert(lu_value_set_lazy(&a, LU_TYPE_FLOAT, 1, data, &callbacks, NULL));
+  const size_t before_failed = lu_storage_materialization_epoch();
   assert(!lu_value_materialize(&a) && a.kind == LU_VALUE_LAZY_ARRAY);
+  assert(lu_storage_materialization_epoch() == before_failed);
   lu_value_destroy(&a);
   assert(destroyed == 2);
 }
@@ -192,7 +199,13 @@ static void numeric_ingestion(void) {
   };
   const lu_abi_info abi = lu_abi_get();
   assert(abi.major == 2 && abi.pointer_bits == sizeof(void*) * 8);
+  /* Revision 1 described the old max_align_t-aligned carrier. */
+  assert(abi.layout_revision == 2);
+  assert(abi.layout_revision == LU_CORE_C_LAYOUT_REVISION);
   assert(abi.value_size == sizeof(lu_value) && abi.value_alignment == _Alignof(lu_value));
+  assert(abi.value_store_offset == offsetof(lu_value, store));
+  assert(abi.descriptor_size == sizeof(lu_type_descriptor));
+  assert(abi.chunks_size == sizeof(lu_chunks));
   assert(lu_type_describe(LU_TYPE_HALF3, 1, &desc));
   assert(desc.storage == LU_COMP_FLOAT32 && desc.components == 3 && desc.stride == 12);
   assert(lu_type_describe(LU_TYPE_HALF, 0, &desc) && desc.storage == LU_COMP_FLOAT16);

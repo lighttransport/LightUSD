@@ -13,6 +13,38 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## Explicit runtime configuration
+
+Library-owned code and `lusdrender` do not read process environment variables.
+Configuration is supplied per call or per renderer instance; vendored dependency
+and driver configuration is separate.
+
+- USDC layer parse/reconstruction diagnostics: `USDLoadOptions::profile_crate`.
+- Crate write diagnostics: `USDWriteOptions::profile_crate`,
+  `CrateWriter::Options::profile_crate`, or the final `profile_crate` argument
+  to `usdc::SaveAsUSDCToMemory`.
+- Parallel composition diagnostics:
+  `ReferencesCompositionOptions::profile_layer_cache` and
+  `PayloadCompositionOptions::profile_layer_cache`.
+- Preview compute: `ScenePreviewOptions::compute_options` carries
+  `PreviewComputeOptions::{software_only,debug_validate,trace_pipeline}`.
+  The same options can be passed directly to `CreatePreviewCompute` and
+  `PreviewVolumeRenderer::load`.
+- Preview cache: set `ScenePreviewOptions::cache_directory`. The default is
+  `.cache/lightusd/scene-preview` relative to the working directory.
+- Path variables: `io::ExpandFilePathWithVariables(path, variables)` accepts
+  a caller-owned string map (including `HOME` for `~`). `ExpandFilePath`
+  expands globs but leaves variable and tilde text literal.
+- Temporary directory: `io::GetTempDir(directory)` accepts an explicit path;
+  its default is `/tmp` on POSIX or the Windows system temporary directory.
+
+The old crate/flatten profiling and preview software environment controls no
+longer alter library calls. Renderer limits and probes are explicit CLI flags
+listed by `lusdrender --help` and in its README. The CLI robustness test checks
+invalid limits and verifies inherited renderer environment variables cannot
+change a render. The I/O unit test interleaves two independent variable maps;
+the preview compute test checks per-instance software selection.
+
 ## C-style core refactor checks
 
 The active migration and measurement procedure is in
@@ -507,6 +539,18 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-camera-motion-raster-gl` | Native/companion OpenGL shutter accumulation and closed shutter | `xvfb-run` |
 | `lusdview-camera-motion-vulkan` | Vulkan RT temporal poses retain progressive accumulation | Vulkan RT adapter |
 | `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
+| `lusdview_shading_normal_test` | Analytic tangent-frame / normal-map transform | No GPU |
+| `lusdview-cpu-normal-map` | CPU normal map shades like the equivalent geometric normal | `xvfb-run` when headless |
+| `lusdview-cpu-graph-tangent` | MaterialX tangent/bitangent nodes use the hit triangle frame | `xvfb-run` when headless |
+| `lusdview-cpu-uv-transform` | CPU texture UV transforms and `st1` routing match pre-transformed UVs | `xvfb-run` when headless |
+| `lusdview-cpu-lane-uv-transform` | CPU metallic/occlusion/clearcoat/emissive lanes apply the per-slot UV transform | `xvfb-run` when headless |
+| `lusdview-cpu-material-lanes` | CPU metallic/roughness/emissive/specular/coat/occlusion lanes match constant equivalents | `xvfb-run` when headless |
+| `lusdview-cpu-coat-normal` | CPU OpenPBR coat normal uses its own map/frame and affects only the coat lobe | `xvfb-run` when headless |
+| `lusdview-cpu-authored-tangent` | CPU normal-map shading uses `primvars:tangents` and its handedness | `xvfb-run` when headless |
+| `lusdview-cpu-graph-lanes` | CPU MaterialX metallic/roughness/emission routes affect the render | `xvfb-run` when headless |
+| `lusdview-cpu-graph-chain` | CPU MaterialX multi-node chain (image→multiply→mix) equals its constant equivalent | `xvfb-run` when headless |
+| `lusdview-cpu-ptex-routing` | CPU PTex material shows the decoded Island face and matches Vulkan RT | `xvfb-run`, Island corpus |
+| `lusdview-cpu-ptex-element` | Real quad-topology element pixels match the independent OpenPtex decoder; no fallback | Island corpus, OpenPtex build, `xvfb-run` |
 | `lusdview-aousd-conformance` | AOUSD spec render conformance | No Vulkan backend |
 | `lusdview-gl-vk-parity` | GL/VK raster image agreement | No GPU |
 | `lusdview-raster-shadow-map` | Raster shadow map regression | No GPU |
@@ -1057,6 +1101,14 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ### Stable `next` library tests
 
+CI builds the default `next` product with the MCP server enabled and with
+ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
+driver so Clang supplies the C++ UBSan runtime used by the shared library.
+The legacy product with `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON` and examples
+also needs a configure check: the unified `lusdcat` target must be created
+only once. Keep compact writer-layout assertions valid on both 32-bit and
+64-bit targets.
+
 `next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
 Run it explicitly when changing shared code or the next product:
 
@@ -1074,6 +1126,48 @@ source arrays, integer boundaries, and all 65,536 binary16 encodings. TypeInfo
 tests check stable pointers and field parity with the C table. On GCC/Clang,
 `next_c11_syntax` compiles every first-party C core source (including generated
 schema data) with `-std=c11 -Wall -Wextra -Wpedantic -Werror`.
+
+`next_c11_storage` checks core ABI layout revision 2 and the reported value
+size, alignment, storage offset, type-descriptor size and chunk size against
+the consumer headers. The C API test also checks that `lightusd_abi_get()`
+forwards the same core layout revision and value dimensions. Consumers must
+reject a mismatched core major/revision or target layout before passing value
+storage across a shared-library boundary.
+
+`next_test_int64_listop` checks signed 64-bit list-op metadata through USDA,
+USDC, composition and PointInstancer masking. It covers all six authored runs,
+empty versus explicit clear, exact IDs beyond 2^53, malformed/count-limited
+payloads, three-layer edits, and deterministic comparisons with the string
+list-op model. A 9,001-prim case checks serial/parallel staged and streaming
+writer parity. Retained operation storage is included in memory estimates.
+Nested list-op values outside metadata are not covered by this codec.
+The CPU preview test checks inactiveIds visibility and rejection of preview
+cache version 3; current preview and source geometry versions are 4 and 2.
+
+`next_test_stream_residency` compares staged/streamed bytes for owned and
+observable mapped sources around the 32 MiB digest threshold. It checks serial
+and parallel encoders (9,001 prims), source-range and cross-source content
+deduplication, page advice before writing, bounded sink calls, lazy-value reuse
+and a sink failure after the first window. It also checks that ordinary
+zero-budget writes preserve their non-windowed path. Real SSD measurements are also
+required: source advice changes read faults and cannot be assessed from
+`/dev/null` timings alone. Use guards and check both low and regular profiles.
+
+The PCP test checks low-profile discovery at frontier caps 0, 1, 2, 3, 4, 5,
+8 and SIZE_MAX.
+Once expanded children plus one entry per unvisited root cannot fit, discovery
+must retain the previous whole frontier without loading later references.
+The later references and all children must still appear in the final composed
+stage. Run the fixture composition sweep and low-profile batch targets 1, 400,
+and 50 with frontier 64 when changing this pruning rule.
+
+The PCP writer lifetime regression uses eight >8,192-prim batches with short
+and long paths, exceeding a packed path-storage block in each batch. Both
+serial and parallel low-memory output must match regular staged output after
+the source batches have been released. Property paths and external target
+paths exercise both borrowed and separately owned path text. Run composition,
+writer rewrite and real-output hash gates when changing this ownership.
+
 
 For C-core size measurements, configure a Ninja tree with
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
@@ -1095,6 +1189,260 @@ features, SIMD, memory width, and threading identical. Compare repeated load
 and export timings as well as size; investigate repeatable regressions above
 5% rather than accepting a smaller binary on size alone.
 
+> **Moved.** The Lean model (`verif/lean`), its proofs, the findings registry, the
+> citation/model-split/reflection gates, the Unicode gate and the replays of
+> Lean vectors against stock OpenUSD (`next_lean_build`, `next_lean_*_vectors`,
+> `next_lean_reflection_*`, `next_lean_axioms`, `next_lean_unicode_conformance`, ...)
+> now live in the separate `usdspec-conformance` repository. Only the C++
+> consumers (`next_test_lean_vectors*`, `next_test_name_order`) remain here, reading
+> the pinned copy in `tests/next/generated/lean/`. Paths and test names in the
+> Lean-specific text below that refer to `verif/lean`, `scripts/*lean*` or
+> `next_lean_*` describe that repository.
+
+The Lean Unicode gate requires a verified official UCD cache. Before running
+Lean-labelled CTest checks, run `python3 scripts/fetch-lean-unicode-data.py` from
+the repository root. This fetches only missing files and verifies every SHA256
+against `verif/lean/data/unicode-15.1.0.json`; corrupted cached files fail.
+`next_lean_unicode_conformance` checks independent Unicode 15.1 generation,
+native XID parity and four negative trust controls, then runs Lean NFC/NFD on
+all 19,074 official test rows and 1,095,035 scalars omitted from Part1. It performs
+2,380,810 checks. The generators do not use host `unicodedata` or copy native
+ranges as their oracle. CI caches and verifies the same version-pinned files.
+This does not replace the open general NFC idempotence proof, and does not
+normalize authored USD identifiers.
+
+The spline proofs certify the rational Keep Ratio transform for arbitrary fuel
+and connect bisection to the unique real time root. The value-error bound is
+`K/2^(n+1)` for an explicit control-point constant `K`; fuel 64 gives `K/2^65`.
+The compiled axiom gate covers the new SplineBounds module and the native vector
+consumer continues to check the existing exact spline cases. The proof covers
+the rational model; floating-point rounding in native C++ is separate. See
+[the proof audit](validation/lean-spline-bounds-audit.md) for assumptions and code
+linkage. Run the focused legacy spline tests when changing shared spline code.
+
+`next_lean_primindex_vectors` consumes the Lean-generated
+`prim-index-vectors.json` through the production PCP JSON CLI. Its 256 cases
+cover four arc fields, stronger/weaker list edits, global payload loading and
+ancestral children. It checks ordered prim and marker-property stacks at 512
+paths, including child absence after a clear or deferral. Run the script with
+`--oracle-python` and `--oracle-pythonpath` to require pinned stock parity;
+the Lean CI job does so. The generator drift gate covers this eighteenth
+generated artifact. See [the model scope audit](validation/lean-prim-index-audit.md).
+
+`next_lean_layerstack_vectors` checks 94 Lean-generated sublayer graphs, including
+cycles, missing files, shared diamonds and a 25-layer chain. Layer order and
+complete prim/property stacks must match; cycle/missing diagnostics must be
+present. CI also checks pinned stock. The model's sublayer traversal terminates
+by a finite-set measure rather than a fuel cutoff. The C++ API regression checks
+the ABI-preserving diagnostic overload of Cache::Open, warning append semantics,
+typed unreadable-sublayer issues, permissive surviving content and strict failure.
+Initial sublayer messages reach the CLI, session and composition helper outputs.
+
+#### Lean-generated conformance vectors
+
+`verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
+emits X-macro tables into `tests/next/generated/lean/` (committed). The
+`next_test_lean_vectors` ctest replays them against `src/next` and never
+skips; `next_test_lean_vectors_combine_chain` replays the corpus list-op
+chains. When `lake` is on `PATH` or in `~/.elan/bin`, `next_lean_build`,
+`next_lean_test` and `next_lean_vectors_check` also run (the first build
+needs `lake exe cache get` for Mathlib). `next_lean_reflection_table`
+checks validator `lean_ref` links. `next_lean_axioms` audits all compiled theorem
+dependencies, including private helpers, allowing only `propext`,
+`Classical.choice`, and `Quot.sound`. `next_lean_axiom_audit_tests` verifies
+acceptance of imported kernel proofs and rejection of explicit axioms, `sorry`,
+and native proof tactics. Both are also required by the Lean CI workflow.
+This trust check does not establish completeness of the specification models.
+Path-order proofs include a general decimal-tokenizer left inverse and joint
+key-encoding injectivity, so comparator equality implies actual string equality
+for arbitrary inputs. Leading zeros and digit-run lengths are unbounded. The
+model's trichotomy and antisymmetry do not establish OpenUSD byte-order parity;
+that distinct production comparator retains its independent stock tests.
+PATHS proofs cover arbitrary decoded-row trees, all four jump forms, arbitrary
+prefix/suffix framing, and exact preservation of sparse path-index sequences.
+Encoded row count is sufficient decoder fuel; chains prove this bound tight for
+every length. This is a theorem about the decoded-row model, separate from native
+binary bounds checks and validation of total table size or duplicate indices.
+The supported USDA AST printer uses a quoted-string codec with a general inverse
+proof for arbitrary strings and trailing input. Forty Lean-generated vectors
+cover every ASCII control, quotes, backslashes, Unicode and NUL followed by a
+digit. Native consumers compare values after parsing and USDA/USDC transport;
+`test-usda-strings.py` independently checks emitted C++ literal values and pinned
+stock semantics and runs in Lean CI. USDC's NUL-terminated token table cannot
+represent embedded NUL: native writing rejects it explicitly, including through
+parallel field workers. The stock 26.11 oracle's two NUL truncations are classified
+and retained. The supported-AST round trip is now proved by `parseLayer_print`;
+hexadecimal and one/two-digit octal source escapes remain outside this model.
+Subset lexical proofs separately cover identifiers, numeric lexemes and
+delimiter-framed asset/path values with explicit boundary conditions. General
+list proofs establish the required fuel and are instantiated for printed
+path-reference lists. These are compositional proof obligations, not a claim
+of complete normative lexical or semantic validation.
+Offset/reference/sublayer proofs cover the four offset states, asset-only,
+path-only and combined references, arbitrary list lengths and following input.
+They establish local parser fuel and whitespace behavior. Their explicit
+lexical predicates do not assert finite values, nonzero scales or valid URIs
+and object paths; semantic validation remains separate from AST recovery.
+Sample-map proofs preserve arbitrary-length lists and authored pair order with
+explicit numeric-lexeme conditions. Attribute proofs use the actual `attrRest`
+and `primItems` functions, cover default and sampled statements, and establish
+sufficient fuel for unbounded attribute-only bodies. They do not assert finite,
+sorted or unique timestamps or value-resolution semantics.
+Recursive metadata, nested prims, top-level forests and Layer assembly now have
+general inverses with sufficient input-length fuel. Dictionary keys are arbitrary
+strings: the model quotes all keys, and `EntriesWellFormed_all` removes the former
+identifier-only restriction. The [constructor audit](validation/lean-usda-roundtrip-audit.md)
+records all supported AST cases and remaining normative-model limitations.
+A seventeenth generated table supplies 135 integer/string/nested dictionary-key
+cases. Native consumers check exact keys through USDA/USDC transport, including
+explicit crate rejection for embedded NUL. `test-usda-keys.py` checks a separate
+45-key manifest and all 135 cases against pinned stock OpenUSD; CI requires it.
+Namespace separators in dictionary keys must be quoted; the native writer
+regression includes `namespace:key` in every entry kind.
+The validator checks layer root `primOrder`, prim `primOrder`, and
+`propertyOrder` name syntax. These are recommendations (warnings): speculative
+names do not need to exist locally, and property names may be namespaced.
+Validation preserves the authored order vectors and does not impose an
+additional duplicate-name restriction. Programmatic tests cover malformed,
+empty, Unicode and namespaced tokens and group toggling. These syntax checks
+are separate from the Lean population-order algorithms.
+Layer-level `relocates` now receives the same identity/path/duplicate-source
+checks as legacy prim metadata, with findings at `<layer>`. Pseudo-root targets
+are rejected; root-prim targets and empty deletion targets remain allowed.
+Checker CLI contracts also verify these rule IDs, warning/strict exit codes and
+layer-level relocate locations. The help banner identifies Core 1.1.0; strict
+semantic fixtures use required statement separators.
+Authoring component rules now cover root sources/pseudo-root targets,
+ancestor/descendant targets, conflicting sources/targets and pre-relocation
+nested sources. The nine Lean references name individual predicates, including
+separate uniqueness components. OpenUSD cross-entry target/source and
+arrival-under-other-source policies use the `compatibility` category and are
+excluded by normative-only filtering. Root-source errors remain normative;
+root-prim targets remain accepted under the explicit LEAN-515 policy.
+Tests cover both layer and prim locations, path-component boundaries, multiple
+deletes, already-relocated namespaces and category/profile filtering. Full
+composed-stack/error-policy coverage remains open; these checks are local
+authoring constraints, not sublayer winner selection or a proof of native composer equivalence.
+The composition cache validates each relocate before selecting the strongest
+valid source opinion. Stronger deletes suppress weaker targets; invalid stronger
+opinions permit valid weaker replacements. Invalid path entries cannot poison a
+valid edit through the pairwise target-conflict scan. Layer metadata, including
+an authored empty list, supersedes legacy prim edits in that same layer.
+The PCP JSON contract checks complete ordered stock stacks for valid strength
+and root-relative cases. Invalid-path and legacy-prim text controls retain stock
+parse rejection explicitly; native permissive/extension behavior is checked
+separately. Programmatic tests cover invalid sources that bypass text parsing.
+Relative relocate prim paths share one anchoring helper across parsing,
+validation, composition and USDC writing. Layer paths anchor at `/`; legacy
+prim paths anchor at the owner, including leading `..`. Strict parsing rejects
+above-root paths; permissive parsing preserves them for diagnostics and
+composition ignores the entire entry. USDC writing rejects them in serial and
+parallel workers. Failed anchoring never substitutes the empty deletion target.
+Authoring validation normalizes temporary values without changing metadata.
+Tests include canonical root-relative crate roundtrips, nested parallel parser
+owners, late parallel writer shards, raw programmatic parent-relative metadata,
+and invalid-target composition controls. The stock contract explicitly retains
+OpenUSD 26.11's above-root-target conversion to deletion as malformed-input
+reference loss, not valid-input parity or a specification defect (Core 1.1.0
+L3370–3375 already prohibits anchoring above the root).
+
+The PCP JSON contract also checks an inherited class variant that selects a
+root variant. Empty options still contribute authored prim-stack sites: the
+class option must precede the dependent root option, just as an option with
+inline properties does. Pending inherited option records are emitted before
+the host variant, while stronger hosts remain pending during class traversal.
+Empty and inline-property options, payloads, sibling inherits and nested
+inherits compare complete ordered prim and property stacks with stock.
+The source arc-site trail supplies nesting depth, including same-stack class
+arcs; pending sibling records are flushed before the next sibling spec.
+
+Subroot reference/payload grafts preserve an inherited source's existing
+implied-class strength anchor, unless an enclosing implied block already owns
+that anchor. Implied inherits stay ahead of the referenced stack's local
+opinions; specializes retain their weaker position. A stock contract compares
+the complete property stack, and native value controls check both the implied
+inherit winner and the referenced local winner when only specializes override
+that value.
+
+Implied subroot inherits whose targets exist only in ancestor variants resolve
+that independent ancestor branch in each expressing stack. A root-layer `z`
+selection and referenced-layer `y` selection therefore both contribute their
+own variant sites, in strength order. Explicit empty and absent root selections
+retain the referenced opinion. A shared ancestor of the inheriting prim keeps
+the current prim-index context instead, avoiding incompatible variants such as
+both `full` and `tidscene`. Tests compare exact property provenance for all four
+independent selection controls with stock; the retained corpus covers the shared
+ancestor control.
+
+The PCP JSON contract checks implied specializes variant selection across a
+reference: direct selections on the specializing prim stay stronger than an
+ancestor-stack selection on the specialized class. Explicit empty selections
+suppress the variant; absent selections still inherit the class selection. The
+four controls compare complete ordered v2 stacks with pinned stock OpenUSD.
+Nested-variant controls also check complete selection-chain identity when a
+variant-set name recurs deeper in the same chain. Metadata-only outer options,
+inline properties, and child content must produce one ordered site per selected
+option, without dropping an enclosing site or duplicating a nested one.
+
+The PCP JSON contract includes authored attribute/relationship interleaving in
+ordinary prims and inline/content-backed variants, and reads LightUSD-written
+crate files through the pinned stock oracle. Native writer regressions cover raw
+property order through USDA (`sort_properties=false`), USDC and USDC-to-USDA,
+independently of authored `propertyOrder` metadata and sorted lookup slots.
+`next_test_name_order` checks the shared compatibility comparator and separates
+stage property ordering from raw PCP property children. The stock comparison
+also runs in Lean CI and can be reproduced with:
+
+```bash
+python3 tests/next/test-name-order.py \
+  --tool build_ninja/next_debug/test_name_order \
+  --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
+```
+
+Use the isolated `usd-core==26.11` wheel for those oracle variables. The script
+verifies distribution provenance, compares 80,089 byte/name pairs (including
+long numeric runs), and checks default and partial stage `propertyOrder` over
+mixed attributes/relationships. These finite checks do not establish general
+Lean comparator laws.
+The PCP contract also covers arc targets deleted beneath a relocated parent:
+internal references/inherits/specializes, external references/payloads and targets
+below the deleted subtree must not reintroduce its specs or children. A sibling
+at the relocated destination remains a valid target.
+The Lean vector executable also includes the eight generated crate list-op wire
+vectors. They exercise the shared framing decoder used by path, reference,
+payload, token, string and Int64 readers; reject every truncated vector prefix,
+reserved bits and over-limit counts; and compare exact production Int64 writer
+payload bytes and reader-retained vectors with the Lean expectations. Type-specific
+byte/index validation and allocation budgets remain in each production consumer.
+Non-canonical header semantics use the separate Lean `pxrRead` compatibility
+model: 256 generated mode vectors cover all 128 legal headers with empty and
+populated vectors. `tests/next/test-listop-modes.py` also compares 2,048 real crate
+fields against stock 26.11 across Int64, token, string, path, reference and payload
+list ops, plus relationship targets and attribute connections. Discarded explicit vectors remain validated: malformed indices warn and drop the
+field in compatibility mode and reject strict AOUSD loads; memory/count limits
+remain hard failures.
+Run it with:
+
+```bash
+python3 tests/next/test-listop-modes.py \
+  --tool build_ninja/next_debug/test_int64_listop \
+  --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
+```
+
+Lean CI requires this stock comparison.
+
+The arc-cycle contract covers cross-file returns to an ancestor of an earlier
+site, exact same-file parent cycles, and a noncyclic branch through the same
+external file. It asserts that the noncyclic opinions preceding the rejected
+arc survive and that no recursive child subtree appears.
+Regenerate after changing the model:
+
+```bash
+cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
+```
+
+See `doc/validation/lean-verification-2026-11-06.md` and `verif/lean/README.md`.
+
 #### AOUSD Core supplemental inputs
 
 The official [Core supplemental repository](https://github.com/aousd/core-spec-supplemental-public)
@@ -1115,11 +1463,60 @@ ctest --test-dir build_ninja/next-debug -L aousd -V
 ```
 
 This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
-The supplemental bridge loads 54 file-format fixtures, checks expected prim
-population across 138 composition cases, and checks resolved samples in eight
-value-resolution cases. Its data-type bridge runs the library's AOUSD type
-checks; it does not execute the upstream Python/OpenUSD test runner or compare
-every PCP field. Keep these coverage limits separate from full spec conformance.
+The supplemental bridge loads 54 file-format fixtures, checks all 138
+composition cases, and checks resolved samples in eight value-resolution cases.
+Three composition roots contain invalid text paths and must be rejected:
+`BasicInherits_root`, `ErrorRelocateWithVariantSelection_root`, and
+`SubrootReferenceAndVariants_root`. Their classification in
+`tests/next/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
+accepted text, changed bytes, a different failure, or an unreadable binary
+dependency fails the gate. The release supplies no binary root for these three
+cases; all six available original binary dependencies are still required loads.
+With the stock oracle enabled, it independently confirms the text rejections
+and reads those binaries too. These three rejection cases are reported
+separately from the 135 structural comparisons, keeping all 138 cases covered.
+An upstream `Errors` list alone does not grant a case an exemption. Run the full
+corpus instead of the default 50-case cap with `LIGHTUSD_AOUSD_CAP=0`.
+Its data-type bridge runs the library's AOUSD type checks; it does not execute
+the upstream Python test runner or compare every PCP field. Keep these coverage
+limits separate from full spec conformance. The 2026-11-03 run is recorded in
+[the supplemental report](validation/aousd-supplemental-2026-11-03.md).
+
+The `lusdcat --dump-pcp-json -` default remains the corpus-compatible v1 JSON.
+Use `--pcp-json-version 2` for ordered prim/property stack arrays of
+`{"layer": "...", "path": "..."}` sites. This retains repeated layers and repeated
+sites reached through distinct reference offsets. External layer identifiers
+retain their relative directory components in v2. `next_pcp_json_contract` tests
+both versions, variant provenance and duplicate-site preservation.
+
+Authored Layer root/child index vectors stay in their original order through
+finalization. Stage child/root queries and traversal apply ordered views, while
+PCP applies each spec's restatement after merging its names with weaker sources.
+The namespace-order regression checks raw vectors, `GetChildAt`, traversal,
+clone/move and edits. Stock-oracle contract cases exercise per-layer and per-spec
+ordering, more than 32 children, USDA/USDC inputs, relocation rename positions,
+shadow-name collisions, missing sources, and arrivals before local children.
+
+For an independent lossless comparison, install `usd-core==26.11` into an
+isolated directory and run:
+
+```bash
+python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
+python3 tests/next/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
+  --oracle-python "$(command -v python3)" \
+  --oracle-pythonpath build_ninja/stock-oracle
+python3 tests/next/run-aousd-supplemental.py \
+  --suite-root build_ninja/aousd-supplemental/releases/1.0.1 \
+  --next-usdcat build_ninja/next-debug/lusdcat --category composition \
+  --pcp-oracle-python "$(command -v python3)" \
+  --pcp-oracle-pythonpath build_ninja/stock-oracle
+```
+
+The oracle verifies the imported package distribution/version and uses stock
+Pcp in USD mode. This comparison counts property ordering and all stack sites;
+its default difference ceiling is zero and it has no engine allowlist. It is
+an active gap-detection gate; current differences are recorded in
+[the execution ledger](validation/lean-followup-status.md).
 
 Reference `customData` tests now require strict USDC loads, typed nested-value
 retention, qualified list-op identity, and memory/streaming writer roundtrips.
@@ -1503,6 +1900,8 @@ prepare/abort/commit, and cancellation; it is registered when Tydra is enabled.
 `workflow_tools` additionally exercises JSON crate limits, bounded dependency
 reports and all-authored variants, variant/property provenance, checker baseline
 and SARIF output, directory/package diffs, textured GLB export and strict losses.
+The GLB checks retain textures from both loose layers and USDZ package entries;
+package reads obey the export archive and entry size limit.
 When `lusdrender` is built, it runs the two-camera synthetic capture and checks
 raw depth, world normals and source IDs numerically. Temporary assets are removed
 after the run. `next_gltf_export` tests API budget failures, invalid attribute
@@ -2340,13 +2739,40 @@ across layer, prim and variant scopes, plus 15 invalid qualified layer spellings
 This locks in `add` versus `append` authoring and composable inferred variant-set
 names through both formats without inventing semantics for extension fields.
 
+Local unknown-metadata assignment folding is covered separately across layer,
+prim, variant and property scopes. Repeated qualifiers replace their earlier
+value; a bare assignment removes prior qualified opinions and suppresses later
+qualified edits. `tests/next/test-raw-metadata.py` retains all 36 fixtures against
+pinned stock OpenUSD 26.11: 32 accepted inputs produce 64 comparisons through
+USDA and native USDC round trips, and four qualified-empty-list inputs are
+explicitly classified as stock text rejections. Native conformance tests retain
+coverage of those compatible opaque inputs. This checks local authoring, without
+assigning schema-defined cross-layer merge semantics to unregistered fields.
+The native crate check also covers raw property metadata without extra quoting;
+it does not claim stock interoperability for private raw metadata storage.
+
+Relationship-default regressions distinguish absent defaults from authored empty
+paths (`rel r.default = <>`), retain relative spelling, and check stronger
+opinions against weaker defaults through composition and USDA fixpoints. These
+use a separate authored bit from relationship target-list opinions. They do not
+close the USDC requirement: pinned stock 26.11 itself rejects exporting SdfPath
+relationship defaults to crate, and native crate preservation remains outstanding.
+
 When the AOUSD checkout and pinned OpenUSD Python package are available,
 `next_aousd_sampled_value_pxrdiff` checks 304 DefaultTime/numeric queries across
 held/linear interpolation and clip transitions. Set
-`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. Six queries have the pinned
-AOUSD corpus's explicitly checked extrapolated timing values where OpenUSD
-clamps; these are reported separately. Every other mismatch fails. Held
+`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
+matches all 304 queries, with zero unexpected or classified timing differences.
+The harness retains explicit classifications for previously observed corpus
+timing differences; any unclassified mismatch fails. Held
 interpolation now propagates into nested clips and missing-value interpolation.
+Clip activation validation also covers unsorted unique times and duplicate
+times with equal or differing asset indices, including nonadjacent authored
+duplicates. Unique times are sorted before interval selection; duplicate times
+reject the clip set. This differs from clip `times` mappings, where two entries
+at the same stage time can encode a jump. Lean keeps literal authored-list
+intervals separate from compatibility preprocessing, with kernel proofs of
+sortedness, uniqueness, permutation preservation, and acceptance of unique input.
 
 Lucia's `workflow-depth.test.mjs` and `project-storage.test.mjs` cover typed mesh
 and primvar authoring, semantic undo, IndexedDB snapshot contracts, nested
@@ -2794,6 +3220,201 @@ roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
 
+Parallel instance-claim repair (large-scene §10.91) needs fresh coverage in
+`next_test_pcp_parallel` and `next_test_instance_group`: compare serial and
+parallel prototype selection/child order when a discarded subtree owns a
+speculative claim, including nested repairs, donations and earlier-batch seeds.
+Check depth-limit/unresolved-source fallback as well. This qualification is
+deferred under the current implementation-first workflow; existing passing
+results do not validate the new repair path.
+
+Projected SPECS delta encoding (large-scene §10.92) additionally needs byte
+parity against the C encoder for most-common-delta ties, arbitrary/wrapped u32
+values, wide-delta candidate pruning and counts across the parallel threshold.
+Exercise mapped and fallback spec views, invalid-fieldset fallback to zero,
+and complete writer parity. A small standalone native/no-thread codec smoke
+has passed; the integration and regression work remains deferred.
+
+Heavy field chunk refinement (large-scene §10.93) needs complete writer parity
+for multiple heavy prims in one original chunk, a heavy prim on either chunk
+edge, combined smaller arrays, time samples and variable-size elements. Check
+consume-prims reaping and pre/post-first-commit failures, plus unchanged fixed
+ranges for low-memory/deferred-fill inputs. Real-SSD Island measurements must
+include chunk_plan overhead and peak RSS; equal context counts alone do not
+prove equal memory use. These runtime checks remain deferred.
+
+Discovery sizing and prefetch fan-out (large-scene §10.94) need coverage for a
+single seed revealing several targets, queue drain/shutdown and explicit parser
+budgets. Compare the complete discovered count to BuildStage for inactive prims,
+arcs and namespace edits. Frontier/depth caps, active instanceable subtrees and
+callback policies must keep conservative sizing; fixed batches remain fixed.
+Retained-plan release (§10.95) needs one-shot output/resource parity, failed
+Plan/writer startup cleanup and confirmation that public repeated Plan and
+dependency manifests retain their previous behavior. Runtime checks are deferred.
+
+For bounded readback/Tydra profiling, build the opt-in `bench_scene_readback`
+target and run `bench_scene_readback scene.usdc 1 retained` (or `4 metadata`).
+It uses 512 MiB reader/converter budgets; still use the process memory guard.
+Its native chunk-copy timing excludes JS extraction and is not a browser result.
+See large-scene §10.96 for baseline provenance and progress-gate limitations.
+
+ChunkedArray::copy_bytes_to and the web geometry bridge (§10.97) need permanent
+native/WASM coverage for aligned/unaligned copies, exact/short capacities,
+partial chunk tails, f32/u32/u16 payloads, heap growth and complete mesh/points/
+curves output parity. The native focused smoke and Emscripten syntax check have
+passed; full regressions/current-runtime performance checks remain deferred.
+
+Scoped web mesh preparation (large-scene §10.98) needs native dispatch/runtime
+coverage for begin/end/nesting, one actual geometry build across repeated
+size/header/payload calls, failed builds and intervening scratch builds. Check
+all ten streams for indexed/soup/merged/analytic/skinned/blend-shape inputs,
+flag changes and supplied-clip replacement/removal. JS must close on preflight,
+header and copy failures and block deletion during the operation. Syntax and
+a small mock-dispatch lifecycle check pass; fresh WASM output/performance and
+heap-growth checks remain deferred.
+
+Direct compressed-section emission (large-scene §10.99) needs permanent coverage
+for byte parity with the owning/C APIs, zero/partial inputs, callback lifetime,
+compression failures without emission and destination failures without raw
+fallback. Check C bound overflow on 32-bit/memory64 and near the 255-chunk limit
+without allocating giant fixtures. Large no-thread u32 columns need independent
+C byte parity across threshold/chunk-code boundaries. Focused native/no-thread
+smokes pass; complete section/scene parity and SSD/RSS qualification are deferred.
+
+Pass-1 lifetime coverage should include the late back-reference/stateful-reader
+case in large-scene §10.101: discovery and the first batch have not loaded the
+later root, whose layer then reaches an earlier shared source. The original
+reader must not be invoked again across planning/run; dependency identifiers
+must stay complete. A focused two-batch probe passes. Parallel authority checks
+should also inspect next_walk speculative_rewalks/seed_rewalks/source_rewalks
+and serial_fallback so an unexercised branch or silent serial fallback cannot
+masquerade as repair-path coverage.
+
+Focused authority checks (§10.102) now establish a real 64K-gated parallel walk
+with byte parity and no fallback, depth-triggered fallback matching the serial
+partial-stage/typed-diagnostic contract, and two injected stale-claim repairs
+with nested child/type/order checks. The injected probe compiles current
+implementation sources directly; it does not establish worker race coverage.
+Permanent cases should retain these distinct gates instead of treating a
+successful parallel run with zero re-walks as repair coverage.
+
+A focused wide-writer check (§10.103) now exercises real range refinement
+(261 versus 256 chunks), serial/fixed/refined byte parity and consume/reaper
+cleanup using a bounded synthetic input. The isolated fixed-chunk control
+changes only the refinement boolean; both parallel probes use identical
+thread/consumption/allocator settings. This does not cover production Island,
+lazy-array fan-out, time-sampled/variable-size workloads or failure paths.
+
+Focused spill-view checks (§10.104) now cover typed view/legacy parity, appends
+after snapshots, mapped and no-mmap builds, mapping fallback, interrupted and
+partial writes, truncated prefixes, tail-write failures and fallback-read EOF.
+A batched writer fixture crosses real chunk thresholds and observes four
+actual mapped spill views; memory-only, mapped-spill and forced-ENOMEM fallback
+writes produce identical regular SSD files. Ordinary WriteLayerToFile alone
+does not trigger boundary eviction and cannot establish this coverage. These
+bounded checks do not replace large-scene, 32-bit or multi-chunk LZ4 gates.
+
+Fresh wasm32 scoped-copy checks (§10.105) now link the current module and
+compare complete copied outputs with scopes enabled/disabled in that same
+runtime. Fixture geometry-read counters establish one versus 24 preparations
+per mesh. Indexed, explicit indices-disabled, merged and a real face-varying
+soup case pass; nested/mismatched scope rejection and failure cleanup pass.
+Use fresh streams for bounded A/B checks: the crate reader's cumulative decode
+budget charges temporary decodes as well as retained storage. This does not
+replace skinned/blend-shape, clip-mutation, heap-growth or memory64 coverage.
+
+Focused discovery/prefetch checks (§10.106) now establish the complete-count
+target boundary, unknown sizing under frontier/depth limits and reader/payload
+callbacks, an authored inactive leaf, and fixed-root batch preservation. Their
+pass-1 path order matches serial BuildStage. A controlled single-seed reader
+proves two automatic workers overlap after fan-out, explicit parser settings
+retain the former one-worker policy, and stopping during a read joins without
+loading newly found children. This does not establish actual parser throughput,
+namespace-edit coverage or the full callback/load-rule matrix.
+
+Low-memory PATHS node-storage reuse (§10.107) needs coverage around the 131,072
+encoded-node threshold, deep trees, variants, relative/property and empty paths,
+and serial/parallel node preparation. A bounded wide fixture now establishes
+ordinary, batched memory-only, mapped-spill, forced mapping-fallback and
+no-thread mapped-spill byte parity with saved pre-change output. Exact-size
+projected encoding also applies to the preorder in the selected policy. This
+check does not establish whole-process memory or production throughput gains;
+the two eliminated arrays account for eight bytes per encoded path specifically
+at column preparation, while retained traversal/codec state remains live.
+
+Mixed-array scheduling checks (§10.108) now cover time-sampled-only arrays,
+default-plus-sample arrays, the variable-size token proxy, multiple small arrays
+per prim and accumulated work across prims, including original chunk edges.
+The expected refined range count, complete serial/parallel byte parity and
+consume/reaper removal of both properties and time samples pass. Large lazy
+payloads and pre/post-commit failures still need separate coverage; serial
+versus parallel timings do not isolate the benefit of refinement itself.
+
+Earlier-batch prototype seeds must survive a failed parallel walk (§10.109).
+The focused 64K-gated reproduction now checks the member's IsInstance and
+GetPrototype results, typed depth diagnostics and complete post-fix crate
+parity against serial. Before the fix, primitive/byte counts were unchanged
+despite the member being incorrectly promoted to a new prototype. Permanent
+coverage must inspect prototype identity as well as output counts and retain
+the explicit serial_fallback timing gate. Full seeded-batch/donation coverage
+remains deferred.
+
+Source-miss repair (§10.110) must distinguish a repeated miss from progress to
+an unseeded prototype. A focused current-source probe now establishes the
+source -> seed -> forced-rewalk transition, seed-only and stale-claim repairs,
+and depth-triggered failure after partial repair. Successful cases inspect
+child/type/order and confirmed authority after temporary spec stores are gone;
+failure cases inspect pause/TLS cleanup. Keep the repeated-miss and unresolved
+forced-seed guards when extending coverage. This does not replace concurrent
+worker/donation checks or measure production fallback frequency.
+
+Medium low-memory structural delta encoding (§10.111) has focused writer parity
+with a C-entry-point counter: batched memory-only, mapped spill, mapping fallback
+and no-thread spill outputs match the saved file and avoid medium C delta calls;
+ordinary zero-budget output retains those calls. Future coverage should include
+131,072/four-million-element boundaries and pathological wide-delta histograms.
+Lower full-delta/output scratch does not bound histogram state or prove a
+production-scene RSS/throughput gain.
+
+The bounded Island comparison (§10.113) now establishes full-file parity and
+the default-profile refinement's observed RSS reduction with a matched
+fixed-chunk control. Three alternating pairs use regular SSD files, per-run
+fsync, normal teardown, identical jemalloc/flags and unchanged encoded-context
+counts. Parallel planning uses disjoint boundary masks merged in order; the
+mixed-array consume check also retains its exact output/range count, and
+no-thread compilation passes. Full suites and cold/other-scene performance
+remain deferred; a near-equal write median is not a general throughput claim.
+
+The residual scoped WASM extraction profile (§10.112) times 64 exported budget
+queries separately from mesh-buffer calls. Any future budget-query reuse must
+preserve accounting across lazy materialization and asset/export mutations;
+the current change retains all checks. Its recorded module is a profiling
+artifact, not a newly qualified WASM distribution.
+
+The PCP path-lifetime fixture also compares the prepared writer path against
+ordinary output across ~72000 prims, exercising mapped encoded-operation
+scratch and multiple 1024-prim contexts. Three smaller checks cover late
+instanceable-field removal, moving the first surviving token use, authored-false
+updates, raw token-vector/array dedup and rejection of a second commit before
+it can truncate the output. CLI focused checks compare retained/prepared and
+ordinary output with 1/4 compose threads, require preparation before Plan
+completion with no Run pass, and verify scratch-limit failure cleanup. See
+[planning/encoding overlap](large-scene.md#10117-planning-overlaps-writer-encoding-and-scratch-io).
+
+The `next_test_pcp` suite also checks opt-in immutable source snapshots:
+read-once callback replay, concurrent initial/replay loads, parsed-layer
+expiration, byte-limit failures, native-file removal, original asset anchors,
+pass-1 back references, retained mapped USDC values after registry cleanup and
+USDZ entry replay after archive removal. Source snapshots require a selected
+POSIX disk directory; preloads and foreign dependency owners remain retained.
+See [large-scene snapshot details](large-scene.md#10116-immutable-source-snapshots-and-pass-1-eviction)
+for options, focused CLI parity evidence and remaining qualification.
+
+The `next_test_spill_array` test checks append/resolve equivalence with spilling
+enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
+the test verifies that no bytes spill and no I/O failure is reported. The
+structural-column spill budget and directory have no effect on Windows.
+
 ### Opt-in NVIDIA level-set regression
 
 For bounded OpenGL, Vulkan, CUDA and OptiX surface checks, use
@@ -2813,3 +3434,617 @@ After changing C memory-loader defaults, rebuild the Python extension and run
 The C API memory loader separately tests composed and uncomposed loads in
 `tests/c-api/test_lightusd_c.c`. Android CI builds lightrt at API 24; aligned
 allocations must use `posix_memalign` there (`aligned_alloc` requires API 28).
+### Cached large-scene preview regression
+
+Build `lusdpreview` and `test_scene_preview`, then run
+`ctest --test-dir build_ninja -R '^next_test_scene_preview$' --output-on-failure`.
+The generated fixtures cover all three representations, bounded outputs,
+portable export, cross-batch native instances, forward PointInstancers,
+texture baking, dependency invalidation, malformed/truncated cache recovery,
+cancellation and default VRAM sizing. Additional cases cover PointInstancer
+targets inside native instance copies, prototype-local transforms, adaptive
+volume bricks with mixed-scale environment geometry, portable four-level USD
+variants, hysteresis and aggregate LOD budget selection.
+
+Run `python3 tools/lusdpreview/check-lod.py --viewer build_ninja/lusdview
+--output build_ninja/preview-lod-check` for 27 headless captures across all three
+representations and CPU / Vulkan / CUDA. Near/far captures must trigger automatic
+refinement within budget; the finest capture must match disabled-LOD rendering
+within one 8-bit rounding step. Run under GPU-assisted validation as below.
+LOD reloads upload the complete replacement scene before capturing a settled
+frame. The camera runner forces device-local staged mesh uploads to cover scene
+replacement before the first raster draw; scene teardown must flush pending
+copies before destroying their destination buffers.
+The `lusdview-vk-gaussian-chunks` hardware-RT test also checks the shader
+feature declarations required by the NVIDIA ray-query path.
+
+For headless hardware qualification run
+[check-renderers.py](../tools/lusdpreview/check-renderers.py) with the built
+viewer/renderer, source scene, cache and output directories. It exercises both
+applications on CPU / Vulkan / CUDA for Gaussian, point and volume previews,
+records actual per-process NVML VRAM and RSS, and requires hardware allocations.
+Use the [Vulkan validation layer procedure](lusdview.md#gpu-assisted-validation-shader-faults--device-loss)
+for shader/descriptor qualification. Keep large source assets, cached sidecars,
+images and measurement logs in ignored build directories.
+
+
+For extended previews, `next_test_scene_preview_compute` checks CPU conversion
+and direct UsdVol SDF/albedo rendering, rejects malformed compute buffers and
+verifies camera updates reuse immutable grid data. Run its executable with
+`vulkan` and `cuda` on hardware to compare each kernel against the CPU reference;
+an unavailable requested backend fails. `next_test_light_filter` checks the
+portable light-filter registry, `lightusd:filter:kind`/parameter parsing with
+clamping, the fold into the render-ready light intensity/color, warnings for
+unknown kinds and missing targets, custom-kind registration/unregistration, and
+the folded values recorded in a cached preview. The compute test also checks
+preview light and shadow linking (mask exclusion/inclusion, independent light and
+shadow masks, CPU/lavapipe parity), and `check-source-refinement.py --software`
+runs the 12-capture refinement matrix against Mesa without NVIDIA probing.
+Custom filter kinds register through the C API
+(`lightusd_register_light_filter`, covered by `next_test_light_filter_c`) and
+through Python (`lightusd.register_light_filter`, covered by
+`python/tests/test_light_filter.py`); both surfaces share the C++ registry used
+by conversion and preview caches. `next_test_scene_preview` also checks
+that regional source resampling produces finer detail and retains the background,
+including PointInstancer targets inside native instances and nested prototype
+triangle/placement graphs.
+Run `tools/lusdpreview/check-source-refinement.py` for 18 automatic-resampling
+captures and run it under Xvfb with `--threaded --owner vk` / `--owner gl` for six
+captures per actual render owner. The JSON report must confirm an active render
+thread, finer source cells and increased sample counts; direct volume captures
+must report the grid path. Keep logs, caches and images in ignored build folders.
+
+Persistent-index qualification must request an uncached camera region and reject
+the `open` progress phase, while observing `source-index`. The retained sample
+count and source detail must increase for a targeted surface. Changing a source
+layer must invalidate the index; keep original geometry and generated indices
+out of Git. Index creation may revisit the whole scene once.
+
+The compute test also checks analytic Beer-Lambert absorption and single
+scattering, emission and phase changes, density-only UsdVol loading/framing,
+and authored scene light effects. Passing a third argument to the executable
+retains its fixtures in that directory for application-level checks. Run
+`check-renderers.py ... --native-volume` on its `fog.usda`, and use
+`--kinds volume --volume-mode medium` to qualify participating media on larger
+previews. `check-particle-radiance.py` guards against relighting converted point
+colors with extreme scene lights; captures must remain nonblank and identical.
+
+Textured-emission and multiple-scattering qualification extends the compute test
+with analytic Monte Carlo Beer-Lambert transmission, nonnegative higher-order
+energy, fixed-seed repeatability, colored dome/rect lighting, rotated dome
+transforms and malformed texture/sample descriptors. CPU, CUDA and Vulkan must
+pass; Vulkan runs under GPU-assisted validation. The conversion test checks
+portable linear-HDR sidecars after deleting the original texture, and upgrades
+a legacy lighting cache while rejecting geometry resampling. For application
+checks, retain the compute fixtures and run:
+
+```sh
+python3 tools/lusdpreview/check-renderers.py FIXTURES/textured-fog.usda \
+  --native-volume --volume-mode medium --volume-bounces 4 --volume-samples 8 \
+  --viewer build_ninja/preview-render/lusdview \
+  --renderer build_ninja/preview-render/lusdview_lightrt_c_build/lusdrender \
+  --cache build_ninja/textured-volume-cache --output build_ninja/textured-volume-check
+```
+
+Use the same scattering controls with `--kinds volume --no-source-refine` for
+Caldera and larger cached scenes. Keep the 2048 MiB process VRAM gate and inspect
+noise and lighting variation in the captures; stochastic paths need an RMS
+comparison, since tiny floating-point differences can change collision branches.
+
+Emitter-importance checks add single-pixel off-axis dome and rect maps and
+compare their raw radiance against integrated energy at one light sample.
+Validate truncated/nonmonotone CDFs, the 1–64 CLI bound and render-cache
+invalidation when the sample count changes. Headless qualification should also
+use a sparse bright map whose nonzero texels occupy less than 0.1% of the image.
+Run CPU, CUDA and GPU-assisted Vulkan; keep captures within the 2048 MiB gate.
+
+Projection and accumulation checks cover angular/mirrored-ball emission energy
+against numerical spherical integrals, including partial texels at disk edges.
+The compute test compares both GPU backends to CPU and checks statistically
+bounded Monte Carlo energy. Accumulation must reduce image MSE, respect its cap,
+reset on camera/viewport/shading/scene changes, and retain its count when a final
+capture reads the last frame. App reports include `preview_accumulated_frames`;
+require a value above one for real progressive viewer/render-thread tests.
+
+For software-only preview development, run compute checks through
+`scripts/with-software-rendering.sh` and application checks with
+`tools/lusdpreview/check-renderers.py --software`. This pins Mesa lavapipe and
+llvmpipe, disables the preview NVIDIA-memory probe, skips CUDA and distinguishes
+software results from hardware qualification. Do not force an NVIDIA device
+when using this mode. Hardware tests remain an explicit separate qualification.
+
+Higher-quality medium/light checks include independent partial overlaps,
+extinction-weighted emission, finest-level halo priority, a thin density peak,
+diagonal cubic-density optical depth, rays beyond 4096 steps, scattering beyond
+eight bounces, and explicit ray/shadow-budget exhaustion. Finite rect/disk/
+sphere/cylinder illumination is checked against geometric solid-angle integrals;
+a conservative medium in a unit environment checks radiance conservation.
+The shared scalar kernel runs on CPU and Mesa lavapipe only for current goal
+qualification. See `doc/preview-lighting-goal.md` for the mandatory no-hardware
+constraint and completion audit.
+
+## OpenUSD / lusdrender offscreen comparison
+
+[`tools/ousddiff`](../tools/ousddiff/README.md) provides JSON-configured external
+corpus inventory, deterministic probe/full selection, shared camera/frame/variant
+preparation, process time/RSS measurements, image comparison, historical gates,
+and offline JSON/HTML reports. Presets cover Caldera, Island, merged ALab,
+USD WG assets, and MJCF-to-USD Menagerie inputs. Dataset and executable paths
+remain configurable; generated inputs and reports stay outside tracked files.
+
+For a bounded 1% CPU validation probe without complete large scene roots:
+
+```sh
+python3 tools/ousddiff/runner.py run --preset usd-assets \
+  --mode probe --sample-percent 1 --no-full-scenes --max-input-mib 16 \
+  --renderers embree,cpu --out /tmp/ousddiff-probe
+```
+
+Sampling rounds up per stratum; inspect `selection.json` for effective coverage.
+An entry layer's small file size does not bound its composed dependencies.
+Cross-renderer image metrics are informational until reviewed thresholds are
+configured. Crashes, timeouts, resource limits, required-backend failures,
+invalid images and configured threshold failures fail the run. Hardware checks
+reject software GPU fallbacks. The complete measurement definitions, baseline
+compatibility rules and exit codes are documented in the tool README.
+
+The `tool-ousddiff-harness` CTest is available in both native product
+configurations with `LIGHTUSD_BUILD_TESTS=ON` and Pillow in the configured Python
+interpreter. Use `-DPython3_EXECUTABLE=/path/to/python3` if CMake selects another
+Python. Real-renderer integration is opt-in:
+
+```sh
+OUSDDIFF_RUN_INTEGRATION=1 python3 -m unittest discover -s tools/ousddiff -v
+ctest --test-dir build_ninja -R '^tool-ousddiff-harness$' --output-on-failure
+```
+
+`LIGHTUSD_OUSDDIFF_EXTERNAL_TESTS=ON` additionally registers an optional 1% CPU
+USD-assets probe; absent datasets return CTest skip code 77. Full-corpus and
+complete large-scene runs require explicit invocation.
+
+For the AMD hardware matrix, use `--profile amd`. This selects Storm, Vulkan
+compute, and Vulkan ray queries with explicit AMD-device/backend checks. Run
+outside the managed sandbox when `/dev/dri` is hidden. The opt-in
+`LIGHTUSD_OUSDDIFF_AMD_TESTS=ON` CMake option registers
+`tool-ousddiff-amd-hardware`, a tiny offscreen test requiring real AMD hardware.
+
+Use `--failed-from <results.json>` to retry unexpected failures only, including
+individual failed animation frames. The runner writes `failed_ids.json` and
+structured diagnostic codes; JSON summaries and HTML filters distinguish
+unsupported geometry, MaterialX failures, context/device failures and visual
+threshold failures. These details and the profile configuration rules are in
+the tool README.
+
+
+### Analytic primitive renderer coverage
+
+`tool-lusdrender-analytic-primitives` checks schema-default Cube/Sphere geometry,
+payload material bindings and transforms, native and point instances, masks,
+visibility/purpose, generated UVs, and animated radius/BVH invalidation. It uses
+small generated fixtures and requires no external assets. The Tydra next suite
+also checks default-time and interpolated analytic dimensions. See
+[headless GPU commands and texture coverage](lusdrender.md#analytic-geometry-regression).
+The same fixtures verify PreviewSurface image routing on generated and authored
+geometry, UV rotation, and packed-channel scalar scale/bias on CPU and ray queries.
+The legacy compute preview uses constant roughness.
+
+### Static batch culling audit
+
+`lusdview_rt_lod_test` includes CPU-only static-chunk projected-radius checks:
+projection Y sign, off-axis view depth, viewport height, camera-intersecting
+spheres, orthographic scale and degenerate projection fallback. Run it with
+`ctest --test-dir build_ninja -R '^lusdview_rt_lod_test$' --output-on-failure`.
+The Vulkan chunk path retains direct draws for primitive/source-face diagnostics
+and Ptex, gates indirect commands on enabled device features, and splits lists
+at the physical device limit. Camera-record equivalence, noninstanced LOD,
+persistent MCP scene replacement and incremental topology gates exercise the
+surrounding camera/resource lifecycle; they do not replace external large-scene
+performance measurements.
+
+`lusdview-wire-depth-fill` renders an authored quad in shaded and wireframe
+modes with a fixed camera. It requires a visible shaded interior and an
+unpainted wireframe interior, catching an opaque shader specialization replacing
+the color-write-disabled depth pipeline. It runs on software or hardware Vulkan.
+The deformation depth-parity harness disables the grid as well as skeleton
+helpers: grid placement follows posed bounds and is composited after the AOV,
+so it can differ even when CPU/GPU geometry matches.
+
+### Linked lusdview / usdview diagnostics
+
+The opt-in linked viewer controller, authentication, capture reports and live
+regression commands are documented in [tools/view_control/README.md](../tools/view_control/README.md).
+Run the Python unit tests there and the live test against an explicitly launched
+small fixture when changing the shared camera/MCP protocol. Hardware live tests
+require the GPU/display access described in the viewer documentation. An installed
+older USD tested through the development bootstrap does not validate the rebuilt
+OpenUSD fork.
+
+For linked viewer changes, also run the opt-in retained-frame and bone regression
+in `tools/view_control/test_frames_live.py` against a controller session launched
+with `tests/usda/view-control-skeleton.usda` and the installed OpenUSD fork. It
+checks independent bone visibility with guide purpose disabled, unchanged skin
+and descendant geometry after toggling, exact native framebuffer readback,
+retained pixels after display/selection changes, token idempotency and release.
+The lusdview **Tools > Compare viewers** panel must be checked on GL and Vulkan,
+including image replacement and renderer switching; the native `compare_panel`
+tool can save its composited window for visual review. Full paired captures need
+the updated fork's mono raster frame-barrier protocol.
+
+Headless agent comparison is documented in
+[`tools/view_control/HEADLESS.md`](../tools/view_control/HEADLESS.md). Run its
+`test_headless_live.py` suite on CPU and available GPU backends after changing
+lusdrender camera generation, shared GPU camera matrices or the fork's usdrecord
+EGL/FrameRecorder code. The suite removes DISPLAY/WAYLAND_DISPLAY, validates
+same-view silhouettes and clipping, and checks actual diagnostic annotation
+pixels, edit atomicity and source immutability. Run `test_headless_usd.py` with
+the installed SDK environment for camera/default-value and USDZ dependency checks.
+
+### Paired headless asset/time/AOV validation
+
+Use `tools/view_control/control.py validate --config
+ tools/view_control/jobs/usd-assets.json --assets-root ../usd-assets --out
+ /tmp/usd-assets-validation` (write the command on one line), with GPU device
+access for `vkr`/EGL. The JSON supports uniform, seeded random and explicit USD
+time-code samples, with per-scene overrides. See
+[headless validation jobs](../tools/view_control/HEADLESS.md#json-validation-jobs-assets-animation-times-and-shading-aovs)
+for AOV spaces, CPU versus GPU capture, material diagnostic limits and gates.
+Every sampled time renders both tools at the same resolved camera and exact time.
+Failures and unsupported captures remain explicit in the manifest; the command
+returns nonzero unless all requested comparisons pass.
+
+For unlit assets, the default beauty contract is `reference_camera_light: true`
+in the job: `lusdrender` ignores authored lights and uses the same
+camera-attached constant-attenuation light as `UsdAppUtilsFrameRecorder`.
+[jobs/usd-assets-beauty-refcam.json](../tools/view_control/jobs/usd-assets-beauty-refcam.json)
+passes 8/9 frames (RiggedSimple 0.9879, mid-pose 0.9859, RiggedFigure
+0.981-0.984, TextureCoordinateTest 0.9575, NormalsTextureBiasAndScale 0.9652;
+RoughnessTest 0.0206/0.8896 after the UsdPreviewSurface
+transparent-opacity, Smith-G2, energy-compensation and preview-F0 fixes; its
+MAE passes and the remaining SSIM gap is Storm's alpha/opacity composition). `beauty_lighting`
+(`{"key":1.0,"fill":0.25}`) remains as an explicitly named camera-light
+approximation for the older wrapper runs. See
+[the default-contract report](validation/beauty-default-contract-2026-11-04.md).
+
+The [Caldera AMD measurement](validation/caldera-amd-2026-11-02.md) records the
+original geometry failure separately from temporary pose-baked diagnostic controls.
+The [USD-WG sampled-time/AOV report](validation/usd-assets-amd-2026-11-02.md)
+includes the versioned job config and portable per-frame metrics.
+
+### Independent physics-property reload checks
+
+[The Menagerie report](validation/menagerie-2026-11-02.md) records source-compiler,
+semantic, loaded-field/geometry and renderer gates separately. Use
+`tools/view_control/menagerie_validate.py` with the current installed LightUSD
+Python package and MuJoCo; it retains three serialized formats and invokes a
+separate SDK interpreter for independent loading. See
+[the headless commands](../tools/view_control/HEADLESS.md#menagerie-conversion-and-independent-physics-loading).
+
+The small `tests/usda/physics-load-compare-{base,root}.usda` fixtures exercise
+references, variants, units, drive targets and midpoint property/world-transform
+evaluation. `test_physics_compare.py` supplies negative mutation/geometry-digest
+checks; `test_physics_snapshot.py` runs in SDK and native Python environments.
+The C++ `test_validation` includes valid linear/angular drive instances and
+invalid/distance drive cases while retaining distance limits.
+
+[ALab](validation/alab-2026-11-02.md) and
+[Island](validation/island-2026-11-02.md) reports preserve capture failures and
+separately identify derived controls/subsets; those are not full-scene passes.
+
+The PCP regression suite also checks inherited value clips on descendants with
+no local child spec: clips must beat weaker reference defaults, preserve stronger
+local defaults, retain their authoring-layer asset anchor, and leave DefaultTime
+queries distinct from numeric sampling. Renderer diagnostics must evaluate points
+at the same numeric time as topology; a successful render alone does not certify
+image agreement or shading.
+
+`tool-lusdrender-capture-normals` verifies distinct raw geometric and interpolated
+normal channels on an instanced plane with nonuniform scale against analytic
+values. Tydra's extraction regression also checks indexed faceVarying UVs when
+point and corner counts are equal, plus uniform normals and scratch lifetimes.
+
+Dataset gap diagnostics are tracked in
+[the implementation ledger](validation/gap-closure-status.md). The bounded
+physics runner `tools/view_control/dynamics.py` checks analytic motion and real
+post-impact contact from source MJCF and converted USD. Failed/unsupported
+consumer behavior is retained and cannot count as source fidelity. Its pure
+harness checks run with `python3 -m unittest discover -s tools/view_control`.
+The asset-free SDK articulation repro is
+`tests/verification/repros/openusd-single-body-articulation.py` and runs with
+an OpenUSD-enabled Python interpreter. It deliberately fails on the unpatched
+single-body parser behavior.
+
+### Raw AMD geometry and bounded instancing checks
+
+The `tool-lusdrender-vk-data-aovs`, `tool-lusdrender-vk-instanced-curves` and
+`tool-lusdrender-vk-blas-batches` tests exercise raw depth/geometric/shading normals,
+nonuniform/reflected transforms, `primvars:normals` priority, nested curve
+instances, zero-width taper spans, evaluated cubic ribbons and nearest-hit merges
+across BLAS batches and TLAS slices. The batch test also compares one-triangle
+flat chunks against the instanced path within 1e-6, guarding the normal-array
+append offset. Hardware results must identify the actual Vulkan device; sandbox
+llvmpipe runs do not establish AMD coverage. See the tests' registered names in
+`ctest --test-dir build_ninja -N -R 'lusdrender.*vk'` for the current build.
+
+Original-source AOV jobs and retained failures are indexed in
+[the gap closure ledger](validation/gap-closure-status.md). They distinguish
+opaque geometry, authored-normal skinning, material channels and beauty. Do not
+accept missing/invalid SDK normal coverage, unsupported channels or consumer
+omissions as a full dataset pass.
+
+`tool-lusdrender-texture-value-modifiers` independently checks two materials
+sharing a one-pixel texture with different RGB scale/bias, in raw and sRGB source
+spaces, through both material resolvers. The expected pixels come from the
+analytic transfer function, not an SDK screenshot. The GPU variant runs the same
+contract through Vulkan; force `-gpuTriangleChunk 1` to test preservation of
+material IDs and UVs across chunks.
+
+Material-channel validation uses `-diagnosticEmission`: unlit emission with
+standard display sRGB and no photographic tone map. This isolates the source
+channel from BRDF/light differences. CPU and flat Vulkan are calibrated;
+unsupported native backends report missing channel coverage explicitly. Beauty
+continues to use its normal rendering model.
+
+The roughness/metallic dataset gates additionally render the original native
+scene with `-diagnosticMaterial roughness|metallic`. A passing shared emissive
+wrapper alone cannot establish that the native material field is correct.
+`tool-lusdrender-diagnostic-material` and its GPU counterpart use distinct RGB
+and alpha channels, scale/bias, shared materials and UV1, with independent raw
+and sRGB expectations. RGB scalar reads honor authored color space while alpha
+stays linear. The sRGB case fails before the scalar sampler/resolver fix.
+
+GPU diagnostic regressions report a CTest skip only for explicit Vulkan engine
+startup codes `NOT_BUILT` (4) or `UNSUPPORTED` (8). Other renderer failures,
+allocation failures, crashes and validation errors remain failures. The shared
+classifier is tested by `tool-lusdrender-gpu-test-status`, including negative
+controls for out-of-memory and device-loss messages. Headless controller tests
+also run without Pillow; image decoding/comparison imports it on demand.
+
+`tool-lusdrender-diagnostic-opacity-chunks-gpu` forces one triangle per Vulkan
+chunk and checks two-layer compositing against independent math. Continuation
+rebuilds one GPU chunk at a time and preserves nearest-hit global IDs and texture
+footprints. Diagnostic-only indexed positions stay on the CPU until shading ends.
+The CPU-chunks counterpart checks transmission rays retain their BVH chunk list.
+Both reject a 20-layer diagnostic with no partial output image; the diagnostic
+limit is 16 layers. Ordinary preview recursion keeps its existing limit.
+The same fixture puts the back layer beyond an authored far clip: transmission
+must reduce its remaining ray range after each surface, on CPU and Vulkan.
+
+Dataset gap acceptance is available through `tools/view_control/control.py verify`.
+The [session ledger](validation/gap-closure-status.md) links actual hashed evidence,
+fixed thresholds, independent physics contracts and outstanding failures. Native
+instance handles have C/Python traversal and generation tests. MJCF Plane texture
+domains and varying-texture indexed/sequential GPU chunk copies have independent
+regressions; a constant one-pixel texture cannot detect missing UV coordinates.
+
+### Large-scene dependency failures and clip boundaries
+
+`test_load.py` exercises decoded-array limits separately from byte/structural
+limits through files, buffers and referenced crates. Negative, overflowing and
+nonintegral limits must be rejected before loading. Strict PCP builds and
+untrusted document sessions fail on rejected/unreadable references; trusted
+compatibility sessions can still explicitly request partial composition.
+`test_attribute_resolution.py` checks linear normal/scalar interpolation across
+one-sample clip files without `interpolateMissingClipValues`, plus held mode.
+`test_connection_to_clip_keeps_lazy_file_loader` requires the C API's stage-level
+value-clip stage cache to revalidate each cached clip against its file stamp, so a
+rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance test
+(`next_test_aousd_conformance`) separately requires a caller-owned
+`ValueClipStageCache` to keep reusing stages across queries (`clip_load_count ==
+1`), which is why file-stamp revalidation is an opt-in cache property rather than
+unconditional. `TestConcurrentValueClipCache` runs eight threads against one
+shared cache and `AttributeEval`: all threads must resolve the same value, and a
+warmed cache must not load the clip again.
+`test_p0_stage_prim.py::test_flattened_instance_members_keep_their_subtree`
+requires a default (holder-flattened) load to expose the same mesh set as a
+native-instance load for shared and nested instances; the extracted-prototype
+writer representation keeps its deliberately orphaned members
+(`next_test_pcp`).
+The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
+strength against direct child reference/payload/inherit arcs and a weaker
+referenced ancestor, in serial/parallel and expanded/native-instance modes.
+
+`lusdrender` CLI robustness additionally rejects malformed/nonfinite memory
+budgets and invalid `-maxArrayElements` values, and fails on missing referenced
+geometry. Dataset jobs retain explicit `native_load_limits` in their replay JSON
+and renderer commands. Complete-scene acceptance requires successful dependency
+loading as well as screenshot coverage and resource budgets.
+
+The CPU reference renderer now applies tangent-space normal maps. Its oracle
+(`lusdview-cpu-normal-map`) renders a plane whose MaterialX `normalmap` decodes
+to `(0.6, 0, 0.8)` next to the same world normal authored as geometry normals;
+the two images must be byte-identical, a flat map must be neutral, and a
+mirrored-UV pair must match its flipped-bitangent control. The
+transform itself has an analytic unit test (`lusdview_shading_normal_test`)
+covering sheared UVs, degenerate parametrizations and malformed vectors. A third
+check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
+`bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
+`bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
+The next-tydra converter also carries unit checks that (a) a texture asset
+forwarded through a referenced material interface (`inputs:file.connect =
+</Mat.inputs:surfaceMap>`) resolves against the layer that authors the value,
+not the referenced look layer (`TestForwardedTextureAssetAnchor`), and (b) a
+material exposing only the RenderMan `outputs:ri:surface` terminal maps its
+PxrDisney inputs onto the OpenPBR preview while a universal `outputs:surface`
+terminal still wins when both exist (`TestPxrDisneyRiSurfaceMaterial`, see
+[the mapping](validation/island-pxrdisney-2026-11-04.md)).
+
+`lusdview-cpu-uv-transform` covers the packed per-slot UV transform and UV-set
+selector for the lanes the CPU samples (base colour, normal map including its
+tangent frame, opacity): each must shade byte-identically to the same texture
+sampled with pre-transformed `st`, with a no-normal control proving the normal
+rows are not vacuous.
+
+`lusdview-cpu-graph-chain` pins MaterialX graph *topology* rather than a single
+route: a three-node chain (`ND_image_color3` -> `ND_multiply_color3` ->
+`ND_mix_color3`) feeds `emission_color`, and the render must match, to within one
+channel step, a scene that authors the computed constant directly (white texture
+x 0.5, mixed 50/50 with 0.2 = 0.35). A white texture keeps the oracle
+independent of colour-space decoding, and an image-only control must differ, so
+a renderer that stops after the first node cannot pass.
+
+`lusdview-cpu-lane-uv-transform` extends the same contract to the non-base
+semantic lanes the CPU preview shades (metallic, roughness, occlusion,
+clearcoat, emissive): each lane must match the pre-transformed-`st` reference to
+within one channel step and must differ from its constant-lane control, so a
+lane that is silently ignored cannot pass. The roughness lane only became
+observable after the packed specular colour was neutralised for the metallic
+workflow, which had been zeroing the entire specular lobe (see the
+[gap-closure ledger](validation/gap-closure-status.md) and the
+[lane analysis](validation/cpu-preview-lanes-and-ptex-2026-11-04.md)).
+
+`tool-lusdrender-vkr-ptex-openptex` checks both Vulkan Ptex routes against
+OpenPtex: the descriptor atlas path and forced mesh chunks with lazy CPU
+sampling. Chunked sampling selects per-face mips from ray differentials;
+only currently visible Ptex triangles retain positions for this calculation.
+`-ptexProbe` records face, mip, intrinsic UV and linear RGB for the
+independent verifier. `-noPtex` disables Ptex loading. Descriptor atlas
+face edges honor `-texMaxSize` up to 512 texels. The test requires the
+optional Island corpus, OpenPtex >=2.4 sources and a working Vulkan ray-query device.
+Instanced/streamed paths and non-base Ptex slots remain unsupported.
+
+`lusdview-cpu-ptex-element` renders the real `isGardeniaA` bonsai element
+(quad topology, 53 meshes, 53 PTex maps), requires no representative-face
+fallback, and verifies every visible base-colour sample with a probe dump
+against OpenPtex 2.4.3 (`pixels=471 textures=11 faces=166 max_error=0`). A
+second 16x16 minified render makes the filter footprint span face boundaries
+and requires the independently decoded neighbouring-face blend
+(`pixels=29 faces=28 cross_face_taps=29 max_error=0`); the test fails if no tap
+crosses an edge. The loader fix behind it also computes per-face source ids
+without a Uniform attribute and maps subdivided children into their quadtree
+sub-rectangle of the base Ptex face.
+
+The CPU preview's PTex path now streams per-face pages and selects a mip from
+the pixel footprint. `lusdview_ptex_atlas_test` compares face 0 mips 1-2 against
+OpenPtex 2.4.3 raw texels byte-for-byte (fixtures and provenance in
+`tests/usdc/ptex-mip/`), checks mip selection and a byte-bounded eviction, and
+`lusdview-cpu-ptex-routing` requires a minified quad to report non-base mip
+samples under `LIGHTUSD_CPU_PTEX_STATS=1`.
+
+`lusdview-cpu-authored-tangent` authors a tangent basis rotated 90 degrees from
+the triangle-derived frame and requires the same tangent-space normal to shade
+like its equivalent geometry normal, while the derived-frame render differs;
+a flat map stays neutral. `lusdview_shading_normal_test` covers authored-frame
+projection, flipped handedness and rejection of a degenerate tangent.
+
+`lusdview-cpu-coat-normal` isolates the OpenPBR coat lobe (black base and
+specular weight zero) and renders a plane with a coat normal map. A flat coat
+map must be neutral, a map decoding to `(0.6, 0, 0.8)` must shade
+byte-identically to the same world normal authored as geometry normals, the
+`+X` and `-X` maps must differ, and both maps must be inert at coat weight
+zero. The lane uses `matTex` slot 11 with its own packed UV set/transform and
+scale/bias and a tangent frame rebuilt from that lane's UVs; disabling it makes
+the `+X`/`-X` pair identical (0) and the geometry control diverge (53/255).
+None of these replaces calibrated beauty illumination or SDK material parity.
+
+The emissive diagnostic opacity regression now covers PreviewSurface
+`transparent` (full emission), `presence` (attenuated emission), and masked
+cutouts, with custom UV sets, shared material caches and alpha scale/bias.
+CPU and AMD Vulkan results are compared with analytic two-layer math.
+Referenced-package texture equivalence also covers an empty USDZ root with a
+nested sublayer and relative texture path; its shell harness propagates pixel
+assertion failures. The SDK material wrapper's optional Pillow scalar adapter
+has independent r/g/b/a channel and parameter-preservation tests in
+`tools/view_control/test_validation_stage.py`.
+
+`test_pcp` also checks the high-level composed loader's explicit thread budget:
+a2048-payload fixture records callback thread IDs and requires both0 and1 to
+remain on the caller thread. Previously1 silently retained the automatic
+hardware worker count. Negative remains automatic; larger positive counts are
+bounded by the execution policy.
+
+Python default traversal prunes ancestors before visiting children,so it uses
+the local default-predicate C query once per prim instead of rewalking all
+ancestors at every descendant. The effective public predicate remains
+available for arbitrary handles. Default-predicate traversal tests cover
+inactive,over/class and instance-proxy ancestry. Load benchmarks now record
+explicit native thread,input-policy and array limits and fingerprint the
+frozen Python package as well as its extension/library. Trusted/mmap profiles
+must be reported separately from the unchanged untrusted default.
+
+The internal `next_test_c_api_lazy_view` regression requires numeric arrays to
+remain undecoded during wrong-type probes and aliases validated uncompressed
+POD storage through a C buffer pin. A counting source verifies zero decodes,
+exact source-pointer identity and source retention after value destruction.
+Compressed and misaligned inputs fall back to decoding; half storage retains
+its existing float widening. Python lifetime tests cover an actual USDC view
+across property replacement,stage close,owner collection and source unlink
+under both input policies. Borrowing never changes the untrusted snapshot
+policy or the decoded-array count ceiling.
+
+### Resumed dataset verification, 2026-11-03
+
+The [resumed report](validation/session-resumed-2026-11-03.md) records the final
+276-test native sweep, separate Python/next/AOUSD/WASM checks and AMD captures.
+[USD-assets sampled diagnostics](validation/usd-assets-native-parameters-2026-11-03.md)
+now require actual native roughness/metallic field checks in addition to shared
+emissive adapters. [Island subset masks](validation/island-subset-population-2026-11-03.md)
+retain relationship/connection dependencies without modifying source layers.
+Reference completeness checks reject known shader/GL/resource loss even after
+exit zero; lighting truncation affects beauty but not independent unlit AOVs.
+The [normal-AOV control](validation/normal-aov-contract-2026-11-03.md) prevents
+unperturbed mesh normal agreement from being reported as normal-map validation.
+Failed and unsupported catalogue contracts remain open in the hashed evidence.
+
+The [OpenUSD staging-buffer control](validation/openusd-staging-buffer-2026-11-03.md)
+independently reproduces the AMD/Mesa 4 GiB boundary. Its candidate SDK patch is
+validated through an isolated preload, including 300 MiB byte-exact transfers,
+overlapping write order and zero-capacity fallback. It is not installed or a
+complete SDK regression pass; missing VDB/shader capabilities remain open.
+
+### Explicit host capabilities and builds without native I/O
+
+`LIGHTUSD_NATIVE_IO` defaults to `ON`. Configure with
+`-DLIGHTUSD_NATIVE_IO=OFF` to disable built-in filesystem readers, writers,
+metadata queries, mapping, temporary spill/snapshot storage, preview caches,
+and native host services. File entry points report an unsupported/disabled
+error before opening their paths. Memory parsing, memory serialization,
+application-owned output streams, registered memory assets, and custom asset
+readers remain available. This is a library backend policy, not an OS sandbox:
+application callbacks and standard runtime allocation/synchronization retain
+their own platform behavior.
+
+`LIGHTUSD_NATIVE_RESOLVER_IO=OFF` disables only the resolver's filesystem
+backend. `LIGHTUSD_NATIVE_HOST_SERVICES=OFF` disables only the optional native
+host-provider factory. Neither narrower option replaces `LIGHTUSD_NATIVE_IO`.
+The exported CMake library targets propagate the no-I/O compile definitions.
+
+Default memory-oriented operations do not discover the current directory,
+query process/system memory, invoke allocator/page hints, or discover GPU
+libraries. Applications can pass `HostServices` from `core/host-services.hh`
+with only the callbacks they authorize. Callbacks must support concurrent
+calls and must not throw. `CreateNativeHostServices()` explicitly supplies
+native callbacks; creating it performs no probing. Its library loader requires
+absolute filenames unless `NativeHostServicesOptions::allow_library_search`
+is explicitly enabled by the application.
+
+Resolvers use lexical `.` when no working directory is supplied. Set
+`ResolverConfig::working_directory` explicitly, or supply its `host_services`
+for native directory lookup. Set `allow_filesystem=false` (C API:
+`lightusd_asset_resolver_set_filesystem_access`) for callback/memory-only asset
+access. This policy applies to root layers, typed C loads, and dependencies.
+GLB export without a resolver does not read texture paths; use
+`lightusd_render_export_glb_with_resolver` or the C++ resolver overload to
+provide asset access explicitly.
+
+Preview GPU compute requires `PreviewComputeOptions::host_services` and
+explicit `vulkan_library` or `cuda_driver_library`/`cuda_compiler_library`
+filenames. Without them Auto uses CPU. CLI equivalents are
+`--preview-native-host`, `--preview-vulkan-library FILE`,
+`--preview-cuda-driver-library FILE`, and
+`--preview-cuda-compiler-library FILE`. The preview qualification scripts
+accept these library arguments too. Unknown GPU capacity uses a 2 GiB preview
+budget; applications can supply a measured capacity explicitly. Memory-budget
+observations, page-fault counters, and allocator/page hints likewise require an
+explicit provider.
+
+Focused no-I/O verification (the ordinary disk-fixture tests require native
+I/O and should run in the default build):
+
+```sh
+cmake -S src/next -B build_ninja/no-native-io -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+  -DLIGHTUSD_NATIVE_IO=OFF
+cmake --build build_ninja/no-native-io --target test_host_services test_host_services_c
+scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
+  -R 'next_test_host_services' --output-on-failure
+```

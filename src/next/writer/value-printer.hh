@@ -33,7 +33,7 @@ struct PrintOptions {
 
   /// Canonicalize dictionary key order (including nested dictionaries).
   /// Reference-item identity uses this; ordinary metadata keeps authored order.
-  bool sort_dictionary_keys = false;
+  bool sort_dictionary_keys = true;  // pxr VtDictionary is a std::map: keys print sorted
 };
 
 /// Print a Value to string (USDA format)

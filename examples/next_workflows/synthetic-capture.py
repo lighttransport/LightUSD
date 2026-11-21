@@ -25,7 +25,7 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=False)
     scene = args.output_dir / 'capture.usda'
     scene.write_text('''#usda 1.0
-(defaultPrim = "World" upAxis = "Y" metersPerUnit = 1 renderSettingsPrimPath = "/Settings")
+(defaultPrim = "World"; upAxis = "Y"; metersPerUnit = 1; renderSettingsPrimPath = "/Settings")
 def Xform "World" {
   def Mesh "Plane" {
     point3f[] points = [(-10,-10,0), (10,-10,0), (10,10,0), (-10,10,0)]
@@ -49,10 +49,26 @@ def Xform "World" {
     float verticalAperture = 36
   }
 }
-def RenderVar "Color" { token dataType = "color3f" string sourceName = "color" token sourceType = "raw" }
-def RenderVar "Depth" { token dataType = "float" string sourceName = "depth" token sourceType = "raw" }
-def RenderVar "Normal" { token dataType = "normal3f" string sourceName = "worldNormal" token sourceType = "raw" }
-def RenderVar "Id" { token dataType = "int" string sourceName = "primId" token sourceType = "raw" }
+def RenderVar "Color" {
+  token dataType = "color3f"
+  string sourceName = "color"
+  token sourceType = "raw"
+}
+def RenderVar "Depth" {
+  token dataType = "float"
+  string sourceName = "depth"
+  token sourceType = "raw"
+}
+def RenderVar "Normal" {
+  token dataType = "normal3f"
+  string sourceName = "worldNormal"
+  token sourceType = "raw"
+}
+def RenderVar "Id" {
+  token dataType = "int"
+  string sourceName = "primId"
+  token sourceType = "raw"
+}
 def RenderProduct "Left" {
   token productType = "raster"
   int2 resolution = (16,16)
@@ -65,7 +81,9 @@ def RenderProduct "Right" {
   rel camera = </World/Right>
   rel orderedVars = [</Color>, </Depth>, </Normal>, </Id>]
 }
-def RenderSettings "Settings" { rel products = [</Left>, </Right>] }
+def RenderSettings "Settings" {
+  rel products = [</Left>, </Right>]
+}
 ''')
     subprocess.run([args.lusdrender, '-rtPreview', '--all-products', str(scene),
                     str(args.output_dir / 'capture.png')], check=True)

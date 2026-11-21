@@ -30,7 +30,7 @@
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
 #include "core/prim.hh"

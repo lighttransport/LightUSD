@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 
+#include "core/native-io.hh"
 #include "mtlx-xml-parser.hh"
 #include <fstream>
 #include <sstream>
@@ -398,6 +399,8 @@ bool MaterialXParser::Parse(const std::string& xml_string) {
 }
 
 bool MaterialXParser::ParseFile(const std::string& filename) {
+  if (!::lightusd::NativeIOAvailable(&error_)) return false;
+
   std::ifstream file(filename, std::ios::binary);
   if (!file) {
     error_ = "Failed to open file: " + filename;

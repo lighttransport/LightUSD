@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -99,6 +100,40 @@ bool DecodeSplineBinary(const uint8_t* data, size_t size, SplineData* out,
 /// Evaluate the spline at `time`. Returns false when the spline yields no
 /// value there (empty spline, or a `none` segment / extrapolation).
 bool EvaluateSplineData(const SplineData& sd, double time, double* out);
+
+/// One (time, value) vertex of a piecewise-linear approximation.
+using SplineSample = std::array<double, 2>;
+/// A run of vertices joined by straight segments.
+using SplinePolyline = std::vector<SplineSample>;
+
+/// Piecewise-linear approximation of `sd` over the closed interval
+/// [t_min, t_max] (AOUSD Core 1.1 "Piecewise-Linear Approximation", optional
+/// feature; the analogue of OpenUSD TsSpline::Sample with unit scales).
+///
+/// Writes polylines in increasing time order. A new polyline starts at every
+/// value discontinuity (dual-valued knot, held segment end, loop reset) and
+/// after every value-block gap (`none` segment or extrapolation), so regions
+/// without a value produce no vertices. Inner loops and looping/linear/sloped/
+/// held extrapolation are covered. Within each polyline the vertical
+/// deviation from EvaluateSplineData is at most `tolerance` at the sampler's
+/// probe points (adaptive bisection; segments are cubic pieces, so the probe
+/// bound tracks the true bound closely). Vertex placement is
+/// implementation-defined, as the spec allows.
+///
+/// Vertical-tangent exception: where the value curve has a true vertical
+/// tangent (a non-monotone Bezier segment exactly at the Keep Ratio limit,
+/// whose time curve has dt/du = 0 at its inflection, so the value grows like
+/// cbrt(t - t0) there), no finite vertex set can meet the vertical bound
+/// within a few ulps of that time. The sampler places a vertex at the
+/// inflection time and the bound holds everywhere else;
+/// TestSplinePiecewiseLinear (tests/next/test_aousd_conformance.cc) skips a
+/// +/-1e-12 time window around such a tangent when checking deviation.
+///
+/// Returns false (with `err`) on an invalid interval or tolerance, or when the
+/// interval spans more loop copies / samples than the internal caps.
+bool SampleSplineData(const SplineData& sd, double t_min, double t_max,
+                      double tolerance, std::vector<SplinePolyline>* out,
+                      std::string* err);
 
 }  // namespace next
 }  // namespace lightusd

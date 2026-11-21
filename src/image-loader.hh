@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "image-types.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 
 #include "nonstd/expected.hpp"
 

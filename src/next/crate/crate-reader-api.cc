@@ -3,6 +3,7 @@
 //
 // LightUSD Next - USDC CrateReader public API wrappers
 
+#include "core/native-io.hh"
 #include "crate-reader-internal.hh"
 #include "../safe-file-size.hh"
 
@@ -45,6 +46,8 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
   specs_.clear();
   paths_.clear();
   path_parent_.clear();
+  // Decoded-value cache entries are keyed by this file's value offsets.
+  for (size_t i = 0; i < kDictCacheShards; ++i) dict_cache_[i].map.clear();
 
   if (!source_ || source_->size() < kCrateBootstrapSize) {
     AddError("Invalid input data");
@@ -131,11 +134,44 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) { CrateReadResult result; result.errors.push_back({0, ::lightusd::NativeIOUnavailableMessage()}); return result; }
+
   if (!filename || !*filename) {
     CrateReadResult result;
     result.errors.push_back({0, "Invalid filename"});
     return result;
   }
+  // Owned snapshot (no mmap): one descriptor, no zero-fill, size-checked
+  // against max_memory itself, so the separate size probe below is skipped.
+  if (!options_.use_mmap) {
+    bool unavailable = false;
+    std::string snapshot_err;
+    auto snapshot =
+        options_.paged_snapshot
+            ? CrateDataSource::PagedFileSnapshot(
+                  filename, static_cast<uint64_t>(options_.max_memory),
+                  options_.paged_snapshot_directory, &unavailable,
+                  &snapshot_err)
+            : CrateDataSource::ReadFileSnapshot(
+                  filename, static_cast<uint64_t>(options_.max_memory),
+                  &unavailable, &snapshot_err);
+    if (snapshot) {
+      source_ = std::move(snapshot);
+      source_->set_max_array_elements(options_.max_array_elements);
+      CrateReadResult result = ParseFromSource();
+      // The structural read is complete. Keep only the snapshot descriptor so
+      // lazy values page their array blocks back in on demand instead of
+      // pinning the whole layer in anonymous memory.
+      source_->ReleaseParseBuffer();
+      return result;
+    }
+    if (!unavailable) {
+      CrateReadResult result;
+      result.errors.push_back({0, snapshot_err});
+      return result;
+    }
+  }
+
   if (options_.max_memory) {
     std::ifstream probe(filename, std::ios::binary | std::ios::ate);
     if (!probe.is_open()) {
@@ -161,7 +197,13 @@ CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
     if (auto src = CrateDataSource::MmapFile(filename)) {
       source_ = std::move(src);
       source_->set_max_array_elements(options_.max_array_elements);
-      return ParseFromSource();
+      CrateReadResult result = ParseFromSource();
+      // Parsing touched the structural sections (and decoded what it keeps);
+      // drop those mapped pages from the process. Lazy arrays fault theirs
+      // back in from the page cache when read. A large composition keeps
+      // tens of thousands of crates mapped (full45: 3.3 GiB of file RSS).
+      source_->DiscardRange(0, source_->size());
+      return result;
     }
   }
 
@@ -240,6 +282,8 @@ bool IsUSDCData(const uint8_t* data, size_t size) {
 }
 
 bool IsUSDCFile(const char* filename) {
+  if (!::lightusd::NativeIOEnabled()) return false;
+
   std::ifstream file(filename, std::ios::binary);
   if (!file.is_open()) return false;
 

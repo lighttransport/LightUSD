@@ -277,7 +277,7 @@ USDA
 render_vkr_forced_fallback() {
   local out="$TMP/gpu_vkr_forced_fallback.png"
   local log
-  log="$(LUSDR_FORCE_VKR_FALLBACK=1 run_lusdrender "$ASSET" "$out" -vkr \
+  log="$(run_lusdrender -forceVkrFallback "$ASSET" "$out" -vkr \
         -w 200 -height 150 -autoframe -samples 2 2>&1)"
   if ! echo "$log" | grep -q "backend: LightRT"; then
     echo "  -vkr forced fallback: Vulkan unavailable (skipped)"

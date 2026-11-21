@@ -2,6 +2,17 @@
 #include "storage-internal.h"
 #include <string.h>
 
+static lu_atomic_size materialization_epoch = 1;
+size_t lu_storage_materialization_epoch(void) {
+  const size_t epoch = lu_atomic_load(&materialization_epoch);
+  return epoch == SIZE_MAX ? 0 : epoch;
+}
+void lu_storage_note_materialization(void) {
+  size_t epoch = lu_atomic_load(&materialization_epoch);
+  while (epoch != SIZE_MAX &&
+         !lu_atomic_cas(&materialization_epoch, &epoch, epoch + 1)) {}
+}
+
 struct lu_budget {
   lu_atomic_size references, current, peak;
   size_t limit;

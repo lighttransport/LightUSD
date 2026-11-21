@@ -78,6 +78,19 @@ Landed so far:
   failure), destructor munmaps on last shared_ptr. `ReadFile` prefers mmap;
   `CrateReadOptions::use_mmap` (default on) gates it. No in-heap crate copy for
   file loads; lazy values read straight from the mapping.
+- **Phase 8 (paged secure snapshot)** — with `use_mmap = false`, file loads now
+  capture the source once into an unlinked 0600 snapshot arena (one descriptor
+  per snapshot directory, shared by every layer) and release the anonymous
+  parse copy after the structural read
+  (`CrateDataSource::PagedFileSnapshot`, `ReleaseParseBuffer`). Lazy arrays
+  materialize by ranged `pread` from the sealed slice (`ReadRange` +
+  `DecodeCrateArrayAt`), so retained RSS no longer equals the dependency
+  closure. `base()` is null and `can_borrow()` false after release; view paths
+  and the writer's verbatim pass-through fall back to materialize/re-encode.
+  `CrateReadOptions::paged_snapshot` (default on) gates it. A failed or
+  undersized snapshot destination degrades to the existing owned buffer; the
+  source is still read exactly once and never aliased. WASM/non-posix keeps the
+  owned path.
 - **TimeSamples decoding** — crate TimeSamples now decode into per-property
   storage (was skipped on read); reads next- and pxr-written files.
 - **Phase 7 (E2)** — layer offsets compose through the arc chain

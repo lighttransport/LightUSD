@@ -4,6 +4,7 @@
 // LightUSD Next - High-level API Implementation
 
 #include "load-usd.hh"
+#include "core/native-io.hh"
 #include "load-usd-internal.hh"
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
@@ -13,6 +14,7 @@
 #include "pcp/cache.hh"
 #include "reader/usdz-reader.hh"
 #include "resolver/asset-resolver.hh"
+#include "layer/asset-anchor.hh"
 #include <algorithm>
 #include <memory>
 #if defined(LIGHTUSD_ENABLE_THREAD)
@@ -113,6 +115,76 @@ bool LoadUSD(const std::string& filename, Stage* stage,
     return false;
   }
 
+  if (options.resolver) {
+    auto& resolver = *options.resolver;
+    const auto resolved = resolver.Resolve(filename, "", false);
+    if (!resolved.exists || resolved.resolved_path.empty()) {
+      if (err) *err = "asset resolver could not resolve root: " + filename;
+      return false;
+    }
+    if (resolver.NativeFilesystemEnabled() && !resolver.HasAssetReader() &&
+        !resolver.HasMemoryAsset(resolved.resolved_path) &&
+        (!resolved.is_package || !resolver.HasMemoryAsset(resolved.package_path)) &&
+        AssetResolver::GetIdentifierScheme(resolved.resolved_path).empty()) {
+      LoadUSDOptions native_options = options;
+      native_options.resolver = nullptr;
+      if (!LoadUSD(resolved.resolved_path, stage, native_options, warn, err)) return false;
+      if (!resolver.FileIdentityUnchanged(resolved)) {
+        if (err) *err = "root file changed during load";
+        return false;
+      }
+      return true;
+    }
+    std::vector<uint8_t> bytes;
+    if (!resolver.ReadAsset(resolved, &bytes, err)) return false;
+    if (bytes.size() > options.limits.max_input_bytes) {
+      if (err) *err = "root asset exceeds max input bytes";
+      return false;
+    }
+    if (resolved.is_package || DetectFormat(bytes.data(), bytes.size()) == FileFormat::USDZ) {
+      USDZReader package;
+      if (!package.Open(bytes.data(), bytes.size(), EffectiveUSDZOptions(options))) {
+        if (err) *err = package.Error();
+        return false;
+      }
+      const int root = resolved.is_package ? -1 : package.FindRootLayer();
+      for (size_t i = 0; i < package.NumEntries(); ++i) {
+        if (resolved.is_package ? package.EntryName(i) != resolved.asset_in_package
+                                : (root < 0 || i != static_cast<size_t>(root))) continue;
+        if (!LoadUSDFromMemory(package.EntryData(i), package.EntrySize(i), stage,
+                               options, warn, err)) return false;
+        StampPackageAssetAnchor(stage->GetRootLayer(), resolved.is_package
+            ? resolved.resolved_path : resolved.resolved_path + "[" + package.EntryName(i) + "]");
+        return true;
+      }
+      if (err) *err = "root package entry not found";
+      return false;
+    }
+    return LoadUSDFromMemory(bytes.data(), bytes.size(), stage, options, warn, err);
+  }
+
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
+  if (AssetResolver::IsPackagePath(filename)) {
+    AssetResolver resolver;
+    const auto resolved = resolver.Resolve(filename, "", false);
+    USDZReader package;
+    if (!resolved.exists || !resolved.is_package ||
+        !package.OpenFile(resolved.package_path, EffectiveUSDZOptions(options))) {
+      if (err) *err = "Failed to open package layer: " + filename + ": " + package.Error();
+      return false;
+    }
+    for (size_t i = 0; i < package.NumEntries(); ++i) {
+      if (package.EntryName(i) != resolved.asset_in_package) continue;
+      if (!LoadUSDFromMemory(package.EntryData(i), package.EntrySize(i), stage,
+                             options, warn, err)) return false;
+      StampPackageAssetAnchor(stage->GetRootLayer(), resolved.resolved_path);
+      return true;
+    }
+    if (err) *err = "Package layer entry not found: " + filename;
+    return false;
+  }
+
   FileFormat format = DetectFormatFromExtension(filename);
   if (format == FileFormat::Unknown) {
     format = DetectFormatFromFileHeader(filename, err);
@@ -159,14 +231,20 @@ bool LoadUSD(const std::string& filename, Stage* stage,
         USDCLoadResult result =
             LoadUSDCFromMemory(entry_data, entry_size,
                                EffectiveUSDCOptions(options));
-        return CompleteLoad(result.success, std::move(result.stage),
+        const bool loaded = CompleteLoad(result.success, std::move(result.stage),
                             result.warnings, result.error_summary, stage, warn, err);
+        if (loaded) StampPackageAssetAnchor(stage->GetRootLayer(),
+            filename + "[" + usdz.EntryName(static_cast<size_t>(idx)) + "]");
+        return loaded;
       } else {
         LoadResult result = LoadUSDAFromString(
             reinterpret_cast<const char*>(entry_data), entry_size,
             EffectiveUSDAOptions(options));
-        return CompleteLoad(result.success, std::move(result.stage),
+        const bool loaded = CompleteLoad(result.success, std::move(result.stage),
                             result.warnings, result.error_summary, stage, warn, err);
+        if (loaded) StampPackageAssetAnchor(stage->GetRootLayer(),
+            filename + "[" + usdz.EntryName(static_cast<size_t>(idx)) + "]");
+        return loaded;
       }
     }
 
@@ -233,7 +311,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
 #if defined(LIGHTUSD_ENABLE_THREAD)
   copts.num_threads = std::min<int>(
       static_cast<int>(std::thread::hardware_concurrency()),
-      kMaxExecutionThreads);
+      kAutoCompositionThreads);
   if (copts.num_threads < 1) copts.num_threads = 1;
 #else
   copts.num_threads = 1;
@@ -265,12 +343,11 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     copts.strict_aousd_conformance =
         copts.strict_aousd_conformance ||
         comp_opts->strict_aousd_conformance;
-    // -1/0 keep the default policy above:
-    //  -1 -> auto (hardware_concurrency on threaded builds)
-    //  0  -> explicit serial (1)
+    // Negative keeps the automatic policy above. Zero and one both request
+    // serial composition; larger values are explicit bounded worker counts.
     if (comp_opts->num_threads == 0) {
       copts.num_threads = 1;
-    } else if (comp_opts->num_threads > 1) {
+    } else if (comp_opts->num_threads > 0) {
       copts.num_threads = ClampExecutionThreads(comp_opts->num_threads);
     }
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
@@ -380,7 +457,16 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     resolver = &default_resolver;
   }
   std::string anchor = filename;
-  if (DetectFormatFromExtension(filename) == FileFormat::USDZ) {
+  if (load_options.resolver) {
+    const auto resolved = resolver->Resolve(filename, "", false);
+    if (resolved.exists) anchor = resolved.resolved_path;
+  }
+  const Layer* source_root = stage->GetRootLayer();
+  const std::string package_anchor = source_root
+      ? AssetAnchorPath(source_root->source_asset_anchor_id()) : std::string();
+  if (AssetResolver::IsPackagePath(package_anchor)) {
+    anchor = package_anchor;
+  } else if (!load_options.resolver && DetectFormatFromExtension(filename) == FileFormat::USDZ) {
     USDZReader package;
     if (package.OpenFile(filename, EffectiveUSDZOptions(load_options))) {
       const int root_index = package.FindRootLayer();

@@ -39,7 +39,8 @@ const renderCases = [
   ['tests/usda/skelanimation-full-001.usda', true, true],
   ['tests/usda/lights-full-001.usda', true, true],
   ['tests/usda/shader.usda', true, true],
-  ['tests/usda/references-001.usda', true, true],
+  // No dependency store is supplied: next rejects the missing reference.
+  ['tests/usda/references-001.usda', true, false],
   ['tests/usda/relocates_basic.usda', true, true],
   ['tests/usda/blendshape-001.usda', true, true],
   ['tests/usdc/cube-000.usdc', true, true],
@@ -150,6 +151,7 @@ exercised.set('loadFromBinary', 'delta');
 // Layer loads: legacy returns a boolean, next a {success, primCount} record.
 const layerCases = [
   ['tests/usda/cube-000.usda', true, true],
+  // Parse-only layer loads preserve unresolved references.
   ['tests/usda/references-001.usda', true, true],
   ['tests/usda/relocates_basic.usda', true, true],
   ['tests/usda/sublayers-001.usda', true, true],

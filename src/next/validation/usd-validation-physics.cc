@@ -108,6 +108,13 @@ bool IsPhysicsDofName(const std::string &dof) {
   return kDofs.count(dof) > 0;
 }
 
+// DriveAPI additionally names the single DOF of prismatic/revolute joints.
+// LimitAPI's distance token is not a drive instance.
+static bool IsPhysicsDriveDofName(const std::string &dof) {
+  return dof == "linear" || dof == "angular" ||
+         (dof != "distance" && IsPhysicsDofName(dof));
+}
+
 bool HasAppliedPhysicsSchema(const std::vector<AppliedSchema> &schemas) {
   for (const AppliedSchema &schema : schemas) {
     if (IsPhysicsSchemaName(schema.name)) {
@@ -214,6 +221,19 @@ void ValidatePhysicsInertiaAndMotion(const PrimSpec &ps,
                                         result);
   ValidateQuaternionProperty(ps, "physics:principalAxes",
                              "physics.quaternion", prim_location, result, true);
+  // UsdPhysicsValidators requires the principal moments and the principal
+  // axes to be authored together: a diagonal tensor without a basis (or a
+  // basis without moments) is ambiguous.
+  const bool has_diag = HasProperty(ps, "physics:diagonalInertia");
+  const bool has_axes = HasProperty(ps, "physics:principalAxes");
+  if (has_diag != has_axes) {
+    AddError(result, "physics.inertia",
+             MakePropertyLocation(
+                 prim_location,
+                 has_diag ? "physics:diagonalInertia" : "physics:principalAxes"),
+             "principalAxes and diagonalInertia must both be authored or "
+             "neither authored");
+  }
   ValidateFiniteVec3Property(ps, "physics:velocity", "physics.motion",
                              prim_location, result, false);
   ValidateFiniteVec3Property(ps, "physics:angularVelocity", "physics.motion",
@@ -354,7 +374,9 @@ void ValidatePhysicsDriveAndLimitAPIs(
   for (const AppliedSchema &schema : schemas) {
     if ((schema.name == "PhysicsDriveAPI" ||
          schema.name == "PhysicsLimitAPI") &&
-        !IsPhysicsDofName(schema.instance_name)) {
+        !(schema.name == "PhysicsDriveAPI"
+              ? IsPhysicsDriveDofName(schema.instance_name)
+              : IsPhysicsDofName(schema.instance_name))) {
       AddError(result,
                schema.name == "PhysicsDriveAPI" ? "physics.drive.dof"
                                                 : "physics.limit.dof",
@@ -406,7 +428,7 @@ void ValidatePhysicsDriveAndLimitAPIs(
                      "; UsdPhysics does not read " + prop_name);
     }
     if (api == "drive") {
-      if (!IsPhysicsDofName(dof)) {
+      if (!IsPhysicsDriveDofName(dof)) {
         AddError(result, "physics.drive.dof", location,
                  "PhysicsDriveAPI DOF `" + dof + "` is not supported");
       }

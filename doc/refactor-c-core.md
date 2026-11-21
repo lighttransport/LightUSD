@@ -6326,6 +6326,13 @@ through a callback, checks narrowing and publishes only complete values.
 retains a render catalog. Pins remain valid across source mutation/destruction.
 `lightusd_abi_get` reports pointer width, layout revision, carrier sizes and
 field offsets. Installed C headers include the corresponding core headers.
+The C core layout revision is `LU_CORE_C_LAYOUT_REVISION` (2), independently
+of the package release version. Revision 1 used `max_align_t` in the value
+carrier; revision 2 uses `uint64_t`/`double` alignment (64 -> 48 bytes on
+64-bit platforms with 16-byte `max_align_t`). Before exchanging value storage
+with a loaded library, compare both core major and layout revision, pointer
+width, and the reported sizes/alignment/offsets against the consumer's headers.
+Use `lu_abi_get()` directly or the `core` member of `lightusd_abi_get()`.
 
 The WASM next distribution has five independently linked modules: the main
 scene/edit/composition/writer/URDF/Tydra module and geometry, raytrace, validator

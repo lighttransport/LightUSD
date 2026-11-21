@@ -534,7 +534,13 @@ void AddEqualityConstraint(tn::Layer *layer, Scope *scope,
       return;
     }
     // mjc:target is the deprecated alias of newton:mimicJoint.
-    if (ActiveProfile().legacy) SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
+    if (ActiveProfile().legacy || ActiveProfile().MjcOnly())
+      SetRel(prim, "mjc:target", {"/World/Joints/" + leader->second});
+    // openusd: MjcEqualityJointAPI's own linear terms (MJCF units).
+    if (ActiveProfile().MjcOnly()) {
+      Set(prim, "mjc:coef0", tn::Value(coef[0]), "double");
+      Set(prim, "mjc:coef1", tn::Value(coef[1]), "double");
+    }
     AddAPI(prim, "NewtonMimicAPI");
     SetRel(prim, "newton:mimicJoint", {"/World/Joints/" + leader->second});
     // NewtonMimicAPI coef0 is in the follower's position unit (degrees).

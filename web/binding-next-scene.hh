@@ -3,7 +3,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "minijson.hh"
+#include "core/minijson.hh"
 namespace lightusd {
 namespace next { class Path; class Value; class ValueView; class UsdPrim; class Stage; }
 namespace web_next {

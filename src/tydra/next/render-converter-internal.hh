@@ -191,6 +191,10 @@ class RenderSceneConverter::Impl {
                                        const ::lightusd::next::UsdPrim& shader_prim,
                                        OpenPBRSurfaceShader* out,
                                        RenderScene* scene);
+  bool ExtractPxrDisneyAsOpenPBR(const ::lightusd::next::Stage& stage,
+                                 const ::lightusd::next::UsdPrim& shader_prim,
+                                 OpenPBRSurfaceShader* out,
+                                 RenderScene* scene);
   bool ExtractOpenPBRSurface(const ::lightusd::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              OpenPBRSurfaceShader* out,

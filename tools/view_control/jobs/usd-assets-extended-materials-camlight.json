@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "assets_root": "../usd-assets",
+  "size": [
+    320,
+    240
+  ],
+  "backend": "vkr",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "uniform",
+    "count": 3
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal",
+    "baseColor",
+    "roughness",
+    "metallic"
+  ],
+  "thresholds": {
+    "coverage_iou_min": 0.99,
+    "depth_relative_p95_max": 0.01,
+    "normal_p95_degrees_max": 5,
+    "color_mae_max": 0.05,
+    "color_ssim_min": 0.95
+  },
+  "scenes": [
+    {
+      "path": "test_assets/TextureTransformTest/TextureTransformTest.usd",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      }
+    },
+    {
+      "path": "test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      }
+    },
+    {
+      "path": "test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      },
+      "state": {
+        "camera": {
+          "transform": [
+            0.7071067811865477,
+            0.0,
+            -0.7071067811865477,
+            0.0,
+            -0.40824829046386313,
+            0.8164965809277263,
+            -0.40824829046386313,
+            0.0,
+            0.5773502691896258,
+            0.5773502691896258,
+            0.5773502691896258,
+            -0.0,
+            1.4842293971329745,
+            1.4734900861858269,
+            1.4737907493678934,
+            1.0
+          ],
+          "projection": "perspective",
+          "aspect": 1.3333333730697632,
+          "fov_y": 59.999996185302734,
+          "ortho_height": 1.5716249465942385,
+          "shift": [
+            0.0,
+            0.0
+          ],
+          "near": 0.8134424686431885,
+          "far": 10.0,
+          "distance": 2.5565333366394043,
+          "exposure": 0
+        },
+        "size": [
+          320,
+          240
+        ]
+      }
+    },
+    {
+      "path": "test_assets/ColorSpaceTests/UsdPreviewSurface/usduvtexture_color_test.usda",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      }
+    },
+    {
+      "path": "test_assets/MaterialXTest/basic.usda",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      },
+      "reference_complexity": "low"
+    },
+    {
+      "path": "test_assets/MaterialXTest/basicTextured.usda",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      }
+    },
+    {
+      "path": "test_assets/TextureCoordinateTest/TextureCoordinateTestMaterialX.usda",
+      "time_sampling": {
+        "mode": "explicit",
+        "values": [
+          0
+        ]
+      }
+    },
+    {
+      "path": "test_assets/USDZ/BrainStem/BrainStem.usdz",
+      "time_sampling": {
+        "mode": "uniform",
+        "count": 3
+      }
+    },
+    {
+      "path": "test_assets/USDZ/CesiumMan/CesiumMan.usdz",
+      "time_sampling": {
+        "mode": "random",
+        "count": 3,
+        "seed": 20261103
+      }
+    }
+  ],
+  "native_load_limits": {
+    "max_memory_gib": 30,
+    "max_array_elements": 67108864
+  },
+  "process_limits": {
+    "max_rss_mib": 30720,
+    "reserve_mib": 4096
+  },
+  "data_backend": "vkr",
+  "reference_camera_light": true
+}

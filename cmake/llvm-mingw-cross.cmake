@@ -5,7 +5,7 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 IF (DEFINED ENV{LLVM_MINGW_DIR})
   set(LLVM_MINGW_ROOT "$ENV{LLVM_MINGW_DIR}")
 ELSE ()
-  set(LLVM_MINGW_ROOT "/home/syoyo/local/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64")
+  set(LLVM_MINGW_ROOT "$ENV{HOME}/local/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64")
 ENDIF()
 
 set(CMAKE_C_COMPILER "${LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-clang")

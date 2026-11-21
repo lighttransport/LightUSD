@@ -2,7 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 // Private layer JSON value conversions shared by import and export.
 #pragma once
-#include "minijson.hh"
+#include "core/minijson.hh"
 #include <cstddef>
 #include <string>
 namespace lightusd { namespace next { class Value; class ValueView; } }

@@ -5,7 +5,7 @@
 
 #include "crate-reader-internal.hh"
 #include "lazy-array.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "../strfmt.hh"
 #include "../execution.hh"
 #include "crate-timing.hh"
@@ -70,6 +70,7 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
     case CrateTypeId::PayloadListOp:
     case CrateTypeId::TokenListOp:
     case CrateTypeId::StringListOp:
+    case CrateTypeId::Int64ListOp:
       return 1;
     case CrateTypeId::TimeSamples:
       return 32;
@@ -239,7 +240,9 @@ bool CrateReader::Impl::ReadTokens() {
   }
 
   if (num_tokens > options_.max_tokens) {
-    AddError("Too many tokens");
+    AddError("Too many tokens: " + std::to_string(num_tokens) + " > " +
+             std::to_string(options_.max_tokens) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -334,7 +337,9 @@ bool CrateReader::Impl::ReadStrings() {
   }
 
   if (num_strings > options_.max_strings) {
-    AddError("Too many strings");
+    AddError("Too many strings: " + std::to_string(num_strings) + " > " +
+             std::to_string(options_.max_strings) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_strings, sizeof(uint32_t), "String table")) {
@@ -377,7 +382,9 @@ bool CrateReader::Impl::ReadFields() {
   }
 
   if (num_fields > options_.max_fields) {
-    AddError("Too many fields");
+    AddError("Too many fields: " + std::to_string(num_fields) + " > " +
+             std::to_string(options_.max_fields) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fields, sizeof(CrateField), "Field table") ||
@@ -534,8 +541,13 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
+        // Over-cap arrays are accepted only when they stay lazy with a
+        // file-backed count (uncompressed; see UnpackArrayUncached). A
+        // compressed over-cap array could never be decoded, and dropping it
+        // field by field would silently lose data, so it fails the load here
+        // (raise max_array_elements for large trusted files).
         const bool lazy_over_cap_ok =
-            options_.lazy_arrays &&
+            options_.lazy_arrays && !rep.is_compressed() &&
             CrateArrayTypeCanBeLazy(rep.type_id(), rep.is_compressed());
         if (count > options_.max_array_elements && !lazy_over_cap_ok) {
           AddError("Array ValueRep element count exceeds max_array_elements limit");
@@ -671,7 +683,8 @@ bool CrateReader::Impl::ReadFields() {
             tid == CrateTypeId::ReferenceListOp ||
             tid == CrateTypeId::PayloadListOp ||
             tid == CrateTypeId::TokenListOp ||
-            tid == CrateTypeId::StringListOp;
+            tid == CrateTypeId::StringListOp ||
+            tid == CrateTypeId::Int64ListOp;
         if (list_op) {
           const size_t saved = reader_->position();
           if (!reader_->seek(static_cast<size_t>(off))) {
@@ -681,6 +694,10 @@ bool CrateReader::Impl::ReadFields() {
           uint8_t bits = 0;
           if (!reader_->read_u8(bits)) {
             AddError("Failed to read list-op ValueRep header");
+            return false;
+          }
+          if (tid == CrateTypeId::Int64ListOp && (bits & 0x80u)) {
+            AddError("Unknown Int64 list-op header bits");
             return false;
           }
           if (!reader_->seek(saved)) {
@@ -700,7 +717,8 @@ bool CrateReader::Impl::ReadFields() {
             const uint64_t arc_prefix_bytes =
                 reference_items || version_.minor >= 8 ? 24u : 8u;
             const uint64_t item_bytes = arc_items
-                ? arc_prefix_bytes + (reference_items ? 8u : 0u) : 4u;
+                ? arc_prefix_bytes + (reference_items ? 8u : 0u) :
+                (tid == CrateTypeId::Int64ListOp ? 8u : 4u);
             uint64_t pos = static_cast<uint64_t>(off + 1);
             const uint8_t order[] = {0x02, 0x04, 0x20, 0x40, 0x08, 0x10};
             for (uint8_t bit : order) {
@@ -808,7 +826,9 @@ bool CrateReader::Impl::ReadFieldsets() {
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
   // huge allocation from a malformed value.
   if (num_fieldsets > options_.max_fieldset_indices) {
-    AddError("Too many fieldset indices");
+    AddError("Too many fieldset indices: " + std::to_string(num_fieldsets) +
+             " > " + std::to_string(options_.max_fieldset_indices) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_fieldsets, sizeof(uint32_t),
@@ -883,7 +903,9 @@ bool CrateReader::Impl::ReadSpecs() {
   }
 
   if (num_specs > options_.max_specs) {
-    AddError("Too many specs");
+    AddError("Too many specs: " + std::to_string(num_specs) + " > " +
+             std::to_string(options_.max_specs) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
   if (!CheckElementAllocation(num_specs, sizeof(CrateSpec), "Spec table") ||
@@ -1070,7 +1092,9 @@ bool CrateReader::Impl::ReadPaths() {
   }
 
   if (num_paths > options_.max_paths) {
-    AddError("Too many paths");
+    AddError("Too many paths: " + std::to_string(num_paths) + " > " +
+             std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 
@@ -1082,7 +1106,9 @@ bool CrateReader::Impl::ReadPaths() {
   }
 
   if (num_encoded > options_.max_paths) {
-    AddError("Too many encoded path nodes");
+    AddError("Too many encoded path nodes: " + std::to_string(num_encoded) +
+             " > " + std::to_string(options_.max_paths) +
+             " (raise the crate table limit for large trusted files)");
     return false;
   }
 

@@ -1,8 +1,56 @@
-# LightUSD Verification Plan against AOUSD Core Spec v1.0.1
+# LightUSD Verification Plan against AOUSD Core Spec v1.1.0
 
-**Spec**: USD Core Specification v1.0.1 (b7bc21a), AOUSD Core Spec Working Group, 2025-12-12
-**Target**: LightUSD (this repository, branch `spec-2026-mar`)
-**Date**: 2026-03-21
+**Spec**: USD Core Specification v1.1.0 (e8f44c0), AOUSD Core Spec Working Group,
+vendored verbatim at [core/1.1.0/core_spec.md](core/1.1.0/core_spec.md). The
+phase plan below was written against v1.0.1 (b7bc21a, 2025-12-12; vendored at
+[core/1.0.1](core/1.0.1/core_spec.md)) and still applies; the v1.1.0 deltas are
+audited in [the section below](#v110-delta-audit-2026-11-04).
+**Target**: LightUSD (this repository)
+**Supplemental corpus**: `aousd/core-spec-supplemental-public` tag
+`release/1.0.1.post0` (c15ae0c) — still the newest corpus release; upstream
+publishes no 1.1 corpus yet.
+
+## Formal verification (2026-11-06)
+
+A Lean 4 formalization of v1.1.0 lives in `verif/lean` in [usdspec-conformance](https://github.com/lighttransport/usdspec-conformance);
+findings, LightUSD fixes and reflection gates are summarized in
+[doc/validation/lean-verification-2026-11-06.md](../doc/validation/lean-verification-2026-11-06.md).
+
+## v1.1.0 delta audit (2026-11-04)
+
+Each normative change in the v1.1.0 changelog was checked against OpenUSD
+26.11 (the spec correlates with OpenUSD 25.08) on purpose-built layers.
+
+| v1.1.0 change | Result |
+|---|---|
+| `timeCodesPerSecond` auto-scaling across layer stacks (sublayer, reference + offset, `framesPerSecond` fallback) | Already conformant; values identical to pxr |
+| Value clip `times` out-of-range clamp | Already conformant |
+| Time sample query outside the authored range (hold) | Already conformant |
+| Variability does not affect value resolution | Already conformant |
+| Type-mismatch boundary (strongest opinion) | Already conformant |
+| Quaternion ordering (USDA `(w,i,j,k)`, crate `(i,j,k,w)`) | Already conformant (USDA->USDC->pxr round trip identical) |
+| Crate 0.13.0 (spline tangent algorithms): read, and write only when needed | Already conformant |
+| Duplicate keys in crate variant-selection maps / dictionaries | **Fixed**: variant selection maps now keep the last value (+warning); dictionaries already did |
+| Spline grammar: tangent optional after any `post` mode | **Fixed**: a bare `post curve` left the spline unevaluable |
+| Splines: linear extrapolation slope from the adjacent segment | **Fixed** |
+| Splines: loop reset at the period boundary | **Fixed** |
+| Splines: inner loops (`LoopParameters`) | **Fixed**: were parsed but never evaluated |
+| Splines: evaluation-time anti-regression must be Keep Ratio | **Fixed** (exact non-regressive limit; pxr stops ~1e-5 short, so values agree to ~1e-5) |
+| Piecewise-linear approximation | **Implemented** (optional feature): `SampleSplineData` (src/next/types/spline.hh) — polylines split at value discontinuities and value-block gaps like pxr `TsSpline::Sample`; covers inner loops and every extrapolation mode; vertical deviation <= tolerance (pxr bounds perpendicular distance in scaled space, so its vertical error can exceed it near steep slopes). Also tightened the Bezier time solve near the Keep Ratio vertical tangent |
+| Native instancing: ignored non-arc specs/arcs under an instance, ancestral arcs, implied-arc sharing (spec examples 1-3 + variants) | Already conformant: prototype sharing, flatten and instance-proxy values identical to pxr; stable cases added as `tests/usda/aousd11-instancing-*` gate fixtures |
+| Schema families and versioning | **Implemented**: `ParseSchemaFamilyAndVersion` (spec grammar; agrees with OpenUSD except `_1`, which pxr splits as family `''`), and schema manifests reject a versioned schema inheriting its own family |
+
+Typed/applied schema-definition rules and the UI-hint relocation (`uiHints`)
+were audited separately in
+[doc/validation/aousd11-schema-defs-uihints-2026-11-04.md](../doc/validation/aousd11-schema-defs-uihints-2026-11-04.md)
+(26 rules: 12 agree, 8 fixed, 3 unspecified/OpenUSD-deviates, 3 n/a).
+
+Pinned by `TestSplineCore11Parity` and `TestSplinePiecewiseLinear` (tests/next/test_aousd_conformance.cc; the latter holds pxr 26.11 `Sample` output as expected data).
+
+**Spec erratum found:** the LZ4 framing table now gives "Number of Chunks:
+8 bytes" and "Chunk Size: 1 byte", and the prose says a 64-bit chunk size.
+OpenUSD's `TfFastCompression` (and LightUSD) use a **1-byte** chunk count and
+an **int32** per-chunk size. LightUSD keeps the OpenUSD layout.
 
 ---
 

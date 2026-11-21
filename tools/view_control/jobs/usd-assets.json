@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "assets_root": "../usd-assets",
+  "size": [
+    320,
+    240
+  ],
+  "backend": "vkr",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "uniform",
+    "count": 3
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal",
+    "baseColor",
+    "roughness",
+    "metallic"
+  ],
+  "thresholds": {
+    "coverage_iou_min": 0.99,
+    "depth_relative_p95_max": 0.01,
+    "normal_p95_degrees_max": 5,
+    "color_mae_max": 0.05,
+    "color_ssim_min": 0.95
+  },
+  "scenes": [
+    {
+      "path": "test_assets/USDZ/RiggedSimple/RiggedSimple.usdz"
+    },
+    {
+      "path": "test_assets/USDZ/RiggedFigure/RiggedFigure.usdz",
+      "time_sampling": {
+        "mode": "random",
+        "count": 3,
+        "seed": 20261102
+      }
+    },
+    {
+      "path": "test_assets/_common/animated_cube_translation.usda"
+    },
+    {
+      "path": "test_assets/TextureCoordinateTest/TextureCoordinateTest.usda"
+    },
+    {
+      "path": "test_assets/RoughnessTest/RoughnessTest.usdz"
+    },
+    {
+      "path": "test_assets/NormalsTextureBiasAndScale/NormalsTextureBiasAndScale.usda"
+    }
+  ]
+}

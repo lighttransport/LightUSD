@@ -137,10 +137,11 @@ await testAsync('next-only module composes USDA root + USDA dependency', async (
   const missingStream = new native.RenderStream();
   try {
     const missingLoad = missingStream.begin(encode(ROOT_USDA));
-    assert.ok(missingLoad.success, missingLoad.error || missingStream.error());
+    assert.equal(missingLoad.success, false, 'missing dependencies must not yield a successful partial scene');
+    assert.match(missingLoad.error, /dep\.usda/);
     const report = missingStream.compositionReport();
     assert.ok(report.issues.some(issue => issue.code === 3 &&
-      issue.site.includes('dep.usda') && issue.message.includes('not found')),
+      issue.site.includes('dep.usda') && issue.message.includes('Failed to load arc asset')),
     'RenderStream exposes a typed InvalidAssetPath issue with site and message');
   } finally {
     missingStream.end();

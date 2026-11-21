@@ -459,23 +459,63 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
 
     TextureNodeData tex_data;
     if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
-      if (tex_data.source_color_space.empty() ||
-          tex_data.source_color_space == "auto") {
+      // UsdUVTexture's sourceColorSpace schema only accepts "raw", "sRGB" and
+      // "auto". OpenUSD ignores any other token and falls back to "auto"; the
+      // ColorSpaceTests/UsdPreviewSurface README states this explicitly for
+      // "lin_ap1_scene" ("the current behavior of OpenUSD is that it seems to
+      // ignore the error and treat it as if it were set to auto"). Resolving
+      // such a token as a real colour space instead diverged from the SDK.
+      {
+        std::string &cs = tex_data.source_color_space;
+        if (!cs.empty() && cs != "auto" && cs != "raw" && cs != "sRGB" &&
+            cs != "srgb") {
+          cs = "auto";
+        }
+      }
+      // An authored UsdColorSpaceAPI `colorSpace` (file metadata, the
+      // `inputs:file:colorSpace:name` attribute, or an applied ColorSpaceAPI on
+      // an enclosing prim) takes precedence over `sourceColorSpace`, including an
+      // explicit raw/sRGB token. This is the opinion the ColorSpaceTests/
+      // UsdPreviewSurface asset documents and builds its expected values on.
+      {
         bool authored = false;
         std::string inherited;
         (void)::lightusd::next::color_management::ComputeColorSpaceName(
             texture_prim, "inputs:file", &inherited, &authored);
         if (authored) {
           tex_data.source_color_space = inherited;
-        } else {
+        } else if (tex_data.source_color_space.empty() ||
+                   tex_data.source_color_space == "auto") {
           (void)MaterialXConfiguredColorSpace(
               texture_prim, &tex_data.source_color_space);
+        }
+      }
+      // "auto" resolves to sRGB only for 8-bit images; floating-point formats
+      // (.hdr/.exr/.pfm) hold scene-linear data and must not be decoded again.
+      if (tex_data.source_color_space.empty() ||
+          tex_data.source_color_space == "auto") {
+        auto lower_ext_is = [&](const char *ext) {
+          const std::string &f = tex_data.file;
+          const size_t n = std::strlen(ext);
+          if (f.size() < n) return false;
+          for (size_t i = 0; i < n; ++i) {
+            char ch = f[f.size() - n + i];
+            if (ch >= 'A' && ch <= 'Z') ch = char(ch - 'A' + 'a');
+            if (ch != ext[i]) return false;
+          }
+          return true;
+        };
+        if (lower_ext_is(".hdr") || lower_ext_is(".exr") ||
+            lower_ext_is(".pfm")) {
+          tex_data.source_color_space = "raw";
         }
       }
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
-      const uint32_t asset_anchor = AssetAnchorOf(texture_prim);
+      const uint32_t asset_anchor =
+          tex_data.file_asset_anchor_valid ? tex_data.file_asset_anchor
+                                           : AssetAnchorOf(texture_prim);
       const std::string authored_anchor =
           ::lightusd::next::AssetAnchorPath(asset_anchor);
       std::vector<RenderUDIMTexture::Tile> udim_tiles;
@@ -492,13 +532,13 @@ bool RenderSceneConverter::Impl::ExtractShaderParam(const Stage& stage,
           if (config_.asset_resolver) {
             resolved_tile = config_.asset_resolver->Resolve(
                 tile_asset, authored_anchor.empty() ? std::string()
-                                                    : authored_anchor + "/");
+                                                    : (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
           } else if (!config_.asset_base_dir.empty()) {
             ::lightusd::next::AssetResolver local_resolver;
             local_resolver.SetWorkingDirectory(config_.asset_base_dir);
             if (!authored_anchor.empty()) {
               resolved_tile = local_resolver.Resolve(tile_asset,
-                                                     authored_anchor + "/");
+                                                     (::lightusd::next::AssetResolver::IsPackagePath(authored_anchor) ? authored_anchor : authored_anchor + "/"));
             }
             if (!resolved_tile.exists) {
               resolved_tile = local_resolver.Resolve(tile_asset);

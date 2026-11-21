@@ -28,6 +28,7 @@ const NODE_TESTS = [
   ['next asset alias composition', 'tests/next-asset-alias-compose.test.mjs'],
   ['next independent feature modules', 'tests/next-features.test.mjs'],
   ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
+  ['next mesh budget cache', 'tests/next-mesh-budget-cache.test.mjs'],
   ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
   ['next material format parity', 'tests/material-format-parity.test.mjs'],
   ['next WASM parity gap matrix', 'tests/next-wasm-parity-matrix.test.mjs'],

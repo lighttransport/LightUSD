@@ -8,7 +8,7 @@
 #include <unordered_set>
 #include <utility>
 #include "sha256.hh"
-#include "minijson.hh"
+#include "core/minijson.hh"
 
 namespace lightusd::web_next {
 

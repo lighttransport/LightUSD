@@ -24,6 +24,7 @@
 #include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-allocation-budget.hh"
 #include "next/crate/crate-format.hh"
+#include "next/c/lightusd-core-c.h"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/layer/layer.hh"
@@ -97,6 +98,39 @@ static void TestSharedDeferredBudget() {
 
 int main() {
   TestSharedDeferredBudget();
+  // Crate 0.4 arrays have a rank word before the count. Check the eager
+  // decoder, lazy count, borrowed view and text printer against explicit bytes.
+  {
+    const CrateVersion version{0, 4, 0};
+    std::string bytes(16, '\0');
+    const uint32_t header[] = {1, 4};
+    const int32_t values[] = {3, -9, 17, 42};
+    bytes.append(reinterpret_cast<const char*>(header), sizeof(header));
+    bytes.append(reinterpret_cast<const char*>(values), sizeof(values));
+    auto source = CrateDataSource::Adopt(std::move(bytes), version);
+    const auto rep = ValueRep::Make(CrateTypeId::Int, 16, true);
+    LazyArrayRef ref;
+    assert(CrateArrayCountHeaderBytes(version) == 8);
+    assert(ProbeArrayBlock(source, rep, 4, &ref));
+    assert(ref.element_count == 4 && ref.block_len == 24);
+    Value lazy = Value::MakeLazyArray(ref), eager;
+    assert(DecodeCrateArray(source->base(), source->size(), rep, version, {}, 4, &eager));
+    assert(eager.as_int_array()->size() == 4 && (*eager.as_int_array())[3] == 42);
+    ArrayScratch<int32_t> scratch;
+    ArrayView<int32_t> view;
+    assert(GetIntArrayView(lazy, &scratch, &view));
+    assert(view.size == 4 && view[0] == 3 && view[1] == -9 && view[3] == 42);
+    std::string text;
+    StreamWriter writer(&text);
+    PrintValue(writer, lazy);
+    assert(text == "[3, -9, 17, 42]");
+    assert(lazy.is_lazy());
+    std::string invalid(16, '\0');
+    const uint32_t bad_header[] = {2, 4};
+    invalid.append(reinterpret_cast<const char*>(bad_header), sizeof(bad_header));
+    auto bad = CrateDataSource::Adopt(std::move(invalid), version);
+    assert(!ProbeArrayBlock(bad, rep, 4, &ref));
+  }
   std::cout << "=== LightUSD Next Lazy Array Tests ===" << std::endl;
 
   // Empty ArrayView must be safe to use with begin()/end() range APIs.
@@ -110,6 +144,72 @@ int main() {
     std::vector<float> copied(view.begin(), view.end());
     assert(copied.empty());
     assert(view.size_bytes() == 0);
+  }
+
+  // EncodeDeltaU32 switches to a chunked parallel encoder for large columns
+  // (threaded builds). Its bytes must equal the serial C encoder exactly:
+  // mixed delta widths, a most-common-delta tie (ties pick the smallest),
+  // deltas outside the flat histogram range, and a count that is not a
+  // multiple of 4 (chunk boundaries share no 2-bit code byte).
+  {
+    auto serial = [](const std::vector<uint32_t>& v) {
+      size_t bound = 0;
+      assert(lu_crate_encode_delta_u32_bound(v.size(), &bound));
+      std::vector<uint8_t> out(bound);
+      size_t n = 0;
+      const char* err = nullptr;
+      assert(lu_crate_encode_delta_u32(v.data(), v.size(), out.data(), bound,
+                                       &n, &err));
+      out.resize(n);
+      return out;
+    };
+    const size_t sizes[] = {(size_t(1) << 22) + 3, (size_t(1) << 22) + 4097};
+    for (size_t count : sizes) {
+      std::vector<uint32_t> v(count);
+      uint64_t x = 0x243F6A8885A308D3ull;
+      uint32_t acc = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        const unsigned kind = static_cast<unsigned>(x % 16);
+        int64_t d;
+        if (kind < 6) d = 1;                                    // common
+        else if (kind < 12) d = -1;                             // tie candidate
+        else if (kind < 14) d = static_cast<int8_t>(x >> 8);    // 1 byte
+        else if (kind < 15) d = static_cast<int16_t>(x >> 16);  // 2 bytes
+        else d = static_cast<int32_t>(x >> 32) | 0x10000;       // 4 bytes
+        acc = static_cast<uint32_t>(static_cast<int64_t>(acc) + d);
+        v[i] = acc;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // Exact tie between +1 and -1 counts: alternate them.
+      for (size_t i = 0; i < count; ++i) v[i] = static_cast<uint32_t>(i & 1);
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // FIELDSETS shape: runs of increasing ids separated by UINT32_MAX
+      // sentinels -- two distinct wide deltas per sentinel, small deltas
+      // win (the wide ones are only counted for summary candidates).
+      uint32_t id = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = (x % 4 == 0) ? UINT32_MAX : id++;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // A wide delta is the most common one (survives every summary).
+      acc = 0;
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        acc += (x % 3 == 0) ? 1u : 100000u;
+        v[i] = acc;
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+      // Almost no small deltas: exact counting of every wide delta.
+      for (size_t i = 0; i < count; ++i) {
+        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+        v[i] = static_cast<uint32_t>(x >> 32);
+      }
+      assert(EncodeDeltaU32(v.data(), v.size()) == serial(v));
+    }
+    std::cout << "  parallel delta encoder matches the serial encoder"
+              << std::endl;
   }
 
   // Capacity-hinted crate blob decompression should grow from an undersized
@@ -392,6 +492,55 @@ int main() {
     assert(lazy_points->is_lazy());
     assert(!lazy_points->is_dirty());
     std::cout << "  serial range printer preserves lazy array text" << std::endl;
+
+    // An uncompressed array over max_array_elements has a file-backed count:
+    // it loads lazy, refuses to materialize, and still passes through to a
+    // rewrite byte for byte (it was silently dropped from the output before).
+    {
+      USDCLoadOptions capped;
+      capped.crate_options.max_array_elements = 1000;
+      USDCLoadResult cl =
+          LoadUSDCFromMemory(big_buf.data(), big_buf.size(), capped);
+      assert(cl.success);
+      const Value* cp =
+          cl.stage.GetPrimAtPath("/BigMesh").GetPropertyValue("points");
+      assert(cp && cp->is_lazy());
+      assert(cp->array_size() == big_points.size() / 3);
+      assert(cp->materialized_copy().is_empty());
+      std::vector<uint8_t> rewritten;
+      assert(WriteUSDCToMemory(rewritten, cl.stage).success);
+      USDCLoadResult rl = LoadUSDCFromMemory(rewritten.data(), rewritten.size());
+      assert(rl.success);
+      const Value* rp =
+          rl.stage.GetPrimAtPath("/BigMesh").GetPropertyValue("points");
+      assert(rp);
+      Value rv = rp->materialized_copy();
+      assert(rv.as_float_array() && *rv.as_float_array() == big_points);
+    }
+    // A compressed array's count is not file-backed: over the cap it fails
+    // the load instead of being dropped field by field.
+    {
+      std::vector<int32_t> indices(70000);
+      for (size_t i = 0; i < indices.size(); ++i)
+        indices[i] = static_cast<int32_t>(i % 977);
+      StageBuilder isb;
+      isb.SetDefaultPrim("M");
+      LayerBuilder& ilb = isb.GetLayerBuilder();
+      ilb.begin_prim("M", "Mesh");
+      ilb.add_property("faceVertexIndices", Value::MakeIntArray(indices));
+      ilb.end_prim();
+      ilb.finalize();
+      std::vector<uint8_t> ibuf;
+      assert(WriteUSDCToMemory(ibuf, isb.Build()).success);
+      USDCLoadOptions capped;
+      capped.crate_options.max_array_elements = 1000;
+      USDCLoadResult il = LoadUSDCFromMemory(ibuf.data(), ibuf.size(), capped);
+      assert(!il.success);
+      assert(il.error_summary.find("exceeds max_array_elements") !=
+             std::string::npos);
+      assert(LoadUSDCFromMemory(ibuf.data(), ibuf.size()).success);
+    }
+    std::cout << "  over-cap arrays pass through or fail the load" << std::endl;
 
     // File-backed USDC arrays must remain mmap-backed after crossing an
     // external reference and PCP Stage reconstruction. The same composition
@@ -825,7 +974,8 @@ int main() {
     std::cout << "  file load is mmap-backed and materializes correctly"
               << std::endl;
 
-    // Opting out falls back to an owned heap buffer (not mmapped), same data.
+    // Opting out uses the private paged snapshot: the parse copy is released
+    // and lazy arrays page their blocks back from the snapshot descriptor.
     USDCLoadOptions opt;
     opt.crate_options.use_mmap = false;
     USDCLoadResult lo = LoadUSDCFromFile(path, opt);
@@ -834,11 +984,65 @@ int main() {
     const Value* opv =
         lo.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
     assert(opv && opv->is_lazy());
-    assert(!opv->lazy_ref()->source->is_mmapped() &&
-           "use_mmap=false must use the owned buffer");
+    auto osrc = opv->lazy_ref()->source;
+    assert(!osrc->is_mmapped() && "use_mmap=false must not alias the file");
+    assert(osrc->is_paged() && "untrusted path should keep a paged snapshot");
+    assert(!osrc->can_borrow() && "the anonymous parse copy must be released");
+    assert(osrc->base() == nullptr && "no retained anonymous parse buffer");
     auto opa = opv->as_float_array();
     assert(opa && *opa == *mpa);
-    std::cout << "  use_mmap=false falls back to owned buffer, same data"
+    // A second materialization after the first temporary is gone still works.
+    auto opa2 = opv->as_float_array();
+    assert(opa2 && *opa2 == *mpa);
+
+    // Writing a paged stage must re-encode instead of aliasing a source block,
+    // and the output reloads identically.
+    std::vector<uint8_t> paged_out;
+    USDCWriteResult paged_wr = WriteUSDCToMemory(paged_out, lo.stage);
+    assert(paged_wr.success);
+    USDCLoadResult paged_re = LoadUSDCFromMemory(
+        paged_out.data(), paged_out.size());
+    assert(paged_re.success);
+    const Value* paged_re_pv =
+        paged_re.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(paged_re_pv && paged_re_pv->is_lazy());
+    auto paged_re_a = paged_re_pv->as_float_array();
+    assert(paged_re_a && *paged_re_a == *mpa);
+    std::cout << "  use_mmap=false pages from a private snapshot and rewrites"
+              << std::endl;
+
+    // The unstaged owned fallback remains available and produces the same data.
+    USDCLoadOptions owned_opt;
+    owned_opt.crate_options.use_mmap = false;
+    owned_opt.crate_options.paged_snapshot = false;
+    USDCLoadResult lowned = LoadUSDCFromFile(path, owned_opt);
+    assert(lowned.success);
+    assert(!lowned.source_was_mmap);
+    const Value* owned_pv =
+        lowned.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(owned_pv && owned_pv->is_lazy());
+    assert(!owned_pv->lazy_ref()->source->is_paged());
+    assert(owned_pv->lazy_ref()->source->can_borrow());
+    auto owned_a = owned_pv->as_float_array();
+    assert(owned_a && *owned_a == *mpa);
+    std::cout << "  use_mmap=false paged_snapshot=false keeps the owned buffer"
+              << std::endl;
+
+    // An unusable snapshot directory degrades to the owned buffer; it never
+    // falls back to a second read of the source or to mmap.
+    USDCLoadOptions nodir_opt;
+    nodir_opt.crate_options.use_mmap = false;
+    nodir_opt.crate_options.paged_snapshot_directory =
+        "/nonexistent-lightusd-snapshot-dir";
+    USDCLoadResult lnodir = LoadUSDCFromFile(path, nodir_opt);
+    assert(lnodir.success);
+    const Value* nodir_pv =
+        lnodir.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
+    assert(nodir_pv && nodir_pv->is_lazy());
+    assert(!nodir_pv->lazy_ref()->source->is_paged());
+    auto nodir_a = nodir_pv->as_float_array();
+    assert(nodir_a && *nodir_a == *mpa);
+    std::cout << "  unusable snapshot directory degrades to the owned buffer"
               << std::endl;
 
     pipeline::FlattenStats mmap_stats;

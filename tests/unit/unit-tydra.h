@@ -13,6 +13,7 @@ void tydra_blendshape_inbetween_test(void);
 void tydra_blendshape_weight_animation_target_test(void);
 void tydra_material_binding_validation_test(void);
 void tydra_material_colorspace_token_test(void);
+void tydra_lightrt_opacity_mode_test(void);
 void tydra_default_material_assignment_test(void);
 void tydra_texture_loader_policy_test(void);
 void tydra_udim_texture_test(void);

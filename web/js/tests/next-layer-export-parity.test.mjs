@@ -103,7 +103,7 @@ try {
   assert.equal(loaded.success, true, loaded.error);
   const jsonSource = new TextEncoder().encode([
     '#usda 1.0',
-    '( comment = "JSON parity" playbackMode = "loop" colorConfiguration = @ocio://default@ colorManagementSystem = "ocio" customLayerData = { float[] samples = [0.25, 1.5] } expressionVariables = { string ASSET = "./mesh.usd" } )',
+    '( comment = "JSON parity"\n playbackMode = "loop"\n colorConfiguration = @ocio://default@\n colorManagementSystem = "ocio"\n customLayerData = { float[] samples = [0.25, 1.5] }\n expressionVariables = { string ASSET = "./mesh.usd" } )',
     'def Xform "Base" {}',
     'def Xform "Root" (',
     '  prepend inherits = </Base>',
@@ -113,7 +113,7 @@ try {
     '  prepend variantSets = "shape"',
     '  variants = { string shape = "round" }',
     ') {',
-    '  custom string label = "hello" (displayName = "Label" customData = { bool enabled = 1 dictionary nested = { string owner = "team" bool[] flags = [true, false] color3f[] colors = [(0.25, 0.5, 0.75), (1, 0, 0)] } } sdrMetadata = { string role = "input" })',
+    '  custom string label = "hello" (\n    displayName = "Label"\n    customData = {\n      bool enabled = 1\n      dictionary nested = {\n        string owner = "team"\n        bool[] flags = [true, false]\n        color3f[] colors = [(0.25, 0.5, 0.75), (1, 0, 0)]\n      }\n    }\n    sdrMetadata = {\n      string role = "input"\n    }\n  )',
     '  float weight.timeSamples = { 0: 1, 1: 2 }',
     '  float[] samples = [0.25, 1.5, 2.75]',
     '  float blocked = None',
@@ -129,7 +129,7 @@ try {
     '  append rel appended = [</Root/Child>]',
     '  delete rel deleted = [</Root/Child>]',
     '  def Scope "Child" {}', '}',
-    'def Xform "AssetOnly" (inherits = </Base> references = @asset.usda@ payload = @payload.usda@) {}', ''
+    'def Xform "AssetOnly" (\n  inherits = </Base>\n  references = @asset.usda@\n  payload = @payload.usda@\n) {}', ''
   ].join('\n'));
   const jsonLegacy = new legacyModule.LightUSDLoaderNative();
   const jsonNext = new nextModule.LayerDocument();
@@ -208,7 +208,8 @@ try {
     assert.match(importedUSDA.text,
       /prepend references = @asset\.usda@<\/Geom> \(offset = 2; scale = 0\.5\)/);
     assert.match(importedUSDA.text, /append payload = @payload\.usda@<\/Geom>/);
-    assert.match(importedUSDA.text, /prepend variantSets = \["shape"\]/);
+    // pxr writes a single-name vector as a bare quoted string.
+    assert.match(importedUSDA.text, /prepend variantSets = "shape"/);
     assert.match(importedUSDA.text, /string shape = "round"/);
     assert.match(importedUSDA.text, /references = @asset\.usda@/);
     assert.match(importedUSDA.text, /rel declaredRel\n/);
@@ -320,7 +321,7 @@ try {
     } finally { halfMetadataDoc.delete(); }
     const propertyMetaUSDA = new TextEncoder().encode([
       '#usda 1.0', 'def Xform "Root" {',
-      ' float[] primvars:weights = [0.25, 0.5] (interpolation = "vertex" elementSize = 2 hidden = false renderType = "float" colorSpace = "raw" documentation = "Notes")',
+      ' float[] primvars:weights = [0.25, 0.5] (\n  interpolation = "vertex"\n  elementSize = 2\n  hidden = false\n  renderType = "float"\n  colorSpace = "raw"\n  documentation = "Notes"\n )',
       ' token outputs:surface.connect = </Root.primvars:weights>', '}', ''
     ].join('\n'));
     const propertyMetaLegacy = new legacyModule.LightUSDLoaderNative();
@@ -402,8 +403,8 @@ try {
     // though the retained Layer itself is small.
     const matrixValue = '((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))';
     const largeArrayUSDA = new TextEncoder().encode(
-      `#usda 1.0\ndef Xform "Root" { matrix4d[] big = [${Array(270000)
-        .fill(matrixValue).join(', ')}] }\n`);
+      `#usda 1.0\ndef Xform "Root" {\n matrix4d[] big = [${Array(270000)
+        .fill(matrixValue).join(', ')}]\n}\n`);
     const largeArraySource = new nextModule.LayerDocument();
     const lazyArrayDoc = new nextModule.LayerDocument();
     try {

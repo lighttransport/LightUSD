@@ -56,6 +56,13 @@ function(lightusd_next_harden tgt)
   endif()
 endfunction()
 
+option(LIGHTUSD_NATIVE_IO "Enable built-in native filesystem I/O backends" ON)
+if(NOT LIGHTUSD_NATIVE_IO)
+  add_definitions(-DLIGHTUSD_NO_NATIVE_IO=1 -DLIGHTUSD_NEXT_NO_MMAP=1 -DLIGHTUSD_NO_NATIVE_RESOLVER_IO=1 -DLIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+option(LIGHTUSD_NATIVE_HOST_SERVICES "Build the explicit native host service provider" ON)
+option(LIGHTUSD_NATIVE_RESOLVER_IO "Build the native filesystem asset resolver backend" ON)
+
 # Define source files
 include("${CMAKE_CURRENT_LIST_DIR}/pipeline-sources.cmake")
 set(LIGHTUSD_NEXT_SOURCES
@@ -67,8 +74,9 @@ set(LIGHTUSD_NEXT_SOURCES
     stage/change-set-diff.cc
     stage/stage-session.cc
     # Shared bounded JSON parser used by the next-generation URDF bridge.
-    ../minijson.cc
-    ../color-transform.cc
+    ../core/host-services.cc
+    ../core/minijson.cc
+    ../core/color-transform.cc
     # C11 core: SdfPathExpression parsing / serialization / matching.
     # next owns this module; the legacy src/core/path-expression*.cc pair is
     # deliberately NOT part of this product (it would drag the legacy
@@ -78,9 +86,6 @@ set(LIGHTUSD_NEXT_SOURCES
     # C11 core: generated checker tables (schema inventory) and their lookups.
     # Type system
     types/value-view.cc
-
-    # Layer (unified PrimSpec storage)
-    layer/asset-anchor.cc
 
     # Writers
     writer/prim-printer.cc
@@ -121,7 +126,7 @@ set(LIGHTUSD_NEXT_SOURCES
     # /MaterialX layers from referenced .mtlx documents.
     ../mtlx-xml-tokenizer.cc
     ../mtlx-xml-parser.cc
-    ../mtlx-dom.cc
+    ../core/mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -131,6 +136,7 @@ set(LIGHTUSD_NEXT_SOURCES
     pcp/cache-layers.cc
     pcp/cache-opinions.cc
     pcp/cache-storage.cc
+    pcp/batched-compose.cc
 
     # AOUSD Core validation
 
@@ -168,6 +174,7 @@ set(LIGHTUSD_NEXT_HEADERS
     # Layer (unified PrimSpec storage)
     layer/property-index.hh
     layer/prim-spec.hh
+    layer/int64-listop.hh
     layer/layer.hh
 
     # Stage (composed scene)
@@ -176,7 +183,7 @@ set(LIGHTUSD_NEXT_HEADERS
     stage/stage-session.hh
 
     # Color management shared with render consumers
-    ../color-transform.hh
+    ../core/color-transform.hh
     schema/color-space.hh
 
     # ASCII parser
@@ -299,6 +306,19 @@ target_include_directories(lightusd_core_c PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 lightusd_next_harden(lightusd_core_c)
 option(LIGHTUSD_NEXT_USE_PCH "Use a precompiled header for native next C++ sources" ON)
 add_library(lightusd_next STATIC ${LIGHTUSD_NEXT_SOURCES} ${LIGHTUSD_NEXT_HEADERS})
+if(NOT LIGHTUSD_NATIVE_IO)
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NO_NATIVE_IO=1 LIGHTUSD_NEXT_NO_MMAP=1 LIGHTUSD_NO_NATIVE_RESOLVER_IO=1 LIGHTUSD_MMAP_SUPPORTED=0)
+endif()
+if(NOT LIGHTUSD_NATIVE_RESOLVER_IO)
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NO_NATIVE_RESOLVER_IO=1)
+endif()
+if(LIGHTUSD_NATIVE_HOST_SERVICES AND LIGHTUSD_NATIVE_IO AND (WIN32 OR UNIX) AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
+  target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NATIVE_HOST_SERVICES=1)
+  target_link_libraries(lightusd_next PUBLIC ${CMAKE_DL_LIBS})
+  if(WIN32)
+    target_link_libraries(lightusd_next PUBLIC psapi)
+  endif()
+endif()
 option(LIGHTUSD_WITH_USDOBJ "Import OBJ layers using the C11 loader" ON)
 if(LIGHTUSD_WITH_USDOBJ)
     set(LIGHTUSD_ASSET_IMPORT_OBJ_ONLY ON)
@@ -389,6 +409,17 @@ if(LIGHTUSD_NEXT_ENABLE_THREAD)
     target_link_libraries(lightusd_next PUBLIC Threads::Threads)
 endif()
 
+# Experimental USD-style deferred opinion fill: the pcp composition builds a
+# skeleton layer (name / path / children per prim) and the USDC writer composes
+# each prim's opinions on demand in its worker threads, releasing them once
+# encoded, instead of materializing the whole composed layer first. Enabled at
+# run time by CompositionOptions::defer_opinion_fill (lusdcat -f to USDC).
+# Output is semantically identical; token/string table order may differ.
+option(LIGHTUSD_NEXT_DEFERRED_FILL "Experimental deferred (USD-style) opinion fill for flatten-to-USDC" OFF)
+if(LIGHTUSD_NEXT_DEFERRED_FILL)
+    target_compile_definitions(lightusd_next PUBLIC LIGHTUSD_NEXT_DEFERRED_FILL)
+endif()
+
 # Optional fine-grained pcp::Cache locking: a std::shared_timed_mutex (pcp/
 # cache-lock.hh) so pure reads (ComposedChildNames, GetMemoryStats, IsInstance,
 # ...) take a shared lock instead of serializing behind the single exclusive
@@ -459,30 +490,53 @@ endif()
 # Optional drop-in allocator for the next CLI tools (next_usdcat). The
 # compose + stream path is allocation-heavy (millions of small PrimSpec/Src
 # allocations and cross-thread frees); glibc ptmalloc is a bottleneck there
-# (~20% of compose samples in malloc/free). Measured on Island with 32
+# (~20% of compose samples in malloc/free). Measured on reference scene with 32
 # threads, jemalloc cut the parallel opinion fill ~2x (2.9 -> 1.35 s) and
 # load+compose 14.3 -> 10.2 s; output is byte-identical (an allocator never
 # changes it). Only the tool executables link it -- the library never forces
 # an allocator on applications.
 #
-# Auto-detected SYSTEM library, never required: jemalloc (preferred), then
-# tcmalloc_minimal, then mimalloc. Missing -> plain system malloc with a status
-# message. Opt out with -DLIGHTUSD_NEXT_WITH_ALLOCATOR=OFF. Never used for
+# Default: the vendored mimalloc (src/external/mimalloc), built into the tool
+# with purge_delay=0, so it needs nothing installed. Measured on benchmark host
+# (doc/large-scene.md §10.26): same full45 wall time as jemalloc at ~5% lower
+# peak RSS, 1.39x faster than glibc. `auto` instead picks an installed SYSTEM
+# library: jemalloc, then tcmalloc_minimal, then mimalloc; missing -> plain
+# system malloc. Opt out with -DLIGHTUSD_NEXT_WITH_ALLOCATOR=OFF. Never used for
 # Emscripten/WASI, Windows/macOS (untested there), or sanitizer/fuzzer builds
 # (the sanitizer runtimes provide their own allocator).
 # Equivalent at runtime to LD_PRELOAD=libjemalloc.so.2.
 #
 # jemalloc runs with its default decay. next-refactor baked a no-purge
 # malloc_conf (dirty/muzzy_decay_ms:-1) into the tool; re-measured here
-# (Island flatten, 3 interleaved runs) it gave the same wall time (~24 s vs
+# (reference scene flatten, 3 interleaved runs) it gave the same wall time (~24 s vs
 # glibc ~30 s) at +1.2 GB peak RSS (7.8 vs 6.6 GB), so it is not baked. Try it
 # with MALLOC_CONF=dirty_decay_ms:-1,muzzy_decay_ms:-1.
 # ------------------------------------------------------------------
 option(LIGHTUSD_NEXT_WITH_ALLOCATOR
     "Link an installed jemalloc/tcmalloc/mimalloc into the next CLI tools when found (optional)" ON)
+# Optional jemalloc options compiled into the CLI tools
+# (src/next/tools/jemalloc-conf.cc); MALLOC_CONF still overrides them. Default
+# empty. `thp:always` (transparent huge pages) cuts the district benchmark scene
+# compose ~1.3x (8 M -> 0.4 M minor faults) but made the 75 GiB all-district
+# flatten ~1.2x SLOWER on a THP=madvise host: huge-page faults compact
+# synchronously and stall the serial walk once memory is fragmented
+# (doc/large-scene.md §10). Opt in per build or per run when the working set
+# is well below the host's free memory.
+set(LIGHTUSD_NEXT_JEMALLOC_CONF "" CACHE STRING
+    "jemalloc malloc_conf compiled into the next CLI tools (empty = none)")
+# Which allocator: `mimalloc` (default; the vendored src/external/mimalloc,
+# built into the tool and overriding malloc/new), `auto` (an installed
+# jemalloc, then tcmalloc, then mimalloc), `jemalloc` / `tcmalloc` (installed
+# only), or `system` (the C library's).
+set(LIGHTUSD_NEXT_ALLOCATOR "mimalloc" CACHE STRING
+    "Allocator for the next CLI tools: auto, jemalloc, tcmalloc, mimalloc (vendored), system")
+set_property(CACHE LIGHTUSD_NEXT_ALLOCATOR PROPERTY STRINGS
+    auto jemalloc tcmalloc mimalloc system)
 set(LIGHTUSD_NEXT_ALLOCATOR_LIB "")
 set(_next_alloc_skip "")
-if(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
+if(NOT LIGHTUSD_NATIVE_IO)
+    set(_next_alloc_skip "native I/O disabled")
+elseif(EMSCRIPTEN OR WASI OR CMAKE_SYSTEM_NAME STREQUAL "WASI" OR
    CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     set(_next_alloc_skip "WebAssembly target")
 elseif(NOT UNIX OR APPLE)
@@ -493,13 +547,31 @@ elseif(LIGHTUSD_NEXT_BUILD_FUZZERS OR LIGHTUSD_NEXT_BUILD_TSAN_TESTS OR
 endif()
 if(LIGHTUSD_NEXT_WITH_ALLOCATOR AND _next_alloc_skip)
     message(STATUS "next: drop-in allocator disabled (${_next_alloc_skip}); using system malloc")
+elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR AND LIGHTUSD_NEXT_ALLOCATOR STREQUAL "system")
+    message(STATUS "next: LIGHTUSD_NEXT_ALLOCATOR=system; using the C library allocator")
+elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR AND LIGHTUSD_NEXT_ALLOCATOR STREQUAL "mimalloc")
+    # Vendored mimalloc as one translation unit. An OBJECT library, so the
+    # object (and with MI_MALLOC_OVERRIDE its malloc/free/new/delete) is always
+    # linked into the tool, taking precedence over the C library's.
+    add_library(lightusd_mimalloc OBJECT
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/mimalloc/src/static.c)
+    target_include_directories(lightusd_mimalloc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/mimalloc/include)
+    # MI_DEFAULT_PURGE_DELAY=0 (local hook, README.lightusd.md): return freed
+    # pages immediately. Upstream's 1 s delay was ~5% faster on full45 but
+    # +18% peak RSS. MIMALLOC_PURGE_DELAY still overrides it at run time.
+    target_compile_definitions(lightusd_mimalloc PRIVATE
+        MI_MALLOC_OVERRIDE=1 MI_STATIC_LIB=1 MI_DEFAULT_PURGE_DELAY=0)
+    set_target_properties(lightusd_mimalloc PROPERTIES C_STANDARD 11)
+    set(LIGHTUSD_NEXT_ALLOCATOR_LIB "$<TARGET_OBJECTS:lightusd_mimalloc>")
+    message(STATUS "next: linking vendored mimalloc (src/external/mimalloc) into CLI tools")
 elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR)
-    # Ranking (next-refactor measurements, doc/large-scene.md): jemalloc is
-    # the fastest at the lowest RSS; tcmalloc_minimal is the zero-config
-    # runner-up (often shipped only as the versioned runtime without a -dev
-    # symlink, so also look for that); mimalloc is fast only with
-    # MIMALLOC_PURGE_DELAY=-1 and costs more RSS.
-    find_library(LIGHTUSD_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    # Installed libraries, in next-refactor's ranking: jemalloc, then
+    # tcmalloc_minimal (often shipped only as the versioned runtime without a
+    # -dev symlink, so also look for that), then a system mimalloc.
+    if(NOT LIGHTUSD_NEXT_ALLOCATOR STREQUAL "tcmalloc")
+        find_library(LIGHTUSD_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    endif()
     if(LIGHTUSD_NEXT_ALLOC_JEMALLOC)
         set(LIGHTUSD_NEXT_ALLOCATOR_LIB "${LIGHTUSD_NEXT_ALLOC_JEMALLOC}")
     else()
@@ -521,6 +593,9 @@ elseif(LIGHTUSD_NEXT_WITH_ALLOCATOR)
     endif()
     if(LIGHTUSD_NEXT_ALLOCATOR_LIB)
         message(STATUS "next: linking allocator ${LIGHTUSD_NEXT_ALLOCATOR_LIB} into CLI tools")
+        if(LIGHTUSD_NEXT_ALLOC_JEMALLOC AND LIGHTUSD_NEXT_JEMALLOC_CONF)
+            message(STATUS "next: jemalloc malloc_conf baked into CLI tools: ${LIGHTUSD_NEXT_JEMALLOC_CONF}")
+        endif()
     else()
         message(STATUS "next: no jemalloc/tcmalloc/mimalloc found (install libjemalloc-dev for faster compose); using system malloc")
     endif()
@@ -565,6 +640,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc.cc
     )
     target_link_libraries(test_usdc_reader PRIVATE lightusd_next)
+    add_executable(test_int64_listop ../../tests/next/test_int64_listop.cc)
+    target_link_libraries(test_int64_listop PRIVATE lightusd_next)
+    add_test(NAME next_test_int64_listop COMMAND test_int64_listop)
+    add_executable(test_stream_residency ../../tests/next/test_stream_residency.cc)
+    target_link_libraries(test_stream_residency PRIVATE lightusd_next)
+    add_test(NAME next_test_stream_residency COMMAND test_stream_residency)
     # Fixtures are found by walking relative prefixes from the working
     # directory, which only resolves when the build dir sits directly under the
     # repo root. Hand the real root in so the test also runs from an
@@ -577,6 +658,12 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer.cc
     )
     target_link_libraries(test_layer PRIVATE lightusd_next)
+
+    add_executable(test_name_order
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_name_order.cc)
+    target_link_libraries(test_name_order PRIVATE lightusd_next)
+    add_test(NAME next_test_name_order COMMAND test_name_order)
+    set_tests_properties(next_test_name_order PROPERTIES LABELS "next;aousd;lean")
 
     add_executable(test_stage
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_stage.cc
@@ -642,7 +729,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     add_executable(test_crate_dict
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_dict.cc
     )
-    target_link_libraries(test_crate_dict PRIVATE lightusd_next)
+    target_link_libraries(test_crate_dict PRIVATE lightusd_validation)
 
     add_executable(test_value_dict
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_value_dict.cc
@@ -724,7 +811,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
       target_compile_options(test_storage PRIVATE -UNDEBUG)
     endif()
     add_test(NAME next_c11_storage COMMAND test_storage)
-    file(GLOB exr_test_sources ../external/tinyexr/src/*.c)
+    file(GLOB exr_test_sources CONFIGURE_DEPENDS ../external/tinyexr/src/*.c)
     add_executable(test_exr_codec ../../tests/next/test_exr_codec.c
       ../imageio/exr-codec.c ${exr_test_sources})
     target_include_directories(test_exr_codec PRIVATE ../external/tinyexr/include ../external/tinyexr/src)
@@ -764,6 +851,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation_registry.cc)
     target_link_libraries(test_validation_registry PRIVATE lightusd_validation)
     add_test(NAME next_test_validation_registry COMMAND test_validation_registry)
+    add_executable(test_schema_prim_definition
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_schema_prim_definition.cc)
+    target_link_libraries(test_schema_prim_definition PRIVATE lightusd_validation)
+    add_test(NAME next_test_schema_prim_definition COMMAND test_schema_prim_definition)
 
     add_executable(test_validation
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc
@@ -791,6 +882,17 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     target_include_directories(test_vr_edge_matrix PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
 
+    # Lean-generated conformance vectors (tests/next/generated/lean/*.inc,
+    # produced by `lake exe usdspec-gen` in the usdspec-conformance repo; never skips).
+    add_executable(test_lean_vectors
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lean_vectors.cc
+    )
+    target_link_libraries(test_lean_vectors PRIVATE lightusd_next)
+    target_compile_definitions(test_lean_vectors PRIVATE
+        LIGHTUSD_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+    target_include_directories(test_lean_vectors PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
+
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crash_regressions.cc
@@ -808,6 +910,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_crate_limits.cc
     )
     target_link_libraries(test_crate_limits PRIVATE lightusd_next)
+    add_executable(test_spill_array
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_spill_array.cc
+    )
+    target_link_libraries(test_spill_array PRIVATE lightusd_next)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -827,6 +933,16 @@ if((LIGHTUSD_NEXT_BUILD_TOOLS OR LIGHTUSD_NEXT_BUILD_TESTS) AND NOT TARGET lusdc
     # symbol resolution.
     target_link_libraries(lusdcat PRIVATE
         ${LIGHTUSD_NEXT_ALLOCATOR_LIB} lightusd_next)
+    if(LIGHTUSD_NEXT_ALLOCATOR_LIB AND LIGHTUSD_NEXT_ALLOC_JEMALLOC AND
+       LIGHTUSD_NEXT_JEMALLOC_CONF)
+        # Compiled-in jemalloc options (see LIGHTUSD_NEXT_JEMALLOC_CONF).
+        target_sources(lusdcat PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/jemalloc-conf.cc)
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/jemalloc-conf.cc PROPERTIES
+            COMPILE_DEFINITIONS
+            "LIGHTUSD_NEXT_JEMALLOC_CONF=\"${LIGHTUSD_NEXT_JEMALLOC_CONF}\"")
+    endif()
     lightusd_next_harden(lusdcat)
     # Keep the CLI at the build root (`build_ninja/lusdcat`), matching the
     # legacy tool layout so scripts and AGENTS.md commands work unchanged.
@@ -907,6 +1023,21 @@ if(LIGHTUSD_NEXT_BUILD_FUZZERS)
         target_compile_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
         target_link_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
     endforeach()
+    # Vendored tptex (src/external/textools/ptex): self-contained C11, so the
+    # whole reader, sampler and filters carry coverage instrumentation.
+    set(_tptex_src ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    file(GLOB _tptex_fuzz_sources CONFIGURE_DEPENDS
+         ${_tptex_src}/external/textools/ptex/src/*.c)
+    add_executable(fuzz_tptex
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fuzzer/tptex_fuzzmain.c
+        ${_tptex_fuzz_sources}
+        ${_tptex_src}/external/miniz.c)
+    target_include_directories(fuzz_tptex PRIVATE ${_tptex_src})
+    target_compile_definitions(fuzz_tptex PRIVATE TPTEX_MINIZ_HEADER="external/miniz.h")
+    set_target_properties(fuzz_tptex PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    target_compile_options(fuzz_tptex PRIVATE ${NEXT_FUZZ_BIN_FLAGS} -ffp-contract=off)
+    target_link_options(fuzz_tptex PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
+    target_link_libraries(fuzz_tptex PRIVATE m)
 endif()
 
 # Tydra Next (render data conversion). Keep its target definition in its own
@@ -1187,6 +1318,7 @@ set_target_properties(lightusd_validation_c PROPERTIES EXPORT_NAME validation_c)
 set_target_properties(lightusd_validation PROPERTIES EXPORT_NAME validation)
 install(TARGETS lightusd_core_c lightusd_next lightusd_c lightusd_validation lightusd_validation_c EXPORT LightUSDTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ../core/host-services.hh ../core/native-io.hh DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/core)
 install(FILES c/lightusd-core-c.h c/storage.h c/value.h c/chunks.h c/descriptor.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/next/c)
 install(FILES ../c-api/lightusd-validation-c.h ../c-api/lightusd-validation-cpp.hh
@@ -1275,10 +1407,18 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     endif()
 
   if(LIGHTUSD_WITH_TYDRA)
-    add_executable(test_tydra_next
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
-    )
-    target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    add_executable(bench_scene_readback EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_scene_readback.cc)
+    target_link_libraries(bench_scene_readback PRIVATE tydra_next lightusd_next)
+
+    # Also defined by src/tydra/next under TYDRA_NEXT_BUILD_TESTS (processed
+    # earlier); reuse that target instead of failing with a duplicate.
+    if(NOT TARGET test_tydra_next)
+      add_executable(test_tydra_next
+          ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/tydra/next/test_tydra_next.cc
+      )
+      target_link_libraries(test_tydra_next PRIVATE tydra_next lightusd_next)
+    endif()
 
     add_executable(test_asset_import ../../tests/next/test_asset_import.cc)
     target_link_libraries(test_asset_import PRIVATE lightusd_render_c)
@@ -1334,6 +1474,9 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         target_compile_definitions(test_lightusd_cpp PRIVATE LIGHTUSD_TEST_RENDER_API=1)
     endif()
     add_test(NAME next_test_cpp_facade COMMAND test_lightusd_cpp)
+    add_executable(test_c_api_lazy_view ../../tests/next/test_c_api_lazy_view.cc)
+    target_link_libraries(test_c_api_lazy_view PRIVATE lightusd_c)
+    add_test(NAME next_test_c_api_lazy_view COMMAND test_c_api_lazy_view)
     if(LIGHTUSD_WITH_TYDRA)
         add_executable(test_lightusd_document_session
             ../../tests/c-api/test_lightusd_document_session.c)
@@ -1362,6 +1505,20 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         endif()
         add_test(NAME next_test_render_session_c
             COMMAND test_lightusd_render_session)
+        add_executable(test_lightusd_light_filter
+            ../../tests/c-api/test_lightusd_light_filter.c)
+        target_link_libraries(test_lightusd_light_filter PRIVATE
+            lightusd_render_c)
+        set_target_properties(test_lightusd_light_filter PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(NOT MSVC)
+            target_compile_options(test_lightusd_light_filter PRIVATE
+                -Wall -Wextra -Werror -pedantic)
+        endif()
+        add_test(NAME next_test_light_filter_c
+            COMMAND test_lightusd_light_filter)
+        set_tests_properties(next_test_light_filter_c PROPERTIES
+            LABELS "next;c-api;render")
         add_executable(test_lightusd_volume_c
             ../../tests/c-api/test_lightusd_volume_c.c)
         target_link_libraries(test_lightusd_volume_c PRIVATE
@@ -1419,15 +1576,20 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     else()
         target_link_libraries(test_lightusd_c PRIVATE lightusd_validation_c)
     endif()
-    # Sources stay pure C11, but link with the C++ driver: the C API library is
-    # C++, and under -fsanitize=undefined its vptr checks need the C++ UBSan
-    # runtime that only the C++ driver adds.
-    set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11
-                          LINKER_LANGUAGE CXX)
+    set_target_properties(test_lightusd_c PROPERTIES C_STANDARD 11)
+    if(SANITIZE_UNDEFINED AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Keep C11 compilation, but supply the C++ UBSan runtime needed by
+        # the instrumented shared library. Normal builds test C-only linking.
+        set_target_properties(test_lightusd_c PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
     if(NOT MSVC)
         target_compile_options(test_lightusd_c PRIVATE
             -Wall -Wextra -Werror -pedantic)
     endif()
+    add_executable(test_host_services_c ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/c-api/test_host_services_c.c)
+    set_target_properties(test_host_services_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO LINKER_LANGUAGE CXX)
+    target_link_libraries(test_host_services_c PRIVATE lightusd_c)
+    add_test(NAME next_test_host_services_c COMMAND test_host_services_c)
     add_test(NAME next_test_c_api COMMAND test_lightusd_c
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/instancing-001.usda
@@ -1497,6 +1659,8 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     add_test(NAME next_test_usdc_malformed COMMAND test_usdc_malformed
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crate_limits COMMAND test_crate_limits
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_spill_array COMMAND test_spill_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -1575,6 +1739,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         next_test_crash_regressions
         next_test_usdc_malformed
          next_test_crate_limits
+         next_test_spill_array
          next_test_load_rules
          next_test_path_expression_c_core
          next_test_layer_diff
@@ -1592,6 +1757,10 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME next_mujoco_compare_coverage
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_mujoco_compare_coverage.py)
+        set_tests_properties(next_mujoco_compare_coverage PROPERTIES LABELS "next;physics")
         add_test(NAME next_usdcat_options
             COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-usdcat-options.py
@@ -1620,7 +1789,14 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
                     --next-usdcat "$<TARGET_FILE:next_usdcat>"
                     --aousd-test "$<TARGET_FILE:test_aousd_conformance>"
                     --aousd-value-test "$<TARGET_FILE:test_aousd_value_resolution>"
-                    --max-composition-fail 0)
+                    --max-composition-fail 0
+                    # pcp.json structural gate (prim/property stacks, child and
+                    # property names via `lusdcat --dump-pcp-json`): every
+                    # divergence is ledgered in the allowlist; ratchet 0.
+                    --compare-pcp
+                    --pcp-allowlist
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/aousd-pcp-allowlist.txt
+                    --max-pcp-diff 0)
         set_tests_properties(next_aousd_supplemental
             PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
     endif()
@@ -1649,6 +1825,27 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(next_test_vr_edge_matrix
         PROPERTIES LABELS "next;aousd;pxrdiff")
+
+    add_test(NAME next_pcp_json_contract
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test-pcp-json.py
+                --lusdcat $<TARGET_FILE:lusdcat>)
+    set_tests_properties(next_pcp_json_contract PROPERTIES LABELS "next;aousd;lean;pcp")
+
+    add_test(NAME next_test_lean_vectors
+        COMMAND test_lean_vectors
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_lean_vectors
+        PROPERTIES LABELS "next;aousd;lean")
+    add_test(NAME next_test_lean_vectors_combine_chain
+        COMMAND test_lean_vectors --combine-chain
+                "${LIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT}/data_types/tests/combine_chain"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_lean_vectors_combine_chain
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd;lean")
+    # The Lean model, proofs, registry gates and Lean-vector replays against
+    # stock OpenUSD now live in the separate usdspec-conformance repository
+    # (generators there are the source of truth for tests/next/generated/lean;
+    # next_test_lean_vectors above consumes the pinned copy of those files).
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when
@@ -1682,7 +1879,9 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
             PROPERTIES LABELS "next;pxrdiff")
     endif()
     # Pinned OpenUSD oracle for the pxr differential gates below. Set
-    # LIGHTUSD_PXR_USDCAT to relocate it.
+    # LIGHTUSD_PXR_USDCAT to relocate it. The oracle must be >= v26.11: flatten
+    # now spells prototype arcs `append references` (OpenUSD 7c0651a52), which
+    # an older usdcat writes as `add references`.
     if(DEFINED ENV{LIGHTUSD_PXR_USDCAT})
         set(NEXT_PXR_USDCAT "$ENV{LIGHTUSD_PXR_USDCAT}")
     else()
@@ -1742,7 +1941,7 @@ if(LIGHTUSD_NEXT_BUILD_TESTS)
     endif()
 
     # next-vs-pxr flatten differential gate: next_usdcat -f vs the PINNED
-    # OpenUSD 26.05 usdcat --flatten, compared semantically. Ratchet is 0:
+    # OpenUSD (>= 26.11) usdcat --flatten, compared semantically. Ratchet is 0:
     # any divergence not recorded (with reason) in
     # tests/next/next-pxr-flatten-xfail.txt fails; entries that start
     # passing are reported as XPASS for pruning.

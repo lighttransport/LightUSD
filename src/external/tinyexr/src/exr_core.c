@@ -122,6 +122,8 @@ exr_result exr_block_uncompressed_size(const exr_channel *channels,
         *out_size = 0;
         return EXR_SUCCESS;
     }
+    if (!exr_valid_span(x, width) || !exr_valid_span(y, num_lines))
+        return EXR_ERROR_CORRUPT;
     for (line = 0; line < num_lines; ++line) {
         int32_t yy = y + line;
         for (c = 0; c < num_channels; ++c) {
@@ -132,7 +134,7 @@ exr_result exr_block_uncompressed_size(const exr_channel *channels,
             size_t row;
             if (xs <= 0 || ys <= 0) return EXR_ERROR_CORRUPT;
             if ((yy % ys) != 0) continue;
-            nx = exr_num_samples(x, x + width - 1, xs);
+            nx = exr_num_samples(x, (int64_t)x + width - 1, xs);
             if (nx < 0) nx = 0;
             if (exr_mul_ovf((size_t)nx, exr_pixel_size(ch->pixel_type), &row))
                 return EXR_ERROR_CORRUPT;
@@ -284,7 +286,7 @@ exr_result exr_header_validate(const exr_header *h, int enforce_short_names,
         return EXR_ERROR_CORRUPT;
     if (h->tiled &&
         (h->tile_x_size == 0 || h->tile_y_size == 0 ||
-         h->tile_x_size > INT32_MAX || h->tile_y_size > INT32_MAX ||
+         h->tile_x_size > EXR_MAX_DIMENSION || h->tile_y_size > EXR_MAX_DIMENSION ||
          h->level_mode < EXR_TILE_ONE_LEVEL ||
          h->level_mode > EXR_TILE_RIPMAP_LEVELS ||
          h->rounding_mode < EXR_TILE_ROUND_DOWN ||
@@ -296,6 +298,8 @@ exr_result exr_header_validate(const exr_header *h, int enforce_short_names,
         if (n == 0 || n >= EXR_MAX_NAME ||
             ch->pixel_type < EXR_PIXEL_UINT || ch->pixel_type > EXR_PIXEL_FLOAT ||
             ch->x_sampling <= 0 || ch->y_sampling <= 0 || ch->p_linear > 1)
+            return EXR_ERROR_CORRUPT;
+        if (h->tiled && (ch->x_sampling != 1 || ch->y_sampling != 1))
             return EXR_ERROR_CORRUPT;
         if (n > 31) requires_long = 1;
     }
@@ -322,6 +326,19 @@ exr_result exr_header_validate(const exr_header *h, int enforce_short_names,
     if (out_width) *out_width = (int32_t)w;
     if (out_height) *out_height = (int32_t)height;
     if (out_requires_long_names) *out_requires_long_names = requires_long;
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_crop(const exr_allocator *a, exr_header *h, exr_box2i crop) {
+    uint8_t bytes[16];
+    exr_result rc;
+    if (h->attrs) {
+        exr_wr_i32(bytes, crop.min_x); exr_wr_i32(bytes + 4, crop.min_y);
+        exr_wr_i32(bytes + 8, crop.max_x); exr_wr_i32(bytes + 12, crop.max_y);
+        rc = exr_header_set_attribute(a, h, "dataWindow", "box2i", bytes, sizeof(bytes));
+        if (rc != EXR_SUCCESS) return rc;
+    }
+    h->data_window = crop;
     return EXR_SUCCESS;
 }
 
@@ -432,9 +449,175 @@ exr_result exr_header_set_string_attribute(const exr_allocator *alloc,
                                     (uint32_t)n);
 }
 
+exr_result exr_header_set_int_attribute(const exr_allocator *alloc,
+                                        exr_header *hdr, const char *name,
+                                        int32_t value) {
+    if (!name || !hdr) return EXR_ERROR_INVALID_ARGUMENT;
+    return exr_header_set_attribute(alloc, hdr, name, "int", &value,
+                                    sizeof(value));
+}
+
+exr_result exr_header_set_float_attribute(const exr_allocator *alloc,
+                                          exr_header *hdr, const char *name,
+                                          float value) {
+    if (!name || !hdr) return EXR_ERROR_INVALID_ARGUMENT;
+    return exr_header_set_attribute(alloc, hdr, name, "float", &value,
+                                    sizeof(value));
+}
+
+exr_result exr_header_get_int_attribute(const exr_header *hdr,
+                                        const char *name, int32_t *out) {
+    exr_attribute a;
+    if (!hdr || !name || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    if (!EXR_OK(exr_header_find_attribute(hdr, name, &a))) return EXR_ERROR_INVALID_ARGUMENT;
+    if (strcmp(a.type_name, "int") != 0 || a.size != sizeof(int32_t))
+        return EXR_ERROR_INVALID_ARGUMENT;
+    memcpy(out, a.data, sizeof(int32_t));
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_get_float_attribute(const exr_header *hdr,
+                                          const char *name, float *out) {
+    exr_attribute a;
+    if (!hdr || !name || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    if (!EXR_OK(exr_header_find_attribute(hdr, name, &a))) return EXR_ERROR_INVALID_ARGUMENT;
+    if (strcmp(a.type_name, "float") != 0 || a.size != sizeof(float))
+        return EXR_ERROR_INVALID_ARGUMENT;
+    memcpy(out, a.data, sizeof(float));
+    return EXR_SUCCESS;
+}
+
+exr_result exr_header_set_preview_image(const exr_allocator *alloc,
+                                        exr_header *hdr,
+                                        const exr_preview_image *preview) {
+    const exr_allocator *a = alloc ? alloc : exr_default_allocator();
+    uint8_t *buf;
+    size_t wh, total, pixel_bytes;
+    if (!hdr || !preview) return EXR_ERROR_INVALID_ARGUMENT;
+    if (preview->width == 0 || preview->height == 0 || !preview->pixels)
+        return EXR_ERROR_INVALID_ARGUMENT;
+    if ((uint64_t)preview->width * (uint64_t)preview->height > (1u << 24))
+        return EXR_ERROR_INVALID_ARGUMENT;
+    wh = (size_t)preview->width * (size_t)preview->height;
+    pixel_bytes = wh * 4u;
+    if (wh > (SIZE_MAX - 8) / 4u) return EXR_ERROR_INVALID_ARGUMENT;
+    total = 8u + pixel_bytes;
+    buf = (uint8_t *)exr_malloc(a, total);
+    if (!buf) return EXR_ERROR_OUT_OF_MEMORY;
+    /* XDR: little? OpenEXR writes high-byte-first for integers. */
+    exr_wr_u32(buf, preview->width);
+    exr_wr_u32(buf + 4, preview->height);
+    memcpy(buf + 8, preview->pixels, pixel_bytes);
+    exr_result rc = exr_header_set_attribute(alloc, hdr, "preview", "preview",
+                                            buf, (uint32_t)total);
+    exr_free(a, buf);
+    return rc;
+}
+
+exr_result exr_header_get_preview_image(const exr_header *hdr,
+                                        exr_preview_image *out) {
+    exr_attribute a;
+    uint32_t w, h;
+    size_t needed;
+    if (!hdr || !out) return EXR_ERROR_INVALID_ARGUMENT;
+    if (!EXR_OK(exr_header_find_attribute(hdr, "preview", &a))) return EXR_ERROR_INVALID_ARGUMENT;
+    if (strcmp(a.type_name, "preview") != 0 || a.size < 8u)
+        return EXR_ERROR_INVALID_ARGUMENT;
+    w = exr_rd_u32(a.data);
+    h = exr_rd_u32((const uint8_t *)a.data + 4);
+    if (w == 0 || h == 0 || (uint64_t)w * h > (1u << 24))
+        return EXR_ERROR_CORRUPT;
+    needed = 8u + (size_t)w * h * 4u;
+    if ((size_t)a.size != needed) return EXR_ERROR_CORRUPT;
+    memset(out, 0, sizeof(*out));
+    out->width = w;
+    out->height = h;
+    out->pixels = (const uint8_t *)a.data + 8;
+    return EXR_SUCCESS;
+}
+
 /* ============================================================================
  * Image lifetime
  * ========================================================================== */
+
+/* Checked byte size of channel c over a rect: raw plane bytes and the padded
+ * slot it occupies in a shared block (at least 1 byte, rounded up to 8). */
+static exr_result flat_plane_bytes(const exr_header *h, int32_t c, int32_t x0,
+                                   int32_t y0, int32_t width, int32_t height,
+                                   size_t *bytes, size_t *slot) {
+    int nx = exr_num_samples(x0, (int64_t)x0 + width - 1,
+                             h->channels[c].x_sampling);
+    int ny = exr_num_samples(y0, (int64_t)y0 + height - 1,
+                             h->channels[c].y_sampling);
+    size_t samples, b, s;
+    if (nx < 0 || ny < 0 ||
+        exr_mul_ovf((size_t)nx, (size_t)ny, &samples) ||
+        exr_mul_ovf(samples, exr_pixel_size(h->channels[c].pixel_type), &b) ||
+        exr_add_ovf(b ? b : 1u, 7u, &s))
+        return EXR_ERROR_CORRUPT;
+    *bytes = b;
+    *slot = s & ~(size_t)7u;
+    return EXR_SUCCESS;
+}
+
+exr_result exr_flat_planes_size(const exr_header *h, int32_t x0, int32_t y0,
+                                int32_t width, int32_t height, size_t *out) {
+    size_t total, bytes, slot;
+    int32_t c;
+    exr_result rc;
+    if (!h || !out || width <= 0 || height <= 0 || h->num_channels <= 0 ||
+        !h->channels)
+        return EXR_ERROR_CORRUPT;
+    if (exr_mul_ovf((size_t)h->num_channels, sizeof(void *), &total))
+        return EXR_ERROR_CORRUPT;
+    for (c = 0; c < h->num_channels; ++c) {
+        rc = flat_plane_bytes(h, c, x0, y0, width, height, &bytes, &slot);
+        if (rc != EXR_SUCCESS) return rc;
+        if (exr_add_ovf(total, slot, &total)) return EXR_ERROR_CORRUPT;
+    }
+    *out = total;
+    return EXR_SUCCESS;
+}
+
+/* Allocate every flat channel plane of a rect.
+ *
+ * Modest images carve images[c] out of one zeroed images_block, which
+ * exr_part_free releases once: allocation count stays independent of the
+ * channel count and the allocator recycles one chunk across repeated loads.
+ * Images above EXR_FLAT_PLANES_BLOCK_MAX keep per-channel planes so a load
+ * never forces a single huge mapping. Every size is recomputed with checked
+ * arithmetic, and block slots are bounds-checked against the block. */
+exr_result exr_flat_planes_alloc(const exr_allocator *a, const exr_header *h,
+                                 int32_t x0, int32_t y0, int32_t width,
+                                 int32_t height, exr_part *out) {
+    size_t total, planes, off = 0, bytes, slot;
+    int32_t c;
+    exr_result rc;
+    if (!a) a = exr_default_allocator();
+    if (!out || out->images || out->images_block) return EXR_ERROR_INVALID_ARGUMENT;
+    rc = exr_flat_planes_size(h, x0, y0, width, height, &total);
+    if (rc != EXR_SUCCESS) return rc;
+    planes = total - (size_t)h->num_channels * sizeof(void *);
+    out->images = (void **)exr_calloc(a, (size_t)h->num_channels, sizeof(void *));
+    if (!out->images) return EXR_ERROR_OUT_OF_MEMORY;
+    if (planes <= EXR_FLAT_PLANES_BLOCK_MAX) {
+        out->images_block = exr_calloc(a, planes, 1);
+        if (!out->images_block) return EXR_ERROR_OUT_OF_MEMORY;
+    }
+    for (c = 0; c < h->num_channels; ++c) {
+        rc = flat_plane_bytes(h, c, x0, y0, width, height, &bytes, &slot);
+        if (rc != EXR_SUCCESS) return rc;
+        if (out->images_block) {
+            if (slot > planes - off) return EXR_ERROR_CORRUPT;
+            out->images[c] = (uint8_t *)out->images_block + off;
+            off += slot;
+        } else {
+            out->images[c] = exr_calloc(a, bytes ? bytes : 1, 1);
+            if (!out->images[c]) return EXR_ERROR_OUT_OF_MEMORY;
+        }
+    }
+    return EXR_SUCCESS;
+}
 
 void exr_part_free(const exr_allocator *a, exr_part *p) {
     int32_t c, nch;
@@ -442,7 +625,11 @@ void exr_part_free(const exr_allocator *a, exr_part *p) {
     if (!a) a = exr_default_allocator();
     nch = p->header.num_channels;
     if (p->images) {
-        for (c = 0; c < nch; ++c) exr_free(a, p->images[c]);
+        if (p->images_block) {
+            exr_free(a, p->images_block);
+        } else {
+            for (c = 0; c < nch; ++c) exr_free(a, p->images[c]);
+        }
         exr_free(a, p->images);
     }
     if (p->deep_images) {
@@ -476,7 +663,7 @@ int exr_is_exr_memory(const void *data, size_t size) {
     return exr_rd_u32((const uint8_t *)data) == EXR_MAGIC;
 }
 
-static exr_result load_all_parts(exr_reader *r, const exr_allocator *a,
+exr_result exr_load_reader(exr_reader *r, const exr_allocator *a,
                                  exr_image *out) {
     int32_t np, i;
     exr_result rc;
@@ -493,25 +680,14 @@ static exr_result load_all_parts(exr_reader *r, const exr_allocator *a,
         const exr_int_part *p = &r->parts[i];
         const exr_header *h = &p->header;
         size_t add = 0, ptr_bytes;
-        int c;
         if (exr_mul_ovf((size_t)h->num_channels, sizeof(void *), &ptr_bytes))
             return EXR_ERROR_CORRUPT;
         add = ptr_bytes;
         if (h->part_type == EXR_PART_SCANLINE || h->part_type == EXR_PART_TILED) {
-            for (c = 0; c < h->num_channels; ++c) {
-                int nx = exr_num_samples(h->data_window.min_x,
-                                         h->data_window.max_x,
-                                         h->channels[c].x_sampling);
-                int ny = exr_num_samples(h->data_window.min_y,
-                                         h->data_window.max_y,
-                                         h->channels[c].y_sampling);
-                size_t samples, bytes;
-                if (nx < 0 || ny < 0 ||
-                    exr_mul_ovf((size_t)nx, (size_t)ny, &samples) ||
-                    exr_mul_ovf(samples, exr_pixel_size(h->channels[c].pixel_type),
-                                &bytes) || exr_add_ovf(add, bytes, &add))
-                    return EXR_ERROR_CORRUPT;
-            }
+            rc = exr_flat_planes_size(h, h->data_window.min_x,
+                                      h->data_window.min_y, p->width,
+                                      p->height, &add);
+            if (rc != EXR_SUCCESS) return rc;
         } else {
             size_t npix, count_bytes;
             if (exr_mul_ovf((size_t)p->width, (size_t)p->height, &npix) ||
@@ -561,21 +737,12 @@ static exr_result load_all_parts(exr_reader *r, const exr_allocator *a,
                     return EXR_ERROR_CORRUPT;
             }
         } else {
-            for (c = 0; c < out->parts[i].header.num_channels; ++c) {
-                const exr_channel *ch = &out->parts[i].header.channels[c];
-                int nx = exr_num_samples(out->parts[i].header.data_window.min_x,
-                                         out->parts[i].header.data_window.max_x,
-                                         ch->x_sampling);
-                int ny = exr_num_samples(out->parts[i].header.data_window.min_y,
-                                         out->parts[i].header.data_window.max_y,
-                                         ch->y_sampling);
-                size_t samples, bytes;
-                if (nx < 0 || ny < 0 ||
-                    exr_mul_ovf((size_t)nx, (size_t)ny, &samples) ||
-                    exr_mul_ovf(samples, exr_pixel_size(ch->pixel_type), &bytes) ||
-                    exr_add_ovf(owned, bytes, &owned))
-                    return EXR_ERROR_CORRUPT;
-            }
+            const exr_header *oh = &out->parts[i].header;
+            rc = exr_flat_planes_size(oh, oh->data_window.min_x,
+                                      oh->data_window.min_y,
+                                      out->parts[i].width,
+                                      out->parts[i].height, &owned);
+            if (rc != EXR_SUCCESS) return rc;
         }
         if (exr_add_ovf(materialized, owned, &materialized))
             return EXR_ERROR_CORRUPT;
@@ -597,7 +764,7 @@ exr_result exr_load_from_memory_ctx(exr_context *context, const void *data,
     rc = exr_reader_open_memory_ctx(context, data, size, alloc, &r);
     if (!EXR_OK(rc)) return rc;
 
-    rc = load_all_parts(r, alloc, out);
+    rc = exr_load_reader(r, alloc, out);
     if (!EXR_OK(rc)) exr_image_free(out);
     exr_reader_close(r);
     return rc;

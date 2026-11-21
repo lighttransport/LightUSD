@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "assets_root": "/mnt/nvme02/data",
+  "size": [
+    640,
+    480
+  ],
+  "backend": "vkr",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "uniform",
+    "count": 3
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal",
+    "baseColor",
+    "roughness",
+    "metallic"
+  ],
+  "thresholds": {
+    "coverage_iou_min": 0.99,
+    "depth_relative_p95_max": 0.01,
+    "normal_p95_degrees_max": 5,
+    "color_mae_max": 0.05,
+    "color_ssim_min": 0.95
+  },
+  "scenes": [
+    {
+      "path": "alab/usd/_merged_ALab/entry.usda",
+      "camera_path": "/root/camera01/GEO/renderCam_hrc/renderCam_buffer/renderCam_srt/renderCam"
+    },
+    {
+      "path": "alab/usd/_merged_ALab/entry.usda",
+      "isolate": [
+        "/root/remi"
+      ],
+      "time_sampling": {
+        "mode": "uniform",
+        "count": 3
+      }
+    }
+  ]
+}

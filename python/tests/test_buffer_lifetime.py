@@ -8,7 +8,7 @@ from lightusd import tydra
 
 
 def test_typed_buffer_survives_mutation_and_close():
-    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { float3[] a = [(1,2,3),(4,5,6)] }')
+    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { float3[] a = [(1,2,3),(4,5,6)]\n}')
     prim = stage.prim_at("/P")
     array = prim["a"]
     view = memoryview(array)
@@ -27,7 +27,7 @@ def test_typed_buffer_survives_mutation_and_close():
 
 def test_numpy_buffer_survives_owner_release():
     np = pytest.importorskip("numpy")
-    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { int[] a = [1,2,3] }')
+    stage = lightusd.loads('#usda 1.0\ndef Xform "P" { int[] a = [1,2,3]\n}')
     source = stage.prim_at("/P")["a"]
     a = np.asarray(source)
     b = np.asarray(source)
@@ -53,10 +53,30 @@ def test_strided_and_big_endian_ingestion():
 
 
 def test_render_buffer_retains_catalog():
-    stage = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2] }')
+    stage = lightusd.loads('#usda 1.0\ndef Mesh "M" { point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n int[] faceVertexCounts = [3]\n int[] faceVertexIndices = [0,1,2]\n}')
     scene = tydra.to_render_scene(stage)
     view = memoryview(scene.meshes[0].points)
     stage.close()
     del scene, stage
     gc.collect()
     assert view.shape == (3, 3) and view.tolist()[1] == [1, 0, 0]
+
+
+@pytest.mark.parametrize('policy', ['untrusted', 'trusted'])
+def test_lazy_crate_array_pin_survives_edit_close_and_unlink(tmp_path, policy):
+    path=tmp_path/'source.usdc'
+    with lightusd.Stage.create() as source:
+        prim=source.define_prim('/M','Mesh')
+        prim.set('points',[(float(i),float(i+1),float(i+2)) for i in range(2048)],type='point3f[]')
+        source.save(str(path))
+    stage=lightusd.load(path,composed=False,input_policy=policy)
+    prim=stage.prim_at('/M')
+    array=prim.attribute('points').resolve(time=0)
+    view=memoryview(array)
+    assert view.shape == (2048,3) and view.format == 'f' and view.readonly
+    prim.set('points',[(0,0,0)],type='point3f[]')
+    stage.close()
+    del array,prim,stage
+    path.unlink()
+    gc.collect()
+    assert view[0,0] == 0 and view[2047,2] == 2049

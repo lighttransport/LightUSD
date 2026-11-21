@@ -3,9 +3,10 @@
 //
 // LightUSD Next - PrimSpec Implementation
 
+#include "int64-listop.hh"
 #include "prim-spec.hh"
 #include "../prim/identifier.hh"
-#include "../../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include <algorithm>
 #include <cstring>
 #include <list>
@@ -17,6 +18,8 @@ namespace lightusd {
 namespace next {
 
 struct PrimSpec::ColdData {
+  std::vector<PropNameId> authored_property_names;
+  bool property_names_preserved = false;
 
     std::unordered_map<std::string, ArcListOp> rel_edits;
     std::unordered_map<std::string, std::vector<RelationshipOpinion>>
@@ -32,12 +35,141 @@ struct PrimSpec::ColdData {
     std::unordered_map<uint32_t, ArrayEditData> array_edits;
   std::unordered_map<std::string, std::vector<Path>> relationships;
   std::unordered_map<uint32_t, std::vector<Path>> connections;
+  // Fallback for declared property type names. The common case lives on
+  // PropSlot::type_name_id; this map only holds names recorded before the
+  // property's slot existed (adopted onto the slot when it is added) or past
+  // the TypeNameTable capacity.
   std::unordered_map<uint32_t, std::string> prop_type_names;
-  std::unordered_map<uint32_t, std::unique_ptr<PropMeta>> prop_metas;
-  ColdData() = default;
-  ColdData(const ColdData& other) : rel_edits(other.rel_edits), rel_opinion_stacks(other.rel_opinion_stacks), rel_flags(other.rel_flags), connection_edits(other.connection_edits), connection_opinion_stacks(other.connection_opinion_stacks), spline_sources(other.spline_sources), raw_default_sources(other.raw_default_sources), array_edits(other.array_edits), relationships(other.relationships), connections(other.connections), prop_type_names(other.prop_type_names) {
-    for (const auto& kv : other.prop_metas)
-      if (kv.second) prop_metas[kv.first] = std::make_unique<PropMeta>(*kv.second);
+};
+
+namespace {
+
+// Property metadata that holds only interpolation / elementSize -- 5M of the
+// 5M composed property metadata on full-LOD benchmark scene, at 688 bytes each -- is
+// interned: one immutable PropMeta per distinct value, shared by every
+// property that carries it. A shared entry is copied on any mutable access, so
+// callers see an ordinary PropMeta either way.
+bool IsPlainPropMeta(const PropMeta& m) {
+  constexpr uint32_t kPlain = PropMeta::kInterpolation | PropMeta::kElementSize;
+  return (m.authored & ~kPlain) == 0 && m.colorSpace.empty() &&
+         m.renderType.empty() && m.connectability.empty() &&
+         m.outputName.empty() && m.bindMaterialAs.empty() && m.kind.empty() &&
+         m.displayName.empty() && m.displayGroup.empty() && m.doc.empty() &&
+         m.comment.empty() && m.permission.empty() &&
+         m.unauthoredValuesIndex == -1 && m.weight == 0.0 && !m.hidden &&
+         m.allowedTokens.empty() && m.customData.is_empty() &&
+         m.assetInfo.is_empty() && m.sdrMetadata.is_empty() &&
+         m.unknownMeta.empty() && m.unknownFields.empty() &&
+         m.relDefault.empty();
+}
+
+// The pool is never freed (shared entries may outlive any owner) and only
+// grows by the number of distinct (authored, interpolation, elementSize).
+const PropMeta* InternPlainPropMeta(const PropMeta& m) {
+  struct Pool {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::mutex mu;
+#endif
+    std::vector<const PropMeta*> metas;
+  };
+  static Pool* pool = new Pool();
+  const auto same = [&m](const PropMeta* p) {
+    return p->authored == m.authored && p->elementSize == m.elementSize &&
+           p->interpolation == m.interpolation;
+  };
+  // Lock-free fast path: a thread's recent hits.
+  static thread_local std::vector<const PropMeta*> recent;
+  for (const PropMeta* p : recent)
+    if (same(p)) return p;
+  const PropMeta* found = nullptr;
+  {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(pool->mu);
+#endif
+    for (const PropMeta* p : pool->metas)
+      if (same(p)) { found = p; break; }
+    if (!found) {
+      PropMeta* fresh = new PropMeta();
+      fresh->authored = m.authored;
+      fresh->elementSize = m.elementSize;
+      fresh->interpolation = m.interpolation;
+      pool->metas.push_back(fresh);
+      found = fresh;
+    }
+  }
+  if (recent.size() < 16) recent.push_back(found);
+  return found;
+}
+
+struct PropMetaEntry {
+  uint32_t id = 0;
+  bool shared = false;
+  PropMeta* meta = nullptr;  // owned unless `shared`
+
+  PropMetaEntry() = default;
+  PropMetaEntry(uint32_t i, PropMeta* m, bool s) : id(i), shared(s), meta(m) {}
+  PropMetaEntry(const PropMetaEntry& o)
+      : id(o.id), shared(o.shared),
+        meta(o.shared || !o.meta ? o.meta : new PropMeta(*o.meta)) {}
+  PropMetaEntry(PropMetaEntry&& o) noexcept
+      : id(o.id), shared(o.shared), meta(o.meta) {
+    o.meta = nullptr;
+  }
+  PropMetaEntry& operator=(PropMetaEntry&& o) noexcept {
+    if (this != &o) {
+      reset();
+      id = o.id;
+      shared = o.shared;
+      meta = o.meta;
+      o.meta = nullptr;
+    }
+    return *this;
+  }
+  PropMetaEntry& operator=(const PropMetaEntry&) = delete;
+  ~PropMetaEntry() { reset(); }
+  void reset() {
+    if (!shared) delete meta;
+    meta = nullptr;
+  }
+};
+
+}  // namespace
+
+struct PrimSpec::PropMetaTable {
+  std::vector<PropMetaEntry> entries;  // sorted by id
+
+  std::vector<PropMetaEntry>::iterator lower(uint32_t id) {
+    return std::lower_bound(entries.begin(), entries.end(), id,
+                            [](const PropMetaEntry& e, uint32_t k) { return e.id < k; });
+  }
+  const PropMetaEntry* find(uint32_t id) const {
+    auto it = std::lower_bound(entries.begin(), entries.end(), id,
+                               [](const PropMetaEntry& e, uint32_t k) { return e.id < k; });
+    return it != entries.end() && it->id == id ? &*it : nullptr;
+  }
+  // The entry for `id`, owned (a shared one is copied first).
+  PropMeta& ensure_owned(uint32_t id) {
+    auto it = lower(id);
+    if (it == entries.end() || it->id != id)
+      it = entries.insert(it, PropMetaEntry(id, new PropMeta(), false));
+    if (it->shared) {
+      it->meta = new PropMeta(*it->meta);
+      it->shared = false;
+    }
+    return *it->meta;
+  }
+  void erase(uint32_t id) {
+    auto it = lower(id);
+    if (it != entries.end() && it->id == id) entries.erase(it);
+  }
+  void share_plain() {
+    for (PropMetaEntry& e : entries) {
+      if (e.shared || !e.meta || !IsPlainPropMeta(*e.meta)) continue;
+      const PropMeta* interned = InternPlainPropMeta(*e.meta);
+      e.reset();
+      e.meta = const_cast<PropMeta*>(interned);
+      e.shared = true;
+    }
   }
 };
 
@@ -60,6 +192,7 @@ PrimSpec PrimSpec::Clone() const {
   c.type_id_ = type_id_;
   c.specifier_ = specifier_;
   c.path_ = path_;
+  c.asset_anchor_id_ = asset_anchor_id_;
 
   // Deep copy properties (slots carry value-storage indices + flags).
   c.props_ = props_;
@@ -91,6 +224,7 @@ PrimSpec PrimSpec::Clone() const {
   }
 
   if (cold_data_) c.cold_data_ = std::make_unique<ColdData>(*cold_data_);
+  if (prop_metas_) c.prop_metas_ = std::make_unique<PropMetaTable>(*prop_metas_);
 
   // Deep copy children
   c.child_indices_ = child_indices_;
@@ -129,6 +263,51 @@ const Value* PrimSpec::property_value(const std::string& name) const {
   return values_->get(slot->value_offset);
 }
 
+void PrimSpec::preserve_property_names() {
+  ColdData& data = cold();
+  if (data.property_names_preserved) return;
+  data.property_names_preserved = true;
+  auto& names = data.authored_property_names;
+  names.reserve(props_.size());
+  for (const auto& slot : props_.slots()) names.push_back(slot.name_id);
+}
+
+void PrimSpec::record_property_name(PropNameId name_id) {
+  if (!cold_data_ || !cold_data_->property_names_preserved) return;
+  auto& names = cold_data_->authored_property_names;
+  if (std::find(names.begin(), names.end(), name_id) == names.end())
+    names.push_back(name_id);
+}
+
+void PrimSpec::forget_property_name(PropNameId name_id) {
+  if (!cold_data_) return;
+  auto& names = cold_data_->authored_property_names;
+  names.erase(std::remove(names.begin(), names.end(), name_id), names.end());
+}
+
+std::vector<std::string> PrimSpec::authored_property_names() const {
+  std::vector<std::string> names;
+  const auto& table = GetPropNameTable();
+  if (cold_data_ && cold_data_->property_names_preserved) {
+    for (auto id : cold_data_->authored_property_names) names.emplace_back(table.get(id));
+  } else {
+    for (const auto& slot : props_.slots()) names.emplace_back(table.get(slot.name_id));
+  }
+  return names;
+}
+
+void PrimSpec::set_authored_property_names(const std::vector<std::string>& names) {
+  ColdData& data = cold();
+  data.property_names_preserved = true;
+  auto& order = data.authored_property_names;
+  order.clear();
+  for (const auto& name : names) {
+    if (!IsValidNamespacedIdentifier(name)) continue;
+    const auto id = GetPropNameTable().intern(name);
+    if (std::find(order.begin(), order.end(), id) == order.end()) order.push_back(id);
+  }
+}
+
 void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags) {
   // Authoring boundary: a property name must be a valid (possibly namespaced)
   // identifier. The parser only ever produces such names, so guarding here keeps
@@ -140,8 +319,13 @@ void PrimSpec::add_property(const std::string& name, Value value, uint16_t flags
 }
 
 void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
-  // Store value
-  if (!values_) values_ = std::make_unique<ValueBlockStorage>();
+  // Store value. Size the value block like the property index (a reserved
+  // index knows how many properties are coming): growing a vector of 64-byte
+  // Values by doubling left ~20% slack across a 50M-property composed stage.
+  if (!values_) {
+    values_ = std::make_unique<ValueBlockStorage>();
+    values_->reserve(props_.capacity());
+  }
   uint32_t offset = values_->store(std::move(value));
 
   // Get type from stored value
@@ -159,6 +343,8 @@ void PrimSpec::add_property(PropNameId name_id, Value value, uint16_t flags) {
     slot.flags |= PropSlot::kFlagArray;
   }
 
+  adopt_pending_type_name(slot);
+  record_property_name(name_id);
   props_.add(slot);
 }
 
@@ -168,7 +354,19 @@ void PrimSpec::add_property_slot(PropNameId name_id, TypeId type_id, uint16_t fl
   slot.value_offset = UINT32_MAX;  // No default value
   slot.value_type = static_cast<uint16_t>(type_id);
   slot.flags = flags;
+  adopt_pending_type_name(slot);
+  record_property_name(name_id);
   props_.add(slot);
+}
+
+void PrimSpec::adopt_pending_type_name(PropSlot& slot) {
+  if (!cold_data_ || cold_data_->prop_type_names.empty()) return;
+  auto it = cold_data_->prop_type_names.find(slot.name_id.id);
+  if (it == cold_data_->prop_type_names.end()) return;
+  const TypeNameId tid = GetTypeNameTable().intern(it->second);
+  if (!tid.is_valid()) return;  // table full: keep the string fallback
+  slot.type_name_id = tid.id;
+  cold_data_->prop_type_names.erase(it);
 }
 
 bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
@@ -262,9 +460,10 @@ bool PrimSpec::remove_property(PropNameId name_id) {
     cold_data_->connection_edits.erase(name_id.id);
     cold_data_->connection_opinion_stacks.erase(name_id.id);
     cold_data_->prop_type_names.erase(name_id.id);
-    cold_data_->prop_metas.erase(name_id.id);
   }
+  if (prop_metas_) prop_metas_->erase(name_id.id);
   if (time_samples_ && time_samples_->remove(name_id)) removed = true;
+  if (removed) forget_property_name(name_id);
   return removed;
 }
 
@@ -322,7 +521,29 @@ void PrimSpec::reserve_properties(size_t count) {
 }
 
 void PrimSpec::finalize_properties() {
+  // Keep the hot lookup slots sorted without rewriting raw spec child order.
+  // Canonical attribute-only prims without cold data need no extra allocation.
+  const auto& table = GetPropNameTable();
+  if (!props_.is_sorted() && !std::is_sorted(props_.slots().begin(),
+      props_.slots().end(), [&](const PropSlot& a, const PropSlot& b) {
+        return table.get(a.name_id) < table.get(b.name_id);
+      })) preserve_property_names();
   props_.sort();
+  share_property_metas();
+}
+
+void PrimSpec::share_property_metas() {
+  if (prop_metas_) prop_metas_->share_plain();
+}
+
+void PrimSpec::release_to_skeleton() {
+  type_id_ = TypeNameId();
+  props_ = PropIndex();
+  values_.reset();
+  time_samples_.reset();
+  cold_data_.reset();
+  prop_metas_.reset();
+  meta_ = PrimMetadata();
 }
 
 void PrimSpec::release_value_payloads() {
@@ -398,8 +619,11 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
 
 void PrimSpec::set_spline_source(const std::string& prop_name,
                                  std::string source) {
-  ensure_cold_data().spline_sources[GetPropNameTable().intern(prop_name).id] =
-      std::move(source);
+  set_spline_source(GetPropNameTable().intern(prop_name), std::move(source));
+}
+
+void PrimSpec::set_spline_source(PropNameId name_id, std::string source) {
+  ensure_cold_data().spline_sources[name_id.id] = std::move(source);
 }
 
 const std::string* PrimSpec::spline_source(PropNameId name_id) const {
@@ -415,9 +639,12 @@ const std::string* PrimSpec::spline_source(
 
 void PrimSpec::set_raw_default_source(const std::string& prop_name,
                                       std::string source) {
-  ensure_cold_data().raw_default_sources[
-      GetPropNameTable().intern(prop_name).id] =
-      std::move(source);
+  set_raw_default_source(GetPropNameTable().intern(prop_name),
+                         std::move(source));
+}
+
+void PrimSpec::set_raw_default_source(PropNameId name_id, std::string source) {
+  ensure_cold_data().raw_default_sources[name_id.id] = std::move(source);
 }
 
 void PrimSpec::clear_raw_default_source(PropNameId name_id) {
@@ -426,8 +653,11 @@ void PrimSpec::clear_raw_default_source(PropNameId name_id) {
 
 void PrimSpec::set_array_edit(const std::string& prop_name,
                               ArrayEditData edit) {
-  ensure_cold_data().array_edits[GetPropNameTable().intern(prop_name).id] =
-      std::move(edit);
+  set_array_edit(GetPropNameTable().intern(prop_name), std::move(edit));
+}
+
+void PrimSpec::set_array_edit(PropNameId name_id, ArrayEditData edit) {
+  ensure_cold_data().array_edits[name_id.id] = std::move(edit);
 }
 
 const ArrayEditData* PrimSpec::array_edit(PropNameId name_id) const {
@@ -464,10 +694,14 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   // Authoring boundary (see add_property): keep relationship names valid
   // identifiers so API scenes stay round-trippable.
   if (!IsValidNamespacedIdentifier(name)) return;
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   cold().relationships[name].push_back(target);
 }
 
 ArcListOp& PrimSpec::ensure_relationship_edit(const std::string& name) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   return ensure_cold_data().rel_edits[name];
 }
 
@@ -480,6 +714,8 @@ PrimSpec::relationship_opinion_stack(const std::string& name) const {
 
 void PrimSpec::set_relationship_opinion_stack(
     const std::string& name, std::vector<RelationshipOpinion> opinions) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   ensure_cold_data().rel_opinion_stacks[name] = std::move(opinions);
 }
 
@@ -497,6 +733,8 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
                                           const std::vector<Path>& targets,
                                           RelationshipListOp op) {
   if (targets.empty()) return;
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   std::vector<Path>& dst = cold().relationships[name];
 
   switch (op) {
@@ -541,14 +779,17 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
 
 void PrimSpec::set_relationship_targets(const std::string& name,
                                         std::vector<Path> targets) {
+  preserve_property_names();
+  record_property_name(GetPropNameTable().intern(name));
   cold().relationships[name] = std::move(targets);
 }
 
 bool PrimSpec::remove_relationship(const std::string& name) {
   bool removed = cold().relationships.erase(name) > 0;
   if (cold_data_) {
-    cold_data_->rel_opinion_stacks.erase(name);
-    cold_data_->rel_edits.erase(name);
+    removed = cold_data_->rel_opinion_stacks.erase(name) > 0 || removed;
+    removed = cold_data_->rel_edits.erase(name) > 0 || removed;
+    cold_data_->rel_flags.erase(name);
   }
   PropNameId id = GetPropNameTable().find(name);
   if (id.is_valid()) {
@@ -558,6 +799,7 @@ bool PrimSpec::remove_relationship(const std::string& name) {
       removed = true;
     }
   }
+  if (removed) forget_property_name(id);
   return removed;
 }
 
@@ -565,6 +807,19 @@ const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   auto it = cold().relationships.find(name);
   if (it == cold().relationships.end()) return nullptr;
   return &it->second;
+}
+
+bool PrimSpec::has_relationship_data() const {
+  return cold_data_ && (!cold_data_->relationships.empty() ||
+                        !cold_data_->rel_edits.empty() ||
+                        !cold_data_->rel_opinion_stacks.empty());
+}
+
+size_t PrimSpec::extra_property_spec_bound() const {
+  size_t n = time_samples_ ? time_samples_->property_count() : 0;
+  if (has_relationship_data())
+    n += cold().relationships.size() + relationship_edits().size();
+  return n;
 }
 
 std::vector<std::string> PrimSpec::relationship_names() const {
@@ -603,20 +858,31 @@ void PrimSpec::set_connection_block(const std::string& prop_name) {
 
 const ArcListOp* PrimSpec::connection_edit(const std::string& prop_name) const {
   if (!cold_data_) return nullptr;
-  const PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
+  return connection_edit(GetPropNameTable().find(prop_name));
+}
+
+const ArcListOp* PrimSpec::connection_edit(PropNameId id) const {
+  if (!id.is_valid() || !cold_data_) return nullptr;
   auto it = cold_data_->connection_edits.find(id.id);
   return it == cold_data_->connection_edits.end() ? nullptr : &it->second;
 }
 
 ArcListOp& PrimSpec::ensure_connection_edit(const std::string& prop_name) {
-  return ensure_cold_data()
-      .connection_edits[GetPropNameTable().intern(prop_name).id];
+  return ensure_connection_edit(GetPropNameTable().intern(prop_name));
+}
+
+ArcListOp& PrimSpec::ensure_connection_edit(PropNameId name_id) {
+  return ensure_cold_data().connection_edits[name_id.id];
 }
 
 const std::vector<PrimSpec::RelationshipOpinion>*
 PrimSpec::connection_opinion_stack(const std::string& prop_name) const {
-  const PropNameId id = GetPropNameTable().find(prop_name);
+  if (!cold_data_) return nullptr;
+  return connection_opinion_stack(GetPropNameTable().find(prop_name));
+}
+
+const std::vector<PrimSpec::RelationshipOpinion>*
+PrimSpec::connection_opinion_stack(PropNameId id) const {
   if (!id.is_valid() || !cold_data_) return nullptr;
   auto it = cold_data_->connection_opinion_stacks.find(id.id);
   return it == cold_data_->connection_opinion_stacks.end() ? nullptr
@@ -625,13 +891,24 @@ PrimSpec::connection_opinion_stack(const std::string& prop_name) const {
 
 void PrimSpec::set_connection_opinion_stack(
     const std::string& prop_name, std::vector<RelationshipOpinion> opinions) {
-  ensure_cold_data().connection_opinion_stacks[
-      GetPropNameTable().intern(prop_name).id] = std::move(opinions);
+  set_connection_opinion_stack(GetPropNameTable().intern(prop_name),
+                               std::move(opinions));
+}
+
+void PrimSpec::set_connection_opinion_stack(
+    PropNameId name_id, std::vector<RelationshipOpinion> opinions) {
+  ensure_cold_data().connection_opinion_stacks[name_id.id] =
+      std::move(opinions);
 }
 
 void PrimSpec::set_connection_targets(const std::string& prop_name,
                                       std::vector<Path> targets) {
-  const PropNameId id = GetPropNameTable().intern(prop_name);
+  set_connection_targets(GetPropNameTable().intern(prop_name),
+                         std::move(targets));
+}
+
+void PrimSpec::set_connection_targets(PropNameId id,
+                                      std::vector<Path> targets) {
   cold().connections[id.id] = std::move(targets);
   if (PropSlot* slot = property_mutable(id)) {
     slot->flags |= PropSlot::kFlagConnection;
@@ -682,10 +959,14 @@ void PrimSpec::apply_connection_list_op(const std::string& prop_name,
 }
 
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
-  PropNameId id = GetPropNameTable().find(prop_name);
-  if (!id.is_valid()) return nullptr;
-  auto it = cold().connections.find(id.id);
-  if (it == cold().connections.end()) return nullptr;
+  if (!cold_data_) return nullptr;  // nothing authored: skip the name hash
+  return connection(GetPropNameTable().find(prop_name));
+}
+
+const std::vector<Path>* PrimSpec::connection(PropNameId id) const {
+  if (!id.is_valid() || !cold_data_) return nullptr;
+  auto it = cold_data_->connections.find(id.id);
+  if (it == cold_data_->connections.end()) return nullptr;
   return &it->second;
 }
 
@@ -756,14 +1037,61 @@ const PrimSpec::ColdData& PrimSpec::cold() const {
 
 void PrimSpec::set_property_type_name(const std::string& prop_name,
                                       const std::string& type_name) {
-  // Intern both name and typeName; typeNames are few and highly shared.
-  cold().prop_type_names[GetPropNameTable().intern(prop_name).id] = type_name;
+  // Type names are few and highly shared: intern once, keep the id on the
+  // slot. A name recorded before the slot exists (the USDA parser declares
+  // the type ahead of the value) waits in the cold map until add_property /
+  // add_property_slot adopts it.
+  const PropNameId nid = GetPropNameTable().intern(prop_name);
+  if (PropSlot* slot = props_.find_mutable(nid)) {
+    const TypeNameId tid = GetTypeNameTable().intern(type_name);
+    if (tid.is_valid()) {
+      slot->type_name_id = tid.id;
+      if (cold_data_) cold_data_->prop_type_names.erase(nid.id);
+      return;
+    }
+    slot->type_name_id = PropSlot::kNoTypeName;
+  }
+  cold().prop_type_names[nid.id] = type_name;
+}
+
+void PrimSpec::set_property_type_name(PropNameId name_id,
+                                      const std::string& type_name) {
+  if (!name_id.is_valid()) return;
+  const TypeNameId tid = GetTypeNameTable().intern(type_name);
+  if (tid.is_valid()) {
+    set_property_type_name(name_id, tid);
+    return;
+  }
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->type_name_id = PropSlot::kNoTypeName;
+  }
+  cold().prop_type_names[name_id.id] = type_name;
+}
+
+void PrimSpec::set_property_type_name(PropNameId name_id, TypeNameId type_id) {
+  if (!name_id.is_valid()) return;
+  if (PropSlot* slot = props_.find_mutable(name_id)) {
+    slot->type_name_id = type_id.is_valid() ? type_id.id : PropSlot::kNoTypeName;
+    if (cold_data_) cold_data_->prop_type_names.erase(name_id.id);
+    return;
+  }
+  if (!type_id.is_valid()) {
+    if (cold_data_) cold_data_->prop_type_names.erase(name_id.id);
+    return;
+  }
+  cold().prop_type_names[name_id.id] = GetTypeNameTable().get(type_id);
 }
 
 const std::string* PrimSpec::property_type_name(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
-  auto it = cold().prop_type_names.find(name_id.id);
-  if (it == cold().prop_type_names.end()) return nullptr;
+  if (const PropSlot* slot = props_.find(name_id)) {
+    if (slot->type_name_id != PropSlot::kNoTypeName) {
+      return &GetTypeNameTable().get(TypeNameId{slot->type_name_id});
+    }
+  }
+  if (!cold_data_) return nullptr;
+  auto it = cold_data_->prop_type_names.find(name_id.id);
+  if (it == cold_data_->prop_type_names.end()) return nullptr;
   return &it->second;
 }
 
@@ -772,10 +1100,9 @@ const std::string* PrimSpec::property_type_name(const std::string& prop_name) co
 }
 
 const PropMeta* PrimSpec::property_meta(PropNameId name_id) const {
-  if (!name_id.is_valid()) return nullptr;
-  auto it = cold().prop_metas.find(name_id.id);
-  if (it == cold().prop_metas.end()) return nullptr;
-  return it->second.get();
+  if (!name_id.is_valid() || !prop_metas_) return nullptr;
+  const PropMetaEntry* e = prop_metas_->find(name_id.id);
+  return e ? e->meta : nullptr;
 }
 
 const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
@@ -783,9 +1110,28 @@ const PropMeta* PrimSpec::property_meta(const std::string& prop_name) const {
 }
 
 PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
-  std::unique_ptr<PropMeta>& slot = cold().prop_metas[name_id.id];
-  if (!slot) slot = std::make_unique<PropMeta>();
-  return *slot;
+  if (!prop_metas_) prop_metas_.reset(new PropMetaTable());
+  return prop_metas_->ensure_owned(name_id.id);
+}
+
+void PrimSpec::set_property_meta(const std::string& prop_name, PropMeta&& meta) {
+  set_property_meta(GetPropNameTable().intern(prop_name), std::move(meta));
+}
+
+void PrimSpec::set_property_meta(PropNameId name_id, PropMeta&& meta) {
+  if (!prop_metas_) prop_metas_.reset(new PropMetaTable());
+  PropMetaTable& t = *prop_metas_;
+  auto it = t.lower(name_id.id);
+  const bool plain = IsPlainPropMeta(meta);
+  PropMeta* p = plain ? const_cast<PropMeta*>(InternPlainPropMeta(meta))
+                      : new PropMeta(std::move(meta));
+  if (it == t.entries.end() || it->id != name_id.id) {
+    t.entries.insert(it, PropMetaEntry(name_id.id, p, plain));
+  } else {
+    it->reset();
+    it->meta = p;
+    it->shared = plain;
+  }
 }
 
 PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
@@ -832,6 +1178,7 @@ size_t PrimSpec::memory_usage() const {
     for (const DecodedExtensionField& field : fields) {
       add(field.name.capacity());
       add(field.unregistered_source.capacity());
+      if (field.int64_list_op) add(Int64ListOpsMemoryUsage(*field.int64_list_op));
       add_value(field.value);
     }
   };
@@ -867,6 +1214,7 @@ size_t PrimSpec::memory_usage() const {
   }
   if (cold_data_) {
     add(sizeof(ColdData));
+    add(safe::saturating_mul(cold_data_->authored_property_names.capacity(), sizeof(PropNameId)));
     for (const auto& entry : cold_data_->rel_edits) {
       add(entry.first.capacity() + sizeof(ArcListOp) + sizeof(void*) * 2);
       add_arc_edit(entry.second);
@@ -918,10 +1266,13 @@ size_t PrimSpec::memory_usage() const {
   }
   for (const auto& entry : cold().prop_type_names)
     add(sizeof(entry) + sizeof(void*) * 2 + entry.second.capacity());
-  for (const auto& entry : cold().prop_metas) {
-    add(sizeof(entry) + sizeof(void*) * 2);
-    if (!entry.second) continue;
-    const PropMeta& meta = *entry.second;
+  if (prop_metas_)
+    add(sizeof(PropMetaTable) +
+        safe::saturating_mul(prop_metas_->entries.capacity(), sizeof(PropMetaEntry)));
+  static const std::vector<PropMetaEntry> kNoMetas;
+  for (const PropMetaEntry& entry : prop_metas_ ? prop_metas_->entries : kNoMetas) {
+    if (!entry.meta || entry.shared) continue;
+    const PropMeta& meta = *entry.meta;
     add(sizeof(PropMeta));
     for (const std::string* text : {&meta.interpolation, &meta.colorSpace,
          &meta.renderType, &meta.connectability, &meta.outputName,
@@ -944,81 +1295,92 @@ size_t PrimSpec::memory_usage() const {
   add_strings(meta_.payloads);
   add_strings(meta_.inherits);
   add_strings(meta_.specializes);
-  add(meta_.variantSelection.capacity());
+  if (!meta_.variantSelection.empty())
+    add(sizeof(std::string) + meta_.variantSelection.get().capacity());
   // Cold fields only cost anything when the ext was allocated.
   if (const PrimMetadataCold* ext = meta_.ext()) {
     add(sizeof(PrimMetadataCold));
-    add(ext->doc.capacity());
-    add(ext->comment.capacity());
     add(ext->kind.capacity());
-    add(ext->displayName.capacity());
-    add(ext->permission.capacity());
-    add(ext->instance_prototype.capacity());
-    add(ext->apiSchemasQualifier.capacity());
-    add_strings(ext->apiSchemas);
-    add_strings(ext->displayGroupOrder);
-    add_strings(ext->primOrder);
-    add_strings(ext->propertyOrder);
-    add_string_edit(ext->apiSchemaEdits);
-    add_string_edit(ext->variantSetNameEdits);
-    add_string_edit(ext->clipSetEdits);
-    add_pairs(ext->variantSelections);
-    add_pairs(ext->relocates);
-    add_pairs(ext->unknownMeta);
-    add_extensions(ext->unknownFields);
-    add_value(ext->customData);
-    add_value(ext->assetInfo);
-    add_value(ext->sdrMetadata);
-    add_value(ext->clips);
-    add(safe::saturating_mul(ext->variantSets.capacity(),
-                             sizeof(PrimVariantSetData)));
-    std::vector<const PrimVariantSetData*> pending_sets;
-    for (const PrimVariantSetData& set : ext->variantSets) pending_sets.push_back(&set);
-    while (!pending_sets.empty()) {
-      const PrimVariantSetData* set = pending_sets.back();
-      pending_sets.pop_back();
-      add(set->name.capacity());
-      add(set->selected.capacity());
-      add(safe::saturating_mul(set->variants.capacity(), sizeof(PrimVariantData)));
-      for (const PrimVariantData& variant : set->variants) {
-        for (const std::string* text : {&variant.name, &variant.doc,
-             &variant.kind}) add(text->capacity());
-        add(safe::saturating_mul(variant.properties.capacity(),
-                                 sizeof(VariantProperty)));
-        for (const VariantProperty& property : variant.properties) {
-          add(property.name.capacity());
-          add_value(property.value);
-        }
-        for (const auto& relationship : variant.relationships) {
-          add(relationship.first.capacity() + sizeof(relationship) +
-              sizeof(void*) * 2);
-          add_paths(relationship.second);
-        }
-        for (const auto& flag : variant.relationshipFlags)
-          add(flag.first.capacity() + sizeof(flag) + sizeof(void*) * 2);
-        add_strings(variant.references);
-        add_strings(variant.payloads);
-        add_strings(variant.inherits);
-        add_strings(variant.specializes);
-        add_pairs(variant.variantSelections);
-        add_pairs(variant.unknownMeta);
-        add_extensions(variant.unknownFields);
-        add(safe::saturating_mul(variant.variantSets.capacity(),
-                                 sizeof(PrimVariantSetData)));
-        for (const PrimVariantSetData& nested : variant.variantSets)
-          pending_sets.push_back(&nested);
-        // Shared variant content Layers can have multiple owners; they need
-        // deduplicated layer-level accounting rather than per-option charging.
-      }
+    if (!ext->instance_prototype.empty())
+      add(sizeof(std::string) + ext->instance_prototype.get().capacity());
+    if (!ext->apiSchemas.empty()) {
+      add(sizeof(std::vector<std::string>));
+      add_strings(ext->apiSchemas.get());
     }
-    add(safe::saturating_mul(ext->clipShadowedProps.capacity(),
-                             sizeof(PropNameId)));
+    add_value(ext->customData);
     if (ext->arc_edits) {
       add(sizeof(ArcListOps));
       add_arc_edit(ext->arc_edits->references);
       add_arc_edit(ext->arc_edits->payloads);
       add_arc_edit(ext->arc_edits->inherits);
       add_arc_edit(ext->arc_edits->specializes);
+    }
+    if (const ApiSchemaListOp* a = ext->api_schema_edits.get()) {
+      add(sizeof(ApiSchemaListOp) + a->qualifier.capacity());
+      add_string_edit(a->edits);
+    }
+    if (const PrimMetadataRare* r = ext->rare.get()) {
+      add(sizeof(PrimMetadataRare));
+      add(r->doc.capacity());
+      add(r->comment.capacity());
+      add(r->displayName.capacity());
+      add(r->permission.capacity());
+      add_strings(r->displayGroupOrder);
+      add_strings(r->primOrder);
+      add_strings(r->propertyOrder);
+      add_string_edit(r->variantSetNameEdits);
+      add_string_edit(r->clipSetEdits);
+      add_pairs(r->variantSelections);
+      add_pairs(r->relocates);
+      add_pairs(r->unknownMeta);
+      add_extensions(r->unknownFields);
+      add_value(r->assetInfo);
+      add_value(r->sdrMetadata);
+      add_value(r->clips);
+      add(safe::saturating_mul(r->variantSets.capacity(),
+                               sizeof(PrimVariantSetData)));
+      std::vector<const PrimVariantSetData*> pending_sets;
+      for (const PrimVariantSetData& set : r->variantSets) pending_sets.push_back(&set);
+      while (!pending_sets.empty()) {
+        const PrimVariantSetData* set = pending_sets.back();
+        pending_sets.pop_back();
+        add(set->name.capacity());
+        add(set->selected.capacity());
+        add(safe::saturating_mul(set->variants.capacity(), sizeof(PrimVariantData)));
+        for (const PrimVariantData& variant : set->variants) {
+          for (const std::string* text : {&variant.name, &variant.doc,
+               &variant.kind}) add(text->capacity());
+          add_strings(variant.authoredPropertyNames);
+          add(safe::saturating_mul(variant.properties.capacity(),
+                                   sizeof(VariantProperty)));
+          for (const VariantProperty& property : variant.properties) {
+            add(property.name.capacity());
+            add_value(property.value);
+          }
+          for (const auto& relationship : variant.relationships) {
+            add(relationship.first.capacity() + sizeof(relationship) +
+                sizeof(void*) * 2);
+            add_paths(relationship.second);
+          }
+          for (const auto& flag : variant.relationshipFlags)
+            add(flag.first.capacity() + sizeof(flag) + sizeof(void*) * 2);
+          add_strings(variant.references);
+          add_strings(variant.payloads);
+          add_strings(variant.inherits);
+          add_strings(variant.specializes);
+          add_pairs(variant.variantSelections);
+          add_pairs(variant.unknownMeta);
+          add_extensions(variant.unknownFields);
+          add(safe::saturating_mul(variant.variantSets.capacity(),
+                                   sizeof(PrimVariantSetData)));
+          for (const PrimVariantSetData& nested : variant.variantSets)
+            pending_sets.push_back(&nested);
+          // Shared variant content Layers can have multiple owners; they need
+          // deduplicated layer-level accounting rather than per-option charging.
+        }
+      }
+      add(safe::saturating_mul(r->clipShadowedProps.capacity(),
+                               sizeof(PropNameId)));
     }
   }
 
@@ -1030,8 +1392,51 @@ size_t PrimSpec::memory_usage() const {
 // do not re-parse their bodies.
 // ---------------------------------------------------------------------------
 bool PrimMetadata::has_ext() const { return ext_ != nullptr; }
+namespace {
+bool IsDefaultListOps(const StringListOps& e) {
+  return !e.authored && !e.is_explicit && e.explicit_items.empty() &&
+         e.added.empty() && e.prepended.empty() && e.appended.empty() &&
+         e.deleted.empty() && e.ordered.empty();
+}
+bool IsDefaultRare(const PrimMetadataRare& r) {
+  return r.doc.empty() && r.comment.empty() && !r.doc_authored &&
+         !r.comment_authored && r.displayName.empty() &&
+         !r.display_name_authored && r.permission.empty() &&
+         r.displayGroupOrder.empty() && !r.displayGroupOrderAuthored &&
+         r.variantSets.empty() && IsDefaultListOps(r.variantSetNameEdits) &&
+         r.variantSelections.empty() && !r.variantSelectionsAuthored &&
+         r.relocates.empty() && !r.relocatesAuthored &&
+         r.assetInfo.is_empty() && r.sdrMetadata.is_empty() &&
+         r.clips.is_empty() && IsDefaultListOps(r.clipSetEdits) &&
+         r.clipShadowedProps.empty() && !r.assetInfoAuthored &&
+         !r.sdrMetadataAuthored && !r.clipsAuthored && r.primOrder.empty() &&
+         r.propertyOrder.empty() && !r.primOrderAuthored &&
+         !r.propertyOrderAuthored && r.unknownMeta.empty() &&
+         r.unknownFields.empty();
+}
+}  // namespace
+void PrimMetadata::trim_ext() {
+    if (!ext_) return;
+    if (ext_->rare && IsDefaultRare(*ext_->rare)) ext_->rare.reset();
+    if (ext_->api_schema_edits &&
+        IsDefaultListOps(ext_->api_schema_edits->edits) &&
+        ext_->api_schema_edits->qualifier.empty())
+      ext_->api_schema_edits.reset();
+    const PrimMetadataCold& c = *ext_;
+    if (!c.rare && !c.arc_edits && !c.api_schema_edits && c.kind.empty() &&
+        !c.kind_authored &&
+        c.instance_prototype.empty() && c.apiSchemas.empty() &&
+        !c.apiSchemasAuthored && c.customData.is_empty() &&
+        !c.customDataAuthored)
+      ext_.reset();
+  }
 void PrimMetadata::ensure_ext() {
     if (!ext_) ext_.reset(new PrimMetadataCold());
+  }
+PrimMetadataRare &PrimMetadata::ensure_rare() {
+    ensure_ext();
+    if (!ext_->rare) ext_->rare.reset(new PrimMetadataRare());
+    return *ext_->rare;
   }
 const PrimMetadataCold *PrimMetadata::ext() const { return ext_.get(); }
 const ArcListOps *PrimMetadata::arc_edits() const {
@@ -1047,29 +1452,29 @@ ArcListOps &PrimMetadata::ensure_arc_edits() {
   }
 const std::string &PrimMetadata::doc() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->doc : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->doc : kEmpty;
   }
 std::string &PrimMetadata::doc() {
-    ensure_ext();
-    return ext_->doc;
+    ensure_rare();
+    return ext_->rare->doc;
   }
-bool PrimMetadata::doc_authored() const { return ext_ && ext_->doc_authored; }
+bool PrimMetadata::doc_authored() const { return ext_ && ext_->rare && ext_->rare->doc_authored; }
 void PrimMetadata::set_doc_authored(bool authored ) {
-    ensure_ext();
-    ext_->doc_authored = authored;
+    ensure_rare();
+    ext_->rare->doc_authored = authored;
   }
 const std::string &PrimMetadata::comment() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->comment : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->comment : kEmpty;
   }
 std::string &PrimMetadata::comment() {
-    ensure_ext();
-    return ext_->comment;
+    ensure_rare();
+    return ext_->rare->comment;
   }
-bool PrimMetadata::comment_authored() const { return ext_ && ext_->comment_authored; }
+bool PrimMetadata::comment_authored() const { return ext_ && ext_->rare && ext_->rare->comment_authored; }
 void PrimMetadata::set_comment_authored(bool authored ) {
-    ensure_ext();
-    ext_->comment_authored = authored;
+    ensure_rare();
+    ext_->rare->comment_authored = authored;
   }
 const std::string &PrimMetadata::kind() const {
     static const std::string kEmpty;
@@ -1086,42 +1491,42 @@ void PrimMetadata::setKindAuthored(bool authored ) {
   }
 const std::string &PrimMetadata::permission() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->permission : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->permission : kEmpty;
   }
 std::string &PrimMetadata::permission() {
-    ensure_ext();
-    return ext_->permission;
+    ensure_rare();
+    return ext_->rare->permission;
   }
 const std::string &PrimMetadata::displayName() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->displayName : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->displayName : kEmpty;
   }
 std::string &PrimMetadata::displayName() {
-    ensure_ext();
-    return ext_->displayName;
+    ensure_rare();
+    return ext_->rare->displayName;
   }
 bool PrimMetadata::displayNameAuthored() const {
-    return ext_ && ext_->display_name_authored;
+    return ext_ && ext_->rare && ext_->rare->display_name_authored;
   }
 void PrimMetadata::setDisplayNameAuthored(bool authored ) {
-    ensure_ext();
-    ext_->display_name_authored = authored;
+    ensure_rare();
+    ext_->rare->display_name_authored = authored;
   }
 const std::string &PrimMetadata::instance_prototype() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->instance_prototype : kEmpty;
+    return ext_ ? ext_->instance_prototype.get() : kEmpty;
   }
 std::string &PrimMetadata::instance_prototype() {
     ensure_ext();
-    return ext_->instance_prototype;
+    return ext_->instance_prototype.mut();
   }
 const std::vector<std::string> &PrimMetadata::apiSchemas() const {
     static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->apiSchemas : kEmpty;
+    return ext_ ? ext_->apiSchemas.get() : kEmpty;
   }
 std::vector<std::string> &PrimMetadata::apiSchemas() {
     ensure_ext();
-    return ext_->apiSchemas;
+    return ext_->apiSchemas.mut();
   }
 bool PrimMetadata::apiSchemasAuthored() const {
     return ext_ && ext_->apiSchemasAuthored;
@@ -1132,86 +1537,89 @@ void PrimMetadata::setApiSchemasAuthored(bool authored ) {
   }
 const StringListOps &PrimMetadata::apiSchemaEdits() const {
     static const StringListOps kEmpty;
-    return ext_ ? ext_->apiSchemaEdits : kEmpty;
+    return ext_ && ext_->api_schema_edits ? ext_->api_schema_edits->edits : kEmpty;
   }
 StringListOps &PrimMetadata::apiSchemaEdits() {
     ensure_ext();
-    return ext_->apiSchemaEdits;
+    if (!ext_->api_schema_edits) ext_->api_schema_edits.reset(new ApiSchemaListOp());
+    return ext_->api_schema_edits->edits;
   }
 const std::string &PrimMetadata::apiSchemasQualifier() const {
     static const std::string kEmpty;
-    return ext_ ? ext_->apiSchemasQualifier : kEmpty;
+    return ext_ && ext_->api_schema_edits ? ext_->api_schema_edits->qualifier
+                                          : kEmpty;
   }
 std::string &PrimMetadata::apiSchemasQualifier() {
     ensure_ext();
-    return ext_->apiSchemasQualifier;
+    if (!ext_->api_schema_edits) ext_->api_schema_edits.reset(new ApiSchemaListOp());
+    return ext_->api_schema_edits->qualifier;
   }
 const std::vector<PrimVariantSetData> &PrimMetadata::variantSets() const {
     static const std::vector<PrimVariantSetData> kEmpty;
-    return ext_ ? ext_->variantSets : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->variantSets : kEmpty;
   }
 std::vector<PrimVariantSetData> &PrimMetadata::variantSets() {
-    ensure_ext();
-    return ext_->variantSets;
+    ensure_rare();
+    return ext_->rare->variantSets;
   }
 const StringListOps &PrimMetadata::variantSetNameEdits() const {
     static const StringListOps kEmpty;
-    return ext_ ? ext_->variantSetNameEdits : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->variantSetNameEdits : kEmpty;
   }
 StringListOps &PrimMetadata::variantSetNameEdits() {
-    ensure_ext();
-    return ext_->variantSetNameEdits;
+    ensure_rare();
+    return ext_->rare->variantSetNameEdits;
   }
 const StringListOps &PrimMetadata::clipSetEdits() const {
     static const StringListOps kEmpty;
-    return ext_ ? ext_->clipSetEdits : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->clipSetEdits : kEmpty;
   }
 StringListOps &PrimMetadata::clipSetEdits() {
-    ensure_ext();
-    return ext_->clipSetEdits;
+    ensure_rare();
+    return ext_->rare->clipSetEdits;
   }
 bool PrimMetadata::primOrderAuthored() const {
-    return ext_ && ext_->primOrderAuthored;
+    return ext_ && ext_->rare && ext_->rare->primOrderAuthored;
   }
 void PrimMetadata::setPrimOrderAuthored(bool authored ) {
-    ensure_ext();
-    ext_->primOrderAuthored = authored;
+    ensure_rare();
+    ext_->rare->primOrderAuthored = authored;
   }
 bool PrimMetadata::propertyOrderAuthored() const {
-    return ext_ && ext_->propertyOrderAuthored;
+    return ext_ && ext_->rare && ext_->rare->propertyOrderAuthored;
   }
 void PrimMetadata::setPropertyOrderAuthored(bool authored ) {
-    ensure_ext();
-    ext_->propertyOrderAuthored = authored;
+    ensure_rare();
+    ext_->rare->propertyOrderAuthored = authored;
   }
 const std::vector<std::pair<std::string, std::string>> &PrimMetadata::variantSelections()
       const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->variantSelections : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->variantSelections : kEmpty;
   }
 std::vector<std::pair<std::string, std::string>> &PrimMetadata::variantSelections() {
-    ensure_ext();
-    return ext_->variantSelections;
+    ensure_rare();
+    return ext_->rare->variantSelections;
   }
 bool PrimMetadata::variantSelectionsAuthored() const {
-    return ext_ && ext_->variantSelectionsAuthored;
+    return ext_ && ext_->rare && ext_->rare->variantSelectionsAuthored;
   }
 void PrimMetadata::setVariantSelectionsAuthored(bool authored ) {
-    ensure_ext();
-    ext_->variantSelectionsAuthored = authored;
+    ensure_rare();
+    ext_->rare->variantSelectionsAuthored = authored;
   }
 const std::vector<std::pair<std::string, std::string>> &PrimMetadata::relocates() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->relocates : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->relocates : kEmpty;
   }
 std::vector<std::pair<std::string, std::string>> &PrimMetadata::relocates() {
-    ensure_ext();
-    return ext_->relocates;
+    ensure_rare();
+    return ext_->rare->relocates;
   }
-bool PrimMetadata::relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
+bool PrimMetadata::relocatesAuthored() const { return ext_ && ext_->rare && ext_->rare->relocatesAuthored; }
 void PrimMetadata::setRelocatesAuthored(bool authored ) {
-    ensure_ext();
-    ext_->relocatesAuthored = authored;
+    ensure_rare();
+    ext_->rare->relocatesAuthored = authored;
   }
 const Value &PrimMetadata::customData() const {
     static const Value kEmpty;
@@ -1230,99 +1638,99 @@ void PrimMetadata::setCustomDataAuthored(bool authored ) {
   }
 const Value &PrimMetadata::assetInfo() const {
     static const Value kEmpty;
-    return ext_ ? ext_->assetInfo : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->assetInfo : kEmpty;
   }
 Value &PrimMetadata::assetInfo() {
-    ensure_ext();
-    return ext_->assetInfo;
+    ensure_rare();
+    return ext_->rare->assetInfo;
   }
-bool PrimMetadata::assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
+bool PrimMetadata::assetInfoAuthored() const { return ext_ && ext_->rare && ext_->rare->assetInfoAuthored; }
 void PrimMetadata::setAssetInfoAuthored(bool authored ) {
-    ensure_ext();
-    ext_->assetInfoAuthored = authored;
+    ensure_rare();
+    ext_->rare->assetInfoAuthored = authored;
   }
 const Value &PrimMetadata::sdrMetadata() const {
     static const Value kEmpty;
-    return ext_ ? ext_->sdrMetadata : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->sdrMetadata : kEmpty;
   }
 Value &PrimMetadata::sdrMetadata() {
-    ensure_ext();
-    return ext_->sdrMetadata;
+    ensure_rare();
+    return ext_->rare->sdrMetadata;
   }
 bool PrimMetadata::sdrMetadataAuthored() const {
-    return ext_ && ext_->sdrMetadataAuthored;
+    return ext_ && ext_->rare && ext_->rare->sdrMetadataAuthored;
   }
 void PrimMetadata::setSdrMetadataAuthored(bool authored ) {
-    ensure_ext();
-    ext_->sdrMetadataAuthored = authored;
+    ensure_rare();
+    ext_->rare->sdrMetadataAuthored = authored;
   }
 const Value &PrimMetadata::clips() const {
     static const Value kEmpty;
-    return ext_ ? ext_->clips : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->clips : kEmpty;
   }
 Value &PrimMetadata::clips() {
-    ensure_ext();
-    return ext_->clips;
+    ensure_rare();
+    return ext_->rare->clips;
   }
-bool PrimMetadata::clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
+bool PrimMetadata::clipsAuthored() const { return ext_ && ext_->rare && ext_->rare->clipsAuthored; }
 void PrimMetadata::setClipsAuthored(bool authored ) {
-    ensure_ext();
-    ext_->clipsAuthored = authored;
+    ensure_rare();
+    ext_->rare->clipsAuthored = authored;
   }
 const std::vector<PropNameId> &PrimMetadata::clipShadowedProps() const {
     static const std::vector<PropNameId> kEmpty;
-    return ext_ ? ext_->clipShadowedProps : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->clipShadowedProps : kEmpty;
   }
 std::vector<PropNameId> &PrimMetadata::clipShadowedProps() {
-    ensure_ext();
-    return ext_->clipShadowedProps;
+    ensure_rare();
+    return ext_->rare->clipShadowedProps;
   }
 const std::vector<std::string> &PrimMetadata::primOrder() const {
     static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->primOrder : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->primOrder : kEmpty;
   }
 const std::vector<std::string> &PrimMetadata::displayGroupOrder() const {
     static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->displayGroupOrder : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->displayGroupOrder : kEmpty;
   }
 std::vector<std::string> &PrimMetadata::editDisplayGroupOrder() {
-    ensure_ext();
-    return ext_->displayGroupOrder;
+    ensure_rare();
+    return ext_->rare->displayGroupOrder;
   }
 bool PrimMetadata::displayGroupOrderAuthored() const {
-    return ext_ && ext_->displayGroupOrderAuthored;
+    return ext_ && ext_->rare && ext_->rare->displayGroupOrderAuthored;
   }
 void PrimMetadata::setDisplayGroupOrderAuthored(bool authored ) {
-    ensure_ext();
-    ext_->displayGroupOrderAuthored = authored;
+    ensure_rare();
+    ext_->rare->displayGroupOrderAuthored = authored;
   }
 std::vector<std::string> &PrimMetadata::editPrimOrder() {
-    ensure_ext();
-    return ext_->primOrder;
+    ensure_rare();
+    return ext_->rare->primOrder;
   }
 const std::vector<std::string> &PrimMetadata::propertyOrder() const {
     static const std::vector<std::string> kEmpty;
-    return ext_ ? ext_->propertyOrder : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->propertyOrder : kEmpty;
   }
 std::vector<std::string> &PrimMetadata::editPropertyOrder() {
-    ensure_ext();
-    return ext_->propertyOrder;
+    ensure_rare();
+    return ext_->rare->propertyOrder;
   }
 const std::vector<std::pair<std::string, std::string>> &PrimMetadata::unknownMeta() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
-    return ext_ ? ext_->unknownMeta : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->unknownMeta : kEmpty;
   }
 const std::vector<DecodedExtensionField> &PrimMetadata::unknownFields() const {
     static const std::vector<DecodedExtensionField> kEmpty;
-    return ext_ ? ext_->unknownFields : kEmpty;
+    return ext_ && ext_->rare ? ext_->rare->unknownFields : kEmpty;
   }
 std::vector<DecodedExtensionField> &PrimMetadata::unknownFields() {
-    ensure_ext();
-    return ext_->unknownFields;
+    ensure_rare();
+    return ext_->rare->unknownFields;
   }
 std::vector<std::pair<std::string, std::string>> &PrimMetadata::unknownMeta() {
-    ensure_ext();
-    return ext_->unknownMeta;
+    ensure_rare();
+    return ext_->rare->unknownMeta;
   }
 
 // ---------------------------------------------------------------------------
@@ -1335,6 +1743,8 @@ PrimSpecifier PrimSpec::specifier() const { return specifier_; }
 void PrimSpec::set_specifier(PrimSpecifier spec) { specifier_ = spec; }
 const Path& PrimSpec::path() const { return path_; }
 void PrimSpec::set_path(const Path& path) { path_ = path; }
+void PrimSpec::set_path(Path&& path) { path_ = std::move(path); }
+Path PrimSpec::take_path() { return std::move(path_); }
 uint32_t PrimSpec::asset_anchor_id() const { return asset_anchor_id_; }
 void PrimSpec::set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
 PropSlot* PrimSpec::property_mutable(PropNameId name_id) {

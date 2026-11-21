@@ -1,0 +1,41 @@
+{
+  "release": "1.0.1",
+  "commit": "c15ae0cad3ed9e07a25dffd6699627d2c166cab0",
+  "description": "Invalid USDA roots require rejection. These releases have no original binary root; every available original binary dependency remains a required load case. Hash changes require independent reclassification.",
+  "cases": {
+    "BasicInherits_root": {
+      "text": "usda/root.usd",
+      "sha256": "9df617a492b166de0eaf7ee71eb7857e6dad7b52778568b9083a289dd327567b",
+      "nextDiagnostic": "cannot contain variant selections",
+      "stockDiagnostic": "Inherit paths cannot contain variant selections",
+      "binaryRootPresent": false,
+      "binaryDependencies": {
+        "group.usd": "4adbeca4307e8d3e65c0274b719b582709f2e9e74c7e0a75007417b27bc2549d",
+        "model.usd": "e93ef0a2e4f278337213e227a3f1c3925367a5218c62d5f5666e39dfe5f6d11e",
+        "nonexistent.usd": "36abf587d3869770789279bad42275e9c96525b345ad1a26d4f1ca2b32d35802"
+      }
+    },
+    "ErrorRelocateWithVariantSelection_root": {
+      "text": "usda/root.usd",
+      "sha256": "626aa30174e394531f168f6f57089e29cc73d567c81fd0d11443754f8a1cd095",
+      "nextDiagnostic": "cannot contain variant selections",
+      "stockDiagnostic": "is not a valid relocates source path",
+      "binaryRootPresent": false,
+      "binaryDependencies": {
+        "model.usd": "fda8dd542513242023b494bffa4b3a2ae6066bf66f1ae54989ef9d26b9ac394c"
+      }
+    },
+    "SubrootReferenceAndVariants_root": {
+      "text": "usda/root.usd",
+      "sha256": "c7caf49b7ac36369664335d601d60737cade9c09fbff3f9e23e1a8ea78be7fe3",
+      "nextDiagnostic": "cannot contain variant selections",
+      "stockDiagnostic": "Reference paths cannot contain variant selections",
+      "binaryRootPresent": false,
+      "binaryDependencies": {
+        "group.usd": "4fdba75c3ca25aec5d9c167daecf7e627ad8bad046220f82d68462f20a59fd8b",
+        "model.usd": "666d18ce0bae9b300d576846aaf1cd487b0d79ff4a4b5df0f1be1a07314a1bd8"
+      }
+    }
+  },
+  "compositionCases": 138
+}

@@ -719,7 +719,30 @@ void App::writeRenderReport(const std::string& scenePath, int exitCode) const {
                                     : "error";
   report["exit_code"] = exitCode;
   report["scene"] = scenePath;
+  report["render_thread"] = renderThreadActive_;
   report["profile"] = largeSceneProfile_;
+  if (previewRequest_.enabled) {
+    report["preview_accumulated_frames"] = previewVolumeRenderer_ ? previewVolumeRenderer_->accumulatedFrames() : 0;
+    report["preview_source"] = {
+        {"samples", previewRequest_.result.samples},
+        {"cell_size", previewRequest_.result.voxel_size},
+        {"direct_volume",
+         previewRequest_.direct_volume &&
+             previewRequest_.options.kind ==
+                 lightusd::tydra::next::ScenePreviewKind::Volume}};
+  }
+  if(previewLods_.success) {
+    uint64_t bytes=0;std::array<size_t,4> levels{};
+    for(const auto& tile:previewLods_.tiles) {
+      int level=3;const auto selection=loadOpts_.variantOverrides.find(tile.path);
+      if(selection!=loadOpts_.variantOverrides.end()) {
+        const auto value=selection->second.find("previewLod");
+        if(value!=selection->second.end() && value->second.size()==4)level=std::max(0,std::min(3,int(value->second[3]-'0')));
+      }
+      ++levels[size_t(level)];bytes+=tile.bytes[size_t(level)];
+    }
+    report["preview_lod"]={{"levels",levels},{"selected_geometry_bytes",bytes},{"budget_bytes",previewLods_.gpu_budget_bytes},{"updates",previewLodUpdates_},{"pixel_error",previewLodPixelError_}};
+  }
   report["camera"] = cameraName_.empty() ? "auto" : cameraName_;
   nlohmann::json stereo = {{"requested", stereoRequested_},
                            {"resolved", false}};
@@ -1856,6 +1879,8 @@ void App::getRequestedWindowSize(int* width, int* height) const {
 App::App(Backend backend) : backend_(backend) {}
 
 App::~App() {
+  if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+  if (previewRefinement_.valid()) previewRefinement_.wait();
 #if defined(LUSDVIEW_HAVE_MCP)
   // Stop the MCP transports first so no worker thread calls back into App while
   // its members are being destroyed.
@@ -2228,6 +2253,8 @@ static bool MeshIsDeformable(const DrawMeshCPU& m) {
 
 static void FreeMeshSurfaceCPU(DrawMeshCPU& m) {
   CaptureMeshUploadIdentity(&m);
+  m.hasWireframe = m.hasWireframe || !m.wireframeIndices.empty() ||
+                   !m.wireframeVertices.empty();
   // Preserve enough geometry for pixel-accurate picking before dropping the
   // much wider render vertices. Static meshes never change shape, so a UNORM16
   // position copy is both stable and substantially smaller than DrawVertex.
@@ -2436,6 +2463,11 @@ void App::compactDeferredMeshAux(size_t meshIndex) {
     return;
   DrawMeshCPU& mesh = draw_.meshes[meshIndex];
   DeferredMeshAux& aux = deferredMeshAux_[meshIndex];
+  // Remember whether the backend received a wireframe stream before the CPU
+  // index arrays are encoded/cleared. Selection rendering uses this to choose
+  // the GPU wire pass over rebuilding CPU edge lines every frame.
+  mesh.hasWireframe = mesh.hasWireframe || !mesh.wireframeIndices.empty() ||
+                      !mesh.wireframeVertices.empty();
   if (MeshIsDeformable(mesh)) return;
 
   aux.wireCount = mesh.wireframeIndices.size();
@@ -2769,6 +2801,10 @@ void App::updateRtLodCamera() {
 }
 
 void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
+  if (ok && previewRequest_.enabled &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Points)
+    for (auto& points : draw_.points) points.previewAlbedo = true;
   // Threaded GL: the per-mesh progressive upload would free CPU geometry on the
   // main thread before the render thread drains the queued appendMesh ops (a
   // use-after-free). Use the one-shot uploadScene path instead (load stays async);
@@ -2896,7 +2932,10 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
     }
     // When the RT path owns the screenshot the rasterized scene is never drawn,
     // so skip the (potentially huge) raster upload entirely.
-    if (!rtOwnsScreenshot_) {
+    if (!rtOwnsScreenshot_ &&
+        !(previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume)) {
       const bool preserveDeferredAux = freeCpu && !renderThreadActive_;
       if (preserveDeferredAux) deferredMeshAux_.resize(draw_.meshes.size());
       for (size_t i = 0; i < draw_.meshes.size(); ++i)
@@ -3169,6 +3208,15 @@ void App::applyLoaded(bool ok, bool progressive, bool alreadyUploaded) {
       if (robustBoundsValid_) {
         fitMin = robustBoundsMin_;
         fitMax = robustBoundsMax_;
+      }
+      float previewMin[3]={1e30f,1e30f,1e30f},previewMax[3]={-1e30f,-1e30f,-1e30f};
+      if (previewLods_.success && !previewLods_.tiles.empty() &&
+          loaded_.filepath == previewLods_.root_path) {
+        for(const auto& tile:previewLods_.tiles) for(size_t k=0;k<3;++k) {
+          previewMin[k]=std::min(previewMin[k],static_cast<float>(tile.minimum[k]));
+          previewMax[k]=std::max(previewMax[k],static_cast<float>(tile.maximum[k]));
+        }
+        fitMin=previewMin;fitMax=previewMax;
       }
       camera_.fitToScene(fitMin, fitMax);
       if (!viewDirExplicit_) {
@@ -3950,15 +3998,16 @@ bool AppendPtexFaceTableUpdates(
       texture.image.width <= 0) {
     return false;
   }
-  uint8_t texels[8u * 4u];
+  uint8_t texels[10u * 4u];
   EncodePtexFaceRectTexels(rect, texels);
-  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * 8u;
+  const size_t stride = size_t(std::max(1u, texture.ptexMipLevels)) * 10u;
+  size_t linear = size_t(texture.ptexRectTexelOffset) + size_t(face) * stride;
   size_t consumed = 0;
-  while (consumed < 8u) {
+  while (consumed < 10u) {
     const int x = static_cast<int>(linear % size_t(texture.image.width));
     const int y = static_cast<int>(linear / size_t(texture.image.width));
     const int count = static_cast<int>(
-        std::min<size_t>(8u - consumed, size_t(texture.image.width - x)));
+        std::min<size_t>(10u - consumed, size_t(texture.image.width - x)));
     Renderer::TextureRegionUpdate update;
     update.x = x;
     update.y = y;
@@ -4282,7 +4331,9 @@ void App::startLoadAsync(const std::string& path) {
   // Keep RT/CUDA/HIP on their scene-owned paths, but do not make Vulkan raster
   // materialize the complete DrawScene before the first upload.
   const bool progressiveStream = useNext && !rt && !cudaRt_ && !hipRt_ &&
-                                 !renderThreadOwnsContext;
+                                 !renderThreadOwnsContext &&
+                                 !previewLodReloadPending_ &&
+                                 !previewRequest_.enabled;
   if (progressiveStream) {
     const size_t maxBytes =
         opts.streamBufferBytes ? opts.streamBufferBytes : (size_t(64) << 20);
@@ -4658,40 +4709,221 @@ bool App::tryApplyNextSceneUpdate(
       next->meshes[i].prototypeLods = draw_.meshes[i].prototypeLods;
     }
   }
-  LOGI("incremental scene update: retained %zu/%zu mesh GPU slots; "
-       "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
-       "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
-       "%.2f MiB uploaded",
-       next->meshes.size() - plan.replacementUpdates.size(),
-       next->meshes.size(), plan.replacementUpdates.size(),
-       plan.vertexUpdates.size(), plan.worldUpdates.size(),
-       plan.instanceUpdates.size(), plan.materialUpdates.size(),
-       plan.textureUpdates.size(), transaction_ms,
-       static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
+  LOGI(
+      "incremental scene update: retained %zu/%zu mesh GPU slots; "
+      "replaced %zu meshes, updated %zu vertex buffers, %zu transforms, "
+      "%zu instance buffers, %zu materials, and %zu textures; %.3f ms, "
+      "%.2f MiB uploaded",
+      next->meshes.size() - plan.replacementUpdates.size(), next->meshes.size(),
+      plan.replacementUpdates.size(), plan.vertexUpdates.size(),
+      plan.worldUpdates.size(), plan.instanceUpdates.size(),
+      plan.materialUpdates.size(), plan.textureUpdates.size(), transaction_ms,
+      static_cast<double>(plan.estimatedUploadBytes) / (1024.0 * 1024.0));
   return true;
+}
+
+bool App::renderScenePreviewVolume(std::vector<uint8_t>* rgba, int* width,
+                                   int* height, std::string* error, bool advance) {
+  namespace preview = lightusd::tydra::next;
+  if (!previewVolumeRenderer_ ||
+      previewVolumeRoot_ != previewRequest_.result.usd_path) {
+    // Retain the old viewport image, but release its grid buffers before
+    // allocating the replacement so refinements share one renderer budget.
+    previewVolumeRenderer_.reset();
+    previewVolumeRoot_.clear();
+    auto engine = std::make_unique<preview::PreviewVolumeRenderer>();
+    const auto backend = cpuRt_    ? preview::PreviewComputeBackend::Cpu
+                         : cudaRt_ ? preview::PreviewComputeBackend::Cuda
+                         : backend_ == Backend::Vulkan
+                             ? preview::PreviewComputeBackend::Vulkan
+                             : preview::PreviewComputeBackend::Cpu;
+    if (!engine->load(previewRequest_.result, backend,
+                      previewRequest_.options.gpu_budget_bytes, error,
+                      previewRequest_.options.compute_options))
+      return false;
+    previewVolumeRoot_ = previewRequest_.result.usd_path;
+    previewVolumeRenderer_ = std::move(engine);
+    LOGI("direct UsdVol grids: backend=%s", previewVolumeRenderer_->backend());
+  }
+  gui_.viewportPixelSize(width, height);
+  if (headless_ || *width < 1 || *height < 1)
+    getRequestedWindowSize(width, height);
+  const auto eye = camera_.eye();
+  const auto forward = light3d::normalize(camera_.target() - eye);
+  const auto view = camera_.view();
+  const auto projection = camera_.proj(false);
+  preview::PreviewVolumeCamera camera;
+  camera.settings=previewRequest_.volume;
+  camera.exposure=camera_.exposure();
+  camera.eye = {eye.x, eye.y, eye.z};
+  camera.forward = {forward.x, forward.y, forward.z};
+  camera.orthographic = std::abs(projection.m[15]) > .5f;
+  camera.near_plane = camera_.nearPlane();
+  camera.far_plane = camera_.farPlane();
+  const float rx = 1.f / std::abs(projection.m[0]),
+              uy = 1.f / std::abs(projection.m[5]);
+  camera.right = {view.m[0] * rx, view.m[4] * rx, view.m[8] * rx};
+  camera.up = {view.m[1] * uy, view.m[5] * uy, view.m[9] * uy};
+  return previewVolumeRenderer_->render(camera, *width, *height, rgba, error, advance);
+}
+
+void App::stepScenePreviewLods() {
+  if (!previewLods_.success || !useNextLoader_ || !nextSession_ ||
+      !loaded_.ok || loadActive_ || progressiveActive_ ||
+      loaded_.filepath != previewLods_.root_path)
+    return;
+  int width = 0, height = 0;
+  gui_.viewportPixelSize(&width, &height);
+  if (headless_ || height < 1) getRequestedWindowSize(&width, &height);
+  const auto projection = camera_.proj(false);
+  const double focal_pixels =
+      std::max(1, height) * .5 * std::abs(projection.m[5]);
+  const auto now = std::chrono::steady_clock::now();
+  const auto eye = camera_.eye(),
+             forward = light3d::normalize(camera_.target() - eye);
+  const auto delta = eye - previewLodLastEye_,
+             turn = forward - previewLodLastForward_;
+  const bool changed =
+      !previewLodHaveCamera_ || light3d::dot(delta, delta) > 1e-8f ||
+      light3d::dot(turn, turn) > 1e-8f || width != previewLodLastWidth_ ||
+      height != previewLodLastHeight_ ||
+      std::abs(focal_pixels - previewLodLastFocalPixels_) >
+          1e-4 * std::max(1., focal_pixels);
+  if (changed) {
+    previewLodLastEye_ = eye;
+    previewLodLastForward_ = forward;
+    previewLodStillSince_ = now;
+    previewLodHaveCamera_ = true;
+    previewLodLastWidth_ = width;
+    previewLodLastHeight_ = height;
+    previewLodLastFocalPixels_ = focal_pixels;
+    previewRefinementTried_ = false;
+    if (previewRefinementCancel_) previewRefinementCancel_->store(true);
+  }
+  if (!headless_ &&
+      (gui_.cameraInteractive() ||
+       now - previewLodStillSince_ < std::chrono::milliseconds(250)))
+    return;
+  lightusd::tydra::next::ScenePreviewLodCamera camera;
+  camera.eye = {eye.x, eye.y, eye.z};
+  camera.forward = {forward.x, forward.y, forward.z};
+  camera.orthographic = std::abs(projection.m[15]) > .5f;
+  camera.focal_pixels = focal_pixels;
+  camera.near_plane = camera_.nearPlane();
+  if (previewRefinement_.valid() &&
+      previewRefinement_.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    const bool cancelled = previewRefinementCancel_->load();
+    auto refined = previewRefinement_.get();
+    if (!cancelled && refined.first.success && refined.second.success &&
+        refined.second.root_path != previewLods_.root_path) {
+      previewRequest_.result = std::move(refined.first);
+      previewLods_ = std::move(refined.second);
+      loadOpts_.variantOverrides =
+          lightusd::tydra::next::SelectScenePreviewLods(previewLods_, camera,
+                                                        previewLodPixelError_);
+      previewLodReloadPending_ = true;
+      LOGI("source refinement: cell %.9g, samples %llu",
+           previewRequest_.result.voxel_size,
+           static_cast<unsigned long long>(previewRequest_.result.samples));
+      startLoadAsync(previewLods_.root_path);
+      return;
+    }
+    if (!cancelled && !refined.first.success)
+      LOGW("source refinement: %s", refined.first.error.c_str());
+  }
+  if (previewRequest_.enabled && previewRequest_.source_refinement &&
+      !previewRefinementTried_ && !previewRefinement_.valid()) {
+    previewRefinementTried_ = true;
+    previewRefinementCancel_ = std::make_shared<std::atomic<bool>>(false);
+    const auto cancel = previewRefinementCancel_;
+    auto request = previewRequest_;
+    previewRefinement_ = std::async(
+        std::launch::async, [request, camera, width, height, cancel]() mutable {
+          request.options.progress =
+              [cancel, last = std::chrono::steady_clock::now()](
+                  const std::string& phase, uint64_t count) mutable {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last > std::chrono::seconds(5)) {
+                  LOGI("source refinement: %s %llu", phase.c_str(),
+                       static_cast<unsigned long long>(count));
+                  last = now;
+                }
+                return !cancel->load();
+              };
+          auto result = lightusd::tydra::next::RefineScenePreview(
+              request.source, request.result, request.options, camera, width,
+              height, request.lod_pixel_error);
+          lightusd::tydra::next::ScenePreviewLods lods;
+          if (result.success && result.usd_path != request.result.usd_path &&
+              !cancel->load()) {
+            if (request.direct_volume &&
+                request.options.kind ==
+                    lightusd::tydra::next::ScenePreviewKind::Volume) {
+              lods.success = true;
+              lods.root_path = result.render_usd_path;
+              lods.cell_size = result.voxel_size;
+              lods.gpu_budget_bytes = request.options.gpu_budget_bytes;
+            } else
+              lods = lightusd::tydra::next::BuildScenePreviewLods(
+                  result, request.options);
+          }
+          return PreviewRefinement{std::move(result), std::move(lods)};
+        });
+  }
+  if (previewRequest_.enabled && previewRequest_.direct_volume &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Volume)
+    return;
+  const auto choices = lightusd::tydra::next::SelectScenePreviewLods(
+      previewLods_, camera, previewLodPixelError_, loadOpts_.variantOverrides);
+  if (choices.empty() || choices == loadOpts_.variantOverrides) return;
+  loadOpts_.variantOverrides = choices;
+  previewLodReloadPending_ = true;
+  size_t levels[4] = {};
+  for (const auto& choice : choices)
+    ++levels[size_t(choice.second.at("previewLod")[3] - '0')];
+  LOGI("preview LOD: tiles=%zu levels=%zu/%zu/%zu/%zu, camera error %.2f px",
+       choices.size(), levels[0], levels[1], levels[2], levels[3],
+       previewLodPixelError_);
+  startRecomposeAsync({});
 }
 
 void App::finishLoadIfReady() {
   if (!loadActive_) return;
   if (!loadFinished_.load(std::memory_order_acquire)) return;
   if (streamLoadActive_ && !streamCompleteSeen_) return;
-  if (loadThread_.joinable()) loadThread_.join();  // sync point: worker fully done
-  clearPtexDecode();  // readers point into the outgoing draw_'s source bytes
+  if (loadThread_.joinable())
+    loadThread_.join();  // sync point: worker fully done
+  std::shared_ptr<std::promise<void>> resumePreviewRenderer;
+#if defined(LUSDVIEW_ENABLE_GL_THREAD)
+  if (renderThreadActive_ && previewLodReloadPending_) {
+    auto paused = std::make_shared<std::promise<void>>();
+    auto ready = paused->get_future();
+    resumePreviewRenderer = std::make_shared<std::promise<void>>();
+    auto resume = resumePreviewRenderer->get_future().share();
+    postGpu([paused, resume] {
+      paused->set_value();
+      resume.wait();
+    });
+    ready.wait();
+  }
+#endif
+  clearPtexDecode();     // readers point into the outgoing draw_'s source bytes
   loaded_ = std::move(*pendingLoaded_);
   const bool ok = loaded_.ok;
   bool incrementalUploaded = false;
   bool renderSessionCommitted = false;
   const bool render_session_bootstrap =
-      pendingNextRenderUpdate_ &&
-      pendingNextRenderBootstrap_;
+      pendingNextRenderUpdate_ && pendingNextRenderBootstrap_;
   if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
       pendingNextRenderSession_ && pendingNextRenderUpdate_ &&
-      !render_session_bootstrap) {
+      !render_session_bootstrap && !previewLodReloadPending_) {
     DrawSceneCommitSink sink([&]() {
       return tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
     });
-    const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
-                                               pendingNextRenderUpdate_.get(), &sink);
+    const auto committed = CommitPreparedScene(
+        *pendingNextRenderSession_, pendingNextRenderUpdate_.get(), &sink);
     incrementalUploaded = committed == LIGHTUSD_OK && sink.committed();
     renderSessionCommitted = committed == LIGHTUSD_OK;
     if (committed != LIGHTUSD_OK) {
@@ -4699,15 +4931,15 @@ void App::finishLoadIfReady() {
            lightusd::api::LastError());
     }
   } else if (!streamLoadActive_ && ok && nextSession_ && pendingDraw_ &&
-             !render_session_bootstrap) {
+             !render_session_bootstrap && !previewLodReloadPending_) {
     incrementalUploaded =
         tryApplyNextSceneUpdate(pendingDraw_.get(), pendingNextChanges_);
   }
-  // Bootstrap the retained RenderSession after an initial load. The GPU upload
-  // still follows the normal full/progressive path; this commit publishes only
-  // the stable-ID catalog prepared by the worker.
-  if (ok && render_session_bootstrap && pendingNextRenderSession_ &&
-      pendingNextRenderUpdate_) {
+  // LOD variants can replace complete mesh buffer layouts. Publish the retained
+  // catalog without an incremental GPU sink, then upload the complete scene.
+  // Bootstrap uses the same catalog-only commit after an initial load.
+  if (ok && (render_session_bootstrap || previewLodReloadPending_) &&
+      pendingNextRenderSession_ && pendingNextRenderUpdate_) {
     const auto committed = CommitPreparedScene(*pendingNextRenderSession_,
                                                pendingNextRenderUpdate_.get());
     renderSessionCommitted = committed == LIGHTUSD_OK;
@@ -4737,18 +4969,40 @@ void App::finishLoadIfReady() {
     nextRenderSession_ = std::move(pendingNextRenderSession_);
   }
   auto snapshot = nextSession_ ? nextSession_->PublicSnapshot()
-                             : lightusd::api::DocumentSnapshot{};
+                               : lightusd::api::DocumentSnapshot{};
   nextStageSnapshot_ = lightusd::api::Stage{};
-  if (snapshot) lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
+  if (snapshot)
+    lightusd::api::DocumentSnapshotStage(snapshot, &nextStageSnapshot_);
   nextStageRevision_ = nextStageSnapshot_
-        ? lightusd::api::DocumentSnapshotRevision(snapshot) : 0;
+                           ? lightusd::api::DocumentSnapshotRevision(snapshot)
+                           : 0;
   pendingNextSession_.reset();
   pendingNextRenderSession_.reset();
   pendingNextRenderUpdate_.reset();
   pendingLoaded_.reset();
   pendingDraw_.reset();
   loadActive_ = false;
-  applyLoaded(ok, /*progressive=*/!alreadyUploaded, alreadyUploaded);
+  const auto savedCamera = camera_;
+  const auto savedLens = cameraLens_;
+  const auto savedShutter = cameraShutter_;
+  applyLoaded(ok, /*progressive=*/!alreadyUploaded && !previewLodReloadPending_,
+              alreadyUploaded);
+  if (previewLodReloadPending_) {
+    camera_ = savedCamera;
+    cameraLens_ = savedLens;
+    cameraShutter_ = savedShutter;
+    gui_.setCameraLens(cameraLens_);
+    gui_.setCameraShutter(cameraShutter_);
+    previewLodReloadPending_ = false;
+    ++previewLodUpdates_;
+  }
+  if (resumePreviewRenderer) {
+    resumePreviewRenderer->set_value();
+    auto uploaded = std::make_shared<std::promise<void>>();
+    auto ready = uploaded->get_future();
+    postGpu([uploaded] { uploaded->set_value(); });
+    ready.wait();
+  }
   streamLoadActive_ = false;
   loadStream_.reset();
 }
@@ -5102,22 +5356,14 @@ void App::updateNextDeformFrameIfNeeded() {
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
 
   // The load-time scene box is the REST box (the loader world-bakes and uploads
-  // rest vertices; the pose only happens downstream), so refresh it for the pose
-  // at this time code -- the ground grid is sized from it, `--mode depth` is
-  // normalized by it, and the initial auto-fit frames on it. Per-MESH boxes are
-  // left alone on purpose: a skinned batch keeps the conservative scene box so a
-  // moving rig cannot cull or LOD itself out of the frame.
-  {
-    float bmin[3], bmax[3];
-    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
-                                  gui_.blendOverrides(), bmin, bmax)) {
-      for (int k = 0; k < 3; ++k) {
-        draw_.aabbMin[k] = bmin[k];
-        draw_.aabbMax[k] = bmax[k];
-      }
-      draw_.hasBounds = true;
-    }
-  }
+  // rest vertices; the pose only happens downstream). Raster playback refreshes
+  // it from the same bone rows as the skinning frame, using a conservative
+  // bone-box union -- skinning every vertex on the CPU just to bound the scene
+  // was the dominant per-frame cost. Ray tracing still uses the exact posed box
+  // below (from the uploads it already computes).
+  // Per-MESH boxes are left alone on purpose: a skinned batch keeps the
+  // conservative scene box so a moving rig cannot cull or LOD itself out of the
+  // frame.
 
   // Ray tracing traces the vertex buffers themselves, so the raster shader's
   // deform never reaches it: re-pose the retained rest vertices on the CPU and
@@ -5138,6 +5384,18 @@ void App::updateNextDeformFrameIfNeeded() {
                          std::chrono::steady_clock::now() - skinT0).count(),
                      uploads.size(), verts);
       }
+      // Reuse the uploads for the exact scene box instead of skinning a second
+      // time inside BuildNextPosedSceneBounds.
+      float bmin[3], bmax[3];
+      if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                    gui_.blendOverrides(), bmin, bmax,
+                                    &uploads)) {
+        for (int k = 0; k < 3; ++k) {
+          draw_.aabbMin[k] = bmin[k];
+          draw_.aabbMax[k] = bmax[k];
+        }
+        draw_.hasBounds = true;
+      }
       const auto upT0 = std::chrono::steady_clock::now();
       for (const RtSkinnedMeshUpload& up : uploads) {
         renderer_->updateMeshVertices(up.meshIndex, up.vertices);
@@ -5155,9 +5413,42 @@ void App::updateNextDeformFrameIfNeeded() {
   // Renderer uploads go through postGpu() so they run on the render thread when
   // it owns the context (threaded path); inline otherwise. See the note in
   // updateGpuSkinningFrameIfNeeded.
-  if (hasSkin && BuildNextSkinningFrame(nextStageSnapshot_.get(), &draw_,
-                                        animTime_, &skinFrame_)) {
-    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
+  if (hasSkin) {
+    float bmin[3], bmax[3];
+    if (BuildNextSkinningFrame(nextStageSnapshot_.get(), &draw_, animTime_,
+                               &skinFrame_, bmin, bmax)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+      postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
+    }
+  } else if (hasNextMorph_) {
+    // Morph-only scene: no bone rows to reuse, but the conservative path still
+    // avoids the full CPU vertex re-pose.
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                  gui_.blendOverrides(), bmin, bmax, nullptr,
+                                  /*conservative=*/true)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+    }
+  }
+  // Seed auto-fit and the frozen helper extent from the same tight initial
+  // pose as CPU skinning. Later animation frames retain the inexpensive
+  // conservative bone bounds above; they must not rescale the ground grid.
+  if (!std::isfinite(skinFrameTime_)) {
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextStageSnapshot_.get(), &draw_, animTime_,
+                                 gui_.blendOverrides(), bmin, bmax)) {
+      std::copy(bmin, bmin + 3, draw_.aabbMin);
+      std::copy(bmax, bmax + 3, draw_.aabbMax);
+      draw_.hasBounds = true;
+    }
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
@@ -5587,6 +5878,8 @@ static std::uint64_t FrameSceneKey(const FramePacket& p) {
   bytes(&p.cameraLens, sizeof(p.cameraLens));
   bytes(&p.cameraShutter, sizeof(p.cameraShutter));
   bytes(&p.mode, sizeof(p.mode));
+  bytes(&p.wireMode, sizeof(p.wireMode));
+  bytes(&p.wireXray, sizeof(p.wireXray));
   bytes(p.clearColor, sizeof(p.clearColor));
   bytes(p.lightDir, sizeof(p.lightDir));
   bytes(p.lightColor, sizeof(p.lightColor));
@@ -6846,7 +7139,7 @@ void App::applyNavCommand(const StreamNav& c) {
         if (streamDragButton_ == 1 || (streamDragButton_ == 0 && streamDragShift_))
           camera_.pan(dx, dy);                       // middle / shift+left = pan
         else if (streamDragButton_ == 2)
-          camera_.dolly((dx - dy) * 0.05f);          // right = dolly
+          camera_.dolly((dx - dy) * 0.022f);         // right = dolly
         else
           camera_.orbit(dx, dy);                     // left = orbit
       }
@@ -7361,7 +7654,7 @@ int App::run(const std::string& initialFile, int maxFrames,
       return finishRun(1);
     }
     // A streaming server runs an open-ended loop (no one-shot screenshot bound).
-    if (maxFrames < 0 && streamHttpPort_ <= 0)
+    if (maxFrames < 0 && streamHttpPort_ <= 0 && !mcpStdio_ && mcpHttpPort_ <= 0)
       maxFrames = 4;  // windowless runs are bounded by frame count
     // GLFW is never initialized in the headless path (no window, no surface).
   } else {
@@ -7573,6 +7866,15 @@ int App::run(const std::string& initialFile, int maxFrames,
                                        : "Failed to start MCP HTTP server";
     }
     if (mcpStdio_) mcp_->startStdio();
+    gui_.setRenderObserver([this] {
+      if (mcpBarrierRequest_.empty() || rtPath_ || stereoRequested_ || rasterMotionAccum_.valid ||
+          loadActive_ || progressiveActive_ || reconvActive_ || (reconvHasRequest_ && reconvRequested_ != reconvApplied_)) return;
+      std::string error;
+      auto state = mcpCallLibraryTool("view_state", nlohmann::json::object(), error);
+      if (!error.empty()) return;
+      for (const char* key : {"frame_serial", "rendered_camera", "rendered_time", "barrier"}) state.erase(key);
+      mcpBarrierSubmitting_ = std::move(state);
+    });
   }
 #else
   if (mcpStdio_ || mcpHttpPort_ > 0) {
@@ -7634,6 +7936,13 @@ int App::run(const std::string& initialFile, int maxFrames,
     finishLoadIfReady();
     stepProgressiveUpload();
     finishReconvertIfReady();  // swap in re-evaluated animation geometry
+    stepScenePreviewLods();
+    // Batch captures wait for the camera-selected variants, not an intermediate
+    // coarse frame. The CPU/CUDA screenshot paths consume the same final scene.
+    if (headless_ && (previewLodReloadPending_ || previewRefinement_.valid())) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
+    }
 
     // Advance the playback clock and request a re-evaluation at the new time.
     // Headless renders a fixed --time frame unless --play asked for playback --
@@ -7892,6 +8201,7 @@ int App::run(const std::string& initialFile, int maxFrames,
 #endif
         mcpHttpRunning_, mcpHttpHost_, mcpHttpPort_ > 0 ? mcpHttpPort_ : 8080,
         mcpHttpStatus_);
+    gui_.setCompareContext(rendererGeneration_, renderThreadActive_);
     gui_.frame(renderer_.get(), &camera_);
     if (!droppedEnvmapPath_.empty()) {
       gui_.setDomeFilePath(droppedEnvmapPath_);
@@ -8370,7 +8680,23 @@ int App::run(const std::string& initialFile, int maxFrames,
       // on the main thread, deep-copy the ImGui draw lists, and hand it to the
       // render thread. The main loop never touches GL or blocks on the GPU.
       auto pkt = std::make_unique<FramePacket>();
-      gui_.renderViewportScene(pkt.get());
+      const bool directVolume =
+          previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume;
+      if (directVolume) {
+        std::vector<uint8_t> rgba;
+        int width = 0, height = 0;
+        std::string error;
+        if (!renderScenePreviewVolume(&rgba, &width, &height, &error)) {
+          LOGE("direct volume: %s", error.c_str());
+          return finishRun(1);
+        }
+        postGpu([this, rgba = std::move(rgba), width, height] {
+          renderer_->uploadViewportImage(rgba.data(), width, height);
+        });
+      } else
+        gui_.renderViewportScene(pkt.get());
       updateTextureResidency();
       glfwGetFramebufferSize(window_, &pkt->fbW, &pkt->fbH);
       pkt->wantCapture = checkpointDue ||
@@ -8481,7 +8807,18 @@ int App::run(const std::string& initialFile, int maxFrames,
           LOGW("stereo live viewport: %s", stereoError.c_str());
         }
       }
-      if (stereoLiveRendered) {
+      if (previewRequest_.enabled && previewRequest_.direct_volume &&
+          previewRequest_.options.kind ==
+              lightusd::tydra::next::ScenePreviewKind::Volume) {
+        std::vector<uint8_t> rgba;
+        int width = 0, height = 0;
+        std::string error;
+        if (!renderScenePreviewVolume(&rgba, &width, &height, &error)) {
+          LOGE("direct volume: %s", error.c_str());
+          return finishRun(1);
+        }
+        renderer_->uploadViewportImage(rgba.data(), width, height);
+      } else if (stereoLiveRendered) {
         // The two eye passes were presented above to make their offscreen
         // captures current. The uploaded side-by-side image is presented once
         // more below with the current ImGui frame.
@@ -8542,11 +8879,45 @@ int App::run(const std::string& initialFile, int maxFrames,
         streamPrevClientCount_ = cc;
       }
       if (streamSend) renderer_->requestWindowCapture();
+#if defined(LUSDVIEW_HAVE_MCP)
+      if (!mcpCompareWindowPath_.empty()) renderer_->requestWindowCapture();
+#endif
 
       if (!imguiRenderedBeforeStereo) ImGui::Render();
       static const bool timeFrame = std::getenv("LUSDVIEW_TIME_FRAME") != nullptr;
       const auto tp0 = std::chrono::steady_clock::now();
       renderer_->present();
+#if defined(LUSDVIEW_HAVE_MCP)
+      if (!mcpCompareWindowPath_.empty()) {
+        std::vector<uint8_t> pixels;
+        int width=0,height=0;
+        std::string error;
+        bool ok=renderer_->captureWindow(&pixels,&width,&height);
+        if (ok) ok=WriteScreenshotImage(mcpCompareWindowPath_,pixels,width,height,&error);
+        else error="composited window readback is unavailable";
+        mcpCompareWindowResult_={{"pending",false},{"written",ok},{"path",mcpCompareWindowPath_},
+                                 {"width",width},{"height",height},{"error",error}};
+        mcpCompareWindowPath_.clear();
+      }
+      if (mcp_) {
+        mcpCpuFrameSeconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - uiFrameStart).count();
+        ++mcpFrameSerial_;
+        mcpRenderedTime_ = hasAnimation_ ? reconvApplied_ : animTime_;
+        std::string cameraError;
+        mcpRenderedCamera_ = mcpViewport(nlohmann::json{{"op", "get"}}, cameraError)["camera"];
+        if (!mcpBarrierSubmitting_.is_null()) {
+          mcpBarrierPixels_.clear();
+          const bool captured = renderer_->captureViewport(&mcpBarrierPixels_, &mcpBarrierWidth_, &mcpBarrierHeight_);
+          mcpBarrier_ = {{"token", mcpBarrierRequest_}, {"frame_serial", mcpFrameSerial_},
+                         {"state", std::move(mcpBarrierSubmitting_)},
+                         {"ready", captured && mcpBarrierWidth_ > 1 && mcpBarrierHeight_ > 1}};
+          mcpBarrier_["state"]["timeline"]["time"] = mcpRenderedTime_;
+          if (!captured) mcpBarrier_["error"] = "viewport readback failed";
+          mcpBarrierSubmitting_ = nullptr;
+          mcpBarrierRequest_.clear();
+        }
+      }
+#endif
 
       if (rasterMotionFrame) {
         RasterMotionAccumulation& accum = rasterMotionAccum_;
@@ -8766,7 +9137,9 @@ int App::run(const std::string& initialFile, int maxFrames,
 
     if (quitAfterFullPresent_) running = false;
 
-    if (maxFrames >= 0) ++frameCount;
+    if (maxFrames >= 0 && !previewLodReloadPending_ &&
+        !previewRefinement_.valid())
+      ++frameCount;
     bool fixedFrameBudgetReached = maxFrames >= 0 && frameCount >= maxFrames;
     if (maxFrames >= 0 && headless_ && pathTrace_.enabled && !cudaRt_ &&
         !hipRt_ && pathTrace_.targetSamples > 0) {
@@ -8905,6 +9278,22 @@ int App::run(const std::string& initialFile, int maxFrames,
       LOGW("capture not supported by this backend");
     }
   };
+  if (previewRequest_.enabled && previewRequest_.direct_volume &&
+      previewRequest_.options.kind ==
+          lightusd::tydra::next::ScenePreviewKind::Volume &&
+      !screenshot.empty()) {
+    std::vector<uint8_t> rgba;
+    int width = 0, height = 0;
+    std::string error;
+    if (!renderScenePreviewVolume(&rgba, &width, &height, &error, false) ||
+        !WriteScreenshotImage(screenshot, rgba, width, height, &error)) {
+      LOGE("direct volume capture: %s", error.c_str());
+      return finishRun(1);
+    }
+    reportCaptureWidth_ = width;
+    reportCaptureHeight_ = height;
+    return finishRun(0);
+  }
   // CUDA ray tracing: trace the loaded scene on the GPU (CUDA driver API + NVRTC
   // loaded at runtime via cuew) and write it in place of the rasterized capture.
   if (cudaRt_ && !screenshot.empty() && !draw_.empty()) {
@@ -9408,7 +9797,9 @@ int App::run(const std::string& initialFile, int maxFrames,
         const float camPos[3] = {eye.x, eye.y, eye.z};
         if (!cpuTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
                               gui_.displacementScale(), nullptr,
-                              gui_.purposeVisibleMask())) {
+                              gui_.purposeVisibleMask(),
+                              std::getenv("LUSDVIEW_CPU_RT_NO_CULL") ? nullptr
+                                                                    : pv.m)) {
           LOGW("CPU ray tracing build failed at shutter time %.6f: %s",
                sampleTime, cerr.c_str());
           traced = false;
@@ -9465,10 +9856,16 @@ int App::run(const std::string& initialFile, int maxFrames,
         reportCaptureHeight_ = h;
         std::string werr;
         if (WriteScreenshotImage(screenshot, rgba, w, h, &werr)) {
-          LOGI("CPU RT wrote %s (%dx%d, %zu tris%s, %s)", screenshot.c_str(),
-               w, h, cpuTracer_.triangleCount(),
+          LOGI("CPU RT wrote %s (%dx%d, %zu tris%s, %zu/%zu instances "
+               "expanded/culled, %s)",
+               screenshot.c_str(), w, h, cpuTracer_.triangleCount(),
                cpuTracer_.truncated() ? ", truncated" : "",
-               cpuTracer_.deviceName());
+               cpuTracer_.expandedInstanceCount(),
+               cpuTracer_.culledInstanceCount(), cpuTracer_.deviceName());
+          LOGI("CPU RT instance TLAS: %zu BLAS groups, %zu/%zu instances "
+               "visible/culled",
+               cpuTracer_.blasGroupCount(), cpuTracer_.expandedInstanceCount(),
+               cpuTracer_.culledInstanceCount());
         } else {
           LOGW("CPU RT screenshot write failed: %s", werr.c_str());
         }

@@ -17,7 +17,7 @@ using namespace crate_stage_detail;
 
 // Set authored bits for recognized metadata, including malformed known fields.
 // Return false only when the field name is not property metadata.
-bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
+bool CrateReader::Impl::DecodePropMetaField(std::string_view name,
                                             ValueRep rep, PropMeta& pm) {
   auto tok_or_str = [&](std::string& dst, uint32_t bit) -> bool {
     Value v;
@@ -119,7 +119,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
     const std::vector<uint32_t>& slot_to_entry, const ReportFn& report_stage,
     size_t spec_begin, size_t spec_end, AttrRecords& attr_out,
     RelRecords& rel_out,
-    std::vector<std::pair<std::string, ValueRep>>& property_raw_field_scratch,
+    std::vector<std::pair<std::string_view, ValueRep>>& property_raw_field_scratch,
     bool report) {
   auto split_prop_path = [](const std::string_view raw, std::string& prim_path,
                             std::string& prop_name) -> bool {
@@ -245,12 +245,19 @@ bool CrateReader::Impl::CollectPropertyRecords(
           } else if (!DecodePropMetaField(f.first, f.second,
                                           ri.ensure_meta())) {
             Value value;
-            if (UnpackValue(f.second, value)) {
+            DecodedExtensionField integer_field;
+            if (f.second.type_id() == CrateTypeId::Int64ListOp &&
+                DecodeInt64ListOpField(std::string(f.first), f.second, &integer_field)) {
+              ri.meta->unknownFields.push_back(std::move(integer_field));
+              ri.meta->authored |= PropMeta::kUnknownMeta;
+            } else if (UnpackValue(f.second, value)) {
               ri.meta->unknownFields.push_back(
-                  MakeTypedExtensionField(f.first, std::move(value)));
+                  MakeTypedExtensionField(std::string(f.first), std::move(value),
+                      f.second.type_id() == CrateTypeId::UnregisteredValue));
               ri.meta->authored |= PropMeta::kUnknownMeta;
             } else {
-              AddWarning("Unknown relationship field '" + f.first + "' on " +
+              AddWarning("Unknown relationship field '" +
+                         std::string(f.first) + "' on " +
                          prim_path + "." + ri.name + " is not decodable");
             }
           }
@@ -292,6 +299,7 @@ bool CrateReader::Impl::CollectPropertyRecords(
             }
           }
         } else if (f.first == "timeSamples") {
+          ai.has_time_samples = true;
           if (!DecodeTimeSamples(f.second, &ai.time_samples)) {
             AddWarning("Failed to decode timeSamples on " + prim_path + "." +
                        ai.name);
@@ -362,12 +370,19 @@ bool CrateReader::Impl::CollectPropertyRecords(
         } else if (!DecodePropMetaField(f.first, f.second,
                                         ai.ensure_meta())) {
           Value value;
-          if (UnpackValue(f.second, value)) {
+          DecodedExtensionField integer_field;
+          if (f.second.type_id() == CrateTypeId::Int64ListOp &&
+              DecodeInt64ListOpField(std::string(f.first), f.second, &integer_field)) {
+            ai.meta->unknownFields.push_back(std::move(integer_field));
+            ai.meta->authored |= PropMeta::kUnknownMeta;
+          } else if (UnpackValue(f.second, value)) {
             ai.meta->unknownFields.push_back(
-                MakeTypedExtensionField(f.first, std::move(value)));
+                MakeTypedExtensionField(std::string(f.first), std::move(value),
+                    f.second.type_id() == CrateTypeId::UnregisteredValue));
             ai.meta->authored |= PropMeta::kUnknownMeta;
           } else {
-            AddWarning("Unknown property field '" + f.first + "' on " +
+            AddWarning("Unknown property field '" + std::string(f.first) +
+                       "' on " +
                        prim_path + "." + ai.name + " is not decodable");
           }
         }

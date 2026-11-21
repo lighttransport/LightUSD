@@ -12,7 +12,7 @@
 #endif
 
 #include "crate-reader.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 #ifdef __wasi__
 #else

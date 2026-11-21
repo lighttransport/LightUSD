@@ -117,6 +117,7 @@ set(LUSDVIEW_SOURCES
     camera_stereo.cc
     frame_packet.cc
     gui.cc
+    compare_panel.cc
     gui_stringify.cc
     gui_style.cc
     gl/gl_util.cc
@@ -222,9 +223,12 @@ endif()
 # Keep all scene/material packing and runtime shader implementations behind one
 # target so the CLI renderer cannot drift from the viewer's OpenPBR/MaterialX
 # ABI.  In particular this target has no GLFW, ImGui, OpenGL, or X11 dependency.
+include(${PROJECT_SOURCE_DIR}/cmake/lightusd-ptex.cmake)
 set(LIGHTUSD_GPU_RT_COMMON_SOURCES
     lighting_ies.cc
     ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+    ${LIGHTUSD_PTEX_C_SOURCES}
+    ${LIGHTUSD_PTEX_C_FILE_SOURCES}
     ptex_atlas.cc
     texture_tools.cc
     displacement_bake.cc
@@ -311,6 +315,7 @@ if(NOT MSVC)
 endif()
 target_link_libraries(lightusd_gpu_rt_common PUBLIC
     ${LIGHTUSD_TARGET_STATIC}
+    tydra_next
     ${CMAKE_DL_LIBS})
 if(Threads_FOUND)
   target_link_libraries(lightusd_gpu_rt_common PUBLIC Threads::Threads)
@@ -383,6 +388,15 @@ endfunction()
 lusdview_set_warning_flags(lusdview_material_objects)
 
 if(LIGHTUSD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME lusdview-control-unit
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover
+          -s ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/view_control -p test_control.py)
+    set_tests_properties(lusdview-control-unit PROPERTIES
+        LABELS "lusdview;mcp" TIMEOUT 30
+        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+  endif()
   if(LUSDVIEW_HAVE_OPTIX)
     add_executable(lusdview_optix_runtime_test
         tests/optix_runtime_test.cc
@@ -421,6 +435,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
+  target_compile_definitions(lusdview_ptex_atlas_test PRIVATE
+      LIGHTUSD_PTEX_MIP_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/usdc/ptex-mip")
   target_link_libraries(lusdview_ptex_atlas_test PRIVATE
       ${LIGHTUSD_TARGET_STATIC})
 
@@ -432,6 +448,8 @@ if(LIGHTUSD_BUILD_TESTS)
       texture_tools.cc
       ptex_atlas.cc
       ${PROJECT_SOURCE_DIR}/src/ptx-loader.cc
+      ${LIGHTUSD_PTEX_C_SOURCES}
+      ${LIGHTUSD_PTEX_C_FILE_SOURCES}
       ${PROJECT_SOURCE_DIR}/src/image-loader.cc
       ${PROJECT_SOURCE_DIR}/src/io-util.cc
       ${PROJECT_SOURCE_DIR}/src/external/miniz.c
@@ -444,6 +462,7 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
+  target_link_libraries(lusdview_lightrt_bridge_test PRIVATE tydra_next)
   if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     target_link_libraries(lusdview_lightrt_bridge_test PRIVATE Threads::Threads)
@@ -467,7 +486,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_openpbr_material_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_openpbr_material_test PRIVATE Threads::Threads)
   endif()
@@ -493,7 +513,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_lighting_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_lighting_test PRIVATE Threads::Threads)
   endif()
@@ -515,7 +536,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_geometry_primvar_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_geometry_primvar_test PRIVATE Threads::Threads)
   endif()
@@ -537,7 +559,8 @@ if(LIGHTUSD_BUILD_TESTS)
       ${PROJECT_SOURCE_DIR}/src/external
       ${COMMON_DIR})
   target_link_libraries(lusdview_texture_pipeline_test PRIVATE
-      ${LIGHTUSD_TARGET_STATIC})
+      ${LIGHTUSD_TARGET_STATIC}
+      tydra_next)
   if(UNIX AND NOT APPLE)
     target_link_libraries(lusdview_texture_pipeline_test PRIVATE Threads::Threads)
   endif()
@@ -575,6 +598,16 @@ if(LIGHTUSD_BUILD_TESTS)
       target_link_libraries(lusdview_lightrt_mtlx_${mtlx_suite}_test PRIVATE m)
     endif()
   endforeach()
+
+  add_executable(lusdview_shading_normal_test
+      tests/shading_normal_test.cc)
+  target_compile_features(lusdview_shading_normal_test PRIVATE cxx_std_17)
+  lusdview_set_warning_flags(lusdview_shading_normal_test)
+  target_include_directories(lusdview_shading_normal_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
 
   add_executable(lusdview_camera_nav_test
       tests/camera_nav_test.cc
@@ -725,6 +758,7 @@ if(LIGHTUSD_BUILD_TESTS)
       lusdview_lightrt_mtlx_graph_evaluation_test
       lusdview_camera_nav_test
       lusdview_camera_stereo_test
+      lusdview_shading_normal_test
       lusdview_preview_cache_test
       lusdview_vchar_control_map_test
       lusdview_document_test

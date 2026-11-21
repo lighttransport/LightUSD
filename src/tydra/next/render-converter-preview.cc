@@ -61,6 +61,46 @@ bool RenderSceneConverter::Impl::ExtractPreviewSurface(const Stage& stage,
   return true;
 }
 
+bool RenderSceneConverter::Impl::ExtractPxrDisneyAsOpenPBR(
+    const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
+    RenderScene* scene) {
+  if (!out || !::lightusd::next::IsShader(shader_prim)) return false;
+
+  // RenderMan's PxrDisney is a layered Disney BRDF. The preview transport is
+  // OpenPBR, so map the lobes with a direct counterpart and leave the rest at
+  // their schema default. This is an approximation for previewing assets that
+  // expose only the ri:surface terminal; it is not a RenderMan-compatible
+  // PxrDisney evaluation.
+  ExtractShaderParam(stage, shader_prim, "baseColor", &out->base_color, scene);
+  ExtractShaderParam(stage, shader_prim, "metallic", &out->base_metalness,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "roughness",
+                     &out->specular_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "ior", &out->specular_ior, scene);
+  ExtractShaderParam(stage, shader_prim, "anisotropic",
+                     &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface",
+                     &out->subsurface_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen", &out->sheen_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "clearcoat", &out->coat_weight,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  // PxrDisney's clearcoatGloss is 0 = blurry, 1 = sharp; OpenPBR stores a
+  // roughness.
+  ShaderParam gloss = {-1, {1, 0, 0, 0}};
+  if (ExtractShaderParam(stage, shader_prim, "clearcoatGloss", &gloss, scene)) {
+    SetParamFloat(&out->coat_roughness, std::max(0.0f, 1.0f - gloss.value.x));
+  }
+  // `isThin` switches the Disney transmission from refraction to a thin wall.
+  ::lightusd::next::AttributeEval eval(&stage);
+  eval.SetTime(config_.time_code);
+  if (std::optional<int32_t> thin = eval.EvalInt(shader_prim, "inputs:isThin")) {
+    SetParamFloat(&out->thin_walled, *thin != 0 ? 1.0f : 0.0f);
+  }
+  return true;
+}
+
 bool RenderSceneConverter::Impl::ExtractStandardSurfaceAsOpenPBR(
     const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
     RenderScene* scene) {

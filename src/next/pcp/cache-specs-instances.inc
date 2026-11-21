@@ -40,6 +40,18 @@
   // would store one key copy per (stack, site) for nothing.
   mutable std::vector<SpecRef> empty_specs_;
 
+  // Read-only spec resolution for threads of the parallel structure walk:
+  // while a thread has a store installed, Specs() never inserts into the
+  // shared caches or builds a filter (a miss is resolved into the store) and
+  // SpecsFor() writes no memo.
+  struct SpecReadOnlyStore {
+    std::deque<std::vector<SpecRef>> vals;
+  };
+  static SpecReadOnlyStore *&SpecReadOnlyTLS() {
+    static thread_local SpecReadOnlyStore *store = nullptr;
+    return store;
+  }
+
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const ;
   // Build (or disable) the per-stack path filter from `layer_stacks[stack_idx]`.
@@ -52,6 +64,12 @@
   // copy/move (see SpecsMemo in cache.cc), so child-build/worker-seed/merge
   // copies can never carry a stale or cross-Impl pointer.
   const std::vector<SpecRef> &SpecsFor(const Src &s) const ;
+  // pxr-style spelling of a site in `stack`'s namespace for diagnostics:
+  // a variant-content site `/__self__/child` becomes `/Owner{set=name}child`
+  // (owner resolved through nested variant-content stacks). Non-variant
+  // stacks return `site` unchanged. Iterative; a malformed owner chain stops
+  // at the depth limit.
+  std::string SpellSitePath(uint32_t stack, const std::string &site) const;
   std::vector<SpecRef> FindSpecs(const LayerStack &st,
                                  const std::string &site) const ;
 
@@ -99,7 +117,8 @@
   // --- instancing ---------------------------------------------------------
 
   // Instanceable iff the COMPOSED `instanceable` value is true AND the prim
-  // actually has a composition arc (more than just its own root opinions).
+  // has a direct composition arc that contributes specs. Unresolved arcs and
+  // purely ancestral sources do not establish an instancing boundary.
   // `instanceable` is ordinary boolean metadata: the STRONGEST authored opinion
   // wins (srcs are strong-first), so a local `instanceable = false` override on
   // a prim that references an instanceable=true prototype de-instances it
@@ -121,6 +140,21 @@
   // (asset-relative, identical across instances). Keep only the latter --
   // `NamespaceMapping::MapsFrom`.
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const ;
+  // Drops sources that can no longer affect the composed stage (see
+  // cache-storage.cc); returns the number removed.
+  bool IsInertSource(const Src &s) const;
+  // Any non-variant source an arc targeted directly (MapsFrom): the sources
+  // an instanceable prim's subtree derives from when it is expanded.
+  bool HasSharedSource(const std::vector<Src> &srcs) const {
+    for (const Src &s : srcs)
+      if (!s.variant && Mapping(s.map_idx).MapsFrom(s.site)) return true;
+    return false;
+  }
+  size_t DropInertSources(const std::string &key, std::vector<Src> &srcs,
+                          const std::vector<std::string> *children);
+  // Set for a build whose sources die with it (release_build_sources): the
+  // source warm then drops inert sources as it goes (ExpandWarmNode).
+  bool warm_drop_inert_ = false;
 
   // Prototype bookkeeping for a prim that is an instance with key `ik`.
   //
@@ -137,15 +171,41 @@
   void AssignPrototype(const std::string &prim_path, const std::string &ik,
                        bool prefer_min = false) ;
 
-  void RegisterInstance(const std::string &prim_path,
+  // Returns true when the prim is instanceable (and so was registered or
+  // stashed); a prim that returns false cannot be in prototype_of.
+  bool RegisterInstance(const std::string &prim_path,
                         const std::vector<Src> &srcs, bool prefer_min = false) ;
+  // RegisterInstance for a caller that already evaluated
+  // IsInstanceableSources(srcs) == true.
+  bool RegisterInstanceKnownInstanceable(const std::string &prim_path,
+                                         const std::vector<Src> &srcs) ;
+
+  // Composed-layer index of each prim the structure walk registered as
+  // instanceable (see BuildStage). Lets FlattenInstances* find prototypes
+  // and members without a path->index map over all prims; a miss falls back
+  // to building that map once.
+  struct InstanceIndexEntry {
+    PathStr path;  // backs the map key (shared with prototype_of)
+    uint32_t idx;
+  };
+  std::unordered_map<std::string_view, InstanceIndexEntry> instance_prim_index_;
+  void RecordInstanceIndex(const std::string &path, uint32_t idx) {
+    auto it = instance_prim_index_.find(path);
+    if (it != instance_prim_index_.end()) {
+      it->second.idx = idx;
+      return;
+    }
+    InstanceIndexEntry e{PathNode(path), idx};
+    const std::string_view key(e.path.str());
+    instance_prim_index_.emplace(key, std::move(e));
+  }
 
   // Retire one group: drop `prim_path` from it and, if that empties it or the
   // prim WAS the prototype, orphan the siblings and erase the group.
   // `it` must be valid; returns the iterator to use next.
-  std::unordered_map<std::string, std::vector<std::string>>::iterator
+  std::unordered_map<std::string, std::vector<PathStr>>::iterator
   DropInstancingFromGroup(
-      std::unordered_map<std::string, std::vector<std::string>>::iterator it,
+      std::unordered_map<std::string, std::vector<PathStr>>::iterator it,
       const std::string &prim_path) ;
 
   void DropInstancing(const std::string &prim_path) ;

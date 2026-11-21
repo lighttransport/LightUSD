@@ -12,7 +12,7 @@ namespace next {
 namespace validation_detail {
 
 inline constexpr const char *kLayerLocation = "<layer>";
-inline constexpr const char *kSpecVersion = "AOUSD Core Spec v1.0.1 (2025-12-12)";
+inline constexpr const char *kSpecVersion = "AOUSD Core Spec v1.1.0 (2026-08-13)";
 
 struct AppliedSchema {
   std::string name;
@@ -451,12 +451,27 @@ void ValidatePathArcString(const std::string &arc_str,
 void ValidateVariantSetsAndSelections(const PrimSpec &ps,
                                       const std::string &prim_location,
                                       USDValidationResult *result);
+// Population order names are recommendations; absent children are permitted.
+void ValidateNameOrder(const std::vector<std::string> &names, bool properties,
+                       const std::string &rule, const std::string &location,
+                       USDValidationResult *result);
+void ValidateRelocates(const std::vector<std::pair<std::string, std::string>> &entries,
+                       const std::string &location, const std::string &anchor,
+                       USDValidationResult *result);
 void ValidateRelocates(const PrimSpec &ps, const std::string &prim_location,
                        USDValidationResult *result);
 void ValidateCompositionMetadata(const PrimSpec &ps,
                                  const std::string &prim_location,
                                  const PrimSpecifierByPath &prim_specifiers,
                                  USDValidationResult *result);
+// core.listop.duplicateItems / core.listop.deprecatedAdd /
+// core.listop.deprecatedReorder over every list-op field of a PrimSpec.
+void ValidateListOpFields(const PrimSpec &ps, const std::string &prim_location,
+                          USDValidationResult *result);
+// core.schema.familyVersion for a schema name (typeName / apiSchemas entry).
+void ValidateSchemaNameGrammar(const std::string &name, const char *what,
+                               const std::string &location,
+                               USDValidationResult *result);
 std::vector<AppliedSchema> CollectAppliedSchemas(const PrimSpec &ps);
 std::set<std::string> CollectAppliedCollectionInstances(
     const std::vector<AppliedSchema> &schemas);

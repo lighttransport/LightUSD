@@ -8,6 +8,13 @@
 extern "C" {
 #endif
 
+/* Process-wide generation of completed read-side storage materializations
+ * (lazy values and deferred indexes). Zero disables reuse after saturation.
+ * Not a general mutation version: explicit edits need separate invalidation.
+ * A read-side cache that changes an owner's footprint notifies after publication. */
+LU_CORE_API size_t lu_storage_materialization_epoch(void);
+LU_CORE_API void lu_storage_note_materialization(void);
+
 typedef struct lu_budget lu_budget;
 typedef struct lu_buffer lu_buffer;
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "core/native-io.hh"
 #include "format-detect.hh"
 
 #include <algorithm>
@@ -58,6 +59,8 @@ FileFormat DetectFormatFromExtension(const std::string& filename) {
 }
 
 FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* err) {
+  if (!::lightusd::NativeIOAvailable(err)) return FileFormat::Unknown;
+
   std::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {
     if (err) *err = "Failed to open file for format detection: " + filename;

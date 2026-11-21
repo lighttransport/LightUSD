@@ -1,7 +1,7 @@
 {
   "name": "lightusd",
   "private": true,
-  "version": "1.0.0-rc4",
+  "version": "1.0.0",
   "description": "LightUSD WebAssembly and JavaScript loaders for USD and USDZ assets",
   "type": "module",
   "main": "./index.js",
@@ -59,6 +59,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "fzstd": "^0.1.1",
     "three": ">=0.178.0"
   }
 }

@@ -3,6 +3,7 @@
  */
 
 #include "py-internal.h"
+#include <math.h>
 
 /* ============================================================
  * Common helpers
@@ -426,6 +427,20 @@ static PyObject* Attr_get_has_timesamples(PyObject* self, void* closure) {
   return PyBool_FromLong(lightusd_attr_has_timesamples(prim->prim, name));
 }
 
+static PyObject* Attr_get_default_state(PyObject* self, void* closure) {
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context((LightUSDNamedRef*)self, &prim, &stage);
+  if (!st) return NULL;
+  const char* name = named_ref_name((LightUSDNamedRef*)self);
+  if (!name) return NULL;
+  lightusd_value_view view = {0};
+  lightusd_status status = lightusd_attr_get(prim->prim, name, &view);
+  if (status == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_FALSE;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+  return PyBool_FromLong(closure ? view.is_block != 0 : 1);
+}
+
 static PyObject* Attr_get_connections(PyObject* self, void* closure) {
   (void)closure;
   LightUSDNamedRef* ref = (LightUSDNamedRef*)self;
@@ -579,6 +594,40 @@ static PyObject* Attr_eval(PyObject* self, PyObject* args, PyObject* kwargs) {
   return lightusd_value_to_python(st, val);
 }
 
+static PyObject* Attr_resolve(PyObject* self, PyObject* args, PyObject* kwargs) {
+  static char* kwlist[] = {"time", "interpolation", "follow_connections", NULL};
+  PyObject* time_obj = Py_None;
+  const char* interpolation = "linear";
+  int follow = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|Osp:resolve", kwlist,
+                                   &time_obj, &interpolation, &follow)) return NULL;
+  if (strcmp(interpolation, "linear") && strcmp(interpolation, "held")) {
+    PyErr_SetString(PyExc_ValueError, "interpolation must be linear or held");
+    return NULL;
+  }
+  double time = NAN;
+  if (time_obj != Py_None) {
+    time = PyFloat_AsDouble(time_obj);
+    if (PyErr_Occurred()) return NULL;
+    if (!isfinite(time)) {
+      PyErr_SetString(PyExc_ValueError, "numeric time must be finite");
+      return NULL;
+    }
+  }
+  LightUSDPrim* prim;
+  lightusd_stage* stage;
+  lightusd_state* st = named_ref_context((LightUSDNamedRef*)self, &prim, &stage);
+  if (!st) return NULL;
+  const char* name = named_ref_name((LightUSDNamedRef*)self);
+  if (!name) return NULL;
+  lightusd_value* value = NULL;
+  lightusd_status status = lightusd_attr_eval_ex(stage, prim->prim, name, time,
+      strcmp(interpolation, "held") != 0, follow != 0, &value);
+  if (status == LIGHTUSD_ERR_NOT_FOUND) Py_RETURN_NONE;
+  if (status != LIGHTUSD_OK) return lightusd_raise(st, status, name);
+  return lightusd_value_to_python(st, value);
+}
+
 static PyObject* Attr_set(PyObject* self, PyObject* args, PyObject* kwargs) {
   static char* kwlist[] = {"value", "type", "time", NULL};
   PyObject* value;
@@ -703,6 +752,10 @@ static PyObject* Attr_repr(PyObject* self) {
 }
 
 static PyMethodDef Attr_methods[] = {
+    {"resolve", (PyCFunction)(void (*)(void))Attr_resolve,
+     METH_VARARGS | METH_KEYWORDS,
+     "resolve(time=None, interpolation='linear', follow_connections=False)\n"
+     "Resolve defaults/fallbacks or numeric samples/clips; None means DefaultTime."},
     {"get", (PyCFunction)(void (*)(void))Attr_get,
      METH_VARARGS | METH_KEYWORDS,
      "get(time=None, interpolation='linear') -> value\n"
@@ -737,6 +790,10 @@ static PyGetSetDef Attr_getset[] = {
      (void*)(uintptr_t)LIGHTUSD_PROP_CONNECTION},
     {"has_timesamples", Attr_get_has_timesamples, NULL,
      "True if time samples are authored.", NULL},
+    {"has_authored_default", Attr_get_default_state, NULL,
+     "A composed authored default exists (including a value block).", NULL},
+    {"is_default_blocked", Attr_get_default_state, NULL,
+     "The composed authored default is a value block.", (void*)(uintptr_t)1},
     {"connections", Attr_get_connections, NULL,
      "Connection target paths (tuple of str).", NULL},
     {"timesamples", Attr_get_timesamples, NULL, "TimeSamples view.", NULL},
@@ -1481,6 +1538,12 @@ static PyObject* Prim_get_asset_info(PyObject* self, void* closure) {
   return lightusd_dict_to_python(st, dict);
 }
 
+static int Prim_bool(PyObject* self) {
+  LightUSDPrim* prim;
+  if (!prim_context(self, &prim, NULL)) return -1;
+  return lightusd_prim_is_valid(prim->prim);
+}
+
 static Py_ssize_t Prim_length(PyObject* self) {
   LightUSDPrim* prim;
   lightusd_state* st = prim_context(self, &prim, NULL);
@@ -1571,6 +1634,18 @@ static PyObject* Prim_attribute(PyObject* self, PyObject* args) {
   if (!cname) return NULL;
   int ok = lightusd_prim_has_property(prim->prim, cname) ||
            lightusd_attr_has_timesamples(prim->prim, cname);
+  if (!ok) {
+    // A declared schema attribute can be valid without an authored value or
+    // fallback (for example PhysicsCollisionGroup.invertFilteredGroups).
+    lightusd_sv type = lightusd_prim_property_type_name(prim->prim, cname);
+    ok = type.len > 0 &&
+         !(type.len == 12 && memcmp(type.data, "relationship", 12) == 0);
+  }
+  if (!ok) {
+    lightusd_value_view view = {0};
+    lightusd_sv text = {0};
+    ok = lightusd_attr_inspect_default(prim->prim, cname, &view, &text) == LIGHTUSD_OK;
+  }
   Py_XDECREF(tmp);
   if (!ok) {
     PyErr_SetObject(PyExc_KeyError, name);
@@ -2003,6 +2078,7 @@ static PyType_Slot Prim_slots[] = {
     {Py_tp_dealloc, (void*)Prim_dealloc},
     {Py_tp_repr, (void*)Prim_repr},
     {Py_tp_iter, (void*)Prim_iter},
+    {Py_nb_bool, (void*)Prim_bool},
     {Py_sq_length, (void*)Prim_length},
     {Py_sq_contains, (void*)Prim_contains},
     {Py_mp_length, (void*)Prim_length},

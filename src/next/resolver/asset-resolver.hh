@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "core/host-services.hh"
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -128,6 +129,12 @@ struct ResolverConfig {
   // prefixes (matches legacy AssetResolutionResolver's default-on
   // suffix fallback).
   bool enable_suffix_fallback = true;
+  // Deny all native filesystem fallback, probes and timestamps. Registered
+  // memory assets and application readers remain available.
+  bool allow_filesystem = true;
+  // Optional working-directory lookup when working_directory is empty.
+  // Without a callback, the lexical base is "."; constructors do no OS I/O.
+  std::shared_ptr<const HostServices> host_services;
 };
 
 /// Custom resolver callback type
@@ -197,6 +204,11 @@ public:
 
   /// True when resolution or reads may enter application-provided code.
   bool HasUserCallbacks() const;
+  // Consumers must not bypass this resolver with direct file reads.
+  bool RequiresResolverReads() const {
+    return !NativeFilesystemEnabled() ||
+        memory_asset_count_.load(std::memory_order_relaxed) != 0 || HasUserCallbacks();
+  }
 
   /// Register an explicit URI/IRI-style scheme handler (for example `https`,
   /// `studio`, or `usd-anon`). Scheme names are ASCII case-insensitive and are
@@ -212,6 +224,7 @@ public:
   /// Register bytes under an identifier. An empty identifier creates a unique
   /// `usd-anon:` identifier. Registered bytes resolve and read without touching
   /// the filesystem and are safe for concurrent reads.
+  bool HasMemoryAsset(const std::string& identifier) const;
   std::string RegisterMemoryAsset(const std::string& identifier,
                                   std::vector<uint8_t> bytes);
   /// Register an immutable shared payload without copying its bytes.
@@ -236,6 +249,15 @@ public:
   /// Follow alias registrations to the final identifier. Returns the input
   /// unchanged when it is not an alias.
   std::string CanonicalPath(const std::string& identifier) const;
+
+  /// Whether the built-in filesystem backend is permitted for this instance.
+  bool NativeFilesystemEnabled() const {
+#if defined(LIGHTUSD_NO_NATIVE_RESOLVER_IO) || defined(LIGHTUSD_NO_NATIVE_IO)
+    return false;
+#else
+    return config_.allow_filesystem;
+#endif
+  }
 
   /// Get configuration
   const ResolverConfig& GetConfig() const { return config_; }

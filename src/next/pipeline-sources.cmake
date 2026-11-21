@@ -35,9 +35,10 @@ set(LIGHTUSD_NEXT_PIPELINE_SOURCES
     c/interpolation.c          # lerp/slerp interpolation kernels (interpolation.cc)
     c/value-storage.c          # value/array storage type queries (value.cc, value-view.cc)
     c/spline.c                 # cubic spline segment math (spline-eval.hh)
-    ../logger.cc               # logger/trace method bodies (logger.hh)
+    ../core/logger.cc               # logger/trace method bodies (logger.hh)
     writer/value-printer.cc
     prim/path.cc
+    layer/asset-anchor.cc
     layer/array-edit.cc
     layer/property-index.cc
     layer/prim-spec.cc

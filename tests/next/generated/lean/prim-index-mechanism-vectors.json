@@ -1,0 +1,111 @@
+{"scope": "implied inherit through reference, payload deferral",
+ "generator": "Gen.Vectors.PrimIndex",
+ "cases":
+ [{"query": "/Inst",
+   "loadPayloads": true,
+   "id": "implied-inherit-override",
+   "files":
+   {"root.usda":
+    "#usda 1.0\nclass \"C\" {}\ndef \"Inst\" (references = @ref.usda@</Ref>) {}\n",
+    "ref.usda":
+    "#usda 1.0\nclass \"C\" {}\ndef \"Ref\" (inherits = </C>) {}\n"},
+   "expected":
+   [{"path": "/Inst", "layer": "root.usda"},
+    {"path": "/C", "layer": "root.usda"},
+    {"path": "/Ref", "layer": "ref.usda"},
+    {"path": "/C", "layer": "ref.usda"}]},
+  {"query": "/Inst",
+   "loadPayloads": true,
+   "id": "implied-inherit-plain",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"Inst\" (references = @ref.usda@</Ref>) {}\n",
+    "ref.usda":
+    "#usda 1.0\nclass \"C\" {}\ndef \"Ref\" (inherits = </C>) {}\n"},
+   "expected":
+   [{"path": "/Inst", "layer": "root.usda"},
+    {"path": "/Ref", "layer": "ref.usda"},
+    {"path": "/C", "layer": "ref.usda"}]},
+  {"query": "/Inst",
+   "loadPayloads": true,
+   "id": "implied-chain",
+   "files":
+   {"root.usda":
+    "#usda 1.0\nclass \"D\" {}\nclass \"C\" (inherits = </D>) {}\ndef \"Inst\" (references = @ref.usda@</Ref>) {}\n",
+    "ref.usda":
+    "#usda 1.0\nclass \"C\" {}\ndef \"Ref\" (inherits = </C>) {}\n"},
+   "expected":
+   [{"path": "/Inst", "layer": "root.usda"},
+    {"path": "/C", "layer": "root.usda"},
+    {"path": "/D", "layer": "root.usda"},
+    {"path": "/Ref", "layer": "ref.usda"},
+    {"path": "/C", "layer": "ref.usda"}]},
+  {"query": "/Root/B",
+   "loadPayloads": true,
+   "id": "relocate-dest",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(\n  relocates = { </Root/A>: </Root/B> }\n)\ndef \"Root\" (references = @ref.usda@</R>)\n{\n  over \"A\"\n  {\n    int x = 1\n  }\n  over \"B\"\n  {\n    int y = 2\n  }\n}\n",
+    "ref.usda":
+    "#usda 1.0\ndef \"R\"\n{\n  def \"A\"\n  {\n    int z = 3\n  }\n}\n"},
+   "expected":
+   [{"path": "/Root/B", "layer": "root.usda"},
+    {"path": "/R/A", "layer": "ref.usda"}]},
+  {"query": "/Root/A",
+   "loadPayloads": true,
+   "id": "relocate-source",
+   "files":
+   {"root.usda":
+    "#usda 1.0\n(\n  relocates = { </Root/A>: </Root/B> }\n)\ndef \"Root\" (references = @ref.usda@</R>)\n{\n  over \"A\"\n  {\n    int x = 1\n  }\n  over \"B\"\n  {\n    int y = 2\n  }\n}\n",
+    "ref.usda":
+    "#usda 1.0\ndef \"R\"\n{\n  def \"A\"\n  {\n    int z = 3\n  }\n}\n"},
+   "expected": []},
+  {"query": "/P",
+   "loadPayloads": true,
+   "id": "variant-cycle",
+   "files":
+   {"root.usda":
+    "#usda 1.0\ndef \"P\" (\n  variantSets = \"v\"\n  variants = {string v = \"a\"}\n)\n{\n  variantSet \"v\" = {\n    \"a\" (\n      references = </P>\n    ) {\n    }\n  }\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P{v=a}", "layer": "root.usda"}]},
+  {"query": "/P",
+   "loadPayloads": true,
+   "id": "payload-loaded",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" (payload = @pay.usda@</T>) {}\n",
+    "pay.usda": "#usda 1.0\ndef \"T\" {}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"}, {"path": "/T", "layer": "pay.usda"}]},
+  {"query": "/P",
+   "loadPayloads": false,
+   "id": "payload-deferred",
+   "files":
+   {"root.usda": "#usda 1.0\ndef \"P\" (payload = @pay.usda@</T>) {}\n",
+    "pay.usda": "#usda 1.0\ndef \"T\" {}\n"},
+   "expected": [{"path": "/P", "layer": "root.usda"}]},
+  {"query": "/P",
+   "loadPayloads": true,
+   "id": "variant-selection-strong",
+   "files":
+   {"weak.usda":
+    "#usda 1.0\ndef \"P\" (\n  variantSets = \"v\"\n  variants = {string v = \"b\"}\n) {\n  variantSet \"v\" = {\n    \"a\" {}\n    \"b\" {}\n  }\n}\n",
+    "root.usda":
+    "#usda 1.0\n(subLayers = [@weak.usda@])\ndef \"P\" (\n  variantSets = \"v\"\n  variants = {string v = \"a\"}\n) {\n  variantSet \"v\" = {\n    \"a\" {}\n    \"b\" {}\n  }\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "weak.usda"},
+    {"path": "/P{v=a}", "layer": "root.usda"},
+    {"path": "/P{v=a}", "layer": "weak.usda"}]},
+  {"query": "/P",
+   "loadPayloads": true,
+   "id": "variant-selection-weak-only",
+   "files":
+   {"weak.usda":
+    "#usda 1.0\ndef \"P\" (\n  variantSets = \"v\"\n  variants = {string v = \"b\"}\n) {\n  variantSet \"v\" = {\n    \"a\" {}\n    \"b\" {}\n  }\n}\n",
+    "root.usda":
+    "#usda 1.0\n(subLayers = [@weak.usda@])\ndef \"P\" (\n  variantSets = \"v\"\n) {\n  variantSet \"v\" = {\n    \"a\" {}\n    \"b\" {}\n  }\n}\n"},
+   "expected":
+   [{"path": "/P", "layer": "root.usda"},
+    {"path": "/P", "layer": "weak.usda"},
+    {"path": "/P{v=b}", "layer": "root.usda"},
+    {"path": "/P{v=b}", "layer": "weak.usda"}]}]}

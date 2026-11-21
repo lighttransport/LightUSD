@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Z"
+    metersPerUnit = 1
+    startTimeCode = 1
+    endTimeCode = 12
+    timeCodesPerSecond = 24
+)
+def Xform "World"
+{
+    def Cube "Cube"
+    {
+        double size = 1
+        double3 xformOp:translate.timeSamples = {
+            1: (0, 0, 0),
+            12: (0.25, 0, 0)
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

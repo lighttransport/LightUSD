@@ -58,17 +58,21 @@ static PyObject* StageIter_next(PyObject* self) {
                     "Stage was structurally modified during traversal");
     return NULL;
   }
-  if (it->top == 0) return NULL; /* StopIteration */
-  lightusd_prim prim = it->stack[--it->top];
-  /* push children in reverse so traversal is preorder, left-to-right */
-  size_t n = lightusd_prim_child_count(prim);
-  for (size_t i = n; i > 0; --i) {
-    lightusd_prim child = lightusd_prim_child(prim, i - 1);
-    if (lightusd_prim_is_valid(child)) {
-      if (stageiter_push(it, child) != 0) return NULL;
+  while (it->top != 0) {
+    lightusd_prim prim = it->stack[--it->top];
+    if (it->default_predicate &&
+        !lightusd_prim_matches_local_default_predicate(prim)) continue;
+    /* A rejected ancestor prunes its subtree, matching default USD traversal. */
+    size_t n = lightusd_prim_child_count(prim);
+    for (size_t i = n; i > 0; --i) {
+      lightusd_prim child = lightusd_prim_child(prim, i - 1);
+      if (lightusd_prim_is_valid(child)) {
+        if (stageiter_push(it, child) != 0) return NULL;
+      }
     }
+    return lightusd_wrap_prim(st, it->stage, prim);
   }
-  return lightusd_wrap_prim(st, it->stage, prim);
+  return NULL; /* StopIteration */
 }
 
 static PyObject* StageIter_iter(PyObject* self) {
@@ -95,7 +99,7 @@ static PyType_Spec StageIter_spec = {
 };
 
 /* Create a DFS iterator over the stage (roots) or a prim's subtree. */
-static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj) {
+static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj, int default_predicate) {
   lightusd_stage* stage = lightusd_stage_handle(stage_obj);
   if (!stage) {
     PyErr_SetString(st->UsdError, "Stage is closed");
@@ -110,6 +114,7 @@ static PyObject* stage_iter_new(lightusd_state* st, PyObject* stage_obj) {
   it->top = 0;
   it->cap = 0;
   it->gen = lightusd_stage_generation(stage);
+  it->default_predicate = default_predicate;
   size_t n = lightusd_stage_root_prim_count(stage);
   for (size_t i = n; i > 0; --i) {
     lightusd_prim root = lightusd_stage_root_prim(stage, i - 1);
@@ -247,7 +252,17 @@ static Py_ssize_t Stage_length(PyObject* self) {
 static PyObject* Stage_iter(PyObject* self) {
   lightusd_state* st = lightusd_state_from_obj(self);
   if (!st) return NULL;
-  return stage_iter_new(st, self);
+  return stage_iter_new(st, self, 0);
+}
+
+static PyObject* Stage_traverse(PyObject* self, PyObject* args, PyObject* kwargs) {
+  static char* kwlist[] = {"all_prims", NULL};
+  int all_prims = 0;
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|$p:traverse", kwlist,
+                                   &all_prims)) return NULL;
+  lightusd_state* st = lightusd_state_from_obj(self);
+  if (!st) return NULL;
+  return stage_iter_new(st, self, !all_prims);
 }
 
 static PyObject* Stage_get_root_prims(PyObject* self, void* closure) {
@@ -294,7 +309,7 @@ static PyObject* Stage_prims_of_type(PyObject* self, PyObject* args) {
 
   PyObject* list = PyList_New(0);
   if (!list) return NULL;
-  PyObject* iter = stage_iter_new(st, self);
+  PyObject* iter = stage_iter_new(st, self, 0);
   if (!iter) {
     Py_DECREF(list);
     return NULL;
@@ -775,6 +790,11 @@ static PyObject* Stage_repr(PyObject* self) {
 }
 
 static PyMethodDef Stage_methods[] = {
+    {"traverse", (PyCFunction)(void (*)(void))Stage_traverse,
+     METH_VARARGS | METH_KEYWORDS,
+     "traverse(*, all_prims=False) -> iterator\n"
+     "Visit active, loaded, defined, non-abstract logical prims including native "
+     "instance proxies; all_prims=True preserves unfiltered iteration."},
     {"create", Stage_create, METH_NOARGS | METH_CLASS,
      "Create an empty stage for authoring."},
     {"close", Stage_close, METH_NOARGS,

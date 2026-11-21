@@ -22,6 +22,23 @@ bool Path::is_valid() const {
 
 Path Path::Parse(const std::string& path_str) {
   if (path_str.empty() || !IsValidPathString(path_str)) return Path();
+  // The grammar allows inline padding inside a variant selection
+  // (`{ set = variant }`); the canonical form has none (OpenUSD SdfPath, and
+  // usdspec-conformance `PathGrammar.printPath`). Padding is only legal inside braces
+  // of a path that already validated, so dropping it there is exact.
+  if (path_str.find('{') != std::string::npos &&
+      path_str.find_first_of(" \t") != std::string::npos) {
+    std::string out;
+    out.reserve(path_str.size());
+    bool in_sel = false;
+    for (char c : path_str) {
+      if (c == '{') in_sel = true;
+      else if (c == '}') in_sel = false;
+      if (in_sel && (c == ' ' || c == '\t')) continue;
+      out.push_back(c);
+    }
+    return Path(std::move(out));
+  }
   return Path(path_str);
 }
 
@@ -95,6 +112,20 @@ std::vector<std::string> Path::elements() const {
   return result;
 }
 
+namespace {
+// a + sep + b, allocated at exactly its length: `x + "/" + y` grows its
+// temporary by doubling, and a composed stage keeps ~10M of these path
+// strings (full-LOD benchmark scene: 2.7 GiB of heap for 1.7 GiB of text).
+std::string JoinExact(const std::string& a, const char* sep,
+                      const std::string& b) {
+  const size_t sl = std::char_traits<char>::length(sep);
+  std::string out;
+  out.reserve(a.size() + sl + b.size());
+  out.append(a).append(sep, sl).append(b);
+  return out;
+}
+}  // namespace
+
 Path Path::append_child(const std::string& child_name) const {
   // Authoring boundary: an appended component must be a valid identifier
   // (strict UTF-8 + XID). Invalid input yields an empty Path.
@@ -102,12 +133,22 @@ Path Path::append_child(const std::string& child_name) const {
     return Path();
   }
   if (path_.empty()) {
-    return Path("/" + child_name);
+    return Path(JoinExact(std::string(), "/", child_name));
   }
   if (path_.back() == '/') {
-    return Path(path_ + child_name);
+    return Path(JoinExact(path_, "", child_name));
   }
-  return Path(path_ + "/" + child_name);
+  return Path(JoinExact(path_, "/", child_name));
+}
+
+Path Path::append_child_unchecked(const std::string& child_name) const {
+  if (path_.empty()) {
+    return Path(JoinExact(std::string(), "/", child_name));
+  }
+  if (path_.back() == '/') {
+    return Path(JoinExact(path_, "", child_name));
+  }
+  return Path(JoinExact(path_, "/", child_name));
 }
 
 Path Path::append_property(const std::string& prop_name) const {
@@ -118,9 +159,9 @@ Path Path::append_property(const std::string& prop_name) const {
   }
   if (has_property()) {
     // Already has property - replace it
-    return Path(prim_path().str() + "." + prop_name);
+    return Path(JoinExact(prim_path().str(), ".", prop_name));
   }
-  return Path(path_ + "." + prop_name);
+  return Path(JoinExact(path_, ".", prop_name));
 }
 
 Path Path::make_relative_to(const Path& base) const {

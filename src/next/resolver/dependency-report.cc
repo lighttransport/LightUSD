@@ -6,7 +6,7 @@
 #include "../layer/asset-anchor.hh"
 #include "../pcp/cache.hh"
 #include "../reader/usdz-reader.hh"
-#include "../../minijson.hh"
+#include "core/minijson.hh"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -43,7 +43,7 @@ class Collector {
       read.max_entries = opt.max_records;
       std::vector<uint8_t> bytes;
       std::string error;
-      const bool opened = resolver.HasUserCallbacks()
+      const bool opened = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(asset.package_path, &bytes, &error) && package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(asset.package_path, read);
       if (!opened) { Issue("cannot inspect package entries: " + asset.package_path); return false; }
@@ -213,7 +213,7 @@ class Collector {
       USDZReadOptions read;
       read.max_archive_size = limits.max_memory;
       std::vector<uint8_t> bytes;
-      const bool opened = resolver.HasUserCallbacks()
+      const bool opened = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(id, &bytes, &err) && package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(id, read);
       if (!opened || package.FindRootLayer() < 0) { Issue("cannot inspect package root: " + id); return; }
@@ -264,6 +264,7 @@ class Collector {
       // otherwise treats its anchor argument as a layer filename and removes
       // its last path component, so make the directory intent explicit.
       if (spec->asset_anchor_id() != 0 && !anchor.empty() &&
+          !AssetResolver::IsPackagePath(anchor) &&
           anchor.back() != '/' && anchor.back() != '\\') {
         anchor.push_back('/');
       }
@@ -309,7 +310,7 @@ class Collector {
       USDZReadOptions read;
       read.max_archive_size = opt.load.max_memory;
       std::vector<uint8_t> bytes;
-      const bool opened_package = resolver.HasUserCallbacks()
+      const bool opened_package = resolver.RequiresResolverReads()
           ? resolver.ReadAsset(id, &bytes, &err) &&
                 package.Open(bytes.data(), bytes.size(), read)
           : package.OpenFile(id, read);

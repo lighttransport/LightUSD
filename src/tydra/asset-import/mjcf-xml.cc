@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // XML and string helpers, MJCF <include> expansion.
+#include "core/native-io.hh"
 #include "mjcf-internal.hh"
 
 namespace lightusd {
@@ -397,7 +398,7 @@ bool ExpandIncludes(const std::string& xml, const fs::path& base_dir,
         fs::path candidate = anchor / dir / path;
         if (!active_reader->options.read && !active_reader->options.open) {
           std::error_code ec;
-          if (!fs::exists(candidate, ec) && fs::exists(anchor / path, ec))
+          if (::lightusd::NativeIOEnabled() && !fs::exists(candidate, ec) && fs::exists(anchor / path, ec))
             candidate = anchor / path;
         }
         item.attribute("file").set_value(

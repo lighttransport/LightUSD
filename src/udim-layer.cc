@@ -10,7 +10,7 @@
 #include <cmath>
 #include <set>
 
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "udim-layer-geometry.hh"
 namespace lightusd::udim {
 LayerAccess::~LayerAccess() = default;

@@ -53,7 +53,7 @@ Interpolation ParsePrimvarInterp(const std::string& s) {
 bool RenderSceneConverter::Impl::ConvertPoints(const Stage& stage,
                                          const UsdPrim& prim,
                                          RenderPoints* out) {
-  const bool gaussian = prim.GetTypeName() == "ParticleField3DGaussianSplat";
+  const bool gaussian = ::lightusd::next::IsParticleField(prim);
   if (!out || !prim.IsValid() ||
       (prim.GetTypeName() != "Points" && !gaussian)) {
     SetLastError("Invalid Points prim");

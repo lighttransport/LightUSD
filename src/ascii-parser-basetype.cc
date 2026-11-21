@@ -643,10 +643,12 @@ bool AsciiParser::ReadBasicType(bool *value) {
     bool ok = ReadIdentifier(&tok);
 
     if (ok) {
-      if (tok == "true") {
+      // `True`/`False` as well: OpenUSD accepts them and the AOUSD Core
+      // examples author `instanceable = True`.
+      if (tok == "true" || tok == "True") {
         (*value) = true;
         return true;
-      } else if (tok == "false") {
+      } else if (tok == "false" || tok == "False") {
         (*value) = false;
         return true;
       }

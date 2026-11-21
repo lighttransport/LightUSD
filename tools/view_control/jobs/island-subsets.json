@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "assets_root": "/mnt/nvme02/data",
+  "size": [
+    640,
+    480
+  ],
+  "backend": "vkr",
+  "camera_policy": "per_frame",
+  "time_sampling": {
+    "mode": "uniform",
+    "count": 3
+  },
+  "aovs": [
+    "color",
+    "depth",
+    "worldNormal",
+    "baseColor",
+    "roughness",
+    "metallic"
+  ],
+  "thresholds": {
+    "coverage_iou_min": 0.99,
+    "depth_relative_p95_max": 0.01,
+    "normal_p95_degrees_max": 5,
+    "color_mae_max": 0.05,
+    "color_ssim_min": 0.95
+  },
+  "scenes": [
+    {
+      "path": "island/usd/island.usda",
+      "isolate": [
+        "/island/isBeach"
+      ],
+      "state": {
+        "camera": {
+          "transform": [
+            0.7071067811865476,
+            0.0,
+            -0.7071067811865476,
+            0.0,
+            -0.36426712970216085,
+            0.8570991287109668,
+            -0.36426712970216085,
+            0.0,
+            0.6060606060606061,
+            0.5151515151515151,
+            0.6060606060606061,
+            -0.0,
+            2389.7145445884726,
+            2037.8862493137754,
+            2386.655767733004,
+            1.0
+          ],
+          "projection": "perspective",
+          "aspect": 1.3333333333333333,
+          "fov_y": 45,
+          "ortho_height": 2740.110735211102,
+          "shift": [
+            0,
+            0
+          ],
+          "near": 1472.0402652257144,
+          "far": 8048.306029732359,
+          "distance": 3938.1399269157064,
+          "exposure": 0
+        },
+        "size": [
+          640,
+          480
+        ]
+      }
+    },
+    {
+      "path": "island/usd/island.usda",
+      "isolate": [
+        "/island/isLavaRocks"
+      ],
+      "state": {
+        "camera": {
+          "transform": [
+            0.7071067811865476,
+            0.0,
+            -0.7071067811865476,
+            0.0,
+            -0.36426712970216085,
+            0.8570991287109668,
+            -0.36426712970216085,
+            0.0,
+            0.6060606060606061,
+            0.5151515151515151,
+            0.6060606060606061,
+            -0.0,
+            3616.888879897931,
+            2360.504620611073,
+            2980.197728620693,
+            1.0
+          ],
+          "projection": "perspective",
+          "aspect": 1.3333333333333333,
+          "fov_y": 45,
+          "ortho_height": 3172.763788943492,
+          "shift": [
+            0,
+            0
+          ],
+          "near": 1704.4698191787134,
+          "far": 9319.102912643095,
+          "distance": 4559.957229227856,
+          "exposure": 0
+        },
+        "size": [
+          640,
+          480
+        ]
+      }
+    }
+  ],
+  "native_load_limits": {
+    "max_memory_gib": 30,
+    "max_array_elements": 67108864
+  },
+  "process_limits": {
+    "max_rss_mib": 30720,
+    "reserve_mib": 4096
+  }
+}

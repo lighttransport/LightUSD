@@ -1665,14 +1665,21 @@ class LightUSDLoader extends Loader {
         try {
             const fzstd = await import('fzstd');
 
-            const wasmURL = new URL(compressedPath, import.meta.url).href;
+            const wasmURL = new URL(compressedPath, import.meta.url);
 
-            const response = await fetch(wasmURL);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
+            let compressedData;
+            if (wasmURL.protocol === 'file:') {
+                // Node.js: fetch() does not support file: URLs.
+                const { readFile } = await import('node:fs/promises');
+                const buf = await readFile(wasmURL);
+                compressedData = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            } else {
+                const response = await fetch(wasmURL.href);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
+                }
+                compressedData = await response.arrayBuffer();
             }
-
-            const compressedData = await response.arrayBuffer();
 
             if (compressedData.byteLength < 1024*64) {
                 throw new Error('Compressed WASM size is unusually small, may not be valid zstd compressed data.');

@@ -254,8 +254,8 @@ bool CrateReader::Impl::BuildStage() {
   // (per spec-range task) collect; `report` only on the serial path.
   auto collect_prims =
       [&](size_t spec_begin, size_t spec_end, PrimRecords& out,
-          std::vector<std::pair<std::string, ValueRep>>& raw_field_scratch,
-          std::vector<std::pair<std::string, Value>>& value_field_scratch,
+          std::vector<std::pair<std::string_view, ValueRep>>& raw_field_scratch,
+          std::vector<std::pair<std::string_view, Value>>& value_field_scratch,
           bool report) -> bool {
     for (size_t spec_index = spec_begin; spec_index < spec_end; ++spec_index) {
       if (report && spec_index > 0 &&
@@ -378,8 +378,8 @@ bool CrateReader::Impl::BuildStage() {
       arena.Run(ntasks, [&](size_t t) {
         ctxs[t].reset(new ThreadDecodeCtx(this, *reader_));
         ScopedThreadDecodeCtx scoped(ctxs[t].get());
-        std::vector<std::pair<std::string, ValueRep>> raw_scratch;
-        std::vector<std::pair<std::string, Value>> value_scratch;
+        std::vector<std::pair<std::string_view, ValueRep>> raw_scratch;
+        std::vector<std::pair<std::string_view, Value>> value_scratch;
         collect_prims(t * task_size,
                       std::min(specs_.size(), (t + 1) * task_size),
                       prim_records[t], raw_scratch, value_scratch,
@@ -391,8 +391,8 @@ bool CrateReader::Impl::BuildStage() {
 #endif
     if (!prims_collected) {
       prim_records.resize(1);
-      std::vector<std::pair<std::string, ValueRep>> raw_field_scratch;
-      std::vector<std::pair<std::string, Value>> value_field_scratch;
+      std::vector<std::pair<std::string_view, ValueRep>> raw_field_scratch;
+      std::vector<std::pair<std::string_view, Value>> value_field_scratch;
       if (!collect_prims(0, specs_.size(), prim_records[0], raw_field_scratch,
                          value_field_scratch, /*report=*/true)) {
         return false;
@@ -451,7 +451,7 @@ bool CrateReader::Impl::BuildStage() {
   for (size_t i = 0; i < prim_entries.size(); ++i) {
     entry_by_path.emplace(prim_entries[i].full_path, static_cast<uint32_t>(i));
   }
-  std::vector<std::pair<std::string, ValueRep>> property_raw_field_scratch;
+  std::vector<std::pair<std::string_view, ValueRep>> property_raw_field_scratch;
 
   // Split a property spec path ".<primpath>/<name>" into (primpath, name).
 
@@ -505,7 +505,7 @@ bool CrateReader::Impl::BuildStage() {
       CollectTask& task = tasks[t];
       task.ctx.reset(new ThreadDecodeCtx(this, *reader_));
       ScopedThreadDecodeCtx scoped(task.ctx.get());
-      std::vector<std::pair<std::string, ValueRep>> scratch;
+      std::vector<std::pair<std::string_view, ValueRep>> scratch;
       CollectPropertyRecords(prim_entries, entry_by_path, slot_to_entry,
                            report_stage, task.begin, task.end, task.attrs, task.rels, scratch,
                          /*report=*/false);
@@ -612,7 +612,7 @@ bool CrateReader::Impl::BuildStage() {
       EmitTask& task = tasks[t];
       task.ctx.reset(new ThreadDecodeCtx(this, *reader_));
       ScopedThreadDecodeCtx scoped(task.ctx.get());
-      std::vector<std::pair<std::string, Value>> scratch;
+      std::vector<std::pair<std::string_view, Value>> scratch;
       for (size_t i = task.begin; i < task.end; ++i) EmitPrimBody(state, i, scratch, report_stage);
     });
     for (EmitTask& task : tasks) MergeDecodeCtx(*task.ctx);
@@ -620,7 +620,7 @@ bool CrateReader::Impl::BuildStage() {
   }
 #endif
   if (!bodies_emitted) {
-    std::vector<std::pair<std::string, Value>> prim_value_field_scratch;
+    std::vector<std::pair<std::string_view, Value>> prim_value_field_scratch;
     for (size_t entry_index = 0; entry_index < prim_entries.size();
          ++entry_index) {
       if (entry_index > 0 &&

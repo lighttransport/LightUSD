@@ -45,6 +45,7 @@ def Xform "World" {
   def Mesh "M" (
     prepend apiSchemas = ["MaterialBindingAPI"]
   ) {
+    uniform token subdivisionScheme = "none"
     point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)]
     normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)]
     normal3f[] normals.timeSamples = {

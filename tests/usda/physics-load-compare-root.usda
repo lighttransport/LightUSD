@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+    kilogramsPerUnit = 0.001
+    startTimeCode = 0
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+)
+def Xform "World" {
+    def Xform "Body" (
+        prepend references = @physics-load-compare-base.usda@</Body>
+        prepend variantSets = "massMode"
+        variants = { string massMode = "heavy" }
+    ) {
+        variantSet "massMode" = {
+            "light" {
+                float physics:mass = 1
+            }
+            "heavy" {
+                float physics:mass = 3
+            }
+        }
+        float physics:mass.timeSamples = { 0: 3, 1: 5 }
+        rel physics:filteredPairs = </World/Base>
+    }
+    def Xform "Base" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        bool physics:kinematicEnabled = true
+    }
+    def PhysicsRevoluteJoint "Joint" (
+        prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+    ) {
+        rel physics:body0 = </World/Base>
+        rel physics:body1 = </World/Body>
+        uniform token physics:axis = "Z"
+        float physics:lowerLimit = -45
+        float physics:upperLimit = 60
+        point3f physics:localPos0 = (0, 0, 0)
+        point3f physics:localPos1 = (0, 1, 0)
+        quatf physics:localRot0 = (1, 0, 0, 0)
+        quatf physics:localRot1 = (1, 0, 0, 0)
+        float drive:angular:physics:stiffness = 2
+        float drive:angular:physics:damping = 0.2
+        float drive:angular:physics:targetPosition = 10
+    }
+}

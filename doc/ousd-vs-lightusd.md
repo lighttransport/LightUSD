@@ -9,7 +9,13 @@
 | Normative specification | [AOUSD Core Specification 1.0.1](../aousd/core/1.0.1/core_spec.md), source revision `b7bc21a`, 2025-12-12 |
 | Vendored specification provenance | `aousd/specifications-public` at `2f9e746c4fbd7f48d6d2c9ac568133fe398bbfc0` |
 
-The vendored Markdown and [license](../aousd/core/1.0.1/LICENSE) are exact copies from that checkout. Their SHA-256 digests are `b2feeb2c900befe224a372b2d60d0ddcc6e35048ab54c32c17d5c085b44c642d` and `9cc97638cf0185884ac800144b6246c7772f94ff2cc70686afa9574aaea4fa2b`, respectively.
+The vendored Markdown and [license](../aousd/core/1.0.1/LICENSE) are exact copies from that checkout.
+
+> **Note (2026-10-27):** AOUSD has since published Core **1.1.0**
+> (`core/v1.1.0`, 2026-08-13), vendored at
+> [`aousd/core/1.1.0/`](../aousd/core/1.1.0/). This review remains pinned to
+> 1.0.1; the 1.1.0 changelog is additive in the areas covered below, so a
+> citation refresh (and a delta re-review) is a follow-up, not a correction. Their SHA-256 digests are `b2feeb2c900befe224a372b2d60d0ddcc6e35048ab54c32c17d5c085b44c642d` and `9cc97638cf0185884ac800144b6246c7772f94ff2cc70686afa9574aaea4fa2b`, respectively.
 
 ## Implementation update
 

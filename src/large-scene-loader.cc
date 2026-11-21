@@ -5,6 +5,7 @@
 //
 // Two backends selected at compile time by LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE.
 
+#include "core/native-io.hh"
 #include "large-scene-loader.hh"
 
 #include <algorithm>
@@ -34,6 +35,8 @@ namespace {
 // Cheap file size without reading the content (used by the Budget policy).
 // Returns 0 on failure (treated as "free").
 uint64_t FileSizeBytes(const std::string &path) {
+  if (!::lightusd::NativeIOEnabled()) return 0;
+
   if (path.empty()) return 0;
   std::ifstream ifs(path, std::ios::binary | std::ios::ate);
   if (!ifs) return 0;
@@ -408,7 +411,8 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
             next::AssetAnchorPath(owner.asset_anchor_id());
         const std::string anchor = anchor_dir.empty()
                                        ? std::string()
-                                       : anchor_dir + "/__layer__.usd";
+                                       : next::AssetResolver::IsPackagePath(anchor_dir)
+                                           ? anchor_dir : anchor_dir + "/__layer__.usd";
         const std::string rp = st->resolver->ResolvePath(ap, anchor);
         const uint64_t sz = FileSizeBytes(rp);
         if (sz == 0 || st->loaded_bytes > st->budget_bytes ||

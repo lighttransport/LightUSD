@@ -15,7 +15,7 @@
 #include "mcp-js-bridge.hh"
 #include "pprinter.hh"
 #include "layer.hh"
-#include "security-policy.hh"
+#include "core/security-policy.hh"
 #include "str-util.hh"
 #include "lightusd.hh"
 #include "uuid-gen.hh"

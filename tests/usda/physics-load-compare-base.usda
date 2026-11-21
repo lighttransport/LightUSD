@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    defaultPrim = "Body"
+    upAxis = "Y"
+    metersPerUnit = 0.01
+)
+def Xform "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+) {
+    double3 xformOp:translate = (0, 0, 0)
+    double3 xformOp:translate.timeSamples = { 0: (0, 0, 0), 1: (0, 2, 0) }
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    bool physics:rigidBodyEnabled = true
+    bool physics:kinematicEnabled = false
+    float physics:mass = 2
+    float3 physics:diagonalInertia = (1, 2, 3)
+    point3f physics:centerOfMass = (0, 1, 0)
+    quatf physics:principalAxes = (1, 0, 0, 0)
+    vector3f physics:velocity = (0, 0, 0)
+    vector3f physics:velocity.timeSamples = { 0: (0, 0, 0), 1: (2, 0, 0) }
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {
+        double size = 1
+        bool physics:collisionEnabled = true
+        rel physics:simulationOwner = </Body/Scene>
+    }
+    def PhysicsScene "Scene" {
+        vector3f physics:gravityDirection = (0, -1, 0)
+        float physics:gravityMagnitude = 981
+}
+}

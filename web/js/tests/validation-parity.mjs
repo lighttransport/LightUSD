@@ -103,6 +103,8 @@ function parseNativeIssues(stdout) {
 async function runNative(filePath) {
   const stdout = await spawnCommand(lusdcat, ['--validate-all', filePath]);
   assert.notEqual(stdout, '', `lusdcat produced no validation report for ${filePath}`);
+  assert.match(stdout, /^AOUSD validation report /m,
+    'validation parity requires the legacy lusdcat --validate-all report; set LUSDCAT_PATH to that executable');
   return parseNativeIssues(stdout);
 }
 

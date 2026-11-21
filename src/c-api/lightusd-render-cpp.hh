@@ -124,6 +124,17 @@ inline lightusd_status ExportGLB(const RenderScene& scene,
                                     max_output_bytes, glb->put(), losses->put());
 }
 
+inline lightusd_status ExportGLB(const RenderScene& scene,
+                                const AssetResolver& resolver,
+                                const char* source_path, bool strict,
+                                uint64_t max_output_bytes, String* glb,
+                                StringList* losses) {
+  if (!glb || !losses) return LIGHTUSD_ERR_INVALID_ARG;
+  glb->reset(); losses->reset();
+  return lightusd_render_export_glb_with_resolver(scene.get(), source_path,
+      resolver.get(), strict ? 1 : 0, max_output_bytes, glb->put(), losses->put());
+}
+
 inline lightusd_status RenderRecord(const RenderScene& scene, uint8_t kind,
                                     size_t index,
                                     lightusd_render_record* out) noexcept {

@@ -7155,6 +7155,21 @@ static void stbi__hdr_convert(float *output, stbi_uc *input, int req_comp)
    }
 }
 
+// LightUSD: keep legacy flat RGBE decoding in a structured loop. Jumping into
+// the width<8 branch from the RLE branch was miscompiled by optimized builds;
+// unchecked reads also left destination floats uninitialized on truncated input.
+static int stbi__hdr_read_flat(stbi__context *s, float *out, int width, int height,
+                              int req_comp, size_t first)
+{
+   size_t i, count = (size_t) width * (size_t) height;
+   for (i = first; i < count; ++i) {
+      stbi_uc rgbe[4];
+      if (!stbi__getn(s, rgbe, 4)) return 0;
+      stbi__hdr_convert(out + i * (size_t) req_comp, rgbe, req_comp);
+   }
+   return 1;
+}
+
 static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__result_info *ri)
 {
    char buffer[STBI__HDR_BUFLEN];
@@ -7214,14 +7229,9 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
    // Load image data
    // image data is stored as some number of sca
    if ( width < 8 || width >= 32768) {
-      // Read flat data
-      for (j=0; j < height; ++j) {
-         for (i=0; i < width; ++i) {
-            stbi_uc rgbe[4];
-           main_decode_loop:
-            stbi__getn(s, rgbe, 4);
-            stbi__hdr_convert(hdr_data + j * width * req_comp + i * req_comp, rgbe, req_comp);
-         }
+      if (!stbi__hdr_read_flat(s, hdr_data, width, height, req_comp, 0)) {
+         STBI_FREE(hdr_data);
+         return stbi__errpf("truncated", "truncated flat HDR pixels");
       }
    } else {
       // Read RLE-encoded data
@@ -7239,11 +7249,17 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
             rgbe[1] = (stbi_uc) c2;
             rgbe[2] = (stbi_uc) len;
             rgbe[3] = (stbi_uc) stbi__get8(s);
-            stbi__hdr_convert(hdr_data, rgbe, req_comp);
-            i = 1;
-            j = 0;
             STBI_FREE(scanline);
-            goto main_decode_loop; // yes, this makes no sense
+            if (j != 0) {
+               STBI_FREE(hdr_data);
+               return stbi__errpf("corrupt", "mixed HDR scanline encoding");
+            }
+            stbi__hdr_convert(hdr_data, rgbe, req_comp);
+            if (!stbi__hdr_read_flat(s, hdr_data, width, height, req_comp, 1)) {
+               STBI_FREE(hdr_data);
+               return stbi__errpf("truncated", "truncated flat HDR pixels");
+            }
+            return hdr_data;
          }
          len <<= 8;
          len |= stbi__get8(s);

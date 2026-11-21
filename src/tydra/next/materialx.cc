@@ -3,9 +3,10 @@
 //
 // LightUSD Tydra/Next - MaterialX Support Implementation
 
+#include "core/native-io.hh"
 #include "materialx.hh"
 #include "render-converter.hh"
-#include "../../mtlx-dom.hh"
+#include "core/mtlx-dom.hh"
 #include "../../next/schema/usd-shade.hh"
 #include <cmath>
 #include <algorithm>
@@ -547,6 +548,8 @@ bool MtlxConverter::ConvertToRenderMaterial(const std::string& mtlx_content,
 bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
                                                  const std::string& material_name,
                                                  RenderMaterial* out) {
+  if (!::lightusd::NativeIOAvailable(&error_)) return false;
+
   std::ifstream ifs(filename.c_str(), std::ios::in | std::ios::binary);
   if (!ifs) {
     error_ = "Failed to open MaterialX file: " + filename;

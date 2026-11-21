@@ -2,6 +2,7 @@
 
 LightUSD is a full-featured, dependency-free, lightweight USD library written
 in C++17. It reads and writes USDA, USDC, and USDZ, and includes MaterialX and USD Physics support.
+(Previously known as TinyUSDZ)
 
 The `src/next` product is the default for native, Python, and WASM consumers.
 The legacy product is deprecated, but remains in the repository and in CI for
@@ -16,14 +17,14 @@ mobile, WebAssembly, and sandboxed environments, with explicit resource limits
 for untrusted assets. MCP interface provided.
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/lighttransport)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/lighttransport/lightusd)
 [![PyPI version](https://img.shields.io/pypi/v/lightusd.svg)](https://pypi.org/project/lightusd/)
 [![npm version](https://img.shields.io/npm/v/lightusd.svg)](https://www.npmjs.com/package/lightusd)
 
 ## Releases
 
-* v1.0.0 RC (main)
-  * Will be 26.09 or 26.10
+* v1.0.0 (26.11)
+  * First stable release.
+  * Add Lean formalization of the USD (AOUSD Core) spec: https://usdspec-conformance.lighttransport.workers.dev/
 
 ## Packages
 
@@ -66,7 +67,7 @@ build options, and examples.
 - [USD Physics](doc/usd-physics.md)
 - [Composition](doc/composition.md)
 - [Python bindings](doc/python_binding.md)
-- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.0.1
+- [AOUSD conformance](aousd/verif.md) — LightUSD verification against the AOUSD Core Specification v1.1.0 (v1.0.1 plan + v1.1 delta audit)
 - [Testing](doc/testing-cpp.md)
 - [Release and CI](doc/ci.md)
 

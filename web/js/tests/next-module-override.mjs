@@ -23,9 +23,12 @@ export async function load(url, context, nextLoad) {
   // Tests and loaders may supply locateFile or wasmBinary pointing at the
   // application build. Keep the overridden JS and WASM an inseparable pair.
   const source = `import factory from ${JSON.stringify(target + '?actual-next-module')};
-    import fs from 'node:fs';
     export default function(options = {}) {
-      return factory({...options, wasmBinary: fs.readFileSync(new URL(${JSON.stringify(wasm)}))});
+      const {wasmBinary: ignoredBinary, locateFile: callerLocate, ...rest} = options;
+      return factory({...rest, locateFile(name, prefix) {
+        if (name.endsWith('.wasm')) return ${JSON.stringify(wasm)};
+        return callerLocate ? callerLocate(name, prefix) : prefix + name;
+      }});
     }`;
   return {format: 'module', source, shortCircuit: true};
 }

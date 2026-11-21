@@ -54,11 +54,11 @@ void AnglesFromDir(const light3d::Vec3& dir, int upAxis, float* yaw,
 }  // namespace
 
 light3d::Vec3 OrbitCamera::eye() const {
-  return target_ + DirFromAngles(yaw_, pitch_, upAxis_) * distance_;
+  return target_ + (havePose_ ? poseBackward_ : DirFromAngles(yaw_, pitch_, upAxis_)) * distance_;
 }
 
 light3d::Mat4 OrbitCamera::view() const {
-  return light3d::lookAt(eye(), target_, worldUp());
+  return light3d::lookAt(eye(), target_, havePose_ ? poseUp_ : worldUp());
 }
 
 light3d::Mat4 OrbitCamera::proj(bool zeroToOneDepth) const {
@@ -182,9 +182,24 @@ void OrbitCamera::setClipPlanes(float nearPlaneValue, float farPlaneValue) {
 }
 
 void OrbitCamera::orbit(float dxPix, float dyPix) {
-  const float k = 0.008f * 0.65f * navigationScale_ * orbitSensitivity_;
+  // Maya-like tumble rate: roughly 0.18 degrees per pixel at the default
+  // sensitivity, so a full-viewport drag turns about half a revolution instead
+  // of whipping around after a short gesture. navigationScale_ and the
+  // user-facing sensitivity slider remain relative multipliers on top.
+  constexpr float kOrbitRadiansPerPixel = 0.0032f;  // ~0.183 deg/px
+  const float k =
+      kOrbitRadiansPerPixel * navigationScale_ * orbitSensitivity_;
   if (!std::isfinite(dxPix) || !std::isfinite(dyPix)) return;
 
+  if (havePose_) {
+    const float yawAngle = (invertYaw_ ? -dxPix : dxPix) * k;
+    poseBackward_ = RotateAroundAxis(poseBackward_, worldUp(), yawAngle);
+    poseUp_ = RotateAroundAxis(poseUp_, worldUp(), yawAngle);
+    const auto right = light3d::normalize(light3d::cross(poseUp_, poseBackward_));
+    poseBackward_ = light3d::normalize(RotateAroundAxis(poseBackward_, right, -dyPix * k));
+    poseUp_ = light3d::normalize(RotateAroundAxis(poseUp_, right, -dyPix * k));
+    return;
+  }
   light3d::Vec3 viewFromTarget = eye() - target_;
   if (light3d::length(viewFromTarget) < 1e-6f) {
     viewFromTarget = DirFromAngles(yaw_, pitch_, upAxis_) * distance_;
@@ -229,7 +244,7 @@ void OrbitCamera::pan(float dxPix, float dyPix) {
   // Camera basis (relative to the world up axis). Near the pole the forward axis
   // approaches worldUp; pitch is clamped to <90 so the cross stays well-defined.
   light3d::Vec3 fwd = light3d::normalize(target_ - eye());
-  light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, worldUp()));
+  light3d::Vec3 right = light3d::normalize(light3d::cross(fwd, havePose_ ? poseUp_ : worldUp()));
   light3d::Vec3 up = light3d::cross(right, fwd);
   const float scale = moveRefDistance() * 0.0015f * 0.65f * navigationScale_ *
                       panSensitivity_;
@@ -242,9 +257,12 @@ void OrbitCamera::moveForward(float amount) {
   // bounds a large mouse delta. Keep enough headroom to move the navigation
   // pivot through the eye: a strict one-reference-distance cap asymptotically
   // approached the pivot but could never cross it.
+  // One wheel notch (amount 1) moves about 8% of the reference distance; a
+  // right-drag of ~100 px is scaled to roughly a fifth of the distance. The
+  // exponential keeps fine control for small gestures and bounds large ones.
   const float magnitude =
       1.25f *
-      (1.0f - std::exp(-std::abs(amount) * 0.12f * 0.65f *
+      (1.0f - std::exp(-std::abs(amount) * 0.065f *
                          navigationScale_ * dollySensitivity_));
   const float signedMagnitude = amount > 0.0f ? magnitude : -magnitude;
   const light3d::Vec3 forward = light3d::normalize(target_ - eye());
@@ -256,6 +274,7 @@ void OrbitCamera::dolly(float amount) {
 }
 
 void OrbitCamera::setPreset(CameraViewPreset preset) {
+  havePose_ = false;
   switch (preset) {
     case CameraViewPreset::Isometric:
       yaw_ = 0.6f;
@@ -316,8 +335,30 @@ void OrbitCamera::setSceneBounds(const float aabbMin[3],
   haveSceneBounds_ = true;
 }
 
+bool OrbitCamera::setPose(const float transform[16], float pivotDistance) {
+  if (!transform || !std::isfinite(pivotDistance) || pivotDistance < 1e-3f) return false;
+  for (int i = 0; i < 16; ++i) if (!std::isfinite(transform[i])) return false;
+  const light3d::Vec3 right{transform[0], transform[1], transform[2]};
+  const light3d::Vec3 up{transform[4], transform[5], transform[6]};
+  const light3d::Vec3 back{transform[8], transform[9], transform[10]};
+  if (std::abs(light3d::length(right) - 1.0f) > 1e-3f ||
+      std::abs(light3d::length(up) - 1.0f) > 1e-3f ||
+      std::abs(light3d::length(back) - 1.0f) > 1e-3f ||
+      std::abs(light3d::dot(up, back)) > 1e-3f ||
+      light3d::dot(light3d::cross(up, back), right) < 0.999f ||
+      std::abs(transform[3]) > 1e-6f || std::abs(transform[7]) > 1e-6f ||
+      std::abs(transform[11]) > 1e-6f || std::abs(transform[15] - 1.0f) > 1e-6f) return false;
+  poseBackward_ = light3d::normalize(back);
+  poseUp_ = light3d::normalize(up);
+  distance_ = pivotDistance;
+  target_ = light3d::Vec3{transform[12], transform[13], transform[14]} - poseBackward_ * distance_;
+  havePose_ = true;
+  return true;
+}
+
 void OrbitCamera::setOrbit(const light3d::Vec3& target, float yawRad, float pitchRad,
                            float dist) {
+  havePose_ = false;
   target_ = target;
   yaw_ = yawRad;
   pitch_ = std::max(-kPitchLimit, std::min(kPitchLimit, pitchRad));

@@ -269,7 +269,7 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
     out->comp.usdzAsset = std::make_shared<lightusd::USDZAsset>();
     constexpr size_t kMiB = 1024u * 1024u;
     const size_t maxArchiveMb = opts.maxMemoryBytes == 0
-                                    ? 16384u
+                                    ? 65536u
                                     : opts.maxMemoryBytes / kMiB +
                                           (opts.maxMemoryBytes % kMiB != 0);
     rootOk = lightusd::ReadUSDZAssetInfoFromFile(

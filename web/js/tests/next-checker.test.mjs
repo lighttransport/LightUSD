@@ -94,8 +94,16 @@ try {
  variants = { string shape = "good" }
 ) {
  variantSet "shape" = {
-  "good" { def Sphere "S" { double radius = 1 } }
-  "bad" { def Sphere "S" { float radius = 1 } }
+  "good" {
+   def Sphere "S" {
+    double radius = 1
+   }
+  }
+  "bad" {
+   def Sphere "S" {
+    float radius = 1
+   }
+  }
  }
 }`;
   fs.mkdirSync(path.join(directory, 'parts'));

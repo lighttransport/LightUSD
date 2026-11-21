@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Macro expansion: <attach>, cable composites, <replicate>, frames, default inlining.
+#include "core/native-io.hh"
 #include "mjcf-internal.hh"
 
 namespace lightusd {
@@ -144,7 +145,10 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path& base_dir,
       const std::string file = m.attribute("file").as_string();
       if (!name.empty() && !file.empty()) {
         std::error_code wc_ec;
-        models[name] = fs::weakly_canonical(base_dir / file, wc_ec);
+        models[name] = ::lightusd::NativeIOEnabled() &&
+            !active_reader->options.read && !active_reader->options.open
+            ? fs::weakly_canonical(base_dir / file, wc_ec)
+            : (base_dir / file).lexically_normal();
       }
     }
   }
@@ -207,8 +211,10 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path& base_dir,
           if (f && !std::string(f.value()).empty() &&
               fs::path(f.value()).is_relative()) {
             std::error_code wc_ec;
-            const fs::path abs = fs::weakly_canonical(
-                child_dir / child_meshdir / f.value(), wc_ec);
+            const fs::path abs = ::lightusd::NativeIOEnabled() &&
+                !active_reader->options.read && !active_reader->options.open
+                ? fs::weakly_canonical(child_dir / child_meshdir / f.value(), wc_ec)
+                : (child_dir / child_meshdir / f.value()).lexically_normal();
             f.set_value(abs.string().c_str());
           }
         }

@@ -22,7 +22,7 @@
 #include "tydra/render-data.hh"
 #include "value-types.hh"
 #include "xform.hh"
-#include "../safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
 namespace tydra {

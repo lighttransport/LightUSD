@@ -2,6 +2,7 @@
 // Copyright 2019 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertinament Inc.
 
+#include "core/native-io.hh"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -29,8 +30,8 @@
 #include "io-util.hh"
 #include "lz4-compression.hh"
 #include "zstd-compression.hh"
-#include "security-policy.hh"
-#include "safe-arithmetic.hh"
+#include "core/security-policy.hh"
+#include "core/safe-arithmetic.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "string-pool.hh"
@@ -1377,9 +1378,8 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   config.kMaxAllowedMemoryInMB = size_t(EffectiveMemoryLimitMb(options));
   usdc::USDCReader reader(&sr, config);
 
-  // LIGHTUSD_CRATE_PROFILE=1: split the layer load into crate parse vs
-  // PrimSpec reconstruction (stderr; complements the lusdcat phase marks).
-  const bool profile_load = (std::getenv("LIGHTUSD_CRATE_PROFILE") != nullptr);
+  // Caller-controlled crate parse/reconstruction timings.
+  const bool profile_load = options.profile_crate;
   const auto load_t0 = std::chrono::steady_clock::now();
 
   if (!reader.ReadUSDC()) {
@@ -2498,6 +2498,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> usdz_data;
 
   if (!SaveAsUSDZToMemory(stage, assets, &usdz_data, options, warn, err)) {
@@ -2528,6 +2530,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       const USDZWriteOptions &options,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   std::vector<uint8_t> usdz_data;
 
   if (!SaveAsUSDZToMemory(layer, assets, &usdz_data, options, warn, err)) {
@@ -2557,6 +2561,8 @@ bool SaveAsUSDZToFile(const std::string &filename, const Layer &layer,
 bool SaveAsUSDZToFile(const std::string &filename, const Stage &stage,
                       const std::map<std::string, std::vector<uint8_t>> &assets,
                       std::string *warn, std::string *err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   return SaveAsUSDZToFile(filename, stage, assets, USDZWriteOptions{}, warn, err);
 }
 

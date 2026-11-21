@@ -4,6 +4,7 @@
 // LightUSD Crate Dump Library Implementation
 //
 
+#include "core/native-io.hh"
 #include "crate-dump.hh"
 
 #include <iostream>
@@ -516,6 +517,8 @@ static void DumpSpecsYAML(const CrateReader& reader, const DumpOptions& opts, In
 }
 
 bool DumpCrate(const std::string& filename, const DumpOptions& opts, std::string* err) {
+  if (!::lightusd::NativeIOAvailable(err)) return false;
+
   // Open and read the file
   std::ifstream ifs(filename, std::ios::binary);
   if (!ifs) {

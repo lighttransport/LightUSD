@@ -4,6 +4,7 @@
 #include "../layer/array-edit.hh"
 #include "../types/type-info.hh"
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <string>
 #include <string_view>
@@ -17,7 +18,7 @@ using namespace crate_stage_detail;
 
 void CrateReader::Impl::EmitPrimBody(
     PrimBuildState& state, size_t entry_index,
-    std::vector<std::pair<std::string, Value>>& prim_value_field_scratch,
+    std::vector<std::pair<std::string_view, Value>>& prim_value_field_scratch,
     [[maybe_unused]] const ReportFn& report) {
   auto& layer = state.layer;
   auto& prim_entries = state.prim_entries;
@@ -94,7 +95,8 @@ void CrateReader::Impl::EmitPrimBody(
       }
     };
 
-    ResolveFieldset(entry.fieldset_index, prim_value_field_scratch);
+    std::vector<DecodedExtensionField> integer_fields;
+    ResolveFieldset(entry.fieldset_index, prim_value_field_scratch, &integer_fields);
 
     // Add properties and extract composition arcs / metadata into PrimMetadata
     for (auto& field : prim_value_field_scratch) {
@@ -247,13 +249,13 @@ void CrateReader::Impl::EmitPrimBody(
           }
         };
         if (field.first == "references") {
-          apply_arc_field(field.second, ps->meta().references,
+          apply_arc_field(field.second, ps->meta().references.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.references; },
                           "references");
           continue;
         }
         if (field.first == "payload") {
-          apply_arc_field(field.second, ps->meta().payloads,
+          apply_arc_field(field.second, ps->meta().payloads.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.payloads; },
                           "payload");
           continue;
@@ -261,13 +263,13 @@ void CrateReader::Impl::EmitPrimBody(
         if (field.first == "inherits" || field.first == "inheritPaths") {
           // pxr's crate field name is "inheritPaths"; next's own writer used
           // "inherits". Accept both.
-          apply_arc_field(field.second, ps->meta().inherits,
+          apply_arc_field(field.second, ps->meta().inherits.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.inherits; },
                           "inherits");
           continue;
         }
         if (field.first == "specializes") {
-          apply_arc_field(field.second, ps->meta().specializes,
+          apply_arc_field(field.second, ps->meta().specializes.mut(),
                           [](ArcListOps& a) -> ArcListOp& { return a.specializes; },
                           "specializes");
           continue;
@@ -537,14 +539,9 @@ void CrateReader::Impl::EmitPrimBody(
       }
       if (field.first == "properties" ||
           field.first == "propertyChildren") {
-        // pxr writes the `properties` field (natural spec order) for EVERY
-        // prim; it is not an authored `reorder properties`. Synthesizing a
-        // propertyOrder from it made every USDC->USDA round trip gain a
-        // spurious `reorder properties` statement that pxr's own round trip
-        // never emits (pxr drops the order and sorts). So consume the field
-        // without pinning an order. Authored USDA `reorder properties` still
-        // round-trips through the USDA path (parser -> writer); like pxr, it
-        // is not preserved through a crate round trip.
+        // Natural spec child order, separate from authored propertyOrder.
+        if (auto names = field.second.as_token_array())
+          ps->set_authored_property_names(std::vector<std::string>(names->begin(), names->end()));
         continue;
       }
       if (field.first == "variantChildren" ||
@@ -564,8 +561,13 @@ void CrateReader::Impl::EmitPrimBody(
       // Unknown Prim fields are extension metadata, not body properties.
       // Preserve the decoded typed value and re-emit it as the same field.
       if (ps) {
-        ps->meta().unknownFields().push_back(
-            MakeTypedExtensionField(field.first, std::move(field.second)));
+        auto integer = std::find_if(integer_fields.begin(), integer_fields.end(),
+            [&](const DecodedExtensionField& f) { return f.name == field.first; });
+        if (integer != integer_fields.end())
+          ps->meta().unknownFields().push_back(std::move(*integer));
+        else ps->meta().unknownFields().push_back(
+            MakeTypedExtensionField(std::string(field.first), std::move(field.second),
+                FieldType(entry.fieldset_index, field.first) == CrateTypeId::UnregisteredValue));
       }
     }
 
@@ -575,19 +577,22 @@ void CrateReader::Impl::EmitPrimBody(
       for (uint32_t k = attr_off[entry_index]; k < attr_off[entry_index + 1];
            ++k) {
         AttrInfo& ai = *attr_refs[k];
-        if (ps->property(ai.name)) continue;  // inline opinion wins
+        const PropNameId nid = GetPropNameTable().intern(ai.name);
+        if (ps->property(nid)) continue;  // inline opinion wins
         uint16_t flags = 0;
         if (ai.uniform) flags |= PropSlot::kFlagUniform;
         if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
         // The writer gates timeSamples emission on the slot flag, so mark a
         // time-sampled attribute (the value lives in add_time_sample below).
-        if (!ai.time_samples.empty()) flags |= PropSlot::kFlagTimeSampled;
+        // An empty `timeSamples = {}` field is still authored (pxr keeps it).
+        if (ai.has_time_samples || !ai.time_samples.empty())
+          flags |= PropSlot::kFlagTimeSampled;
         const bool is_array =
             ai.type_name.size() >= 2 &&
             ai.type_name.compare(ai.type_name.size() - 2, 2, "[]") == 0;
         if (ai.has_default) {
-          ps->add_property(ai.name, std::move(ai.default_value), flags);
+          ps->add_property(nid, std::move(ai.default_value), flags);
         } else if (ai.has_array_edit) {
           // Sparse array-edit default: a typed slot with the structured edit
           // and its canonical `edit [...]` text (usda writer re-emits it;
@@ -597,7 +602,7 @@ void CrateReader::Impl::EmitPrimBody(
           std::string base_tn = is_array
               ? ai.type_name.substr(0, ai.type_name.size() - 2)
               : ai.type_name;
-          ps->add_property_slot(GetPropNameTable().intern(ai.name),
+          ps->add_property_slot(nid,
                                 GetTypeIdFromName(base_tn.c_str()),
                                 edit_flags);
           ps->set_raw_default_source(ai.name,
@@ -611,18 +616,17 @@ void CrateReader::Impl::EmitPrimBody(
               ? ai.type_name.substr(0, ai.type_name.size() - 2)
               : ai.type_name;
           TypeId tid = GetTypeIdFromName(base.c_str());
-          ps->add_property_slot(GetPropNameTable().intern(ai.name), tid, flags);
+          ps->add_property_slot(nid, tid, flags);
         }
         // Time samples (an attribute may have timeSamples with or without a
         // default).
         if (!ai.time_samples.empty()) {
-          PropNameId nid = GetPropNameTable().intern(ai.name);
           for (auto& ts : ai.time_samples) {
             ps->add_time_sample(nid, ts.first, std::move(ts.second));
           }
         }
         if (!ai.type_name.empty()) {
-          ps->set_property_type_name(ai.name, ai.type_name);
+          ps->set_property_type_name(nid, GetTypeNameTable().intern(ai.type_name));
         }
         if (ai.is_connection && ai.cold->connection_targets.empty()) {
           ps->set_connection_block(ai.name);  // authored `.connect = None`
@@ -641,7 +645,7 @@ void CrateReader::Impl::EmitPrimBody(
         }
         // Per-property metadata (full PropMeta round-trip).
         if (ai.meta && ai.meta->authored != 0) {
-          ps->ensure_property_meta(ai.name) = std::move(*ai.meta);
+          ps->set_property_meta(ai.name, std::move(*ai.meta));
         }
         ai = AttrInfo();  // release the record's leftovers on this task
       }
@@ -676,7 +680,7 @@ void CrateReader::Impl::EmitPrimBody(
                                              flags));
         }
         if (ri.meta && ri.meta->authored != 0) {
-          ps->ensure_property_meta(ri.name) = std::move(*ri.meta);
+          ps->set_property_meta(ri.name, std::move(*ri.meta));
         }
         ri = RelInfo();  // release the record's leftovers on this task
       }

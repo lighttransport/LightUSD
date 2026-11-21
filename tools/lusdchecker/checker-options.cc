@@ -93,8 +93,10 @@ bool NormalizeOptions(CheckerOptions* args, std::string* error) {
   // `package`, so `-g arkit` on a .usdz enforces the ARKit package rules rather
   // than silently skipping them while still reporting arkit as checked. (The
   // `--arkit` flag already sets this explicitly.)
+  // `aousd-core-1.1.0` is current; `aousd-core-1.0.1` stays as a compatible
+  // alias (same normative check set) for existing scripts.
   if (args->profile != "default" && args->profile != "strict" &&
-      args->profile != "aousd-core-1.0.1") {
+      args->profile != "aousd-core-1.1.0" && args->profile != "aousd-core-1.0.1") {
     *error = "unknown validation profile: " + args->profile;
     return false;
   }
@@ -114,7 +116,8 @@ bool NormalizeOptions(CheckerOptions* args, std::string* error) {
     args->all_samples = true;
     args->strict = args->profile == "strict";
     args->groups.require_complete = args->strict;
-    args->groups.normative_only = args->profile == "aousd-core-1.0.1";
+    args->groups.normative_only = args->profile == "aousd-core-1.1.0" ||
+                                  args->profile == "aousd-core-1.0.1";
     if (args->groups.normative_only && arkit) {
       *error = "AOUSD Core profile cannot include the ARKit delivery profile";
       return false;

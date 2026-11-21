@@ -191,8 +191,9 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
     const bool is_color = (pv.name == "displayColor");
     const bool is_opacity = (pv.name == "displayOpacity");
     const bool is_normals = (pv.name == "normals");
-    const bool builtin =
-        is_uv0 || is_uv1 || is_color || is_opacity || is_normals;
+    const bool is_tangents = (pv.name == "tangents");
+    const bool builtin = is_uv0 || is_uv1 || is_color || is_opacity ||
+                         is_normals || is_tangents;
     if (custom_only && builtin) continue;
 
     std::vector<float> data;
@@ -284,6 +285,27 @@ bool RenderSceneConverter::Impl::ExtractMeshPrimvars(const UsdPrim& prim,
         mesh->normals.clear();
         mesh->normals.append_exact(fdata->data(), fdata->size());
         mesh->normals_interp = interp;
+      } else if (is_tangents && (comps == 3 || comps == 4)) {
+        // Authored tangent basis (xyz + handedness w). The legacy loader and
+        // the renderers store four components; a three-component primvar gets
+        // a right-handed w=1. Authored tangents win over computed ones, which
+        // only run when this channel is empty.
+        mesh->tangents.clear();
+        if (comps == 4) {
+          mesh->tangents.append_exact(fdata->data(), fdata->size());
+        } else {
+          const size_t elems = fdata->size() / 3;
+          std::vector<float> padded;
+          padded.reserve(elems * 4);
+          for (size_t i = 0; i < elems; ++i) {
+            padded.push_back(fdata->data()[i * 3 + 0]);
+            padded.push_back(fdata->data()[i * 3 + 1]);
+            padded.push_back(fdata->data()[i * 3 + 2]);
+            padded.push_back(1.0f);
+          }
+          mesh->tangents.append_exact(padded.data(), padded.size());
+        }
+        mesh->tangents_interp = interp;
       }
       continue;
     }

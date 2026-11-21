@@ -194,6 +194,12 @@ retirement, stale/wrong-class calls, explicit disposal, argument validation,
 numeric/Unicode JSON fidelity, and malformed validation options. Run it on both
 wasm32 and memory64 after changing the C dispatch or post-JS wrapper.
 
+`tests/next-mesh-budget-cache.test.mjs` compares scoped memory headroom to a
+fresh Stage scan after limit changes, asset updates, retained USDC export and
+forced heap growth. It also checks that owned mesh points survive growth.
+Run on both pointer widths; `LIGHTUSD_NEXT_MODULE` can select an isolated
+module without replacing generated app files.
+
 `tests/next-binding-copy-contracts.test.mjs` exercises raw C callers on both
 pointer widths. It checks UTF-8 node-path size queries, untouched undersized
 destinations, scene strings' separate truncation/NUL convention, invalid
@@ -222,8 +228,10 @@ loader redirects combined imports and keeps their WASM paired with the glue.
 inventory, typed streaming-buffer and asset-cache ownership/progress/error
 contracts, binary chunk copies, exact memory64 size_t/BigInt values, wasm32
 progress overflow, and standard SHA-256 digests across padding boundaries,
-alongside composition and flatten coverage. Set `LUSDCAT_PATH` to the native `build_ninja/lusdcat` executable to
-include validation parity rather than skipping it.
+alongside composition and flatten coverage. Set `LUSDCAT_PATH` to a native
+`lusdcat` built with `LIGHTUSD_NATIVE_PRODUCT=legacy` to include legacy validation
+parity. This check requires its `--validate-all` report; the default `next` CLI
+does not implement that legacy flag. Next validation has its own parity tests.
 
 ## Complete gate
 
@@ -450,3 +458,13 @@ without composition or rendering. The next document API enforces its 512 MiB
 input/resident limit. `--max-fail 0`, supplied by the npm command, fails on any
 rejected input; a missing loader API is an error. The pinned corpus currently
 contains 280 USD-family files.
+
+### Composed-load dependency failures
+
+A next RenderStream composed load fails when an external reference or payload
+cannot load, including blocked parent-relative paths and missing assets after
+an attached store is detached. It must clear prior render geometry and retain
+the typed composition issue report. A successful empty/partial scene is not an
+acceptable result for these cases. The USDA composition, C dispatch and loading
+parity suites assert this contract; legacy parse-only loads may still succeed.
+Incremental dependency discovery belongs to the flatten-session workflow.

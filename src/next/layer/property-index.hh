@@ -62,7 +62,7 @@ public:
   /// Freeze the table for lock-free concurrent reads. After composition the set
   /// of interned names is fixed; rendering does millions of find()/get() calls
   /// across many threads, and the per-call shared_lock then contends purely on
-  /// the lock's own cache line (a measured ~14% of an Island render).
+  /// the lock's own cache line (a measured ~14% of an reference scene render).
   ///
   /// freeze() publishes an IMMUTABLE SNAPSHOT of the table; while one is
   /// published, find()/get() answer from it with no lock at all. A later
@@ -142,7 +142,7 @@ private:
   // name views plus a hash index over them, published lock-free as a raw
   // pointer. Read HITS on it never touch mu_ -- parallel USDC stage-build
   // workers call add_property()/intern()/find() millions of times, and the
-  // shared_lock cache line alone cost ~17% of an Island crate load. It is
+  // shared_lock cache line alone cost ~17% of an reference scene crate load. It is
   // republished under the exclusive lock whenever the table has grown by half
   // since the last one (plus on publish_snapshot()), so a miss is always
   // recent and falls back to the authoritative locked path, and the retained
@@ -174,6 +174,13 @@ struct PropSlot {
   uint32_t value_offset;      // Offset into value storage
   uint16_t value_type;        // TypeId of the value
   uint16_t flags;             // Property flags
+  // Declared USD type name ("color3f", "float[]") as a TypeNameTable id;
+  // kNoTypeName when none was recorded (PrimSpec then falls back to its cold
+  // string map, used only for names set before the slot existed or past the
+  // table's capacity). Slot-resident so the crate writer and the compose
+  // merge read it without a per-property map lookup or string hash.
+  uint16_t type_name_id = kNoTypeName;
+  static constexpr uint16_t kNoTypeName = UINT16_MAX;
 
   // Flag bits
   static constexpr uint16_t kFlagCustom = 0x0001;
@@ -226,6 +233,7 @@ public:
 
   /// Get property count
   size_t size() const;
+  size_t capacity() const { return slots_.capacity(); }
 
   /// Sort slots by property name (canonical, run-stable order) for binary
   /// search. No-op while already sorted.

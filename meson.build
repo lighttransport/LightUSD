@@ -2,7 +2,7 @@
 # Source list synchronized with CMakeLists.txt
 
 project('lightusd', ['c', 'cpp'],
-  version: '1.0.0-rc4',
+  version: '1.0.0',
   default_options: [
     'cpp_std=c++17',
     'c_std=c11',
@@ -250,7 +250,7 @@ lightusd_sources = files(
   'src/usdLux.cc',
   'src/mtlx-xml-tokenizer.cc',
   'src/mtlx-xml-parser.cc',
-  'src/mtlx-dom.cc',
+  'src/core/mtlx-dom.cc',
   'src/mtlx-simple-parser.cc',
   'src/usdMtlx.cc',
   'src/usdMtlx-write.cc',

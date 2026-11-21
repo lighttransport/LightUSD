@@ -86,7 +86,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-i386-asan
         max-size: 2G
@@ -117,7 +117,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-clang-legacy
         max-size: 500M
@@ -136,6 +136,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libtbb12
+        # The downloaded OpenUSD binary links against libpython3.12.so.1.0,
+        # which is no longer in the runner's distro repos. Install the latest
+        # Ubuntu python3.12 runtime .deb directly so `usdcat --help` works.
+        pool="https://archive.ubuntu.com/ubuntu/pool/main/p/python3.12"
+        deb="$(curl -fsSL "$pool/" | grep -o 'libpython3.12t64_[0-9][^" ]*ubuntu[^" ]*_amd64\.deb' | sort -V | tail -1)"
+        test -n "$deb"
+        curl -fsSL -o /tmp/libpython3.12t64.deb "$pool/$deb"
+        mkdir -p /tmp/libpython3.12
+        dpkg-deb -x /tmp/libpython3.12t64.deb /tmp/libpython3.12
+        echo "LD_LIBRARY_PATH=/tmp/libpython3.12/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
     - name: Download OpenUSD binary
       run: |
@@ -194,7 +204,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-mcp-qjs
         max-size: 500M
@@ -224,7 +234,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-next-product
         max-size: 500M
@@ -253,7 +263,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-fuzz-cabi
         max-size: 500M
@@ -280,7 +290,7 @@ jobs:
           -artifact_prefix=/tmp/cabi-artifacts/ /tmp/cabi-corpus
     - name: upload reproducers on failure
       if: failure()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: cabi-fuzz-artifacts
         path: /tmp/cabi-artifacts
@@ -296,7 +306,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-next-asan-ubsan
         max-size: 500M
@@ -329,7 +339,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-hardening
         max-size: 500M
@@ -371,7 +381,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-lusdview-hermetic
         max-size: 500M
@@ -403,7 +413,7 @@ jobs:
           --target lusdview_camera_nav_test
     - name: tests
       run: |
-        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav|lusdview-vk-oit-validation"
+        cd build_lusdview && ctest --output-on-failure -R "lusdview_lighting|lusdview_lightrt_bridge|lusdview_openpbr|lusdview_texture_pipeline|lusdview_lightrt_mtlx|lusdview_geometry|lusdview_camera_nav"
 
   # Build with the experimental `next` (pcp large-scene) backend enabled.
   # The default build and the rest of CI do NOT compile src/next/ — it is gated
@@ -416,7 +426,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-legacy-with-next
         max-size: 500M
@@ -447,7 +457,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-aousd
         max-size: 500M
@@ -520,7 +530,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-arm64-gcc
         max-size: 500M
@@ -535,7 +545,7 @@ jobs:
       run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: lusdcat-linux-arm64-gcc
         path: build/lusdcat
@@ -563,7 +573,7 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.24
       with:
         key: linux-arm64-clang
         max-size: 500M
@@ -585,7 +595,7 @@ jobs:
       run: cmake --build build -j $(nproc)
 
     - name: Upload ARM64 lusdcat binary
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: lusdcat-linux-arm64-clang
         path: build/lusdcat

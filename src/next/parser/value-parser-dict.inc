@@ -106,9 +106,30 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
       val = ParseGenericValue(lexer, inferred);
     }
     if (!val.success) return val;
+    // AOUSD 6.6.2 (L1224-1225): each key maps to one and only one value. The
+    // dictionary keeps the last value (pxr parity), so the authored
+    // duplicate survives only as a diagnostic (core.dict.duplicateKey).
+    if (d.find(key)) {
+      lexer.diagnostics.push_back(
+          "Line " + std::to_string(lexer.line()) +
+          ": [core.dict.duplicateKey] duplicate dictionary key `" + key +
+          "`");
+    }
     d->set(std::move(key), std::move(val.value));
 
-    if (lexer.peek_view().type == TokenType::Comma) lexer.next();
+    // Entries are separated by a newline or `;` (pxr dictionary grammar);
+    // a `,` is tolerated for legacy LightUSD-written files. Two entries on
+    // one line with no separator are rejected in strict mode, as OpenUSD does.
+    const TokenType nt = lexer.peek_view().type;
+    if (nt == TokenType::Comma || nt == TokenType::Semicolon) {
+      lexer.next();
+    } else if (lexer.strict_aousd_conformance &&
+               nt != TokenType::CloseBrace && nt != TokenType::Eof &&
+               !lexer.newline_before_current()) {
+      // Strict (AOUSD) mode only: lenient mode keeps loading such files.
+      return ParseResult::Error(
+          "Expected newline or ';' between dictionary entries");
+    }
   }
 
   if (!lexer.expect(TokenType::CloseBrace)) {

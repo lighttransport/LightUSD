@@ -226,11 +226,12 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
     return;
   }
 
-  const std::vector<::lightusd::next::Path>* includes =
-      prim.GetRelationship(base + "includes");
-  const std::vector<::lightusd::next::Path>* excludes =
-      prim.GetRelationship(base + "excludes");
-  if (!includes && !excludes) return;  // unauthored -> links all
+  std::vector<::lightusd::next::Path> includes, excludes;
+  const bool has_includes =
+      prim.GetMappedRelationshipTargets(base + "includes", &includes);
+  const bool has_excludes =
+      prim.GetMappedRelationshipTargets(base + "excludes", &excludes);
+  if (!has_includes && !has_excludes) return;  // unauthored -> links all
 
   bool include_root = false;
   GetPropBool(prim, base + "includeRoot", &include_root);
@@ -246,8 +247,8 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   // walk only the meshes the includes actually name. Cost is proportional to
   // the matched subtrees, not to the whole scene.
   index.NewGeneration();
-  if (excludes) {
-    for (const ::lightusd::next::Path& p : *excludes) {
+  if (has_excludes) {
+    for (const ::lightusd::next::Path& p : excludes) {
       const std::string ep = p.str();
       const int32_t exact = index.ExactMatch(ep);
       if (exact >= 0) index.Mark(exact);
@@ -267,8 +268,8 @@ void ResolveLightLinkInstance(const Stage& stage, const UsdPrim& prim,
   };
 
   if (include_root) add_subtree(owner_path);
-  if (includes) {
-    for (const ::lightusd::next::Path& p : *includes) {
+  if (has_includes) {
+    for (const ::lightusd::next::Path& p : includes) {
       const std::string ip = p.str();
       if (explicit_only) {
         const int32_t exact = index.ExactMatch(ip);

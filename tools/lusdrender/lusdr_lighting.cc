@@ -55,11 +55,13 @@ Vec3 SampleEnvNearest(const EnvImage &img, float u, float v) {
   if (img.width <= 0 || img.height <= 0 || img.pixels.empty()) {
     return Vec3{0.0f, 0.0f, 0.0f};
   }
+  if (!std::isfinite(u) || !std::isfinite(v)) return Vec3{0, 0, 0};
   u = u - std::floor(u);
   v = ClampFloat(v, 0.0f, 1.0f);
   int x = int(std::floor(u * float(img.width))) % img.width;
   int y = std::min(img.height - 1, int(std::floor(v * float(img.height))));
-  return img.pixels[size_t(y) * size_t(img.width) + size_t(x)];
+  const size_t index = size_t(y) * size_t(img.width) + size_t(x);
+  return index < img.pixels.size() ? img.pixels[index] : Vec3{0, 0, 0};
 }
 
 Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir) {

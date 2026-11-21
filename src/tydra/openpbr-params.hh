@@ -70,6 +70,16 @@ struct RealtimePbrMaterial {
   // OpenPBR geometry_thin_walled. Thin sheets transmit without entering a
   // volumetric medium; closed dielectric shells retain the default false.
   bool geometryThinWalled{false};
+  // UsdPreviewSurface inputs:opacityMode. The default "transparent" attenuates
+  // only the diffuse lobe and keeps the surface opaque; "presence" treats
+  // opacity as coverage (stochastic/dithered or cutout alpha).
+  bool opacityTransparent{false};
+  // UsdPreviewSurface metallic workflow (useSpecularWorkflow == 0). Storm's
+  // MaterialX graph computes F0 as mix(SC*r2, SC, metallic) with
+  // SC = mix(1, baseColor, metallic), which differs from the generic OpenPBR
+  // mix(iorF0*specularColor*specularWeight, baseColor, metallic). Packed as a
+  // 2.0 sentinel in slot 41 (diffuseRoughness stays in [0,1]).
+  bool previewSurfaceMetallicWorkflow{false};
 };
 
 inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
@@ -129,7 +139,7 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   StoreOpenPBR3(p.emissionColor, dst + 32);       dst[35] = p.emission;
   StoreOpenPBR3(p.normal, dst + 36);              dst[39] = p.opacity;
   dst[40] = p.metalness;
-  dst[41] = p.diffuseRoughness;
+  dst[41] = p.previewSurfaceMetallicWorkflow ? 2.0f : p.diffuseRoughness;
   dst[42] = p.specularRoughness;
   dst[43] = p.specularIor;
   dst[44] = p.coatRoughness;
@@ -144,7 +154,7 @@ inline void PackRealtimePbrMaterial(const RealtimePbrMaterial& p,
   dst[53] = p.hasNormalInput ? 1.0f : 0.0f;
   dst[54] = alpha_mode;
   dst[55] = alpha_cutoff;
-  dst[56] = p.diffuseRoughness;
+  dst[56] = p.opacityTransparent ? 1.0f : 0.0f;
   dst[57] = p.specularAnisotropy;
   dst[58] = p.specularRotation;
   dst[59] = p.specularRoughnessAnisotropy;

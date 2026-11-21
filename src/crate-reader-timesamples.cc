@@ -28,7 +28,7 @@
 #include "integerCoding.h"
 #include "lz4-compression.hh"
 #include "memory-budget.hh"
-#include "safe-arithmetic.hh"
+#include "core/safe-arithmetic.hh"
 #include "parser-timing.hh"
 #include "path-util.hh"
 #include "core/prim-spec.hh"

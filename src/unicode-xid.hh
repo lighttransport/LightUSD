@@ -3,7 +3,7 @@
 //
 // UTF-8 Unicode identifier XID_Start and XID_Continue validation utility.
 //
-// Based on UAX31 Default Identifier and Unicode 5.1.0. The tables and the
+// Based on UAX31 Default Identifier and Unicode 15.1.0. The tables and the
 // lookups live in the C11 module src/unicode-xid-c.{c,h}; this header only
 // forwards to them, so translation units that validate identifiers no longer
 // parse a 1450-line table each.

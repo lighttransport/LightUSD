@@ -26,21 +26,7 @@
 #include <new>
 #include <string>
 #include <vector>
-#if defined(__EMSCRIPTEN__)
-#include <emscripten/heap.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#elif defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <psapi.h>
-#endif
-
+#include "core/host-services.hh"
 #include "tydra/next/chunked-array.hh"
 #include "tydra/next/resource-budget.hh"
 
@@ -58,7 +44,9 @@ class MemBudget {
   }
 
   // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
-  void Init(double cap_override_gib) {
+  void Init(double cap_override_gib,
+            std::shared_ptr<const HostServices> services = {}) {
+    host_services_ = std::move(services);
     if (cap_override_gib > 0.0) {
       // Plain `double` here, not `long double`: MSVC's `long double` is
       // bit-identical to `double` (no 80-bit extended precision like
@@ -75,7 +63,7 @@ class MemBudget {
                  ? (std::numeric_limits<size_t>::max)()
                  : static_cast<size_t>(requested);
     } else {
-      size_t avail = AvailableSystemMemory();
+      size_t avail = AvailableSystemMemory(host_services_.get());
       const uint64_t target_capacity =
           avail ? std::min<uint64_t>(avail, lightusd::tydra::next::GiB(32))
                 : lightusd::tydra::next::GiB(32);
@@ -91,8 +79,10 @@ class MemBudget {
   // Set an explicit byte cap, clamped to what the machine can actually back.
   // Convenience for callers whose flag is in MB rather than GiB (a previewer
   // wants a 512 MB budget, not 0.5 GiB of floating point).
-  void InitBytes(uint64_t cap_bytes) {
-    uint64_t avail = AvailableSystemMemory();
+  void InitBytes(uint64_t cap_bytes,
+                 std::shared_ptr<const HostServices> services = {}) {
+    host_services_ = std::move(services);
+    uint64_t avail = AvailableSystemMemory(host_services_.get());
     if (avail) {
       const uint64_t host_limit =
           lightusd::tydra::next::ComputeResourceBudget(avail, 0).host_limit;
@@ -120,7 +110,7 @@ class MemBudget {
   // pool allocator can bound OUR allocations to cap_ - base_ with pure atomics
   // (no /proc read per allocation). Call at the start of a streaming phase.
   void SnapshotBase() {
-    size_t rss = ProcessRSS();
+    size_t rss = ProcessRSS(host_services_.get());
     size_t tr = tracked_.load(std::memory_order_relaxed);
     base_.store(rss > tr ? rss - tr : 0, std::memory_order_relaxed);
   }
@@ -151,7 +141,7 @@ class MemBudget {
   // the cap right now? `phase`/extra are for the diagnostic message.
   bool WouldExceed(size_t extra_estimate, std::string *why = nullptr) const {
     if (!cap_) return false;
-    size_t rss = ProcessRSS();
+    size_t rss = ProcessRSS(host_services_.get());
     if (extra_estimate <= cap_ - std::min(rss, cap_)) return false;
     if (why) {
       *why = "memory cap " + GiB(cap_) + " would be exceeded (current RSS " +
@@ -160,64 +150,16 @@ class MemBudget {
     return true;
   }
 
-  // Process RSS in bytes; 0 if unavailable.
-  //   wasm:    grown linear-heap size (there is no /proc, and the heap IS the
-  //            memory bound that matters on wasm32).
-  //   Windows: working set via GetProcessMemoryInfo.
-  //   Linux:   /proc/self/statm (pages).
-  // NOTE: the /proc branch is guarded on __linux__ rather than used as the
-  // fallback for every non-Windows target -- it referenced _SC_PAGESIZE
-  // without <unistd.h> being included off-Linux, which broke the emscripten
-  // build as soon as a wasm translation unit included this header.
-  static size_t ProcessRSS() {
-#if defined(__EMSCRIPTEN__)
-    return static_cast<size_t>(emscripten_get_heap_size());
-#elif defined(_WIN32)
-    PROCESS_MEMORY_COUNTERS pmc;
-    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-      return size_t(pmc.WorkingSetSize);
-    }
-    return 0;
-#elif defined(__linux__)
-    std::ifstream f("/proc/self/statm");
-    if (!f) return 0;
-    size_t total_pages = 0, rss_pages = 0;
-    f >> total_pages >> rss_pages;
-    if (!f) return 0;
-    long pg = sysconf(_SC_PAGESIZE);
-    return rss_pages * size_t(pg > 0 ? pg : 4096);
-#else
-    return 0;  // unknown platform: budget guards become inert, never wrong
-#endif
+  // Host observations are explicit. No provider means unavailable (zero).
+  static size_t ProcessRSS(const HostServices* services = nullptr) {
+    const uint64_t bytes = services && services->resident_memory_bytes
+        ? services->resident_memory_bytes() : 0;
+    return static_cast<size_t>(std::min(bytes, uint64_t((std::numeric_limits<size_t>::max)())));
   }
-
-  // Available system memory in bytes; 0 if unavailable. Linux: /proc/meminfo
-  // MemAvailable. Windows: GlobalMemoryStatusEx ullAvailPhys.
-  static size_t AvailableSystemMemory() {
-#if defined(__EMSCRIPTEN__)
-    return 0;  // no host meminfo; callers fall back to their configured cap
-#elif defined(_WIN32)
-    MEMORYSTATUSEX st;
-    st.dwLength = sizeof(st);
-    if (GlobalMemoryStatusEx(&st)) {
-      return size_t(st.ullAvailPhys);
-    }
-    return 0;
-#else
-    std::ifstream f("/proc/meminfo");
-    if (!f) return 0;
-    std::string key;
-    while (f >> key) {
-      if (key == "MemAvailable:") {
-        size_t kib = 0;
-        f >> kib;
-        return kib * size_t(1024);
-      }
-      std::string rest;
-      std::getline(f, rest);
-    }
-    return 0;
-#endif
+  static size_t AvailableSystemMemory(const HostServices* services = nullptr) {
+    const uint64_t bytes = services && services->available_memory_bytes
+        ? services->available_memory_bytes() : 0;
+    return static_cast<size_t>(std::min(bytes, uint64_t((std::numeric_limits<size_t>::max)())));
   }
 
   static std::string GiB(size_t bytes) {
@@ -229,6 +171,7 @@ class MemBudget {
 
  private:
   MemBudget() = default;
+  std::shared_ptr<const HostServices> host_services_;
   void BumpPeak(size_t v) {
     size_t p = peak_tracked_.load(std::memory_order_relaxed);
     while (v > p &&

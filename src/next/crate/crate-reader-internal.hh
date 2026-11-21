@@ -21,6 +21,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <unordered_map>
+#if defined(LIGHTUSD_ENABLE_THREAD)
+#include <mutex>
+#endif
 #if defined(LIGHTUSD_ENABLE_THREAD)
 #include <atomic>
 #endif
@@ -177,6 +181,7 @@ class PathPool {
     bool is_connection = false;  // implies `cold`
     bool uniform = false;
     bool custom = false;
+    bool has_time_samples = false;  // field present (may be empty)
     Value default_value;
     std::vector<std::pair<double, Value>> time_samples;
     std::unique_ptr<AttrCold> cold;
@@ -213,7 +218,7 @@ using RelRecords = std::vector<std::pair<uint32_t, RelInfo>>;
 namespace crate_stage_detail {
 constexpr uint32_t kSkipEntry = UINT32_MAX;
 Value ParseDictText(const std::string& text);
-DecodedExtensionField MakeTypedExtensionField(std::string name, Value value);
+DecodedExtensionField MakeTypedExtensionField(std::string name, Value value, bool unregistered);
 }
 
 struct PrimBuildState {
@@ -343,7 +348,7 @@ class CrateReader::Impl {
   bool ReadFieldsets();
   bool ReadSpecs();
   bool ReadPaths();
-  bool DecodePropMetaField(const std::string& name, ValueRep rep,
+  bool DecodePropMetaField(std::string_view name, ValueRep rep,
                            PropMeta& pm);
   bool BuildStage();
   void ReorderPrimsByPath(std::vector<PrimEntry>& entries, int threads);
@@ -362,10 +367,10 @@ class CrateReader::Impl {
       const std::vector<uint32_t>& slot_to_entry, const ReportFn& report_stage,
       size_t spec_begin, size_t spec_end, AttrRecords& attr_out,
       RelRecords& rel_out,
-      std::vector<std::pair<std::string, ValueRep>>& raw_field_scratch,
+      std::vector<std::pair<std::string_view, ValueRep>>& raw_field_scratch,
       bool report);
   void EmitPrimBody(PrimBuildState& state, size_t entry_index,
-                    std::vector<std::pair<std::string, Value>>& scratch,
+                    std::vector<std::pair<std::string_view, Value>>& scratch,
                     const ReportFn& report);
 
   // `depth` is the nesting depth of the value being unpacked. It MUST be
@@ -379,6 +384,7 @@ class CrateReader::Impl {
   // values become canonical usda element text (see layer/array-edit.hh).
   bool UnpackArrayEditData(ValueRep rep, ArrayEditData* out);
   bool UnpackArray(ValueRep rep, Value& out);
+  bool UnpackArrayUncached(ValueRep rep, Value& out);
 
   bool UnpackBool(ValueRep rep, Value& out);
   bool UnpackInt(ValueRep rep, Value& out);
@@ -432,10 +438,15 @@ class CrateReader::Impl {
                                   bool use_string_indices);
   bool GetToken(uint32_t index, std::string& out);
   bool GetString(uint32_t index, std::string& out);
+  // Field-name views point into the token blob, which outlives the stage build
+  // (no per-field string allocation while decoding millions of fieldsets).
   bool ResolveFieldset(uint32_t fieldset_index,
-                       std::vector<std::pair<std::string, Value>>& out);
-  bool ResolveFieldsetRaw(uint32_t fieldset_index,
-                          std::vector<std::pair<std::string, ValueRep>>& out);
+                       std::vector<std::pair<std::string_view, Value>>& out,
+                       std::vector<DecodedExtensionField>* extensions = nullptr);
+  CrateTypeId FieldType(uint32_t fieldset_index, std::string_view name) const;
+  bool ResolveFieldsetRaw(
+      uint32_t fieldset_index,
+      std::vector<std::pair<std::string_view, ValueRep>>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out,
                          bool with_markers);
@@ -444,7 +455,28 @@ class CrateReader::Impl {
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
+  bool DecodeInt64ListOpField(std::string name, ValueRep rep,
+                              DecodedExtensionField* out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
+  bool DecodeDictionaryUncached(ValueRep rep, Value& out, int depth);
+  // Decoded dictionaries and arrays by ValueRep. A crate stores each distinct
+  // value once and every spec that authors it points at the same rep, so the
+  // specs share one decoded value (refcounted, copy-on-write) instead of a
+  // copy each -- benchmark scene's prefab prims all carry a small nested `customData`
+  // and the same few small arrays (~2.6 GB of dictionaries plus ~3.9 GB of
+  // arrays decoded per prim on full LOD). Sharded: EmitPrimBody decodes in
+  // parallel.
+  struct DictCacheShard {
+#if defined(LIGHTUSD_ENABLE_THREAD)
+    std::mutex mu;
+#endif
+    std::unordered_map<uint64_t, Value> map;
+  };
+  static constexpr size_t kDictCacheShards = 16;
+  std::unique_ptr<DictCacheShard[]> dict_cache_{new DictCacheShard[kDictCacheShards]};
+  // Returns true (with `out` set) on a hit; Store records a fresh decode.
+  bool FindDecoded(uint64_t rep, Value& out);
+  void StoreDecoded(uint64_t rep, const Value& v);
 
   bool ReportProgress(const char* phase, size_t current = 0,
                       size_t total = 0);

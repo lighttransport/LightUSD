@@ -154,5 +154,20 @@ int main() {
     return 1;
   }
 
+  // A rolled camera looking exactly along world up must survive import and input.
+  const float polePose[16] = {0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 3, 4, 5, 1};
+  if (!camera.setPose(polePose, 2.0f)) return 1;
+  auto roundtrip = camera.view().inverse();
+  for (int i = 0; i < 16; ++i) if (!Near(roundtrip.m[i], polePose[i])) return 1;
+  camera.pan(3, 4);
+  camera.orbit(10, 20);
+  auto moved = camera.view();
+  for (float v : moved.m) if (!std::isfinite(v)) return 1;
+  float badPose[16];
+  for (int i = 0; i < 16; ++i) badPose[i] = polePose[i];
+  badPose[0] = 4;
+  const auto previousEye = camera.eye();
+  if (camera.setPose(badPose, 2.0f) || light3d::length(camera.eye() - previousEye) > 1e-6f) return 1;
+
   return 0;
 }

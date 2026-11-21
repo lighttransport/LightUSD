@@ -2,6 +2,7 @@
 // Copyright 2024-Present Light Transport Entertainment Inc.
 #include "binding-next-render.hh"
 #include <algorithm>
+#include <cmath>
 #include "tydra/next/render-extract.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
