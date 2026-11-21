@@ -106,7 +106,7 @@ test('verifyUSDA requires articulation root APIs when dynamic root links exist',
   }, /Missing USDA tokens: .*PhysicsRigidBodyAPI.*NewtonArticulationRootAPI/);
 });
 
-test('verifyUSDA accepts typed physics joints for next backend scenes', () => {
+test('verifyUSDA accepts typed physics joints for core backend scenes', () => {
   const usdaWithTypedJoint = `
     #usda 1.0
       def Xform "World" (

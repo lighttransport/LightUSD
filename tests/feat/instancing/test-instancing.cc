@@ -17,7 +17,10 @@
 #include "tydra/render-data.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 namespace {
 
@@ -57,11 +60,11 @@ bool test_compute_api(const Stage &stage) {
   CHECK(protoIndices.size() == 4, "protoIndices has 4 entries");
 
   // Transforms.
-  std::vector<value::matrix4d> xforms;
+  std::vector<lightusd::legacy::value::matrix4d> xforms;
   std::string err;
   bool ok = ComputeInstanceTransformsAtTime(
-      *pi, value::TimeCode::Default(),
-      value::TimeSampleInterpolationType::Linear, &xforms, &err);
+      *pi, lightusd::legacy::value::TimeCode::Default(),
+      lightusd::legacy::value::TimeSampleInterpolationType::Linear, &xforms, &err);
   CHECK(ok, "ComputeInstanceTransformsAtTime succeeds");
   CHECK(xforms.size() == 4, "4 instance transforms");
 
@@ -92,7 +95,7 @@ bool test_compute_api(const Stage &stage) {
 
   // Mask: index 2 masked via invisibleIds.
   std::vector<bool> mask;
-  ok = ComputeMaskAtTime(*pi, value::TimeCode::Default(), &mask, &err);
+  ok = ComputeMaskAtTime(*pi, lightusd::legacy::value::TimeCode::Default(), &mask, &err);
   CHECK(ok, "ComputeMaskAtTime succeeds");
   CHECK(mask.size() == 4, "mask has 4 entries");
   if (mask.size() == 4) {

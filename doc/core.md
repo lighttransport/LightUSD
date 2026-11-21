@@ -1,0 +1,590 @@
+# LightUSD Core, Core IO, and Tydra
+
+This note explains the LightUSD core stack (formerly "next") and how it is used
+by the web `usdzconvert` pipeline.
+
+Property metadata round trips preserve authored empty `allowedTokens` arrays
+and unknown USDA property metadata through USDC unregistered values. The writer
+test generates an attribute/relationship matrix for empty lists, dictionaries,
+strings, and authored default scalars.
+
+Tydra exposes `RenderScene::conversion_diagnostics` with preserved
+unsupported, approximated, and failed dispositions. `StreamConvertResult`
+also retains diagnostics produced after the scene catalog was emitted.
+`ConverterConfig::strict_conversion` requires warning-free full conversion;
+this includes resolver and colorspace warnings, so it is deliberately stricter
+than merely rejecting shader approximations. The default remains permissive.
+The C API exposes `lightusd_render_config_set_strict` and conversion diagnostic
+count/get functions without changing the render-config layout. Light-filter
+fallbacks remain inert even when their source authors a nonzero intensity.
+
+The WASM `LayerDocument.setAttribute(path, name, type, value, isArray, options)`
+accepts optional `{uniform, custom}` boolean flags. Existing calls retain their
+custom-attribute default; explicit flags support schema-authored attributes.
+
+## Default core and optional legacy
+
+The maintained implementation lives in `src/` and `src/tydra/`, with public
+namespaces `lightusd::` and `lightusd::tydra::`. Link `lightusd_core`
+(`lightusd::core` from the root build) and `tydra`. The root and standalone
+`src/` projects register core tests when `LIGHTUSD_BUILD_TESTS=ON`.
+Retired module names, CMake aliases, environment aliases, and CLI switches
+are removed; use the canonical names in current headers and command help.
+
+The older implementation lives under `src/legacy/` in `lightusd::legacy::`.
+It is disabled by default. Explicitly enable `LIGHTUSD_BUILD_LEGACY=ON` and,
+if needed, `LIGHTUSD_WITH_LEGACY_TYDRA=ON`. Its native libraries are
+`lightusd_legacy_static` / `lightusd::legacy_static` and optional
+`lightusd_legacy` / `lightusd::legacy`. Legacy configuration is isolated from
+core compile options and include paths. Native legacy tests are compiled but
+not registered with CTest. Legacy does not override CMake test commands,
+so tests added by parent consumers remain available.
+
+WASM publishes `LIGHTUSD_WASM_PRODUCT=core` as `lightusd[_64].js` and uses
+the `lightusd_wasm_*` C ABI. Independent feature modules and the MCP product
+also use core. Standalone `LIGHTUSD_WASM_PRODUCT=legacy` is opt-in and emits
+`lightusd_legacy[_64].js`; it is not published. The combined product is removed.
+The browser loader always uses core; explicit legacy requests warn.
+Python wheels link only the core libraries and never build `src/legacy/`.
+
+Meson also defaults to core and Tydra. It builds the canonical CMake targets
+without maintaining a separate source list. `lightusd_dep` and `tydra_dep`
+export their resolved include paths, feature definitions, and link dependencies.
+Use `-Dlegacy=true` to add `lightusd_legacy_dep`, and `-Dlegacy_tydra=true`
+for its older converter. Meson's `-Dtests=true` builds the core API smoke test.
+The older standalone Meson fuzz harness requires explicit `-Dlegacy=true`;
+maintained core fuzzers use CMake's `LIGHTUSD_BUILD_FUZZERS` option.
+
+See [the C++ testing guide](testing-cpp.md) and
+[the WASM regression procedure](../web/js/docs/regression.md) for validation.
+
+## Terminology
+
+LightUSD currently has two USD implementations:
+
+- **Core**: the implementation under `src/` (formerly `src/`): a
+  lower-dependency USD core with flat layer storage, runtime type dispatch,
+  lazy USDC arrays, and a lower-memory flatten/write path.
+- **Legacy**: the pre-1.1 Stage/Prim implementation, now `src/legacy/`
+  (compile-only).
+
+In this document:
+
+- **core** means the in-memory USD model in `src/`: `Stage`, `Layer`,
+  `PrimSpec`, `Value`, property indices, schema helpers, evaluation, and PCP
+  composition.
+- **core IO** means core readers/writers: USDA, USDC/Crate, USDZ package
+  loading, lazy array decode, and streaming crate write.
+- **tydra** means the render conversion layer in `src/tydra/`, which
+  converts a `lightusd::Stage` into render-ready data.
+
+The core stack is the only document and render-conversion path for every
+LightUSD app (lusdcat, lusdview, lusdrender, lusdzconvert, lusddiff, ...).
+
+## Core
+
+`src/` is a standalone LightUSD core (`cmake -S src`). Its main public
+header is:
+
+```cpp
+#include "lightusd-core.hh"
+```
+
+The design differs from the legacy core in several important ways:
+
+- A runtime `TypeId`/`Value` system replaces much of the template-heavy legacy
+  value dispatch.
+- `Layer` stores prims in flat vectors with indices, which is cache-friendly and
+  avoids pointer-heavy tree ownership.
+- `PrimSpec` is the main authored prim record; `UsdPrim` is a lightweight handle.
+- Property lookup uses an indexed property table rather than repeated string
+  scans.
+- USDC numeric arrays can stay lazy: the reader can retain references to source
+  crate ranges instead of eagerly decoding every large POD array.
+- Time sample storage includes value deduplication.
+
+Basic C++ load/write example:
+
+```cpp
+#include "lightusd-core.hh"
+
+int main() {
+  lightusd::Stage stage;
+  std::string warn;
+  std::string err;
+
+  lightusd::LoadUSDOptions opts;
+  opts.limits.max_resident_bytes = 1024ull * 1024ull * 1024ull;
+
+  if (!lightusd::LoadUSDComposed("scene.usdc", &stage, opts, &warn, &err)) {
+    // handle err
+    return 1;
+  }
+
+  if (!lightusd::WriteUSDC(stage, "flattened.usdc", &err)) {
+    // handle err
+    return 1;
+  }
+
+  return 0;
+}
+```
+
+For interactive applications, keep a `StageSession` alive instead of repeatedly
+calling the one-shot loader. The session retains the resolver and PCP layer
+cache across payload and variant edits:
+
+```cpp
+lightusd::StageSession session;
+lightusd::StageSessionOptions options;
+options.composition.load_payloads = false;
+options.progress_callback = [](const lightusd::ProgressEvent& event) {
+  return !ApplicationRequestedCancel(event);
+};
+
+if (!session.OpenFile("scene.usdc", options)) return 1;
+lightusd::StageSnapshot old = session.GetSnapshot();
+lightusd::StageEditResult edit =
+    session.SetVariantSelection("/World/Model", "lod", "high");
+if (!edit) return 1;
+edit = session.LoadPayload("/World/Model");
+if (!edit) return 1;
+lightusd::StageSnapshot current = edit.snapshot;
+```
+
+All public core loaders default to `InputPolicy::Untrusted` and finite
+`ResourceLimits`. Zero-valued limits are rejected. Trusted applications that
+deliberately need no shared load/session/render ceiling must opt in with
+`InputPolicy::Trusted` and `ResourceLimits::Unlimited()`; lower-level
+format-specific structural guards remain in force unless separately raised.
+
+Variant overrides are scoped by prim path, so identically named variant sets on
+different prims do not interfere. Diagnostics and deferred-payload state remain
+available on the session after each rebuild. Successful edits atomically publish
+a monotonically revisioned, immutable `StageSnapshot` and a typed
+`StageChangeSet`; retained older snapshots remain coherent. `ReloadLayer()`
+re-reads an edited dependency and publishes the resulting stage transactionally.
+`GetLastChangeSet()` lets retained consumers recover the change record paired
+with the current snapshot after an asynchronous edit completes.
+`AppendStageChangeSet()` combines consecutive edit records into one revision
+range, ORing per-prim flags and deduplicating property names; a revision gap
+forces the aggregate to full-resync.
+Array-backed geometry remains copy-on-write across snapshots.
+Concurrent snapshot reads are supported with one serialized writer. Mutations
+attempted reentrantly from progress, preview, or render-sink callbacks fail with
+`OperationStatus::Busy`. `CloseAndTakeStage()` transfers without cloning only
+after all published snapshots have been released.
+
+Persistent render consumers can feed those snapshots and change sets to
+`tydra::RenderSession`. Its `SceneUpdateSink` transaction reports stable
+resource IDs plus typed removals/upserts, allowing a renderer to retain GPU
+resources across payload, variant, and layer edits. Geometry-only topology and
+primvar changes clone the retained catalog with copy-on-write chunk storage and
+reconvert only the named meshes; unchanged mesh allocations remain shared with
+the previous snapshot. `Prepare()`/`PrepareInitialize()` complete conversion and
+allocation without publishing or invoking the destination sink. `Commit()` may
+then run on the render thread; it publishes only after `SceneUpdateSink::EndUpdate`
+succeeds, calls `AbortUpdate` on rejection, and rejects candidates whose base
+revision became stale. A rejected candidate remains retryable, while `Abort()`
+explicitly discards it. The existing `Initialize()` and `Apply()` calls are
+compatibility wrappers around this two-phase protocol.
+
+The session converts at `ConverterConfig::time_code` until `SetTimeCode()`
+changes it. A changed time marks the next update as a full resync: time samples
+can move any prim, and UsdVol volume material constants (density, scattering,
+emission) are read at that time too, so an update with an empty change set still
+re-converts the scene instead of taking the no-op or mesh-patch shortcut. The C
+API mirrors this as `lightusd_render_session_set_time_code` /
+`lightusd_render_session_time_code`, and the C++ facade as
+`RenderSession::set_time_code()` / `time_code()`.
+older immutable render snapshots. Broader resync, material, hierarchy, light,
+camera, and animation changes currently take the full conversion path.
+
+## Core IO
+
+The core IO layer is the reader/writer portion of `src/`:
+
+- `reader/usda-reader.*`
+- `reader/usdc-reader.*`
+- `reader/usdz-reader.*`
+- `crate/crate-reader.*`
+- `crate/crate-writer.*`
+- `pipeline/flatten.*`
+
+The main performance feature is the lazy USDC path:
+
+1. The USDC reader can keep large numeric arrays as lazy references into the
+   retained input crate buffer.
+2. Composition/flattening can preserve those lazy references when the values do
+   not need semantic rewriting.
+3. The crate writer can pass those arrays through verbatim.
+4. The streaming writer can emit the output crate to a sink without building the
+   whole output in a second large buffer.
+
+This is the reason the web `--pipeline core --stream-write` path can keep large
+single-USDZ flattened rewrites below the wasm32 2 GB heap limit. The input crate
+is retained once, lazy arrays point into it, and the flattened root crate can be
+streamed into the USDZ archive.
+
+## Tydra
+
+Tydra converts `lightusd::Stage` into `lightusd::tydra::RenderScene`.
+Its sources live in `src/tydra/`, and `LIGHTUSD_WITH_TYDRA` defaults to ON.
+The former converter lives in `src/legacy/tydra/`. To compile it, enable
+both `LIGHTUSD_BUILD_LEGACY` and `LIGHTUSD_WITH_LEGACY_TYDRA`.
+
+Important files:
+
+- `render-data.hh`: GPU-oriented render scene, mesh, material, texture, light,
+  camera, skeleton, and animation data.
+- `scene-access.hh`: traversal and query helpers for `lightusd::Stage`.
+- `render-extract.hh`: scene extraction helpers.
+- `render-converter.hh`: `RenderSceneConverter`, the main conversion entry.
+- `materialx.hh`: MaterialX/OpenPBR support for the render path.
+
+Tydra is designed for fewer intermediate copies:
+
+- mesh arrays use chunked storage,
+- conversion can extract directly from core prim/value data,
+- render data is shaped for WebGL/WebGPU/OpenGL/Vulkan style upload,
+- texture loading can be supplied by a host callback.
+
+Large applications can use `RenderSceneConverter::ConvertToSink()` with a
+`SceneSink`. It emits geometry one prim at a time while retaining only the
+lightweight scene catalog, avoiding a second full copy of mesh/point/curve data.
+
+Shared render conversion currently covers meshes, analytic primitives, TetMesh
+boundary surfaces, points, BasisCurves, NurbsCurves, HermiteCurves, materials,
+lights, cameras, skeletons, animations, and point instancers. TetMesh conversion
+cancels shared tetrahedron faces and retains only the external triangle surface.
+Volume field loading remains application-owned because the host supplies the
+OpenVDB decoder and GPU representation. NurbsPatch remains an explicit
+unsupported renderable in tydra rather than being silently triangulated
+with lossy assumptions.
+
+## Application Defaults
+
+- `lusdcat`: built from `tests/core/lusdcat.cc` by the core project.
+- `lusdview`: core document session + tydra. `--core` is an accepted no-op (deprecated alias of `--core`);
+  `--legacy-load` is ignored with a warning.
+- `lusdrender`: every CPU and GPU render loads through the core;
+  `-materialResolver tydra` is the default (`legacy` selects the former
+  hand-written material resolver, which still runs on the core stage).
+  The old `tydra-next` value is accepted as a deprecated alias.
+- Parent-relative asset paths are enabled because USD resolves them relative to
+  the authoring layer. Sandboxed hosts can disable them through
+  `ResolverConfig::allow_parent_paths`.
+
+Minimal C++ conversion sketch:
+
+```cpp
+#include "lightusd-core.hh"
+#include "tydra/render-converter.hh"
+
+int main() {
+  lightusd::Stage stage;
+  std::string warn;
+  std::string err;
+
+  if (!lightusd::LoadUSDComposed("scene.usdc", &stage, &warn, &err)) {
+    return 1;
+  }
+
+  lightusd::tydra::ConverterConfig config;
+  config.mesh.triangulate = true;
+  config.mesh.compute_normals = true;
+  config.material.load_textures = true;
+  config.progress_callback = [](float progress, const std::string& message) {
+    // report progress to UI/log
+  };
+
+  lightusd::tydra::RenderSceneConverter converter(config);
+  auto result = converter.Convert(stage);
+  if (!result.success) {
+    // handle result.error
+    return 1;
+  }
+
+  const lightusd::tydra::RenderScene& scene = result.scene;
+  // upload scene meshes/materials/textures to renderer
+  return 0;
+}
+```
+
+## How This Maps to `usdzconvert`
+
+The web converter exposes four flatten/package modes:
+
+| Mode | CLI/UI value | Core path | Best use |
+|------|--------------|-----------|----------|
+| Legacy | `legacy` | legacy core + legacy writer | Stable default, broad feature coverage. |
+| Core | `core` | core/core IO for a single top-level USDC-root `.usdz` | Low-memory flattened rewrite of existing USDZ. |
+| Stream | `stream` | legacy compose/write with lazy source fetching | Folder or URL-list input where textures should not be loaded all at once. |
+| Stream + Core | `stream-core` | streaming source + core multi-layer flatten | Folder or URL-list input with USDC layers, low-memory root flatten, streamed textures. |
+
+Browser UI:
+
+```bash
+cd web/js
+npm run dev -- --host 127.0.0.1 --port 5174
+# open http://127.0.0.1:5174/usdzconvert.html
+```
+
+Node CLI:
+
+```bash
+cd web/js
+node cli/usdzconvert.js <input-dir-or-file> -o out.usdz --pipeline <mode>
+```
+
+The browser demo and CLI both call the same library in
+`web/js/src/usdzconvert.js`:
+
+- `convertFolderToUSDZ(native, assetMap, opts)` for in-memory folder/file input.
+- `convertSourceToUSDZStreaming(native, source, opts)` for lazy folder/URL-list
+  input.
+
+## `usdzconvert` Examples
+
+### 1. Stable default conversion
+
+Use legacy mode when you want the broadest feature coverage and the scene is not
+too large for in-memory processing.
+
+```bash
+cd web/js
+node cli/usdzconvert.js ./model_folder \
+  -o model.usdz \
+  --pipeline legacy \
+  --resize 1024 \
+  --texture-format png \
+  -v
+```
+
+### 2. Low-memory rewrite of a single USDZ
+
+Use core mode for a single `.usdz` whose root layer is a top-level USDC file.
+This is the lowest-memory path for flattening an existing package while keeping
+textures unchanged.
+
+```bash
+cd web/js
+node cli/usdzconvert.js input.usdz \
+  -o output.usdz \
+  --pipeline core \
+  --no-reencode \
+  --stream-write \
+  --max-usdc-mb 1024 \
+  --max-mem-mb 2048 \
+  -v
+```
+
+Notes:
+
+- `--stream-write` is the default for core mode when writing to a file, but
+  spelling it out documents the intended path.
+- If the input does not qualify, the converter logs that the core path declined
+  and falls back to a legacy path.
+- Texture processing hooks can disable some low-heap shortcuts because decoded
+  texture data must then be materialized.
+
+### 3. Streaming folder conversion
+
+Use stream mode when the input is a folder or URL list and the main risk is
+loading all textures into JS/WASM memory at once.
+
+```bash
+cd web/js
+node cli/usdzconvert.js ./scene_folder \
+  -o scene.usdz \
+  --root root.usdc \
+  --pipeline stream \
+  --resize 512 \
+  --texture-format png \
+  --texture-codec best \
+  --texture-memory-budget 1GB \
+  -v
+```
+
+The stream path preloads USD layers for composition, then processes textures
+through a bounded fetch/process/zip loop. Texture concurrency is capped at 64
+even for malformed or extreme API inputs; `--texture-memory-budget` normally
+selects a much smaller count from the conservative per-worker estimate.
+
+### 4. Streaming folder conversion with core flatten
+
+Use stream-core for folder or URL-list inputs with USDC layers when you want both
+lazy texture packaging and the core multi-layer compose/flatten path.
+
+```bash
+cd web/js
+node cli/usdzconvert.js ./scene_folder \
+  -o scene-core.usdz \
+  --root root.usdc \
+  --pipeline stream-core \
+  --resize 512 \
+  --texture-format png \
+  --texture-codec best \
+  --texture-memory-budget 1GB \
+  --max-usdc-mb 2048 \
+  --max-mem-mb 2048 \
+  -v
+```
+
+By default, stream-core packages only texture assets referenced by the composed
+root. To include unreferenced texture files from the input folder:
+
+```bash
+node cli/usdzconvert.js ./scene_folder \
+  -o scene-core-all-textures.usdz \
+  --root root.usdc \
+  --pipeline stream-core \
+  --include-unused-textures
+```
+
+### 5. URL-list streaming source
+
+For non-browser batch jobs, a URL manifest can be used instead of a local folder.
+
+```json
+{
+  "baseUrl": "https://example.invalid/assets/scene/",
+  "files": [
+    "root.usdc",
+    "materials.usdc",
+    "textures/albedo.png",
+    "textures/normal.png"
+  ]
+}
+```
+
+```bash
+cd web/js
+node cli/usdzconvert.js \
+  --url-list manifest.json \
+  --root root.usdc \
+  -o scene.usdz \
+  --pipeline stream-core \
+  --texture-format keep \
+  --no-reencode
+```
+
+## Programmatic JS Examples
+
+### In-memory conversion
+
+```js
+import {
+  loadWasm,
+  convertFolderToUSDZ,
+} from './src/usdzconvert.js';
+
+const native = await loadWasm(() => import('./src/lightusd/lightusd.js'));
+
+const assetMap = new Map();
+assetMap.set('scene.usdz', inputBytes);
+
+const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, {
+  rootPath: 'scene.usdz',
+  pipeline: 'core',
+  reencode: false,
+  textureFormat: 'keep',
+  streamWrite: true,
+  maxUsdcMb: 1024,
+  maxMemMb: 2048,
+  progress: ({ stage, current, total, message }) => {
+    console.log(stage, current, total, message);
+  },
+  log: console.log,
+});
+```
+
+### Streaming source conversion
+
+```js
+import {
+  loadWasm,
+  convertSourceToUSDZStreaming,
+} from './src/usdzconvert.js';
+
+const native = await loadWasm(() => import('./src/lightusd/lightusd.js'));
+
+const source = {
+  keys: ['root.usdc', 'materials.usdc', 'textures/albedo.png'],
+  async fetch(key) {
+    const res = await fetch(`/assets/${key}`);
+    if (!res.ok) throw new Error(`fetch failed: ${key}`);
+    return new Uint8Array(await res.arrayBuffer());
+  },
+};
+
+const { usdz, stats } = await convertSourceToUSDZStreaming(native, source, {
+  rootPath: 'root.usdc',
+  pipeline: 'core',
+  preloadUsdLayers: true,
+  textureFormat: 'png',
+  maxTextureSize: 512,
+  includeUnusedTextures: false,
+  progress: ({ stage, current, total, path }) => {
+    console.log(stage, current, total, path);
+  },
+  log: console.log,
+});
+```
+
+For browser folder upload, `web/js/usdzconvert.js` uses this same streaming API
+with `File.arrayBuffer()` as the source fetch function.
+
+## Choosing a Pipeline
+
+Use this rule of thumb:
+
+- Use **legacy** first when correctness coverage matters more than memory.
+- Use **core** for a single packaged `.usdz` with a top-level USDC root and
+  unchanged textures.
+- Use **stream** for folder/URL-list input when texture memory is the bottleneck
+  but the legacy flatten path is acceptable.
+- Use **stream-core** for large folder/URL-list input with USDC layers when you
+  need core flattening plus streaming texture packaging.
+
+The core paths are most effective when:
+
+- the root USD is USDC,
+- large arrays can pass through lazily,
+- the output root is USDC,
+- texture processing is bounded or skipped,
+- streaming write is enabled.
+
+They are less effective or may fall back when:
+
+- the root is USDA and must be parsed into authored values,
+- the package has a nested root layout not supported by the optimized path,
+- texture or audio hooks force all assets through host-side processing,
+- a feature has not yet been implemented in core/core IO.
+
+## Testing
+
+Next standalone checks:
+
+```bash
+scripts/run-core-checks.sh
+ctest --test-dir build-ninja --output-on-failure -L core -LE 'benchmark|corpus'
+```
+
+Web converter tests:
+
+```bash
+cd web/js
+node tests/test-usdzconvert.js
+node tests/usdzconvert-core.test.mjs
+```
+
+Browser smoke test:
+
+```bash
+cd web/js
+npm run dev -- --host 127.0.0.1 --port 5174
+# Open /usdzconvert.html, select a folder or USDZ, choose pipeline, Convert.
+```
+
+For large-scene memory notes, see `web/js/docs/wasm-heap.md`.

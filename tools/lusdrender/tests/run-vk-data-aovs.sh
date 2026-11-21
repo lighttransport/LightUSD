@@ -21,7 +21,7 @@ for SCENE in original reflected left-handed; do
     MODE_ARGS=(); if [ "$MODE" != cpu ]; then MODE_ARGS=("-$MODE"); fi
     for CHANNEL in depth geometricNormal shadingNormal; do
       if ! "$BIN" "$SOURCE" "$TMP/$SCENE-$MODE-$CHANNEL.pfm" "${MODE_ARGS[@]}" --aov "$CHANNEL" -camera /C -w 32 -height 32 > "$TMP/$SCENE-$MODE-$CHANNEL.log" 2>&1; then
-        if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/$SCENE-$MODE-$CHANNEL.log"; then echo 'SKIP: hardware ray query unavailable';exit 77;fi
+        if grep -qiE 'ray.query unavailable|needs ray query|Failed to create.*Vulkan|no Vulkan' "$TMP/$SCENE-$MODE-$CHANNEL.log"; then echo 'SKIP: hardware ray query unavailable';exit 77;fi
         cat "$TMP/$SCENE-$MODE-$CHANNEL.log";exit 1
       fi
     done

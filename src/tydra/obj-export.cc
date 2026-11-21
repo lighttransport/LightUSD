@@ -1,315 +1,320 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2024 - Present, Light Transport Entertainment Inc.
-//
-#include <algorithm>
-#include <array>
-#include <locale>
-#include <sstream>
-#include <limits>
-#include <numeric>
-#include <unordered_set>
-
+// SPDX-License-Identifier: Apache-2.0
 #include "obj-export.hh"
-#include "common-macros.inc"
-#include "tiny-format.hh"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <locale>
+#include <ostream>
+#include <streambuf>
+#include <unordered_set>
+#include <vector>
+
+#include "export-text.hh"
 
 namespace lightusd {
 namespace tydra {
-
-#define PushError(msg) do { \
-  if (err) { \
-    (*err) += msg + "\n"; \
-  } \
-} while (0)
-
-bool export_to_obj(const RenderScene &scene, const int mesh_id,
-  std::string &obj_str, std::string &mtl_str, std::string *warn, std::string *err) {
-
-  //
-  // NOTE:
-  //
-  // - Export GeomSubset(per-face material) as group(g) + usemtl
-  // - Export skin weight as tinyobjloader's 'vw' extension
-  //
-
-  (void)obj_str;
-  (void)mtl_str;
-  (void)warn;
-
-  std::stringstream ss;
-  // OBJ/MTL numbers must not follow the process locale's decimal separator.
-  ss.imbue(std::locale::classic());
-  ss.precision(std::numeric_limits<float>::max_digits10);
-
-  if (mesh_id < 0) {
-    PUSH_ERROR_AND_RETURN("Invalid mesh_id");
-  } else if (size_t(mesh_id) >= scene.meshes.size()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("mesh_id {} is out-of-range. scene.meshes.size {}", mesh_id, scene.meshes.size()));
-  }
-
-  const RenderMesh &mesh = scene.meshes[size_t(mesh_id)];
-
-  ss << "# exported from LightUSD Tydra.\n";
-  ss << "mtllib " << mesh_id << mesh.prim_name + ".mtl";
-  ss << "\n";
-
-  for (size_t i = 0; i < mesh.points.size(); i++) {
-    ss << "v " << mesh.points[i][0] << " " << mesh.points[i][1] << " " << mesh.points[i][2] << "\n";
-  }
-  ss << "# " << mesh.points.size() << " vertices\n";
-
-  if (mesh.joint_and_weights.elementSize > 0 &&
-      mesh.joint_and_weights.jointIndices.size() == mesh.joint_and_weights.jointWeights.size() &&
-      mesh.joint_and_weights.jointWeights.size() / size_t(mesh.joint_and_weights.elementSize) == mesh.points.size() &&
-      mesh.joint_and_weights.jointWeights.size() % size_t(mesh.joint_and_weights.elementSize) == 0) {
-
-    size_t elementSize = size_t(mesh.joint_and_weights.elementSize); // # of weights per vertex.
-    for (size_t i = 0; i < mesh.points.size(); i++) {
-      ss << "vw " << i << " ";
-      for (size_t w = 0; w < elementSize; w++) {
-        if (w > 0) {
-          ss << " ";
-        }
-        ss << mesh.joint_and_weights.jointIndices[i * elementSize + w] << " " << mesh.joint_and_weights.jointWeights[i * elementSize + w];
-      }
-      ss << "\n";
-    }
-  }
-
-  bool has_texcoord = false;
-  bool is_facevarying_texcoord = false;
-  size_t texcoord_count = 0;
-  bool has_normal = false;
-  bool is_facevarying_normal = false;
-  size_t normal_count = 0;
-
-  // primary texcoord only
-  if (mesh.texcoords.count(0)) {
-    const VertexAttribute &texcoord = mesh.texcoords.at(0);
-    if (texcoord.variability == VertexVariability::FaceVarying) {
-      is_facevarying_texcoord = true;
-    } else if (texcoord.variability == VertexVariability::Vertex) {
-      is_facevarying_texcoord = false;
-    } else {
-      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for texcoord0");
-    }
-    if (texcoord.format == VertexAttributeFormat::Vec2) {
-      const float *ptr = reinterpret_cast<const float *>(texcoord.buffer());
-      texcoord_count = texcoord.vertex_count();
-      for (size_t i = 0; i < texcoord_count; i++) {
-        ss << "vt " << ptr[2 * i + 0] << " " << ptr[2 * i + 1] << "\n";
-      }
-      has_texcoord = true;
-    }
-  }
-
-  if (!mesh.normals.empty()) {
-    if (mesh.normals.variability == VertexVariability::FaceVarying) {
-      is_facevarying_normal = true;
-    } else if (mesh.normals.variability == VertexVariability::Vertex) {
-      is_facevarying_normal = false;
-    } else {
-      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for normals");
-    }
-    if (mesh.normals.format == VertexAttributeFormat::Vec3) {
-      const float *ptr = reinterpret_cast<const float *>(mesh.normals.buffer());
-      normal_count = mesh.normals.vertex_count();
-      for (size_t i = 0; i < normal_count; i++) {
-        ss << "vn " << ptr[3 * i + 0] << " " << ptr[3 * i + 1] << " " << ptr[3 * i + 2] << "\n";
-      }
-      has_normal = true;
-    }
-  }
-
-  const auto &counts = mesh.faceVertexCounts();
-  const auto &indices = mesh.faceVertexIndices();
-  const size_t num_faces = counts.size();
-
-  // Corner offset of every face into faceVertexIndices (and face-varying
-  // attributes), validated against the index array.
-  std::vector<size_t> offsets(num_faces);
-  {
-    size_t offset = 0;
-    for (size_t i = 0; i < num_faces; i++) {
-      offsets[i] = offset;
-      if (counts[i] > indices.size() - std::min(offset, indices.size())) {
-        PUSH_ERROR_AND_RETURN(fmt::format("faceVertexCounts exceed faceVertexIndices at face {}", i));
-      }
-      offset += counts[i];
-    }
-  }
-
-  // Groups in deterministic order: faces outside any subset first (so they
-  // never inherit a later group's usemtl), then subsets by their first face.
-  struct FaceGroup {
-    std::string name;
-    int material_id;
-    std::vector<uint32_t> faces;
-  };
-  std::vector<FaceGroup> groups;
-  {
-    std::vector<bool> in_subset(num_faces, false);
-    for (const auto &subset : mesh.material_subsetMap) {
-      if (subset.first.empty()) {
-        PUSH_ERROR_AND_RETURN("Empty material_subset name is not allowed.");
-      }
-      FaceGroup group{subset.first, subset.second.material_id, {}};
-      for (const int32_t face : subset.second.indices()) {
-        if (face < 0 || size_t(face) >= num_faces) {
-          PUSH_ERROR_AND_RETURN(fmt::format("GeomSubset `{}` face index {} is out of range", subset.first, face));
-        }
-        group.faces.push_back(uint32_t(face));
-        in_subset[size_t(face)] = true;
-      }
-      groups.push_back(std::move(group));
-    }
-    std::sort(groups.begin(), groups.end(), [](const FaceGroup &a, const FaceGroup &b) {
-      const uint32_t fa = a.faces.empty() ? UINT32_MAX : *std::min_element(a.faces.begin(), a.faces.end());
-      const uint32_t fb = b.faces.empty() ? UINT32_MAX : *std::min_element(b.faces.begin(), b.faces.end());
-      return fa != fb ? fa < fb : a.name < b.name;
-    });
-    FaceGroup rest{"", mesh.material_id, {}};
-    for (size_t i = 0; i < num_faces; i++) {
-      if (!in_subset[i]) rest.faces.push_back(uint32_t(i));
-    }
-    if (!rest.faces.empty() || groups.empty()) groups.insert(groups.begin(), std::move(rest));
-  }
-  for (const auto &group : groups) {
-    if (group.material_id >= 0 && size_t(group.material_id) >= scene.materials.size()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Material id {} is out of range. scene.materials.size = {}",
-                                        group.material_id, scene.materials.size()));
-    }
-  }
-
-  for (const auto &group : groups) {
-    if (!group.name.empty()) {
-      ss << "g " << group.name << "\n";
-    }
-    if (group.material_id >= 0) {
-      ss << "usemtl " << scene.materials[size_t(group.material_id)].name << "\n";
-    }
-    for (const uint32_t face : group.faces) {
-      ss << "f";
-      for (size_t f = 0; f < counts[face]; f++) {
-        const size_t corner = offsets[face] + f;
-        const uint32_t vertex = indices[corner];
-        if (vertex >= mesh.points.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("faceVertexIndex {} is out of range", vertex));
-        }
-        // OBJ indices are 1-based; face-varying attributes index corners.
-        const size_t t_idx = is_facevarying_texcoord ? corner : vertex;
-        const size_t n_idx = is_facevarying_normal ? corner : vertex;
-        const bool t = has_texcoord && t_idx < texcoord_count;
-        const bool n = has_normal && n_idx < normal_count;
-        if ((has_texcoord && !t) || (has_normal && !n)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Attribute index out of range at face {}", face));
-        }
-        ss << " " << (vertex + 1);
-        if (t && n) {
-          ss << "/" << (t_idx + 1) << "/" << (n_idx + 1);
-        } else if (t) {
-          ss << "/" << (t_idx + 1);
-        } else if (n) {
-          ss << "//" << (n_idx + 1);
-        }
-      }
-      ss << "\n";
-    }
-    ss << "\n";
-  }
-
-  obj_str = ss.str();
-
-  ss.str("");
-  ss << "# exported from LightUSD Tydra.\n";
-
-  // Original MTL spec: https://paulbourke.net/dataformats/mtl/
-  // PBR extension: https://github.com/tinyobjloader/tinyobjloader/blob/release/pbr-mtl.md
-  auto texture_name = [&](int32_t tex_id, std::string *name) -> bool {
-    if (tex_id < 0 || size_t(tex_id) >= scene.textures.size()) {
-      PushError(fmt::format("Invalid texture id {}. scene.textures.size = {}", tex_id, scene.textures.size()));
-      return false;
-    }
-    const int64_t image_id = scene.textures[size_t(tex_id)].texture_image_id;
-    if (image_id < 0 || image_id >= int64_t(scene.images.size())) {
-      PushError(fmt::format("Invalid image id {}. scene.images.size = {}", image_id, scene.images.size()));
-      return false;
-    }
-    *name = scene.images[size_t(image_id)].asset_identifier;
-    if (name->empty()) {
-      PushError(fmt::format("Filename for image id {} is empty.", image_id));
-      return false;
-    }
-    return true;
-  };
-  // Emit `map_<key> file` for a texture or `<key> value` otherwise.
-  auto emit = [&](const char *map_key, const char *key, int32_t tex_id,
-                  const std::string &value) -> bool {
-    if (tex_id >= 0) {
-      std::string name;
-      if (!texture_name(tex_id, &name)) return false;
-      ss << map_key << " " << name << "\n";
-    } else {
-      ss << key << " " << value << "\n";
-    }
-    return true;
-  };
-  auto scalar = [&](float v) {
-    std::ostringstream os;
-    os.imbue(std::locale::classic());
-    os.precision(std::numeric_limits<float>::max_digits10);
-    os << v;
-    return os.str();
-  };
-  auto color = [&](const std::array<float, 3> &c) {
-    return scalar(c[0]) + " " + scalar(c[1]) + " " + scalar(c[2]);
-  };
-
-  std::vector<bool> written(scene.materials.size(), false);
-  size_t material_count = 0;
-  for (const auto &group : groups) {
-    if (group.material_id < 0 || written[size_t(group.material_id)]) {
-      continue;
-    }
-    written[size_t(group.material_id)] = true;
-    ++material_count;
-    const RenderMaterial &material = scene.materials[size_t(group.material_id)];
-    ss << "newmtl " << material.name << "\n";
-    const auto &shader = material.surfaceShader;
-    if (!shader) {
-      ss << "\n";
-      continue;
-    }
-    bool ok = emit("map_Kd", "Kd", shader->diffuseColor.texture_id, color(shader->diffuseColor.value));
-    if (shader->useSpecularWorkflow) {
-      ok = ok && emit("map_Ks", "Ks", shader->specularColor.texture_id, color(shader->specularColor.value));
-    } else {
-      ok = ok && emit("map_Pm", "Pm", shader->metallic.texture_id, scalar(shader->metallic.value));
-    }
-    ok = ok && emit("map_Pr", "Pr", shader->roughness.texture_id, scalar(shader->roughness.value));
-    ok = ok && emit("map_Ke", "Ke", shader->emissiveColor.texture_id, color(shader->emissiveColor.value));
-    ok = ok && emit("map_d", "d", shader->opacity.texture_id, scalar(shader->opacity.value));
-    // Clearcoat thickness/roughness (PBR extension).
-    ok = ok && emit("map_Pc", "Pc", shader->clearcoat.texture_id, scalar(shader->clearcoat.value));
-    ok = ok && emit("map_Pcr", "Pcr", shader->clearcoatRoughness.texture_id,
-                    scalar(shader->clearcoatRoughness.value));
-    // map_Ni is not in the original MTL definition.
-    ok = ok && emit("map_Ni", "Ni", shader->ior.texture_id, scalar(shader->ior.value));
-    ok = ok && emit("map_Ka", "Ka", shader->occlusion.texture_id, scalar(shader->occlusion.value));
-    if (!ok) {
-      return false;
-    }
-    // TODO: opacityThreshold
-    ss << "\n";
-  }
-  ss << "# " << material_count << " materials.\n";
-
-  mtl_str = ss.str();
-
-  return true;
+namespace {
+using export_detail::TextBuffer;
+std::string Token(std::string name) {
+  for (char& c : name)
+    if (static_cast<unsigned char>(c) <= 32 || c == '/' || c == '\\' ||
+        c == '#')
+      c = '_';
+  return name.empty() ? "unnamed" : name;
+}
+bool OneLine(const std::string& value) {
+  return value.find_first_of("\r\n") == std::string::npos &&
+         value.find('\0') == std::string::npos;
+}
+}  // namespace
+std::string OBJMeshBasename(const RenderMesh& mesh, int mesh_id) {
+  return std::to_string(mesh_id) + Token(mesh.name);
 }
 
-
-} // namespace tydra
-} // namespace lightusd
-
+bool export_to_obj(const RenderScene& scene, int mesh_id, std::string& obj,
+                   std::string& mtl, std::string* warn, std::string* error,
+                   size_t max_output_bytes) {
+  const auto fail = [&](const char* message) {
+    if (error) *error += std::string(message) + "\n";
+    return false;
+  };
+  if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= scene.meshes.size())
+    return fail("Invalid mesh id");
+  const auto& mesh = scene.meshes[static_cast<size_t>(mesh_id)];
+  const size_t vertices = mesh.point_count();
+  if (mesh.points.size() % 3)
+    return fail("Points must contain complete xyz triples");
+  const bool triangles = !mesh.triangulated_indices.empty();
+  const auto& indices =
+      triangles ? mesh.triangulated_indices : mesh.face_vertex_indices;
+  const size_t faces =
+      triangles ? indices.size() / 3 : mesh.face_vertex_counts.size();
+  if ((triangles && indices.size() % 3) || faces > max_output_bytes / 2 ||
+      vertices > max_output_bytes / 6)
+    return fail("Invalid topology or output limit exceeded");
+  std::vector<bool> hole_faces(mesh.face_vertex_counts.size(), false);
+  for (uint32_t face : mesh.hole_faces) {
+    if (face >= hole_faces.size()) return fail("Hole face index out of range");
+    hole_faces[face] = true;
+  }
+  std::vector<size_t> offsets(faces + 1);
+  std::vector<size_t> source_faces(faces);
+  for (size_t f = 0; f < faces; ++f) {
+    const size_t count = triangles ? 3 : mesh.face_vertex_counts[f];
+    if (count < 3 || count > indices.size() - offsets[f])
+      return fail("Invalid face vertex counts");
+    offsets[f + 1] = offsets[f] + count;
+    source_faces[f] = f;
+  }
+  if (offsets.back() != indices.size())
+    return fail("Face counts do not consume the index array");
+  if (triangles && !mesh.face_triangle_offsets.empty()) {
+    const auto& ranges = mesh.face_triangle_offsets;
+    if (ranges.front() != 0 || ranges.back() != faces ||
+        ranges.size() != mesh.face_vertex_counts.size() + 1)
+      return fail("Invalid source face mapping");
+    for (size_t f = 0; f + 1 < ranges.size(); ++f) {
+      if (ranges[f] > ranges[f + 1] || ranges[f + 1] > faces)
+        return fail("Invalid source face mapping");
+      for (size_t t = ranges[f]; t < ranges[f + 1]; ++t) source_faces[t] = f;
+    }
+  }
+  if (triangles && !mesh.triangulated_face_vertex_indices.empty() &&
+      mesh.triangulated_face_vertex_indices.size() != indices.size())
+    return fail("Invalid source corner mapping");
+  std::vector<int32_t> materials(faces, mesh.material_id);
+  std::vector<int32_t> groups(faces, -1);
+  for (size_t i = 0; i < mesh.material_subsets.size(); ++i) {
+    const auto& subset = mesh.material_subsets[i];
+    const bool triangle_ranges =
+        triangles && !mesh.face_triangle_offsets.empty();
+    const size_t range_limit =
+        triangle_ranges ? faces : mesh.face_vertex_counts.size();
+    if (subset.face_start > range_limit ||
+        subset.face_count > range_limit - subset.face_start)
+      return fail("Invalid material subset range");
+    for (size_t f = 0; f < faces; ++f) {
+      const size_t source = triangle_ranges ? f : source_faces[f];
+      if (source >= subset.face_start &&
+          source - subset.face_start < subset.face_count) {
+        if (groups[f] >= 0) return fail("Overlapping material subsets");
+        groups[f] = static_cast<int32_t>(i);
+        materials[f] = subset.material_id;
+      }
+    }
+  }
+  for (const auto id : materials)
+    if (id < -1 ||
+        (id >= 0 && static_cast<size_t>(id) >= scene.materials.size()))
+      return fail("Invalid material id");
+  std::vector<std::string> material_names(scene.materials.size());
+  std::unordered_set<std::string> used_names{"lightusd_unbound"};
+  for (int32_t id : materials) {
+    if (id < 0 || !material_names[static_cast<size_t>(id)].empty()) continue;
+    std::string name = Token(scene.materials[static_cast<size_t>(id)].name);
+    while (!used_names.insert(name).second) name += "_" + std::to_string(id);
+    material_names[static_cast<size_t>(id)] = std::move(name);
+  }
+  const auto attribute_index = [&](Interpolation interpolation, size_t face,
+                                   size_t corner, size_t vertex,
+                                   size_t* result) {
+    switch (interpolation) {
+      case Interpolation::Constant:
+        *result = 0;
+        return true;
+      case Interpolation::Uniform:
+        *result = source_faces[face];
+        return true;
+      case Interpolation::Vertex:
+      case Interpolation::Varying:
+        *result = vertex;
+        return true;
+      case Interpolation::FaceVarying:
+        if (triangles) {
+          if (mesh.triangulated_face_vertex_indices.empty()) return false;
+          *result = mesh.triangulated_face_vertex_indices[corner];
+        } else
+          *result = corner;
+        return true;
+    }
+    return false;
+  };
+  TextBuffer object_buffer(max_output_bytes);
+  std::ostream os(&object_buffer);
+  os.imbue(std::locale::classic());
+  os.precision(std::numeric_limits<float>::max_digits10);
+  os << "# exported from LightUSD Tydra.\nmtllib "
+     << OBJMeshBasename(mesh, mesh_id) << ".mtl\n";
+  for (size_t i = 0; i < mesh.points.size(); i += 3) {
+    if (!std::isfinite(mesh.points[i]) || !std::isfinite(mesh.points[i + 1]) ||
+        !std::isfinite(mesh.points[i + 2]))
+      return fail("Non-finite mesh point");
+    os << "v " << mesh.points[i] << ' ' << mesh.points[i + 1] << ' '
+       << mesh.points[i + 2] << '\n';
+  }
+  if (mesh.skin && mesh.skin->influences_per_vertex) {
+    const auto& skin = *mesh.skin;
+    if (skin.joint_indices.size() != skin.joint_weights.size() ||
+        skin.joint_weights.size() / skin.influences_per_vertex != vertices ||
+        skin.joint_weights.size() % skin.influences_per_vertex)
+      return fail("Invalid skin weights");
+    for (size_t v = 0; v < vertices; ++v) {
+      os << "vw " << v;
+      for (size_t j = 0; j < skin.influences_per_vertex; ++j) {
+        const size_t index = v * skin.influences_per_vertex + j;
+        if (!std::isfinite(skin.joint_weights[index]))
+          return fail("Non-finite skin weight");
+        os << ' ' << skin.joint_indices[index] << ' '
+           << skin.joint_weights[index];
+      }
+      os << '\n';
+    }
+  }
+  const auto write_attribute = [&](const FloatChunked& values,
+                                   size_t components, const char* prefix) {
+    if (values.size() % components) return false;
+    for (size_t i = 0; i < values.size(); i += components) {
+      os << prefix;
+      for (size_t c = 0; c < components; ++c) {
+        if (!std::isfinite(values[i + c])) return false;
+        os << ' ' << values[i + c];
+      }
+      os << '\n';
+    }
+    return true;
+  };
+  if (!write_attribute(mesh.texcoords_0, 2, "vt") ||
+      !write_attribute(mesh.normals, 3, "vn"))
+    return fail("Invalid UV or normal payload");
+  int32_t last_group = -2;
+  for (size_t f = 0; f < faces; ++f) {
+    if (!triangles && hole_faces[f]) continue;
+    if (groups[f] != last_group) {
+      const auto group = groups[f];
+      const std::string name =
+          group < 0 ? "default"
+          : mesh.material_subsets[static_cast<size_t>(group)].name.empty()
+              ? "subset_" + std::to_string(group)
+              : Token(mesh.material_subsets[static_cast<size_t>(group)].name);
+      os << "g " << name << '\n';
+      os << "usemtl "
+         << (materials[f] < 0
+                 ? "lightusd_unbound"
+                 : material_names[static_cast<size_t>(materials[f])])
+         << '\n';
+      last_group = groups[f];
+    }
+    os << 'f';
+    for (size_t corner = offsets[f]; corner < offsets[f + 1]; ++corner) {
+      const size_t vertex = indices[corner];
+      if (vertex >= vertices) return fail("Mesh index out of range");
+      size_t uv = 0, normal = 0;
+      const bool has_uv = !mesh.texcoords_0.empty(),
+                 has_normal = !mesh.normals.empty();
+      if (has_uv &&
+          (!attribute_index(mesh.texcoords_0_interp, f, corner, vertex, &uv) ||
+           uv >= mesh.texcoords_0.size() / 2))
+        return fail("UV index out of range");
+      if (has_normal &&
+          (!attribute_index(mesh.normals_interp, f, corner, vertex, &normal) ||
+           normal >= mesh.normals.size() / 3))
+        return fail("Normal index out of range");
+      os << ' ' << vertex + 1;
+      if (has_uv || has_normal) {
+        os << '/';
+        if (has_uv) os << uv + 1;
+        if (has_normal) os << '/' << normal + 1;
+      }
+    }
+    os << '\n';
+    if (!os) return fail("OBJ output limit exceeded");
+  }
+  if (!os) return fail("OBJ output limit exceeded");
+  TextBuffer material_buffer(max_output_bytes - object_buffer.text.size());
+  std::ostream ms(&material_buffer);
+  ms.imbue(std::locale::classic());
+  ms.precision(std::numeric_limits<float>::max_digits10);
+  std::vector<bool> written(scene.materials.size());
+  if (std::find(materials.begin(), materials.end(), -1) != materials.end())
+    ms << "newmtl lightusd_unbound\nKd 0.18 0.18 0.18\n";
+  for (int32_t id : materials) {
+    if (id < 0 || written[static_cast<size_t>(id)]) continue;
+    written[static_cast<size_t>(id)] = true;
+    const auto& material = scene.materials[static_cast<size_t>(id)];
+    ms << "newmtl " << material_names[static_cast<size_t>(id)] << '\n';
+    const auto emit = [&](const char* key, const ShaderParam& parameter,
+                          bool color) {
+      if (parameter.is_texture()) {
+        if (static_cast<size_t>(parameter.texture_id) >= scene.textures.size())
+          return false;
+        const auto& texture =
+            scene.textures[static_cast<size_t>(parameter.texture_id)];
+        std::string filename = texture.asset_path;
+        if (filename.empty() && texture.image_id >= 0 &&
+            static_cast<size_t>(texture.image_id) < scene.images.size())
+          filename = scene.images[static_cast<size_t>(texture.image_id)]
+                         .asset_identifier;
+        if (filename.empty() || !OneLine(filename)) return false;
+        ms << "map_" << key << ' ' << filename << '\n';
+      } else {
+        if (!std::isfinite(parameter.value.x) ||
+            (color && (!std::isfinite(parameter.value.y) ||
+                       !std::isfinite(parameter.value.z))))
+          return false;
+        ms << key << ' ' << parameter.value.x;
+        if (color) ms << ' ' << parameter.value.y << ' ' << parameter.value.z;
+        ms << '\n';
+      }
+      return static_cast<bool>(ms);
+    };
+    PreviewSurfaceShader shader;
+    if (material.preview_surface)
+      shader = *material.preview_surface;
+    else if (material.openpbr) {
+      const auto& p = *material.openpbr;
+      shader.diffuse_color = p.base_color;
+      shader.metallic = p.base_metalness;
+      shader.roughness = p.specular_roughness;
+      shader.ior = p.specular_ior;
+      shader.emissive_color = p.emission_color;
+      if (!p.emission_luminance.is_texture()) {
+        const float luminance = p.emission_luminance.as_float();
+        if (luminance == 0)
+          shader.emissive_color = ShaderParam{-1, {0, 0, 0, 1}};
+        else if (!shader.emissive_color.is_texture()) {
+          shader.emissive_color.value.x *= luminance;
+          shader.emissive_color.value.y *= luminance;
+          shader.emissive_color.value.z *= luminance;
+        }
+      }
+      shader.opacity = p.opacity;
+      shader.clearcoat = p.coat_weight;
+      shader.clearcoat_roughness = p.coat_roughness;
+      shader.normal = p.normal;
+      if (warn)
+        *warn += "OpenPBR material approximated as MTL PBR parameters\n";
+    }
+    if (!emit("Kd", shader.diffuse_color, true) ||
+        !emit(shader.use_specular_workflow ? "Ks" : "Pm",
+              shader.use_specular_workflow ? shader.specular_color
+                                           : shader.metallic,
+              shader.use_specular_workflow) ||
+        !emit("Pr", shader.roughness, false) ||
+        !emit("Ke", shader.emissive_color, true) ||
+        !emit("d", shader.opacity, false) ||
+        !emit("Pc", shader.clearcoat, false) ||
+        !emit("Pcr", shader.clearcoat_roughness, false) ||
+        !emit("Ni", shader.ior, false) || !emit("Ka", shader.occlusion, false))
+      return fail("Invalid material or output limit exceeded");
+    if (shader.normal.is_texture() && !emit("Bump", shader.normal, false))
+      return fail("Invalid normal texture");
+    ms << '\n';
+  }
+  if (!ms) return fail("MTL output limit exceeded");
+  obj.swap(object_buffer.text);
+  mtl.swap(material_buffer.text);
+  return true;
+}
+}  // namespace tydra
+}  // namespace lightusd

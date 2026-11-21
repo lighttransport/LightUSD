@@ -25,7 +25,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 : "${LUSDVIEW_USD_ASSETS_MODES:=vk-raster,vk-rt,lusdr-cpu,lusdr-vk}"
 # usd-wg/assets uses '..' parent-relative references (e.g. ../_common/*.usda);
 # lusdview rejects those by default (security policy), so allow them here to
-# match lusdrender's next-path default and actually load these assets.
+# match lusdrender's core-path default and actually load these assets.
 : "${LUSDVIEW_USD_ASSETS_ALLOW_PARENT:=1}"
 : "${LUSDVIEW_XVFB:=1}"
 : "${LUSDVIEW_USD_ASSETS_TIMEOUT:=60s}"

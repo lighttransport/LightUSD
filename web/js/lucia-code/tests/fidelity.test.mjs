@@ -7,8 +7,11 @@ import { analyzeAsset } from '../src/asset-report.js';
 import { snapshotHealthInput } from '../src/health-analysis.js';
 
 test('typed property flags preserve schema and custom attributes on WASM32 and WASM64', async () => {
-  for (const suffix of ['', '_64']) {
-    const { default: factory } = await import(`../../src/lightusd/lightusd_next${suffix}.js`);
+  // The wasm64 module requires Node >= 23 (emscripten memory64 glue); skip it
+  // there but always exercise wasm32.
+  const [major] = process.versions.node.split('.').map(Number);
+  for (const suffix of (major >= 23 ? ['', '_64'] : [''])) {
+    const { default: factory } = await import(`../../src/lightusd/lightusd${suffix}.js`);
     const module = await factory(), document = new module.LayerDocument();
     try {
       assert.equal(document.load(new TextEncoder().encode('#usda 1.0\ndef Xform "P" {}')).success, true);
@@ -133,4 +136,26 @@ test('typed mesh edits keep indexed corner buffers and four-component tangents',
     value: { type: 'point3f[]', value: [0, 0, 0] }, metadata: { interpolation: 'vertex' } } },
     { args: { path: '/Missing', attr_name: 'points', value: { type: 'point3f[]', value: [0, 0, 0] } } }], 'failed'));
   assert.equal(session.usda, before);
+});
+
+test('core session shares MCP authoring, preview, validation and packaged export', async () => {
+  const {readFile} = await import('node:fs/promises');
+  const {unpackUSDZ} = await import('../../src/usdzconvert.js');
+  const session = new LuciaUsdSession();
+  await session.init();
+  try {
+    const marker = new Uint8Array(await readFile(new URL('../../../../models/textures/checkerboard.png',import.meta.url)));
+    session.assetProvider = () => new Map([['unused.png',{bytes:marker}]]);
+    const source = await readFile(new URL('../../../../tests/usda/cube-000.usda',import.meta.url));
+    await session.loadBytes(source,'cube.usda');
+    assert.ok(session.tree().length>0);
+    assert.ok(session.render.numMeshes()>0);
+    const report = await session.validate();
+    assert.equal(typeof report,'object');
+    assert.equal(report.parse_ok,true);
+    assert.equal(report.ok,true);
+    const archive = unpackUSDZ(session.exportUSDZ(session.assetProvider()));
+    assert.deepEqual(archive.entries.get('unused.png'),marker);
+    assert.ok(archive.order[0].endsWith('.usdc'));
+  } finally {session.dispose();}
 });

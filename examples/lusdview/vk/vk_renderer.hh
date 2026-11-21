@@ -350,7 +350,7 @@ class VulkanRenderer final : public Renderer {
     std::vector<float> instanceColors;
     std::vector<float> instanceOpacities;
     bool hasTranslucentInstances{false};
-    // Raster GPU instancing (flat --next path): per-instance 3x4 o2w (instVbo,
+    // Raster GPU instancing (flat --core path): per-instance 3x4 o2w (instVbo,
     // 48B/inst, host-visible so per-instance culling can re-map the visible subset)
     // + per-instance RGBA color/opacity (instColorBuf) + per-vertex prototype color
     // (instVtxColorBuf, white when absent). drawInstanceCount is the count actually
@@ -1089,7 +1089,7 @@ class VulkanRenderer final : public Renderer {
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
   void refreshMdiDrawMeta();
 
-  // ---- Multi-draw-indirect instanced path (large-scene --next) ----
+  // ---- Multi-draw-indirect instanced path (large-scene --core) ----
   // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
   // vkCmdDrawIndexedIndirect batches over shared buffers instead of ~83k per-mesh
   // bind+draw calls. Geometry (positions/normals, per-vertex color, morph-zero,
@@ -1538,6 +1538,10 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
   bool rtUsesFullShader_{true};
+  // True while the hardware ray-query pipeline is the interactive-only variant
+  // (built with LUSDVIEW_RT_INTERACTIVE_ONLY, i.e. without the production path
+  // tracer). Entering path tracing must swap it for the full/fast shader.
+  bool rtUsesInteractiveShader_{false};
   bool rtUsesProceduralMaterialX_{false};
   size_t materialXShaderMaxSourceBytes_{129u * 1024u};
   int materialXShaderCompileTimeoutSec_{30};

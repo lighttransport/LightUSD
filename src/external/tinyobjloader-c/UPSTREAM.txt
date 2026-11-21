@@ -60,3 +60,28 @@ instead of 0.234 s.
 Local MTL leniency: a negative `Ns` (written by Blender's exporter, e.g.
 `Ns -1.960784`) is clamped to 0 instead of failing the parse; the C++ loader
 accepts any value.
+
+Local MaterialX-in-MTL: tobj_mtlx.{c,h} copied verbatim from tinyobjloader
+branch mtl-materialx (58e6bf8; connections are `@node` input values), the reference implementation of the Lean spec
+in tinyobjloader formal/Mtlx. The loader hunk (mat_mtlx pending lines,
+finalize_mtlx, tobj_material.mtlx_lines/num_mtlx_lines) is ported by hand
+onto this patched copy, grouping pending lines in one linear pass. The OBJ
+importer turns accepted graphs into a UsdShade MaterialX network; covered by
+tool-lusdrender-mtlx-mtl (tests/mtlx-mtl/run_mtlx_mtl.py).
+
+Local subdivision tags: tobj_subd.{c,h} copied verbatim from tinyobjloader
+branch subd-ext (tobj_subd.c of 9dff12c, loader hunk of d787769; reference implementation of the Lean spec in
+tinyobjloader formal/Subd, subd-obj.md). The loader hunk (`t` lines kept per
+shape in tobj_mesh.tag_lines and parsed into tobj_mesh.tags; handle_t, t_lines,
+t_tags) is applied from that commit onto this patched copy. The OBJ importer
+checks each shape's tags against its untriangulated faces and authors the
+UsdGeomMesh subdivision attributes; covered by test_obj_reader and
+tool-obj-subd-osd (tests/obj-subd, LightUSD vs OpenSubdiv).
+
+Local skeleton lines: tobj_skel.{c,h} copied verbatim from tinyobjloader
+branch skel-ext (a1b739e; reference implementation of the Lean spec in
+tinyobjloader formal/Skel, skel-obj.md). The loader hunk (file-scope `skel_*`
+lines kept verbatim in tobj_attrib.skel_lines/num_skel_lines) is applied from
+that commit onto this patched copy. The OBJ importer checks them against the
+`vw` joint ids and authors SkelRoot/Skeleton/SkelAnimation (sidecars: .fbx via
+ufbx, USD by reference); covered by tests/obj-skel (ctest label `skel`).

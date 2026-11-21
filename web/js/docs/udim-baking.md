@@ -2,7 +2,7 @@
 
 Folder conversion, streaming conversion, the CLI, and the browser Worker use
 the same C++ atlas and direct-layer edit engine. Rebuild the combined and
-next-only WASM products after changing that engine. Both wasm32 and memory64
+core WASM products after changing that engine. Both wasm32 and memory64
 are supported; the legacy WASM converter also exposes the bake API.
 
 ```js
@@ -17,13 +17,15 @@ const {usdz, stats} = await convertFolderToUSDZ(native, assets, {
 });
 ```
 
-The next-only converter retains its single-root, asset-passthrough contract:
-use `flatten: false`; external dependency-layer composition and variant
-selection overrides require the combined product. Authored variants are
-preserved and grid baking edits their texture definitions. Dense baking can
-update authored prototype geometry consumed through internal references.
-Instances that override prototype geometry require composition before dense
-baking, so next-only conversion diagnoses them explicitly.
+The core converter composes dependency layers and applies variant selection
+overrides by default. Texture paths are rebased against their authoring layers
+before composition, including animated paths and UDIM patterns. Material dedupe
+and mesh merging run after UDIM baking. `flatten: false` preserves single-root
+authoring, including variant definitions; optimization or variant overrides
+require composition and enable it automatically. Non-flattened dependency-layer
+packaging is still being migrated. Dense baking can update authored prototype
+geometry consumed through internal references; geometry overrides on instances
+require composition before dense baking.
 
 The browser converter exposes layout, tile cap, atlas edge, memory budget,
 crossing-face policy, gutter, and subdivision controls. The CLI accepts
@@ -65,13 +67,13 @@ source tiles. Concrete tile references used by other texture consumers remain
 packaged.
 
 The focused browser gate is `node tests/udim-bake-browser.test.mjs`; it verifies
-controls, main-thread baking and legacy/next/streaming Workers.
+controls, main-thread baking and legacy/core/streaming Workers.
 
 Run `node tests/udim-bake.test.mjs` from `web/js`. Use
 `LIGHTUSD_UDIM_COMBINED=1` for combined, `LIGHTUSD_WASM64=1` for memory64,
 `LIGHTUSD_UDIM_GLUE` for an isolated module, and
 `LIGHTUSD_NATIVE_USDZCONVERT` to include native USDA/USDC/USDZ CLI checks.
-The Node regression profile includes the next-only bake suite. The fixture
+The Node regression profile includes the core bake suite. The fixture
 creates its images in memory and leaves no binary assets in Git.
 
 ### Selected shader sets

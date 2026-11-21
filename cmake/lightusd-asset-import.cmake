@@ -18,7 +18,10 @@ if(NOT TARGET lightusd_obj_import)
     "${_lusd_import_root}/tydra/asset-import/reader.cc"
     "${_lusd_import_root}/tydra/asset-import/obj.cc"
     "${_lusd_import_root}/external/tinyobjloader-c/tiny_obj_c.c"
-    "${_lusd_import_root}/external/tinyobjloader-c/tobj_tess.c")
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_tess.c"
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_mtlx.c"
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_subd.c"
+    "${_lusd_import_root}/external/tinyobjloader-c/tobj_skel.c")
   lightusd_configure_import_target(lightusd_obj_import "${_lusd_import_root}")
 endif()
 if(NOT LIGHTUSD_ASSET_IMPORT_OBJ_ONLY AND NOT TARGET lightusd_asset_import)
@@ -41,7 +44,7 @@ if(NOT LIGHTUSD_ASSET_IMPORT_OBJ_ONLY AND NOT TARGET lightusd_asset_import)
     "${_lusd_import_root}/tydra/asset-import/mjcf-sdf.cc"
     "${_lusd_import_root}/tydra/asset-import/volumetric.cc"
     # UsdVol .vdb decoding and field resolution, shared by the legacy and
-    # next tydras (one copy for executables that link both).
+    # current Tydra converters (one copy for executables that link both).
     "${_lusd_import_root}/usdVol.cc"
     "${_lusd_import_root}/tydra/vol/volume-field.cc"
     "${_lusd_import_root}/external/pugixml.cpp")

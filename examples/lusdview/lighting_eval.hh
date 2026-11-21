@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Backend-neutral light derivation shared by the legacy and `--next` loaders.
+// Backend-neutral light derivation shared by the legacy and `--core` loaders.
 #pragma once
 
 #include <algorithm>

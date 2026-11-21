@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026-Present Light Transport Entertainment Inc. */
 /*
  * rb-dynamics.h — Rigid body dynamics simulation (C API)
@@ -163,7 +163,7 @@ typedef struct {
   int32_t            num_islands;
   int32_t            max_islands;
   int32_t           *island_union;   /* Union-find parent (one per body)   */
-  int32_t           *island_body_buf;/* Scratch buffer for island bodies   */
+  int32_t           *island_body_buf;/* Scratch: 2 * max_bodies entries    */
 
   /* Simulation parameters */
   TydraPhysVec3 gravity;

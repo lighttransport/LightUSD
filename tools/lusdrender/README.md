@@ -1,14 +1,76 @@
 # lusdrender
 
-CPU preview ray-tracer for USD scenes (LightRT BVH + the `next` lazy USDC
-loader). Renders large, reference- and instance-composed scenes directly, within
-a bounded memory budget.
+CPU preview ray-tracer for USD scenes (LightRT BVH + the core lazy loader).
+Renders large, reference- and instance-composed scenes directly, within a
+bounded memory budget. Every input format (USDA/USDC/USDZ) takes the same core
+path; `-subdiv N` refines authored subdivision surfaces on it. `-legacyLoad` is
+accepted with a warning and ignored.
 
 ## Quick start
 
 ```sh
 lusdrender scene.usd out.png -rtPreview -w 960 -height 540 -autoframe
 ```
+
+### MaterialX validation preview
+
+```sh
+lusdrender --mtlx material.mtlx material.png
+lusdrender --mtlx material.mtlx material.png --mtlx-material MyMaterial -w 512 -height 512
+lusdrender --mtlx material.mtlx node.pfm --mtlx-material MyMaterial --aov mtlxNode:BaseColor
+lusdrender --mtlx material.mtlx lobe.pfm --mtlx-material MyMaterial --aov mtlxDiffuseWeight
+lusdrender --mtlx material.mtlx beauty.pfm --path-trace --pt-samples 1024 --pt-seed 1 --pt-max-depth 6
+```
+
+This CPU-only entry point evaluates the selected MaterialX surface with
+LightUSD's resolved document (including nested XIncludes, version upgrades,
+scoped attributes, and nodedef defaults) through LightRT's MaterialX graph
+evaluator, binds the resulting OpenPBR parameters to a generated sphere, and
+renders under a uniform white `DomeLight` with LightRT BSDF shading. The
+resolved graph is evaluated at each hit, with world position, shading
+and geometric normals, UVs, UV screen derivatives, and tangent directions. This
+preserves spatially varying procedural and texture outputs through the render.
+When the graph requests `geompropvalue` or `geompropvalueuniform`, the validation
+scene uses generated flat and instanced meshes and supplies matching typed USD
+primvars at triangle hits; float, color, and vector primvars are interpolated by
+barycentric weights, and integer primvars retain their typed values.
+The render-side primvar stream is included in the configured memory-budget
+check. Subdivision carries floating-point primvars through vertex/varying and
+faceVarying interpolation, and replicates constant/uniform values onto refined
+faces. Integer and boolean subdivision primvars are supported when constant or
+uniform; vertex-interpolated categorical values keep the MaterialX default. The
+validation regression captures float, integer, and uniform node AOVs after one
+Catmull-Clark refinement level. Analytic primitives support constant custom
+primvars; per-point and per-face values require mesh geometry.
+`--mtlx-mipmaps` enables precomputed linear-RGBA texture mipmaps for this
+validation path, selected using the hit's UV derivatives. The base textures
+and mip pixels count together against `-texBudgetMb` when it is set.
+The default image size is 512 by 512. `--mtlx-material` selects a named
+MaterialX material. `--aov mtlxNode:NAME` writes the selected numeric node output
+to a float PFM image (scalar values are repeated into RGB; vectors and matrices
+show their first three components). The four `mtlx*Weight` AOVs show the
+LightRT BSDF's diffuse, specular, coat, or transmission sampling probability at
+each hit; these probabilities are diagnostic weights, not integrated energy
+fractions. Data AOVs require `.pfm` output. The CPU BSDF also has a
+deterministic white-furnace CTest that integrates diffuse and specular response
+for diffuse, dielectric, metal, subsurface, coat, sheen, and colored materials
+at normal and grazing views, plus an analytic Lambert check against its base
+color. MaterialXView/OSL reference-image comparisons and full lobe-response
+parity remain open.
+
+`--path-trace` selects a CPU BSDF-sampling integrator for this sphere and
+uniform environment. It re-evaluates the graph at every hit, including both
+sides of the sphere, and uses deterministic per-sample random streams. Color
+output with a `.pfm` extension is scene-linear float RGB; PNG uses the selected
+display transform. `--pt-samples` sets a fixed sample count (defaults to 32 for
+interactive quality and 256 for final quality); adaptive `--pt-variance` is
+not implemented for this CPU path. Secondary rays do not carry texture
+derivatives, and transmission and layered closures remain approximate.
+
+Use `--displayTransform srgb` to compare linear render values against analytic
+MaterialX results without the default filmic curve. The CPU renderer honors
+this transform in its PNG output; `--displayTransform filmic` selects the
+default tone-mapped output.
 
 ### Build and link time
 
@@ -40,7 +102,7 @@ Common flags:
 
 | flag | meaning |
 |------|---------|
-| `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
+| `-rtPreview` | ray-traced preview (the default for every CPU render; kept for compatibility) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/lusdrender.md`](../../doc/lusdrender.md) for status + testing |
 | `-vkDevice N` | Select a Vulkan physical-device index for explicit multi-GPU validation (`-1`/omitted means automatic selection) |
 | `-cuda` / `-hip` | Headless RT using the GUI-free lusdview core, including packed MaterialX/OpenPBR preview shading |
@@ -49,9 +111,9 @@ Common flags:
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
-| `-mask <prim,...>` | restrict to these prim subtrees; with the `next` loader, defer payloads that cannot intersect the selected subtrees |
+| `-mask <prim,...>` | restrict to these prim subtrees; defer payloads that cannot intersect the selected subtrees |
 
-When `-mask` is used with the default `next` loader, payloads whose authored
+When `-mask` is used with the core loader, payloads whose authored
 prim path is outside (and does not contain) the requested subtree are left
 deferred during composition. This keeps a per-element render from first
 materializing the whole payload set; a selected payload may still contain its
@@ -60,7 +122,7 @@ own nested payloads. The loader reports the number of deferred payloads.
 | `-smooth` | interpolate authored normals (smooth shading) |
 | `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
-| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `tydra-next` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
+| `-materialResolver legacy\|tydra\|compare` | core material resolver. `tydra` is the default shared path; `legacy` keeps the hand-rolled compatibility path; `compare` renders legacy and reports resolver field differences. |
 | `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
 | `-maxMem <GiB>` | memory cap override (automatic policy reserves 2 GiB on the 32 GiB target) |
 | `-texMaxSize <N>` | longest texture edge cap; derived automatically from the host/VRAM budget unless explicitly set |
@@ -157,7 +219,7 @@ multi-million-triangle allocation.
 The OpenUSD float/half property pairs share float-over-half selection and
 array-length validation across native and fallback paths.
 
-For GPU mesh previews, next-loader traversal records are also collected and
+For GPU mesh previews, core-loader traversal records are also collected and
 converted one stage root at a time. This keeps large instancer/job lists from
 being retained alongside the world-space geometry waiting for the GPU chunk
 upload; the final nearest-hit reduction and material order are unchanged.
@@ -167,7 +229,7 @@ job records are released immediately after native curve extraction as well, so
 subset-heavy instanced scenes do not retain authored job metadata throughout
 the entire BLAS/TLAS build.
 
-The flat next-loader mesh path also splits its native LightRT triangle BVH when
+The flat core-loader mesh path also splits its native LightRT triangle BVH when
 needed. `-triangleChunk N` sets the triangle limit (default 262,144);
 the integrator preserves global material/UV indices while checking every chunk,
 and `-stats` reports aggregate chunk node/memory totals.
@@ -215,6 +277,32 @@ inputs resolve through Material/NodeGraph interfaces and MaterialX constant
 nodes. Constant add/subtract/multiply/divide/min/max, clamp, and mix graphs are
 evaluated without baking. Texture, noise, and other spatial procedural volume
 graphs remain unsupported.
+
+For an explicit MaterialX look on CPU volume previews, pass
+`--volume-mtlx look.mtlx --volume-mtlx-look Look`. Assignments match volume prim
+paths, and geometry-property nodes sample authored VDB fields in world space.
+The marcher integrates RGB absorption, scattering and EDF emission per step.
+MaterialX scattering uses the scene's finite, distant, and dome lights, a
+Henyey–Greenstein phase functions for each VDF scattering lobe, and geometry,
+level-set surface, and fog shadows when shadows are enabled. Volume evaluation
+rejects graphs with more than 64 distinct scattering anisotropies. Dome lighting uses 16 deterministic phase-function
+samples per step, so small or bright environment features can be undersampled.
+Fog shadows accumulate RGB extinction through intersected media, using up to
+approximately 128 steps per medium on each light ray. Level-set surfaces cast
+shadows into fog but do not receive shadows. Rectangular, disk, cylindrical,
+sphere and mesh lights use 16 stratified samples; sphere lights enclosing the
+sample are approximated at their centers. Multiple scattering is not
+implemented. Legacy fog mixed with a MaterialX volume still uses unit isotropic
+illumination. Overlapping fog volumes
+combine their coefficients at each step; stepwise integration approximates
+spatially varying media. The preview caps each ray at 1,024 intersected fog
+volumes and one million interval, light, and shadow sample checks, and limits
+each interval to approximately 4,096 steps.
+Level sets remain surfaces unless
+`-volumeLevelSet fog` is selected. Negative coefficients fail the render.
+The resolved field cache and per-worker texture caches have bounded budgets;
+the latter share `-texBudgetMb` among bound volumes and workers, or 256 MiB
+when that option is unset. This path does not support GPU backends.
 
 For a strict GPU CI gate covering Vulkan ray query on both configured physical
 devices, CUDA on NVIDIA, and HIP on AMD, run:
@@ -287,14 +375,14 @@ analytic curve API is available.
   glass. UsdGeomBasisCurves, HermiteCurves, and NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
-  The default `-materialResolver tydra-next` path uses the shared material
+  The default `-materialResolver tydra` path uses the shared material
   converter. The legacy and compare modes remain migration aids for the
   shared material-eval layer; measure coverage on usd-assets with:
   `USD_ASSETS_ROOT=/path/to/usd-assets LUSDR_RUN_MATERIAL_RESOLVER=1 ctest --test-dir build -R tool-lusdrender-material-resolver --output-on-failure`.
   Add `LUSDR_MATERIAL_SHADING=lightrt-bsdf` to smoke the experimental BSDF
   shading mode through the same curated loop.
   `-materialShading lightrt-bsdf` is the next experimental step: with
-  `-materialResolver tydra-next`, lusdrender carries the shared OpenPBR block in
+  `-materialResolver tydra`, lusdrender carries the shared OpenPBR block in
   per-material side tables, then evaluates direct-light and headlight response
   through LightRT's OpenPBR BSDF. The diffuse irradiance and prefiltered
   reflection IBL terms also use `bsdf_eval` in this mode, and opaque hits trace
@@ -304,7 +392,7 @@ analytic curve API is available.
   diffusion response, fuzz uses the Charlie distribution, and thin film uses
   wavelength-sensitive Airy interference. Legacy material resolution still
   falls back to the slim material fields.
-* **Back plates** — the next CPU backend composites the selected camera's first
+* **Back plates** — the core CPU backend composites the selected camera's first
   visible `BackPlateAPI` instance. Color and optional alpha/depth images,
   scale/translate/Z-rotation tweaks, luma gain/lift/gamma, and camera-space
   depth normalization are honored. GPU backends currently omit the plate.

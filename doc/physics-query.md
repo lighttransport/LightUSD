@@ -46,8 +46,8 @@ mutations from another thread, following the ordinary C API threading contract.
 
 ## Native C++ and C
 
-C++ uses `next::QueryPhysics(stage, PhysicsQueryOptions)` from
-`next/schema/physics-query.hh`. It returns an `expected<PhysicsSnapshot,
+C++ uses `lightusd::QueryPhysics(stage, PhysicsQueryOptions)` from
+`src/schema/physics-query.hh`. It returns an `expected<PhysicsSnapshot,
 std::string>`. Records hold owned typed `Value`s and explicit group masks.
 Read arrays through const values to retain shared storage; mutable Value
 accessors intentionally detach through copy-on-write.

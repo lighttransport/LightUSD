@@ -97,7 +97,7 @@ add_test(NAME lusdview-texture-vulkan-nvidia-hdr-real
           ${_texture_hdr_test_env}
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-nvidia-hdr-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;nvidia" TIMEOUT 900)
 
@@ -106,7 +106,7 @@ add_test(NAME lusdview-texture-vulkan-amd-hdr-real
           ${_texture_hdr_test_env}
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-amd-hdr-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;amd" TIMEOUT 900)
 
@@ -121,7 +121,7 @@ add_test(NAME lusdview-texture-vulkan-nvidia-bc6h-full-real
           ${_texture_bc6h_full_env}
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-nvidia-bc6h-full-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;full;nvidia" TIMEOUT 1800)
 
@@ -130,7 +130,7 @@ add_test(NAME lusdview-texture-vulkan-amd-bc6h-full-real
           ${_texture_bc6h_full_env}
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-amd-bc6h-full-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;full;amd" TIMEOUT 1800)
 if(LUSDVIEW_TEXTURE_HAVE_HIP)
@@ -139,7 +139,7 @@ if(LUSDVIEW_TEXTURE_HAVE_HIP)
             ${_texture_hdr_test_env}
             "LUSDVIEW_TEXTURE_GPU_MAX_DIMENSION=2048"
             "LUSDVIEW_TEXTURE_GPU_BACKEND=hip"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+            ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
   set_tests_properties(lusdview-texture-hip-hdr-real PROPERTIES
     SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;hip" TIMEOUT 900)
 endif()
@@ -150,10 +150,12 @@ if(LUSDVIEW_TEXTURE_HAVE_CUDA)
             ${_texture_hdr_test_env}
             "LUSDVIEW_TEXTURE_GPU_MAX_DIMENSION=2048"
             "LUSDVIEW_TEXTURE_GPU_BACKEND=cuda"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+            ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
   set_tests_properties(lusdview-texture-cuda-hdr-real PROPERTIES
     SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hdr;cuda" TIMEOUT 900)
 endif()
+set_target_properties(lusdview_texture_gpu_bench PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_dependencies(lusdview_texture_gpu_bench lusdview_texture_gpu_shaders)
 target_compile_features(lusdview_texture_gpu_bench PRIVATE cxx_std_17)
 target_compile_definitions(lusdview_texture_gpu_bench PRIVATE VK_NO_PROTOTYPES)
@@ -167,7 +169,7 @@ target_include_directories(lusdview_texture_gpu_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/include
   ${PROJECT_SOURCE_DIR}/src/external/textools/texcomp/src)
 target_link_libraries(lusdview_texture_gpu_bench PRIVATE
-  ${LIGHTUSD_TARGET_STATIC} lightusd_textools ${CMAKE_DL_LIBS})
+  lightusd_preview_images tydra lightusd_core lightusd_textools ${CMAKE_DL_LIBS})
 if(UNIX)
   find_package(Threads REQUIRED)
   target_link_libraries(lusdview_texture_gpu_bench PRIVATE Threads::Threads m)
@@ -231,7 +233,7 @@ add_test(NAME lusdview-texture-vulkan-nvidia-real
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=NVIDIA"
           "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-nvidia-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;nvidia" TIMEOUT 900)
 
@@ -245,7 +247,7 @@ add_test(NAME lusdview-texture-vulkan-nvidia-formats-real
           "LUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
           "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
           "LUSDVIEW_TEXTURE_GPU_MIN_PSNR=1"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-nvidia-formats-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;formats;nvidia" TIMEOUT 900)
 
@@ -255,7 +257,7 @@ add_test(NAME lusdview-texture-vulkan-amd-real
           "LUSDVIEW_TEXTURE_GPU_BACKEND=vulkan"
           "LUSDVIEW_TEXTURE_GPU_DEVICE=AMD"
           "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-amd-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;amd" TIMEOUT 900)
 
@@ -269,7 +271,7 @@ add_test(NAME lusdview-texture-vulkan-amd-formats-real
           "LUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
           "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
           "LUSDVIEW_TEXTURE_GPU_MIN_PSNR=1"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-vulkan-amd-formats-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;formats;amd" TIMEOUT 900)
 
@@ -279,7 +281,7 @@ add_test(NAME lusdview-texture-tiff-metadata-real
           "LUSDVIEW_TEXTURE_GPU_METADATA_ONLY=1"
           "LUSDVIEW_TEXTURE_GPU_MAX_IMAGES=8"
           "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-tiff-metadata-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;tiff;metadata" TIMEOUT 300)
 
@@ -291,14 +293,14 @@ add_test(NAME lusdview-texture-tiff-decode-real
           "LUSDVIEW_TEXTURE_GPU_MIPS=3"
           "LUSDVIEW_TEXTURE_GPU_MAX_IMAGES=1"
           "LUSDVIEW_TEXTURE_GPU_MAX_GPU_MS=5000"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
 set_tests_properties(lusdview-texture-tiff-decode-real PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;tiff;decode" TIMEOUT 900)
 
 add_test(NAME lusdview-texture-vulkan-validation
   COMMAND ${CMAKE_COMMAND} -E env
           "LUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:lusdview_texture_gpu_bench>"
-          bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-vulkan-validation.sh")
+          ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-vulkan-validation.sh")
 set_tests_properties(lusdview-texture-vulkan-validation PROPERTIES
   SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;vulkan;validation" TIMEOUT 180)
 
@@ -308,7 +310,7 @@ if(LUSDVIEW_TEXTURE_HAVE_HIP)
             "LUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:lusdview_texture_gpu_bench>"
             "LUSDVIEW_TEXTURE_GPU_BACKEND=hip"
             "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+            ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
   set_tests_properties(lusdview-texture-hip-real PROPERTIES
     SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;hip" TIMEOUT 900)
 endif()
@@ -319,7 +321,7 @@ if(LUSDVIEW_TEXTURE_HAVE_CUDA)
             "LUSDVIEW_TEXTURE_BENCH=$<TARGET_FILE:lusdview_texture_gpu_bench>"
             "LUSDVIEW_TEXTURE_GPU_BACKEND=cuda"
             "LUSDVIEW_TEXTURE_GPU_PREFER_TEXTURES=1"
-            bash "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
+            ${LIGHTUSD_BASH} "${PROJECT_SOURCE_DIR}/examples/lusdview/tests/run-texture-gpu-real.sh")
   set_tests_properties(lusdview-texture-cuda-real PROPERTIES
     SKIP_RETURN_CODE 77 LABELS "lusdview;gpu;real;cuda" TIMEOUT 900)
 endif()

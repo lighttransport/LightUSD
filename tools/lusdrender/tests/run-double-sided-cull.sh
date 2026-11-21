@@ -86,7 +86,7 @@ print(red)
 PY
 }
 
-for spec in "legacy:" "next:-rtPreview"; do
+for spec in "legacy:" "core:-rtPreview"; do
   tag="${spec%%:*}"; flag="${spec#*:}"
   declare -A r
   for v in ss ds; do

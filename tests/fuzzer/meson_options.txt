@@ -1,0 +1,2 @@
+option('legacy', type: 'boolean', value: false,
+       description: 'Explicitly build the older legacy fuzz harness')

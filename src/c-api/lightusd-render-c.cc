@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// LightUSD C API — tydra-next render-scene implementation.
+// LightUSD C API — Tydra render-scene implementation.
 
 #include "lightusd-render-c.h"
 
@@ -18,20 +18,20 @@
 
 #include "c-internal.hh"
 #include "c-session-ref.hh"
-#include "next/load-usd.hh"
-#include "next/schema/usd-vol.hh"
-#include "next/resolver/asset-resolver.hh"
-#include "next/eval/attribute-eval.hh"
-#include "tydra/next/light-filter.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
-#include "tydra/next/render-session.hh"
+#include "load-usd.hh"
+#include "schema/usd-vol.hh"
+#include "resolver/asset-resolver.hh"
+#include "eval/attribute-eval.hh"
+#include "tydra/light-filter.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
+#include "tydra/render-session.hh"
 #include "core/safe-arithmetic.hh"
-#include "tydra/next/render-data.hh"
-#include "tydra/next/resource-budget.hh"
+#include "../tydra/render-data.hh"
+#include "tydra/resource-budget.hh"
 
-namespace td = lightusd::tydra::next;
-namespace n = lightusd::next;
+namespace td = lightusd::tydra;
+namespace n = lightusd;
 using lightusd_internal::EmptySV;
 using lightusd_internal::Fail;
 using lightusd_internal::SV;
@@ -276,9 +276,9 @@ const std::vector<std::string>* RenderWarningsForExport(
 // The converter borrows the resolver. Sessions own it for their whole lifetime;
 // one-shot conversion keeps it on the stack until conversion completes.
 static const td::ConverterConfig& ConfigureDefaultResolver(
-    td::ConverterConfig& config, lightusd::next::AssetResolver& resolver, bool enabled) {
+    td::ConverterConfig& config, lightusd::AssetResolver& resolver, bool enabled) {
   if (enabled) {
-    lightusd::next::ResolverConfig resolver_config;
+    lightusd::ResolverConfig resolver_config;
     resolver_config.working_directory = config.asset_base_dir;
     resolver_config.search_paths.push_back(config.asset_base_dir);
     resolver.SetConfig(resolver_config);
@@ -310,7 +310,7 @@ struct lightusd_render_session {
       : source_dir(std::move(source_dir_in)),
         session(ConfigureDefaultResolver(config, resolver, default_resolver)) {}
   std::string source_dir;
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   td::RenderSession session;
   lightusd_render_event_sink event_sink{};
 };
@@ -340,8 +340,8 @@ bool ToSizeLimit(uint64_t value, size_t* out) {
   return true;
 }
 
-lightusd_status ToCStatus(::lightusd::next::OperationStatus status) {
-  using Status = ::lightusd::next::OperationStatus;
+lightusd_status ToCStatus(::lightusd::OperationStatus status) {
+  using Status = ::lightusd::OperationStatus;
   switch (status) {
     case Status::Ok: return LIGHTUSD_OK;
     case Status::InvalidArgument: return LIGHTUSD_ERR_INVALID_ARG;
@@ -537,14 +537,14 @@ lightusd_status FillUpdateInfo(const td::RenderUpdateResult& result,
 
 lightusd_status PrepareRenderSnapshot(
     lightusd_render_session* session,
-    const ::lightusd::next::StageSnapshot& snapshot,
-    const ::lightusd::next::StageChangeSet& changes,
+    const ::lightusd::StageSnapshot& snapshot,
+    const ::lightusd::StageChangeSet& changes,
     lightusd_render_prepared_update** out, lightusd_render_update_info* info);
 
 lightusd_status ApplyRenderSnapshot(
     lightusd_render_session* session,
-    const ::lightusd::next::StageSnapshot& snapshot,
-    const ::lightusd::next::StageChangeSet& changes,
+    const ::lightusd::StageSnapshot& snapshot,
+    const ::lightusd::StageChangeSet& changes,
     lightusd_render_scene** out, lightusd_render_update_info* info) {
   if (!session || !snapshot || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid render snapshot request");
@@ -565,7 +565,7 @@ lightusd_status ApplyRenderSnapshot(
 
 lightusd_status ApplyRenderSession(
     lightusd_render_session* session, const lightusd_stage* stage,
-    const ::lightusd::next::StageChangeSet& changes,
+    const ::lightusd::StageChangeSet& changes,
     lightusd_render_scene** out, lightusd_render_update_info* info) {
   if (!session || !stage || !out) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "session/stage/out is null");
@@ -574,24 +574,24 @@ lightusd_status ApplyRenderSession(
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "stage source directory differs from render session");
   }
-  ::lightusd::next::StageSnapshot snapshot;
+  ::lightusd::StageSnapshot snapshot;
   snapshot.revision = session->session.revision() + 1;
   if (stage->snapshot_stage) {
     snapshot.stage = stage->snapshot_stage;
   } else {
-    auto* clone = new (std::nothrow) ::lightusd::next::Stage(stage->ReadStage().Clone());
+    auto* clone = new (std::nothrow) ::lightusd::Stage(stage->ReadStage().Clone());
     if (!clone) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "stage clone alloc failed");
     snapshot.stage.reset(clone);
   }
-  ::lightusd::next::StageChangeSet applied = changes;
+  ::lightusd::StageChangeSet applied = changes;
   applied.new_revision = snapshot.revision;
   return ApplyRenderSnapshot(session, snapshot, applied, out, info);
 }
 
 lightusd_status PrepareRenderSnapshot(
     lightusd_render_session* session,
-    const ::lightusd::next::StageSnapshot& snapshot,
-    const ::lightusd::next::StageChangeSet& changes,
+    const ::lightusd::StageSnapshot& snapshot,
+    const ::lightusd::StageChangeSet& changes,
     lightusd_render_prepared_update** out, lightusd_render_update_info* info) {
   if (!session || !snapshot || !out)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid render snapshot request");
@@ -617,7 +617,7 @@ lightusd_status PrepareRenderSnapshot(
 
 lightusd_status PrepareRenderSession(
     lightusd_render_session* session, const lightusd_stage* stage,
-    const ::lightusd::next::StageChangeSet& changes,
+    const ::lightusd::StageChangeSet& changes,
     lightusd_render_prepared_update** out, lightusd_render_update_info* info) {
   if (!session || !stage || !out) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "session/stage/out is null");
@@ -626,23 +626,23 @@ lightusd_status PrepareRenderSession(
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "stage source directory differs from render session");
   }
-  ::lightusd::next::StageSnapshot snapshot;
+  ::lightusd::StageSnapshot snapshot;
   snapshot.revision = session->session.revision() + 1;
   if (stage->snapshot_stage) {
     snapshot.stage = stage->snapshot_stage;
   } else {
-    auto* clone = new (std::nothrow) ::lightusd::next::Stage(stage->ReadStage().Clone());
+    auto* clone = new (std::nothrow) ::lightusd::Stage(stage->ReadStage().Clone());
     if (!clone) return Fail(LIGHTUSD_ERR_OUT_OF_MEMORY, "stage clone alloc failed");
     snapshot.stage.reset(clone);
   }
-  ::lightusd::next::StageChangeSet applied = changes;
+  ::lightusd::StageChangeSet applied = changes;
   applied.new_revision = snapshot.revision;
   return PrepareRenderSnapshot(session, snapshot, applied, out, info);
 }
 
 lightusd_status DecodeRenderChangeSet(
     const lightusd_render_change_set* input,
-    ::lightusd::next::StageChangeSet* output) {
+    ::lightusd::StageChangeSet* output) {
   if (!input || !output ||
       input->struct_size < sizeof(lightusd_render_change_set) ||
       (input->prim_count != 0 && !input->prims)) {
@@ -662,14 +662,14 @@ lightusd_status DecodeRenderChangeSet(
         (source.property_count != 0 && !source.properties)) {
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid prim change");
     }
-    ::lightusd::next::Path path =
-        ::lightusd::next::Path::Parse(std::string(source.prim_path));
+    ::lightusd::Path path =
+        ::lightusd::Path::Parse(std::string(source.prim_path));
     if (path.empty() || path.has_property()) {
       return Fail(LIGHTUSD_ERR_INVALID_ARG, "invalid changed prim path");
     }
-    ::lightusd::next::PrimChange change;
+    ::lightusd::PrimChange change;
     change.path = std::move(path);
-    change.flags = static_cast<::lightusd::next::StageChangeFlag>(source.flags);
+    change.flags = static_cast<::lightusd::StageChangeFlag>(source.flags);
     if (source.property_count > change.properties.max_size() ||
         source.property_count > (std::numeric_limits<size_t>::max)() / sizeof(*source.properties))
       return Fail(LIGHTUSD_ERR_OVERFLOW, "property change count overflow");
@@ -842,6 +842,9 @@ const td::ShaderParam* FindParamOpenPBR(const td::OpenPBRSurfaceShader& s,
   if (n == "coat_roughness_anisotropy")
     return &s.coat_roughness_anisotropy;
   if (n == "coat_normal") return &s.coat_normal;
+  if (n == "coat_affect_color") return &s.coat_affect_color;
+  if (n == "coat_affect_roughness") return &s.coat_affect_roughness;
+  if (n == "coat_darkening") return &s.coat_darkening;
   if (n == "sheen_weight") return &s.sheen_weight;
   if (n == "sheen_color") return &s.sheen_color;
   if (n == "sheen_roughness") return &s.sheen_roughness;
@@ -1356,6 +1359,8 @@ lightusd_status lightusd_render_convert_material(
   td::ConverterConfig config;
   const lightusd_status config_status = BuildConverterConfig(stage, cfg, &config);
   if (config_status != LIGHTUSD_OK) return config_status;
+  lightusd::AssetResolver resolver;
+  ConfigureDefaultResolver(config, resolver, cfg && cfg->use_default_asset_resolver);
   td::RenderSceneConverter converter(config);
   td::RenderMaterial material;
   td::RenderScene converted;
@@ -1402,7 +1407,7 @@ lightusd_status lightusd_render_convert(const lightusd_stage* stage,
   lightusd_status config_status = BuildConverterConfig(stage, cfg, &config);
   if (config_status != LIGHTUSD_OK) return config_status;
 
-  lightusd::next::AssetResolver resolver;
+  lightusd::AssetResolver resolver;
   ConfigureDefaultResolver(config, resolver, cfg && cfg->use_default_asset_resolver);
   td::RenderSceneConverter converter(config);
   td::ConvertResult result = converter.Convert(stage->ReadStage());
@@ -1510,7 +1515,7 @@ lightusd_status lightusd_render_session_update(
     lightusd_render_session* session, const lightusd_stage* stage,
     lightusd_render_scene** out, lightusd_render_update_info* info) {
   if (!session) return Fail(LIGHTUSD_ERR_INVALID_ARG, "session is null");
-  ::lightusd::next::StageChangeSet changes;
+  ::lightusd::StageChangeSet changes;
   changes.base_revision = session->session.revision();
   changes.full_resync = true;
   return ApplyRenderSession(session, stage, changes, out, info);
@@ -1520,7 +1525,7 @@ lightusd_status lightusd_render_session_apply(
     lightusd_render_session* session, const lightusd_stage* stage,
     const lightusd_render_change_set* changes, lightusd_render_scene** out,
     lightusd_render_update_info* info) {
-  ::lightusd::next::StageChangeSet native;
+  ::lightusd::StageChangeSet native;
   const lightusd_status status = DecodeRenderChangeSet(changes, &native);
   if (status != LIGHTUSD_OK) return status;
   return ApplyRenderSession(session, stage, native, out, info);
@@ -1548,7 +1553,7 @@ lightusd_status lightusd_render_session_prepare(
     lightusd_render_session* session, const lightusd_stage* stage,
     const lightusd_render_change_set* changes,
     lightusd_render_prepared_update** out, lightusd_render_update_info* info) {
-  ::lightusd::next::StageChangeSet native;
+  ::lightusd::StageChangeSet native;
   const lightusd_status status = DecodeRenderChangeSet(changes, &native);
   if (status != LIGHTUSD_OK) return status;
   return PrepareRenderSession(session, stage, native, out, info);
@@ -1581,7 +1586,7 @@ lightusd_status lightusd_render_session_prepare_document_changes(
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "session/snapshot/out is null");
   if (lightusd_internal::DocumentSnapshotSourceDir(snapshot) != session->source_dir)
     return Fail(LIGHTUSD_ERR_INVALID_ARG, "document source directory differs from render session");
-  ::lightusd::next::StageChangeSet native;
+  ::lightusd::StageChangeSet native;
   const auto status = DecodeRenderChangeSet(changes, &native);
   if (status != LIGHTUSD_OK) return status;
   const auto& stage = lightusd_internal::DocumentSnapshotStage(snapshot);

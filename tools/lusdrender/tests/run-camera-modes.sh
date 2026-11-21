@@ -158,8 +158,8 @@ print(rgba[o], rgba[o + 1], rgba[o + 2])
 PY
 }
 
-read -r RR RG RB < <(render_camera RedCam) || exit 1
-read -r BR BG BB < <(render_camera BlueCam) || exit 1
+read -r RR RG RB < <(render_camera RedCam | tr -d '\015') || exit 1
+read -r BR BG BB < <(render_camera BlueCam | tr -d '\015') || exit 1
 
 echo "RedCam center RGB = $RR $RG $RB"
 echo "BlueCam center RGB = $BR $BG $BB"

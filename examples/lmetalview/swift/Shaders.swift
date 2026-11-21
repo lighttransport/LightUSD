@@ -8,7 +8,7 @@
 // does too. A headless CTest run compiles and renders this source, so shader
 // syntax errors fail CI.
 //
-// Material model: tydra-next resolves UsdPreviewSurface / MaterialX OpenPBR
+// Material model: Tydra resolves UsdPreviewSurface / MaterialX OpenPBR
 // into the canonical packed OpenPBR block (see lmv.h lmv_pbr_index). The shader
 // evaluates an OpenPBR-lite response: GGX base specular + energy-conserving
 // diffuse, coat, sheen, emission, mask/blend opacity and an approximate

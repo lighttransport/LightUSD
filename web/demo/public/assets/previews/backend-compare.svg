@@ -14,7 +14,7 @@
   <rect x="322" y="20" width="2" height="320" rx="1" fill="#303038"/>
   <rect x="326" y="20" width="290" height="320" rx="8" fill="#101013" stroke="#303038" stroke-width="1"/>
   <rect x="326" y="20" width="290" height="22" rx="8" fill="rgba(167,139,250,.08)"/>
-  <text x="338" y="35" fill="#a78bfa" font-family="system-ui" font-size="9" font-weight="700">NEXT BACKEND</text>
+  <text x="338" y="35" fill="#a78bfa" font-family="system-ui" font-size="9" font-weight="700">CORE BACKEND</text>
   <rect x="338" y="48" width="266" height="260" rx="4" fill="#080809"/>
   <g opacity=".06" fill="none" stroke="#a78bfa" stroke-width="1.5">
     <ellipse cx="471" cy="180" rx="40" ry="40"/>

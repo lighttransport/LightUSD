@@ -42,6 +42,14 @@ std::string NormalizeMtlxType(const std::string& type) {
   return "float";
 }
 
+int MtlxTypeComponents(const std::string& type) {
+  const std::string normalized = NormalizeMtlxType(type);
+  if (normalized == "vector2") return 2;
+  if (normalized == "vector3" || normalized == "color3") return 3;
+  if (normalized == "vector4" || normalized == "color4") return 4;
+  return 1;
+}
+
 std::string JsonString(const nlohmann::json& obj, const char* key,
                        const std::string& fallback = std::string()) {
   const auto it = obj.find(key);
@@ -131,6 +139,18 @@ bool PackMaterialXGraphRuntimePhase(
     MaterialXGraphNodeCPU out;
     out.name = name;
     const std::string type = JsonString(node, "type");
+    out.components = MtlxTypeComponents(type);
+    out.inputComponents = out.components;
+    const auto declaredInputsIt = node.find("inputs");
+    if (declaredInputsIt != node.end() && declaredInputsIt->is_array()) {
+      for (const auto& input : *declaredInputsIt) {
+        const std::string inputType = JsonString(input, "type");
+        if (!inputType.empty()) {
+          out.inputComponents = MtlxTypeComponents(inputType);
+          break;
+        }
+      }
+    }
     const std::string cat = NormalizeMtlxCategory(JsonString(node, "category"), type);
     if (cat == "constant") out.op = MaterialXGraphOpCPU::Constant;
     else if (cat == "image" || cat == "gltf_image" || cat == "gltf_colorimage") {
@@ -156,8 +176,9 @@ bool PackMaterialXGraphRuntimePhase(
     }
     else if (cat == "dot" || cat == "dotproduct") out.op = MaterialXGraphOpCPU::Dot;
     else if (cat == "normalize") out.op = MaterialXGraphOpCPU::Normalized;
-    else if (cat == "power" || cat == "pow" || cat == "safepower")
+    else if (cat == "power" || cat == "pow")
       out.op = MaterialXGraphOpCPU::Power;
+    else if (cat == "safepower") out.op = MaterialXGraphOpCPU::SafePower;
     else if (cat == "min" || cat == "minimum")
       out.op = MaterialXGraphOpCPU::Minimum;
     else if (cat == "max" || cat == "maximum")
@@ -375,6 +396,26 @@ bool PackMaterialXGraphRuntimePhase(
         const std::string inputName = JsonString(input, "name");
         const auto valueIt = input.find("value");
         const std::string inputType = NormalizeMtlxType(JsonString(input, "type"));
+        if ((cat == "texcoord" || cat == "texcoord0" ||
+             cat == "texcoord1") && inputName == "index") {
+          const std::string source = JsonString(input, "nodename");
+          if (!source.empty()) {
+            const auto found = nodeIds.find(source);
+            if (found == nodeIds.end()) {
+              if (err) *err = "Unresolved MaterialX texcoord index input: " + source;
+              return false;
+            }
+            out.input[2] = found->second;
+          }
+          if (valueIt != input.end() && valueIt->is_number())
+            out.value[2][0] = valueIt->get<float>();
+          const int authoredIndex = valueIt != input.end() && valueIt->is_number()
+                                        ? valueIt->get<int>() : 0;
+          out.value[2][2] =
+              (cat == "texcoord1" || (cat == "texcoord" && authoredIndex == 1))
+                  ? 1.0f : 0.0f;
+          continue;
+        }
         const bool conditional = cat == "ifgreater" || cat == "ifgreatereq" ||
                                  cat == "ifgreaterequal" || cat == "ifequal";
         if (((cat == "splitlr" || cat == "splittb") &&
@@ -420,7 +461,13 @@ bool PackMaterialXGraphRuntimePhase(
         }
         if (inputName == "file" || inputType == "filename") {
           out.imagePath = JsonString(input, "value");
+          out.colorSpaceToken = JsonString(input, "colorspace");
           if (!out.imagePath.empty()) graph.hasImages = true;
+          continue;
+        }
+        if ((cat == "image" || cat == "tiledimage" ||
+             cat == "hextiledimage") && inputName == "colorspace") {
+          out.colorSpaceToken = JsonString(input, "value");
           continue;
         }
         // Tiled-image graphs commonly author a local UV scale/offset on the

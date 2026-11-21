@@ -58,7 +58,7 @@ mkdir -p "$OUT/config/lusdview"
 trap 'rm -rf "$OUT"' EXIT
 # Headless Vulkan takes its offscreen extent from the startup config. Keep this
 # texture-sampling regression compact: it checks distinct sampled texels and
-# loader parity, not high-resolution anti-aliasing, and a small extent avoids
+# texture sampling, not high-resolution anti-aliasing, and a small extent avoids
 # needlessly long two-loader hardware runs.
 printf '%s\n' '{"window_size":{"width":640,"height":480}}' \
   >"$OUT/config/lusdview/config.json"
@@ -145,11 +145,10 @@ PY
   grep -oE '[0-9]+ materials, [0-9]+ textures' "$log" || true
 }
 
-for tag in next legacy; do
+for tag in core; do
   image="$OUT/$tag.ppm"
   log="$OUT/$tag.log"
   loader_args=()
-  if [ "$tag" = legacy ]; then loader_args=(--legacy-load); fi
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-60s}" \
       env XDG_CONFIG_HOME="$OUT/config" \
@@ -163,37 +162,5 @@ for tag in next legacy; do
   validate_textured_render "$tag" "$image" "$log" "$?"
 done
 
-python3 - "$OUT/next.ppm" "$OUT/legacy.ppm" <<'PY'
-import sys
-
-def load(path):
-    data = open(path, "rb").read()
-    if not data.startswith(b"P6"):
-        raise ValueError(f"{path}: not P6")
-    i, tok = 2, []
-    while len(tok) < 3 and i < len(data):
-        c = data[i]
-        if c == 35:
-            while i < len(data) and data[i] not in (10, 13): i += 1
-        elif chr(c).isspace(): i += 1
-        else:
-            s = i
-            while i < len(data) and not chr(data[i]).isspace(): i += 1
-            tok.append(int(data[s:i]))
-    return tok[:2], data[i + 1:]
-
-(wa, ha), a = load(sys.argv[1])
-(wb, hb), b = load(sys.argv[2])
-if (wa, ha) != (wb, hb) or len(a) != len(b):
-    print("FAIL: next/legacy screenshot dimensions differ")
-    sys.exit(1)
-mean = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
-if mean > 2.0:
-    print(f"FAIL: next/legacy textured output differs (mean absolute delta={mean:.3f})")
-    sys.exit(1)
-print(f"OK: next/legacy textured output parity (mean absolute delta={mean:.3f})")
-PY
-[ "$?" -eq 0 ] || exit 1
-
-echo "PASS: both loaders resolve, sample, and agree on the material texture"
+echo "PASS: core loader resolves and samples the material texture"
 exit 0

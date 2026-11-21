@@ -9,6 +9,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <usd_file>\n";

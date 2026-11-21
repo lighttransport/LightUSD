@@ -8,7 +8,7 @@
 
 #define Py_LIMITED_API 0x030a0000
 #include "../include/py_limited_api.h"
-#include "../../../src/c-lightusd.h"
+#include "../../../src/legacy/c-lightusd.h"
 
 #include <string.h>
 

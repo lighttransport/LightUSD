@@ -108,7 +108,7 @@ render() {
   local in="$1" out="$2" log="$3"
   "$LUSDRENDER" "$in" "$out" -rtPreview -w 64 -height 64 -autoframe \
     -viewDir 0,0,-1 -ambient 1 -noShadows -samples 1 \
-    --materialResolver tydra-next -udim sparse -stats >"$log" 2>&1
+    --materialResolver tydra -udim sparse -stats >"$log" 2>&1
   local rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "FAIL: lusdrender failed for $in with $rc"

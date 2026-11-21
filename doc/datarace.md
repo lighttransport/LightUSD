@@ -174,7 +174,7 @@ Covered by `stage_concurrent_parse_test`.
 
 ### CRC32 / base122 double-checked table init — **FIXED**
 `usdz_crc32_table` (`src/lightusd.cc`), the identical table in
-`src/next/writer/usdz-writer.cc`, and `base122_decode_map` (`src/base122.cc`) used
+`src/writer/usdz-writer.cc`, and `base122_decode_map` (`src/base122.cc`) used
 a hand-rolled `static bool …_ready` flag with no atomics → racy on concurrent USDZ
 write/decode. Replaced each with a function-local `static const std::array<…>`
 returned by reference (C++11 magic statics: thread-safe one-time init). The CRC

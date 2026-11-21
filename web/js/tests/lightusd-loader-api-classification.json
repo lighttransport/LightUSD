@@ -720,88 +720,88 @@
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncBegin",
-    "family": "next_flatten",
+    "name": "flattenAsyncBegin",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncBeginRemap",
-    "family": "next_flatten",
+    "name": "flattenAsyncBeginRemap",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncBeginRemapVariants",
-    "family": "next_flatten",
+    "name": "flattenAsyncBeginRemapVariants",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncEnd",
-    "family": "next_flatten",
+    "name": "flattenAsyncEnd",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncProvideLayer",
-    "family": "next_flatten",
+    "name": "flattenAsyncProvideLayer",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenAsyncStep",
-    "family": "next_flatten",
+    "name": "flattenAsyncStep",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBuffer",
-    "family": "next_flatten",
+    "name": "flattenBuffer",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBufferRemap",
-    "family": "next_flatten",
+    "name": "flattenBufferRemap",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBufferRemapVariants",
-    "family": "next_flatten",
+    "name": "flattenBufferRemapVariants",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBufferToSink",
-    "family": "next_flatten",
+    "name": "flattenBufferToSink",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBufferToSinkRemap",
-    "family": "next_flatten",
+    "name": "flattenBufferToSinkRemap",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenBufferToSinkRemapVariants",
-    "family": "next_flatten",
+    "name": "flattenBufferToSinkRemapVariants",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenMultiBufferToSink",
-    "family": "next_flatten",
+    "name": "flattenMultiBufferToSink",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenMultiBufferToSinkFetch",
-    "family": "next_flatten",
+    "name": "flattenMultiBufferToSinkFetch",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenMultiBufferToSinkFetchRemap",
-    "family": "next_flatten",
+    "name": "flattenMultiBufferToSinkFetchRemap",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenMultiBufferToSinkFetchRemapVariants",
-    "family": "next_flatten",
+    "name": "flattenMultiBufferToSinkFetchRemapVariants",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {
-    "name": "nextFlattenUSDC",
-    "family": "next_flatten",
+    "name": "flattenUSDC",
+    "family": "flatten",
     "boundary": "typed-c"
   },
   {

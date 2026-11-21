@@ -35,7 +35,7 @@ The same ledger generates two regression artifacts:
   preservation case for every required schema. Concrete types use their schema
   type; applied APIs use `apiSchemas`; abstract and non-applied schemas use a
   generic marker prim.
-- `src/next/schema/generated/openusd-supported-schema-names.inc` is the next
+- `src/schema/generated/openusd-supported-schema-names.inc` is the next
   registry's recognition table.
 
 Registry recognition means LightUSD knows that a schema identifier belongs to

@@ -1,5 +1,5 @@
-# Legacy-only WASM32 build: the lightusd module WITHOUT the next core
-# (-DLIGHTUSD_WASM_PRODUCT=legacy). Drops the nextFlatten* low-memory flatten
+# Legacy-only WASM32 build: the lightusd module WITHOUT the core
+# (-DLIGHTUSD_WASM_PRODUCT=legacy). Drops the flatten* low-memory flatten
 # pipeline and the RenderStream streaming API; the classic loadFromBinary/
 # Tydra RenderScene path is unchanged. Output: js/src/lightusd/
 # lightusd.js/.wasm.

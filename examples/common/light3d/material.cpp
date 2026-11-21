@@ -753,7 +753,9 @@ void evalMaterialXGraph(vec2 uv) {
             else if (op == 19) values[i] = vec4(dot(a.xyz, vec3(0.2126, 0.7152, 0.0722)));
             else if (op == 20) values[i] = a.x >= 0.5 ? b : c;
             else if (op == 21) {
-                vec2 tc = uGraphNode3[i].z > 0.5 ? vUV1 : uv;
+                bool secondSet = ic >= 0 ? c.x == 1.0 :
+                                           uGraphNode3[i].z > 0.5;
+                vec2 tc = secondSet ? vUV1 : uv;
                 values[i] = vec4(tc, 0.0, 1.0);
             }
             else if (op == 22) values[i] = floor(a);

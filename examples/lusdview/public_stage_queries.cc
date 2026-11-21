@@ -92,6 +92,32 @@ std::unordered_map<std::string, float> ReadPublicBlendWeights(
   return weights;
 }
 
+bool ReadPublicGeomSubsetFaces(lightusd_prim prim, std::set<uint32_t>* faces) {
+  if (!faces || PublicString(lightusd_prim_type_name(prim)) != "GeomSubset")
+    return false;
+  {
+    lightusd::api::Value element;
+    if (lightusd_attr_copy_default(prim, "elementType", element.put()) ==
+        LIGHTUSD_OK) {
+      lightusd_sv token{};
+      if (lightusd_value_get_string(element.get(), &token) == LIGHTUSD_OK &&
+          PublicString(token) != "face")
+        return false;
+    }
+  }
+  lightusd::api::Value value;
+  if (lightusd_attr_copy_default(prim, "indices", value.put()) != LIGHTUSD_OK)
+    return false;
+  lightusd_value_view view{};
+  if (lightusd_value_get_view(value.get(), &view) != LIGHTUSD_OK ||
+      !view.is_array || !view.data || view.storage != LIGHTUSD_COMP_INT32)
+    return false;
+  const auto* data = static_cast<const int32_t*>(view.data);
+  for (size_t i = 0; i < view.nbytes / sizeof(int32_t); ++i)
+    if (data[i] >= 0) faces->insert(static_cast<uint32_t>(data[i]));
+  return true;
+}
+
 bool ReadPublicPreviewExtent(lightusd_prim prim, float min[3], float max[3]) {
   if (!min || !max) return false;
   lightusd::api::Value value;

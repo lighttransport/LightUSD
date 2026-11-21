@@ -427,7 +427,9 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
                nlohmann::json::array({1, 1, 1}), "color3");
       emitLeaf("coat_affect_roughness", "coat_affect_roughness", 0.0,
                "float");
-      emitLeaf("coat_darkening", "coat_darkening", 0.0, "float");
+      // OpenPBR's nodedef default is 1.0 (open_pbr_surface.mtlx); Standard
+      // Surface has no darkening control.
+      emitLeaf("coat_darkening", "coat_darkening", standard ? 0.0 : 1.0, "float");
       emitLeaf("subsurface_weight", standard ? "subsurface" : "subsurface_weight",
                0.0, "float");
       emitLeaf("subsurface_color", "subsurface_color",
@@ -482,7 +484,16 @@ bool CompileMaterialXGraphRuntime(DrawMaterialCPU* mat, std::string* err) {
             inputNamed(node, "thin_film_IOR", nlohmann::json()).is_null()
                 ? "thinfilm_IOR" : "thin_film_IOR";
       }
-      emitLeaf("thin_film_thickness", thinFilmThicknessName, 0.0, "float");
+      emitLeaf("thin_film_thickness", thinFilmThicknessName, standard ? 0.0 : 0.5, "float");
+      if (!standard) {
+        const std::string thicknessNm = name + "__closure_thin_film_thickness_nm";
+        runtimeNodes.push_back({
+            {"name", thicknessNm}, {"category", "multiply"}, {"type", "float"},
+            {"inputs", nlohmann::json::array({
+                nlohmann::json{{"name", "in1"}, {"nodename", lanes["thin_film_thickness"]}},
+                nlohmann::json{{"name", "in2"}, {"value", 1000.0}}})}});
+        lanes["thin_film_thickness"] = thicknessNm;
+      }
       emitLeaf("thin_film_ior", thinFilmIorName, standard ? 1.5 : 1.4,
                "float");
       emitLeaf("geometry_opacity", standard ? "opacity" : "geometry_opacity",

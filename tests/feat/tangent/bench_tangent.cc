@@ -56,8 +56,8 @@
 // ComputeTangentsAndBinormals is a static function in render-data.cc, so we
 // replicate a lightweight standalone version here for the benchmark.
 
-using float2 = lightusd::value::float2;
-using float3 = lightusd::value::float3;
+using float2 = lightusd::legacy::value::float2;
+using float3 = lightusd::legacy::value::float3;
 
 // ============================================================================
 // Standalone Lengyel tangent computation (extracted from render-data.cc)
@@ -332,19 +332,19 @@ static FVMesh generateIcosphere(int subdivisions) {
 #ifdef BENCH_WITH_USD
 // Load a USD file and extract the first mesh as facevarying data
 static bool loadUSDMesh(const std::string &filepath, FVMesh *out, std::string *err) {
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
-  if (!lightusd::LoadUSDFromFile(filepath, &stage, &warn, err)) {
+  if (!lightusd::legacy::LoadUSDFromFile(filepath, &stage, &warn, err)) {
     return false;
   }
 
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.mesh_config.triangulate = true;
   env.mesh_config.compute_tangents_and_binormals = false; // we compute separately
   env.mesh_config.compute_normals = true;
 
-  lightusd::tydra::RenderScene scene;
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
   if (!converter.ConvertToRenderScene(env, &scene)) {
     if (err) *err = converter.GetError();
     return false;

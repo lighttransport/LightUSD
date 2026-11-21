@@ -1,8 +1,8 @@
 // Example JavaScript script to query LayerMeta information
-// This script demonstrates how to access USD Layer metadata through the Tydra JavaScript interface
+// This script demonstrates how to access USD Layer metadata through the core JavaScript example
 
 console.log("=== USD Layer Metadata Query Script ===");
-console.log("This script demonstrates querying LayerMetas through the Tydra JavaScript interface.");
+console.log("This script demonstrates querying LayerMetas through the core JavaScript example.");
 console.log("");
 
 // Get the LayerMetas object from the C++ side

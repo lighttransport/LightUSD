@@ -1,779 +1,728 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2022 - 2023, Syoyo Fujita.
-// Copyright 2023 - Present, Light Transport Entertainment Inc.
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
 //
-// TODO:
-//   - [ ] Subdivision surface to polygon mesh conversion.
-//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
-//     function of subd surface)
-//   - [ ] Support material binding collection(Collection API)
-//   - [ ] Support multiple skel animation
-//   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
-//   - [ ] Adjust normal vector computation with handness?
-//   - [ ] Node xform animation
-//   - [ ] Better build of index buffer
-//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin
-//     indices/weights, BlendShape points, ...) as much as possible.
-//     - Implement spatial hash
-//
-#include <chrono>
-#include <cstdint>
-#include <functional>
-#include <string>
-#include <unordered_map>
-#include <utility>
-#include <vector>
+// Tydra - Render Data Implementation
 
-#include "color-management.hh"
-#include "common-macros.inc"
-#include "lightusd.hh"
-#include "pprint-enum.hh"
-#include "tiny-format.hh"
-#include "tydra/attribute-eval.hh"
-#include "tydra/render-data.hh"
-#include "tydra/render-data-internal.hh"
-#include "tydra/render-data-material-internal.hh"
-#include "tydra/scene-access.hh"
-#include "usdGeom.hh"
-#include "usdShade.hh"
-#include "value-types.hh"
+#include "render-data.hh"
+#include <cmath>
+
+#include "core/safe-arithmetic.hh"
 
 namespace lightusd {
-
 namespace tydra {
 
+RenderMesh::RenderMesh() = default;
+RenderMesh::~RenderMesh() = default;
+RenderMesh::RenderMesh(const RenderMesh&) = default;
+RenderMesh& RenderMesh::operator=(const RenderMesh&) = default;
+RenderMesh::RenderMesh(RenderMesh&&) noexcept = default;
+RenderMesh& RenderMesh::operator=(RenderMesh&&) noexcept = default;
+
+RenderMaterial::RenderMaterial() = default;
+RenderMaterial::~RenderMaterial() = default;
+RenderMaterial::RenderMaterial(const RenderMaterial&) = default;
+RenderMaterial& RenderMaterial::operator=(const RenderMaterial&) = default;
+RenderMaterial::RenderMaterial(RenderMaterial&&) noexcept = default;
+RenderMaterial& RenderMaterial::operator=(RenderMaterial&&) noexcept = default;
+
+RenderScene::RenderScene() = default;
+RenderScene::~RenderScene() = default;
+RenderScene::RenderScene(RenderScene&&) noexcept = default;
+RenderScene& RenderScene::operator=(RenderScene&&) noexcept = default;
+RenderScene::RenderScene(const RenderScene&) = default;
+RenderScene& RenderScene::operator=(const RenderScene&) = default;
 namespace {
 
-using TydraPerfClock = std::chrono::steady_clock;
-
-static double ElapsedMs(const TydraPerfClock::time_point &start) {
-  return double(std::chrono::duration_cast<std::chrono::microseconds>(
-                    TydraPerfClock::now() - start)
-                    .count()) *
-         0.001;
+template <typename T>
+size_t VectorBytes(const std::vector<T>& v) {
+  return safe::saturating_mul(v.capacity(), sizeof(T));
 }
 
-static double NsToMs(const uint64_t ns) {
-  return double(ns) * 0.000001;
+template <typename T>
+size_t VectorSlackBytes(const std::vector<T>& v) {
+  return safe::saturating_mul(v.capacity() - v.size(), sizeof(T));
 }
 
+void AddBytes(size_t* total, size_t bytes) {
+  *total = safe::saturating_add(*total, bytes);
+}
+
+size_t StringVectorBytes(const std::vector<std::string>& v) {
+  size_t total = safe::saturating_mul(v.capacity(), sizeof(std::string));
+  for (const std::string& s : v) {
+    AddBytes(&total, s.capacity());
+  }
+  return total;
+}
+
+size_t StringMapBytes(const std::unordered_map<std::string, int32_t>& m) {
+  size_t total = safe::saturating_mul(m.bucket_count(), sizeof(void*));
+  for (const auto& entry : m) {
+    AddBytes(&total, sizeof(entry));
+    AddBytes(&total, entry.first.capacity());
+  }
+  return total;
+}
 
 }  // namespace
 
-namespace {
-// Clears the converter's streaming-sink pointer on every exit path of
-// ConvertToRenderSceneImpl (works without exceptions). Declared at the top of
-// the function so all `return`s (incl. PUSH_ERROR_AND_RETURN) run the dtor.
-struct SinkScopeGuard {
-  const RenderSceneSink **slot;
-  ~SinkScopeGuard() { *slot = nullptr; }
-};
-}  // namespace
+//
+// RenderMesh
+//
 
-bool RenderSceneConverter::ConvertToRenderScene(
-    const RenderSceneConverterEnv &env, RenderScene *scene) {
-  return ConvertToRenderSceneImpl(env, scene, /* sink */ nullptr);
+void RenderMesh::compact() {
+  face_vertex_counts.shrink_to_fit();
+  face_vertex_indices.shrink_to_fit();
+  points.shrink_to_fit();
+  normals.shrink_to_fit();
+  tangents.shrink_to_fit();
+  texcoords_0.shrink_to_fit();
+  texcoords_1.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+  triangulated_indices.shrink_to_fit();
+  triangulated_face_vertex_indices.shrink_to_fit();
+
+  for (auto& pv : primvars) {
+    pv.float_data.shrink_to_fit();
+    pv.int_data.shrink_to_fit();
+    pv.uint_data.shrink_to_fit();
+    pv.indices.shrink_to_fit();
+  }
+
+  if (skin) {
+    skin->joint_indices.shrink_to_fit();
+    skin->joint_weights.shrink_to_fit();
+  }
+
+  for (auto& bs : blend_shapes) {
+    bs.point_offsets.shrink_to_fit();
+    bs.normal_offsets.shrink_to_fit();
+    for (auto& inbetween : bs.inbetweens) {
+      inbetween.point_offsets.shrink_to_fit();
+    }
+  }
 }
 
-
-bool RenderSceneConverter::ConvertToRenderSceneStreaming(
-    const RenderSceneConverterEnv &env, const RenderSceneSink &sink,
-    RenderScene *scene) {
-  return ConvertToRenderSceneImpl(env, scene, &sink);
+bool RenderMesh::has_alloc_failure() const {
+  if (face_vertex_counts.alloc_failed() || face_vertex_indices.alloc_failed() ||
+      points.alloc_failed() || normals.alloc_failed() ||
+      tangents.alloc_failed() || texcoords_0.alloc_failed() ||
+      texcoords_1.alloc_failed() || colors.alloc_failed() ||
+      opacities.alloc_failed() ||
+      triangulated_indices.alloc_failed() ||
+      triangulated_face_vertex_indices.alloc_failed()) {
+    return true;
+  }
+  for (const auto& pv : primvars) {
+    if (pv.float_data.alloc_failed() || pv.int_data.alloc_failed() ||
+        pv.uint_data.alloc_failed() || pv.indices.alloc_failed()) {
+      return true;
+    }
+  }
+  if (skin && (skin->joint_indices.alloc_failed() ||
+               skin->joint_weights.alloc_failed())) {
+    return true;
+  }
+  for (const auto& bs : blend_shapes) {
+    if (bs.point_offsets.alloc_failed() || bs.normal_offsets.alloc_failed()) {
+      return true;
+    }
+    for (const auto& inbetween : bs.inbetweens) {
+      if (inbetween.point_offsets.alloc_failed()) return true;
+    }
+  }
+  return false;
 }
 
-bool RenderSceneConverter::ConvertToRenderSceneImpl(
-    const RenderSceneConverterEnv &env, RenderScene *scene,
-    const RenderSceneSink *sink) {
-  _sink = sink;
-  SinkScopeGuard _sink_guard{&_sink};
+size_t RenderMesh::memory_usage() const {
+  size_t total = sizeof(*this);
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, texcoords_0_name.capacity());
+  AddBytes(&total, texcoords_1_name.capacity());
+  AddBytes(&total, VectorBytes(subdivision_face_source));
+  AddBytes(&total, face_vertex_counts.memory_usage());
+  AddBytes(&total, face_vertex_indices.memory_usage());
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, normals.memory_usage());
+  AddBytes(&total, tangents.memory_usage());
+  AddBytes(&total, texcoords_0.memory_usage());
+  AddBytes(&total, texcoords_1.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
+  AddBytes(&total, triangulated_indices.memory_usage());
+  AddBytes(&total, triangulated_face_vertex_indices.memory_usage());
 
-  if (!scene) {
-    PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
+  AddBytes(&total, VectorBytes(primvars));
+  for (const auto& pv : primvars) {
+    AddBytes(&total, pv.name.capacity());
+    AddBytes(&total, pv.memory_usage());
+  }
+  AddBytes(&total, VectorBytes(material_subsets));
+  AddBytes(&total, VectorBytes(face_triangle_offsets));
+  AddBytes(&total, VectorBytes(sanitize_face_remap));
+  AddBytes(&total, VectorBytes(hole_faces));
+
+  if (skin) {
+    AddBytes(&total, sizeof(SkinBinding));
+    AddBytes(&total, skin->skeleton_path.capacity());
+    AddBytes(&total, StringVectorBytes(skin->mesh_joint_order));
+    AddBytes(&total, skin->joint_indices.memory_usage());
+    AddBytes(&total, skin->joint_weights.memory_usage());
   }
 
-  color_management::RenderingColorConfig rendering_color;
-  std::string color_warning;
-  if (!color_management::ResolveRenderingColorConfig(
-          env.stage, env.material_config.render_settings_path,
-          &rendering_color, &color_warning)) {
-    PUSH_ERROR_AND_RETURN("Failed to resolve rendering color configuration.");
-  }
-  _working_color_space = rendering_color.working_space;
-  if (!color_warning.empty()) PushWarn(color_warning);
-
-  const auto total_start = TydraPerfClock::now();
-  double count_ms = 0.0;
-  double skel_map_ms = 0.0;
-  double xform_ms = 0.0;
-  double visit_prims_ms = 0.0;
-  double standalone_skel_ms = 0.0;
-  double skel_anim_ms = 0.0;
-  double hierarchy_ms = 0.0;
-  double xform_anim_ms = 0.0;
-  double merge_ms = 0.0;
-  double instance_map_ms = 0.0;
-  double stage_meta_ms = 0.0;
-
-  // Reset progress state
-  _progress_info = DetailedProgressInfo{};
-  _timing_info.clear();
-
-  // Clear lookup caches from previous conversion
-  _skelPathToIndex.clear();
-  _animPathToIndex.clear();
-  _skelNameToIndexCache.clear();
-  _skelRootToSkeleton.clear();
-  _uvNameCache.clear();
-  _materialBindingCache.clear();
-  _materialSourceSignatureCache.clear();
-  _value_clip_layer_cache.clear();
-  _value_clip_stage_cache.clear();
-  ResetConnectionResolveCache(env.stage);
-
-  // Report initial progress
-  if (!CallProgressCallback(0.0f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  // Count meshes and materials before conversion for accurate progress reporting
-  // Single-pass traversal: walk the stage tree once and classify prims by type_id
-  DCOUT("[Tydra] Counting primitives...");
-  PathPrimMap<GeomMesh> meshPrimMap;
-  PathPrimMap<GeomCube> cubePrimMap;
-  PathPrimMap<GeomSphere> spherePrimMap;
-  PathPrimMap<GeomCylinder> cylinderPrimMap;
-  PathPrimMap<GeomCone> conePrimMap;
-  PathPrimMap<GeomCapsule> capsulePrimMap;
-  PathPrimMap<GeomPlane> planePrimMap;
-  PathPrimMap<Material> materialPrimMap;
-  PathPrimMap<Skeleton> allSkeletons;
-  PathPrimMap<SkelRoot> allSkelRoots;
-  PathPrimMap<SkelAnimation> allAnimations;
-  PathPrimMap<GeomPointInstancer> pointInstancerPrimMap;
-
-  {
-    const auto phase_start = TydraPerfClock::now();
-    // Iterative stack-based traversal visiting each prim exactly once
-    struct StackEntry {
-      const Prim *parent;
-      size_t child_idx;
-      size_t parent_path_len;
-    };
-    std::vector<StackEntry> stack;
-    stack.reserve(64);
-    std::string path_buf;
-    path_buf.reserve(256);
-
-    auto classifyPrim = [&](const Prim &prim) {
-      switch (prim.type_id()) {
-        case value::TYPE_ID_GEOM_MESH:
-          if (const auto *p = prim.as<GeomMesh>()) meshPrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_CUBE:
-          if (const auto *p = prim.as<GeomCube>()) cubePrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_SPHERE:
-          if (const auto *p = prim.as<GeomSphere>()) spherePrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_CYLINDER:
-          if (const auto *p = prim.as<GeomCylinder>()) cylinderPrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_CONE:
-          if (const auto *p = prim.as<GeomCone>()) conePrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_CAPSULE:
-          if (const auto *p = prim.as<GeomCapsule>()) capsulePrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_PLANE:
-          if (const auto *p = prim.as<GeomPlane>()) planePrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_MATERIAL:
-          if (const auto *p = prim.as<Material>()) materialPrimMap[path_buf] = p;
-          break;
-        case value::TYPE_ID_SKELETON:
-          if (const auto *p = prim.as<Skeleton>()) allSkeletons[path_buf] = p;
-          break;
-        case value::TYPE_ID_SKEL_ROOT:
-          if (const auto *p = prim.as<SkelRoot>()) allSkelRoots[path_buf] = p;
-          break;
-        case value::TYPE_ID_SKELANIMATION:
-          if (const auto *p = prim.as<SkelAnimation>()) allAnimations[path_buf] = p;
-          break;
-        case value::TYPE_ID_GEOM_POINT_INSTANCER:
-          if (const auto *p = prim.as<GeomPointInstancer>())
-            pointInstancerPrimMap[path_buf] = p;
-          break;
-        default:
-          break;
-      }
-    };
-
-    for (const auto &root_prim : env.stage.root_prims()) {
-      path_buf = "/" + root_prim.local_path().full_path_name();
-      classifyPrim(root_prim);
-
-      if (!root_prim.children().empty()) {
-        stack.push_back({&root_prim, 0, 0});
-      }
-
-      size_t iter = 0;
-      while (!stack.empty()) {
-        if (iter++ >= kMaxDefaultTraversalLimit) {
-          PUSH_WARN("Prim traversal exceeded max iteration limit during pre-processing.");
-          break;
-        }
-        auto &top = stack.back();
-        if (top.child_idx >= top.parent->children().size()) {
-          path_buf.resize(top.parent_path_len);
-          stack.pop_back();
-          continue;
-        }
-
-        const Prim &child = top.parent->children()[top.child_idx];
-        ++top.child_idx;
-
-        size_t cur_len = path_buf.size();
-        path_buf += "/";
-        path_buf += child.local_path().full_path_name();
-
-        classifyPrim(child);
-
-        if (!child.children().empty()) {
-          stack.push_back({&child, 0, cur_len});
-        } else {
-          path_buf.resize(cur_len);
-        }
-      }
-    }
-    count_ms = ElapsedMs(phase_start);
-  }
-  DCOUT("[Tydra] Pre-discovered " << allSkeletons.size() << " skeletons, "
-        << allSkelRoots.size() << " skelroots, " << allAnimations.size() << " animations");
-
-  {
-    const auto phase_start = TydraPerfClock::now();
-    SkelRootSkeletonResolver::BuildMap(allSkeletons, allSkelRoots,
-                                       &_skelRootToSkeleton);
-    skel_map_ms = ElapsedMs(phase_start);
-  }
-  DCOUT("Precomputed SkelRoot->Skeleton entries: " << _skelRootToSkeleton.size());
-
-  // Total meshes includes GeomMesh and all parametric primitives (all converted to meshes)
-  const size_t total_meshes = meshPrimMap.size() + cubePrimMap.size() + spherePrimMap.size() +
-                              cylinderPrimMap.size() + conePrimMap.size() +
-                              capsulePrimMap.size() + planePrimMap.size();
-  const size_t total_materials = materialPrimMap.size();
-  DCOUT("[Tydra] Found " << total_meshes << " meshes ("
-        << meshPrimMap.size() << " mesh, " << cubePrimMap.size() << " cube, "
-        << spherePrimMap.size() << " sphere, "
-        << cylinderPrimMap.size() << " cylinder, " << conePrimMap.size() << " cone, "
-        << capsulePrimMap.size() << " capsule, " << planePrimMap.size() << " plane), "
-        << total_materials << " materials");
-
-  // Report counting complete via detailed progress
-  _progress_info.stage = DetailedProgressInfo::Stage::CountingPrims;
-  _progress_info.meshes_total = total_meshes;
-  _progress_info.materials_total = total_materials;
-  _progress_info.message = "Counted " + std::to_string(total_meshes) + " meshes, " +
-                           std::to_string(total_materials) + " materials";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  // 1. Convert Xform
-  // 2. Convert Material/Texture
-  // 3. Convert Mesh/SkinWeights/BlendShapes
-  // 4. Convert Skeleton(bones)
-  // 5. Build node hierarchy (includes lights and cameras)
-
-  //
-  // 1. Build Xform at specified time.
-  //    Each Prim in Stage is converted to XformNode.
-  //
-  _progress_info.stage = DetailedProgressInfo::Stage::ConvertingXforms;
-  _progress_info.progress = 0.1f;
-  _progress_info.message = "Building xform hierarchy";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  XformNode xform_node;
-  {
-    const auto phase_start = TydraPerfClock::now();
-    if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
-      PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
-    }
-    xform_ms = ElapsedMs(phase_start);
-  }
-
-  // Report progress after xform building (20%)
-  if (!CallProgressCallback(0.2f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  std::string err;
-
-  //
-  // 2. Convert Material/Texture
-  // 3. Convert Mesh/SkinWeights/BlendShapes
-  // 4. Convert Skeleton(bones) and SkelAnimation
-  //
-  // Material conversion will be done in MeshVisitor.
-  //
-  _progress_info.stage = DetailedProgressInfo::Stage::ConvertingMeshes;
-  _progress_info.progress = 0.2f;
-  _progress_info.message = "Converting meshes and materials";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-  if (!EmitPhase(StreamPhase::MaterialsAndMeshes)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  MeshVisitorEnv menv;
-  menv.env = &env;
-  menv.converter = this;
-  menv.meshes_total = total_meshes;
-  menv.materials_total = total_materials;
-  menv.allSkeletons = &allSkeletons;
-  menv.allSkelRoots = &allSkelRoots;
-  menv.allAnimations = &allAnimations;
-
-  // Store pre-discovered maps in converter for use by ConvertMesh
-  _allSkeletons = &allSkeletons;
-  _allSkelRoots = &allSkelRoots;
-  _allAnimations = &allAnimations;
-
-  // Parallel per-mesh geometry conversion (non-streaming only: the streaming
-  // sink contract requires interleaved material/mesh emission in traversal
-  // order). When enabled, materials convert inline during a collection pass
-  // and geometry runs on a worker pool; meshes are merged back in original
-  // traversal order, so output is identical to the serial path.
-  const size_t geom_workers = ResolveGeometryWorkerCount(env.scene_config.num_threads);
-  const bool use_deferred_geometry =
-      (geom_workers > 1) && !HasStreamingSink();
-
-  std::vector<MeshWorkItem> work_items;
-
-  {
-    const auto phase_start = TydraPerfClock::now();
-    bool ret = false;
-    if (use_deferred_geometry) {
-      menv.work_items = &work_items;
-      ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
-      if (ret) {
-        ret = ConvertDeferredMeshes(env, work_items, geom_workers,
-                                    &menv, &err);
-      }
-    } else {
-      ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
-    }
-
-    visit_prims_ms = ElapsedMs(phase_start);
-    if (!ret) {
-      PUSH_ERROR_AND_RETURN(err);
+  AddBytes(&total, VectorBytes(blend_shapes));
+  for (const auto& bs : blend_shapes) {
+    AddBytes(&total, bs.name.capacity());
+    AddBytes(&total, bs.point_offsets.memory_usage());
+    AddBytes(&total, bs.normal_offsets.memory_usage());
+    AddBytes(&total, VectorBytes(bs.point_indices));
+    AddBytes(&total, VectorBytes(bs.inbetweens));
+    for (const auto& inbetween : bs.inbetweens) {
+      AddBytes(&total, inbetween.name.capacity());
+      AddBytes(&total, inbetween.point_offsets.memory_usage());
     }
   }
 
-  // Add standalone skeletons (not referenced by any mesh) to the render scene.
-  // This ensures skeletons with SkelAnimations but no bound meshes are still
-  // available for visualization (e.g. bone hierarchy display).
-  {
-    const auto phase_start = TydraPerfClock::now();
-    for (const auto &skelEntry : allSkeletons) {
-      const std::string &skelPathStr = skelEntry.first;
-      if (_skelPathToIndex.find(skelPathStr) != _skelPathToIndex.end()) {
-        continue;  // Already added by a mesh binding
-      }
-      const Skeleton *skelPtr = skelEntry.second;
-      if (!skelPtr) continue;
+  return total;
+}
 
-      int32_t skel_id = int32_t(skeletons.size());
-      SkelHierarchy skel;
+//
+// RenderPoints
+//
 
-      std::string primName = skelPathStr;
-      size_t lastSlash = primName.rfind('/');
-      if (lastSlash != std::string::npos) {
-        primName = primName.substr(lastSlash + 1);
-      }
-      if (!ConvertSkeletonFromPtr(env, Path(skelPathStr, ""), *skelPtr, primName, &skel)) {
-        PushWarn(fmt::format(
-            "Skipping invalid standalone skeleton {}: {}\n",
-            skelPathStr, GetError()));
-        _err.clear();
-        continue;
-      }
+void RenderPoints::compact() {
+  points.shrink_to_fit();
+  normals.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+}
 
-      _skelPathToIndex[skelPathStr] = skel_id;
-      skeletons.emplace_back(std::move(skel));
-      DCOUT("Added standalone skeleton: " << skelPathStr);
+bool RenderPoints::has_alloc_failure() const {
+  return points.alloc_failed() || normals.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed();
+}
+
+size_t RenderPoints::memory_usage() const {
+  size_t total = sizeof(*this);
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, normals.memory_usage());
+  AddBytes(&total, widths.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
+  return total;
+}
+
+//
+// RenderCurves
+//
+
+void RenderCurves::compact() {
+  points.shrink_to_fit();
+  widths.shrink_to_fit();
+  colors.shrink_to_fit();
+  opacities.shrink_to_fit();
+  tessellated_points.shrink_to_fit();
+  tessellated_normals.shrink_to_fit();
+  tessellated_widths.shrink_to_fit();
+  tessellated_colors.shrink_to_fit();
+  tessellated_opacities.shrink_to_fit();
+}
+
+bool RenderCurves::has_alloc_failure() const {
+  return points.alloc_failed() || widths.alloc_failed() ||
+         colors.alloc_failed() || opacities.alloc_failed() ||
+         tessellated_points.alloc_failed() || tessellated_normals.alloc_failed() ||
+         tessellated_widths.alloc_failed() ||
+         tessellated_colors.alloc_failed() ||
+         tessellated_opacities.alloc_failed();
+}
+
+size_t RenderCurves::memory_usage() const {
+  size_t total = sizeof(*this);
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, VectorBytes(curve_vertex_counts));
+  AddBytes(&total, points.memory_usage());
+  AddBytes(&total, widths.memory_usage());
+  AddBytes(&total, colors.memory_usage());
+  AddBytes(&total, opacities.memory_usage());
+  AddBytes(&total, VectorBytes(tessellated_vertex_counts));
+  AddBytes(&total, tessellated_points.memory_usage());
+  AddBytes(&total, tessellated_normals.memory_usage());
+  AddBytes(&total, tessellated_widths.memory_usage());
+  AddBytes(&total, tessellated_colors.memory_usage());
+  AddBytes(&total, tessellated_opacities.memory_usage());
+  return total;
+}
+
+//
+// RenderPointInstancer
+//
+
+size_t RenderPointInstancer::memory_usage() const {
+  size_t total = sizeof(*this);
+  AddBytes(&total, StringVectorBytes(prototype_paths));
+  AddBytes(&total, VectorBytes(prototype_node_ids));
+  AddBytes(&total, VectorBytes(prototype_mesh_offsets));
+  AddBytes(&total, VectorBytes(prototype_mesh_ids));
+  AddBytes(&total, VectorBytes(prototype_mesh_transforms));
+  AddBytes(&total, VectorBytes(proto_indices));
+  AddBytes(&total, VectorBytes(positions));
+  AddBytes(&total, VectorBytes(orientations));
+  AddBytes(&total, VectorBytes(scales));
+  AddBytes(&total, VectorBytes(velocities));
+  AddBytes(&total, VectorBytes(angular_velocities));
+  AddBytes(&total, VectorBytes(ids));
+  AddBytes(&total, VectorBytes(invisible_ids));
+  AddBytes(&total, VectorBytes(inactive_ids));
+  AddBytes(&total, VectorBytes(transforms));
+  AddBytes(&total, VectorBytes(instance_visible));
+  AddBytes(&total, VectorBytes(compact_instances));
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, prim_path.capacity());
+  AddBytes(&total, validation_error.capacity());
+  return total;
+}
+
+size_t RenderPointInstancer::prototype_mesh_count(size_t prototype_index) const {
+  if (prototype_index + 1 >= prototype_mesh_offsets.size()) return 0;
+  const uint32_t begin = prototype_mesh_offsets[prototype_index];
+  const uint32_t end = prototype_mesh_offsets[prototype_index + 1];
+  return end >= begin ? static_cast<size_t>(end - begin) : 0;
+}
+
+bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
+  if (prototype_mesh_offsets.size() != prototype_paths.size() + 1) return false;
+  if (prototype_node_ids.size() != prototype_paths.size()) return false;
+  if (prototype_mesh_transforms.size() != prototype_mesh_ids.size()) return false;
+  if (prototype_mesh_offsets.empty() || prototype_mesh_offsets[0] != 0) return false;
+  uint32_t prev = 0;
+  for (uint32_t offset : prototype_mesh_offsets) {
+    if (offset < prev) return false;
+    prev = offset;
+  }
+  return prototype_mesh_offsets.back() == prototype_mesh_ids.size();
+}
+
+size_t RenderPointInstancer::visible_instance_count() const {
+  if (instance_visible.empty() && !compact_instances.empty()) {
+    size_t total = 0;
+    for (const CompactInstance& instance : compact_instances) {
+      if ((instance.flags & 1u) != 0) ++total;
     }
-    standalone_skel_ms = ElapsedMs(phase_start);
+    return total;
+  }
+  if (instance_visible.empty()) return instance_count();
+  size_t total = 0;
+  for (uint8_t visible : instance_visible) {
+    if (visible) ++total;
+  }
+  return total;
+}
+
+bool RenderPointInstancer::has_valid_draw_range(size_t total_draw_count) const {
+  const size_t start = draw_start;
+  const size_t count = draw_count;
+  return start <= total_draw_count && count <= total_draw_count - start;
+}
+
+//
+// RenderCamera
+//
+
+float RenderCamera::fov_y() const {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      vertical_aperture <= 0.0f) {
+    return 0.0f;
+  }
+  // fov_y = 2 * atan(vertical_aperture / (2 * focal_length))
+  return 2.0f * std::atan(vertical_aperture / (2.0f * focal_length));
+}
+
+float RenderCamera::fov_x() const {
+  if (type == CameraType::Orthographic || focal_length <= 0.0f ||
+      horizontal_aperture <= 0.0f) {
+    return 0.0f;
+  }
+  return 2.0f * std::atan(horizontal_aperture / (2.0f * focal_length));
+}
+
+float RenderCamera::aspect_ratio() const {
+  if (vertical_aperture <= 0.0f) return 1.0f;
+  return horizontal_aperture / vertical_aperture;
+}
+
+//
+// RenderScene
+//
+
+size_t RenderScene::memory_usage() const {
+  size_t total = sizeof(*this);
+
+  /* Include catalog capacities and owned metadata strings.  The previous
+   * estimate counted only object sizes, which made the public memory budget
+   * unusable for scenes whose records were mostly paths and lookup keys. */
+  AddBytes(&total, name.capacity());
+  AddBytes(&total, default_prim.capacity());
+  AddBytes(&total, render_settings_path.capacity());
+  AddBytes(&total, working_color_space.capacity());
+  AddBytes(&total, VectorBytes(root_nodes));
+  AddBytes(&total, StringMapBytes(node_by_path));
+  AddBytes(&total, StringMapBytes(mesh_by_path));
+  AddBytes(&total, StringMapBytes(points_by_path));
+  AddBytes(&total, StringMapBytes(curves_by_path));
+  AddBytes(&total, StringMapBytes(point_instancer_by_path));
+  AddBytes(&total, StringMapBytes(material_by_path));
+
+  // Per-record memory_usage() includes sizeof(record); account only for
+  // reserved, unused slots here. TextureImage::memory_usage() covers its
+  // payload alone, so its full catalog allocation is counted below.
+  AddBytes(&total, VectorSlackBytes(meshes));
+  AddBytes(&total, VectorSlackBytes(points));
+  AddBytes(&total, VectorSlackBytes(curves));
+  AddBytes(&total, VectorSlackBytes(point_instancers));
+  AddBytes(&total, VectorBytes(images));
+  for (const auto& mesh : meshes) {
+    AddBytes(&total, mesh.memory_usage());
   }
 
-  // Convert all SkelAnimation prims now that all skeletons have been discovered.
-  // This supports multiple animations per skeleton (when animationSource is a pathvector).
-  DCOUT("Converting all SkelAnimation prims...");
-  {
-    const auto phase_start = TydraPerfClock::now();
-    if (!ConvertAllSkelAnimations(env)) {
-      PUSH_ERROR_AND_RETURN("Failed to convert SkelAnimation prims");
+  for (const auto& point_cloud : points) {
+    AddBytes(&total, point_cloud.memory_usage());
+  }
+
+  for (const auto& curve : curves) {
+    AddBytes(&total, curve.memory_usage());
+  }
+
+  for (const auto& instancer : point_instancers) {
+    AddBytes(&total, instancer.memory_usage());
+  }
+
+  for (const auto& img : images) {
+    AddBytes(&total, img.memory_usage());
+    AddBytes(&total, img.name.capacity());
+    AddBytes(&total, img.resolved_path.capacity());
+    AddBytes(&total, img.asset_identifier.capacity());
+  }
+
+  // Estimate for other containers (saturating on overflow)
+  auto add_size = [&total](size_t count, size_t elem_size) {
+    AddBytes(&total, safe::saturating_mul(count, elem_size));
+  };
+  add_size(nodes.capacity(), sizeof(SceneNode));
+  for (const auto& node : nodes) {
+    AddBytes(&total, node.name.capacity());
+    AddBytes(&total, node.prim_path.capacity());
+    AddBytes(&total, node.prototype_path.capacity());
+    AddBytes(&total, VectorBytes(node.children));
+  }
+  add_size(point_instance_draws.capacity(), sizeof(RenderPointInstanceDraw));
+  add_size(materials.capacity(), sizeof(RenderMaterial));
+  for (const auto& material : materials) {
+    AddBytes(&total, material.name.capacity());
+    AddBytes(&total, material.prim_path.capacity());
+    AddBytes(&total, VectorBytes(material.diagnostics));
+    for (const auto& diagnostic : material.diagnostics) {
+      AddBytes(&total, diagnostic.material_path.capacity());
+      AddBytes(&total, diagnostic.node_path.capacity());
+      AddBytes(&total, diagnostic.shader_id.capacity());
+      AddBytes(&total, diagnostic.message.capacity());
     }
-    skel_anim_ms = ElapsedMs(phase_start);
+    AddBytes(&total, VectorBytes(material.retained_params));
+    for (const auto& parameter : material.retained_params) {
+      AddBytes(&total, parameter.shader.capacity());
+      AddBytes(&total, parameter.name.capacity());
+    }
+    AddBytes(&total, material.displacement_shader_path.capacity());
+    AddBytes(&total, material.volume_shader_path.capacity());
+    AddBytes(&total, material.volume_nodegraph_json.capacity());
+    AddBytes(&total, material.preview_surface_nodegraph_json.capacity());
+    AddBytes(&total, material.mtlx_config.version.capacity());
+    AddBytes(&total, material.mtlx_config.name_space.capacity());
+    AddBytes(&total, material.mtlx_config.colorspace.capacity());
+    AddBytes(&total, material.mtlx_config.source_uri.capacity());
+    if (material.preview_surface) {
+      AddBytes(&total, sizeof(PreviewSurfaceShader));
+    }
+    if (material.openpbr) {
+      AddBytes(&total, sizeof(OpenPBRSurfaceShader));
+      AddBytes(&total, material.openpbr->nodegraph_json.capacity());
+    }
   }
-  DCOUT("SkelAnimation conversion complete");
-
-  // Clear temporary pointers
-  _allSkeletons = nullptr;
-  _allSkelRoots = nullptr;
-  _allAnimations = nullptr;
-  _skelRootToSkeleton.clear();
-  _materialBindingCache.clear();
-  _materialSourceSignatureCache.clear();
-
-  // Report progress after mesh/material conversion (70%)
-  _progress_info.stage = DetailedProgressInfo::Stage::BuildingHierarchy;
-  _progress_info.progress = 0.7f;
-  _progress_info.meshes_processed = menv.meshes_processed;
-  _progress_info.message = "Mesh conversion complete (" +
-      std::to_string(menv.meshes_processed) + " meshes)";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
+  add_size(textures.capacity(), sizeof(RenderTexture));
+  for (const auto& texture : textures) {
+    AddBytes(&total, texture.name.capacity());
+    AddBytes(&total, texture.prim_path.capacity());
+    AddBytes(&total, texture.asset_path.capacity());
+    AddBytes(&total, texture.ktx2_hint.capacity());
+    AddBytes(&total, texture.uv_primvar.capacity());
+    AddBytes(&total, texture.source_color_space.capacity());
+    AddBytes(&total, texture.target_color_space.capacity());
+  }
+  add_size(udim_textures.capacity(), sizeof(RenderUDIMTexture));
+  for (const auto& udim : udim_textures) {
+    AddBytes(&total, udim.prim_name.capacity());
+    AddBytes(&total, udim.abs_path.capacity());
+    AddBytes(&total, udim.display_name.capacity());
+    AddBytes(&total, udim.asset_identifier.capacity());
+    AddBytes(&total, VectorBytes(udim.tiles));
+  }
+  add_size(lights.capacity(), sizeof(RenderLight));
+  for (const auto& light : lights) {
+    AddBytes(&total, light.name.capacity());
+    AddBytes(&total, light.prim_path.capacity());
+    AddBytes(&total, light.shaping_ies_file.capacity());
+    AddBytes(&total, light.texture_file.capacity());
+    AddBytes(&total, StringVectorBytes(light.light_link_targets));
+    AddBytes(&total, StringVectorBytes(light.shadow_link_targets));
+    AddBytes(&total, StringVectorBytes(light.filter_targets));
+  }
+  add_size(cameras.capacity(), sizeof(RenderCamera));
+  for (const auto& camera : cameras) {
+    AddBytes(&total, camera.name.capacity());
+    AddBytes(&total, camera.prim_path.capacity());
+  }
+  add_size(animations.capacity(), sizeof(AnimationClip));
+  for (const auto& animation : animations) {
+    AddBytes(&total, animation.name.capacity());
+    AddBytes(&total, animation.prim_path.capacity());
+    AddBytes(&total, StringVectorBytes(animation.clip_asset_paths));
+    AddBytes(&total, VectorBytes(animation.channels));
+    for (const auto& channel : animation.channels) {
+      AddBytes(&total, channel.target_prim_path.capacity());
+      AddBytes(&total, channel.property_name.capacity());
+      AddBytes(&total, channel.target_skeleton_path.capacity());
+      AddBytes(&total, StringVectorBytes(channel.joint_order));
+      AddBytes(&total, StringVectorBytes(channel.blend_shape_order));
+      AddBytes(&total, VectorBytes(channel.joint_remap));
+      AddBytes(&total, VectorBytes(channel.keyframes));
+      AddBytes(&total, VectorBytes(channel.array_values));
+    }
+  }
+  add_size(skeletons.capacity(), sizeof(Skeleton));
+  for (const auto& skeleton : skeletons) {
+    AddBytes(&total, skeleton.name.capacity());
+    AddBytes(&total, skeleton.display_name.capacity());
+    AddBytes(&total, skeleton.prim_path.capacity());
+    AddBytes(&total, skeleton.animation_source_path.capacity());
+    AddBytes(&total, VectorBytes(skeleton.joints));
+    for (const auto& joint : skeleton.joints) {
+      AddBytes(&total, joint.name.capacity());
+      AddBytes(&total, joint.path.capacity());
+      AddBytes(&total, VectorBytes(joint.children));
+    }
+  }
+  add_size(unsupported_renderables.capacity(), sizeof(UnsupportedRenderable));
+  for (const auto& unsupported : unsupported_renderables) {
+    AddBytes(&total, unsupported.prim_path.capacity());
+    AddBytes(&total, unsupported.type_name.capacity());
+    AddBytes(&total, unsupported.reason.capacity());
+  }
+  add_size(conversion_diagnostics.capacity(), sizeof(ConversionDiagnostic));
+  for (const auto& diagnostic : conversion_diagnostics) {
+    AddBytes(&total, diagnostic.prim_path.capacity());
+    AddBytes(&total, diagnostic.message.capacity());
   }
 
-  if (!CallProgressCallback(0.7f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
+  // Physics annotations are part of the retained render snapshot too. Keep
+  // their string and extension-property storage in the public memory budget;
+  // otherwise physics-heavy scenes under-report usage substantially.
+  auto add_physics_properties = [&total](
+      const std::vector<PhysicsProperty>& properties) {
+    AddBytes(&total, VectorBytes(properties));
+    for (const auto& property : properties) {
+      AddBytes(&total, property.name.capacity());
+      AddBytes(&total, property.value.capacity());
+    }
+  };
+  AddBytes(&total, VectorBytes(physics.scenes));
+  for (const auto& value : physics.scenes) {
+    AddBytes(&total, value.prim_path.capacity());
+    add_physics_properties(value.extension_properties);
   }
+  AddBytes(&total, VectorBytes(physics.rigid_bodies));
+  for (const auto& value : physics.rigid_bodies) {
+    AddBytes(&total, value.prim_path.capacity());
+    AddBytes(&total, value.simulation_owner.capacity());
+    add_physics_properties(value.extension_properties);
+  }
+  AddBytes(&total, VectorBytes(physics.colliders));
+  for (const auto& value : physics.colliders) {
+    AddBytes(&total, value.prim_path.capacity());
+    AddBytes(&total, value.simulation_owner.capacity());
+    AddBytes(&total, value.approximation.capacity());
+    add_physics_properties(value.extension_properties);
+  }
+  AddBytes(&total, VectorBytes(physics.joints));
+  for (const auto& value : physics.joints) {
+    AddBytes(&total, value.prim_path.capacity());
+    AddBytes(&total, value.type_name.capacity());
+    AddBytes(&total, value.body0.capacity());
+    AddBytes(&total, value.body1.capacity());
+    add_physics_properties(value.extension_properties);
+  }
+  AddBytes(&total, VectorBytes(physics.materials));
+  for (const auto& value : physics.materials) {
+    AddBytes(&total, value.prim_path.capacity());
+    add_physics_properties(value.extension_properties);
+  }
+  AddBytes(&total, VectorBytes(physics.filtered_pairs));
+  for (const auto& value : physics.filtered_pairs) {
+    AddBytes(&total, value.prim_path.capacity());
+    AddBytes(&total, StringVectorBytes(value.filtered_pair_paths));
+  }
+  AddBytes(&total, StringVectorBytes(physics.articulation_roots));
 
-  //
-  // 5. Build node hierarchy from XformNode and meshes, materials, skeletons,
-  // etc.
-  //
-  _progress_info.message = "Building node hierarchy";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-  if (!EmitPhase(StreamPhase::Hierarchy)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
+  return total;
+}
 
-  {
-    const auto phase_start = TydraPerfClock::now();
-    if (!BuildNodeHierarchy(env, xform_node)) {
+const RenderMesh* RenderScene::get_mesh(int32_t mesh_id) const {
+  if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= meshes.size()) return nullptr;
+  return &meshes[static_cast<size_t>(mesh_id)];
+}
+
+const RenderPoints* RenderScene::get_points(int32_t points_id) const {
+  if (points_id < 0 || static_cast<size_t>(points_id) >= points.size()) return nullptr;
+  return &points[static_cast<size_t>(points_id)];
+}
+
+const RenderCurves* RenderScene::get_curves(int32_t curves_id) const {
+  if (curves_id < 0 || static_cast<size_t>(curves_id) >= curves.size()) {
+    return nullptr;
+  }
+  return &curves[static_cast<size_t>(curves_id)];
+}
+
+const RenderMaterial* RenderScene::get_material(int32_t material_id) const {
+  if (material_id < 0 ||
+      static_cast<size_t>(material_id) >= materials.size()) {
+    return nullptr;
+  }
+  return &materials[static_cast<size_t>(material_id)];
+}
+
+const RenderPointInstancer* RenderScene::get_point_instancer(
+    int32_t instancer_id) const {
+  if (instancer_id < 0 ||
+      static_cast<size_t>(instancer_id) >= point_instancers.size()) {
+    return nullptr;
+  }
+  return &point_instancers[static_cast<size_t>(instancer_id)];
+}
+
+const RenderPointInstanceDraw* RenderScene::get_point_instance_draw(
+    size_t draw_id) const {
+  if (draw_id >= point_instance_draws.size()) return nullptr;
+  return &point_instance_draws[draw_id];
+}
+
+RenderPointInstanceDrawView RenderScene::get_point_instance_draw_view(
+    size_t draw_id) const {
+  RenderPointInstanceDrawView view;
+  view.draw = get_point_instance_draw(draw_id);
+  if (!view.draw) return view;
+  view.instancer = get_point_instancer(view.draw->point_instancer_id);
+  view.mesh = get_mesh(view.draw->mesh_id);
+  view.expanded_mesh = get_mesh(view.draw->expanded_mesh_id);
+  view.material = get_material(view.draw->material_id);
+  return view;
+}
+
+RenderPointInstanceDrawRange RenderScene::get_point_instancer_draws(
+    int32_t instancer_id) const {
+  RenderPointInstanceDrawRange range;
+  const RenderPointInstancer* instancer = get_point_instancer(instancer_id);
+  if (!instancer || instancer->draw_count == 0) return range;
+  const size_t start = instancer->draw_start;
+  const size_t count = instancer->draw_count;
+  if (start > point_instance_draws.size() ||
+      count > point_instance_draws.size() - start) {
+    return range;
+  }
+  range.data = point_instance_draws.data() + start;
+  range.size = count;
+  return range;
+}
+
+const SceneNode* RenderScene::get_node(int32_t node_id) const {
+  if (node_id < 0 || static_cast<size_t>(node_id) >= nodes.size()) return nullptr;
+  return &nodes[static_cast<size_t>(node_id)];
+}
+
+bool RenderScene::has_valid_point_instance_draw_ranges() const {
+  for (size_t instancer_id = 0; instancer_id < point_instancers.size();
+       ++instancer_id) {
+    const RenderPointInstancer& instancer = point_instancers[instancer_id];
+    if (!instancer.has_valid_draw_range(point_instance_draws.size())) {
       return false;
     }
-    if (!ResolveBlendShapeAnimationTargets()) {
-      return false;
-    }
-    hierarchy_ms = ElapsedMs(phase_start);
-  }
-
-  // Stream cameras, lights and the node tree now that world matrices are known.
-  // (Skipped entirely without a streaming sink.)
-  if (_sink) {
-    for (size_t i = 0; i < cameras.size(); i++) {
-      if (!EmitCamera(i, cameras[i].abs_path)) {
-        PushError("Conversion cancelled by user.\n");
-        return false;
-      }
-    }
-    for (size_t i = 0; i < lights.size(); i++) {
-      if (!EmitLight(i, lights[i].abs_path)) {
-        PushError("Conversion cancelled by user.\n");
-        return false;
-      }
-    }
-    for (size_t i = 0; i < root_nodes.size(); i++) {
-      if (!EmitRootNode(i)) {
-        PushError("Conversion cancelled by user.\n");
+    for (size_t draw_i = 0; draw_i < instancer.draw_count; ++draw_i) {
+      const size_t draw_id = static_cast<size_t>(instancer.draw_start) + draw_i;
+      if (draw_id >= point_instance_draws.size()) return false;
+      if (point_instance_draws[draw_id].point_instancer_id !=
+          static_cast<int32_t>(instancer_id)) {
         return false;
       }
     }
   }
-
-  // Report progress after node hierarchy building (85%)
-  _progress_info.stage = DetailedProgressInfo::Stage::ExtractingAnimations;
-  _progress_info.progress = 0.85f;
-  _progress_info.message = "Hierarchy complete, extracting animations";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  if (!CallProgressCallback(0.85f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  //
-  // 6. Extract xformOp animations from nodes with time-sampled transforms
-  //
-  {
-    const auto phase_start = TydraPerfClock::now();
-    ExtractXformAnimations(env, xform_node);
-    xform_anim_ms = ElapsedMs(phase_start);
-  }
-
-  // Report progress after animation extraction (90%)
-  if (!CallProgressCallback(0.9f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  //
-  // 7. Merge meshes with same material (optional optimization)
-  //
-  if (env.scene_config.dedup_materials_by_texture_identity) {
-    const size_t before_textures = textures.size();
-    const size_t removed_textures = DeduplicateTexturesByIdentityImpl();
-    if (removed_textures > 0) {
-      PushInfo("Texture deduplication before material deduplication: " +
-               std::to_string(before_textures) + " -> " +
-               std::to_string(textures.size()) + ".");
-    }
-
-    const size_t before_materials = materials.size();
-    const size_t removed = DeduplicateMaterialsByTextureIdentityImpl();
-    if (removed > 0) {
-      PushInfo("Material deduplication before merge: " +
-               std::to_string(before_materials) + " -> " +
-               std::to_string(materials.size()) + ".");
-    }
-  }
-
-  if (env.scene_config.merge_meshes) {
-    const auto phase_start = TydraPerfClock::now();
-    if (!MergeMeshesImpl(env)) {
-      PushWarn("Mesh merging encountered issues, but conversion continues.\n");
-    }
-    merge_ms = ElapsedMs(phase_start);
-  }
-
-  // Report progress after mesh merging (95%)
-  if (!CallProgressCallback(0.95f)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  instance_map_ms = BuildStageInstances(env, pointInstancerPrimMap);
-
-  if (env.scene_config.flatten_optimized_render_tree) {
-    const size_t before_nodes = root_nodes.size();
-    const size_t kept_nodes = FlattenOptimizedRenderTreeImpl();
-    PushInfo("Flattened optimized render tree: roots " +
-             std::to_string(before_nodes) + " -> 1, render nodes " +
-             std::to_string(kept_nodes) + ".");
-  }
-
-  // render_scene.meshMap = std::move(meshMap);
-  // render_scene.materialMap = std::move(materialMap);
-  // render_scene.textureMap = std::move(textureMap);
-  // render_scene.imageMap = std::move(imageMap);
-  // render_scene.bufferMap = std::move(bufferMap);
-
-  // Stream skeletons/animations then instances (fast tail phases) before the
-  // member arrays are moved into the RenderScene. Skipped without a sink.
-  if (_sink) {
-    if (!EmitPhase(StreamPhase::Animations)) {
-      PushError("Conversion cancelled by user.\n");
-      return false;
-    }
-    for (size_t i = 0; i < skeletons.size(); i++) {
-      if (!EmitSkeleton(i, skeletons[i].abs_path)) {
-        PushError("Conversion cancelled by user.\n");
-        return false;
-      }
-    }
-    for (size_t i = 0; i < animations.size(); i++) {
-      if (!EmitAnimation(i, animations[i].abs_path)) {
-        PushError("Conversion cancelled by user.\n");
-        return false;
-      }
-    }
-    if (!EmitPhase(StreamPhase::Instances)) {
-      PushError("Conversion cancelled by user.\n");
-      return false;
-    }
-    for (size_t i = 0; i < instances.size(); i++) {
-      if (!EmitInstance(i, instances[i].abs_path)) {
-        PushError("Conversion cancelled by user.\n");
-        return false;
-      }
-    }
-  }
-
-  RenderScene render_scene;
-  render_scene.usd_filename = env.usd_filename;
-  render_scene.default_root_node = 0;
-  if (default_node > -1) {
-    if (size_t(default_node) >= root_nodes.size()) {
-      PushWarn("Invalid default_node id. Use 0 for default_node id.");
-    } else {
-      render_scene.default_root_node = uint32_t(default_node);
-    }
-  }
-
-  render_scene.nodes = std::move(root_nodes);
-  render_scene.meshes = std::move(meshes);
-  render_scene.textures = std::move(textures);
-  render_scene.udim_textures = std::move(udim_textures);
-  render_scene.images = std::move(images);
-  render_scene.buffers = std::move(buffers);
-  render_scene.materials = std::move(materials);
-  render_scene.cameras = std::move(cameras);
-  render_scene.lights = std::move(lights);
-  render_scene.skeletons = std::move(skeletons);
-  render_scene.animations = std::move(animations);
-  render_scene.instances = std::move(instances);
-  render_scene.volumes = std::move(volumes);
-
-  // Populate scene metadata from Stage
-  {
-    const auto phase_start = TydraPerfClock::now();
-    const auto &stage_metas = env.stage.metas();
-
-    render_scene.meta.renderSettingsPrimPath =
-        rendering_color.render_settings_path;
-    render_scene.meta.workingColorSpace = rendering_color.working_space;
-    color::ColorSpaceDesc display_linear;
-    color::ColorTransform display_transform;
-    if (color::GetBuiltinColorSpace("lin_rec709_scene", &display_linear) &&
-        color::BuildColorTransform(rendering_color.working_definition,
-                                   display_linear, &display_transform)) {
-      std::copy(display_transform.matrix, display_transform.matrix + 9,
-                render_scene.meta.workingToDisplayLinear.begin());
-    }
-
-    // upAxis
-    if (stage_metas.upAxis.authored()) {
-      render_scene.meta.upAxis = to_string(stage_metas.upAxis.get_value());
-    }
-
-    // metersPerUnit
-    if (stage_metas.metersPerUnit.authored()) {
-      render_scene.meta.metersPerUnit = stage_metas.metersPerUnit.get_value();
-    }
-
-    // framesPerSecond
-    if (stage_metas.framesPerSecond.authored()) {
-      render_scene.meta.framesPerSecond = stage_metas.framesPerSecond.get_value();
-    }
-
-    // timeCodesPerSecond
-    if (stage_metas.timeCodesPerSecond.authored()) {
-      render_scene.meta.timeCodesPerSecond = stage_metas.timeCodesPerSecond.get_value();
-    }
-
-    // startTimeCode
-    if (stage_metas.startTimeCode.authored()) {
-      render_scene.meta.startTimeCode = stage_metas.startTimeCode.get_value();
-    }
-
-    // endTimeCode
-    if (stage_metas.endTimeCode.authored()) {
-      render_scene.meta.endTimeCode = stage_metas.endTimeCode.get_value();
-    }
-
-    // autoPlay
-    if (stage_metas.autoPlay.authored()) {
-      render_scene.meta.autoPlay = stage_metas.autoPlay.get_value();
-    }
-
-    // comment
-    if (!stage_metas.comment.value.empty()) {
-      render_scene.meta.comment = stage_metas.comment.value;
-    }
-
-    // copyright - Check if customLayerData contains copyright info
-    auto it = stage_metas.customLayerData.find("copyright");
-    if (it != stage_metas.customLayerData.end()) {
-      // Try to extract string value from MetaVariable
-      auto copyright_val = it->second.get_value<std::string>();
-      if (copyright_val) {
-        render_scene.meta.copyright = copyright_val.value();
-      } else if (auto string_data =
-                     it->second.get_value<value::StringData>()) {
-        // USDA string metadata is retained as StringData (which preserves its
-        // quoting style); expose its payload through the render-scene string.
-        render_scene.meta.copyright = string_data->value;
-      }
-    }
-    stage_meta_ms = ElapsedMs(phase_start);
-  }
-
-  (*scene) = std::move(render_scene);
-
-  {
-    std::ostringstream ss;
-    ss << "total=" << ElapsedMs(total_start)
-       << " count=" << count_ms
-       << " skelMap=" << skel_map_ms
-       << " xform=" << xform_ms
-       << " visitPrims=" << visit_prims_ms
-       << " materialResolve=" << NsToMs(menv.resolve_material_ns)
-       << "/" << menv.material_resolve_calls
-       << " materialFound=" << menv.material_resolve_found
-       << " materialConvert=" << NsToMs(menv.convert_material_ns)
-       << " materialCache=" << menv.material_cache_hits << "/"
-       << menv.material_cache_misses
-       << " meshConvert=" << NsToMs(menv.convert_mesh_ns)
-       << " meshProgress=" << NsToMs(menv.progress_ns)
-       << " standaloneSkel=" << standalone_skel_ms
-       << " skelAnim=" << skel_anim_ms
-       << " hierarchy=" << hierarchy_ms
-       << " xformAnim=" << xform_anim_ms
-       << " merge=" << merge_ms
-       << " instanceMap=" << instance_map_ms
-       << " metadata=" << stage_meta_ms
-       << " meshes=" << scene->meshes.size()
-       << " materials=" << scene->materials.size()
-       << " textures=" << scene->textures.size()
-       << " images=" << scene->images.size()
-       << " instances=" << scene->instances.size();
-    _timing_info = ss.str();
-  }
-
-  // Report completion (100%)
-  _progress_info.stage = DetailedProgressInfo::Stage::Complete;
-  _progress_info.progress = 1.0f;
-  _progress_info.message = "Conversion complete";
-  if (!CallDetailedProgressCallback(_progress_info)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-  CallProgressCallback(1.0f);
-
-  // Light-link collections depend on the final RenderScene mesh table. Resolve
-  // them after conversion/merge and before the streaming completion callback,
-  // so both monolithic consumers and sinks observe identical records.
-  ResolveLightLinking(env.stage, scene);
-
-  if (!EmitPhase(StreamPhase::Complete)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-  if (!EmitComplete(*scene)) {
-    PushError("Conversion cancelled by user.\n");
-    return false;
-  }
-
-  DCOUT("[Tydra] Conversion complete: " << scene->meshes.size() << " meshes, "
-        << scene->materials.size() << " materials, " << scene->textures.size() << " textures");
-
   return true;
 }
 
+RenderScene::Stats RenderScene::get_stats() const {
+  Stats s = {};
+  s.node_count = nodes.size();
+  s.mesh_count = meshes.size();
+  s.points_count = points.size();
+  s.point_instancer_count = point_instancers.size();
+  s.point_instance_draw_count = point_instance_draws.size();
+  s.material_count = materials.size();
+  s.texture_count = textures.size();
+  s.image_count = images.size();
+  s.light_count = lights.size();
+  s.camera_count = cameras.size();
+  s.animation_count = animations.size();
+  s.skeleton_count = skeletons.size();
+
+  for (const auto& mesh : meshes) {
+    s.total_vertices += mesh.point_count();
+
+    // Count triangles
+    if (mesh.is_triangulated) {
+      s.total_triangles += mesh.triangulated_indices.size() / 3;
+    } else {
+      // Estimate from face counts
+      for (size_t i = 0; i < mesh.face_vertex_counts.size(); ++i) {
+        uint32_t nverts = mesh.face_vertex_counts[i];
+        if (nverts >= 3) {
+          s.total_triangles += nverts - 2;  // Triangle fan decomposition
+        }
+      }
+    }
+  }
+
+  for (const auto& instancer : point_instancers) {
+    s.point_instance_count += instancer.instance_count();
+    s.visible_point_instance_count += instancer.visible_instance_count();
+  }
+
+  for (const auto& point_cloud : points) {
+    s.point_cloud_point_count += point_cloud.point_count();
+  }
+
+  s.curves_count = curves.size();
+  for (const auto& curve : curves) {
+    s.curve_count += curve.curve_count();
+    s.curve_tessellated_point_count += curve.tessellated_point_count();
+  }
+
+  s.memory_bytes = memory_usage();
+  return s;
+}
 
 }  // namespace tydra
 }  // namespace lightusd

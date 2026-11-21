@@ -243,9 +243,9 @@ or darkening it.
 Additional kinds register a parser without core changes:
 
 ```cpp
-lightusd::tydra::next::RegisterLightFilter(
-    "gain", [](const lightusd::next::Stage&, const lightusd::next::UsdPrim&,
-               double, lightusd::tydra::next::LightFilter* out, std::string*) {
+lightusd::tydra::RegisterLightFilter(
+    "gain", [](const lightusd::Stage&, const lightusd::UsdPrim&,
+               double, lightusd::tydra::LightFilter* out, std::string*) {
       out->intensity = 0.5f;   // receiver-independent multiplier
       return true;
     });
@@ -311,7 +311,7 @@ For development without a hardware GPU, use the installed Mesa software stack:
 
 ```sh
 scripts/with-software-rendering.sh \
-  build_ninja/src/next/tydra_next_build/test_scene_preview_compute vulkan
+  build_ninja/src/tydra_build/test_scene_preview_compute vulkan
 python3 tools/lusdpreview/check-renderers.py scene.usda --software \
   --kinds volume --viewer build_ninja/preview-render/lusdview \
   --renderer build_ninja/preview-render/lusdview_lightrt_c_build/lusdrender \

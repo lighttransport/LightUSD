@@ -1,0 +1,9 @@
+[{"parents": [], "joints": []},
+ {"parents": [-1], "joints": ["root"]},
+ {"parents": [-1, 0], "joints": ["root", "root/child"]},
+ {"parents": [-1, 0], "joints": ["root", "root/gap/child"]},
+ {"parents": [1, -1], "joints": ["root/child", "root"]},
+ {"parents": [-1, 2, 0],
+  "joints": ["root", "root/branch/child", "root/branch"]},
+ {"parents": [-1, -1, 0], "joints": ["root", "branch", "root/gap/child"]},
+ {"parents": [-1, -1], "joints": ["one/leaf", "two/leaf"]}]

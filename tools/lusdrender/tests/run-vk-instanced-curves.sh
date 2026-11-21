@@ -16,7 +16,7 @@ for KIND in round ribbon; do
  if [ "$KIND" = ribbon ]; then SOURCE="$TMP/ribbon.usda"; fi
 for MODE in vkInstanced vkInstancedStream; do
  if ! "$BIN" "$SOURCE" "$TMP/$KIND-$MODE.pfm" "-$MODE" --aov depth -camera /C -w 128 -height 128 -stats > "$TMP/$KIND-$MODE.log" 2>&1; then
-  if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/$KIND-$MODE.log";then echo 'SKIP: hardware ray query unavailable';exit 77;fi
+  if grep -qiE 'ray.query unavailable|needs ray query|Failed to create.*Vulkan|no Vulkan' "$TMP/$KIND-$MODE.log";then echo 'SKIP: hardware ray query unavailable';exit 77;fi
   cat "$TMP/$KIND-$MODE.log";exit 1
  fi
  grep -q '1 prototypes .* x 2 instances' "$TMP/$KIND-$MODE.log" || { cat "$TMP/$KIND-$MODE.log";exit 1; }

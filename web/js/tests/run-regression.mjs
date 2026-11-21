@@ -16,54 +16,58 @@ const REPO_ROOT = path.resolve(WEB_JS_DIR, '../..');
 const NODE = process.execPath;
 
 const NODE_TESTS = [
+  ['core WebGPU texture uploads', 'tests/core-webgpu-texture.test.mjs'],
+  ['core streaming transfer', 'tests/core-stream-transfer.test.mjs'],
+  ['core export CLI', 'tests/core-export-cli.test.mjs'],
+  ['core usdcat CLI', 'tests/usdcat-cli.test.mjs'],
+  ['core memory diagnostic', 'cli/memory-usage-test.js'],
+  ['core physics roundtrip CLI', 'cli/usd-urdf-roundtrip.js'],
+  ['core image textures', 'tests/core-image-texture.test.mjs'],
+  ['core render inspector', 'tests/core-render-inspector.test.mjs'],
+  ['core progress CLI', 'cli/test-progress-cli.js'],
+  ['core loader progress', 'tests/core-loader-progress.test.mjs'],
+  ['core texture bindings', 'tests/core-texture-bindings.test.mjs'],
   ['WebGPU MaterialX graph and scene', 'tests/webgpu-mtlx.test.mjs'],
   ['WebGPU MaterialX USD graph snapshot', 'tests/webgpu-mtlx-usd-graph.mjs'],
+  ['core physics CLI', 'tests/core-physics-cli.test.mjs'],
+  ['core public composer', 'tests/core-composer.test.mjs'],
+  ['core compact physics snapshots', 'tests/core-physics-snapshot.test.mjs'],
+  ['core generated colors', 'tests/core-generated-colors.test.mjs'],
+  ['core xatlas', 'tests/core-xatlas.test.mjs'],
+  ['core image conversion', 'tests/core-image-convert.test.mjs'],
+  ['core converter textures', 'tests/core-converter-textures.test.mjs'],
+  ['core converter orchestration', 'tests/core-converter-orchestration.test.mjs'],
+  ['core converter geometry', 'tests/core-converter-geometry.test.mjs'],
+  ['core converter materials', 'tests/core-converter-materials.test.mjs'],
   ['usdzconvert helpers', 'tests/test-usdzconvert.js'],
-  ['combined RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
-  ['next usdzconvert', 'tests/usdzconvert-next.test.mjs'],
-  ['next-only usdzconvert', 'tests/usdzconvert-next-only.test.mjs'],
-  ['next USDA composition', 'tests/next-usda-composition.test.mjs'],
-  ['next HTTP asset fallback', 'tests/next-http-asset-fallback.test.mjs'],
-  ['next HTTP texture alias dedup', 'tests/next-http-texture-alias.test.mjs'],
-  ['next asset alias composition', 'tests/next-asset-alias-compose.test.mjs'],
-  ['next independent feature modules', 'tests/next-features.test.mjs'],
-  ['next C dispatch', 'tests/next-c-dispatch.test.mjs'],
-  ['next mesh budget cache', 'tests/next-mesh-budget-cache.test.mjs'],
-  ['next binding copy contracts', 'tests/next-binding-copy-contracts.test.mjs'],
-  ['next material format parity', 'tests/material-format-parity.test.mjs'],
-  ['next WASM parity gap matrix', 'tests/next-wasm-parity-matrix.test.mjs'],
-  ['next flatten workflow parity map', 'tests/next-flatten-parity.test.mjs'],
-  ['next composition workflow parity map', 'tests/next-composition-parity.test.mjs'],
-  ['next loading workflow parity map', 'tests/next-loading-parity.test.mjs'],
-  ['next layer export workflow parity map', 'tests/next-layer-export-parity.test.mjs'],
-  ['next lusdchecker', 'tests/next-checker.test.mjs'],
-  ['next validation parity', 'tests/next-validation-parity.test.mjs'],
-  ['next layer-to-render parity', 'tests/next-layer-render-parity.test.mjs'],
-  ['next mesh ownership parity map', 'tests/next-mesh-access-parity.test.mjs'],
-  ['next asset-store parity matrix', 'tests/next-asset-store-parity.test.mjs'],
-  ['next asset cache/streaming behavior parity', 'tests/next-asset-cache-behavior-parity.test.mjs'],
-  ['next loader configuration behavior parity', 'tests/next-loader-config-behavior-parity.test.mjs'],
-  ['next load diagnostics behavior parity', 'tests/next-load-diagnostics-behavior-parity.test.mjs'],
-  ['next loading behavior parity', 'tests/next-loading-behavior-parity.test.mjs'],
-  ['next render-scene behavior parity', 'tests/next-render-scene-behavior-parity.test.mjs'],
-  ['next composition behavior parity', 'tests/next-composition-behavior-parity.test.mjs'],
-  ['next layer export behavior parity', 'tests/next-layer-export-behavior-parity.test.mjs'],
-  ['next flatten behavior parity', 'tests/next-flatten-behavior-parity.test.mjs'],
-  ['next schema/image utility behavior parity', 'tests/next-schema-utilities-behavior-parity.test.mjs'],
-  ['next allocation-failure gate', 'tests/next-allocation-failure.test.mjs'],
-  ['next volume query contract', 'tests/next-volume-query-contract.test.mjs'],
-  ['next MCP server module', 'tests/next-mcp-server.test.mjs'],
-  ['variant selection overloads', 'tests/apply-variant-selection-overload.test.mjs'],
-  ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
+  ['core RenderStream regression', 'tests/regression-usdzconvert-material-dedup.mjs'],
+  ['core usdzconvert', 'tests/usdzconvert-core.test.mjs'],
+  ['core-only usdzconvert', 'tests/usdzconvert-core-only.test.mjs'],
+  ['core USDA composition', 'tests/core-usda-composition.test.mjs'],
+  ['core HTTP asset fallback', 'tests/core-http-asset-fallback.test.mjs'],
+  ['core HTTP texture alias dedup', 'tests/core-http-texture-alias.test.mjs'],
+  ['core asset alias composition', 'tests/core-asset-alias-compose.test.mjs'],
+  ['core independent feature modules', 'tests/core-features.test.mjs'],
+  ['core C dispatch', 'tests/core-c-dispatch.test.mjs'],
+  ['core mesh budget cache', 'tests/core-mesh-budget-cache.test.mjs'],
+  ['core binding copy contracts', 'tests/core-binding-copy-contracts.test.mjs'],
+  ['core WASM parity gap matrix', 'tests/core-wasm-parity-matrix.test.mjs'],
+  ['core flatten workflow parity map', 'tests/core-flatten-parity.test.mjs'],
+  ['core composition workflow parity map', 'tests/core-composition-parity.test.mjs'],
+  ['core loading workflow parity map', 'tests/core-loading-parity.test.mjs'],
+  ['core lusdchecker', 'tests/core-checker.test.mjs'],
+  ['core mesh ownership parity map', 'tests/core-mesh-access-parity.test.mjs'],
+  ['core asset-store parity matrix', 'tests/core-asset-store-parity.test.mjs'],
+  ['core flatten behavior parity', 'tests/core-flatten-behavior-parity.test.mjs'],
+  ['core allocation-failure gate', 'tests/core-allocation-failure.test.mjs'],
+  ['core volume query contract', 'tests/core-volume-query-contract.test.mjs'],
+  ['core MCP server module', 'tests/core-mcp-server.test.mjs'],
   ['URDF/MJCF CLI', 'tests/urdf-to-usd-cli.test.mjs'],
   ['loader fast materials', 'tests/loader-utils-fast-materials.mjs'],
   ['typed array ownership', 'tests/typed-array-ownership.test.mjs'],
   ['texture compression loader', 'tests/loader-utils-texture-compression.mjs'],
   ['Basis/KTX2 loader', 'tests/loader-utils-basis-ktx2.mjs'],
-  ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],
   ['LightRT BVH occlusion WASM ABI', 'tests/lightrt-wasm.mjs'],
-  ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
-  ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
   ['Lucia UDIM workflow', 'lucia-code/tests/udim-workflow.test.mjs'],
   ['Lucia scene activity gate', 'lucia-code/tests/activity-gate.test.mjs'],
   ['Lucia source deltas and asset snapshots', 'lucia-code/tests/source-delta.test.mjs'],
@@ -73,12 +77,34 @@ const NODE_TESTS = [
   ['Lucia validation failures', 'lucia-code/tests/validation.test.mjs'],
   ['texture memory budget', 'tests/texture-memory-budget.test.mjs'],
   ['UDIM baking', 'tests/udim-bake.test.mjs'],
-  ['MaterialX JSON regression', 'tests/materialx-json-regression.js'],
   ['USD skeleton animation', 'tests/usdskel-animation-test.js'],
 ];
 
-const OPTIONAL_NODE_TESTS = [
+// Tests of the legacy WASM module (lightusd_legacy[_64].js, compile-only and
+// not published): run with --profile legacy after building
+// LIGHTUSD_WASM_PRODUCT=legacy.
+const LEGACY_NODE_TESTS = [
+  ['core material format parity', 'tests/material-format-parity.test.mjs'],
+  ['core layer export workflow parity map', 'tests/core-layer-export-parity.test.mjs'],
+  ['core validation parity', 'tests/core-validation-parity.test.mjs'],
+  ['core layer-to-render parity', 'tests/core-layer-render-parity.test.mjs'],
+  ['core asset cache/streaming behavior parity', 'tests/core-asset-cache-behavior-parity.test.mjs'],
+  ['core loader configuration behavior parity', 'tests/core-loader-config-behavior-parity.test.mjs'],
+  ['core load diagnostics behavior parity', 'tests/core-load-diagnostics-behavior-parity.test.mjs'],
+  ['core loading behavior parity', 'tests/core-loading-behavior-parity.test.mjs'],
+  ['core render-scene behavior parity', 'tests/core-render-scene-behavior-parity.test.mjs'],
+  ['core composition behavior parity', 'tests/core-composition-behavior-parity.test.mjs'],
+  ['core layer export behavior parity', 'tests/core-layer-export-behavior-parity.test.mjs'],
+  ['core schema/image utility behavior parity', 'tests/core-schema-utilities-behavior-parity.test.mjs'],
+
+  ['usdcat CLI helpers', 'tests/usdcat-cli.test.mjs'],
+  ['texture compression WASM ABI', 'tests/texture-compression-wasm.mjs'],
+  ['xatlas WASM mapping', 'tests/xatlas-wasm.mjs'],
+  ['Lucia Code core processors', 'lucia-code/tests/core.test.mjs'],
   ['validation parity', 'tests/validation-parity.mjs'],
+];
+
+const OPTIONAL_NODE_TESTS = [
   ['memory64 capability', 'tests/memory64-test.js'],
 ];
 
@@ -90,7 +116,7 @@ Usage:
   node tests/run-regression.mjs [options]
 
 Options:
-  --profile <full|node|physics|browser>  Gate profile (default: full)
+  --profile <full|node|physics|browser|legacy>  Gate profile (default: full)
   --menagerie <dir>                     Menagerie checkout
   --out <dir>                           Generated output directory
   --software                            Force software browser rendering
@@ -260,8 +286,24 @@ async function runPhysics(results, opts) {
 }
 
 async function runBrowserTests(results, opts) {
+  results.push(await run('MaterialX core inspectors', NODE,
+    ['tests/core-materialx-demos.test.mjs'], {}));
+  results.push(await run('Core codec and colorspace demos', NODE,
+    ['tests/core-codec-colorspace-demos.test.mjs'], {}));
+  results.push(await run('Standalone core demos', NODE,
+    ['tests/standalone-core-demos.test.mjs'], {}));
+  results.push(await run('Core ShaderBall adapter', NODE,
+    ['tests/core-shaderball-adapter.test.mjs'], {}));
+  results.push(await run('Core OpenPBR WebGPU demo', NODE,
+    ['tests/core-openpbr-webgpu-demo.test.mjs'], {}));
+  results.push(await run('Core material-dedup demo', NODE,
+    ['tests/core-material-dedup-demo.test.mjs'], {}));
+  results.push(await run('Core HTTP asset demo', NODE,
+    ['tests/core-http-demo.test.mjs'], {}));
+  results.push(await run('Core streaming demo', NODE,
+    ['tests/core-streaming-demo.test.mjs'], {}));
   results.push(await run('Independent features in browser and Worker', NODE,
-    ['tests/next-features-browser.test.mjs'], {}));
+    ['tests/core-features-browser.test.mjs'], {}));
   results.push(await run('USD validation demos', NODE,
     ['tests/validation-browser.test.mjs'], {}));
   results.push(await run('UDIM browser and Worker baking', NODE,
@@ -332,6 +374,12 @@ async function main() {
   if (opts.profile === 'node' || opts.profile === 'full') await runNodeTests(results);
   if (opts.profile === 'physics' || opts.profile === 'full') await runPhysics(results, opts);
   if (opts.profile === 'browser' || opts.profile === 'full') await runBrowserTests(results, opts);
+  if (opts.profile === 'legacy') {
+    for (const [label, relative] of LEGACY_NODE_TESTS) {
+      if (!exists(relative)) continue;
+      results.push(await run(label, NODE, [relative], {}));
+    }
+  }
 
   const failed = results.filter((result) => !result.ok);
   const summary = {

@@ -55,9 +55,11 @@ def render(binary: pathlib.Path, asset: pathlib.Path, backend: str,
     if not re.search(success_pattern, log):
         unavailable = (
             "unavailable", "no CUDA", "no HIP", "no Vulkan", "failed to create",
-            "Failed to create", "renderer init failed", "WARN: No renderable",
+            "Failed to create", "not built in", "renderer init failed", "WARN: No renderable",
         )
-        if any(token in log for token in unavailable):
+        if any(token in log for token in unavailable) or (
+                backend == "vkr" and
+                re.search(r"Vulkan caps:(?!.*ray_query)", log)):
             print(f"  {backend}: unavailable (skipped)")
             return log, False
         fail(f"{backend} did not report its production RT path", log)

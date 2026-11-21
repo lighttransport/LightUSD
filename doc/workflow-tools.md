@@ -111,7 +111,7 @@ Exit codes: 0 equal, 1 different, 2 incomplete/error.
 ## Static GLB
 
 See [usd_to_gltf](../examples/usd_to_gltf/README.md). The implementation is
-`src/tydra/next/gltf-export.{hh,cc}` and supports both standalone next and native
+`src/tydra/gltf-export.{hh,cc}` and supports both standalone and native
 builds. Conversion losses are explicit; `--strict` makes them fatal.
 
 ## CPU capture and authored products

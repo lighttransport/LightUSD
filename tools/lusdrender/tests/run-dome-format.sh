@@ -26,6 +26,7 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 missing"; exit $SKIP; }
 
 TMP="$(mktemp -d)"
+command -v cygpath >/dev/null 2>&1 && TMP="$(cygpath -m "$TMP")"  # native exes need a Windows path
 trap 'rm -rf "$TMP"' EXIT
 fail() { echo "FAIL: $1"; exit 1; }
 
@@ -120,8 +121,8 @@ COMMON=(-w 64 -height 64 -samples 1 -fitScale 8 -viewDir 0,-1,0)
 "$LUSDRENDER" "$TMP/latlong.usda" "$TMP/latlong.png" "${COMMON[@]}" -rtPreview \
     >/dev/null 2>&1 || fail "latlong render failed"
 
-read BALL_R BALL_G <<< "$(stats "$TMP/ball.png")"
-read LL_R LL_G <<< "$(stats "$TMP/latlong.png")"
+read BALL_R BALL_G <<< "$(stats "$TMP/ball.png" | tr -d '\015')"
+read LL_R LL_G <<< "$(stats "$TMP/latlong.png" | tr -d '\015')"
 echo "mirroredBall: red=$BALL_R green=$BALL_G; latlong: red=$LL_R green=$LL_G"
 
 # 1. The ball mapping never reaches outside the disc: no red anywhere.

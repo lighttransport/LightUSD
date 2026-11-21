@@ -6,7 +6,7 @@ import process from 'node:process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-import createLightUSD from '../src/lightusd/lightusd.js';
+import createLightUSD from '../src/lightusd/lightusd_legacy.js';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const JS_ROOT = path.resolve(TEST_DIR, '..');

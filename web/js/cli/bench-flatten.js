@@ -5,12 +5,12 @@
 // so each run's TRUE peak resident set size is captured in a fresh process
 // (the only reliable way — an in-process measurement misses the emscripten heap
 // high-water mark and can't recover from a wasm `abort()`). Emits a markdown
-// table comparing `legacy` vs `next`, and — when a run overflows the wasm32
+// table comparing `legacy` vs `core`, and — when a run overflows the wasm32
 // 2 GB ceiling and the wasm64 glue is present — re-runs it under wasm64 and
 // records the result as `<pipeline>-wasm64`.
 //
 // Usage:
-//   node web/js/cli/bench-flatten.js [model.usdz ...] [--pipelines legacy,next]
+//   node web/js/cli/bench-flatten.js [model.usdz ...] [--pipelines legacy,core]
 //                                    [--max-usdc-mb N] [--max-mem-mb N]
 //                                    [--stream-textures] [--no-wasm64]
 // With no model args, uses the default corpus under ../../../models/.
@@ -28,7 +28,7 @@ const WASM64_GLUE = path.join(__dirname, '../src/lightusd/lightusd_64.js');
 function parseArgs() {
   const a = process.argv.slice(2);
   const o = {
-    models: [], pipelines: ['legacy', 'next'], maxUsdcMb: 4096, maxMemMb: 4096,
+    models: [], pipelines: ['legacy', 'core'], maxUsdcMb: 4096, maxMemMb: 4096,
     streamTextures: false, wasm64: true,
   };
   for (let i = 0; i < a.length; i++) {
@@ -109,7 +109,7 @@ function main() {
   // Markdown table.
   const cols = [];
   for (const p of opts.pipelines) { cols.push(p); if (have64) cols.push(p + '-wasm64'); }
-  console.log('\n| Model | Input | ' + cols.join(' | ') + ' | next/legacy |');
+  console.log('\n| Model | Input | ' + cols.join(' | ') + ' | core/legacy |');
   console.log('|---|---|' + cols.map(() => '---').join('|') + '|---|');
   for (const row of rows) {
     const cells = cols.map((c) => {
@@ -118,7 +118,7 @@ function main() {
       return r.ok ? fmtMB(r.rssKB) : (r.aborted ? '**overflow**' : 'fail');
     });
     let ratio = '—';
-    const lg = row.results['legacy'], nx = row.results['next'];
+    const lg = row.results['legacy'], nx = row.results['core'];
     if (lg && nx && lg.ok && nx.ok && nx.rssKB) {
       ratio = (lg.rssKB / nx.rssKB).toFixed(2) + '×';
     }

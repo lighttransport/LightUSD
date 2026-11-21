@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import shutil
 import statistics
@@ -545,7 +546,7 @@ def run(config, args):
     result = {'schema_version': 1, 'mode': args.mode, 'inventory_count': len(rows), 'selected_count': len(selected),
               'eligible_count': len(eligible), 'selection': str(output / 'selection.json'), 'datasets': datasets,
               'seed': args.seed, 'config': config, 'cases': [], 'capabilities': {},
-              'provenance': {'source_revision': source_revision(), 'python': sys.version, 'cpu': cpu_identity(), 'environment': {key: value for key, value in os.environ.items() if key.startswith(('HDEMBREE_', 'PXR_WORK_', 'OMP_', 'VK_', 'MESA_VK_', '__NV_')) or key in ('CUDA_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES')}, 'platform': os.uname().sysname + ' ' + os.uname().release,
+              'provenance': {'source_revision': source_revision(), 'python': sys.version, 'cpu': cpu_identity(), 'environment': {key: value for key, value in os.environ.items() if key.startswith(('HDEMBREE_', 'PXR_WORK_', 'OMP_', 'VK_', 'MESA_VK_', '__NV_')) or key in ('CUDA_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES')}, 'platform': platform.system() + ' ' + platform.release(),
                              'renderers': {r['name']: {'executable_sha256': file_hash(r.get('executable', r.get('argv', [''])[0]))} for r in config['renderers']},
                              'converter_sha256': file_hash(config.get('converter', '')),
                              'runner_sha256': {p.name: file_hash(p) for p in HERE.glob('*.py')}}}

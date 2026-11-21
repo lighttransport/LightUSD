@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Package the portable MetaHuman hero layer for the browser WebGL2 demo.
-# Keep the USDA root and reference arcs: the web next backend receives the
+# Keep the USDA root and reference arcs: the web core backend receives the
 # archive's internal layers and composes them in WASM.
 set -euo pipefail
 

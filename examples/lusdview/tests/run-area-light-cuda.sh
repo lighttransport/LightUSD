@@ -11,7 +11,7 @@ printf '%s\n' '{"window_size":{"width":160,"height":120}}' > "$OUT/config.json"
 
 render() {
   local scene="$1" samples="$2" image="$3" log="$4"
-  env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+  env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
     --cuda --frames 1 --rt-samples "$samples" --camera Camera --config "$OUT/config.json" \
     --screenshot "$image" "$scene" >"$log" 2>&1
 }

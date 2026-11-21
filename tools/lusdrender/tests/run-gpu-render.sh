@@ -42,6 +42,13 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# True when the log shows a Vulkan device whose caps lack hardware ray query
+# (compute-only fallback); such a device cannot run the -vkr production path.
+vkr_no_ray_query() {
+  echo "$1" | grep -q "Vulkan caps:" &&
+    ! echo "$1" | grep "Vulkan caps:" | grep -q "ray_query"
+}
+
 run_lusdrender() {
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=5s "$GPU_RENDER_TIMEOUT" "$LUSDRENDER" "$@"
@@ -61,6 +68,11 @@ render() {
         -samples 2 2>&1)"
   if ! echo "$log" | grep -q "backend: LightRT"; then
     echo "  $name: unavailable (skipped)"
+    return 1
+  fi
+  if [ "$name" = "vkr" ] && echo "$log" | grep -q "Vulkan caps:" &&
+     ! echo "$log" | grep "Vulkan caps:" | grep -q "ray_query"; then
+    echo "  $name: device has no hardware ray query (skipped)"
     return 1
   fi
   if [ "$name" = "vkr" ] &&
@@ -169,7 +181,7 @@ render_vkr_path_trace() {
   log="$(run_lusdrender "$ASSET" "$out" -vkr --path-trace \
         --pt-samples 2 --pt-max-depth 3 --pt-rr-depth 2 \
         -w 96 -height 72 -autoframe 2>&1)"
-  if ! echo "$log" | grep -q "backend: LightRT"; then
+  if ! echo "$log" | grep -q "backend: LightRT" || vkr_no_ray_query "$log"; then
     echo "  -vkr --path-trace: Vulkan ray query unavailable (skipped)"
     return 0
   fi
@@ -197,7 +209,7 @@ render_vkr_materialx_graph() {
   log="$(run_lusdrender "$graph_asset" "$out" -vkr -stats --path-trace \
         --pt-samples 1 --pt-max-depth 3 --pt-rr-depth 2 \
         -w 64 -height 48 -autoframe 2>&1)"
-  if ! echo "$log" | grep -q "backend: LightRT"; then
+  if ! echo "$log" | grep -q "backend: LightRT" || vkr_no_ray_query "$log"; then
     echo "  -vkr MaterialX graph: Vulkan ray query unavailable (skipped)"
     return 0
   fi
@@ -250,7 +262,7 @@ USDA
   log="$(run_lusdrender "$scene" "$lit_out" -vkr -stats --path-trace \
         --pt-samples 4 --pt-max-depth 2 -viewDir 0,0,1 -bg 0,0,0 \
         -w 64 -height 64 2>&1)"
-  if ! echo "$log" | grep -q "backend: LightRT"; then
+  if ! echo "$log" | grep -q "backend: LightRT" || vkr_no_ray_query "$log"; then
     echo "  -vkr geometry light: Vulkan ray query unavailable (skipped)"
     return 0
   fi
@@ -279,8 +291,8 @@ render_vkr_forced_fallback() {
   local log
   log="$(run_lusdrender -forceVkrFallback "$ASSET" "$out" -vkr \
         -w 200 -height 150 -autoframe -samples 2 2>&1)"
-  if ! echo "$log" | grep -q "backend: LightRT"; then
-    echo "  -vkr forced fallback: Vulkan unavailable (skipped)"
+  if ! echo "$log" | grep -q "backend: LightRT" || vkr_no_ray_query "$log"; then
+    echo "  -vkr forced fallback: Vulkan ray query unavailable (skipped)"
     return 0
   fi
   if ! echo "$log" | grep -q "compute trace, ray_query fallback"; then

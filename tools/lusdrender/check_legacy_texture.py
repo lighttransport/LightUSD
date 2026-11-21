@@ -2,7 +2,7 @@
 """lusdrender legacy-path texture regression.
 
 The legacy (eager tydra) loader handles every .usda/.usdz -- only .usdc,
--rtPreview and the GPU backends route to the `next` path. It used to flatten each
+-rtPreview and the GPU backends route to the `core` path. It used to flatten each
 material to a constant `base_color` and leave every TriInfo::tex_id at -1, so a
 photo-textured quad rendered as a UNIFORM GRAY: tydra had resolved and decoded the
 UsdUVTexture, but nothing consumed it.

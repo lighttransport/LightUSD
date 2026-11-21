@@ -56,10 +56,10 @@ to clear the stale value.
 | Piece | Why |
 | --- | --- |
 | **lightui** (`examples/common/lightui`) | Software-rendered C99 UI. Its X11 backend `dlopen`s libX11 with its own minimal ABI declarations, so there is no build-time or link-time X dependency — only `libdl`. That property is what makes the app portable and minimal; preserve it. |
-| **`src/next`** (`next::StageSession`) | Lazy USD loading with progress/preview callbacks that can **abort mid-composition**. The budget is enforced from inside those callbacks, so a stage that would bust the cap is never fully built first. |
-| **`src/tydra/next`** (`ConvertToSink`) | Streaming conversion keeps one geometry prim live at a time, and `SelectGeometry` lets us decide `Full`/`Proxy`/`Skip` **per mesh** against the running budget. |
+| **`src/`** (`lightusd::StageSession`) | Lazy USD loading with progress/preview callbacks that can **abort mid-composition**. The budget is enforced from inside those callbacks, so a stage that would bust the cap is never fully built first. |
+| **`src/tydra/`** (`ConvertToSink`) | Streaming conversion keeps one geometry prim live at a time, and `SelectGeometry` lets us decide `Full`/`Proxy`/`Skip` **per mesh** against the running budget. |
 | **lightrt** (`src/external/lightrt`) | CPU BVH kernel. Uses the lightusd-local `lrt_tri_scene_build_indexed`, which keeps indexed data instead of materializing a vertex soup. |
-| **`src/tydra/next/mem-budget.hh`** | Tracking allocator + process cap, shared with `tools/lusdrender`. |
+| **`src/tydra/` (mem-budget.hh)** | Tracking allocator + process cap, shared with `tools/lusdrender`. |
 
 ## Memory budget
 

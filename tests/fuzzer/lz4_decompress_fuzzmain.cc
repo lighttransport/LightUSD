@@ -37,7 +37,7 @@ static int lz4_decompress_main(const uint8_t *data, size_t size)
   dst.resize(uncompressedSize);
 
   std::string err;
-  size_t n = lightusd::LZ4Compression::DecompressFromBuffer(reinterpret_cast<const char *>(data + 8), dst.data(), compressedSize, uncompressedSize, &err);
+  size_t n = lightusd::legacy::LZ4Compression::DecompressFromBuffer(reinterpret_cast<const char *>(data + 8), dst.data(), compressedSize, uncompressedSize, &err);
   (void)n;
 
   return 0;

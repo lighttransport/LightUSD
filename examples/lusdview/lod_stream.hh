@@ -4,7 +4,7 @@
 // fit one host/GPU, so this composes the scene cheaply in proxy LOD, ranks the
 // districts by view importance from a camera, and promotes the nearest to the
 // `full` variant under host-RSS / GPU-VRAM budgets via a generated wrapper layer.
-// The viewer then loads the wrapper (through the --next path).
+// The viewer then loads the wrapper (through the --core path).
 #pragma once
 
 #include <string>

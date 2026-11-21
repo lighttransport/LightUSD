@@ -9,7 +9,9 @@
 // identical structure.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -133,7 +135,7 @@ struct DrawMeshCPU {
   uint64_t uploadedTopologyFingerprint{0};
   size_t uploadedVertexCount{0};
   // Optional per-vertex displayColor (rgb, parallel to `vertices`); empty = none.
-  // Used by the flat --next preview to tint geometry; the material shader
+  // Used by the flat --core preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
   std::vector<float> vertexColors;
   // Optional per-vertex alpha (parallel to `vertices`); empty = fully opaque.
@@ -146,7 +148,7 @@ struct DrawMeshCPU {
   // renderers ignore these until full normal-map/anisotropy evaluation lands.
   std::vector<float> tangents;
   std::vector<float> binormals;
-  // Float/vector primvars retained from the next loader for MaterialX
+  // Float/vector primvars retained from the core loader for MaterialX
   // geompropvalue nodes. Empty until a generic primvar is authored.
   std::vector<DrawGeomPropCPU> geomProps;
   // True when the mesh has no authored normals: the shader shades it with the
@@ -258,14 +260,14 @@ struct DrawMeshCPU {
   float protoAabbMax[3]{0, 0, 0};
   // Max per-axis morph displacement (object space), used to pad protoAabb so a
   // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
-  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
+  // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsCore.
   float morphExtent[3]{0, 0, 0};
-  // --next deform: this mesh's OWN rest-pose world box, and the absolute bone-row
+  // --core deform: this mesh's OWN rest-pose world box, and the absolute bone-row
   // range its jointIdx references. aabbMin/Max cannot serve: a skinned batch keeps
   // the conservative whole-scene box there (a tight rest box would pop the mesh out
-  // of view as the rig moves). These let BuildNextPosedSceneBounds re-derive the
+  // of view as the rig moves). These let BuildCorePosedSceneBounds re-derive the
   // scene box at a new time code from 8 corners per bone, instead of re-skinning
-  // every vertex -- which is what the Tydra path does, and what the next loader is
+  // every vertex -- which is what the Tydra path does, and what the core loader is
   // built to avoid. boneLo < 0 = unskinned.
   float restAabbMin[3]{0, 0, 0};
   float restAabbMax[3]{0, 0, 0};
@@ -609,6 +611,7 @@ enum class MaterialXGraphOpCPU : uint32_t {
   ChiangHairAbsorption,
   Unknown,
   GeomProp,
+  SafePower = 136,
 };
 
 // Canonical, backend-neutral MaterialX graph record. Input indices refer to
@@ -617,6 +620,10 @@ enum class MaterialXGraphOpCPU : uint32_t {
 // the Vulkan descriptor-indexed image table resolves it to a resident texture.
 struct MaterialXGraphNodeCPU {
   MaterialXGraphOpCPU op{MaterialXGraphOpCPU::Unknown};
+  // MaterialX vector widths needed by the runtime evaluators. Scalar outputs
+  // such as length and distance still need the first input's vector width.
+  int components{4};
+  int inputComponents{3};
   int input[3]{-1, -1, -1};
   // Independent fallback values for the three possible inputs.  A single
   // shared fallback loses vector-valued MaterialX constants (for example the
@@ -625,6 +632,9 @@ struct MaterialXGraphNodeCPU {
                     {0.0f, 0.0f, 0.0f, 1.0f},
                     {0.0f, 0.0f, 0.0f, 1.0f}};
   int textureId{-1};  // resolved DrawScene texture slot, when resident
+  // 0 = descriptor transfer already matches; 1 = undo an sRGB decode;
+  // 2 = apply an sRGB decode to a linearly sampled texture.
+  int colorSpaceTransferCorrection{0};
   // Fourth graph dependency for operators such as splitlr/splittb. Packed in
   // the texture-id lane, which those non-image operators otherwise never use.
   int auxInput{-1};
@@ -636,8 +646,118 @@ struct MaterialXGraphNodeCPU {
   // 32-bit hash in the otherwise-unused UV-transform lane.
   std::string geomPropName;
   std::string imagePath;
+  // Authored MaterialX image colorspace token. Empty means use the existing
+  // semantic/slot-based texture interpretation.
+  std::string colorSpaceToken;
   std::string name;
 };
+
+// Compact image-node conversion IDs packed into the otherwise unused third
+// fallback lane. The GPU samplers decode the texture transfer function first
+// (via the texture descriptor), then convert these source primaries to the
+// renderer's linear Rec.709 working space.
+inline int MaterialXGraphColorSpaceMode(const std::string& token) {
+  if (token == "lin_ap1_scene" || token == "srgb_ap1_scene" ||
+      token == "g22_ap1_scene" || token == "acescg" || token == "lin_ap1" ||
+      token == "g22_ap1") return 1;
+  if (token == "lin_ap0_scene" || token == "aces2065-1" ||
+      token == "lin_ap0") return 2;
+  if (token == "lin_rec2020_scene" || token == "lin_rec2020") return 3;
+  if (token == "lin_p3d65_scene" || token == "srgb_p3d65_scene" ||
+      token == "lin_displayp3" || token == "srgb_displayp3") return 4;
+  if (token == "g22_adobergb_scene" || token == "g563_adobergb_scene" ||
+      token == "lin_adobergb_scene" || token == "adobergb" ||
+      token == "lin_adobergb") return 5;
+  return 0;
+}
+
+inline int MaterialXGraphColorSpaceTransfer(const std::string& token) {
+  if (token.rfind("srgb_", 0) == 0 || token == "srgb" || token == "sRGB" ||
+      token == "srgb_texture") return 1;
+  if (token == "g22_rec709_scene" || token == "g22_ap1_scene" ||
+      token == "g22_adobergb_scene" || token == "g22_rec709" ||
+      token == "g22_ap1" || token == "g22_adobergb") return 2;
+  if (token == "g18_rec709_scene" || token == "g18_rec709") return 3;
+  if (token == "g24_rec709_scene" || token == "g24_rec709") return 4;
+  if (token == "g563_adobergb_scene" || token == "g563_adobergb") return 5;
+  // cmlib rec709_display: pow(max(in, 0), 2.4); distinct from signed gamma 2.4.
+  if (token == "rec709_display") return 6;
+  return 0;
+}
+
+inline int MaterialXGraphTransferCorrection(const std::string& token,
+                                            bool sampledSrgb) {
+  const int transfer = MaterialXGraphColorSpaceTransfer(token);
+  // Codes 1-5/6-10 as before; transfer 6 (rec709_display) uses 11 (sampled
+  // as sRGB) and 12 (sampled linear) to avoid colliding with 6 = sRGB.
+  if (sampledSrgb) {
+    if (transfer == 1) return 0;
+    if (transfer == 6) return 11;
+    return transfer == 0 ? 1 : transfer;
+  }
+  if (transfer == 0) return 0;
+  if (transfer == 6) return 12;
+  return transfer == 1 ? 6 : transfer + 5;
+}
+
+inline bool MaterialXGraphColorSpaceSupported(const std::string& token) {
+  return MaterialXGraphColorSpaceMode(token) != 0 ||
+         token == "lin_rec709_scene" || token == "lin_rec709" ||
+         token == "lin_srgb" || token == "srgb_rec709_scene" ||
+         token == "srgb_texture" || token == "sRGB" || token == "srgb" ||
+         MaterialXGraphColorSpaceTransfer(token) != 0;
+}
+
+inline void MaterialXGraphToLinearRec709(float rgb[3], int mode) {
+  const float r = rgb[0], g = rgb[1], b = rgb[2];
+  if (mode == 1) { // ACEScg / AP1
+    rgb[0] = 1.70505f*r - 0.62179f*g - 0.08326f*b;
+    rgb[1] = -0.13026f*r + 1.14080f*g - 0.01054f*b;
+    rgb[2] = -0.02400f*r - 0.12897f*g + 1.15297f*b;
+  } else if (mode == 2) { // ACES2065-1 / AP0
+    rgb[0] = 2.52169f*r - 1.13413f*g - 0.38756f*b;
+    rgb[1] = -0.27648f*r + 1.37272f*g - 0.09624f*b;
+    rgb[2] = -0.01538f*r - 0.15298f*g + 1.16836f*b;
+  } else if (mode == 3) { // Rec.2020
+    rgb[0] = 1.66049f*r - 0.58764f*g - 0.07285f*b;
+    rgb[1] = -0.12455f*r + 1.13290f*g - 0.00835f*b;
+    rgb[2] = -0.01815f*r - 0.10058f*g + 1.11873f*b;
+  } else if (mode == 4) { // Display P3, D65
+    rgb[0] = 1.22494f*r - 0.22494f*g;
+    rgb[1] = -0.04206f*r + 1.04206f*g;
+    rgb[2] = -0.01964f*r - 0.07864f*g + 1.09828f*b;
+  } else if (mode == 5) { // Adobe RGB (1998)
+    rgb[0] = 1.39835536f*r - 0.39835569f*g;
+    rgb[1] = g;
+    rgb[2] = -0.04292889f*g + 1.04292905f*b;
+  }
+}
+
+inline void MaterialXGraphCorrectSampleTransfer(float rgb[3], int correction) {
+  for (int i = 0; i < 3; ++i) {
+    if (correction == 0) continue;
+    float x = rgb[i];
+    if ((correction >= 1 && correction <= 5) || correction == 11) {
+      const float a = std::fabs(x);
+      x = std::copysign(a <= 0.0031308f ? 12.92f * a
+                  : 1.055f * std::pow(a, 1.0f / 2.4f) - 0.055f, x);
+      if (correction == 1) { rgb[i] = x; continue; }
+    }
+    const int transfer = correction >= 11 ? 6 : (correction >= 6 ? correction - 5 : correction);
+    const float a = std::fabs(x);
+    if (transfer == 6) {
+      rgb[i] = x > 0.0f ? std::pow(a, 2.4f) : 0.0f;
+    } else if (transfer == 1) {
+      rgb[i] = std::copysign(a <= 0.04045f ? a / 12.92f
+                    : std::pow((a + 0.055f) / 1.055f, 2.4f), x);
+    } else {
+      const float gamma = transfer == 2 ? 2.2f :
+                          transfer == 3 ? 1.8f :
+                          transfer == 4 ? 2.4f : 563.0f / 256.0f;
+      rgb[i] = std::copysign(std::pow(a, gamma), x);
+    }
+  }
+}
 
 struct MaterialXGraphRuntimeCPU {
   std::vector<MaterialXGraphNodeCPU> nodes;
@@ -934,6 +1054,52 @@ struct DrawTextureCPU {
   std::vector<light3d::Image> mipImages;
 };
 
+// Build a derived LDR texture whose pixels already carry an authored MaterialX
+// image colorspace transfer: the source is decoded the way the descriptor
+// samples it, corrected by `correction` (MaterialXGraphTransferCorrection) and
+// re-encoded as sRGB so the ordinary descriptor path (hardware sampler, mip
+// chain generated from `image`) filters in the override's space. Returns false
+// when the source cannot be converted (non-RGBA8 payloads, UDIM, Ptex, final
+// compressed, or larger than `maxBytes`); callers keep the per-sample fallback.
+inline bool MaterialXBuildTransferOverrideTexture(const DrawTextureCPU& src,
+                                                  int correction,
+                                                  size_t maxBytes,
+                                                  DrawTextureCPU* out) {
+  if (!out || correction == 0 || src.isUdim || src.compressedFinal ||
+      src.ptexMipLevels > 1 || src.image.width <= 0 || src.image.height <= 0 ||
+      src.image.channels != 4) {
+    return false;
+  }
+  const size_t count = static_cast<size_t>(src.image.width) *
+                       static_cast<size_t>(src.image.height);
+  if (src.image.data.size() != count * 4u || count * 4u > maxBytes) return false;
+  auto decode = [](float x) {
+    return x <= 0.04045f ? x / 12.92f : std::pow((x + 0.055f) / 1.055f, 2.4f);
+  };
+  auto encode = [](float x) {
+    x = std::min(1.0f, std::max(0.0f, x));
+    return x <= 0.0031308f ? 12.92f * x
+                           : 1.055f * std::pow(x, 1.0f / 2.4f) - 0.055f;
+  };
+  *out = src;
+  out->mipImages.clear();
+  out->srgb = true;
+  out->assetIdentifier = src.assetIdentifier + "#cs" + std::to_string(correction);
+  for (size_t i = 0; i < count; ++i) {
+    float rgb[3];
+    for (int c = 0; c < 3; ++c) {
+      const float raw = src.image.data[i * 4u + static_cast<size_t>(c)] / 255.0f;
+      rgb[c] = src.srgb ? decode(raw) : raw;
+    }
+    MaterialXGraphCorrectSampleTransfer(rgb, correction);
+    for (int c = 0; c < 3; ++c) {
+      out->image.data[i * 4u + static_cast<size_t>(c)] =
+          static_cast<uint8_t>(encode(rgb[c]) * 255.0f + 0.5f);
+    }
+  }
+  return true;
+}
+
 // A UsdVol volume (OpenVDB) as a dense scalar (density) grid, for GPU 3D-texture
 // raymarching. `data` is the dense float grid (x-contiguous), `world` maps the
 // object-space box [aabbMin, aabbMax] into world space.
@@ -1087,7 +1253,7 @@ struct DrawLightCPU {
   bool hasSpectralEmission{false};
 };
 
-// Render-ready non-mesh geometry retained from the next-core converter. These
+// Render-ready non-mesh geometry retained from the core converter. These
 // carriers deliberately preserve world-space placement and authored/tessellated
 // attributes instead of prematurely expanding them into camera-dependent mesh
 // proxies; raster backends consume them as billboards/ribbons and RT backends
@@ -1187,18 +1353,18 @@ struct DrawScene {
   float previewLightColor[3]{1.0f, 1.0f, 1.0f};
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
 
-  // --next per-frame GPU skinning. The Tydra path re-poses from
-  // RenderScene::skeletons; the next path has no RenderScene, so each skinned
+  // --core per-frame GPU skinning. The Tydra path re-poses from
+  // RenderScene::skeletons; the core path has no RenderScene, so each skinned
   // source mesh records here how to re-pose itself straight from the retained
-  // next Stage. One entry per skinned source mesh (not per DrawMesh: the next
+  // core Stage. One entry per skinned source mesh (not per DrawMesh: the core
   // loader merges meshes into material batches, so one batch may draw vertices
   // from several of these).
   //
   // The mesh's vertices are already world-baked into its batch, so the bone rows
   // this entry owns ([matrixBase, matrixBase + numJoints)) are pre-composed with
-  // both `geomBind` and the mesh's world transform -- see BuildNextSkinningFrame.
+  // both `geomBind` and the mesh's world transform -- see BuildCoreSkinningFrame.
   // Vertices reference them by ABSOLUTE row index through DrawMeshCPU::jointIdx.
-  struct NextSkelBinding {
+  struct CoreSkelBinding {
     std::string skelPath;  // Skeleton prim
     std::string animPath;  // bound SkelAnimation ("" = rest pose)
     std::string meshPath;  // the skinned mesh (diagnostics)
@@ -1209,7 +1375,7 @@ struct DrawScene {
     double renderWorld[16];  // transform applied by the draw after skinning
     double skeletonWorld[16];  // Skeleton prim local-to-world transform
   };
-  std::vector<NextSkelBinding> nextSkels;
+  std::vector<CoreSkelBinding> coreSkels;
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};
@@ -1227,7 +1393,7 @@ struct DrawScene {
   std::vector<std::string> skipped;
   size_t triangleCount{0};
   // Total vertex count, captured at load time. Stored separately because the
-  // --next path frees per-mesh CPU geometry after GPU upload (so summing
+  // --core path frees per-mesh CPU geometry after GPU upload (so summing
   // meshes[].vertices later would report 0).
   size_t vertexCount{0};
 

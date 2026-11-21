@@ -7,12 +7,15 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <thread>
 #include <vector>
 
 #include "image-writer.hh"
 #include "lusdr_context.hh"
+#include "tydra/materialx.hh"
+#include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
 extern "C" {
 #include "mtlxrender/bsdf.h"
@@ -201,7 +204,7 @@ OpenPBRParams OpenPBRParamsFromTri(const TriInfo &tri, const Vec3 &normal) {
   OpenPBRParams p{};
   p.base_weight = 1.0f;
   p.base_color = ToMtlxV3(tri.base_color);
-  p.diffuse_roughness = tri.roughness;
+  p.diffuse_roughness = 0.0f;
   p.metalness = tri.metallic;
   p.specular_weight = 1.0f;
   p.specular_color = tri.use_specular_workflow
@@ -236,7 +239,60 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.base_weight = src.baseWeight;
   p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
   p.diffuse_roughness = src.diffuseRoughness;
+  p.diffuse_model = src.diffuseModel;
+  static_assert(lightusd::tydra::kMaxRealtimeDiffuseLobes == MTLX_MAX_DIFFUSE_LOBES,
+                "Diffuse lobe limits must match");
+  p.diffuse_lobe_count = std::clamp(src.diffuseLobeCount, 0, MTLX_MAX_DIFFUSE_LOBES);
+  for (int i = 0; i < p.diffuse_lobe_count; ++i) {
+    const auto &lobe = src.diffuseLobes[i];
+    p.diffuse_lobes[i].color = v3_make(lobe.color[0], lobe.color[1], lobe.color[2]);
+    p.diffuse_lobes[i].weight = lobe.weight;
+    p.diffuse_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
+    p.diffuse_lobes[i].roughness = lobe.roughness;
+    p.diffuse_lobes[i].model = lobe.model;
+  }
   p.metalness = src.metalness;
+  static_assert(lightusd::tydra::kMaxRealtimeConductorLobes == MTLX_MAX_CONDUCTOR_LOBES,
+                "Conductor lobe limits must match");
+  p.conductor_lobe_count = std::clamp(src.conductorLobeCount, 0, MTLX_MAX_CONDUCTOR_LOBES);
+  for (int i = 0; i < p.conductor_lobe_count; ++i) {
+    const auto &lobe = src.conductorLobes[i];
+    p.conductor_lobes[i].ior = v3_make(lobe.ior[0], lobe.ior[1], lobe.ior[2]);
+    p.conductor_lobes[i].extinction = v3_make(lobe.extinction[0], lobe.extinction[1], lobe.extinction[2]);
+    p.conductor_lobes[i].weight = lobe.weight;
+    p.conductor_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
+    p.conductor_lobes[i].roughness = lobe.roughness;
+    p.conductor_lobes[i].roughness_y = lobe.roughnessY;
+    p.conductor_lobes[i].tangent = v3_make(lobe.tangent[0], lobe.tangent[1], lobe.tangent[2]);
+    p.conductor_lobes[i].normal = v3_make(lobe.normal[0], lobe.normal[1], lobe.normal[2]);
+    p.conductor_lobes[i].retroreflective = lobe.retroreflective;
+    p.conductor_lobes[i].thinfilm_thickness = lobe.thinfilmThickness;
+    p.conductor_lobes[i].thinfilm_ior = lobe.thinfilmIor;
+  }
+  static_assert(lightusd::tydra::kMaxRealtimeSpecularLobes == MTLX_MAX_SPECULAR_LOBES,
+                "Specular lobe limits must match");
+  p.specular_lobe_count = std::clamp(src.specularLobeCount, 0, MTLX_MAX_SPECULAR_LOBES);
+  for (int i = 0; i < p.specular_lobe_count; ++i) {
+    const auto &lobe=src.specularLobes[i];
+    auto &out=p.specular_lobes[i];
+    out.frame.ior=v3_make(lobe.frame.ior[0],lobe.frame.ior[1],lobe.frame.ior[2]);
+    out.frame.extinction=v3_make(lobe.frame.extinction[0],lobe.frame.extinction[1],lobe.frame.extinction[2]);
+    out.frame.weight=lobe.frame.weight;
+    out.frame.weight_color=v3_make(lobe.frame.weightColor[0],lobe.frame.weightColor[1],lobe.frame.weightColor[2]);
+    out.frame.roughness=lobe.frame.roughness;
+    out.frame.roughness_y=lobe.frame.roughnessY;
+    out.frame.tangent=v3_make(lobe.frame.tangent[0],lobe.frame.tangent[1],lobe.frame.tangent[2]);
+    out.frame.normal=v3_make(lobe.frame.normal[0],lobe.frame.normal[1],lobe.frame.normal[2]);
+    out.frame.retroreflective=lobe.frame.retroreflective;
+    out.frame.thinfilm_thickness=lobe.frame.thinfilmThickness;
+    out.frame.thinfilm_ior=lobe.frame.thinfilmIor;
+    out.model=lobe.model;
+    out.tint=v3_make(lobe.tint[0],lobe.tint[1],lobe.tint[2]);
+    out.color0=v3_make(lobe.color0[0],lobe.color0[1],lobe.color0[2]);
+    out.color82=v3_make(lobe.color82[0],lobe.color82[1],lobe.color82[2]);
+    out.color90=v3_make(lobe.color90[0],lobe.color90[1],lobe.color90[2]);
+    out.exponent=lobe.exponent;
+  }
   p.specular_weight = src.specularWeight;
   p.specular_color =
       v3_make(src.specularColor[0], src.specularColor[1], src.specularColor[2]);
@@ -263,10 +319,23 @@ OpenPBRParams OpenPBRParamsFromLightRt(
   p.coat_color = v3_make(src.coatColor[0], src.coatColor[1], src.coatColor[2]);
   p.coat_roughness = src.coatRoughness;
   p.coat_ior = src.coatIor;
+  p.coat_darkening = src.coatDarkening;
+  p.openpbr_coat_remap = src.openPbrCoatRemap;
   p.sheen_weight = src.sheenWeight;
   p.sheen_color =
       v3_make(src.sheenColor[0], src.sheenColor[1], src.sheenColor[2]);
   p.sheen_roughness = src.sheenRoughness;
+  static_assert(lightusd::tydra::kMaxRealtimeSheenLobes == MTLX_MAX_SHEEN_LOBES,
+                "Sheen lobe limits must match");
+  p.sheen_lobe_count = std::clamp(src.sheenLobeCount, 0, MTLX_MAX_SHEEN_LOBES);
+  for (int i = 0; i < p.sheen_lobe_count; ++i) {
+    const auto &lobe = src.sheenLobes[i];
+    p.sheen_lobes[i].color = v3_make(lobe.color[0], lobe.color[1], lobe.color[2]);
+    p.sheen_lobes[i].weight = lobe.weight;
+    p.sheen_lobes[i].weight_color = v3_make(lobe.weightColor[0], lobe.weightColor[1], lobe.weightColor[2]);
+    p.sheen_lobes[i].roughness = lobe.roughness;
+    p.sheen_lobes[i].model = lobe.model;
+  }
   p.thin_film_weight = src.thinFilmWeight;
   p.thin_film_thickness = src.thinFilmThicknessNm;
   p.thin_film_ior = src.thinFilmIor;
@@ -535,6 +604,12 @@ bool SampleAreaLight(const PreviewLight &light, const Vec3 &p, float u1, float u
             Add(Mul(light.axis_u, rr * std::cos(phi)),
                 Mul(light.axis_v, rr * std::sin(phi))));
     nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Mesh) {
+    const float root = std::sqrt(std::max(0.0f, u1));
+    const Vec3 p0 = Sub(light.position, Mul(Add(light.axis_u, light.axis_v), 1.0f / 3.0f));
+    q = Add(p0, Add(Mul(light.axis_u, root * (1.0f - u2)),
+                    Mul(light.axis_v, root * u2)));
+    nl = light.normal;
   } else if (light.kind == PreviewLight::Kind::Cylinder) {
     Vec3 b1, b2;
     OrthonormalBasis(light.axis_u, &b1, &b2);
@@ -602,6 +677,57 @@ Vec3 EvalMaterialIblDiffuse(
   return Vec3{brdf.x * diffuse_irradiance.x * scale,
               brdf.y * diffuse_irradiance.y * scale,
               brdf.z * diffuse_irradiance.z * scale};
+}
+
+// MaterialX's Conty–Kulla directional-albedo fit, used for environment
+// illumination. The diffuse irradiance map stores the cosine-weighted
+// environment average, so this yields the reference white-environment limit.
+float MaterialXSheenDirectionalAlbedo(float cos_view, float roughness) {
+  const float n = std::clamp(cos_view, 0.0f, 1.0f);
+  const float r = std::clamp(roughness, 0.0f, 1.0f);
+  const float numerator = 13.67300f - 68.78018f * n + 799.08825f * r -
+      905.00061f * n * r + 60.28956f * n * n + 1086.96473f * r * r;
+  const float denominator = 1.0f + 61.57746f * n + 442.78211f * r +
+      2597.49308f * n * r + 121.81241f * n * n + 3045.55075f * r * r;
+  return std::clamp(numerator / denominator, 0.0f, 1.0f);
+}
+
+Vec3 EvalMaterialIblSheen(const TriInfo &tri, const Vec3 &normal,
+                          const Vec3 &wo, const Vec3 &irradiance,
+                          const lightusd::tydra::LightRtOpenPBRParams *openpbr) {
+  if (!openpbr) return Vec3{0.0f, 0.0f, 0.0f};
+  const OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
+  if (p.sheen_lobe_count == 0 && p.sheen_weight <= 0.0f)
+    return Vec3{0.0f, 0.0f, 0.0f};
+  const float ndotv = std::clamp(Dot(normal, wo), 0.0f, 1.0f);
+  Vec3 response{0.0f, 0.0f, 0.0f};
+  if (p.sheen_lobe_count > 0) {
+    for (int i = 0; i < p.sheen_lobe_count; ++i) {
+      const MtlxSheenLobe &lobe = p.sheen_lobes[i];
+      const float albedo = lobe.model == MTLX_SHEEN_ZELTNER
+          ? bsdf_zeltner_sheen_albedo(ndotv, lobe.roughness)
+          : MaterialXSheenDirectionalAlbedo(ndotv, lobe.roughness);
+      const float weight = lobe.weight * albedo;
+      response.x += lobe.color.x * lobe.weight_color.x * weight;
+      response.y += lobe.color.y * lobe.weight_color.y * weight;
+      response.z += lobe.color.z * lobe.weight_color.z * weight;
+    }
+  } else if (p.sheen_weight > 0.0f) {
+    const float weight = p.sheen_weight * MaterialXSheenDirectionalAlbedo(ndotv, p.sheen_roughness);
+    response = Vec3{p.sheen_color.x * weight, p.sheen_color.y * weight, p.sheen_color.z * weight};
+  }
+  const float coat_weight = std::clamp(p.coat_weight, 0.0f, 1.0f);
+  const float coat_ior = p.coat_ior;
+  const float f = (coat_ior - 1.0f) / (coat_ior + 1.0f);
+  const float m = 1.0f - ndotv;
+  const float reflectance = f * f + (1.0f - f * f) * m * m * m * m * m;
+  const float coat_transmission = 1.0f - coat_weight * reflectance;
+  response.x *= (1.0f - coat_weight + coat_weight * p.coat_color.x) * coat_transmission;
+  response.y *= (1.0f - coat_weight + coat_weight * p.coat_color.y) * coat_transmission;
+  response.z *= (1.0f - coat_weight + coat_weight * p.coat_color.z) * coat_transmission;
+  return Vec3{response.x * irradiance.x * tri.occlusion,
+              response.y * irradiance.y * tri.occlusion,
+              response.z * irradiance.z * tri.occlusion};
 }
 
 // Environment specular for a prefiltered radiance, via the bounded split-sum
@@ -871,13 +997,98 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
   return true;
 }
 
+bool MakeMaterialXHitContext(const Vec3 &ray_org, const Vec3 &ray_dir,
+                             const RayDiff &rd, const Vec3 &p0,
+                             const Vec3 &p1, const Vec3 &p2,
+                             const float *uv, const float *uv1,
+                             float b1, float b2, MaterialXHitContext *out) {
+  if (!uv || !out) return false;
+  const float b0 = 1.0f - b1 - b2;
+  out->has_uv = true;
+  out->uv[0] = b0 * uv[0] + b1 * uv[2] + b2 * uv[4];
+  out->uv[1] = b0 * uv[1] + b1 * uv[3] + b2 * uv[5];
+
+  const Vec3 e1 = Sub(p1, p0);
+  const Vec3 e2 = Sub(p2, p0);
+  const float du1 = uv[2] - uv[0];
+  const float dv1 = uv[3] - uv[1];
+  const float du2 = uv[4] - uv[0];
+  const float dv2 = uv[5] - uv[1];
+  const float det = du1 * dv2 - du2 * dv1;
+  if (std::fabs(det) > 1.0e-12f) {
+    const float invdet = 1.0f / det;
+    out->dpdu = Mul(Sub(Mul(e1, dv2), Mul(e2, dv1)), invdet);
+    out->dpdv = Mul(Sub(Mul(e2, du1), Mul(e1, du2)), invdet);
+  }
+
+  const Vec3 geometric_normal = Normalize(Cross(e1, e2));
+  float dudx = 0.0f, dvdx = 0.0f, dudy = 0.0f, dvdy = 0.0f;
+  if (ComputeUVFootprint(ray_org, ray_dir, rd, p0, p1, p2,
+                         geometric_normal, uv[0], uv[1], uv[2], uv[3],
+                         uv[4], uv[5], &dudx, &dvdx, &dudy, &dvdy)) {
+    out->uv_dx[0] = dudx;
+    out->uv_dx[1] = dvdx;
+    out->uv_dy[0] = dudy;
+    out->uv_dy[1] = dvdy;
+    out->has_uv_derivatives = true;
+  }
+  if (uv1) {
+    out->has_uv1 = true;
+    out->uv1[0] = b0 * uv1[0] + b1 * uv1[2] + b2 * uv1[4];
+    out->uv1[1] = b0 * uv1[1] + b1 * uv1[3] + b2 * uv1[5];
+    if (ComputeUVFootprint(ray_org, ray_dir, rd, p0, p1, p2,
+                           geometric_normal, uv1[0], uv1[1], uv1[2], uv1[3],
+                           uv1[4], uv1[5], &dudx, &dvdx, &dudy, &dvdy)) {
+      out->uv1_dx[0] = dudx;
+      out->uv1_dx[1] = dvdx;
+      out->uv1_dy[0] = dudy;
+      out->uv1_dy[1] = dvdy;
+    }
+  }
+  return true;
+}
+
+template <class FVec>
+void InterpolateMaterialXGeomProps(
+    const std::vector<MtlxGeomPropRequest>* requests,
+    const FVec* values, const ByteVec* valid,
+    size_t triangle, float u, float v,
+    std::vector<lusdview::MaterialXGeomPropValue>* out) {
+  if (!out) return;
+  out->clear();
+  if (!requests || !values || !valid || requests->empty()) return;
+  const float weights[3] = {1.0f - u - v, u, v};
+  for (size_t property = 0; property < requests->size(); ++property) {
+    const size_t valid_index = triangle * requests->size() + property;
+    const size_t value_index = valid_index * 12;
+    if (valid_index >= valid->size() || !(*valid)[valid_index] ||
+        value_index > values->size() || values->size() - value_index < 12)
+      continue;
+    const MtlxGeomPropRequest& request = (*requests)[property];
+    lusdview::MaterialXGeomPropValue sample;
+    sample.name = request.name;
+    sample.type = static_cast<lusdview::MaterialXGeomPropType>(request.type);
+    for (size_t component = 0; component < request.components; ++component) {
+      sample.value[component] =
+          weights[0] * (*values)[value_index + component] +
+          weights[1] * (*values)[value_index + 4 + component] +
+          weights[2] * (*values)[value_index + 8 + component];
+    }
+    out->push_back(std::move(sample));
+  }
+}
+
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
                     const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
                     const lightusd::tydra::LightRtOpenPBRParams **out_openpbr,
-                    Vec3* geometric_normal, Vec3* shading_normal) {
+                    Vec3* geometric_normal, Vec3* shading_normal,
+                    MaterialXHitContext *materialx_hit,
+                    const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+                    std::vector<lusdview::MaterialXGeomPropValue>* geomprop_values) {
   if (out_openpbr) *out_openpbr = nullptr;
+  if (materialx_hit) *materialx_hit = MaterialXHitContext{};
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
   if (size_t(inst.blas_id) >= blas.size()) return false;
@@ -914,6 +1125,9 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     return true;
   }
   if (size_t(th.prim_id) >= b.tris.size()) return false;
+  InterpolateMaterialXGeomProps(geomprop_requests, &b.tri_geomprops,
+                                &b.tri_geomprops_valid, size_t(th.prim_id),
+                                th.u, th.v, geomprop_values);
   const TriStore &ts = b.tris[size_t(th.prim_id)];
   TriInfo lt;
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
@@ -982,6 +1196,16 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     if (Length(wn) > 1.0e-12f) out->n = Normalize(wn);
   }
   if (shading_normal) *shading_normal = out->n;
+  if (materialx_hit && !b.tri_uvs.empty()) {
+    const size_t base = size_t(th.prim_id) * 6;
+    if (base + 5 < b.tri_uvs.size()) {
+      const float* uv1 = base + 5 < b.tri_uvs1.size()
+                             ? &b.tri_uvs1[base]
+                             : nullptr;
+      MakeMaterialXHitContext(ray_org, ray_dir, rd, wp0, wp1, wp2,
+                              &b.tri_uvs[base], uv1, th.u, th.v, materialx_hit);
+    }
+  }
   const bool has_tex = (lt.tex_id >= 0 || lt.normal_tex_id >= 0 ||
                         lt.rough_tex_id >= 0 || lt.metal_tex_id >= 0 ||
                         lt.emission_tex_id >= 0 || lt.occ_tex_id >= 0 ||
@@ -1110,7 +1334,11 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                *openpbr_mats,
            bool indirect,
            const std::vector<TriangleSceneChunk> *triangle_chunks,
-           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted) {
+           float *primary_hit_t, std::atomic<bool>* diagnostic_exhausted,
+           uint64_t path_seed, std::atomic<bool>* materialx_error,
+           const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+           const std::vector<float>* tri_geomprops,
+           const ByteVec* tri_geomprops_valid) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1125,13 +1353,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
+  MaterialXHitContext materialx_hit;
+  std::vector<lusdview::MaterialXGeomPropValue> materialx_geomprop_values;
   Vec3 hit_geometric_normal{0, 0, 0}, hit_shading_normal{0, 0, 0};
   const lightusd::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
-                       &hit_tri, &hit_openpbr, &hit_geometric_normal, &hit_shading_normal)) {
+                       &hit_tri, &hit_openpbr, &hit_geometric_normal,
+                       &hit_shading_normal, &materialx_hit,
+                       geomprop_requests, &materialx_geomprop_values)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -1190,6 +1422,17 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         if (Length(sn) > 1.0e-12f) hit_tri.n = Normalize(sn);
       }
       hit_shading_normal = hit_tri.n;
+      if (tri_uvs) {
+        const size_t uv_base = size_t(hit.prim_id) * 6;
+        if (uv_base + 5 < tri_uvs->size()) {
+          const float* uv1 = tri_uvs1 && uv_base + 5 < tri_uvs1->size()
+                                 ? &(*tri_uvs1)[uv_base]
+                                 : nullptr;
+          MakeMaterialXHitContext(ray_org, ray_dir, rd, hit_tri.p0, hit_tri.p1,
+                                  hit_tri.p2, &(*tri_uvs)[uv_base], uv1,
+                                  hit.u, hit.v, &materialx_hit);
+        }
+      }
       // Diffuse/normal textures: interpolate per-vertex UV with the barycentric
       // hit weights (Moller-Trumbore: w0=1-u-v for p0, u for p1, v for p2).
       if ((hit_tri.tex_id >= 0 || hit_tri.normal_tex_id >= 0 ||
@@ -1356,6 +1599,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       if (hit_tri.opacity_threshold > 0.0f)
         hit_tri.opacity =
             (hit_tri.opacity < hit_tri.opacity_threshold) ? 0.0f : 1.0f;
+      InterpolateMaterialXGeomProps(geomprop_requests, tri_geomprops,
+                                    tri_geomprops_valid, size_t(hit.prim_id),
+                                    hit.u, hit.v,
+                                    &materialx_geomprop_values);
       tri_t = hit.t;
       tri_hit = true;
     }
@@ -1363,7 +1610,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
-  const bool gathered_directly = indirect && !opt.light_double_count;
+  const bool cpu_materialx_path = opt.path_trace && opt.mtlx_runtime;
+  const bool gathered_directly = indirect && !opt.light_double_count && !cpu_materialx_path;
   if (!tri_hit && !direct_hit.hit) {
     if (primary_hit_t) *primary_hit_t = camera.zfar;
     if (opt.aov != CaptureAov::Color) return Vec3{0, 0, 0};
@@ -1393,15 +1641,177 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
-  if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
-  if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
-  if (opt.aov == CaptureAov::GeometricNormal) return Normalize(hit_geometric_normal);
-  if (opt.aov == CaptureAov::ShadingNormal) return Normalize(hit_shading_normal);
-  if (opt.aov == CaptureAov::PrimId) {
-    const float id = float(tri.capture_prim_id);
-    return Vec3{id, id, id};
+  if (!IsMaterialXAov(opt.aov)) {
+    if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
+    if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
+    if (opt.aov == CaptureAov::GeometricNormal)
+      return Normalize(hit_geometric_normal);
+    if (opt.aov == CaptureAov::ShadingNormal)
+      return Normalize(hit_shading_normal);
+    if (opt.aov == CaptureAov::PrimId) {
+      const float id = float(tri.capture_prim_id);
+      return Vec3{id, id, id};
+    }
   }
   const Vec3 p = Add(ray_org, Mul(ray_dir, hit_t));
+  lightusd::tydra::LightRtOpenPBRParams dynamic_openpbr{};
+  if (opt.mtlx_runtime && tri_hit) {
+    lusdview::MaterialXSurfaceContext context;
+    context.geomprops = &materialx_geomprop_values;
+    if (materialx_hit.has_uv) {
+      context.uv[0] = materialx_hit.uv[0];
+      context.uv[1] = materialx_hit.uv[1];
+      context.uv_dx[0] = materialx_hit.uv_dx[0];
+      context.uv_dx[1] = materialx_hit.uv_dx[1];
+      context.uv_dy[0] = materialx_hit.uv_dy[0];
+      context.uv_dy[1] = materialx_hit.uv_dy[1];
+      context.has_uv_derivatives = materialx_hit.has_uv_derivatives;
+      context.has_uv1 = materialx_hit.has_uv1;
+      context.uv1[0] = materialx_hit.uv1[0];
+      context.uv1[1] = materialx_hit.uv1[1];
+      context.uv1_dx[0] = materialx_hit.uv1_dx[0];
+      context.uv1_dx[1] = materialx_hit.uv1_dx[1];
+      context.uv1_dy[0] = materialx_hit.uv1_dy[0];
+      context.uv1_dy[1] = materialx_hit.uv1_dy[1];
+      context.dpdu[0] = materialx_hit.dpdu.x;
+      context.dpdu[1] = materialx_hit.dpdu.y;
+      context.dpdu[2] = materialx_hit.dpdu.z;
+      context.dpdv[0] = materialx_hit.dpdv.x;
+      context.dpdv[1] = materialx_hit.dpdv.y;
+      context.dpdv[2] = materialx_hit.dpdv.z;
+    }
+    context.position[0] = p.x;
+    context.position[1] = p.y;
+    context.position[2] = p.z;
+    const Vec3 runtime_normal = Normalize(tri.n);
+    context.shading_normal[0] = runtime_normal.x;
+    context.shading_normal[1] = runtime_normal.y;
+    context.shading_normal[2] = runtime_normal.z;
+    context.geometric_normal[0] = hit_geometric_normal.x;
+    context.geometric_normal[1] = hit_geometric_normal.y;
+    context.geometric_normal[2] = hit_geometric_normal.z;
+    const Vec3 runtime_view = Normalize(Mul(ray_dir, -1.0f));
+    context.view_direction[0] = runtime_view.x;
+    context.view_direction[1] = runtime_view.y;
+    context.view_direction[2] = runtime_view.z;
+    std::string eval_error;
+    if (opt.aov == CaptureAov::MaterialXNode) {
+      lusdview::MaterialXNodeValue value;
+      if (!lusdview::EvaluateMaterialXNodeRuntimeAt(
+              opt.mtlx_runtime.get(), context, opt.mtlx_aov_node.c_str(),
+              &value, &eval_error)) {
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true, std::memory_order_relaxed))
+          std::cerr << "MaterialX node AOV evaluation failed: " << eval_error
+                    << "\n";
+        if (materialx_error) materialx_error->store(true, std::memory_order_relaxed);
+        return Vec3{0.0f, 0.0f, 0.0f};
+      }
+      return Vec3{value.rgb[0], value.rgb[1], value.rgb[2]};
+    }
+    if (lusdview::EvaluateMaterialXSurfaceRuntimeAt(
+            opt.mtlx_runtime.get(), context, &dynamic_openpbr, &eval_error)) {
+      tri_openpbr = &dynamic_openpbr;
+      tri.base_color = Vec3{dynamic_openpbr.baseColor[0],
+                            dynamic_openpbr.baseColor[1],
+                            dynamic_openpbr.baseColor[2]};
+      tri.roughness = dynamic_openpbr.diffuseRoughness;
+      tri.metallic = dynamic_openpbr.metalness;
+      tri.clearcoat = dynamic_openpbr.coatWeight;
+      tri.clearcoat_roughness = dynamic_openpbr.coatRoughness;
+      tri.ior = dynamic_openpbr.specularIor;
+      tri.emission = Vec3{dynamic_openpbr.emissionColor[0] * dynamic_openpbr.emission,
+                          dynamic_openpbr.emissionColor[1] * dynamic_openpbr.emission,
+                          dynamic_openpbr.emissionColor[2] * dynamic_openpbr.emission};
+      tri.opacity = dynamic_openpbr.opacity;
+      const Vec3 evaluated_normal{dynamic_openpbr.normal[0],
+                                  dynamic_openpbr.normal[1],
+                                  dynamic_openpbr.normal[2]};
+      if (Length(evaluated_normal) > 1.0e-12f) {
+        tri.n = Normalize(evaluated_normal);
+        hit_shading_normal = tri.n;
+      }
+    } else {
+      static std::atomic<bool> reported{false};
+      if (!reported.exchange(true, std::memory_order_relaxed)) {
+        std::cerr << "MaterialX hit evaluation failed: " << eval_error << "\n";
+      }
+      if (materialx_error) materialx_error->store(true, std::memory_order_relaxed);
+      return Vec3{0.0f,0.0f,0.0f};
+    }
+  }
+  if (opt.aov == CaptureAov::MaterialXDiffuseWeight ||
+      opt.aov == CaptureAov::MaterialXSpecularWeight ||
+      opt.aov == CaptureAov::MaterialXCoatWeight ||
+      opt.aov == CaptureAov::MaterialXTransmissionWeight) {
+    if (!tri_openpbr) return Vec3{0.0f, 0.0f, 0.0f};
+    const OpenPBRParams params = OpenPBRParamsForMaterial(tri, tri.n, tri_openpbr);
+    const BsdfLobeWeights weights = bsdf_lobe_weights(&params);
+    float weight = 0.0f;
+    switch (opt.aov) {
+      case CaptureAov::MaterialXDiffuseWeight: weight = weights.diffuse; break;
+      case CaptureAov::MaterialXSpecularWeight: weight = weights.specular; break;
+      case CaptureAov::MaterialXCoatWeight: weight = weights.coat; break;
+      case CaptureAov::MaterialXTransmissionWeight:
+        weight = weights.transmission;
+        break;
+      default: break;
+    }
+    return Vec3{weight, weight, weight};
+  }
+  if (cpu_materialx_path && tri_hit && tri_openpbr) {
+    // A separate deterministic PCG stream is derived for each path vertex.
+    // The validation scene has a uniform environment; BSDF sampling alone is
+    // unbiased there and avoids double counting the preview's split-sum IBL.
+    pcg32 rng;
+    pcg32_seed(&rng, path_seed, Mix64(path_seed ^ 0xd1b54a32d192ed03ULL));
+    const unsigned max_depth=std::max(1u,std::min(opt.path_trace_max_depth,64u));
+    const float mag=std::max(std::max(std::fabs(p.x),std::fabs(p.y)),std::fabs(p.z));
+    const float eps=std::max(1.0e-4f,mag*3.0e-6f);
+    const float opacity=std::clamp(tri.opacity,0.0f,1.0f);
+    if (opacity<1.0f && pcg32_f(&rng)>=opacity) {
+      if (static_cast<unsigned>(depth)>=max_depth) return Vec3{0.0f,0.0f,0.0f};
+      CameraFrame next_camera=camera; next_camera.znear=eps;
+      RayDiff next_rd; next_rd.valid=false;
+      return Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
+          Add(p,Mul(ray_dir,eps)),ray_dir,textures,tri_uvs,tri_uvs1,tlas,blas,
+          instances,next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,
+          triangle_chunks,nullptr,diagnostic_exhausted,Mix64(rng.state),materialx_error,
+          geomprop_requests,tri_geomprops,tri_geomprops_valid);
+    }
+    if (static_cast<unsigned>(depth)>=max_depth) return tri.emission;
+    const Vec3 view=Normalize(Mul(ray_dir,-1.0f));
+    OpenPBRParams params=OpenPBRParamsForMaterial(tri,tri.n,tri_openpbr);
+    BsdfSample sample{};
+    if (!bsdf_sample(&params,ToMtlxV3(tri.n),ToMtlxV3(view),&rng,&sample) ||
+        sample.pdf<=0.0f || !v3_is_finite(sample.throughput) || !v3_is_finite(sample.wi))
+      return tri.emission;
+    Vec3 throughput=FromMtlxV3(sample.throughput);
+    if (!FiniteColor(throughput)) return tri.emission;
+    const unsigned rr_depth=std::min(opt.path_trace_rr_depth,max_depth);
+    if (static_cast<unsigned>(depth+1)<max_depth &&
+        static_cast<unsigned>(depth+1)>=rr_depth) {
+      const float survival=std::clamp(std::max({throughput.x,throughput.y,throughput.z}),0.05f,0.95f);
+      if (pcg32_f(&rng)>=survival) return tri.emission;
+      throughput=Mul(throughput,1.0f/survival);
+    }
+    Vec3 wi=Normalize(FromMtlxV3(sample.wi));
+    if (!FiniteColor(wi) || Length(wi)<=0.0f) return tri.emission;
+    CameraFrame next_camera=camera; next_camera.znear=eps;
+    RayDiff next_rd; next_rd.valid=false; float next_hit=next_camera.zfar;
+    Vec3 incoming=Shade(scene,direct,tris,mats,lights,ibl,next_camera,opt,
+        Add(p,Mul(wi,eps)),wi,textures,tri_uvs,tri_uvs1,tlas,blas,instances,
+        next_rd,depth+1,tri_colors,tri_normals,openpbr_mats,true,triangle_chunks,
+        &next_hit,diagnostic_exhausted,Mix64(rng.state),materialx_error,
+        geomprop_requests,tri_geomprops,tri_geomprops_valid);
+    if (sample.transmission && sample.crossed && next_hit<next_camera.zfar) {
+      const VolumeMedium medium=transmission_medium(&params);
+      incoming.x*=std::exp(-medium.sigma_t.x*next_hit);
+      incoming.y*=std::exp(-medium.sigma_t.y*next_hit);
+      incoming.z*=std::exp(-medium.sigma_t.z*next_hit);
+    }
+    return FiniteColor(incoming) ? Add(tri.emission,Mul(throughput,incoming)) : tri.emission;
+  }
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray; bounded recursion). Opaque hits (default
   // opacity 1.0) return `col` unchanged, so opaque renders are byte-identical.
@@ -1425,7 +1835,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               ray_dir, textures, tri_uvs, tri_uvs1, tlas, blas, instances, rd,
               depth + 1,
               tri_colors, tri_normals, openpbr_mats, indirect, triangle_chunks,
-              nullptr, diagnostic_exhausted);
+              nullptr, diagnostic_exhausted, path_seed, materialx_error,
+              geomprop_requests, tri_geomprops, tri_geomprops_valid);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   if (opt.diagnostic_emission) {
@@ -1486,9 +1897,32 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // metallic, so its diffuse weight isn't dimmed by it.
     Vec3 f0;
     float kd_metal;
-    if (tri.use_specular_workflow) {
+    float specular_f90 = 1.0f;
+    float specular_roughness = tri.roughness;
+    if (tri.use_specular_workflow && !(opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+        tri_openpbr && (tri_openpbr->conductorLobeCount > 0 || tri_openpbr->specularLobeCount > 0))) {
       f0 = tri.specular_color;
       kd_metal = 0.0f;
+    } else if (opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+               tri_openpbr) {
+      // The LightRT BSDF path carries the complete MaterialX/OpenPBR parameters.
+      // Keep the split-sum environment specular consistent with that material:
+      // the legacy TriInfo values do not include specular_weight, and its
+      // roughness is diffuse roughness for MaterialX surfaces.
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      float dielectric_f0 = (pbr.specular_ior - 1.0f) /
+                            (pbr.specular_ior + 1.0f);
+      dielectric_f0 = dielectric_f0 * dielectric_f0 * pbr.specular_weight;
+      const Vec3 dielectric_f0_color{
+          dielectric_f0 * pbr.specular_color.x,
+          dielectric_f0 * pbr.specular_color.y,
+          dielectric_f0 * pbr.specular_color.z};
+      const Vec3 base = Mul(FromMtlxV3(pbr.base_color), pbr.base_weight);
+      const float metal = pbr.conductor_lobe_count > 0 ? 0.0f : pbr.metalness;
+      f0 = pbr.specular_lobe_count > 0 ? Vec3{0.0f, 0.0f, 0.0f} : Lerp(dielectric_f0_color, base, metal);
+      kd_metal = 0.0f;
+      specular_f90 = pbr.specular_lobe_count > 0 ? 0.0f : std::clamp(pbr.specular_weight, 0.0f, 1.0f);
+      specular_roughness = pbr.specular_roughness;
     } else {
       // ior 1.5 (the default) -> exactly 0.04f, matching the prior fixed constant
       // bit-for-bit; only an authored non-default IOR takes the derived path.
@@ -1502,14 +1936,93 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     Vec3 refl = Reflect(Mul(view, -1.0f), n);
     Vec3 env_refl = EnvDir(*ibl, refl);  // reflection in the dome's frame
-    Vec3 spec_env = SampleIblMip(ibl->prefiltered, env_refl, tri.roughness);
+    Vec3 spec_env = SampleIblMip(ibl->prefiltered, env_refl,
+                                 specular_roughness);
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
-    SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
+    SampleBrdfLut(*ibl, ndotv, specular_roughness, &brdf_a, &brdf_b);
     // Both modes use the bounded split-sum for environment specular (see
     // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
     // bsdf mode, so this stays material-correct.
-    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b);
+    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b * specular_f90);
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i = 0; i < pbr.conductor_lobe_count; ++i) {
+        const MtlxConductorLobe &lobe = pbr.conductor_lobes[i];
+        const v3 one = v3_splat(1.0f), em = v3_sub(lobe.ior, one), ep = v3_add(lobe.ior, one);
+        const v3 k2 = v3_mul(lobe.extinction, lobe.extinction);
+        const v3 num = v3_add(v3_mul(em, em), k2), den = v3_add(v3_mul(ep, ep), k2);
+        Vec3 cf0{num.x / std::max(den.x, 1.0e-6f), num.y / std::max(den.y, 1.0e-6f),
+                       num.z / std::max(den.z, 1.0e-6f)};
+        // Split-sum preview uses Schlick F0 and filtered environment; it is an
+        // approximation to the full conductor Fresnel and compensation model.
+        const float ax = std::clamp(lobe.roughness, 0.0f, 1.0f);
+        const float ay = std::clamp(lobe.roughness_y, 0.0f, 1.0f);
+        const float rough = std::sqrt(std::sqrt(ax * ay));
+        Vec3 lobe_n = FromMtlxV3(lobe.normal);
+        const float lobe_normal_length = Length(lobe_n);
+        if (!std::isfinite(lobe_n.x) || !std::isfinite(lobe_n.y) ||
+            !std::isfinite(lobe_n.z) || !std::isfinite(lobe_normal_length) ||
+            lobe_normal_length < 1.0e-6f) lobe_n = n;
+        else lobe_n = Mul(lobe_n, 1.0f / lobe_normal_length);
+        if (Dot(lobe_n, view) < 0.0f) lobe_n = Mul(lobe_n, -1.0f);
+        const float lobe_ndotv = std::max(0.0f, Dot(lobe_n, view));
+        // Reflecting the view before the microfacet reflection sends the
+        // mirror direction back towards the original view for retroreflection.
+        const Vec3 lobe_refl = EnvDir(*ibl, lobe.retroreflective
+            ? view : Reflect(Mul(view, -1.0f), lobe_n));
+        const Vec3 env = SampleIblMip(ibl->prefiltered, lobe_refl, rough);
+        float a = 1.0f, b = 0.0f;
+        SampleBrdfLut(*ibl, lobe_ndotv, rough, &a, &b);
+        Vec3 response = EvalIblSpecularSplitSum(env, cf0, a, b);
+        if (lobe.thinfilm_thickness > 0.0f && std::isfinite(lobe.thinfilm_thickness) &&
+            std::isfinite(lobe.thinfilm_ior)) {
+          const v3 f0film = bsdf_materialx_conductor_film_fresnel(
+              1.0f, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
+          const v3 fview = bsdf_materialx_conductor_film_fresnel(
+              lobe_ndotv, lobe.ior, lobe.extinction, lobe.thinfilm_thickness, lobe.thinfilm_ior);
+          // Like the reference's Airy directional-albedo approximation, blend
+          // mirror Fresnel with a rough response; the environment LUT and mip
+          // remain a rotationally averaged split-sum approximation.
+          response = Lerp(Mul(env, FromMtlxV3(fview)),
+                          EvalIblSpecularSplitSum(env, FromMtlxV3(f0film), a, b), rough);
+        }
+        const Vec3 tint{lobe.weight_color.x, lobe.weight_color.y, lobe.weight_color.z};
+        spec = Add(spec, Mul(Mul(response, tint), lobe.weight));
+      }
+    }
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf && tri_openpbr) {
+      const OpenPBRParams pbr = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+      for (int i=0; i<pbr.specular_lobe_count; ++i) {
+        const MtlxSpecularLobe &lobe=pbr.specular_lobes[i];
+        const MtlxConductorLobe &frame=lobe.frame;
+        Vec3 ln=FromMtlxV3(frame.normal);
+        const float len=Length(ln);
+        if (!std::isfinite(ln.x) || !std::isfinite(ln.y) || !std::isfinite(ln.z) ||
+            !std::isfinite(len) || len<1.0e-6f) ln=n;
+        else ln=Mul(ln,1.0f/len);
+        if (Dot(ln,view)<0.0f) ln=Mul(ln,-1.0f);
+        const float nv=std::max(0.0f,Dot(ln,view));
+        const float ax=std::isfinite(frame.roughness) ? std::clamp(frame.roughness,0.0f,1.0f) : 1.0f;
+        const float ay=std::isfinite(frame.roughness_y) ? std::clamp(frame.roughness_y,0.0f,1.0f) : 1.0f;
+        const float rough=std::sqrt(std::sqrt(ax*ay));
+        const Vec3 direction=EnvDir(*ibl,frame.retroreflective ? view : Reflect(Mul(view,-1.0f),ln));
+        const Vec3 env=SampleIblMip(ibl->prefiltered,direction,rough);
+        float a=1.0f,b=0.0f; SampleBrdfLut(*ibl,nv,rough,&a,&b);
+        const Vec3 lobe_f0=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,1.0f));
+        const Vec3 fv=FromMtlxV3(bsdf_materialx_specular_fresnel(&lobe,nv));
+        const Vec3 f90=(lobe.model==MTLX_SPECULAR_SCHLICK && frame.thinfilm_thickness<=0.0f)
+            ? Vec3{std::max(0.0f,lobe.color90.x),std::max(0.0f,lobe.color90.y),std::max(0.0f,lobe.color90.z)}
+            : Vec3{1.0f,1.0f,1.0f};
+        Vec3 response=Mul(env,Add(Mul(lobe_f0,a),Mul(f90,b)));
+        if (frame.thinfilm_thickness>0.0f || lobe.model==MTLX_SPECULAR_SCHLICK)
+          response=Lerp(Mul(env,fv),response,rough);
+        Vec3 tint=FromMtlxV3(frame.weight_color);
+        if (lobe.model==MTLX_SPECULAR_DIELECTRIC)
+          tint=Mul(tint,Vec3{std::max(0.0f,lobe.tint.x),std::max(0.0f,lobe.tint.y),std::max(0.0f,lobe.tint.z)});
+        spec=Add(spec,Mul(Mul(response,tint),frame.weight));
+      }
+    }
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
     Vec3 diff =
@@ -1518,6 +2031,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
             : Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
     c_diffuse = Add(c_diffuse, diff);
     c = Add(c, Add(diff, spec));
+    if (opt.material_shading == Options::MaterialShading::LightRtBsdf)
+      c = Add(c, EvalMaterialIblSheen(tri, n, view, diffuse, tri_openpbr));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
     // its own (usually low) roughness, layered on top and weighted by the coat
     // amount. Skipped entirely when clearcoat==0 (byte-identical default).
@@ -1612,7 +2127,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                         opt, bounce_org, wi, textures, tri_uvs, tri_uvs1, tlas,
                         blas, instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats, /*indirect=*/true,
-                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted);
+                        triangle_chunks, &bounce_hit_t, diagnostic_exhausted,
+                        path_seed, materialx_error, geomprop_requests,
+                        tri_geomprops, tri_geomprops_valid);
     // OpenPBR transmission_depth defines a homogeneous interior medium. Apply
     // Beer-Lambert extinction over the actual continuation-ray distance instead
     // of tinting only at the interface; this makes thick glass absorb more than
@@ -1648,7 +2165,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     }
     return out;
   };
-  if (lights.finite.empty() && lights.mesh.empty()) {
+  if (lights.finite.empty() && lights.mesh.empty() && !lights.has_dome &&
+      (!ibl || !ibl->valid)) {
     Vec3 l = Normalize(Sub(camera.origin, p));
     if (Dot(n, l) > 0.0f &&
         (!opt.shadows ||
@@ -1772,9 +2290,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   return apply_opacity(c);
 }
 
-uint8_t ToSRGB8(float linear) {
+uint8_t ToSRGB8(float linear, bool srgb_display_transform) {
   linear = std::max(0.0f, linear);
-  float mapped = linear / (1.0f + linear);
+  const float mapped = srgb_display_transform ? linear : linear / (1.0f + linear);
   float srgb = (mapped <= 0.0031308f)
                    ? (12.92f * mapped)
                    : (1.055f * std::pow(mapped, 1.0f / 2.4f) - 0.055f);
@@ -1818,76 +2336,6 @@ void MakeRay(const CameraFrame &camera, float aspect, float sx, float sy,
 // volume). Good for isolated volumes; refine later.
 // ===========================================================================
 
-std::vector<VolumeData> BuildVolumes(const RenderScene &scene) {
-  std::vector<VolumeData> out;
-  for (const auto &v : scene.volumes) {
-    int fi = v.density_field_index();
-    if (fi < 0) continue;
-    const auto &f = v.fields[size_t(fi)];
-    if (f.buffer_id < 0 || size_t(f.buffer_id) >= scene.buffers.size()) continue;
-    const auto &buf = scene.buffers[size_t(f.buffer_id)];
-    const size_t n = size_t(f.dim[0]) * size_t(f.dim[1]) * size_t(f.dim[2]);
-    if (n == 0) continue;
-
-    VolumeData vd;
-    vd.dim[0] = f.dim[0];
-    vd.dim[1] = f.dim[1];
-    vd.dim[2] = f.dim[2];
-    // Vector fields are shaded through their magnitude (the integrator reads
-    // one scalar per cell).
-    if (!lightusd::tydra::ReadVolumeFieldScalars(buf, f, &vd.density)) continue;
-    vd.bmin = Vec3{f.bounds_min[0], f.bounds_min[1], f.bounds_min[2]};
-    vd.bmax = Vec3{f.bounds_max[0], f.bounds_max[1], f.bounds_max[2]};
-    vd.world = v.world_matrix;
-    matrix4d invw;
-    if (!lightusd::inverse(v.world_matrix, invw, 1.0e-12)) {
-      invw = matrix4d::identity();
-    }
-    vd.inv_world = invw;
-    {
-      const Vec3 ext = Sub(vd.bmax, vd.bmin);
-      const float ex = vd.dim[0] > 0 ? ext.x / float(vd.dim[0]) : 0.0f;
-      const float ey = vd.dim[1] > 0 ? ext.y / float(vd.dim[1]) : 0.0f;
-      const float ez = vd.dim[2] > 0 ? ext.z / float(vd.dim[2]) : 0.0f;
-      vd.voxel_size = std::min(ex, std::min(ey, ez));
-    }
-    // UsdVol fieldClass decides the shading: a level set is an isosurface.
-    vd.level_set = f.level_set;
-    vd.density_scale = v.density_scale;
-    vd.albedo = Vec3{v.albedo[0], v.albedo[1], v.albedo[2]};
-    vd.emission = Vec3{v.emission_color[0] * v.emission_scale,
-                       v.emission_color[1] * v.emission_scale,
-                       v.emission_color[2] * v.emission_scale};
-    vd.background = f.background;
-
-    for (const auto &aux : v.fields) {
-      if (aux.buffer_id < 0 ||
-          size_t(aux.buffer_id) >= scene.buffers.size()) continue;
-      const auto &abuf = scene.buffers[size_t(aux.buffer_id)];
-      const size_t an = size_t(aux.dim[0]) * size_t(aux.dim[1]) *
-                        size_t(aux.dim[2]);
-      if (an == 0) continue;
-      VolumeScalarField *dst_field = nullptr;
-      if (aux.field_name == "temperature") {
-        dst_field = &vd.temperature_field;
-      } else if (aux.field_name == "emission" || aux.field_name == "flame" ||
-                 aux.field_name == "heat") {
-        dst_field = &vd.emission_field;
-      }
-      if (dst_field) {
-        if (!lightusd::tydra::ReadVolumeFieldScalars(abuf, aux, &dst_field->data)) continue;
-        for (int a = 0; a < 3; ++a) {
-          dst_field->dim[a] = aux.dim[a];
-        }
-        dst_field->bmin = {aux.bounds_min[0], aux.bounds_min[1], aux.bounds_min[2]};
-        dst_field->bmax = {aux.bounds_max[0], aux.bounds_max[1], aux.bounds_max[2]};
-        dst_field->background = aux.background;
-      }
-    }
-    out.push_back(std::move(vd));
-  }
-  return out;
-}
 
 // Fast blackbody approximation in linear-ish RGB. VDB fire fields are often
 // normalized rather than Kelvin, so map [0,1] to a useful 1000..6500 K range.
@@ -1947,7 +2395,7 @@ static bool RayAABBVol(const Vec3 &o, const Vec3 &d, const Vec3 &bmin,
 
 static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
                                  const Vec3 &d, float t0, float t1,
-                                 float *t_hit) {
+                                 float *t_hit, size_t *work = nullptr) {
   if (!t_hit) return false;
   const float dir_len = Length(d);
   if (!std::isfinite(dir_len) || dir_len <= 1.0e-9f) return false;
@@ -1959,10 +2407,12 @@ static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
   // the crossing instead of stepping over it).
   const float max_step = std::max(min_step, vd.voxel_size * 4.0f / dir_len);
   auto sample_at = [&](float t) {
+    if (work) ++*work;
     return SampleVolumeDensity(vd, Add(o, Mul(d, t)));
   };
   float t_prev = t0;
   float v_prev = sample_at(t_prev);
+  if (work && *work > 1000000) return false;
   // The first sign change along the ray is the outermost surface, whatever the
   // stored sign convention (narrow-band level sets store a positive value
   // inside the solid's core, so "negative" is not the whole interior).
@@ -1975,11 +2425,14 @@ static bool TraceLevelSetSurface(const VolumeData &vd, const Vec3 &o,
         std::min(max_step, std::fabs(v_prev) / dir_len * 0.8f));
     const float t_next = std::min(t_prev + step, t1);
     const float v_next = sample_at(t_next);
+    if (work && *work > 1000000) return false;
     if (other_side(v_next)) {
       float lo = t_prev, hi = t_next;
       for (int k = 0; k < 16; ++k) {
         const float mid = 0.5f * (lo + hi);
-        if (other_side(sample_at(mid))) {
+        const bool crossed = other_side(sample_at(mid));
+        if (work && *work > 1000000) return false;
+        if (crossed) {
           hi = mid;
         } else {
           lo = mid;
@@ -2012,6 +2465,25 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
                                  float ambient) {
   Vec3 c = Mul(vd.albedo, ambient);
   auto add_light = [&](const PreviewLight &light) {
+    if (light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f) {
+      const float dist = Length(Sub(light.position, p));
+      if (dist <= light.radius + 1.0e-5f)
+        return;  // the enclosing one-sided sphere emits away from this point
+      constexpr int kSphereSamples = 16;
+      for (int i = 0; i < kSphereSamples; ++i) {
+        const float u = (float(i / 4) + 0.5f) * 0.25f;
+        const float v = (float(i % 4) + 0.5f) * 0.25f;
+        LightSample sample;
+        if (!SampleSphereLight(light, p, u, v, &sample)) continue;
+        const float ndotl = std::max(0.0f, Dot(n, sample.wi));
+        if (ndotl <= 0.0f) continue;
+        const float weight = ndotl / (float(kSphereSamples) * sample.pdf);
+        c = Add(c, Vec3{vd.albedo.x * sample.radiance.x * weight,
+                        vd.albedo.y * sample.radiance.y * weight,
+                        vd.albedo.z * sample.radiance.z * weight});
+      }
+      return;
+    }
     Vec3 radiance = light.radiance;
     Vec3 l;
     if (light.kind == PreviewLight::Kind::Distant) {
@@ -2028,9 +2500,6 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
         const float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
         if (emit_cos <= 0.0f) return;
         radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
-      } else if (light.kind == PreviewLight::Kind::Sphere &&
-                 light.radius > 1.0e-5f) {
-        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
       }
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
@@ -2050,13 +2519,426 @@ static Vec3 ShadeLevelSetSurface(const VolumeData &vd, const Vec3 &p,
 // Composite all volumes along the world-space primary ray over `bg`.
 // `scene_hit` is the world-space distance to the primary geometry hit (or the
 // far plane); a level-set surface behind it does not replace the geometry.
+struct MixedVolumeInterval {
+  size_t index;
+  Vec3 origin, direction;
+  float begin, end, step;
+};
+
+static Vec3 CompositeMixedVolumes(
+    const std::vector<VolumeData>& vols, const Vec3& worg, const Vec3& wdir,
+    Vec3 background, const LightCache& lights, float ambient, float scene_hit,
+    const CameraFrame& camera, Options::VolumeLevelSet level_set_shading,
+    const std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>>* evaluators,
+    std::atomic<bool>* material_error, const IblCache* ibl, lrt_tri_scene* scene,
+    const std::vector<FlatTri>& tris, const DirectScene* direct,
+    const lrt_tlas* tlas, const std::vector<TriangleSceneChunk>* chunks,
+    const Options& opt) {
+  float far_t = scene_hit;
+  Vec3 result = background;
+  // Surfaces first: fog in front is integrated over the nearest surface.
+  for (const VolumeData& vd : vols) {
+    if (!vd.level_set || level_set_shading != Options::VolumeLevelSet::Surface) continue;
+    const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
+    float a, b, hit = 0.0f;
+    if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b) ||
+        b <= std::max(a, 0.0f) ||
+        !TraceLevelSetSurface(vd, o, d, std::max(a, 0.0f), b, &hit) || hit >= far_t) continue;
+    const Vec3 p = Add(o, Mul(d, hit)), gradient = LevelSetObjectGradient(vd, p);
+    Vec3 normal = Length(gradient) > 1.0e-8f ? TransformNormal(vd.inv_world, gradient)
+                                               : Normalize(Mul(wdir, -1.0f));
+    if (Dot(normal, wdir) > 0.0f) normal = Mul(normal, -1.0f);
+    result = ShadeLevelSetSurface(vd, TransformPoint(vd.world, p), normal, lights, ambient);
+    far_t = hit;
+  }
+  std::vector<MixedVolumeInterval> intervals;
+  std::vector<float> boundaries;
+  for (size_t i = 0; i < vols.size(); ++i) {
+    const VolumeData& vd = vols[i];
+    if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) continue;
+    const Vec3 o = TransformPoint(vd.inv_world, worg), d = TransformVector(vd.inv_world, wdir);
+    float a, b;
+    if (!RayAABBVol(o, d, vd.bmin, vd.bmax, &a, &b)) continue;
+    a = std::max(a, 0.0f); b = std::min(b, far_t);
+    if (b <= a) continue;
+    const float speed = Length(d);
+    const Vec3 extent = Sub(vd.bmax, vd.bmin);
+    const float sx = vd.dim[0] > 0 ? extent.x / float(vd.dim[0]) : extent.x;
+    const float sy = vd.dim[1] > 0 ? extent.y / float(vd.dim[1]) : extent.y;
+    const float sz = vd.dim[2] > 0 ? extent.z / float(vd.dim[2]) : extent.z;
+    const float voxel = std::min(sx, std::min(sy, sz));
+    const float step = voxel > 0 ? voxel * 0.5f / speed : (b - a) / 128.0f;
+    if (!(speed > 0) || !std::isfinite(speed) || !std::isfinite(a) ||
+        !std::isfinite(b) || !(step > 0) || !std::isfinite(step)) {
+      material_error->store(true, std::memory_order_relaxed); return background;
+    }
+    intervals.push_back({i, o, d, a, b, step});
+    boundaries.push_back(a); boundaries.push_back(b);
+    if (intervals.size() > 1024) {
+      material_error->store(true, std::memory_order_relaxed); return background;
+    }
+  }
+  if (intervals.empty()) return result;
+  std::sort(boundaries.begin(), boundaries.end());
+  boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+  const float world_speed = Length(wdir);
+  if (!(world_speed > 0) || !std::isfinite(world_speed)) {
+    material_error->store(true, std::memory_order_relaxed); return background;
+  }
+  Vec3 trans{1, 1, 1}, radiance{0, 0, 0};
+  size_t work = 0;
+  // Reuse the camera's graph context when evaluating extinction along light rays.
+  auto sample_material = [&](size_t index, const Vec3& world, const Vec3& local,
+                             lightusd::tydra::MtlxVolumeSample* sample) -> bool {
+    const VolumeData& vd = vols[index];
+    if (!evaluators || index >= evaluators->size() || !(*evaluators)[index] ||
+        !vd.materialx_fields) {
+      material_error->store(true, std::memory_order_relaxed); return false;
+    }
+    const Vec3 extent = Sub(vd.bmax, vd.bmin);
+    lightusd::tydra::MtlxVolumeContext context;
+    context.position[0] = world.x; context.position[1] = world.y; context.position[2] = world.z;
+    context.uv[0] = extent.x > 0 ? (local.x - vd.bmin.x) / extent.x : 0;
+    context.uv[1] = extent.y > 0 ? (local.y - vd.bmin.y) / extent.y : 0;
+    context.view[0] = -wdir.x / world_speed; context.view[1] = -wdir.y / world_speed;
+    context.view[2] = -wdir.z / world_speed;
+    context.frame = vd.materialx_frame; context.time = vd.materialx_time;
+    context.has_space_transforms = true;
+    for (size_t c = 0; c < 4; ++c) for (size_t r = 0; r < 4; ++r) {
+      context.object_to_world[c * 4 + r] = float(vd.materialx_world.m[c][r]);
+      context.world_to_object[c * 4 + r] = float(vd.materialx_inv_world.m[c][r]);
+    }
+    const Vec3 axes[3] = {camera.right, camera.up, Mul(camera.forward, -1.0f)};
+    for (size_t c = 0; c < 3; ++c) {
+      const float axis[3] = {axes[c].x, axes[c].y, axes[c].z};
+      for (size_t r = 0; r < 3; ++r) {
+        context.view_to_world[c * 4 + r] = axis[r];
+        context.world_to_view[r * 4 + c] = axis[r];
+      }
+      context.world_to_view[12 + c] = -Dot(axes[c], camera.origin);
+    }
+    context.view_to_world[12] = camera.origin.x; context.view_to_world[13] = camera.origin.y;
+    context.view_to_world[14] = camera.origin.z;
+
+    if (!(*evaluators)[index]->EvaluateWithFields(vd.materialx_volume,
+            *vd.materialx_fields, context, sample)) {
+      if (!material_error->exchange(true, std::memory_order_relaxed))
+        std::cerr << "MaterialX volume evaluation: " << (*evaluators)[index]->GetError() << "\n";
+      return false;
+    }
+    return true;
+  };
+  // Integrate extinction separately in each medium. Products of their
+  // transmittances give the same result as summing extinction in overlaps.
+  auto light_transmittance = [&](const Vec3& origin, const Vec3& direction,
+                                 float max_t, Vec3* transmittance) -> bool {
+    *transmittance = Vec3{1, 1, 1};
+    for (size_t index = 0; index < vols.size(); ++index) {
+      if (++work > 1000000) return false;
+      const VolumeData& vd = vols[index];
+      const Vec3 local_origin = TransformPoint(vd.inv_world, origin);
+      const Vec3 local_direction = TransformVector(vd.inv_world, direction);
+      float a, b;
+      if (!RayAABBVol(local_origin, local_direction, vd.bmin, vd.bmax, &a, &b)) continue;
+      a = std::max(a, 0.0f); b = std::min(b, max_t);
+      if (!(b > a)) continue;
+      if (vd.level_set && level_set_shading == Options::VolumeLevelSet::Surface) {
+        float hit;
+        const bool blocked = TraceLevelSetSurface(vd, local_origin, local_direction,
+                                                  a, b, &hit, &work);
+        if (work > 1000000) return false;
+        if (blocked) {
+          *transmittance = Vec3{0, 0, 0};
+          return true;
+        }
+        continue;
+      }
+      const float speed = Length(local_direction);
+      const Vec3 extent = Sub(vd.bmax, vd.bmin);
+      const float sx = vd.dim[0] > 0 ? extent.x / float(vd.dim[0]) : extent.x;
+      const float sy = vd.dim[1] > 0 ? extent.y / float(vd.dim[1]) : extent.y;
+      const float sz = vd.dim[2] > 0 ? extent.z / float(vd.dim[2]) : extent.z;
+      const float voxel = std::min(sx, std::min(sy, sz));
+      if (!(speed > 0) || !std::isfinite(speed) || !std::isfinite(a) || !std::isfinite(b)) return false;
+      const float step = std::max(voxel > 0 ? voxel * 0.5f / speed : (b - a) / 128.0f,
+                                  (b - a) / 128.0f);
+      if (!(step > 0) || !std::isfinite(step)) return false;
+      float optical_depth[3] = {};
+      for (float t = a; t < b;) {
+        if (++work > 1000000) return false;
+        const float dt = std::min(step, b - t);
+        if (!(dt > 0) || !(t + dt > t)) return false;
+        const float midpoint = t + 0.5f * dt;
+        const Vec3 local = Add(local_origin, Mul(local_direction, midpoint));
+        float extinction[3];
+        if (vd.materialx_volume.materialx_binding) {
+          lightusd::tydra::MtlxVolumeSample sample;
+          if (!sample_material(index, Add(origin, Mul(direction, midpoint)), local, &sample)) return false;
+          for (int c = 0; c < 3; ++c) {
+            if (!std::isfinite(sample.absorption[c]) || !std::isfinite(sample.scattering[c]) ||
+                sample.absorption[c] < 0 || sample.scattering[c] < 0) return false;
+            extinction[c] = sample.absorption[c] + sample.scattering[c];
+          }
+        } else {
+          const float raw = SampleVolumeDensity(vd, local);
+          if (!std::isfinite(raw) || !std::isfinite(vd.background) ||
+              !std::isfinite(vd.density_scale)) return false;
+          const float density = vd.level_set ? std::max(0.0f, -raw) * vd.density_scale
+                                              : std::max(0.0f, raw - vd.background) * vd.density_scale;
+          if (!std::isfinite(density) || density < 0) return false;
+          extinction[0] = extinction[1] = extinction[2] = density;
+        }
+        for (int c = 0; c < 3; ++c) optical_depth[c] += extinction[c] * dt;
+        t += dt;
+      }
+      transmittance->x *= std::exp(-optical_depth[0]);
+      transmittance->y *= std::exp(-optical_depth[1]);
+      transmittance->z *= std::exp(-optical_depth[2]);
+    }
+    return true;
+  };
+  for (size_t interval = 0; interval + 1 < boundaries.size(); ++interval) {
+    float t = boundaries[interval];
+    const float end = boundaries[interval + 1];
+    float step = end - t;
+    for (const auto& active : intervals) {
+      if (++work > 1000000) {
+        material_error->store(true, std::memory_order_relaxed); return background;
+      }
+      if (active.begin <= t && active.end >= end) step = std::min(step, active.step);
+    }
+    step = std::max(step, (end - t) / 4096.0f);
+    while (t < end) {
+      const float dt = std::min(step, end - t);
+      if (!(dt > 0) || !(t + dt > t)) {
+        material_error->store(true, std::memory_order_relaxed); return background;
+      }
+      const float midpoint = t + 0.5f * dt;
+      float extinction[3] = {}, source[3] = {};
+      for (const auto& active : intervals) {
+        if (++work > 1000000) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+        if (active.begin > t || active.end < end) continue;
+        const VolumeData& vd = vols[active.index];
+        const Vec3 local = Add(active.origin, Mul(active.direction, midpoint));
+        if (vd.materialx_volume.materialx_binding) {
+          const Vec3 world = Add(worg, Mul(wdir, midpoint));
+          lightusd::tydra::MtlxVolumeSample sample;
+          if (!sample_material(active.index, world, local, &sample)) return background;
+          for (int c = 0; c < 3; ++c) {
+            if (sample.absorption[c] < 0 || sample.scattering[c] < 0 || sample.emission[c] < 0) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            extinction[c] += sample.absorption[c] + sample.scattering[c];
+            source[c] += sample.emission[c];
+          }
+          for (size_t lobe_index = 0; lobe_index < sample.lobe_count; ++lobe_index) {
+            const auto& lobe = sample.lobes[lobe_index];
+            Vec3 incident{0, 0, 0};
+            if (!std::isfinite(lobe.anisotropy) || std::abs(lobe.anisotropy) >= 1.0f ||
+                lobe.scattering[0] < 0 || lobe.scattering[1] < 0 || lobe.scattering[2] < 0) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            const float g = lobe.anisotropy;
+            auto add_scattered_light = [&](const PreviewLight& light) {
+              auto accumulate = [&](const Vec3& l, Vec3 incoming, float max_t) {
+                if (++work > 1000000) { material_error->store(true, std::memory_order_relaxed); return; }
+                if (opt.shadows && light.shadow_enable &&
+                    (tlas ? OccludedTLAS(tlas, world, l, l, max_t)
+                          : Occluded(scene, tris, world, l, l, max_t, direct,
+                                     opt.purpose_mask, chunks))) return;
+                if (opt.shadows && light.shadow_enable) {
+                  Vec3 transmittance;
+                  if (!light_transmittance(world, l, max_t, &transmittance)) {
+                    material_error->store(true, std::memory_order_relaxed); return;
+                  }
+                  incoming = Vec3{incoming.x * transmittance.x, incoming.y * transmittance.y,
+                                  incoming.z * transmittance.z};
+                }
+                const float cosine = std::clamp(Dot(l, Mul(wdir, 1.0f / world_speed)), -1.0f, 1.0f);
+                const float denom = 1.0f + g * g - 2.0f * g * cosine;
+                const float phase = (1.0f - g * g) / (4.0f * MTLX_PI * denom * std::sqrt(denom));
+                incident = Add(incident, Mul(incoming, phase));
+              };
+              const bool sphere = light.kind == PreviewLight::Kind::Sphere && light.radius > 1.0e-5f;
+              // UsdLux SphereLight emits outward from its surface only. A
+              // scattering point inside an enclosing sphere sees its back
+              // faces, so the center-light fallback would invent illumination.
+              if (sphere && Length(Sub(light.position, world)) <=
+                                light.radius + 1.0e-5f)
+                return;
+              const bool shaped = light.kind == PreviewLight::Kind::Rect ||
+                                  light.kind == PreviewLight::Kind::Disk ||
+                                  light.kind == PreviewLight::Kind::Cylinder ||
+                                  light.kind == PreviewLight::Kind::Mesh;
+              if (shaped || (sphere && Length(Sub(light.position, world)) > light.radius + 1.0e-5f)) {
+                // Stratified surface or solid-angle quadrature; invalid/back-facing
+                // samples have zero contribution and retain their share of the PDF.
+                constexpr int kAreaSamples = 16;
+                for (int i = 0; i < kAreaSamples; ++i) {
+                  if (++work > 1000000) {
+                    material_error->store(true, std::memory_order_relaxed); return;
+                  }
+                  const float u = (float(i / 4) + 0.5f) * 0.25f;
+                  const float v = (float(i % 4) + 0.5f) * 0.25f;
+                  LightSample ls;
+                  const bool valid = sphere ? SampleSphereLight(light, world, u, v, &ls)
+                                            : SampleAreaLight(light, world, u, v, &ls);
+                  if (valid) accumulate(ls.wi, Mul(ls.radiance, 1.0f / (float(kAreaSamples) * ls.pdf)),
+                                        std::max(0.0f, ls.dist - 1.0e-3f));
+                  if (material_error->load(std::memory_order_relaxed)) return;
+                }
+                return;
+              }
+              Vec3 l, incoming = light.radiance;
+              float max_t = 1.0e30f;
+              if (light.kind == PreviewLight::Kind::Distant) {
+                l = Normalize(Mul(light.direction, -1.0f));
+              } else {
+                const Vec3 delta = Sub(light.position, world);
+                const float dist = Length(delta);
+                if (dist <= 1.0e-6f) return;
+                l = Mul(delta, 1.0f / dist);
+                max_t = std::max(0.0f, dist - 1.0e-3f);
+                if (sphere) incoming = Mul(incoming, MTLX_PI * light.radius * light.radius);
+                if (!light.constant_attenuation)
+                  incoming = Mul(incoming, 1.0f / std::max(1.0e-4f, dist * dist));
+              }
+              accumulate(l, incoming, max_t);
+            };
+            if (lobe.scattering[0] > 0 || lobe.scattering[1] > 0 || lobe.scattering[2] > 0) {
+              for (const PreviewLight& light : lights.finite) {
+                add_scattered_light(light);
+                if (material_error->load(std::memory_order_relaxed)) return background;
+              }
+              for (const PreviewLight& light : lights.mesh) {
+                add_scattered_light(light);
+                if (material_error->load(std::memory_order_relaxed)) return background;
+              }
+              // Importance-sample the phase function. Its PDF cancels the phase
+              // factor, so averaging radiance gives the spherical integral.
+              if ((ibl && ibl->valid) || lights.has_dome) {
+                constexpr int kEnvSamples = 16;
+                const Vec3 axis = Mul(wdir, 1.0f / world_speed);
+                Vec3 u_axis, v_axis;
+                OrthoBasis(axis, &u_axis, &v_axis);
+                for (int i = 0; i < kEnvSamples; ++i) {
+                  if (++work > 1000000) {
+                    material_error->store(true, std::memory_order_relaxed); return background;
+                  }
+                  const float u = (float(i) + 0.5f) / float(kEnvSamples);
+                  float cosine = 2.0f * u - 1.0f;
+                  if (std::abs(g) > 1.0e-4f) {
+                    const float q = (1.0f - g * g) / (1.0f - g + 2.0f * g * u);
+                    cosine = std::clamp((1.0f + g * g - q * q) / (2.0f * g), -1.0f, 1.0f);
+                  }
+                  const float sine = std::sqrt(std::max(0.0f, 1.0f - cosine * cosine));
+                  const float phi = float(i) * 2.39996323f;
+                  const Vec3 l = Add(Mul(axis, cosine),
+                      Mul(Add(Mul(u_axis, std::cos(phi)), Mul(v_axis, std::sin(phi))), sine));
+                  Vec3 env = ibl && ibl->valid ? SampleEnv(ibl->env, EnvDir(*ibl, l))
+                                               : lights.env_color;
+                  if (opt.shadows) {
+                    if (tlas ? OccludedTLAS(tlas, world, l, l, 1.0e30f)
+                             : Occluded(scene, tris, world, l, l, 1.0e30f, direct,
+                                        opt.purpose_mask, chunks)) continue;
+                    Vec3 transmittance;
+                    if (!light_transmittance(world, l, 1.0e30f, &transmittance)) {
+                      material_error->store(true, std::memory_order_relaxed); return background;
+                    }
+                    env = Vec3{env.x * transmittance.x, env.y * transmittance.y,
+                               env.z * transmittance.z};
+                  }
+                  incident = Add(incident, Mul(env, 1.0f / float(kEnvSamples)));
+                }
+              }
+            }
+            if (material_error->load(std::memory_order_relaxed)) return background;
+            const float incident_channels[3] = {incident.x, incident.y, incident.z};
+            for (int c = 0; c < 3; ++c)
+              source[c] += lobe.scattering[c] * incident_channels[c];
+          }
+        } else {
+          const float raw = SampleVolumeDensity(vd, local);
+          if (!std::isfinite(raw) || !std::isfinite(vd.background) ||
+              !std::isfinite(vd.density_scale)) {
+            material_error->store(true, std::memory_order_relaxed); return background;
+          }
+          const float density = vd.level_set ? std::max(0.0f, -raw) * vd.density_scale
+                                              : std::max(0.0f, raw - vd.background) * vd.density_scale;
+          Vec3 emit = vd.emission;
+          float weight = density;
+          if (!vd.emission_field.data.empty()) {
+            const float value = SampleVolumeField(vd.emission_field.data, vd.emission_field.dim,
+                vd.emission_field.bmin, vd.emission_field.bmax, local) - vd.emission_field.background;
+            if (!std::isfinite(value)) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            weight = std::max(0.0f, value);
+          }
+          if (!vd.temperature_field.data.empty()) {
+            const float value = SampleVolumeField(vd.temperature_field.data,
+                vd.temperature_field.dim, vd.temperature_field.bmin, vd.temperature_field.bmax,
+                local) - vd.temperature_field.background;
+            if (!std::isfinite(value)) {
+              material_error->store(true, std::memory_order_relaxed); return background;
+            }
+            const float temperature = std::max(0.0f, value);
+            const Vec3 tint = VolumeTemperatureColor(temperature);
+            emit = (emit.x + emit.y + emit.z) > 0 ? Vec3{emit.x * tint.x, emit.y * tint.y, emit.z * tint.z} : tint;
+            weight = std::max(weight, temperature);
+          }
+          const float albedo[3] = {vd.albedo.x, vd.albedo.y, vd.albedo.z};
+          const float emission[3] = {emit.x, emit.y, emit.z};
+          for (int c = 0; c < 3; ++c) {
+            extinction[c] += density;
+            source[c] += density * albedo[c] + emission[c] * weight * vd.emission_scale;
+          }
+        }
+      }
+      float* tr[3] = {&trans.x, &trans.y, &trans.z};
+      float* light[3] = {&radiance.x, &radiance.y, &radiance.z};
+      const float distance = dt * world_speed;
+      for (int c = 0; c < 3; ++c) {
+        if (!std::isfinite(extinction[c]) || !std::isfinite(source[c]) ||
+            extinction[c] < 0 || source[c] < 0) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+        const float attenuation = std::exp(-extinction[c] * distance);
+        const float integral = extinction[c] > 0 ? -std::expm1(-extinction[c] * distance) / extinction[c] : distance;
+        *light[c] += *tr[c] * source[c] * integral;
+        *tr[c] *= attenuation;
+        if (!std::isfinite(*light[c]) || !std::isfinite(*tr[c])) {
+          material_error->store(true, std::memory_order_relaxed); return background;
+        }
+      }
+      t += dt;
+    }
+  }
+  return Vec3{radiance.x + trans.x * result.x, radiance.y + trans.y * result.y,
+              radiance.z + trans.z * result.z};
+}
+
 Vec3 CompositeVolumes(const std::vector<VolumeData> &vols, const Vec3 &worg,
                       const Vec3 &wdir, Vec3 bg, const LightCache &lights,
                       float ambient, float scene_hit,
-                      Options::VolumeLevelSet level_set_shading) {
+                      const CameraFrame& camera,
+                      Options::VolumeLevelSet level_set_shading,
+                      const std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>>* evaluators,
+                      std::atomic<bool>* material_error, const IblCache* ibl,
+                      lrt_tri_scene* scene, const std::vector<FlatTri>& tris, const DirectScene* direct,
+                      const lrt_tlas* tlas, const std::vector<TriangleSceneChunk>* chunks,
+                      const Options& opt) {
+  for (const VolumeData& volume : vols)
+    if (volume.materialx_volume.materialx_binding)
+      return CompositeMixedVolumes(vols, worg, wdir, bg, lights, ambient, scene_hit,
+                                   camera, level_set_shading, evaluators, material_error,
+                                   ibl, scene, tris, direct, tlas, chunks, opt);
   Vec3 result = bg;
   float nearest_surface = scene_hit;
-  for (const VolumeData &vd : vols) {
+  for (size_t volume_index = 0; volume_index < vols.size(); ++volume_index) {
+    const VolumeData &vd = vols[volume_index];
     // World -> object space.
     Vec3 o = TransformPoint(vd.inv_world, worg);
     Vec3 d = TransformVector(vd.inv_world, wdir);
@@ -2199,15 +3081,21 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<lightusd::tydra::LightRtOpenPBRParams>
                                 *openpbr_mats,
                             const std::vector<TriangleSceneChunk> *triangle_chunks,
-                            const std::vector<BackPlateImage> *backplates) {
+                            const std::vector<BackPlateImage> *backplates,
+                            const std::vector<MtlxGeomPropRequest>* geomprop_requests,
+                            const std::vector<float>* tri_geomprops,
+                            const ByteVec* tri_geomprops_valid) {
   lightusd::Image img;
   img.width = opt.width;
   img.height = height;
   img.channels = 4;
   const bool data_aov = opt.aov != CaptureAov::Color;
-  img.bpp = data_aov ? 32 : 8;
-  img.format = data_aov ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
-  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (data_aov ? 4 : 1));
+  const bool linear_color_pfm = opt.mtlx_runtime && opt.path_trace &&
+      opt.output.size() >= 4 && opt.output.substr(opt.output.size()-4) == ".pfm";
+  const bool float_output = data_aov || linear_color_pfm;
+  img.bpp = float_output ? 32 : 8;
+  img.format = float_output ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (float_output ? 4 : 1));
   float aspect = float(img.width) / float(img.height);
   // Exactly `samples` anti-aliasing samples, distributed by the Halton(2,3)
   // low-discrepancy sequence (PixelJitter). This supersedes the old
@@ -2215,11 +3103,45 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   // square and aliased against regular geometry/texture patterns; Halton spreads
   // the same N samples evenly while staying fully deterministic in `s`.
   int spp = data_aov ? 1 : std::max(1, opt.samples);
+  if (!data_aov && opt.path_trace && opt.mtlx_runtime) {
+    const uint32_t requested=opt.path_trace_samples ? opt.path_trace_samples :
+        (opt.path_trace_quality==Options::PathTraceQuality::Final ? 256u : 32u);
+    spp=static_cast<int>(requested);
+  }
   std::atomic<bool> diagnostic_exhausted{false};
+  std::atomic<bool> materialx_error{false};
+  std::atomic<bool> volume_material_error{false};
+  const unsigned nthreads = std::min<unsigned>(WorkerThreadCount(opt.threads),
+                                                img.height > 0 ? unsigned(img.height) : 1u);
+  size_t bound_volume_count = 0;
+  if (volumes) for (const VolumeData& volume : *volumes)
+    if (volume.materialx_volume.materialx_binding) ++bound_volume_count;
 
   // Scanlines are independent and write to disjoint pixel ranges, so render
   // them in parallel. Result is deterministic regardless of thread scheduling.
   auto render_rows = [&](int y_begin, int y_end) {
+    std::vector<std::unique_ptr<lightusd::tydra::MtlxVolumeEvaluator>> volume_evaluators;
+    if (volumes) {
+      volume_evaluators.resize(volumes->size());
+      lightusd::tydra::MtlxConverter converter;
+      lightusd::tydra::MtlxConvertOptions volume_options;
+      const uint64_t total_texture_budget = opt.texture_budget_mb > 0
+          ? uint64_t(opt.texture_budget_mb) * 1024u * 1024u : uint64_t(256) * 1024u * 1024u;
+      const uint64_t cache_count = uint64_t(std::max(1u, nthreads)) *
+                                   std::max<size_t>(1, bound_volume_count);
+      volume_options.volume_texture_max_decoded_bytes = static_cast<size_t>(
+          std::max<uint64_t>(1, total_texture_budget / cache_count));
+      converter.SetOptions(volume_options);
+      for (size_t i = 0; i < volumes->size(); ++i) {
+        if (!(*volumes)[i].materialx_volume.materialx_binding) continue;
+        volume_evaluators[i] = converter.CreateVolumeEvaluator((*volumes)[i].materialx_volume);
+        if (!volume_evaluators[i]) {
+          if (!volume_material_error.exchange(true, std::memory_order_relaxed))
+            std::cerr << "MaterialX volume setup: " << converter.GetError() << "\n";
+          return;
+        }
+      }
+    }
     for (int y = y_begin; y < y_end; y++) {
       for (int x = 0; x < img.width; x++) {
         Vec3 color{0.0f, 0.0f, 0.0f};
@@ -2250,7 +3172,14 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             instances, rd, 0, tri_colors, tri_normals,
                             openpbr_mats,
                             false, triangle_chunks, &primary_hit_t,
-                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr);
+                            opt.diagnostic_emission ? &diagnostic_exhausted : nullptr,
+                            opt.path_trace && opt.mtlx_runtime ?
+                                Mix64(uint64_t(opt.path_trace_seed) ^
+                                      Mix64(uint64_t(y)*uint64_t(img.width)+uint64_t(x)) ^
+                                      Mix64(uint64_t(s)+0x9e3779b97f4a7c15ULL)) : 0,
+                            opt.mtlx_runtime ? &materialx_error : nullptr,
+                            geomprop_requests, tri_geomprops,
+                            tri_geomprops_valid);
           if (!data_aov && backplates) {
             for (const BackPlateImage &backplate : *backplates) {
               if (!backplate.valid()) continue;
@@ -2272,28 +3201,33 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           }
           if (!data_aov && !opt.diagnostic_emission && volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf, lights,
-                                    opt.ambient, primary_hit_t,
-                                    opt.volume_level_set);
+                                    opt.ambient, primary_hit_t, ray_camera,
+                                    opt.volume_level_set, &volume_evaluators,
+                                    &volume_material_error, ibl, scene, tris, direct,
+                                    tlas, triangle_chunks, opt);
           }
           color = Add(color, surf);
         }
         color = Mul(color, 1.0f / float(spp));
         size_t ofs = (size_t(y) * size_t(img.width) + size_t(x)) * 4;
-        if (data_aov) {
+        if (float_output) {
           const float values[4] = {color.x, color.y, color.z, 1.f};
           std::memcpy(img.data.data() + ofs * sizeof(float), values, sizeof(values));
           continue;
         }
-        img.data[ofs + 0] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.x):ToSRGB8(color.x);
-        img.data[ofs + 1] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.y):ToSRGB8(color.y);
-        img.data[ofs + 2] = opt.diagnostic_emission?EncodeDiagnosticSRGB(color.z):ToSRGB8(color.z);
+        img.data[ofs + 0] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.x)
+                                : ToSRGB8(color.x, opt.srgb_display_transform);
+        img.data[ofs + 1] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.y)
+                                : ToSRGB8(color.y, opt.srgb_display_transform);
+        img.data[ofs + 2] = opt.diagnostic_emission
+                                ? EncodeDiagnosticSRGB(color.z)
+                                : ToSRGB8(color.z, opt.srgb_display_transform);
         img.data[ofs + 3] = 255;
       }
     }
   };
-  unsigned nthreads =
-      std::min<unsigned>(WorkerThreadCount(opt.threads),
-                         img.height > 0 ? unsigned(img.height) : 1u);
   if (nthreads <= 1) {
     render_rows(0, img.height);
   } else {
@@ -2308,8 +3242,16 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
     }
     for (std::thread &th : pool) th.join();
   }
+  if (materialx_error.load(std::memory_order_relaxed)) {
+    std::cerr << "MaterialX surface evaluation failed during rendering.\n";
+    return {};
+  }
   if (diagnostic_exhausted.load(std::memory_order_relaxed)) {
     std::cerr << "CPU material diagnostic exceeds the maximum 16 transparency layers.\n";
+    return {};
+  }
+  if (volume_material_error.load(std::memory_order_relaxed)) {
+    std::cerr << "MaterialX volume evaluation failed, exceeded limits, or produced negative coefficients.\n";
     return {};
   }
   return img;

@@ -253,7 +253,7 @@ estimated peak ~600–700 MB (V1 hybrid) → ~400–450 MB (V2 deferred).
 | Optimization | Savings | Where |
 |-------------|---------|-------|
 | Parallel per-mesh geometry conversion (legacy Tydra) | ~2x on 16 workers for many-mesh scenes; byte-identical output | `render-data.cc` (`ConvertDeferredMeshes`), `task-arena.hh`, `render-data-material.cc` (collect mode) |
-| Dynamic work distribution (tydra-next) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `LIGHTUSD_NEXT_ENABLE_THREAD=ON`) | `tydra/next/render-converter.cc` |
+| Dynamic work distribution (Tydra) | removes fixed-batch wave stalls on mixed-size meshes (~3.5x vs serial when `LIGHTUSD_ENABLE_THREAD=ON`) | `src/tydra/render-converter.cc` |
 | Instance-registry descendant lookup | O(instances × meshes) → O(log meshes) | `render-data.cc` |
 | MikkTSpace Fast/Hybrid zero-copy inputs | one full vertex-array copy per mesh | `render-data-mesh.cc`, `fast-mikktspace.hh` |
 | mmap file loading | ~file size heap | `lusdcat`, `lightusd.cc` |
@@ -424,7 +424,7 @@ intended for refcounts / type tags / cache-coherency flags.
 | `src/tydra/render-data.cc` | RenderMesh/RenderScene estimation, tangent quantization |
 | `src/tydra/tangent-quantize.hh` | packed tangent/normal formats |
 | `web/binding.cc` | WASM memory config, tangent cache, deferred computation |
-| `examples/lusdcat/main.cc` | mmap loading, `--memstat` |
+| `src/legacy/examples/lusdcat/main.cc` | mmap loading, `--memstat` |
 | `examples/tydra_to_renderscene/to-renderscene-main.cc` | per-mesh/-buffer `--memstat` |
 | `tests/feat/tangent/bench_tangent.cc` | tangent memory/quality benchmark |
 | `tests/feat/hash/hash_bench.cc` | XXH3 vs FNV-1a hash benchmark |
@@ -434,13 +434,13 @@ intended for refcounts / type tags / cache-coherency flags.
 
 ## refactor-next Phase-0 baselines (2026-06-10, HEAD 59801312)
 
-Baselines for the `src/next` optimization roadmap (`doc/refactor-next.md`),
+Baselines for the `src/` optimization roadmap (`doc/refactor-next.md`),
 captured with `bench_pcp_compose` and `bench_lazy_mem` (Release, gcc,
 Linux x86-64). Re-measure after each phase and diff here. For the current
 standalone `next` smoke tests and benchmark entrypoint, run:
 
 ```bash
-RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-core-checks.sh
 ```
 
 The script uses small `bench_lazy_mem` defaults for routine local checks. Set

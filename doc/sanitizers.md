@@ -195,7 +195,7 @@ startup (shadow memory, internal allocators — reservations, not committed
 RAM). Any `RLIMIT_AS` cap kills it. `lusdcat` sets a 32 GB `RLIMIT_AS` in
 `main()` as an OOM/thrash guard; that guard is now compiled out under
 `__SANITIZE_THREAD__` / `__SANITIZE_ADDRESS__` (see
-`examples/lusdcat/main.cc`). If you add an address-space cap to another tool,
+`src/legacy/examples/lusdcat/main.cc`). If you add an address-space cap to another tool,
 gate it the same way. The same applies to caps inherited from the
 environment (`ulimit -v`, container limits).
 

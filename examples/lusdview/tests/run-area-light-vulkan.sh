@@ -12,7 +12,7 @@ printf '%s\n' '{"window_size":{"width":160,"height":120}}' > "$OUT/config.json"
 render() {
   local scene="$1" frames="$2" image="$3" log="$4"
   timeout --kill-after=5s "${LUSDVIEW_RENDER_TIMEOUT:-120s}" \
-    env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+    env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
     --backend vk --rt --frames "$frames" --camera Camera --config "$OUT/config.json" \
     --screenshot "$image" "$scene" >"$log" 2>&1
 }
@@ -23,7 +23,7 @@ render() {
 # consuming the CTest timeout.
 probe_log="$OUT/probe.log"
 if ! timeout --kill-after=5s 30s env XDG_CONFIG_HOME="$OUT/config-home-probe" \
-    "$BIN" --next --headless --backend vk --frames 1 --size 16x16 \
+    "$BIN" --core --headless --backend vk --frames 1 --size 16x16 \
     --camera Camera --config "$OUT/config.json" \
     "$ROOT/examples/lusdview/tests/point-light-shadow.usda" \
     >"$probe_log" 2>&1; then

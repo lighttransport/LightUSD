@@ -1,4 +1,4 @@
-import { flattenNextOverHttp } from 'lightusd-js/http-asset-resolver.js';
+import { flattenOverHttp } from 'lightusd-js/http-asset-resolver.js';
 export { AssetBudget, chooseRootFile, formatBytes, githubContentsRequest, MAX_ASSET_BYTES, normalizeAssetKey } from './online-usd-viewer-core.js';
 import { AssetBudget, chooseRootFile, formatBytes, githubContentsRequest, MAX_ASSET_BYTES, normalizeAssetKey } from './online-usd-viewer-core.js';
 
@@ -146,12 +146,12 @@ export class HttpAssetResolver {
 }
 
 export async function composeLayer({ loader, bytes, filename, resolver, onStatus = () => {} }) {
-  const flattened = await flattenNextOverHttp({
+  const flattened = await flattenOverHttp({
     renderer: { native: loader.native_ }, rootBytes: bytes, filename, resolver, onStatus,
   });
   const layer = await new Promise((resolve, reject) => {
     loader.parse(flattened.usdz, 'scene.usdz', resolve, reject, {
-      backend: 'next', maxMemoryLimitMB: 512,
+      backend: 'core', maxMemoryLimitMB: 512,
     });
   });
   return { layer, composition: 'references and payloads' };

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "../src/c-api/lightusd-c.h"
-#include "../src/next/c/chunks.h"
+#include "c/chunks.h"
 #include <emscripten/emscripten.h>
 EMSCRIPTEN_KEEPALIVE uint32_t lu_feature_info(uint32_t field) {
   switch (field) {

@@ -13,15 +13,15 @@
 
 #include "image_decode.hh"
 #include "byte-budget.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/stage/stage-session.hh"
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-data.hh"
+#include "reader/usdz-reader.hh"
+#include "stage/stage-session.hh"
+#include "tydra/render-converter.hh"
+#include "../../src/tydra/render-data.hh"
 
 namespace lusdql {
 
-namespace tnext = ::lightusd::next;
-namespace tyn = ::lightusd::tydra::next;
+namespace core = ::lightusd;
+namespace tyn = ::lightusd::tydra;
 
 const char* LoadPhaseName(LoadPhase phase) {
   switch (phase) {
@@ -109,7 +109,7 @@ uint64_t LoadStream::queued_bytes() const {
 // ---------------------------------------------------------------------------
 // Transform helpers
 //
-// tydra_next Matrix4 is row-major with USD's row-vector convention
+// tydra Matrix4 is row-major with USD's row-vector convention
 // (world = local * parent_world, translation in the last row), so a point
 // transforms as p' = p * M.
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ void XformNormal(const NormalMatrix& nm, const float v[3], float out[3]) {
 // ---------------------------------------------------------------------------
 // Texture bytes: filesystem, or an entry inside the USDZ package.
 //
-// tydra_next's built-in texture loader is metadata-only by design, so decoding
+// tydra's built-in texture loader is metadata-only by design, so decoding
 // is ours to do. For a USDZ root the "resolved" path points at an archive entry
 // that does not exist on disk, so the package is consulted first.
 // ---------------------------------------------------------------------------
@@ -188,9 +188,9 @@ class TextureSource {
     for (char& c : ext) c = static_cast<char>(::tolower(c));
     if (ext != ".usdz") return;
 
-    ::lightusd::next::USDZReadOptions zopts;
+    ::lightusd::USDZReadOptions zopts;
     zopts.max_archive_size = max_archive_bytes;
-    zip_ = std::make_unique<::lightusd::next::USDZReader>();
+    zip_ = std::make_unique<::lightusd::USDZReader>();
     if (!zip_->OpenFile(root_path, zopts)) zip_.reset();
   }
 
@@ -231,7 +231,7 @@ class TextureSource {
 
  private:
   std::string root_path_;
-  std::unique_ptr<::lightusd::next::USDZReader> zip_;
+  std::unique_ptr<::lightusd::USDZReader> zip_;
   size_t max_image_bytes_ = 0;
 };
 
@@ -613,7 +613,7 @@ QlCameraDesc ConvertCamera(const tyn::RenderCamera& src) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// QlSceneSink — the streaming tydra_next consumer.
+// QlSceneSink — the streaming tydra consumer.
 //
 // This is where "ok to skip large files" is actually implemented: not as a
 // whole-file verdict, but per geometry prim, against the running budget.
@@ -1251,28 +1251,28 @@ void RunLoad(const std::string& path, const Options& opts,
   progress(LoadPhase::Open, 0, "opening");
 
   // ---- Load + compose ------------------------------------------------------
-  tnext::StageSessionOptions sopts;
+  core::StageSessionOptions sopts;
   sopts.compose = opts.compose;
   if (budget.stage > 0) {
     sopts.load.limits.max_resident_bytes = static_cast<size_t>(budget.stage);
   }
   // The composed stage is all we need; dropping the parsed dependency layers
   // and the PCP cache afterwards is a large part of staying inside the budget.
-  sopts.cache_retention = tnext::CacheRetention::LayersOnly;
+  sopts.cache_retention = core::CacheRetention::LayersOnly;
 
   bool budget_hit_during_compose = false;
   std::string budget_why;
 
   sopts.progress_callback =
-      [&](const tnext::ProgressEvent& e) -> bool {
+      [&](const core::ProgressEvent& e) -> bool {
     if (ctrl->cancel.load()) return false;
 
     LoadPhase phase = LoadPhase::Open;
     switch (e.phase) {
-      case tnext::ProgressPhase::RootLoad: phase = LoadPhase::Open; break;
-      case tnext::ProgressPhase::Compose:
-      case tnext::ProgressPhase::Recompose:
-      case tnext::ProgressPhase::PreviewCompose:
+      case core::ProgressPhase::RootLoad: phase = LoadPhase::Open; break;
+      case core::ProgressPhase::Compose:
+      case core::ProgressPhase::Recompose:
+      case core::ProgressPhase::PreviewCompose:
         phase = LoadPhase::Compose;
         break;
     }
@@ -1289,7 +1289,7 @@ void RunLoad(const std::string& path, const Options& opts,
     return true;
   };
 
-  tnext::StageSession session;
+  core::StageSession session;
   std::string load_error;
   bool opened = false;
   try {
@@ -1311,9 +1311,9 @@ void RunLoad(const std::string& path, const Options& opts,
     // preview beats no preview, as long as we say so.
     degraded.uncomposed = true;
     degraded.detail = budget_why;
-    tnext::StageSessionOptions flat = sopts;
+    core::StageSessionOptions flat = sopts;
     flat.compose = false;
-    flat.progress_callback = [&](const tnext::ProgressEvent&) -> bool {
+    flat.progress_callback = [&](const core::ProgressEvent&) -> bool {
       return !ctrl->cancel.load();
     };
     try {
@@ -1414,7 +1414,7 @@ void RunLoad(const std::string& path, const Options& opts,
     fail("stage is still retained by an active snapshot");
     return;
   }
-  tnext::Stage conversion_stage = std::move(*taken_stage);
+  core::Stage conversion_stage = std::move(*taken_stage);
   try {
     result = converter.ConvertToSink(conversion_stage, &sink);
   } catch (const std::bad_alloc&) {

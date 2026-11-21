@@ -5,6 +5,8 @@
 
 using namespace lightusd::mtlx;
 
+using namespace lightusd::legacy::mtlx;  // NOLINT
+
 int main() {
   const char* xml = R"(<?xml version="1.0"?>
     <materialx version="1.38">

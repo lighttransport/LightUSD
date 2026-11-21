@@ -138,6 +138,17 @@ int main(void) {
       " <tiledcircles name=\"tile_circle\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcircles>"
       " <tiledcloverleafs name=\"tile_clover\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledcloverleafs>"
       " <tiledhexagons name=\"tile_hex\" type=\"color3\"><input name=\"texcoord\" type=\"vector2\" value=\"0.5,0.5\"/><input name=\"size\" type=\"float\" value=\"0.4\"/></tiledhexagons>"
+      " <position name=\"geom_position_object\" type=\"vector3\"/>"
+      " <position name=\"geom_position_world\" type=\"vector3\"><input name=\"space\" type=\"string\" value=\"world\"/></position>"
+      " <normal name=\"geom_normal_object\" type=\"vector3\"/>"
+      " <normal name=\"geom_normal_world\" type=\"vector3\"><input name=\"space\" type=\"string\" value=\"world\"/></normal>"
+      " <tangent name=\"geom_tangent_object\" type=\"vector3\"/>"
+      " <bitangent name=\"geom_bitangent_object\" type=\"vector3\"/>"
+      " <noise3d name=\"geom_noise_default\" type=\"float\"/>"
+      " <noise3d name=\"geom_noise_object\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"1.2,2.3,3.4\"/></noise3d>"
+      " <noise3d name=\"geom_noise_world\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"7.4,12.9,20.6\"/></noise3d>"
+      " <noise2d name=\"geom_uv_default\" type=\"float\"/>"
+      " <noise2d name=\"geom_uv_explicit\" type=\"float\"><input name=\"texcoord\" type=\"vector2\" value=\"0.8,0.9\"/></noise2d>"
       " <viewdirection name=\"view_direction\" type=\"vector3\"/>"
       " <time name=\"scene_time\" type=\"float\"/>"
       " <frame name=\"scene_frame\" type=\"float\"/>"
@@ -192,8 +203,8 @@ int main(void) {
   int ok = check3("chain", eval_named(&ctx, "clamped"), 0.6f, 1.0f, 1.0f) &&
            check3("ramp-left", eval_named(&ctx, "ramp"), 0.75f, 0.0f, 0.25f) &&
            check3("split-left", eval_named(&ctx, "split"), 0.0f, 1.0f, 0.0f) &&
-           check3("ramp-tb", eval_named(&ctx, "ramp_tb"), 0.25f, 1.0f, 0.75f) &&
-           check3("split-tb-top", eval_named(&ctx, "split_tb"), 1.0f, 0.0f, 0.0f) &&
+           check3("ramp-tb", eval_named(&ctx, "ramp_tb"), 0.75f, 1.0f, 0.25f) &&
+           check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f, 1.0f) &&
            check3("screen", eval_named(&ctx, "screen"), 0.19f, 0.55f, 0.82f) &&
            check3("overlay", eval_named(&ctx, "overlay"), 0.07f, 0.4f, 0.79f) &&
            nearf_eps(eval_named(&ctx, "burn").v[0], -0.125f) &&
@@ -213,9 +224,9 @@ int main(void) {
   ok = check3("hsv-roundtrip", eval_named(&ctx, "rgb"), 0.2f, 0.4f, 0.8f) &&
        nearf_eps(eval_named(&ctx, "rotate").v[0], 0.0f) &&
        nearf_eps(eval_named(&ctx, "rotate").v[1], 1.0f) && ok;
-  ok = check3("ramp4", eval_named(&ctx, "quad"), 0.375f, 0.25f, 0.75f) &&
-       check3("switch-connected", eval_named(&ctx, "pick"), 0.375f, 0.25f,
-              0.75f) && ok;
+  ok = check3("ramp4", eval_named(&ctx, "quad"), 0.625f, 0.25f, 0.25f) &&
+       check3("switch-connected", eval_named(&ctx, "pick"), 0.625f, 0.25f,
+              0.25f) && ok;
   ok = check4("ramp", eval_named(&ctx, "full_ramp"), 0.5f, 0.0f, 0.0f,
               1.0f) &&
        check4("ramp-gradient", eval_named(&ctx, "gradient"), 0.15625f,
@@ -253,7 +264,9 @@ int main(void) {
        nearf_eps(eval_named(&ctx, "xor").v[0], 1.0f) &&
        check3("inside", eval_named(&ctx, "inside"), 0.05f, 0.1f, 0.2f) && ok;
   ok = nearf_eps(eval_named(&ctx, "tri_wave").v[0], 0.25f) && ok;
-  ok = check3("checkerboard", eval_named(&ctx, "checker"), 0.0f, 0.0f, 1.0f) && ok;
+  /* floor((0.6,0.1) * (2,2)) sums to odd parity: the MaterialX
+   * checkerboard graph selects color1 (red) for this cell. */
+  ok = check3("checkerboard", eval_named(&ctx, "checker"), 1.0f, 0.0f, 0.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "circle").v[0], 1.0f) && ok;
   ok = nearf_eps(eval_named(&ctx, "line").v[0], 1.0f) && ok;
   ok = check3("view-direction",eval_named(&ctx,"view_direction"),0,0,1) &&
@@ -321,15 +334,15 @@ int main(void) {
        check3("fractal2d-color", eval_named(&ctx, "fractal_color"),
               0.18168622f, 1.98365822f, -0.40455556f) && ok;
   ok = check3("worley2d-distance", eval_named(&ctx, "worley2_distance"),
-              0.604036f, 0.778409f, 0.907265f) && ok;
+              0.334542f, 0.463517f, 0.984037f) && ok;
   ok = check3("worley2d-solid", eval_named(&ctx, "worley2_solid"),
-              0.623529f, 0.580392f, 0.211765f) && ok;
+              0.960777f, 0.166139f, 0.444949f) && ok;
   { MtlxValue w = eval_named(&ctx, "worley3_distance");
-    ok = check1("worley3d-distance-f1", w, 0.724764287f) && ok;
-    if (!nearf_eps(w.v[1], 0.825379968f))
+    ok = check1("worley3d-distance-f1", w, 0.321671426f) && ok;
+    if (!nearf_eps(w.v[1], 0.943064690f))
       fprintf(stderr, "worley3d-distance-f2: got %.9f, expected %.9f\n",
-              w.v[1], 0.825379968f);
-    ok = nearf_eps(w.v[1], 0.825379968f) && ok;
+              w.v[1], 0.943064690f);
+    ok = nearf_eps(w.v[1], 0.943064690f) && ok;
   }
   ok = check3("noise2d-color", eval_named(&ctx, "noise2_color"),
               0.377306f, 1.246215f, 0.188793f) && ok;
@@ -340,7 +353,7 @@ int main(void) {
   ok = check1("unified-cell", eval_named(&ctx, "unified_cell"),
               0.860312760f) && ok;
   ok = check1("unified-worley", eval_named(&ctx, "unified_worley"),
-              0.623227179f) && ok;
+              0.371120334f) && ok;
   ok = check1("unified-fractal", eval_named(&ctx, "unified_fractal"),
               0.475442290f) && ok;
   ok = check1("unified3-fractal", eval_named(&ctx, "unified3_fractal"),
@@ -360,9 +373,113 @@ int main(void) {
   ctx.uv[1] = 0.9f;
   ok = check3("ramp-right", eval_named(&ctx, "ramp"), 0.2f, 0.0f, 0.8f) &&
        check3("split-right", eval_named(&ctx, "split"), 1.0f, 0.0f, 1.0f) && ok;
-  ok = check3("split-tb-bottom", eval_named(&ctx, "split_tb"), 0.0f, 0.0f,
-              1.0f) && ok;
+  ok = check3("split-tb-top", eval_named(&ctx, "split_tb"), 1.0f, 0.0f,
+              0.0f) && ok;
+  /* World-to-object point, normal and tangent transforms with nonuniform scale. */
+  ctx.P = v3_make(7.0f, 12.0f, 19.0f);
+  ctx.Ns = v3_make(0.7682213f, 0.5121475f, 0.3841106f);
+  ctx.dpdu = v3_make(2.0f, 3.0f, 0.0f);
+  ctx.dpdv = v3_make(0.0f, 3.0f, 4.0f);
+  ok = check3("geometry-object-position", eval_named(&ctx, "geom_position_object"), 1, 2, 3) &&
+       check3("geometry-world-position", eval_named(&ctx, "geom_position_world"), 7, 12, 19) &&
+       check3("geometry-object-normal", eval_named(&ctx, "geom_normal_object"),
+              0.5773503f, 0.5773503f, 0.5773503f) &&
+       check3("geometry-world-normal", eval_named(&ctx, "geom_normal_world"),
+              0.7682213f, 0.5121475f, 0.3841106f) &&
+       check3("geometry-object-tangent", eval_named(&ctx, "geom_tangent_object"),
+              0.7071068f, 0.7071068f, 0.0f) &&
+       check3("geometry-object-bitangent", eval_named(&ctx, "geom_bitangent_object"),
+              0.0f, 0.7071068f, 0.7071068f) && ok;
+  /* The stdlib defaults are UV0 and Pobject, not world-space P. */
+  ctx.P = v3_make(7.4f, 12.9f, 20.6f);
+  const float noise_default = eval_named(&ctx, "geom_noise_default").v[0];
+  const float noise_object = eval_named(&ctx, "geom_noise_object").v[0];
+  const float noise_world = eval_named(&ctx, "geom_noise_world").v[0];
+  const float uv_default = eval_named(&ctx, "geom_uv_default").v[0];
+  const float uv_explicit = eval_named(&ctx, "geom_uv_explicit").v[0];
+  if (!nearf_eps(noise_default, noise_object) || nearf_eps(noise_default, noise_world) ||
+      !nearf_eps(uv_default, uv_explicit)) {
+    fprintf(stderr, "implicit geometry defaults did not use Pobject and UV0\n");
+    ok = 0;
+  }
   free(ctx.memo); free(ctx.memo_done); mtlx_free(doc);
+
+  /* An authored geometry definition overrides Pobject; two users share its
+   * generated node, while an authored input remains a literal. */
+  {
+    const char *override_xml =
+        "<materialx version=\"1.39\">"
+        "<geompropdef name=\"Pobject\" type=\"vector3\" geomprop=\"position\" space=\"world\"/>"
+        "<nodegraph name=\"G\"><noise3d name=\"a\" type=\"float\"/>"
+        "<noise3d name=\"b\" type=\"float\"/>"
+        "<noise3d name=\"authored\" type=\"float\"><input name=\"position\" type=\"vector3\" value=\"7.4,12.9,20.6\"/></noise3d>"
+        "</nodegraph></materialx>";
+    MtlxDoc *override_doc = mtlx_load_string(override_xml);
+    ShadeContext override_ctx = ctx;
+    int a = override_doc ? mtlx_find_node(override_doc, 0, "a") : -1;
+    int b = override_doc ? mtlx_find_node(override_doc, 0, "b") : -1;
+    int authored = override_doc ? mtlx_find_node(override_doc, 0, "authored") : -1;
+    int source_a = -1, source_b = -1, literal = 0;
+    if (override_doc && a >= 0 && b >= 0 && authored >= 0) {
+      for (int i = 0; i < override_doc->nodes[a].ninput; ++i)
+        if (!strcmp(override_doc->nodes[a].inputs[i].name, "position"))
+          source_a = override_doc->nodes[a].inputs[i].src_node;
+      for (int i = 0; i < override_doc->nodes[b].ninput; ++i)
+        if (!strcmp(override_doc->nodes[b].inputs[i].name, "position"))
+          source_b = override_doc->nodes[b].inputs[i].src_node;
+      for (int i = 0; i < override_doc->nodes[authored].ninput; ++i)
+        if (!strcmp(override_doc->nodes[authored].inputs[i].name, "position"))
+          literal = override_doc->nodes[authored].inputs[i].has_value;
+      override_ctx.doc = override_doc;
+      override_ctx.memo = (MtlxValue *)calloc((size_t)override_doc->nnode, sizeof(MtlxValue));
+      override_ctx.memo_done = (char *)calloc((size_t)override_doc->nnode, 1);
+      float override_value = 0.0f, authored_value = 1.0f;
+      if (override_ctx.memo && override_ctx.memo_done) {
+        override_value = mtlx_eval_node_test(&override_ctx, a).v[0];
+        authored_value = mtlx_eval_node_test(&override_ctx, authored).v[0];
+      }
+      if (!override_ctx.memo || !override_ctx.memo_done || source_a < 0 || source_a != source_b ||
+          !literal || override_doc->nnode != 4 ||
+          !nearf_eps(override_value, authored_value)) {
+        fprintf(stderr, "geometry-definition override or generated-node reuse failed\n");
+        ok = 0;
+      }
+      free(override_ctx.memo); free(override_ctx.memo_done);
+    } else {
+      fprintf(stderr, "geometry-definition override fixture did not load\n");
+      ok = 0;
+    }
+    mtlx_free(override_doc);
+  }
+
+  /* A nonzero UV set is represented by the indexed texcoord callback. */
+  {
+    const char *unsupported_xml =
+        "<materialx version=\"1.39\">"
+        "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"1\"/>"
+        "<surfacematerial name=\"m\"/><nodegraph name=\"g\">"
+        "<noise3d name=\"first\" type=\"float\"/><noise2d name=\"n\" type=\"float\"/>"
+        "<output name=\"out\" type=\"float\" nodename=\"n\"/>"
+        "</nodegraph></materialx>";
+    MtlxDoc *indexed_doc = mtlx_load_string(unsupported_xml);
+    if (!indexed_doc) {
+      fprintf(stderr, "indexed geometry default was rejected\n");
+      ok = 0;
+    }
+    mtlx_free(indexed_doc);
+    const char *authored_xml =
+        "<materialx version=\"1.39\">"
+        "<geompropdef name=\"UV0\" type=\"vector2\" geomprop=\"texcoord\" index=\"1\"/>"
+        "<nodegraph name=\"g\"><noise2d name=\"n\" type=\"float\">"
+        "<input name=\"texcoord\" type=\"vector2\" value=\"0.2,0.3\"/>"
+        "</noise2d></nodegraph></materialx>";
+    MtlxDoc *authored_doc = mtlx_load_string(authored_xml);
+    if (!authored_doc) {
+      fprintf(stderr, "authored UV was rejected due to an unused geometry default\n");
+      ok = 0;
+    }
+    mtlx_free(authored_doc);
+  }
 
   /* Cyclic graph edges must terminate through the evaluator's zero sentinel
    * instead of recursing indefinitely. */

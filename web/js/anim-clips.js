@@ -14,15 +14,15 @@ import {
 	getAssetUriFromURL,
 	getBackendFromURL,
 	loadUSDSceneFromURL,
-	makeStaticNextParseOptions,
+	makeStaticParseOptions,
 	mountBackendSelector,
 	parseUSDSceneFromArrayBuffer
 } from 'lightusd/LoaderConfigUtils.js';
 import {
-	buildNextThreeNode,
-	isNextScene,
-	readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+	buildThreeNode,
+	isScene,
+	readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 import { getUSDSceneMetadata } from 'lightusd/USDSceneMetadata.js';
 import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
 import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
@@ -282,10 +282,10 @@ groundHelper.add(ground);
 const gridHelper = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
 groundHelper.add(gridHelper);
 
-// The next backend can preview very large static/transform-animated scenes.
+// The core backend can preview very large static/transform-animated scenes.
 // Avoid allocating and rendering a second full shadow pass for those meshes;
 // the legacy demo keeps its original shadows for the small skinned fixture.
-if (LOADER_BACKEND === 'next') {
+if (LOADER_BACKEND === 'core') {
 	renderer.shadowMap.enabled = false;
 	dirLight.castShadow = false;
 	ground.receiveShadow = false;
@@ -418,8 +418,8 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
-	if (isNextScene(usdScene)) {
-		const meta = readNextSceneMeta(usdScene);
+	if (isScene(usdScene)) {
+		const meta = readSceneMeta(usdScene);
 		const rawMeta = usdScene.getSceneMetadata ? usdScene.getSceneMetadata() : {};
 		sceneTimeCodesPerSecond = rawMeta.timeCodesPerSecond || rawMeta.framesPerSecond || 24;
 		const {
@@ -431,7 +431,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			logger: console,
 			hasSkinnedMeshData
 		});
-		const built = buildNextThreeNode(usdScene, {
+		const built = buildThreeNode(usdScene, {
 			skipTextures: false,
 			lazyTextures: true,
 			// Animations/skinning are extracted from the adapter AFTER the
@@ -439,10 +439,10 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			releaseBuildData: false
 		});
 		if (built.textureManager) {
-			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
+			startTrackedTextureLoading(built.textureManager, stats, 'coreTextureQueue');
 		}
-		// Next animation target_node is a RenderScene node-table index; use the
-		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		// Core animation target_node is a RenderScene node-table index; use the
+		// table map from buildThreeNode, not a DFS walk of the built tree.
 		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
 		if (String(meta.upAxis || 'Y').toUpperCase() === 'Z') {
 			characterGroup.rotation.x = -Math.PI / 2;
@@ -457,7 +457,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			usdScene,
 			showMesh: true,
 			showSkeleton: showSkeletonVisualization,
-			// Large static next scenes can exhaust WebGL resources compiling a
+			// Large static core scenes can exhaust WebGL resources compiling a
 			// second depth program for every mesh. Animation preview does not
 			// require those shadow passes.
 			enableShadows: false,
@@ -477,9 +477,9 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			});
 			animationInfos = animData.animationInfos || [];
 			allClips.push(...animData.usdAnimations, ...animData.usdNodeAnimations);
-			console.log(`[anim-clips] next backend loaded ${allClips.length} animation clip(s)`);
+			console.log(`[anim-clips] core backend loaded ${allClips.length} animation clip(s)`);
 		} catch (err) {
-			console.error('[anim-clips] next animation extraction failed:', err);
+			console.error('[anim-clips] core animation extraction failed:', err);
 		}
 		if (allClips.length > 0) {
 			mixer = new THREE.AnimationMixer(characterGroup);
@@ -1273,7 +1273,7 @@ async function loadFromURL(url) {
 			loader,
 			arrayBuffer,
 			getDisplayNameFromURI(url),
-			makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
+			makeStaticParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, url, stats);
 	} catch (err) {
@@ -1290,7 +1290,7 @@ async function loadFromURLViaLoader(url) {
 	try {
 		const parseStart = performance.now();
 		const usdScene = await loadUSDSceneFromURL(
-			loader, url, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
+			loader, url, makeStaticParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, url, stats);
 	} catch (err) {
@@ -1307,7 +1307,7 @@ async function loadFromArrayBuffer(buffer, filename) {
 	try {
 		const parseStart = performance.now();
 		const usdScene = await parseUSDSceneFromArrayBuffer(
-			loader, buffer, filename, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
+			loader, buffer, filename, makeStaticParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, filename, stats);
 	} catch (err) {
@@ -1332,7 +1332,7 @@ window.addEventListener('loadUSDFile', async (event) => {
 	try {
 		const parseStart = performance.now();
 		const usdScene = await parseUSDSceneFromArrayBuffer(
-			loader, buffer, file.name, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
+			loader, buffer, file.name, makeStaticParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, file.name, stats);
 	} catch (err) {

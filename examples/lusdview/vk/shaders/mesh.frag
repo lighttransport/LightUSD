@@ -269,6 +269,124 @@ vec4 sampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing) {
   return udim ? sampleUdim(uGraphUdim7, int(udimRow + 0.5), uv, missing) : texture(uGraphTex7, uv);
 }
 
+vec3 mtlxColorPrimariesToRec709(vec3 c, int mode) {
+  if (mode == 1) return mat3(1.70505, -0.13026, -0.02400,
+                            -0.62179, 1.14080, -0.12897,
+                            -0.08326, -0.01054, 1.15297) * c;
+  if (mode == 2) return mat3(2.52169, -0.27648, -0.01538,
+                            -1.13413, 1.37272, -0.15298,
+                            -0.38756, -0.09624, 1.16836) * c;
+  if (mode == 3) return mat3(1.66049, -0.12455, -0.01815,
+                            -0.58764, 1.13290, -0.10058,
+                            -0.07285, -0.00835, 1.11873) * c;
+  if (mode == 4) return mat3(1.22494, -0.04206, -0.01964,
+                            -0.22494, 1.04206, -0.07864,
+                             0.0,      0.0,      1.09828) * c;
+  if (mode == 5) return mat3(1.39835536, 0.0, -0.0,
+                            -0.39835569, 1.0, -0.04292889,
+                             0.0, -0.0, 1.04292905) * c;
+  return c;
+}
+
+vec3 mtlxCorrectSampleTransfer(vec3 c, int correction) {
+  if (correction == 0) return c;
+  for (int i = 0; i < 3; ++i) {
+    float x = c[i];
+    if (correction <= 5 || correction == 11) {
+      if (correction == 1) {
+        float a = abs(x);
+        c[i] = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                    : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+        continue;
+      }
+      float a = abs(x);
+      x = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                   : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+    }
+    int transfer = correction >= 11 ? 6 : (correction >= 6 ? correction - 5 : correction);
+    float a = abs(x), y;
+    if (transfer == 1)
+      y = a <= 0.04045 ? a / 12.92 : pow((a + 0.055) / 1.055, 2.4);
+    else if (transfer == 6)
+      y = x > 0.0 ? pow(a, 2.4) : 0.0;  // cmlib rec709_display clamps negatives
+    else {
+      float gamma = transfer == 2 ? 2.2 : transfer == 3 ? 1.8
+                    : transfer == 4 ? 2.4 : 563.0 / 256.0;
+      y = pow(a, gamma);
+    }
+    c[i] = sign(x) * y;
+  }
+  return c;
+}
+
+vec4 mtlxSample2DLevel(sampler2D tex, vec2 uv, int level,
+                       int transferCorrection) {
+  ivec2 size = textureSize(tex, level);
+  vec2 p = uv * vec2(size) - 0.5;
+  ivec2 p0 = ivec2(floor(p));
+  ivec2 p1 = p0 + ivec2(1);
+  vec2 f = fract(p);
+  vec2 invSize = 1.0 / vec2(size);
+  vec4 c00 = textureLod(tex, (vec2(p0) + 0.5) * invSize, float(level));
+  vec4 c10 = textureLod(tex, (vec2(p1.x, p0.y) + 0.5) * invSize, float(level));
+  vec4 c01 = textureLod(tex, (vec2(p0.x, p1.y) + 0.5) * invSize, float(level));
+  vec4 c11 = textureLod(tex, (vec2(p1) + 0.5) * invSize, float(level));
+  c00.rgb = mtlxCorrectSampleTransfer(c00.rgb, transferCorrection);
+  c10.rgb = mtlxCorrectSampleTransfer(c10.rgb, transferCorrection);
+  c01.rgb = mtlxCorrectSampleTransfer(c01.rgb, transferCorrection);
+  c11.rgb = mtlxCorrectSampleTransfer(c11.rgb, transferCorrection);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+vec4 mtlxSampleUDIMLevel(sampler2DArray tex, int slot, vec2 uv, int level,
+                         int transferCorrection, vec4 missing) {
+  ivec2 tile = ivec2(floor(uv));
+  int idx = tile.x + tile.y * 10;
+  if (idx < 0 || idx >= 100) return missing;
+  int layer = int(texelFetch(uUdimLutAtlas, ivec2(idx, slot), 0).r * 255.0 + 0.5) - 1;
+  if (layer < 0) return missing;
+  ivec2 size = textureSize(tex, level).xy;
+  vec2 localUv = fract(uv);
+  vec2 p = localUv * vec2(size) - 0.5;
+  ivec2 p0 = ivec2(floor(p));
+  ivec2 p1 = p0 + ivec2(1);
+  vec2 f = fract(p);
+  vec2 invSize = 1.0 / vec2(size);
+  vec4 c00 = textureLod(tex, vec3((vec2(p0) + 0.5) * invSize, float(layer)), float(level));
+  vec4 c10 = textureLod(tex, vec3((vec2(p1.x, p0.y) + 0.5) * invSize, float(layer)), float(level));
+  vec4 c01 = textureLod(tex, vec3((vec2(p0.x, p1.y) + 0.5) * invSize, float(layer)), float(level));
+  vec4 c11 = textureLod(tex, vec3((vec2(p1) + 0.5) * invSize, float(layer)), float(level));
+  c00.rgb = mtlxCorrectSampleTransfer(c00.rgb, transferCorrection);
+  c10.rgb = mtlxCorrectSampleTransfer(c10.rgb, transferCorrection);
+  c01.rgb = mtlxCorrectSampleTransfer(c01.rgb, transferCorrection);
+  c11.rgb = mtlxCorrectSampleTransfer(c11.rgb, transferCorrection);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+vec4 mtlxSampleGraphImageLevel(int slot, float udimRow, vec2 uv, int level,
+                               vec4 missing, int transferCorrection) {
+  bool udim = udimRow >= 0.0;
+  if (slot == 0) return udim ? mtlxSampleUDIMLevel(uGraphUdim0, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex0, uv, level, transferCorrection);
+  if (slot == 1) return udim ? mtlxSampleUDIMLevel(uGraphUdim1, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex1, uv, level, transferCorrection);
+  if (slot == 2) return udim ? mtlxSampleUDIMLevel(uGraphUdim2, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex2, uv, level, transferCorrection);
+  if (slot == 3) return udim ? mtlxSampleUDIMLevel(uGraphUdim3, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex3, uv, level, transferCorrection);
+  if (slot == 4) return udim ? mtlxSampleUDIMLevel(uGraphUdim4, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex4, uv, level, transferCorrection);
+  if (slot == 5) return udim ? mtlxSampleUDIMLevel(uGraphUdim5, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex5, uv, level, transferCorrection);
+  if (slot == 6) return udim ? mtlxSampleUDIMLevel(uGraphUdim6, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex6, uv, level, transferCorrection);
+  return udim ? mtlxSampleUDIMLevel(uGraphUdim7, int(udimRow + 0.5), uv, level, transferCorrection, missing) : mtlxSample2DLevel(uGraphTex7, uv, level, transferCorrection);
+}
+
+vec4 mtlxSampleGraphImage(int slot, float udimRow, vec2 uv, vec4 missing,
+                          int transferCorrection, int primariesMode) {
+  if (slot < 0 || slot >= 8) return missing;
+  vec4 value = transferCorrection == 0
+      ? sampleGraphImage(slot, udimRow, uv, missing)
+      : mtlxSampleGraphImageLevel(slot, udimRow, uv, 0, missing,
+                                  transferCorrection);
+  value.rgb = mtlxColorPrimariesToRec709(value.rgb, primariesMode);
+  return value;
+}
+
 #ifdef LUSDVIEW_GRAPH_FREE
 bool hasGraphRoute(int route) { return false; }
 void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
@@ -324,7 +442,11 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
           // `value` with that input's result before the image is sampled.
           row = mgraph.graphRows[p + 7u];
         }
-        v[i] = sampleGraphImage(slot, row, graphUv, value);
+        value = mtlxSampleGraphImage(
+            slot, row, graphUv, value,
+            int(floor(mgraph.graphRows[p + 13u] + 0.5)),
+            int(floor(mgraph.graphRows[p + 12u] + 0.5)));
+        v[i] = value;
       } else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
       else if (op == 4) v[i] = av + bv;
       else if (op == 5) v[i] = av - bv;
@@ -332,9 +454,28 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
       else if (op == 8) v[i] = mix(av, bv, cv);
       else if (op == 9) v[i] = clamp(av, bv, cv);
-      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
-      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 10) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? av.x * bv.x
+                  : width == 2 ? dot(av.xy, bv.xy)
+                  : width == 3 ? dot(av.xyz, bv.xyz)
+                               : dot(av, bv);
+        v[i] = vec4(d);
+      }
+      else if (op == 11) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float nlength = width == 1 ? abs(av.x)
+                        : width == 2 ? length(av.xy)
+                        : width == 3 ? length(av.xyz) : length(av);
+        vec4 n = av;
+        if (nlength > 1e-6)
+          for (int lane = 0; lane < width; ++lane) n[lane] = av[lane] / nlength;
+        v[i] = n;
+      }
       else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 136)
+        v[i] = mix(sign(av) * pow(abs(av), bv), vec4(0.0),
+                   equal(av, vec4(0.0)));
       else if (op == 13) v[i] = min(av, bv);
       else if (op == 14) v[i] = max(av, bv);
       else if (op == 15) v[i] = abs(av);
@@ -349,9 +490,18 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
       else if (op == 25) v[i] = step(av, bv);
-      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 26) {
+        vec4 t = clamp((av - bv) / max(cv - bv, vec4(1e-6)),
+                       vec4(0.0), vec4(1.0));
+        v[i] = t * t * (vec4(3.0) - 2.0 * t);
+      }
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
-      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 28) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float l = width == 1 ? abs(av.x) : width == 2 ? length(av.xy)
+                  : width == 3 ? length(av.xyz) : length(av);
+        v[i] = vec4(l);
+      }
       else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv, vec2(127.1, 311.7))) * 43758.5453));
       else if (op == 40) v[i] = vec4(fract(sin(dot(av.xyz + vec3(uv, uv.x + uv.y),
                                                         vec3(127.1, 311.7, 74.7))) *
@@ -359,7 +509,10 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 30) v[i] = tan(av);
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
-      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 33) {
+        vec4 divisor = max(abs(bv), vec4(1e-6));
+        v[i] = av - divisor * trunc(av / divisor);
+      }
       else if (op == 41) v[i] = atan(av, bv);
       else if (op == 42) v[i] = sign(av);
       else if (op == 43) v[i] = round(av);
@@ -368,16 +521,27 @@ void evalRasterMaterialXGraphs(vec2 uv, out vec4 result[49]) {
       else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
       else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
       else if (op == 38) {
-        vec3 axis = normalize(bv.xyz);
         float ang = radians(av.x);
         vec3 q = cv.xyz;
-        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
-                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        float axisLength = length(bv.xyz);
+        if (axisLength > 1e-6) {
+          vec3 axis = bv.xyz / axisLength;
+          v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                      axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        } else v[i] = cv;
       }
       else if (op == 39) {
         v[i] = vec4(av.xy * vec2(mgraph.graphRows[p + 17u], mgraph.graphRows[p + 18u]) +
                     vec2(mgraph.graphRows[p + 19u], mgraph.graphRows[p + 20u]),
                     av.zw);
+      }
+      else if (op == 70) {
+        int width = clamp(int(floor(mgraph.graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? distance(av.x, bv.x)
+                  : width == 2 ? distance(av.xy, bv.xy)
+                  : width == 3 ? distance(av.xyz, bv.xyz)
+                               : distance(av, bv);
+        v[i] = vec4(d);
       }
       else v[i] = value;
   }

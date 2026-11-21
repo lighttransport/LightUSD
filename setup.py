@@ -2,12 +2,10 @@
 Build driver for the lightusd PyPI wheel.
 
 Flow:
-  1. Invoke CMake on the standalone `src/next` project (next-core), building
-     the next core, Tydra, asset importer, C API and native validation libraries.
-     The legacy lightusd core is NOT built or linked into the Python wheel
-     (v1.0.0 next + tydra-next only, npm preview tag). Native
-     (`cmake -S .`) and WASM (`web/CMakeLists.txt` / `web/binding.cc` with
-     LIGHTUSD_WASM_PRODUCT=legacy/next/combined) still build the legacy path.
+  1. Invoke CMake on the standalone `src` project (the core), building the
+     core, Tydra, asset importer, C API and native validation libraries.
+     src/legacy (compile-only, `-DLIGHTUSD_BUILD_LEGACY=ON` in the root
+     project) is never built or linked into the wheel.
   2. Compile the `src/python/py-*.c` sources into the `lightusd._core`
      extension, linking those static archives.
 
@@ -52,8 +50,8 @@ def _env_flag(name: str, default: bool) -> bool:
 # for constrained native targets without changing the C/Python API; internal
 # synchronization required by free-threaded CPython remains available.
 PY_ENABLE_THREAD = _env_flag("LIGHTUSD_PY_ENABLE_THREAD", True)
-_default_build_dir = ("build_py_ext_next" if PY_ENABLE_THREAD else
-                      "build_py_ext_next_nothread")
+_default_build_dir = ("build_py_ext" if PY_ENABLE_THREAD else
+                      "build_py_ext_nothread")
 CMAKE_BUILD_DIR = pathlib.Path(
     os.environ.get("LIGHTUSD_PY_BUILD_DIR", str(ROOT / _default_build_dir))
 ).resolve()
@@ -71,14 +69,14 @@ def _cmake_configure_and_build() -> None:
 
     cmake_args = [
         "cmake",
-        "-S", str(ROOT / "src" / "next"),
+        "-S", str(ROOT / "src"),
         "-B", str(CMAKE_BUILD_DIR),
         "-DCMAKE_BUILD_TYPE=MinSizeRel",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        ("-DLIGHTUSD_NEXT_ENABLE_THREAD=" +
+        ("-DLIGHTUSD_ENABLE_THREAD=" +
          ("ON" if PY_ENABLE_THREAD else "OFF")),
-        "-DLIGHTUSD_NEXT_BUILD_TESTS=OFF",
-        "-DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF",
+        "-DLIGHTUSD_BUILD_TESTS=OFF",
+        "-DLIGHTUSD_BUILD_EXAMPLES=OFF",
         "-DLIGHTUSD_WITH_TYDRA=ON",
     ]
     is_windows = platform.system() == "Windows"
@@ -102,8 +100,8 @@ def _cmake_configure_and_build() -> None:
     build_args = [
         "cmake", "--build", str(CMAKE_BUILD_DIR),
         "--config", "MinSizeRel",
-        "--target", "lightusd_next",
-        "--target", "tydra_next",
+        "--target", "lightusd_core",
+        "--target", "tydra",
         "--target", "lightusd_render_c",
         "--target", "lightusd_validation_c",
         "--parallel", os.environ.get("LIGHTUSD_PY_JOBS", str(min(16, os.cpu_count() or 2))),
@@ -121,14 +119,14 @@ class CMakeBuildExt(build_ext):
         # filename search can pick stale archives left by a reconfiguration.
         manifest = CMAKE_BUILD_DIR / "lightusd-python-libraries-MinSizeRel.txt"
         archives = manifest.read_text().splitlines()
-        if len(archives) != 10 or not all(pathlib.Path(p).is_file() for p in archives):
+        if len(archives) < 10 or not all(pathlib.Path(p).is_file() for p in archives):
             raise RuntimeError(f"Invalid CMake archive manifest: {manifest}")
         stamp = pathlib.Path(self.build_temp) / "lightusd-build-config.txt"
         stamp.parent.mkdir(parents=True, exist_ok=True)
         config = repr((archives, USE_LIMITED, PY_LIMITED_API, PY_ENABLE_THREAD))
         if not stamp.exists() or stamp.read_text() != config:
             stamp.write_text(config)
-        headers = [str(p) for directory in (ROOT / "src/python", ROOT / "src/c-api", ROOT / "src/next/c")
+        headers = [str(p) for directory in (ROOT / "src/python", ROOT / "src/c-api", ROOT / "src/c")
                    for p in directory.glob("*.h")]
         for ext in self.extensions:
             ext.extra_objects = archives + list(ext.extra_objects)

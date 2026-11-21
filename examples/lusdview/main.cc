@@ -11,7 +11,7 @@
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
 #include <algorithm>
-#include "tydra/next/scene-preview.hh"
+#include "tydra/scene-preview.hh"
 #include "preview_gpu_budget.hh"
 #include <cstdio>
 #include <cstdlib>
@@ -242,9 +242,9 @@ uint64_t HostMemoryCapacityBytes() {
 
 int main(int argc, char** argv) {
   lusdview::PreviewGpuBudgetReport previewBudgetReport;
-  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  lightusd::tydra::ScenePreviewRequest scenePreview;
   std::string scenePreviewError;
-  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+  if (!lightusd::tydra::ExtractScenePreviewArguments(
           &argc, argv, &scenePreview, &scenePreviewError)) {
     std::fprintf(stderr, "%s\n", scenePreviewError.c_str());
     return 1;
@@ -310,7 +310,7 @@ int main(int argc, char** argv) {
   bool dynamicLodExplicit = false;
   bool rasterLodFullExplicit = false;
   bool rasterLodCullExplicit = false;
-  bool useNextExplicit = false;
+  bool useCoreExplicit = false;
   bool lodMaxMemExplicit = false;
   bool lodMaxVramExplicit = false;
   bool maxAssetBytesExplicit = false;
@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
   float fStopOverride = 0.0f;
   float focusDistanceOverride = 0.0f;
   long long rtMaxInstances = 16000000;  // --max-instances: CUDA/HIP instance cap (0=off)
-  bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --next)
+  bool lodStream = false;     // --lod-stream: view-dependent district LOD (needs --core)
   double lodMaxMem = 0.0;     // --max-mem GiB: host budget for --lod-stream (0=auto)
   double lodMaxVram = 0.0;    // --max-vram GiB: GPU budget for --lod-stream (0=auto)
   std::optional<size_t> curvePreviewPrims;
@@ -394,12 +394,12 @@ int main(int argc, char** argv) {
   bool targetRenderFpsExplicit = false;
   float minRenderScale = 0.5f;
   bool minRenderScaleExplicit = false;
-  bool useNextLoader = true;              // next-core is the default scene path
+  bool useCoreLoader = true;              // core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
   bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
-  std::string cameraName;                   // --camera: USD camera to frame (--next)
+  std::string cameraName;                   // --camera: USD camera to frame (--core)
   bool stereoRequested = false;             // --stereo: authored left/right pair
   bool rasterMotionEnabled = true;           // native raster shutter accumulation
   lusdview::CameraConform cameraConform{lusdview::CameraConform::Fit};
@@ -700,13 +700,12 @@ int main(int argc, char** argv) {
         LOGE("--min-render-scale must be in [0.25, 1]");
         return 1;
       }
-    } if (std::strcmp(argv[i], "--next") == 0) {
-      useNextLoader = true;
-      useNextExplicit = true;
+    } if (std::strcmp(argv[i], "--core") == 0) {
+      useCoreLoader = true;
+      useCoreExplicit = true;
     } if (std::strcmp(argv[i], "--legacy-load") == 0 ||
                std::strcmp(argv[i], "--legacyLoad") == 0) {
-      useNextLoader = false;
-      useNextExplicit = true;
+      LOGW("--legacy-load was removed; every scene uses the core loader");
     } if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
     } if (std::strcmp(argv[i], "--no-grid") == 0) {
@@ -1411,9 +1410,9 @@ int main(int argc, char** argv) {
           "live in the Inspector's Blend Shapes panel.\n"
           "  --headless    Windowless offscreen rendering, no display needed "
           "(Metal or Vulkan; needs --frames + --screenshot/--window-shot).\n"
-          "  --next        Use the default next-core + tydra-next loader "
-          "(compatibility flag).\n"
-          "  --legacy-load Use the legacy eager loader.\n"
+          "  --core        Use the default core + Tydra loader "
+          "(`--core` accepted as a deprecated alias).\n"
+          "  --legacy-load Ignored (removed; prints a warning).\n"
           "  --no-composition  Load the root layer only (skip USD composition arcs).\n"
           "  --defer-payloads  Lazy payloads: skip payload arcs on load and load "
           "them on demand from the GUI.\n"
@@ -1465,7 +1464,7 @@ int main(int argc, char** argv) {
           "  --texture-gpu-device=NAME|INDEX  Select the Vulkan GPU used for "
           "texture preprocessing.\n"
           "  --texture-mips on|off  Generate content-aware texture mip chains "
-          "(default on; interactive --next default off).\n"
+          "(default on; interactive --core default off).\n"
           "  --texture-keep-compressed  Preserve supported KTX2 block payloads "
           "instead of decoding/re-encoding them.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
@@ -1539,12 +1538,12 @@ int main(int argc, char** argv) {
   if (scenePreview.enabled) {
     scenePreview.options.time_code = timeCode.value_or(0.0);
     scenePreview.options.composition.load_payloads = !deferPayloads.value_or(false);
-    if (!lightusd::tydra::next::PrepareScenePreview(
+    if (!lightusd::tydra::PrepareScenePreview(
             &file, scenePreview, 0, &scenePreviewError)) {
       LOGE("scene preview: %s", scenePreviewError.c_str());
       return 1;
     }
-    useNextLoader = true;
+    useCoreLoader = true;
     largeSceneProfile = LargeSceneProfile::Off;
     largeSceneProfileExplicit = true;
     dynamicLod = false;
@@ -1611,7 +1610,7 @@ int main(int argc, char** argv) {
   const double targetHostGiB =
       double(targetBudget.host_limit) / double((uint64_t{1} << 30));
 
-  // Bound texture residency for ordinary --next loads as well as named
+  // Bound texture residency for ordinary --core loads as well as named
   // large-scene profiles. The decoder applies these limits while reading, so
   // this also prevents a large source image set from peaking before the
   // draw-side residency pass runs. Explicit command-line values win,
@@ -1683,7 +1682,7 @@ int main(int argc, char** argv) {
     }
   }
   if (effectiveProfile != LargeSceneProfile::Off) {
-    if (!useNextExplicit) useNextLoader = true;
+    if (!useCoreExplicit) useCoreLoader = true;
     if (!backendExplicit && backend != lusdview::Backend::Metal) {
       backend = lusdview::Backend::Vulkan;
       backendExplicit = true;
@@ -1811,9 +1810,9 @@ int main(int argc, char** argv) {
     backend = lusdview::Backend::Vulkan;
     backendExplicit = true;
   }
-  // The `next` loader is the OpenGL large-scene mesh preview; default it to the
+  // The `core` loader is the OpenGL large-scene mesh preview; default it to the
   // GL backend unless the user picked one explicitly (it feeds either backend).
-  if (useNextLoader && !backendExplicit && backend != lusdview::Backend::Metal) {
+  if (useCoreLoader && !backendExplicit && backend != lusdview::Backend::Metal) {
     backend = lusdview::Backend::GL;
   }
 
@@ -1827,10 +1826,10 @@ int main(int argc, char** argv) {
 
   if ((quitAfterFullUpload || quitAfterConvert) &&
       ((backend != lusdview::Backend::GL && backend != lusdview::Backend::Vulkan) ||
-       !useNextLoader || threaded || headless ||
+       !useCoreLoader || threaded || headless ||
        wantRt || wantCuda || wantHip || wantCpuRt)) {
     LOGE("--quit-after-full-upload/--quit-after-convert requires interactive "
-         "non-threaded OpenGL/Vulkan with --next");
+         "non-threaded OpenGL/Vulkan with --core");
     return 1;
   }
 
@@ -1842,12 +1841,12 @@ int main(int argc, char** argv) {
          targetVramGiB,
          double(hostCapacity) / double((uint64_t{1} << 30)),
          targetHostGiB);
-    LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
+    LOGI("large-scene-profile %s resolved: backend=%s --core=%s "
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
          ProfileName(effectiveProfile),
          lusdview::BackendName(backend),
-         useNextLoader ? "on" : "off",
+         useCoreLoader ? "on" : "off",
          rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
          rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
          maxGpuMemGiB, maxDrawMeshes, maxTris);
@@ -2057,7 +2056,7 @@ int main(int argc, char** argv) {
     lo.timing = timing;
     lo.streamBufferBytes = streamBufferMB * 1024ull * 1024ull;
     lo.previewMaxBoxes = previewMaxBoxes;
-    // Keep the next loader bounded even without a named large-scene profile.
+    // Keep the core loader bounded even without a named large-scene profile.
     // Profiles may tighten these values below, but ordinary preview/headless
     // loads must not fall back to unlimited composition or GPU staging.
     lo.maxMemoryBytes = static_cast<size_t>(targetBudget.host_limit);
@@ -2101,7 +2100,7 @@ int main(int argc, char** argv) {
     // 16 GB card and skips conversion entirely; a 16 GB card keeps uncompressed
     // textures resident with room for geometry and framebuffers. Explicit
     // --texture-compress / --texture-mips / --texture-budget-mb override this.
-    lo.optimizeTextureUpload = useNextLoader;
+    lo.optimizeTextureUpload = useCoreLoader;
     lo.textureGpuBudgetBytes = vramCapacity;
     lo.textureFit = textureFit;
     lo.textureFitThresholdBytes = static_cast<size_t>(textureFitThreshold);
@@ -2121,14 +2120,14 @@ int main(int argc, char** argv) {
       }
       if (!mipsExplicit) lo.textureOptions.generateMips = false;
     }
-    // Interactive --next loads should reach a usable frame promptly even for
+    // Interactive --core loads should reach a usable frame promptly even for
     // texture sets larger than VRAM/2 (where the comfortable-skip above does not
     // apply): defer CPU mip generation so the uploaded base level can render
     // immediately. Headless/benchmark runs rely on the comfortable-skip default
     // above and honor an explicit --texture-mips on.
-    if (useNextLoader && !headless && maxFrames < 0 && !mipsExplicit) {
+    if (useCoreLoader && !headless && maxFrames < 0 && !mipsExplicit) {
       lo.textureOptions.generateMips = false;
-      LOGI("interactive --next: deferring CPU texture mip generation "
+      LOGI("interactive --core: deferring CPU texture mip generation "
            "(use --texture-mips on to enable)");
     }
     lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(2));
@@ -2167,7 +2166,7 @@ int main(int argc, char** argv) {
     }
   }
   if (windowSizeExplicit) app.setWindowSize(windowWidth, windowHeight);
-  app.setUseNextLoader(useNextLoader);
+  app.setUseCoreLoader(useCoreLoader);
   app.setScenePreviewRequest(scenePreview);
   if(scenePreview.enabled && scenePreview.camera_lod)
     app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);

@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<materialx version="1.39">
+  <constant name="included_constant" type="color3">
+    <input name="value" type="color3" value="0.25, 0.5, 0.75"/>
+  </constant>
+</materialx>

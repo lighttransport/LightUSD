@@ -286,7 +286,7 @@ async function loadSample(index) {
       filename,
       baseUrl,
       label: sample.label,
-      backend: 'next',
+      backend: 'core',
       onStatus: (msg) => { status.textContent = msg; },
     });
 

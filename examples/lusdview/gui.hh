@@ -19,7 +19,6 @@
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
 #include "light3d/camera.h"  // light3d::Frustum (cull worker)
-#include "gui_stringify.hh"
 #include "imgui.h"  // ImGuiTextFilter
 #include "load_control.hh"
 #include "renderer.hh"
@@ -122,9 +121,9 @@ class Gui {
     domeDirty_ = false;
   }
   void setDomeStatus(const std::string& status) { domeStatus_ = status; }
-  void setNextStage(const lightusd::api::Stage& stage);
-  size_t nextSkeletonOverlayVertexCount() const { return showSkeleton_ ? nextSkeletonLines_.size() : 0; }
-  // StageSession owns the authoritative deferred set. The composed next Stage
+  void setCoreStage(const lightusd::api::Stage& stage);
+  size_t coreSkeletonOverlayVertexCount() const { return showSkeleton_ ? coreSkeletonLines_.size() : 0; }
+  // StageSession owns the authoritative deferred set. The composed core Stage
   // may no longer expose payload metadata for arcs deliberately left unloaded.
   void setDeferredPayloadPaths(std::vector<std::string> paths) {
     deferredPayloadPaths_ = std::move(paths);
@@ -403,10 +402,10 @@ class Gui {
     adaptiveTargetFps_ = targetFps;
   }
   bool cameraInteractive() const { return cameraInteractive_; }
-  // True once App::poseNextDrawForTracer has written POSED vertices back into
+  // True once App::poseCoreDrawForTracer has written POSED vertices back into
   // draw_ for a CUDA/HIP/CPU RT build. The selection-highlight re-pose must
   // then NOT deform draw_ again (it would double-deform); see
-  // rebuildSubsetHighlight. Fed by App each frame from nextTracerPosedTime_.
+  // rebuildSubsetHighlight. Fed by App each frame from coreTracerPosedTime_.
   void setDrawIsPosed(bool posed) { drawIsPosed_ = posed; }
   // Lazy CUDA/HIP capability cache (App::cudaProbe_/hipProbe_), fed each frame
   // so the menu can gray out an item once a switch attempt has proven the
@@ -561,10 +560,8 @@ class Gui {
   void drawDockspaceAndMenu();
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
-  bool drawPrimTree(const lightusd::Prim& prim);
-  bool drawNextPrimTree(lightusd_prim prim);
-  void drawNextInspector();
-  bool drawNodeTree(const lightusd::tydra::Node& node);
+  bool drawCorePrimTree(lightusd_prim prim);
+  void drawCoreInspector();
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
   // selection, an ancestor, or a descendant mesh carries blendshape targets).
@@ -602,7 +599,6 @@ class Gui {
   void isolateSelection();
   void setSelectionVisibility(bool visible);
   void buildViewVisibilityMask();
-  void rebuildInspectorCache();
   void setSelectionListSingle(const std::string& absPath, int meshIndex);
   void setSelectionListFromMeshes(std::vector<int> meshIndices);
   void setSelectionListFromPaths(std::vector<std::string> paths);
@@ -679,13 +675,12 @@ class Gui {
     std::string selectedPath;
   };
 
-  const lightusd::Prim* selPrim_{nullptr};
-  lightusd::api::Stage nextStage_;
-  std::vector<std::string> nextSkeletonPaths_;
-  bool nextSkeletonPathsReady_{false};
-  double nextSkeletonTime_{0};
-  bool nextSkeletonTimeValid_{false};
-  std::vector<HelperVertex> nextSkeletonLines_;
+  lightusd::api::Stage coreStage_;
+  std::vector<std::string> coreSkeletonPaths_;
+  bool coreSkeletonPathsReady_{false};
+  double coreSkeletonTime_{0};
+  bool coreSkeletonTimeValid_{false};
+  std::vector<HelperVertex> coreSkeletonLines_;
   std::vector<std::string> deferredPayloadPaths_;
   std::string selPath_;
   int selMeshIndex_{-1};
@@ -758,11 +753,11 @@ class Gui {
   bool gizmoActive_{false};   // currently dragging the gizmo
   ImVec2 gizmoMouseStart_;    // mouse position at drag start
   float gizmoStartPos_[3];    // world position at drag start
-  bool showRenderNodes_{false};
   bool dockBuilt_{false};
   bool resetLayoutRequested_{false};
 
   ImGuiTextFilter hierFilter_;
+  bool renderHierarchy_{false};
   ImGuiTextFilter propFilter_;
   ImGuiTextFilter metaFilter_;
 
@@ -953,21 +948,7 @@ class Gui {
   bool releaseSelectedTextures_{false};
   bool revealSelectionInHierarchy_{false};
 
-  struct InspectorPropRow {
-    std::string name;
-    std::string value;
-    std::string typeStr;
-    std::string attrMeta;
-    bool gotProperty{false};
-    bool hasColor{false};
-    float color[4]{0.0f, 0.0f, 0.0f, 1.0f};
-  };
-  const lightusd::Prim* inspectorCachePrim_{nullptr};
   std::string inspectorCachePath_;
-  std::string inspectorCacheType_;
-  std::string inspectorCacheMeta_;
-  std::string inspectorCacheError_;
-  std::vector<InspectorPropRow> inspectorCacheRows_;
 
   bool vpHovered_{false};
   int navMode_{0};

@@ -519,7 +519,8 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const CpuPtexSampler* ptex = nullptr,
                                   uint32_t ptex_mip = 0,
                                   const CpuPtexSampler::Footprint* ptex_fp =
-                                      nullptr) {
+                                      nullptr,
+                                  int transfer_correction = 0) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
@@ -533,6 +534,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
         : ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
                        srgb, rgb);
     if (ok) {
+      MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
       out[0] = rgb[0];
       out[1] = rgb[1];
       out[2] = rgb[2];
@@ -599,6 +601,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
       rgb[1] = srgbToLinear(rgb[1]);
       rgb[2] = srgbToLinear(rgb[2]);
     }
+    MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
   };
   float c00[3], c10[3], c01[3], c11[3];
   texel(x0, y0, c00); texel(x1, y0, c10);
@@ -1011,6 +1014,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       const auto a = ia >= 0 && ia < count ? values[ia] : fallback(0);
       const auto b = ib >= 0 && ib < count ? values[ib] : fallback(1);
       const auto c = ic >= 0 && ic < count ? values[ic] : fallback(2);
+      const int vectorComponents = std::clamp(static_cast<int>(std::floor(
+          scene.matGraph[p + 3] + 0.5f)), 1, 4);
       const int textureId = static_cast<int>(std::floor(
           scene.matGraph[p + 16] + 0.5f));
       auto& dst = values[i];
@@ -1062,8 +1067,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         else if (uvInput == 2) { gu = c[0]; gv = c[1]; }
         const float su = gu * scene.matGraph[p + 17] + scene.matGraph[p + 19];
         const float sv = gv * scene.matGraph[p + 18] + scene.matGraph[p + 20];
-        SampleTextureBilinear(scene.textures, scene.texels, textureId, su, sv,
-                              rgb);
+        SampleTextureBilinear(
+            scene.textures, scene.texels, textureId, su, sv, rgb, -1, nullptr,
+            0, nullptr,
+            static_cast<int>(std::floor(scene.matGraph[p + 13] + 0.5f)));
+        MaterialXGraphToLinearRec709(
+            rgb, static_cast<int>(std::floor(scene.matGraph[p + 12] + 0.5f)));
         dst = {rgb[0], rgb[1], rgb[2], 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::NormalMap)) {
         float nx = a[0] * 2.0f - 1.0f, ny = a[1] * 2.0f - 1.0f,
@@ -1087,15 +1096,26 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Clamp)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::clamp(a[cidx], b[cidx], c[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Dot)) {
-        const float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        float d = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          d += a[lane] * b[lane];
         dst = {d, d, d, d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Normalized)) {
-        const float length = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
-        dst = length > 1.0e-6f ? std::array<float, 4>{a[0] / length, a[1] / length,
-                                                       a[2] / length, a[3]} : a;
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float length = std::sqrt(squaredLength);
+        dst = a;
+        if (length > 1.0e-6f)
+          for (int lane = 0; lane < vectorComponents; ++lane)
+            dst[lane] = a[lane] / length;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Power)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::pow(std::max(a[cidx], 0.0f), b[cidx]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::SafePower)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = a[cidx] == 0.0f ? 0.0f :
+              std::copysign(std::pow(std::fabs(a[cidx]), b[cidx]), a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Minimum)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::min(a[cidx], b[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Maximum)) {
@@ -1114,7 +1134,7 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Select)) {
         dst = (a[0] >= 0.5f) ? b : c;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Texcoord)) {
-        const bool secondSet = c[2] > 0.5f;
+        const bool secondSet = ic >= 0 ? c[0] == 1.0f : c[2] > 0.5f;
         dst = {secondSet ? u1 : u, secondSet ? v1 : v, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Floor)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::floor(a[cidx]);
@@ -1135,7 +1155,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
                a[0] * b[1] - a[1] * b[0], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Length)) {
-        const float l = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float l = std::sqrt(squaredLength);
         dst = {l, l, l, l};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise2D)) {
         const int channels=std::clamp(static_cast<int>(std::floor(c[3]+.5f)),1,4);
@@ -1243,8 +1266,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         }
         hue = hue + b[0] - std::floor(hue + b[0]);
         const float sat = mx > 1.0e-6f ? chroma / mx : 0.0f;
-        const float s2 = std::clamp(sat * b[1], 0.0f, 1.0f);
-        const float v2 = std::max(mx * b[2], 0.0f);
+        const float s2 = sat * b[1];
+        const float v2 = mx * b[2];
         const float hp = hue * 6.0f, x = v2 * s2 *
             (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
         const float cc = v2 * s2, m = v2 - cc;
@@ -1392,8 +1415,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float cs = std::cos(angle), sn = std::sin(angle);
         dst = {a[0] * cs - a[1] * sn, a[0] * sn + a[1] * cs, a[2], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Distance)) {
-        const float x=a[0]-b[0], y=a[1]-b[1], z=a[2]-b[2];
-        const float d=std::sqrt(x*x+y*y+z*z); dst={d,d,d,d};
+        float squaredDistance = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane) {
+          const float delta = a[lane] - b[lane];
+          squaredDistance += delta * delta;
+        }
+        const float d = std::sqrt(squaredDistance); dst={d,d,d,d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Reflect)) {
         const float d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
         dst={a[0]-2*d*b[0],a[1]-2*d*b[1],a[2]-2*d*b[2],a[3]};
@@ -2885,6 +2912,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           float sheenWeight = 0.0f, sheenRoughness = 0.3f;
           float coatAffectColor = 0.0f, coatAffectRoughness = 0.0f;
           float coatDarkening = 0.0f;
+          float coatIorDark = 1.5f;
           float thinFilmWeight = 0.0f, thinFilmThickness = 0.0f;
           float thinFilmIor = 1.5f;
           float emission[3] = {0.0f, 0.0f, 0.0f};
@@ -2931,6 +2959,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               coatAffectColor = std::clamp(lrt[67], 0.0f, 1.0f);
               coatAffectRoughness = std::clamp(lrt[68], 0.0f, 1.0f);
               coatDarkening = std::clamp(lrt[70], 0.0f, 1.0f);
+              coatIorDark = std::max(lrt[45], 1.0001f);
               emission[0] += lrt[76] * std::max(lrt[79], 0.0f);
               emission[1] += lrt[77] * std::max(lrt[79], 0.0f);
               emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
@@ -3200,10 +3229,19 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // brightness spike on grazing views.
           const float coatColorMix = std::clamp(coatWeight * coatAffectColor,
                                                 0.0f, 1.0f);
-          for (int c = 0; c < 3; ++c) {
-            base[c] *= 1.0f - 0.2f * std::clamp(coatWeight * coatDarkening,
-                                                0.0f, 1.0f);
-            base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+          {
+            // OpenPBR coat darkening (1 - K) / (1 - Ebase K), as in the GPU
+            // path tracers and LightRT's verified CPU BSDF.
+            const float n = std::max(coatIorDark, 1.0f);
+            const float cr = (n - 1.0f) / (n + 1.0f);
+            const float k = std::clamp(1.0f - (1.0f - cr * cr) / (n * n), 0.0f, 0.9999f);
+            const float t = std::clamp(coatWeight * coatDarkening, 0.0f, 1.0f);
+            for (int c = 0; c < 3; ++c) {
+              const float e = base[c] + (base[c] * std::max(specWeight, 0.0f) - base[c]) * metallic;
+              const float f = (1.0f - k) / std::max(1.0e-4f, 1.0f - e * k);
+              base[c] *= 1.0f + (f - 1.0f) * t;
+              base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+            }
           }
           const float coatRoughMix = std::clamp(coatWeight * coatAffectRoughness,
                                                 0.0f, 1.0f);

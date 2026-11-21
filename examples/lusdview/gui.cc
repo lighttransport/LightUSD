@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
 #include "public_stage_queries.hh"
+#include "scene_gizmos.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <map>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -18,20 +20,14 @@
 #include <unistd.h>  // sysconf (RSS page size)
 #endif
 
-#include "core/prim.hh"
-#include "gizmo_build.hh"
 #include "lod_math.hh"  // BoxFitXform (raster LOD box proxies)
 #include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
-#include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
-#include "next_scene_loader.hh"  // BuildNextRtDeformedVertices (selection-highlight re-pose)
-#include "pprint-enum.hh"
+#include "core_scene_loader.hh"  // BuildCoreRtDeformedVertices (selection-highlight re-pose)
 #include "skinning.hh"
-#include "lightusd.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
-#include "tydra/shader-network.hh"
 
 namespace lusdview {
 
@@ -39,23 +35,6 @@ namespace tydra = lightusd::tydra;
 
 namespace {
 
-const char* NodeTypeName(tydra::NodeType t) {
-  switch (t) {
-    case tydra::NodeType::Xform: return "Xform";
-    case tydra::NodeType::Mesh: return "Mesh";
-    case tydra::NodeType::Camera: return "Camera";
-    case tydra::NodeType::SkelRoot: return "SkelRoot";
-    case tydra::NodeType::Skeleton: return "Skeleton";
-    case tydra::NodeType::PointLight: return "PointLight";
-    case tydra::NodeType::DirectionalLight: return "DirectionalLight";
-    case tydra::NodeType::EnvmapLight: return "EnvmapLight";
-    case tydra::NodeType::RectLight: return "RectLight";
-    case tydra::NodeType::DiskLight: return "DiskLight";
-    case tydra::NodeType::CylinderLight: return "CylinderLight";
-    case tydra::NodeType::GeometryLight: return "GeometryLight";
-    default: return "Node";
-  }
-}
 
 const char* MaterialParamTypeName(DrawMaterialParamType t) {
   switch (t) {
@@ -145,14 +124,8 @@ bool ViewportRay(const OrbitCamera& camera, bool zeroToOneDepth, float px,
 }
 
 std::string LightUsdVersionString() {
-  std::string v = std::to_string(lightusd::version_major) + "." +
-                  std::to_string(lightusd::version_minor) + "." +
-                  std::to_string(lightusd::version_micro);
-  if (lightusd::version_rev && lightusd::version_rev[0] != '\0') {
-    v += "-";
-    v += lightusd::version_rev;
-  }
-  return v;
+  const char* v = lightusd_version_string();
+  return v ? std::string(v) : std::string();
 }
 
 const char* OperatingSystemString() {
@@ -208,42 +181,6 @@ const char* CompilerString() {
 #endif
 }
 
-const lightusd::Prim* FindPrimByPath(const lightusd::Prim& prim,
-                                     const std::string& path) {
-  if (prim.absolute_path().full_path_name() == path) return &prim;
-  for (const auto& c : prim.children()) {
-    if (const lightusd::Prim* p = FindPrimByPath(c, path)) return p;
-  }
-  return nullptr;
-}
-
-// --- Hierarchy search predicates (name + type + abs path) ---
-bool PrimPasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
-  std::string typeName = prim.prim_type_name();
-  if (typeName.empty()) typeName = prim.type_name();
-  std::string s = prim.element_name() + " " + typeName + " " +
-                  prim.absolute_path().full_path_name();
-  return f.PassFilter(s.c_str());
-}
-bool PrimSubtreePasses(ImGuiTextFilter& f, const lightusd::Prim& prim) {
-  if (PrimPasses(f, prim)) return true;
-  for (const auto& c : prim.children()) {
-    if (PrimSubtreePasses(f, c)) return true;
-  }
-  return false;
-}
-bool NodePasses(ImGuiTextFilter& f, const tydra::Node& node) {
-  std::string s = node.prim_name + " " + node.abs_path + " " +
-                  NodeTypeName(node.nodeType);
-  return f.PassFilter(s.c_str());
-}
-bool NodeSubtreePasses(ImGuiTextFilter& f, const tydra::Node& node) {
-  if (NodePasses(f, node)) return true;
-  for (const auto& c : node.children) {
-    if (NodeSubtreePasses(f, c)) return true;
-  }
-  return false;
-}
 
 bool PathIsSameOrDescendant(const std::string& path, const std::string& ancestor) {
   if (path.empty() || ancestor.empty()) return false;
@@ -331,7 +268,6 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   domeRequest_.rotationDegrees = 0.0f;
   domeRequest_.browse = false;
   domeStatus_.clear();
-  selPrim_ = nullptr;
   selPath_.clear();
   selMeshIndex_ = -1;
   openPbrEditorMaterial_ = -1;
@@ -342,9 +278,7 @@ void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
   selectionList_.clear();
   selectionHistory_.clear();
   selectionHistoryIndex_ = -1;
-  inspectorCachePrim_ = nullptr;
   inspectorCachePath_.clear();
-  inspectorCacheRows_.clear();
   // Reset per-mesh visibility to all-visible for the new scene.
   meshVisible_.assign(draw_ ? draw_->meshes.size() : 0, uint8_t{1});
   carrierVisible_.assign(draw_ ? draw_->points.size() + draw_->curves.size() : 0,
@@ -1032,9 +966,6 @@ void Gui::drawDockspaceAndMenu() {
                           !meshVisible_.empty() || !carrierVisible_.empty())) {
         unhideAll();
       }
-      if (ImGui::MenuItem("Show RenderScene nodes", nullptr, &showRenderNodes_)) {
-        if (!selPath_.empty()) revealSelectionInHierarchy_ = true;
-      }
       ImGui::Separator();
 
       ImGui::MenuItem("Grid", nullptr, &showGrid_);
@@ -1315,25 +1246,7 @@ void Gui::applySelection(const std::string& absPath, int meshIndex,
   selPath_ = absPath;
   selMeshIndex_ = meshIndex;
   selSourcePrim_ = sourcePrim;
-  selPrim_ = nullptr;
   revealSelectionInHierarchy_ = !absPath.empty();
-  if (loaded_) {
-    for (const auto& root : loaded_->stage.root_prims()) {
-      if (const lightusd::Prim* p = FindPrimByPath(root, absPath)) {
-        selPrim_ = p;
-        break;
-      }
-    }
-    // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
-    // GeomSubset children); fall back to the stage's path lookup.
-    if (!selPrim_ && !absPath.empty()) {
-      const lightusd::Prim* p = nullptr;
-      std::string err;
-      if (loaded_->stage.find_prim_at_path(lightusd::Path(absPath, ""), p, &err) && p) {
-        selPrim_ = p;
-      }
-    }
-  }
   if (meshIndex < 0 && draw_) {
     for (size_t i = 0; i < draw_->meshes.size(); ++i) {
       if (draw_->meshes[i].absPath == absPath) {
@@ -1343,11 +1256,9 @@ void Gui::applySelection(const std::string& absPath, int meshIndex,
     }
   }
   if (recordHistory && !absPath.empty()) pushSelectionHistory(absPath);
-  if (inspectorCachePrim_ != selPrim_ || inspectorCachePath_ != selPath_) {
-    inspectorCachePrim_ = nullptr;
+  if (inspectorCachePath_ != selPath_) {
     inspectorCachePath_.clear();
-    inspectorCacheRows_.clear();
-  }
+    }
   rebuildSubsetHighlight();
 }
 
@@ -1633,16 +1544,14 @@ void Gui::rebuildSubsetHighlight() {
   int mi = -1;
   const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
 
-  if (selPrim_) {
-    if (const auto* gs = selPrim_->as<lightusd::GeomSubset>()) {
-      if (gs->elementType.get_value() == lightusd::GeomSubset::ElementType::Face) {
-        std::set<uint32_t> faces;
-        if (auto opt = gs->indices.get_value()) {
-          std::vector<int32_t> fi;
-          if (opt.value().get_scalar(&fi))
-            for (int32_t f : fi)
-              if (f >= 0) faces.insert(static_cast<uint32_t>(f));
-        }
+  std::set<uint32_t> faces;
+  if (coreStage_ && !selPath_.empty()) {
+    const lightusd_prim subset =
+        lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
+    ReadPublicGeomSubsetFaces(subset, &faces);
+  }
+  {
+    {
         std::string meshPath = selPath_;
         const size_t slash = meshPath.find_last_of('/');
         if (!faces.empty() && slash != std::string::npos && slash != 0) {
@@ -1669,7 +1578,6 @@ void Gui::rebuildSubsetHighlight() {
             }
           }
         }
-      }
     }
   }
   // A viewport pick inside a merged batch resolves to one source prim. Outline
@@ -1738,14 +1646,11 @@ void Gui::clearSelection() {
   selPath_.clear();
   selMeshIndex_ = -1;
   selSourcePrim_ = -1;
-  selPrim_ = nullptr;
   lastPickedFocusPath_.clear();
   haveLastPickedFocusPoint_ = false;
   selectionList_.clear();
   revealSelectionInHierarchy_ = false;
-  inspectorCachePrim_ = nullptr;
   inspectorCachePath_.clear();
-  inspectorCacheRows_.clear();
   // Drop the highlight geometry too, exactly as selecting rebuilds it. The GL
   // backend keys its selection overlay off highlightMeshIndex (cleared to -1
   // above), so it stops drawing on its own; Vulkan's surface-wire pass does the
@@ -2066,295 +1971,7 @@ bool Gui::framePath(const std::string& absPath) {
   return found;
 }
 
-bool Gui::drawPrimTree(const lightusd::Prim& prim) {
-  // When filtering, hide whole subtrees that contain no match; expand the rest
-  // so matches are visible in context.
-  const bool filtering = hierFilter_.IsActive();
-  if (filtering && !PrimSubtreePasses(hierFilter_, prim)) return false;
-
-  ImGui::PushID(static_cast<const void*>(&prim));
-  std::string typeName = prim.prim_type_name();
-  if (typeName.empty()) typeName = prim.type_name();
-  std::string label = prim.element_name();
-  if (label.empty()) label = "<root>";
-  if (!typeName.empty()) label += "  [" + typeName + "]";
-
-  std::string subd = SubdivisionSchemeName(prim);
-  std::string vis = VisibilityState(prim);
-  std::string badges;
-  if (!subd.empty() && subd != "none") badges += " [" + subd + "]";
-  if (vis == "invisible") badges += " [invisible]";
-  // Purpose badge
-  {
-    auto tryPurpose = [&](auto* gprim) -> std::string {
-      if (gprim->purpose.authored()) {
-        auto v = gprim->purpose.get_value();
-        if (v != lightusd::Purpose::Default) return lightusd::to_string(v);
-      }
-      return {};
-    };
-    std::string purpose;
-    if (auto* m = prim.as<lightusd::GeomMesh>()) purpose = tryPurpose(m);
-    else if (auto* s = prim.as<lightusd::GeomSphere>()) purpose = tryPurpose(s);
-    else if (auto* c = prim.as<lightusd::GeomCube>()) purpose = tryPurpose(c);
-    else if (auto* y = prim.as<lightusd::GeomCylinder>()) purpose = tryPurpose(y);
-    else if (auto* o = prim.as<lightusd::GeomCone>()) purpose = tryPurpose(o);
-    else if (auto* p = prim.as<lightusd::GeomCapsule>()) purpose = tryPurpose(p);
-    else if (auto* n = prim.as<lightusd::GeomPlane>()) purpose = tryPurpose(n);
-    else if (auto* b = prim.as<lightusd::GeomBasisCurves>()) purpose = tryPurpose(b);
-    else if (auto* pt = prim.as<lightusd::GeomPoints>()) purpose = tryPurpose(pt);
-    if (!purpose.empty()) badges += " [purpose:" + purpose + "]";
-  }
-  // Material badge
-  const std::string absPath = prim.absolute_path().full_path_name();
-  if (loaded_ && loaded_->ok &&
-      (prim.is<lightusd::GeomMesh>() || prim.is<lightusd::GeomBasisCurves>() ||
-       prim.is<lightusd::GeomPoints>())) {
-    lightusd::Path matPath;
-    const lightusd::Material* matPtr = nullptr;
-    std::string matErr;
-    if (lightusd::tydra::GetDirectlyBoundMaterial(
-            loaded_->stage, prim, "", &matPath, &matPtr, &matErr)) {
-      badges += " [mat:" + std::string(matPath.prim_part().c_str()) + "]";
-    }
-  }
-  // Instance / composition arc badges
-  if (!prim.IsActive()) badges += " [inactive]";
-  if (prim.specifier() == lightusd::Specifier::Over) badges += " [over]";
-  else if (prim.specifier() == lightusd::Specifier::Class) badges += " [class]";
-  if (prim.IsInstance()) badges += " [instance]";
-  if (prim.metas().get_instanceable()) badges += " [instanceable]";
-  {
-    const auto& m = prim.metas();
-    if (m.has_kind()) badges += " [" + lightusd::to_string(m.get_kind()) + "]";
-    if (m.references.has_value() && !m.references->empty()) {
-      size_t count = 0;
-      for (const auto& [qual, refs] : *m.references) count += refs.size();
-      if (count > 0) badges += " [ref:" + std::to_string(count) + "]";
-    }
-    if (m.payload.has_value()) {
-      bool isDeferred = false;
-      if (loaded_) {
-        for (const auto& da : loaded_->comp.deferred) {
-          if (da.primPath == absPath) { isDeferred = true; break; }
-        }
-      }
-      badges += isDeferred ? " [payload:defer]" : " [payload:loaded]";
-    }
-    if (m.inherits.has_value() && !m.inherits->empty()) badges += " [inherits]";
-  }
-  // Visibility indicator
-  {
-    bool anyHidden = false, anyVisible = false;
-    if (draw_) {
-      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
-        if (draw_->meshes[mi].absPath == absPath) {
-          if (mi < meshVisible_.size() && !meshVisible_[mi]) anyHidden = true;
-          else anyVisible = true;
-        }
-      }
-    }
-    if (anyHidden && !anyVisible) badges += " [hidden]";
-    else if (anyHidden) badges += " [mixed]";
-  }
-  label += badges;
-
-  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                             ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                             ImGuiTreeNodeFlags_SpanAvailWidth;
-  const bool leaf = prim.children().empty();
-  if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
-  if (selPrim_ == &prim || isPathSelected(absPath))
-    flags |= ImGuiTreeNodeFlags_Selected;
-
-  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-  else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
-           PathIsSameOrDescendant(selPath_, absPath)) {
-    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-  }
-  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("%s", absPath.c_str());
-  }
-  if (selPrim_ == &prim && revealSelectionInHierarchy_) {
-    ImGui::SetScrollHereY(0.35f);
-    revealSelectionInHierarchy_ = false;
-  }
-  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-    if (ImGui::GetIO().KeyCtrl) {
-      toggleSelectionItem({absPath, -1, -1});
-      selPrim_ = &prim;
-    } else {
-      selectByPath(absPath, -1);
-      selPrim_ = &prim;
-    }
-    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      if (!framePath(absPath)) frameSelected();
-    }
-  }
-  if (ImGui::BeginPopupContextItem()) {
-    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(absPath.c_str());
-    if (ImGui::MenuItem("Frame selection")) { if (!framePath(absPath)) frameSelected(); }
-    if (ImGui::MenuItem("Select group (descendants)"))
-      selectDescendants(absPath, /*addToSelection=*/false);
-    if (ImGui::MenuItem("Select parent prim")) {
-      const size_t slash = absPath.find_last_of('/');
-      const std::string parent =
-          (slash == std::string::npos || slash == 0) ? "/" : absPath.substr(0, slash);
-      if (parent != absPath) selectByPath(parent, -1);
-    }
-    // Hide/show
-    bool hasDeferred = false;
-    if (loaded_) {
-      for (const auto& da : loaded_->comp.deferred) {
-        if (da.primPath == absPath) { hasDeferred = true; break; }
-      }
-    }
-    if (hasDeferred && ImGui::MenuItem("Load payload")) payloadLoadRequests_.push_back(absPath);
-    ImGui::Separator();
-    std::vector<size_t> primMeshIndices;
-    if (draw_) {
-      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
-        if (draw_->meshes[mi].absPath == absPath) primMeshIndices.push_back(mi);
-      }
-    }
-    if (!primMeshIndices.empty()) {
-      bool anyHidden = false;
-      for (size_t mi : primMeshIndices) {
-        if (mi < meshVisible_.size() && !meshVisible_[mi]) { anyHidden = true; break; }
-      }
-      if (anyHidden) {
-        if (ImGui::MenuItem("Show")) {
-          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 1;
-        }
-      } else {
-        if (ImGui::MenuItem("Hide", "Ctrl+H")) {
-          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 0;
-        }
-      }
-    }
-    ImGui::EndPopup();
-  }
-  if (open) {
-    for (const auto& c : prim.children()) drawPrimTree(c);
-    ImGui::TreePop();
-  }
-  ImGui::PopID();
-  return true;
-}
-
-bool Gui::drawNodeTree(const tydra::Node& node) {
-  const bool filtering = hierFilter_.IsActive();
-  if (filtering && !NodeSubtreePasses(hierFilter_, node)) return false;
-
-  ImGui::PushID(static_cast<const void*>(&node));
-  std::string label = node.prim_name.empty() ? "<node>" : node.prim_name;
-  label += "  {";
-  label += NodeTypeName(node.nodeType);
-  label += "}";
-
-  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                             ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                             ImGuiTreeNodeFlags_SpanAvailWidth;
-  const bool leaf = node.children.empty();
-  if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
-  if (!selPath_.empty() && selPath_ == node.abs_path) flags |= ImGuiTreeNodeFlags_Selected;
-
-  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-  else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
-           PathIsSameOrDescendant(selPath_, node.abs_path)) {
-    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-  }
-  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
-  if (!selPath_.empty() && selPath_ == node.abs_path && revealSelectionInHierarchy_) {
-    ImGui::SetScrollHereY(0.35f);
-    revealSelectionInHierarchy_ = false;
-  }
-  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-    const int meshIdx = (node.nodeType == tydra::NodeType::Mesh) ? node.id : -1;
-    selectByPath(node.abs_path, meshIdx);
-    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      if (!framePath(node.abs_path)) frameSelected();
-    }
-  }
-  if (open) {
-    for (const auto& c : node.children) drawNodeTree(c);
-    ImGui::TreePop();
-  }
-  ImGui::PopID();
-  return true;
-}
-
-void Gui::rebuildInspectorCache() {
-  if (!selPrim_) return;
-  if (inspectorCachePrim_ == selPrim_ && inspectorCachePath_ == selPath_) return;
-
-  inspectorCachePrim_ = selPrim_;
-  inspectorCachePath_ = selPath_;
-  inspectorCacheRows_.clear();
-  inspectorCacheError_.clear();
-  inspectorCacheType_ = selPrim_->prim_type_name();
-  if (inspectorCacheType_.empty()) inspectorCacheType_ = selPrim_->type_name();
-  inspectorCacheMeta_ = PrimMetaSummary(*selPrim_);
-
-  std::vector<std::string> names;
-  std::string err;
-  if (!tydra::GetPropertyNames(*selPrim_, &names, &err)) {
-    inspectorCacheError_ = err.empty() ? "No properties." : err;
-    return;
-  }
-
-  inspectorCacheRows_.reserve(names.size());
-  for (const std::string& name : names) {
-    InspectorPropRow row;
-    row.name = name;
-    lightusd::Property prop;
-    std::string perr;
-    row.gotProperty = tydra::GetProperty(*selPrim_, name, &prop, &perr);
-    if (row.gotProperty) {
-      row.value = PropertyToString(prop);
-      if (prop.is_attribute()) {
-        row.typeStr = prop.value_type_name();
-        const auto& a = prop.get_attribute();
-        if (a.is_connection()) row.typeStr += " (connect)";
-        else if (a.has_value() || a.has_timesamples()) row.typeStr += " (authored)";
-        else row.typeStr += " (default)";
-        row.attrMeta = AttrMetaSummary(a);
-        // Color swatch detection
-        const std::string& tn = prop.value_type_name();
-        if (a.has_value() && (tn == "color3f" || tn == "color4f" || tn == "color3d")) {
-          const auto& v = a.get_var().value_raw();
-          if (tn == "color3f") {
-            if (const auto* c = v.as<lightusd::value::color3f>()) {
-              row.hasColor = true;
-              row.color[0] = c->r; row.color[1] = c->g;
-              row.color[2] = c->b; row.color[3] = 1.0f;
-            }
-          } else if (tn == "color4f") {
-            if (const auto* c = v.as<lightusd::value::color4f>()) {
-              row.hasColor = true;
-              row.color[0] = c->r; row.color[1] = c->g;
-              row.color[2] = c->b; row.color[3] = c->a;
-            }
-          } else if (tn == "color3d") {
-            if (const auto* c = v.as<lightusd::value::color3d>()) {
-              row.hasColor = true;
-              row.color[0] = static_cast<float>(c->r); row.color[1] = static_cast<float>(c->g);
-              row.color[2] = static_cast<float>(c->b); row.color[3] = 1.0f;
-            }
-          }
-        }
-      } else if (prop.is_relationship()) {
-        row.typeStr = "rel";
-      }
-    } else {
-      row.value = perr.empty() ? "<error>" : perr;
-    }
-    inspectorCacheRows_.push_back(std::move(row));
-  }
-}
-
-bool Gui::drawNextPrimTree(lightusd_prim prim) {
+bool Gui::drawCorePrimTree(lightusd_prim prim) {
   if (!lightusd_prim_is_valid(prim)) return false;
   const std::string path = PublicString(lightusd_prim_path(prim));
   const std::string label = PublicString(lightusd_prim_name(prim)) + "  " + PublicString(lightusd_prim_type_name(prim));
@@ -2396,7 +2013,7 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
     ImGui::SameLine();
     ImGui::TextDisabled("payload");
   }
-  if (ImGui::BeginPopupContextItem("next_prim_context")) {
+  if (ImGui::BeginPopupContextItem("core_prim_context")) {
     if (lightusd_prim_has_payload(prim) && ImGui::MenuItem("Load payload")) {
       payloadLoadRequests_.push_back(path);
     }
@@ -2420,7 +2037,7 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   }
   if (open) {
     for (size_t i = 0; i < lightusd_prim_child_count(prim); ++i) {
-      drawNextPrimTree(lightusd_prim_child(prim, i));
+      drawCorePrimTree(lightusd_prim_child(prim, i));
     }
     ImGui::TreePop();
   }
@@ -2428,18 +2045,18 @@ bool Gui::drawNextPrimTree(lightusd_prim prim) {
   return matches || descendant_matches;
 }
 
-void Gui::drawNextInspector() {
-  if (!nextStage_ || selPath_.empty()) {
+void Gui::drawCoreInspector() {
+  if (!coreStage_ || selPath_.empty()) {
     HintWrapped("Select a prim to inspect it.");
     return;
   }
-  const lightusd_prim publicPrim = lightusd_stage_prim_at_path(nextStage_.get(), selPath_.c_str());
+  const lightusd_prim publicPrim = lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
   if (!lightusd_prim_is_valid(publicPrim)) {
     HintWrapped("The selected prim is not present in the composed stage.");
     return;
   }
 
-  drawSelectionBreadcrumbs("##next-inspector-breadcrumbs");
+  drawSelectionBreadcrumbs("##core-inspector-breadcrumbs");
   ImGui::TextWrapped("%s", selPath_.c_str());
   if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
   ImGui::TextDisabled("Type: %s", PublicString(lightusd_prim_type_name(publicPrim)).c_str());
@@ -2461,7 +2078,7 @@ void Gui::drawNextInspector() {
   if (shaderBallPos != std::string::npos &&
       shaderBallPos + shaderBallSuffix.size() == selPath_.size()) {
     const std::string sceneRoot = selPath_.substr(0, shaderBallPos);
-    const lightusd_prim materialScope = lightusd_stage_prim_at_path(nextStage_.get(),
+    const lightusd_prim materialScope = lightusd_stage_prim_at_path(coreStage_.get(),
         (sceneRoot + "/materials/examples/mtlx").c_str());
     std::vector<std::string> choices;
     if (lightusd_prim_is_valid(materialScope)) {
@@ -2517,7 +2134,7 @@ void Gui::drawNextInspector() {
       const std::string set = PublicString(lightusd_prim_variant_set_name(publicPrim, i));
       std::string selected = PublicString(lightusd_variant_selection(publicPrim, set.c_str()));
       if (selected.empty()) selected = "(default)";
-      const std::string id = set + "##next_variant";
+      const std::string id = set + "##core_variant";
       if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
         for (size_t j = 0; j < lightusd_variant_count(publicPrim, set.c_str()); ++j) {
           const std::string variant = PublicString(lightusd_variant_name(publicPrim, set.c_str(), j));
@@ -2562,7 +2179,7 @@ void Gui::drawNextInspector() {
   }
 
   if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-    if (ImGui::BeginTable("##next_properties", 3,
+    if (ImGui::BeginTable("##core_properties", 3,
                           ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_BordersInnerV |
                               ImGuiTableFlags_Resizable)) {
@@ -2656,16 +2273,66 @@ void Gui::drawHierarchy() {
       }
       ImGui::Separator();
     }
+    ImGui::Checkbox("Render scene", &renderHierarchy_);
     hierFilter_.Draw("Search", -1.0f);  // name / type / path
     ImGui::Separator();
-    if (showRenderNodes_) {
-      for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
-    } else if (nextStage_) {
-      for (size_t i = 0; i < lightusd_stage_root_prim_count(nextStage_.get()); ++i) {
-        drawNextPrimTree(lightusd_stage_root_prim(nextStage_.get(), i));
+    if (draw_ && (renderHierarchy_ || !coreStage_)) {
+      // The draw records retain composed prim paths, including instanced and
+      // procedural geometry. Build ancestors iteratively to avoid recursive
+      // traversal of arbitrarily deep scene paths.
+      std::map<std::string, std::string> nodes;
+      const auto collect = [&](const auto& records, const char* type) {
+        for (const auto& record : records) {
+          const std::string& path = record.absPath;
+          if (path.empty() || path[0] != '/' ||
+              !hierFilter_.PassFilter((path + " " + type).c_str())) continue;
+          nodes[path] = type;
+          size_t slash = path.find_last_of('/');
+          while (slash != std::string::npos && slash > 0) {
+            nodes.emplace(path.substr(0, slash), "Group");
+            slash = path.find_last_of('/', slash - 1);
+          }
+        }
+      };
+      collect(draw_->meshes, "Mesh");
+      collect(draw_->points, "Points");
+      collect(draw_->curves, "Curves");
+      collect(draw_->lights, "Light");
+      collect(draw_->cameras, "Camera");
+      std::vector<std::string> openPaths;
+      const auto descendant = [](const std::string& child, const std::string& parent) {
+        return child.size() > parent.size() &&
+               child.compare(0, parent.size(), parent) == 0 &&
+               child[parent.size()] == '/';
+      };
+      for (auto it = nodes.begin(); it != nodes.end();) {
+        const auto& path = it->first;
+        while (!openPaths.empty() && !descendant(path, openPaths.back())) {
+          ImGui::TreePop();
+          openPaths.pop_back();
+        }
+        auto next = std::next(it);
+        const bool branch = next != nodes.end() && descendant(next->first, path);
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                   ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (!branch) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
+        if (revealSelectionInHierarchy_ && descendant(selPath_, path))
+          ImGui::SetNextItemOpen(true);
+        const bool open = ImGui::TreeNodeEx(path.c_str(), flags, "%s (%s)",
+            path.substr(path.find_last_of('/') + 1).c_str(), it->second.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) selectByPath(path, -1);
+        if (branch && open) openPaths.push_back(path);
+        if (branch && !open)
+          while (next != nodes.end() && descendant(next->first, path)) ++next;
+        it = next;
       }
-    } else {
-      for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
+      while (!openPaths.empty()) { ImGui::TreePop(); openPaths.pop_back(); }
+      if (nodes.empty()) HintWrapped("No matching render objects.");
+    } else if (coreStage_) {
+      for (size_t i = 0; i < lightusd_stage_root_prim_count(coreStage_.get()); ++i) {
+        drawCorePrimTree(lightusd_stage_root_prim(coreStage_.get(), i));
+      }
     }
   } else {
     HintWrapped("No scene loaded.");
@@ -2678,248 +2345,8 @@ void Gui::drawInspector() {
   refineSelectedTextures_ = false;
   releaseSelectedTextures_ = false;
   ImGui::Begin("Inspector");
-  if (nextStage_) {
-    drawNextInspector();
-  } else if (selPrim_) {
-    rebuildInspectorCache();
-    drawSelectionBreadcrumbs("##inspector-breadcrumbs");
-    ImGui::TextWrapped("%s", selPath_.c_str());
-    if (ImGui::SmallButton("Copy path")) {
-      ImGui::SetClipboardText(selPath_.c_str());
-    }
-    ImGui::SameLine();
-    if (canGoSelectionBack()) {
-      if (ImGui::SmallButton("Back")) goSelectionBack();
-    } else {
-      ImGui::BeginDisabled();
-      ImGui::SmallButton("Back");
-      ImGui::EndDisabled();
-    }
-    ImGui::SameLine();
-    if (canGoSelectionForward()) {
-      if (ImGui::SmallButton("Forward")) goSelectionForward();
-    } else {
-      ImGui::BeginDisabled();
-      ImGui::SmallButton("Forward");
-      ImGui::EndDisabled();
-    }
-    ImGui::TextDisabled("Type: %s", inspectorCacheType_.c_str());
-
-    // Blendshape editor (only renders when the selection has blendshape targets).
-    drawBlendShapeEditor();
-
-    // Prim metadata (kind/active/hidden/displayName/doc/...).
-    if (!inspectorCacheMeta_.empty() &&
-        ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
-      HintWrapped(inspectorCacheMeta_.c_str());
-    }
-
-    // GPrim properties (doubleSided, orientation, visibility, purpose)
-    {
-      std::string gprimSummary = GPrimPropertySummary(*selPrim_);
-      if (!gprimSummary.empty() &&
-          ImGui::CollapsingHeader("GPrim properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-        HintWrapped(gprimSummary.c_str());
-      }
-    }
-
-    // Variant sets with combo boxes
-    {
-      const auto& vsMap = selPrim_->variantSets();
-      if (!vsMap.empty() &&
-          ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const auto& metas = selPrim_->metas();
-        const auto* curSel = metas.variants.has_value() ? &(*metas.variants) : nullptr;
-        for (const auto& [setName, vs] : vsMap) {
-          if (vs.variantSet.empty()) continue;
-          std::string preview = "(default)";
-          if (curSel) {
-            auto it = curSel->find(setName);
-            if (it != curSel->end()) preview = it->second;
-          }
-          std::string comboLabel = setName + "##variant";
-          if (ImGui::BeginCombo(comboLabel.c_str(), preview.c_str())) {
-            for (const auto& [vName, var] : vs.variantSet) {
-              bool selected = (vName == preview);
-              if (ImGui::Selectable(vName.c_str(), selected)) {
-                if (!curSel || preview != vName) {
-                  std::map<std::string, std::string> overrides;
-                  if (curSel) overrides = *curSel;
-                  overrides[setName] = vName;
-                  requestVariantSwitch(selPath_, overrides);
-                }
-              }
-              if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-          }
-        }
-      }
-    }
-
-    // Composition sources / arcs
-    {
-      const auto& metas = selPrim_->metas();
-      bool hasArcs = false;
-      std::string compSummary;
-      auto addArc = [&](const char* k, const std::string& v) {
-        if (!compSummary.empty()) compSummary += "\n";
-        compSummary += k;
-        compSummary += ": ";
-        compSummary += v;
-        hasArcs = true;
-      };
-      if (metas.references.has_value() && !metas.references->empty()) {
-        size_t count = 0;
-        for (const auto& [qual, refs] : *metas.references) count += refs.size();
-        addArc("references", std::to_string(count) + " arc(s)");
-      }
-      if (metas.payload.has_value()) {
-        addArc("payload", "(authored)");
-      }
-      if (metas.inherits.has_value() && !metas.inherits->empty()) {
-        addArc("inherits", std::to_string(metas.inherits->size()) + " path(s)");
-      }
-      if (metas.specializes.has_value() && !metas.specializes->empty()) {
-        addArc("specializes", std::to_string(metas.specializes->size()) + " path(s)");
-      }
-      if (hasArcs &&
-          ImGui::CollapsingHeader("Composition arcs", ImGuiTreeNodeFlags_DefaultOpen)) {
-        HintWrapped(compSummary.c_str());
-      }
-    }
-
-    // Material binding
-    if (loaded_ && loaded_->ok &&
-        (selPrim_->is<lightusd::GeomMesh>() || selPrim_->is<lightusd::GeomBasisCurves>() ||
-         selPrim_->is<lightusd::GeomPoints>())) {
-      lightusd::Path matPath;
-      const lightusd::Material* matPtr = nullptr;
-      std::string matErr;
-      if (lightusd::tydra::GetDirectlyBoundMaterial(
-              loaded_->stage, *selPrim_, "", &matPath, &matPtr, &matErr)) {
-        const std::string matPathStr = matPath.full_path_name();
-        std::string matLabel = "Material: " + matPathStr;
-        if (ImGui::CollapsingHeader("Material binding", ImGuiTreeNodeFlags_DefaultOpen)) {
-          if (ImGui::SmallButton(matLabel.c_str())) {
-            selectByPath(matPathStr, -1);
-          }
-          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to navigate");
-          (void)matPtr;
-        }
-      }
-    }
-
-    // Shader graph viewer (for Material/Shader prims).
-    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<lightusd::Material>()) {
-      if (ImGui::CollapsingHeader("Shader graph", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Recursive lambda to trace shader connections.
-        std::function<void(const std::string&, int)> traceShader;
-        traceShader = [&](const std::string& shaderPath, int depth) {
-          if (depth > 4) { ImGui::TextDisabled("  ..."); return; }
-          const lightusd::Prim* sprim = nullptr;
-          std::function<void(const lightusd::Prim&, const std::string&)> findPrim;
-          findPrim = [&](const lightusd::Prim& p, const std::string& target) {
-            if (p.absolute_path().full_path_name() == target) { sprim = &p; return; }
-            for (const auto& c : p.children()) findPrim(c, target);
-          };
-          for (const auto& r : loaded_->stage.root_prims()) findPrim(r, shaderPath);
-          if (!sprim) { ImGui::TextDisabled("  %s", shaderPath.c_str()); return; }
-          ImGui::TextDisabled("  %s  %s", sprim->type_name().c_str(), shaderPath.c_str());
-          std::vector<std::string> names;
-          std::string perr;
-          if (tydra::GetPropertyNames(*sprim, &names, &perr)) {
-            for (const auto& n : names) {
-              lightusd::Property prop;
-              if (tydra::GetProperty(*sprim, n, &prop, &perr) &&
-                  prop.is_attribute() && prop.get_attribute().has_connections()) {
-                for (const auto& cpath : prop.get_attribute().connections()) {
-                  ImGui::TextDisabled("    %s ->", n.c_str());
-                  traceShader(cpath.full_path_name(), depth + 1);
-                }
-              }
-            }
-          }
-        };
-        // Trace from Material outputs.
-        std::vector<std::string> pnames;
-        std::string perr;
-        if (tydra::GetPropertyNames(*selPrim_, &pnames, &perr)) {
-          for (const auto& n : pnames) {
-            lightusd::Property prop;
-            if (tydra::GetProperty(*selPrim_, n, &prop, &perr) &&
-                prop.is_attribute() && prop.get_attribute().has_connections()) {
-              for (const auto& cp : prop.get_attribute().connections()) {
-                ImGui::TextDisabled("outputs:%s", n.c_str());
-                ImGui::Indent();
-                traceShader(cp.full_path_name(), 0);
-                ImGui::Unindent();
-              }
-            }
-          }
-        }
-      }
-    }
-
-    ImGui::Separator();
-    propFilter_.Draw("Search##props", -1.0f);  // property name / value / type
-
-    if (inspectorCacheError_.empty()) {
-      if (ImGui::BeginTable("##props", 3,
-                            ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
-                                ImGuiTableFlags_BordersInnerH |
-                                ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed,
-                                ImGui::GetFontSize() * 8.0f);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed,
-                                ImGui::GetFontSize() * 6.0f);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
-        for (const InspectorPropRow& row : inspectorCacheRows_) {
-          // Filter rows by property name, type or value.
-          if (propFilter_.IsActive() && !propFilter_.PassFilter(row.name.c_str()) &&
-              !propFilter_.PassFilter(row.typeStr.c_str()) &&
-              !propFilter_.PassFilter(row.value.c_str()) &&
-              !propFilter_.PassFilter(row.attrMeta.c_str())) {
-            continue;
-          }
-          ImGui::TableNextRow();
-          ImGui::TableSetColumnIndex(0);
-          ImGui::TextUnformatted(row.name.c_str());
-          ImGui::TableSetColumnIndex(1);
-          ImGui::TextUnformatted(row.typeStr.c_str());
-          ImGui::TableSetColumnIndex(2);
-          if (row.gotProperty) {
-            // Color swatch before value if applicable
-            if (row.hasColor) {
-              ImVec4 c(row.color[0], row.color[1], row.color[2], row.color[3]);
-              ImGui::ColorButton("##swatch", c,
-                                 ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
-                                 ImVec2(ImGui::GetFontSize(), ImGui::GetFontSize()));
-              ImGui::SameLine();
-            }
-            if (ImGui::BeginChild(("##val-" + row.name).c_str(),
-                                  ImVec2(0, ImGui::GetTextLineHeightWithSpacing()),
-                                  false, ImGuiWindowFlags_NoScrollbar)) {
-              ImGui::TextUnformatted(row.value.c_str());
-              if (ImGui::IsItemHovered() && !row.value.empty()) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                  ImGui::SetClipboardText(row.value.c_str());
-                }
-              }
-            }
-            ImGui::EndChild();
-            if (!row.attrMeta.empty()) HintWrapped(row.attrMeta.c_str());
-          } else {
-            ImGui::TextDisabled("<error>");
-          }
-        }
-        ImGui::EndTable();
-      }
-    } else {
-      HintWrapped(inspectorCacheError_.c_str());
-    }
+  if (coreStage_) {
+    drawCoreInspector();
   } else if (!selPath_.empty()) {
     ImGui::TextWrapped("%s", selPath_.c_str());
     if (ImGui::SmallButton("Copy path")) {
@@ -3547,7 +2974,7 @@ void Gui::drawPayloads() {
     ImGui::End();
     return;
   }
-  if (nextStage_) {
+  if (coreStage_) {
     // The overwhelmingly common case has no deferred payloads. Do not traverse
     // the entire composed stage merely to decide whether the empty panel says
     // "No deferred payloads" or "All payloads loaded"; on large scenes that
@@ -3562,7 +2989,7 @@ void Gui::drawPayloads() {
       wantLoadAllPayloads_ = true;
     }
     ImGui::Separator();
-    if (ImGui::BeginTable("##next_payloads", 3,
+    if (ImGui::BeginTable("##core_payloads", 3,
                           ImGuiTableFlags_RowBg |
                               ImGuiTableFlags_BordersInnerV |
                               ImGuiTableFlags_Resizable)) {
@@ -3582,7 +3009,7 @@ void Gui::drawPayloads() {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(primPath.c_str());
         ImGui::TableNextColumn();
-        const lightusd_prim prim = lightusd_stage_prim_at_path(nextStage_.get(), primPath.c_str());
+        const lightusd_prim prim = lightusd_stage_prim_at_path(coreStage_.get(), primPath.c_str());
         const std::string asset = lightusd_prim_has_payload(prim)
             ? PublicString(lightusd_prim_arc_text(prim, LIGHTUSD_ARC_PAYLOAD, 0))
             : "(deferred)";
@@ -4121,12 +3548,16 @@ void Gui::drawMaterialsPanel() {
 
 void Gui::drawCompositionGraph() {
   ImGui::Begin("Composition Graph");
-  if (!selPrim_) {
+  const lightusd_prim selPrim =
+      (coreStage_ && !selPath_.empty())
+          ? lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str())
+          : lightusd_prim{};
+  if (!lightusd_prim_is_valid(selPrim)) {
     ImGui::TextDisabled("Select a prim to see its composition arcs.");
     ImGui::End();
     return;
   }
-  const auto& m = selPrim_->metas();
+  const std::string selName = PublicString(lightusd_prim_name(selPrim));
 
   // Collect arcs into a simple data structure.
   struct ArcNode {
@@ -4135,48 +3566,27 @@ void Gui::drawCompositionGraph() {
     ImU32 color;
   };
   std::vector<ArcNode> arcs;
-
-  auto addArc = [&](const char* type, const std::string& detail, ImU32 color) {
-    arcs.push_back({type, detail, color});
+  struct ArcKind {
+    uint8_t type;
+    const char* label;
+    ImU32 color;
   };
-
-  if (m.references.has_value() && !m.references->empty()) {
-    for (const auto& [qual, refs] : *m.references) {
-      for (const auto& ref : refs) {
-        std::string qstr = lightusd::to_string(qual);
-        std::string detail = qstr + " " + ref.asset_path.GetAssetPath();
-        addArc("reference", detail, IM_COL32(100, 180, 255, 220));
-      }
-    }
+  for (const ArcKind& kind :
+       {ArcKind{LIGHTUSD_ARC_REFERENCE, "reference", IM_COL32(100, 180, 255, 220)},
+        ArcKind{LIGHTUSD_ARC_PAYLOAD, "payload", IM_COL32(255, 180, 80, 220)},
+        ArcKind{LIGHTUSD_ARC_INHERIT, "inherits", IM_COL32(180, 255, 120, 220)},
+        ArcKind{LIGHTUSD_ARC_SPECIALIZE, "specializes",
+                IM_COL32(220, 140, 255, 220)}}) {
+    const size_t count = lightusd_prim_arc_count(selPrim, kind.type);
+    for (size_t i = 0; i < count; ++i)
+      arcs.push_back({kind.label,
+                      PublicString(lightusd_prim_arc_text(selPrim, kind.type, i)),
+                      kind.color});
   }
-  if (m.payload.has_value() && !m.payload->empty()) {
-    for (const auto& [qual, pls] : *m.payload) {
-      for (const auto& pl : pls) {
-        addArc("payload", pl.asset_path.GetAssetPath(), IM_COL32(255, 180, 80, 220));
-      }
-    }
-  }
-  if (m.inherits.has_value() && !m.inherits->empty()) {
-    for (const auto& [qual, inh] : *m.inherits) {
-      for (const auto& p : inh) {
-        addArc("inherits", p.full_path_name(), IM_COL32(180, 255, 120, 220));
-      }
-    }
-  }
-  if (m.specializes.has_value() && !m.specializes->empty()) {
-    for (const auto& [qual, spec] : *m.specializes) {
-      for (const auto& p : spec) {
-        addArc("specializes", p.full_path_name(), IM_COL32(220, 140, 255, 220));
-      }
-    }
-  }
-  if (m.variantSets.has_value() && !m.variantSets->empty()) {
-    for (const auto& [qual, vs] : *m.variantSets) {
-      for (const auto& vsName : vs) {
-        addArc("variantSet", vsName, IM_COL32(255, 220, 100, 220));
-      }
-    }
-  }
+  for (size_t i = 0; i < lightusd_prim_variant_set_count(selPrim); ++i)
+    arcs.push_back({"variantSet",
+                    PublicString(lightusd_prim_variant_set_name(selPrim, i)),
+                    IM_COL32(255, 220, 100, 220)});
 
   if (arcs.empty()) {
     ImGui::TextDisabled("No composition arcs on this prim.");
@@ -4208,7 +3618,7 @@ void Gui::drawCompositionGraph() {
   dl->AddRectFilled(primMin, primMax, IM_COL32(70, 80, 110, 220), 6.0f);
   dl->AddRect(primMin, primMax, IM_COL32(130, 150, 190, 255), 6.0f);
   dl->AddText(ImVec2(primX + 8, primY + 10), IM_COL32(255, 255, 255, 255),
-              selPrim_->element_name().c_str());
+              selName.c_str());
 
   // Layout arcs below in 2 columns.
   int cols = std::min(static_cast<int>(arcs.size()), 2);
@@ -4408,7 +3818,7 @@ void Gui::drawStats() {
     ImGui::Text("Curves: %zu prims / %zu tessellated samples",
                 draw_->curves.size(), curveSamples);
     // draw_->vertexCount is captured at load (CPU geometry may be freed after
-    // upload on the --next path, so summing meshes[].vertices would read 0).
+    // upload on the --core path, so summing meshes[].vertices would read 0).
     ImGui::Text("Vertices: %zu", draw_->vertexCount);
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
     // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
@@ -5677,13 +5087,13 @@ Gui::posedPickVertices() const {
     std::fprintf(stderr,
                  "[pick] pose applied=%.3f current=%.3f drawIsPosed=%d next=%d\n",
                  timeline_.applied, timeline_.current, drawIsPosed_ ? 1 : 0,
-                 nextStage_ ? 1 : 0);
+                 coreStage_ ? 1 : 0);
   }
-  if (nextStage_) {
-    // --next loader: re-pose the retained rest vertices at the current time
+  if (coreStage_) {
+    // --core loader: re-pose the retained rest vertices at the current time
     // (morph then skin), exactly like the selection-highlight path.
     std::vector<RtSkinnedMeshUpload> posed;
-    if (BuildNextRtDeformedVertices(nextStage_.get(), *draw_, timeline_.applied,
+    if (BuildCoreRtDeformedVertices(coreStage_.get(), *draw_, timeline_.applied,
                                     blendOverrides(), &posed)) {
       for (RtSkinnedMeshUpload& upload : posed) {
         if (upload.meshIndex >= 0)
@@ -5691,26 +5101,6 @@ Gui::posedPickVertices() const {
       }
     }
     return out;
-  }
-  if (!loaded_) return out;
-  // Legacy/tydra scene: compose the current skinning matrices and skin each
-  // deformable mesh's rest vertices on the CPU.
-  std::unordered_map<int, std::vector<lightusd::value::matrix4d>> skinCache;
-  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
-    const DrawMeshCPU& m = draw_->meshes[mi];
-    if (m.vertices.empty() ||
-        (m.jointIdx.empty() && m.morphDeltaHalf.empty())) {
-      continue;
-    }
-    std::vector<lightusd::value::matrix4d> composed;
-    if (!BuildComposedSkinningMatrices(loaded_->render, m, timeline_.applied,
-                                       &skinCache, &composed)) {
-      continue;
-    }
-    std::vector<DrawVertex> verts = m.vertices;
-    if (ApplySkinningToVertices(m, composed, &verts)) {
-      (*out)[static_cast<int>(mi)] = std::move(verts);
-    }
   }
   return out;
 }
@@ -5881,7 +5271,7 @@ int Gui::pickMeshSingle(
   const light3d::Vec3 rd = light3d::normalize(farW - nearW);
 
   // Slab test against a world-space AABB. Return the entry distance as well: the
-  // next-loader deliberately releases static CPU triangles after GPU upload, so
+  // core-loader deliberately releases static CPU triangles after GPU upload, so
   // their retained bounds are the low-memory object-picking representation.
   const float invdx = (rd.x != 0.0f) ? 1.0f / rd.x : 1e30f;
   const float invdy = (rd.y != 0.0f) ? 1.0f / rd.y : 1e30f;
@@ -7279,12 +6669,12 @@ void Gui::drawViewport() {
   ImGui::End();
 }
 
-void Gui::setNextStage(const lightusd::api::Stage& stage) {
-  if (nextStage_.get() == stage.get()) return;
-  nextStage_ = stage;
-  nextSkeletonPathsReady_ = false;
-  nextSkeletonPaths_.clear(); nextSkeletonLines_.clear();
-  nextSkeletonTimeValid_ = false;
+void Gui::setCoreStage(const lightusd::api::Stage& stage) {
+  if (coreStage_.get() == stage.get()) return;
+  coreStage_ = stage;
+  coreSkeletonPathsReady_ = false;
+  coreSkeletonPaths_.clear(); coreSkeletonLines_.clear();
+  coreSkeletonTimeValid_ = false;
 }
 
 void Gui::renderViewportScene(FramePacket* packet) {
@@ -7535,7 +6925,7 @@ void Gui::buildHelpers() {
   overlayLines_.clear();
   helperLines_.insert(helperLines_.end(), physicsDebugLines_.begin(),
                       physicsDebugLines_.end());
-  const bool zUp = loaded_ && loaded_->ok && loaded_->render.meta.upAxis == "Z";
+  const bool zUp = loaded_ && loaded_->ok && loaded_->meta.upAxis == "Z";
 
   auto addLine = [&](float ax, float ay, float az, float bx, float by, float bz,
                      float r, float g, float b) {
@@ -7613,6 +7003,8 @@ void Gui::buildHelpers() {
     addLine(0, 0, 0, 0, L, 0, 0.20f, 0.85f, 0.25f);  // Y green
     addLine(0, 0, 0, 0, 0, L, 0.30f, 0.50f, 1.00f);  // Z blue
   }
+  if (draw_) AppendSceneGizmos(*draw_, showLights_, showCameras_,
+                               std::max(half * 0.1f, 0.1f), addLine);
   if (showSceneBbox_ && draw_ && draw_->hasBounds) {
     addBox(draw_->aabbMin, draw_->aabbMax, 0.90f, 0.90f, 0.30f);
   }
@@ -7624,66 +7016,40 @@ void Gui::buildHelpers() {
   }
 
   // Extent attribute bbox
-  if (showExtent_ && loaded_ && selPrim_) {
-    lightusd::Property extentProp;
-    std::string extentErr;
-    if (tydra::GetProperty(*selPrim_, "extent", &extentProp, &extentErr)) {
-      if (extentProp.is_attribute()) {
-        const auto& attr = extentProp.get_attribute();
-        if (attr.has_value()) {
-          const auto& v = attr.get_var().value_raw();
-          const float* vf = v.as<float>();
-          if (vf) {
-            // extent is typically vec3f[2] = {min, max}
-            float mn[3] = {vf[0], vf[1], vf[2]};
-            float mx[3] = {vf[3], vf[4], vf[5]};
-            addBox(mn, mx, 0.30f, 1.00f, 0.50f);
-          }
-        }
-      }
-    }
+  if (showExtent_ && coreStage_ && !selPath_.empty()) {
+    const lightusd_prim prim =
+        lightusd_stage_prim_at_path(coreStage_.get(), selPath_.c_str());
+    float mn[3], mx[3];
+    if (lightusd_prim_is_valid(prim) && ReadPublicPreviewExtent(prim, mn, mx))
+      addBox(mn, mx, 0.30f, 1.00f, 0.50f);
   }
 
-  // Light and camera gizmos
-  if ((showLights_ || showCameras_) && loaded_ && loaded_->ok) {
-    std::unordered_map<int, std::array<float, 16>> lightXforms;
-    std::unordered_map<int, std::array<float, 16>> camXforms;
-    for (const auto& n : loaded_->render.nodes) {
-      CollectLightCameraTransforms(n, lightXforms, camXforms);
-    }
-    if (showLights_) {
-      BuildLightGizmos(loaded_->render, lightXforms, helperLines_);
-    }
-    if (showCameras_) {
-      BuildCameraGizmos(loaded_->render, camXforms, helperLines_);
-    }
-  }
 
   // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
   // Draw the same animated joint hierarchy used for skinning, then apply the
   // Skeleton prim transform to match the rendered character placement.
-  if (showSkeleton_ && nextStage_) {
-    if (!nextSkeletonPathsReady_) {
-      VisitPublicPrims(nextStage_.get(), [&](lightusd_prim prim) {
+  if (showSkeleton_ && coreStage_) {
+    if (!coreSkeletonPathsReady_) {
+      VisitPublicPrims(coreStage_.get(), [&](lightusd_prim prim) {
         if (PublicString(lightusd_prim_type_name(prim)) == "Skeleton")
-          nextSkeletonPaths_.push_back(PublicString(lightusd_prim_path(prim)));
+          coreSkeletonPaths_.push_back(PublicString(lightusd_prim_path(prim)));
         return true;
       });
-      nextSkeletonPathsReady_ = true;
+      coreSkeletonPathsReady_ = true;
     }
-    if (!nextSkeletonTimeValid_ || nextSkeletonTime_ != timeline_.applied) {
-      nextSkeletonLines_.clear();
+    if (!coreSkeletonTimeValid_ || coreSkeletonTime_ != timeline_.applied) {
+      coreSkeletonLines_.clear();
       const float dx = draw_ && draw_->hasBounds ? draw_->aabbMax[0] - draw_->aabbMin[0] : 1.0f;
       const float dy = draw_ && draw_->hasBounds ? draw_->aabbMax[1] - draw_->aabbMin[1] : 1.0f;
       const float dz = draw_ && draw_->hasBounds ? draw_->aabbMax[2] - draw_->aabbMin[2] : 1.0f;
       const float diagonal = std::sqrt(dx*dx + dy*dy + dz*dz);
       auto segment = [&](const light3d::Vec3& a, const light3d::Vec3& b) {
-        nextSkeletonLines_.push_back(HelperVertex{{a.x,a.y,a.z},{0.10f,0.80f,0.90f}});
-        nextSkeletonLines_.push_back(HelperVertex{{b.x,b.y,b.z},{0.10f,0.80f,0.90f}});
+        coreSkeletonLines_.push_back(HelperVertex{{a.x,a.y,a.z},{0.10f,0.80f,0.90f}});
+        coreSkeletonLines_.push_back(HelperVertex{{b.x,b.y,b.z},{0.10f,0.80f,0.90f}});
       };
-      for (const auto& path : nextSkeletonPaths_) {
-        NextSkeletonOverlay pose;
-        if (!BuildNextSkeletonOverlay(nextStage_.get(),path,timeline_.applied,&pose)) continue;
+      for (const auto& path : coreSkeletonPaths_) {
+        CoreSkeletonOverlay pose;
+        if (!BuildCoreSkeletonOverlay(coreStage_.get(),path,timeline_.applied,&pose)) continue;
         const size_t count = std::min(pose.parents.size(), pose.positions.size()/3);
         const float markerSize = std::max(diagonal*(count>=1024 ? 0.001f : 0.015f),1e-5f);
         for (size_t joint=0; joint<count; ++joint) {
@@ -7698,122 +7064,10 @@ void Gui::buildHelpers() {
           }
         }
       }
-      nextSkeletonTime_ = timeline_.applied;
-      nextSkeletonTimeValid_ = true;
+      coreSkeletonTime_ = timeline_.applied;
+      coreSkeletonTimeValid_ = true;
     }
-    overlayLines_.insert(overlayLines_.end(),nextSkeletonLines_.begin(),nextSkeletonLines_.end());
-  } else if (showSkeleton_ && loaded_ && loaded_->ok) {
-    std::unordered_map<std::string, light3d::Mat4> nodeWorlds;
-    std::function<void(const tydra::Node&)> collectNodeWorlds =
-        [&](const tydra::Node& node) {
-          light3d::Mat4 world;
-          for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c)
-              world.m[r * 4 + c] = static_cast<float>(node.global_matrix.m[r][c]);
-          nodeWorlds.emplace(node.abs_path, world);
-          for (const tydra::Node& child : node.children) collectNodeWorlds(child);
-        };
-    for (const tydra::Node& root : loaded_->render.nodes) collectNodeWorlds(root);
-
-    // Joint positions are in skeleton space and are placed by the Skeleton
-    // prim itself. They must not inherit a bound mesh's current transform.
-    auto skelWorld = [&](size_t si, bool densePointSamples) -> light3d::Mat4 {
-      (void)densePointSamples;
-      if (si < loaded_->render.skeletons.size()) {
-        auto it = nodeWorlds.find(loaded_->render.skeletons[si].abs_path);
-        if (it != nodeWorlds.end()) return it->second;
-      }
-      return light3d::Mat4::identity();
-    };
-
-    const auto& skels = loaded_->render.skeletons;
-    for (size_t si = 0; si < skels.size(); ++si) {
-      const auto& skel = skels[si];
-      const size_t nj = skel.num_joints();
-      if (nj == 0 || skel.bind_transforms.size() != nj ||
-          skel.parent_joint_indices.size() != nj) {
-        continue;  // empty or malformed topology; skip
-      }
-      const bool densePointSamples = nj >= 1024;
-      if (densePointSamples && draw_) {
-        float sceneDiag = 1.0f;
-        if (draw_->hasBounds) {
-          const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
-          const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
-          sceneDiag = std::max(light3d::length(smx - smn), 1.0e-5f);
-        }
-        const float cs = std::max(sceneDiag * 0.0006f, 1e-5f);
-        bool drewDenseSamples = false;
-        for (const auto& dm : draw_->meshes) {
-          if (dm.skelId != static_cast<int>(si)) continue;
-          light3d::Mat4 W;
-          for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
-          const bool hasSkinnedSamples =
-              !dm.skinnedHelperPoints.empty() && dm.skinnedHelperPoints.size() % 3 == 0;
-          const size_t count = hasSkinnedSamples ? (dm.skinnedHelperPoints.size() / 3)
-                                                 : dm.vertices.size();
-          for (size_t i = 0; i < count; ++i) {
-            light3d::Vec3 local;
-            if (hasSkinnedSamples) {
-              local = {dm.skinnedHelperPoints[i * 3 + 0],
-                       dm.skinnedHelperPoints[i * 3 + 1],
-                       dm.skinnedHelperPoints[i * 3 + 2]};
-            } else {
-              const DrawVertex& v = dm.vertices[i];
-              local = {v.px, v.py, v.pz};
-            }
-            const light3d::Vec3 p = light3d::transformPoint(W, local);
-            addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
-            drewDenseSamples = true;
-          }
-        }
-        if (drewDenseSamples) continue;
-      }
-      const light3d::Mat4 W = skelWorld(si, densePointSamples);
-      std::vector<lightusd::value::matrix4d> jointWorlds;
-      if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
-                                    timeline_.applied, &jointWorlds) ||
-          jointWorlds.size() != nj) {
-        jointWorlds = skel.bind_transforms;
-      }
-
-      // World-space joint positions + this skeleton's own AABB.
-      std::vector<light3d::Vec3> jp(nj);
-      light3d::Vec3 mn{1e30f, 1e30f, 1e30f};
-      light3d::Vec3 mx{-1e30f, -1e30f, -1e30f};
-      for (size_t i = 0; i < nj; ++i) {
-        jp[i] = light3d::transformPoint(
-            W, {static_cast<float>(jointWorlds[i].m[3][0]),
-                static_cast<float>(jointWorlds[i].m[3][1]),
-                static_cast<float>(jointWorlds[i].m[3][2])});
-        mn.x = std::min(mn.x, jp[i].x); mn.y = std::min(mn.y, jp[i].y);
-        mn.z = std::min(mn.z, jp[i].z);
-        mx.x = std::max(mx.x, jp[i].x); mx.y = std::max(mx.y, jp[i].y);
-        mx.z = std::max(mx.z, jp[i].z);
-      }
-      // Stable marker size: dense point-joint rigs can have animated extents,
-      // so derive cross size from the scene bounds to avoid helper wobble.
-      float sceneDiag = light3d::length(mx - mn);
-      if (draw_ && draw_->hasBounds) {
-        const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
-        const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
-        sceneDiag = light3d::length(smx - smn);
-      }
-      const float cs = std::max(sceneDiag * (nj >= 1024 ? 0.002f : 0.02f), 1e-5f);
-
-      for (size_t i = 0; i < nj; ++i) {
-        const light3d::Vec3& p = jp[i];
-        // Small axis cross so leaf/isolated joints are visible too.
-        addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
-        addOverlay(p.x, p.y - cs, p.z, p.x, p.y + cs, p.z, 0.20f, 0.95f, 0.95f);
-        addOverlay(p.x, p.y, p.z - cs, p.x, p.y, p.z + cs, 0.20f, 0.95f, 0.95f);
-        const int par = skel.parent_joint_indices[i];
-        if (!densePointSamples && par >= 0 && static_cast<size_t>(par) < nj) {
-          const light3d::Vec3& pp = jp[static_cast<size_t>(par)];
-          addOverlay(pp.x, pp.y, pp.z, p.x, p.y, p.z, 0.10f, 0.80f, 0.90f);
-        }
-      }
-    }
+    overlayLines_.insert(overlayLines_.end(),coreSkeletonLines_.begin(),coreSkeletonLines_.end());
   }
 
   // Translation gizmo at the selected mesh world position.
@@ -7862,7 +7116,6 @@ void Gui::buildHelpers() {
 void Gui::drawStageMeta() {
   ImGui::Begin("Stage");
   if (loaded_ && loaded_->ok) {
-    const auto& meta = loaded_->render.meta;
     metaFilter_.Draw("Search##meta", -1.0f);  // key / value
     if (ImGui::BeginTable("##stagemeta", 2,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
@@ -7882,9 +7135,9 @@ void Gui::drawStageMeta() {
         ImGui::TableSetColumnIndex(1);
         ImGui::TextWrapped("%s", v.c_str());
       };
-      if (nextStage_) {
+      if (coreStage_) {
         PublicStageInfo info;
-        if (ReadPublicStageInfo(nextStage_.get(), &info)) {
+        if (ReadPublicStageInfo(coreStage_.get(), &info)) {
           row("upAxis", info.upAxis);
           row("metersPerUnit", std::to_string(info.metersPerUnit));
           row("framesPerSecond", std::to_string(info.framesPerSecond));
@@ -7896,7 +7149,7 @@ void Gui::drawStageMeta() {
           if (!info.documentation.empty()) row("documentation", info.documentation);
         }
         lightusd::api::StringList layers;
-        if (lightusd_stage_sublayers(nextStage_.get(), layers.put()) == LIGHTUSD_OK &&
+        if (lightusd_stage_sublayers(coreStage_.get(), layers.put()) == LIGHTUSD_OK &&
             lightusd::api::StringListSize(layers)) {
           std::string sublayers;
           for (size_t i = 0; i < lightusd::api::StringListSize(layers); ++i) {
@@ -7905,21 +7158,6 @@ void Gui::drawStageMeta() {
           }
           row("subLayers", sublayers);
         }
-      } else {
-        const auto& smeta = loaded_->stage.metas();
-        row("upAxis", meta.upAxis);
-        row("metersPerUnit", std::to_string(meta.metersPerUnit));
-        row("framesPerSecond", std::to_string(meta.framesPerSecond));
-        row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
-        if (meta.startTimeCode.has_value())
-          row("startTimeCode", std::to_string(*meta.startTimeCode));
-        if (meta.endTimeCode.has_value())
-          row("endTimeCode", std::to_string(*meta.endTimeCode));
-        if (!smeta.defaultPrim.str().empty())
-          row("defaultPrim", smeta.defaultPrim.str());
-        if (!meta.copyright.empty()) row("copyright", meta.copyright);
-        if (!meta.comment.empty()) row("comment", meta.comment);
-        if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
       }
       ImGui::EndTable();
     }

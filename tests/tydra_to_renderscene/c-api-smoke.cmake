@@ -1,7 +1,7 @@
 # Verify CLI options reach the public C conversion configuration.
 function(check_scene fixture expected)
   execute_process(
-    COMMAND "${APP}" "${ROOT}/tests/usda/${fixture}" --next --memstat --nodump ${ARGN}
+    COMMAND "${APP}" "${ROOT}/tests/usda/${fixture}" --memstat --nodump ${ARGN}
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
   if(NOT result EQUAL 0)
     message(FATAL_ERROR "${fixture}: conversion failed (${result}): ${error}")

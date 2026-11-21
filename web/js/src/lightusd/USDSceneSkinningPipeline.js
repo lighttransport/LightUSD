@@ -8,7 +8,7 @@ import { collectMeshesInHierarchy } from './SceneGraphUtils.js';
 
 /**
  * Recover a skeleton prim's WORLD transform from the RenderScene node table
- * (next backend). The next-built three tree is flat — every mesh has its world
+ * (core backend). The next-built three tree is flat — every mesh has its world
  * matrix baked — so the Skeleton prim has no named node to parent bones under;
  * without its ancestor transform (e.g. an axis-correcting Z_UP xform) the
  * bones deform in the wrong space. Returns a fixed-matrix Group or null.

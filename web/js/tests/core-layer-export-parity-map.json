@@ -1,0 +1,123 @@
+[
+  {
+    "legacyMethod": "loadLayerFromJSON",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "loadJSON",
+    "workflow": [
+      "loadJSON"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportAsUSDA",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportAsUSDC",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCToBufferWithOptions",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "load",
+      "exportUSDCToBuffer"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDCWithOptions",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDC",
+    "workflow": [
+      "load",
+      "exportUSDC"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportLayerAsUSDZWithOptions",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDZ",
+    "workflow": [
+      {
+        "surface": "LayerDocument",
+        "method": "load"
+      },
+      {
+        "surface": "AssetStore",
+        "method": "setAsset"
+      },
+      {
+        "surface": "LayerDocument",
+        "method": "exportUSDZ"
+      }
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "exportStageAsUSDCToBufferWithOptions",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "exportUSDCToBuffer",
+    "workflow": [
+      "begin",
+      "exportUSDCToBuffer"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenLayer",
+    "coreSurface": "FlattenSession",
+    "coreEquivalent": "step",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToString",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportUSDA",
+    "workflow": [
+      "load",
+      "exportUSDA"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToJSON",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportJSON",
+    "workflow": [
+      "load",
+      "exportJSON"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "layerToJSONWithOptions",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "exportJSONWithOptions",
+    "workflow": [
+      "load",
+      "exportJSONWithOptions"
+    ],
+    "parityStatus": "behavior_verified"
+  }
+]

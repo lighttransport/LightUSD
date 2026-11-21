@@ -31,25 +31,24 @@
 #include <psapi.h>
 #endif
 
-#include "value-types.hh"
+#include "lusdr_value.hh"
 #include "tydra/openpbr-params.hh"
-#include "tydra/next/mem-budget.hh"
-#include "tydra/next/resource-budget.hh"
-#include "xform.hh"
+#include "tydra/mem-budget.hh"
+#include "tydra/resource-budget.hh"
 
 namespace lusdr {
 
-using lightusd::value::color3f;
-using lightusd::value::float3;
-using lightusd::value::matrix4d;
+using lusdr::value::color3f;
+using lusdr::value::float3;
+using lusdr::value::matrix4d;
 
 // Memory budget + tracking pool allocator now live in the shared header so
 // examples/lusdquicklook can use them too. These aliases keep every lusdr call
 // site (MemBudget::Get(), PoolAlloc<T>, MemPool::Get()) unchanged.
-using MemBudget = lightusd::tydra::next::MemBudget;
-using MemPool = lightusd::tydra::next::MemPool;
+using MemBudget = lightusd::tydra::MemBudget;
+using MemPool = lightusd::tydra::MemPool;
 template <class T>
-using PoolAlloc = lightusd::tydra::next::PoolAlloc<T>;
+using PoolAlloc = lightusd::tydra::PoolAlloc<T>;
 
 // Conservative estimate of the extra memory LightRT's BVH build adds per
 // triangle (the re-swizzled vertex copy ~36 B + wide-BVH nodes/leaves). Used by
@@ -65,6 +64,20 @@ struct Vec3 {
   float x{0.0f};
   float y{0.0f};
   float z{0.0f};
+};
+
+struct MaterialXHitContext {
+  bool has_uv{false};
+  bool has_uv_derivatives{false};
+  bool has_uv1{false};
+  float uv[2]{0.0f, 0.0f};
+  float uv_dx[2]{0.0f, 0.0f};
+  float uv_dy[2]{0.0f, 0.0f};
+  float uv1[2]{0.0f, 0.0f};
+  float uv1_dx[2]{0.0f, 0.0f};
+  float uv1_dy[2]{0.0f, 0.0f};
+  Vec3 dpdu{1.0f, 0.0f, 0.0f};
+  Vec3 dpdv{0.0f, 1.0f, 0.0f};
 };
 
 struct Bounds {
@@ -535,10 +548,10 @@ inline float ClampFloat(float v, float lo, float hi) {
 }
 
 inline Vec3 FromFloat3(const float3 &v) { return Vec3{v[0], v[1], v[2]}; }
-inline Vec3 FromPoint3(const lightusd::value::point3f &v) {
+inline Vec3 FromPoint3(const lusdr::value::point3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
-inline Vec3 FromVector3(const lightusd::value::vector3f &v) {
+inline Vec3 FromVector3(const lusdr::value::vector3f &v) {
   return Vec3{v[0], v[1], v[2]};
 }
 

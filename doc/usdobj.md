@@ -64,9 +64,11 @@ override filename detection, `--asset-dir DIR` for additional asset roots, and
 | `p` | Points |
 | `usemtl` | MaterialBindingAPI bindings on face GeomSubsets in the `materialBind` family |
 | `vw` | Vertex joint-index/weight primvars with SkelBindingAPI; see below |
+| `t` (tinyobjloader extension) | Subdivision surface attributes; see [Subdivision tags](#subdivision-tags-t-lines) |
+| `skel_*` (tinyobjloader extension) | SkelRoot, Skeleton, SkelAnimation; see [Skeletons](#skeletons-skel_-lines) |
 
-Meshes have `subdivisionScheme = "none"`; point-based prims receive a computed
-extent. UV/normal seams and flat-shaded corners can split one source position
+Meshes have `subdivisionScheme = "none"` unless the shape has subdivision tags;
+point-based prims receive a computed extent. UV/normal seams and flat-shaded corners can split one source position
 into several USD points. Point count and index order therefore need not match
 the source OBJ position array. A mesh with incomplete corner UVs omits
 `primvars:st` and warns instead of inventing UVs for the missing corners.
@@ -93,6 +95,41 @@ and produce a warning; there is no NURBS evaluation.
 OBJ supplies no physical units or rigid-body description. Standalone import
 does not invent `metersPerUnit`, colliders, masses or physics joints. Physics
 for an OBJ mesh used in a robot asset comes from the URDF/MJCF description.
+
+## Subdivision tags (`t` lines)
+
+The OpenSubdiv `t` tags of tinyobjloader's
+[subd-obj.md](https://github.com/tinyobjloader/tinyobjloader/blob/release/subd-obj.md)
+are checked by the vendored `tobj_subd` (the C reference of that spec's Lean
+model) against each shape's faces as written. A shape with accepted tags is
+imported with compact topology (one point per source position), so tag vertex
+numbers map directly to point indices. Tag vertex numbers are 0-based and count
+over the whole file; `hole` face numbers are 0-based within the shape.
+
+| Tag | UsdGeomMesh |
+|---|---|
+| `scheme catmark` / `loop` / `bilinear` | `subdivisionScheme` catmullClark / loop / bilinear (catmullClark when tags are present without `scheme`) |
+| `interpolateboundary 0` / `1` / `2` | `interpolateBoundary` none / edgeAndCorner / edgeOnly |
+| `facevaryinginterpolateboundary 0`..`5` | `faceVaryingLinearInterpolation` none / cornersOnly / cornersPlus1 / cornersPlus2 / boundaries / all |
+| `smoothtriangles` | `triangleSubdivisionRule` catmullClark / smooth |
+| `crease` | `creaseIndices`, `creaseLengths`, `creaseSharpnesses` |
+| `corner` | `cornerIndices`, `cornerSharpnesses` |
+| `hole` | `holeIndices` |
+| `creasemethod chaikin` | custom `obj:subd:creaseMethod` (UsdGeomMesh has no equivalent; Tydra honours it) |
+
+Tag values follow OpenSubdiv's OBJ reader: `interpolateboundary 1` is
+edge-and-corner and `2` is edge-only. Absent tags take that reader's defaults
+(edge-only boundaries, `all` face-varying interpolation), and the importer
+always authors `interpolateBoundary` and `faceVaryingLinearInterpolation` for
+tagged shapes, because USD's fallbacks differ. Ill-formed tags are reported as
+`obj.subd_invalid` and the shape stays `none`.
+
+Tydra and `lusdrender -subdiv N` refine these meshes with LightUSD's `tsd`.
+The ctest `tool-obj-subd-osd` compares the refined points with OpenSubdiv
+(set `OSD_ROOT` to an OpenSubdiv install with the CPU backend; skipped
+otherwise). One known gap: tsd rejects non-manifold edges, which OpenSubdiv
+accepts. A "pillow" (two coincident faces) becomes non-manifold after one
+refinement step, so it is refined at level 1 only.
 
 ## MTL materials and textures
 
@@ -177,6 +214,18 @@ described in [native import reports and policies](import-report.md). In Python,
 codes and memory estimates. `unsupported_policy="preserve"` retains unconverted
 MTL bump/displacement/sheen/anisotropy data as non-executable layer metadata.
 
+### MaterialX in MTL
+
+`.mtl` files may carry a MaterialX node graph in `mtlx_*` lines
+(tinyobjloader's
+[mtlx-mtl.md](https://github.com/tinyobjloader/tinyobjloader/blob/release/mtlx-mtl.md)),
+checked by the vendored `tobj_mtlx`. Such a material gets, besides its
+PreviewSurface, a MaterialX network: `<Material>/MtlxSurface`
+(`ND_<category>_surfaceshader`) fed by `<Material>/NodeGraphs`, with one Shader
+per node. Each node's id is the MaterialX standard-library nodedef whose input
+types match the node's inputs. lusdrender renders it through the MaterialX
+path; `tool-lusdrender-mtlx-mtl` checks the result.
+
 ## Skin weights: the `vw` extension
 
 `vw` is a tinyobjloader extension, not a standard Wavefront OBJ statement. It
@@ -226,7 +275,9 @@ emitted point the arrays contain that many consecutive indices and weights.
 The same mapping applies to imported Mesh, BasisCurves and Points prims.
 
 - Every influence is retained in source order, including repeated joint IDs.
-  There is no four-influence limit, sorting, merging, pruning or normalization.
+  There is no four-influence limit, sorting, merging or pruning. Weights are
+  normalized only when the file's skeleton lines bind the mesh to a Skeleton
+  (UsdSkel expects unit sums); otherwise they are kept as written.
 - Finite signed weights, zero weights, weights above one and non-unit sums are
   accepted. This preserves source data; the consuming skinning implementation
   determines whether those weights are appropriate for deformation.
@@ -251,11 +302,57 @@ and double (`_d`) APIs. The USD frontend uses the float API and authors
 `float[]` weights. It cannot check an index against a skeleton's joint count
 during OBJ parsing because the skeleton is supplied separately.
 
+### Skeletons: `skel_*` lines
+
+tinyobjloader's
+[skel-obj.md](https://github.com/tinyobjloader/tinyobjloader/blob/release/skel-obj.md)
+gives the `vw` joint ids a skeleton:
+
+```obj
+skel_joint root -    1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+skel_joint spine root
+skel_joint head spine
+skel_lib  rig.fbx              # bind/rest of joints without an inline matrix
+skel_anim rig.fbx Take001      # or: skel_anim rig.usda /Rig/Skel/Anim
+```
+
+The n-th `skel_joint` is `vw` joint id n-1. The lines are checked by the
+vendored `tobj_skel`. When they are accepted, the import authors:
+
+- `/World` as a SkelRoot, and `/World/Skel` as a Skeleton whose joint paths
+  come from the hierarchy (`root/spine/head`). Bind transforms are the inline
+  world matrices or the sidecar's, matched by joint name. Rest transforms are
+  `skel_rest`, the sidecar's, or the bind pose relative to the parent.
+- `skel:skeleton` and normalized weights on every mesh with `vw` weights.
+- An animation:
+  - from an `.fbx` sidecar (through ufbx, see [usdfbx.md](usdfbx.md)): a
+    `/World/Skel/Anim` SkelAnimation sampled per frame;
+  - from a USD sidecar: `/World/Skel/Anim` *references* the sidecar's
+    SkelAnimation (the named prim or the first one), and the sidecar's time
+    codes are copied.
+
+  Either way it is bound with `skel:animationSource`.
+
+Sidecars share the OBJ's units and axes, and the animation applies in the
+OBJ's skeleton space. Transforms above the sidecar's skeleton are not applied;
+the importer warns when a USD sidecar has them. An ill-formed skeleton or an
+unusable sidecar drops the skeleton with a warning (`obj.skel_invalid`, or the
+reason), and the weights are imported as without skeleton lines.
+
+Tests in `tests/obj-skel` (ctest label `skel`) compare LightUSD's skinning with:
+- ufbx's (`tool-obj-skin-ufbx`, `tool-obj-skin-usd-sidecar`,
+  `tool-obj-skin-inline-rest`);
+- OpenUSD's UsdSkel (`tool-skel-skin-pxr`, with `OPENUSD_ROOT`);
+- a lusdrender smoke test (`tool-lusdrender-obj-skel`).
+
+tinyobjloader's Blender add-on (`blender/io_scene_obj_ext`) reads and writes
+these lines, with FBX or USD sidecars.
+
 ### Binding to a skeleton supplied in USD
 
-Importing `vw` does not create a Skeleton, SkelRoot, joint-name order, bind/rest
-transforms, animation or `skel:skeleton` relationship. Supply these in the
-containing USD. The following complete `character.usda` binds `skin.obj` to a
+Without skeleton lines, importing `vw` does not create a Skeleton, SkelRoot,
+joint-name order, bind/rest transforms, animation or `skel:skeleton`
+relationship. Supply these in the containing USD. The following complete `character.usda` binds `skin.obj` to a
 two-joint skeleton; identity transforms make this a minimal bind-space example:
 
 ```usda
@@ -347,7 +444,7 @@ Menagerie robot exports in about 2 s).
 
 ## Composition and native APIs
 
-The next-core layer loader used by Python supports OBJ references, payloads and
+The core layer loader used by Python supports OBJ references, payloads and
 sublayers. An OBJ layer has default prim `/World`, so a reference without an
 explicit prim path imports that subtree, as in the binding example above. An
 OBJ sublayer contributes its `/World` hierarchy directly. OBJ, MTL and textures
@@ -365,11 +462,11 @@ must be portable to other USD readers.
 | C `lightusd_import_file`, `lightusd_import_memory` | Full import with `LIGHTUSD_IMPORT_OBJ`; initialize options with `lightusd_import_options_init` |
 | C++ `usdObj::ReadObjStageFromFile`, `ReadObjStageFromMemory`, `ReadObjLayerFromMemory` | Legacy full-stage/layer adapters; memory APIs accept source and import options |
 | C++ `usdObj::ReadObjFromFile`, `ReadObjFromString` | Legacy geometry-only adapter: combines polygon meshes, requires faces and does not provide the full material/curve/point scene |
-| Next-core `pcp::LoadLayerFromFile`, `LoadLayerFromMemory` | Layer loading and composition; use a `.obj` source identifier for format dispatch |
+| Core `pcp::LoadLayerFromFile`, `LoadLayerFromMemory` | Layer loading and composition; use a `.obj` source identifier for format dispatch |
 
 See [`lightusd-import-c.h`](../src/c-api/lightusd-import-c.h),
 [`usdObj.hh`](../src/usdObj.hh) and the
-[next-core layer loader](../src/next/pcp/layer-registry.hh) for signatures and
+[core layer loader](../src/pcp/layer-registry.hh) for signatures and
 ownership. The legacy composition loader also accepts loose OBJ layers; this
 does not make every USD-only memory loader an OBJ reader.
 
@@ -395,14 +492,14 @@ incomplete UVs, missing weights and unsupported features are reported through
 ### Large inputs and generated stress tests
 
 OBJ memory inputs are parsed as bounded byte views; they need no NUL terminator
-and the next-core/Python path does not copy the entire input into a string.
+and the core/Python path does not copy the entire input into a string.
 File imports without a custom resolver memory-map the OBJ on POSIX systems
 (other platforms and resolver-backed reads fall back to reading it), so the
 source is not duplicated in anonymous memory; it still counts against
 `max_input` and the memory budget. The file must not shrink while it is being
 imported. URDF/MJCF mesh assets (OBJ, STL, DAE) are read the same way.
 Serial OBJ, MTL and callback parsing visit lines incrementally rather than
-allocating a line table proportional to the input. The next-core layer loader
+allocating a line table proportional to the input. The core layer loader
 and C/Python OBJ import APIs pass compact numeric geometry to USD without a
 JSON node for every coordinate. The legacy/robot JSON bridge remains available
 and checks its additional allocation estimates against the import budget.
@@ -434,7 +531,7 @@ Repeated object names use advancing suffix counters, so resolving
 name collisions does not restart a search through all prior objects. Warning
 storage is capped even when a single diagnostic is very large.
 
-[`test_obj_large.cc`](../tests/next/test_obj_large.cc) generates OBJ source in
+[`test_obj_large.cc`](../tests/core/test_obj_large.cc) generates OBJ source in
 memory. Its normal CTest case checks geometry, UV/color/skin arrays, allocation
 failure cleanup, expansion budgets, tiny decimals, scale-independent and mixed
 explicit/generated normals, smoothing memory use, large coordinates, blank-line
@@ -443,19 +540,19 @@ assets are checked in. Its optional `--triangles` and `--comment-mib` arguments
 exercise dense geometry and byte offsets beyond 32 bits independently:
 
 ```sh
-cmake -S src/next -B build_ninja/obj-large-next -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
-cmake --build build_ninja/obj-large-next --target test_obj_large -j8
-ctest --test-dir build_ninja/obj-large-next -R next_test_obj_large --output-on-failure
+cmake -S src -B build_ninja/obj-large-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON
+cmake --build build_ninja/obj-large-core --target test_obj_large -j8
+ctest --test-dir build_ninja/obj-large-core -R core_test_obj_large --output-on-failure
 
 # One million triangles with normals, UVs, colors and vw records.
-build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0
+build_ninja/obj-large-core/test_obj_large --triangles 1000000 --comment-mib 0
 
 # Explicit normals with a smoothing group must avoid unused smoothing maps.
-build_ninja/obj-large-next/test_obj_large --triangles 1000000 --comment-mib 0 --smooth
+build_ninja/obj-large-core/test_obj_large --triangles 1000000 --comment-mib 0 --smooth
 
 # More than 4 GiB of input, with real geometry after the generated comments.
-build_ninja/obj-large-next/test_obj_large --triangles 100 --comment-mib 4097
+build_ninja/obj-large-core/test_obj_large --triangles 100 --comment-mib 4097
 ```
 
 These stress sizes are opt-in and allocate the source in RAM. `--parser-only`
@@ -463,7 +560,7 @@ runs the C11 parse without the USD conversion. Python-generated buffer and
 expansion-limit tests are in
 [`test_obj_large.py`](../python/tests/test_obj_large.py).
 Generated MTL validation and allocation-failure tests are in
-[`test_obj_materials.cc`](../tests/next/test_obj_materials.cc). They cover both
+[`test_obj_materials.cc`](../tests/core/test_obj_materials.cc). They cover both
 precision families, standalone/OBJ/callback entry points, 2,001 materials,
 30,000 reverse-ordered custom fields and duplicate-key order. Python resolver
 coverage is in [`test_obj_materials.py`](../python/tests/test_obj_materials.py).
@@ -472,13 +569,13 @@ orders, repeated/missing library requests and prefix/duplicate name lookups for
 scene and callback loading in both precisions. For a larger optional run:
 
 ```sh
-cmake --build build_ninja/obj-large-next --target test_obj_materials -j8
-build_ninja/obj-large-next/test_obj_materials --lookup-materials 100000
+cmake --build build_ninja/obj-large-core --target test_obj_materials -j8
+build_ninja/obj-large-core/test_obj_materials --lookup-materials 100000
 ```
 
 Regression coverage also includes:
 
-- [C11/next OBJ reader tests](../tests/next/test_obj_reader.cc): float/double
+- [C11 OBJ reader tests](../tests/core/test_obj_reader.cc): float/double
   skin arrays, invalid records, mixed primitive types and influence metadata.
 - [Python OBJ layer/skin tests](../python/tests/test_obj_layers_skin.py): seam
   copies, signed weights, more than four influences, composition, packaged

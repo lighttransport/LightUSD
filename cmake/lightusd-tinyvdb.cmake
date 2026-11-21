@@ -27,7 +27,7 @@ if(NOT TARGET lightusd_tinyvdb)
   # This target owns miniz (and, when LIGHTUSD_TINYVDB_ZSTD is set, the
   # bundled zstd) for every build: the legacy root drops them from its own
   # sources and gets them through lightusd_asset_import. Without zstd,
-  # BLOSC-zstd .vdb files are rejected. LZ4 comes from lightusd_next / the
+  # BLOSC-zstd .vdb files are rejected. LZ4 comes from lightusd_core / the
   # root sources.
   target_sources(lightusd_tinyvdb PRIVATE "${_lusd_tinyvdb_root}/external/miniz.c")
   set_source_files_properties("${_lusd_tinyvdb_root}/external/miniz.c"

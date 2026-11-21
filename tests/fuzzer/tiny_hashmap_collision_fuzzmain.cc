@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Fuzzer for lightusd::HashMap collision-heavy operations.
+// Fuzzer for lightusd::legacy::HashMap collision-heavy operations.
 
 #include <algorithm>
 #include <cstddef>
@@ -45,7 +45,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (size == 0 || size > 4096) return 0;
 
   Reader r{data, size, 0};
-  lightusd::HashMap<std::string, int, AlwaysZeroHash> map;
+  lightusd::legacy::HashMap<std::string, int, AlwaysZeroHash> map;
   map.reserve(1u + r.bounded(16));
 
   const size_t ops = 1u + r.bounded(160);

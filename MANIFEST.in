@@ -1,17 +1,17 @@
 # sdist contents for the lightusd PyPI package.
 # Everything needed to run `python -m build --wheel` from the sdist itself.
-# The wheel builds only the "next" core, Tydra-next, the C API, and the Python
-# extension, but those targets reuse selected sources and headers elsewhere in
-# src/. Keep those transitive build inputs in the sdist.
+# The wheel builds the core library (src/), Tydra (src/tydra), the C API and
+# the Python extension. src/legacy is never included; src/external only the
+# vendored pieces the core build compiles (all headers are kept).
 
 include LICENSE
 include README.md
 include pyproject.toml
 include setup.py
 
-# next core + tydra-next + C API + extension sources.
-recursive-include src/next *.cc *.c *.h *.hh *.inc *.txt
-recursive-include src/tydra/next *.cc *.hh *.txt
+# Core + Tydra + C API + extension sources.
+recursive-include src *.cc *.c *.h *.hh *.inc *.txt *.json *.cmake
+recursive-include src/tydra *.cc *.hh *.txt *.comp
 recursive-include src/c-api *.cc *.h *.hh
 recursive-include src/python *.c *.h
 include src/lz4/lz4.c src/lz4/lz4.h
@@ -47,48 +47,47 @@ prune android
 prune ios
 prune tests/usdc
 prune tests/feat
-prune tests/unit
+prune tests/legacy
 prune tests/fuzzer
-prune tests/next
+prune tests/core
 prune tests/tydra
 prune tests/c-api
 prune tests/composition
 prune src/external
-prune src/core
-prune src/tsd
 prune src/osd
-prune src/tydra/mcp
 prune tools
 prune subprojects
-prune @draft
 exclude resume-*.md
 prune scripts
-exclude src/*.cc src/*.cpp
-# Transitive standalone-next inputs. Headers are inexpensive and keeping the
+# Transitive standalone core inputs. Headers are inexpensive and keeping the
 # complete src/ header surface avoids a fragile hand-maintained include graph.
 recursive-include src *.h *.hh *.hpp *.inc *.inl *.txt
 include src/core/color-transform.cc src/core/logger.cc src/core/minijson.cc
 include src/mtlx-xml-tokenizer.cc src/mtlx-xml-parser.cc src/core/mtlx-dom.cc
 include src/ptx-loader.cc
 recursive-include src/external/textools/ptex/src *.c
-include src/core/path-expression.cc src/core/path-expression-eval.cc
 recursive-include src/tsd *.cc
 include src/external/miniz.c src/external/mikktspace/mikktspace.c
-# Configure-time inputs: src/next and tydra-next CMake define these targets
+# Configure-time inputs: src and Tydra CMake define these targets
 # even though the wheel only builds the four library targets, so every source
 # they list must exist in the sdist (a missing file fails `cmake -S`).
 include src/core/host-services.cc src/image-loader.cc src/image-writer.cc src/io-util.cc src/usdVol.cc
-include tests/next/lusdcat.cc
+include tests/core/lusdcat.cc
 recursive-include src/external/tinyvdb *.c *.h
 recursive-include src/external/mimalloc *.c *.h
 recursive-include tools/lusdpreview *.cc *.hh *.h
 recursive-include cmake *.cmake
 
+# Legacy sources are never part of the Python package.
+
 # Strip build artefacts.
 global-exclude *.pyc *.pyo *.so *.pyd __pycache__
 prune build
-prune build_py_ext_next
+prune build_py_ext
+prune build_py_ext_nothread
 prune build-next
+prune build-core
+prune build_combined
 prune dist
 prune .git
 prune .github
@@ -124,4 +123,7 @@ include src/external/pugixml.cpp
 include src/unicode-xid-c.c
 include src/external/zmij/zmij.cc
 recursive-include cmake *.cmake *.in
-recursive-include src/next *.cmake
+recursive-include src *.cmake
+
+# Last, so no earlier include pattern re-adds legacy files.
+prune src/legacy

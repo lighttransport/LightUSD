@@ -8,11 +8,19 @@
 //   Include this script and call the browser examples with a URL
 
 import { LightUSDLoader } from './src/lightusd/LightUSDLoader.js';
+import {parseUSDZEntries} from './src/usdzconvert.js';
+import {createCoreRenderInspector} from './src/lightusd/CoreRenderInspector.js';
+
+function writeProgress(message) {
+  if(typeof process!=='undefined'&&process.stdout)process.stdout.write(message);
+  else console.log(message);
+}
 
 // ============================================================
 // Memory Usage Reporting (Node.js only)
 // ============================================================
 function reportMemUsage() {
+  if(typeof process==='undefined'||!process.memoryUsage)return;
   const used = process.memoryUsage();
   for (let key in used) {
     console.log(`${key}: ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
@@ -36,7 +44,7 @@ async function exampleStreamFetch(url) {
     const result = await loader.streamFetchToWasm(url, 'test-asset.usd', {
       onProgress: (loaded, total) => {
         const percent = total > 0 ? ((loaded / total) * 100).toFixed(1) : '?';
-        process.stdout.write(`\rStreaming: ${(loaded / 1024).toFixed(1)} KB / ${(total / 1024).toFixed(1)} KB (${percent}%)`);
+        writeProgress(`\rStreaming: ${(loaded / 1024).toFixed(1)} KB / ${(total / 1024).toFixed(1)} KB (${percent}%)`);
       }
     });
 
@@ -48,14 +56,14 @@ async function exampleStreamFetch(url) {
 
     // Load from cached asset using the same instance (cache is per-instance)
     const usd = result.usdInstance;
-    const loadOk = usd.loadFromCachedAsset('test-asset.usd');
+    const loadOk = usd.beginStreamedAsset('test-asset.usd').success;
 
     if (loadOk) {
       console.log('USD loaded successfully from cached asset!');
       console.log(`Total time: ${(performance.now() - startTime).toFixed(2)} ms`);
       reportMemUsage();
     } else {
-      console.error('Failed to load USD:', usd.error());
+      const error=usd.error();usd.delete();throw Error('Failed to load USD: '+error);
     }
 
     return result;
@@ -83,7 +91,7 @@ async function exampleStreamFile(filePath) {
       chunkSize: 64 * 1024, // 64KB chunks
       onProgress: (loaded, total) => {
         const percent = ((loaded / total) * 100).toFixed(1);
-        process.stdout.write(`\rStreaming: ${(loaded / 1024).toFixed(1)} KB / ${(total / 1024).toFixed(1)} KB (${percent}%)`);
+        writeProgress(`\rStreaming: ${(loaded / 1024).toFixed(1)} KB / ${(total / 1024).toFixed(1)} KB (${percent}%)`);
       }
     });
 
@@ -95,14 +103,14 @@ async function exampleStreamFile(filePath) {
 
     // Load from cached asset using the same instance (cache is per-instance)
     const usd = result.usdInstance;
-    const loadOk = usd.loadFromCachedAsset('test-file.usd');
+    const loadOk = usd.beginStreamedAsset('test-file.usd').success;
 
     if (loadOk) {
       console.log('USD loaded successfully from cached asset!');
       console.log(`Total time: ${(performance.now() - startTime).toFixed(2)} ms`);
       reportMemUsage();
     } else {
-      console.error('Failed to load USD:', usd.error());
+      const error=usd.error();usd.delete();throw Error('Failed to load USD: '+error);
     }
 
     return result;
@@ -128,7 +136,7 @@ async function exampleLoadWithStreaming(url) {
     const usd = await loader.loadWithStreaming(url, {
       onProgress: (info) => {
         const bar = '='.repeat(Math.floor(info.progress * 20)).padEnd(20, ' ');
-        process.stdout.write(`\r[${bar}] ${info.percentage.toFixed(0)}% - ${info.message}`);
+        writeProgress(`\r[${bar}] ${info.percentage.toFixed(0)}% - ${info.message}`);
       }
     });
 
@@ -191,223 +199,73 @@ async function exampleStreamMultiple(assets) {
 // ============================================================
 // This mode loads USD as a Layer only, without converting to RenderScene.
 // Useful for measuring pure USD parsing memory usage.
+function layerBytes(bytes) {
+  if(bytes[0]===0x50&&bytes[1]===0x4b) {
+    const entries=parseUSDZEntries(bytes);
+    if(!entries[0]||!/\.usd[ac]?$/i.test(entries[0].name))throw Error('USDZ first entry is not a USD root layer');
+    return entries[0].data;
+  }
+  return bytes;
+}
+
 async function exampleLoadOnly(filePath) {
-  console.log('=== USD Load Only (No Scene Conversion) ===');
-  console.log(`File: ${filePath}`);
-  console.log('Mode: Layer-only parsing (no RenderScene conversion)');
-
-  const loader = new LightUSDLoader();
-  await loader.init({ useMemory64: true });
-
-  const fs = await import('fs');
-  const fileData = fs.readFileSync(filePath);
-  const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
-  console.log(`File size: ${fileSizeMB} MB`);
-
-  const startTime = performance.now();
-
+  const loader=new LightUSDLoader();await loader.init({useMemory64:true});
+  const fs=await import('node:fs');
+  const bytes=fs.readFileSync(filePath);
+  const start=performance.now();
+  const document=new loader.native_.LayerDocument();
   try {
-    const usd = new loader.native_.LightUSDLoaderNative();
-
-    // Load as Layer only - no RenderScene conversion
-    const loadOk = usd.loadAsLayerFromBinary(fileData, filePath);
-    const loadTime = performance.now() - startTime;
-
-    if (loadOk) {
-      console.log(`\nUSD Layer loaded successfully!`);
-      console.log(`Load time: ${loadTime.toFixed(2)} ms`);
-
-      // Try to get memory stats if available
-      try {
-        const stats = usd.getMemoryStats();
-        console.log('\nWASM Memory Stats:');
-        console.log(`  Meshes: ${stats.numMeshes} (should be 0 for layer-only)`);
-        console.log(`  Materials: ${stats.numMaterials}`);
-        console.log(`  Buffer Memory: ${stats.bufferMemoryMB?.toFixed(2) || 0} MB`);
-      } catch (e) {
-        // getMemoryStats may not exist
-      }
-    } else {
-      console.error('Failed to load USD:', usd.error());
-    }
-
-    console.log('\nNode.js Memory Usage:');
-    reportMemUsage();
-
-    return { success: loadOk, loadTime };
-  } catch (error) {
-    console.error('Load only failed:', error);
-    throw error;
-  }
+    const result=document.load(layerBytes(bytes));
+    if(!result.success)throw Error(result.error||document.error());
+    const loadTime=performance.now()-start;
+    console.log(`USD Layer loaded successfully! Load time: ${loadTime.toFixed(2)} ms`);
+    console.log('Meshes: 0 (layer-only parsing)');reportMemUsage();
+    return {success:true,loadTime};
+  }finally{document.delete();}
 }
 
-// ============================================================
-// Example 6: Compare full load vs load-only
-// ============================================================
 async function exampleCompareLoadModes(filePath) {
-  console.log('=== Compare Load Modes ===');
-  console.log(`File: ${filePath}`);
-
-  const loader = new LightUSDLoader();
-  await loader.init({ useMemory64: true });
-
-  const fs = await import('fs');
-  const fileData = fs.readFileSync(filePath);
-  const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
-  console.log(`File size: ${fileSizeMB} MB`);
-
-  // Mode 1: Load Only (Layer parsing, no scene conversion)
-  console.log('\n--- Mode 1: Load Only (Layer) ---');
-  const loadOnlyStart = performance.now();
-
-  const usd1 = new loader.native_.LightUSDLoaderNative();
-  const ok1 = usd1.loadAsLayerFromBinary(fileData, filePath);
-  const loadOnlyTime = performance.now() - loadOnlyStart;
-
-  console.log(`  Load time: ${loadOnlyTime.toFixed(2)} ms`);
-  console.log(`  Load result: ${ok1 ? 'success' : 'failed'}`);
-  console.log('  Memory (Layer only):');
-  reportMemUsage();
-
-  // Reset for fair comparison
-  usd1.reset();
-
-  // Force GC if available
-  if (global.gc) {
-    global.gc();
-    console.log('  (GC triggered)');
-  }
-
-  // Mode 2: Full Load (with RenderScene conversion)
-  console.log('\n--- Mode 2: Full Load (with Scene Conversion) ---');
-  const fullLoadStart = performance.now();
-
-  const usd2 = new loader.native_.LightUSDLoaderNative();
-  const ok2 = usd2.loadFromBinary(fileData, filePath);
-  const fullLoadTime = performance.now() - fullLoadStart;
-
-  console.log(`  Load time: ${fullLoadTime.toFixed(2)} ms`);
-  console.log(`  Load result: ${ok2 ? 'success' : 'failed'}`);
-
-  // Get render scene stats
+  const layer=await exampleLoadOnly(filePath);
+  const loader=new LightUSDLoader();await loader.init({useMemory64:true});
+  const fs=await import('node:fs');const bytes=fs.readFileSync(filePath);
+  const start=performance.now();
+  const stream=await createCoreRenderInspector(loader.native_,bytes,filePath);
   try {
-    const stats = usd2.getMemoryStats();
-    console.log('  RenderScene Stats:');
-    console.log(`    Meshes: ${stats.numMeshes}`);
-    console.log(`    Materials: ${stats.numMaterials}`);
-    console.log(`    Textures: ${stats.numTextures}`);
-    console.log(`    Images: ${stats.numImages}`);
-    console.log(`    Buffers: ${stats.numBuffers}`);
-    console.log(`    Buffer Memory: ${stats.bufferMemoryMB?.toFixed(2) || 0} MB`);
-  } catch (e) {
-    // getMemoryStats may not exist
-  }
-
-  console.log('  Memory (Full load):');
-  reportMemUsage();
-
-  // Summary
-  console.log('\n--- Summary ---');
-  console.log(`  Load Only (Layer):     ${loadOnlyTime.toFixed(2)} ms`);
-  console.log(`  Full Load (RenderScene): ${fullLoadTime.toFixed(2)} ms`);
-  console.log(`  Scene conversion overhead: ${(fullLoadTime - loadOnlyTime).toFixed(2)} ms`);
-  if (fullLoadTime > 0) {
-    console.log(`  Overhead ratio: ${((fullLoadTime / loadOnlyTime - 1) * 100).toFixed(1)}% slower`);
-  }
+    // Force the same geometry/material work that a full scene load performs.
+    const meshes=stream.numMeshes(),materials=stream.numMaterials(),images=stream.numImages();
+    for(let i=0;i<meshes;i++)stream.getMeshCopy(i);
+    const fullLoadTime=performance.now()-start;
+    console.log(`RenderScene Stats: Meshes: ${meshes}, Materials: ${materials}, Images: ${images}`);
+    console.log(`Load Only (Layer): ${layer.loadTime.toFixed(2)} ms`);
+    console.log(`Full Load (RenderScene): ${fullLoadTime.toFixed(2)} ms`);
+    reportMemUsage();return {success:true,layerTime:layer.loadTime,fullLoadTime,meshes};
+  }finally{stream.delete();}
 }
 
-// ============================================================
-// Example 7: Compare streaming vs traditional loading
-// ============================================================
 async function exampleComparePerformance(filePath) {
-  console.log('=== Performance Comparison ===');
-  console.log(`File: ${filePath}`);
-
-  const loader = new LightUSDLoader();
-  await loader.init({ useMemory64: true });
-
-  const fs = await import('fs');
-
-  // Traditional loading (read entire file into JS, then copy to WASM)
-  console.log('\n--- Traditional Loading ---');
-  const traditionalStart = performance.now();
-
-  let fileData = fs.readFileSync(filePath);
-  const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
-  console.log(`  File size: ${fileSizeMB} MB`);
-  const traditionalReadTime = performance.now() - traditionalStart;
-
-  const usd1 = new loader.native_.LightUSDLoaderNative();
-  const ok1 = usd1.loadFromBinary(fileData, filePath);
-  const traditionalTotalTime = performance.now() - traditionalStart;
-
-  console.log(`  Read time: ${traditionalReadTime.toFixed(2)} ms`);
-  console.log(`  Total time: ${traditionalTotalTime.toFixed(2)} ms`);
-  console.log(`  Load result: ${ok1 ? 'success' : 'failed'}`);
-  console.log('  Memory after traditional load:');
-  reportMemUsage();
-
-  // Clear memory before streaming test for fair comparison
-  console.log('\n--- Clearing Memory ---');
-
-  // Reset WASM memory (clear render scene, assets, caches)
+  const loader=new LightUSDLoader();await loader.init({useMemory64:true});
+  const fs=await import('node:fs');
+  const start=performance.now();let bytes=fs.readFileSync(filePath);
+  const traditional=await createCoreRenderInspector(loader.native_,bytes,filePath);
+  const meshes=traditional.numMeshes();
+  for(let i=0;i<meshes;i++)traditional.getMeshCopy(i);
+  traditional.numMaterials();traditional.numImages();
+  const traditionalTime=performance.now()-start;
+  traditional.delete();bytes=null;
+  if(globalThis.gc)globalThis.gc();
+  const streamStart=performance.now();
+  const result=await loader.streamFileToWasm(filePath,filePath,{chunkSize:65536});
+  const stream=result.usdInstance;
   try {
-    usd1.reset();
-    console.log('  WASM memory reset');
-  } catch (e) {
-    // reset() may not exist in older builds
-    try {
-      usd1.clearAssets();
-      console.log('  WASM assets cleared (fallback)');
-    } catch (e2) {
-      console.log('  Could not clear WASM memory');
-    }
-  }
-
-  // Clear JS file data reference
-  fileData = null;
-
-  // Try to trigger garbage collection if available
-  // Run with: node --expose-gc test-stream-load.js file.usd --compare
-  if (global.gc) {
-    global.gc();
-    console.log('  GC triggered');
-  } else {
-    console.log('  GC not available (run with --expose-gc for manual GC)');
-  }
-
-  // Small delay to allow GC to run
-  await new Promise(resolve => setTimeout(resolve, 100));
-
-  console.log('  Memory after cleanup:');
-  reportMemUsage();
-
-  // Streaming loading (chunks transferred directly to WASM)
-  console.log('\n--- Streaming Loading ---');
-  const streamingStart = performance.now();
-
-  const streamResult = await loader.streamFileToWasm(filePath, 'streaming-test.usd', {
-    chunkSize: 64 * 1024
-  });
-  const streamingTransferTime = performance.now() - streamingStart;
-
-  // Use the same instance to access the cached asset
-  const usd2 = streamResult.usdInstance;
-  const ok2 = usd2.loadFromCachedAsset('streaming-test.usd');
-  const streamingTotalTime = performance.now() - streamingStart;
-
-  console.log(`  Transfer time: ${streamingTransferTime.toFixed(2)} ms`);
-  console.log(`  Total time: ${streamingTotalTime.toFixed(2)} ms`);
-  console.log(`  Load result: ${ok2 ? 'success' : 'failed'}`);
-  console.log('  Memory after streaming load:');
-  reportMemUsage();
-
-  // Summary
-  console.log('\n--- Summary ---');
-  console.log(`  Traditional: ${traditionalTotalTime.toFixed(2)} ms`);
-  console.log(`  Streaming: ${streamingTotalTime.toFixed(2)} ms`);
-  console.log(`  Memory benefit: Streaming frees JS memory chunk-by-chunk`);
-  console.log('  Note: Run with "node --expose-gc" for accurate memory comparison');
+    const loaded=stream.beginStreamedAsset(filePath);
+    if(!loaded.success)throw Error(loaded.error||stream.error());
+    if(stream.numMeshes()!==meshes)throw Error('Streaming geometry differs from direct loading');
+    for(let i=0;i<meshes;i++)stream.getMeshCopy(i);
+    stream.numMaterials();stream.numImages();
+    console.log(`Traditional: ${traditionalTime.toFixed(2)} ms`);
+    console.log(`Streaming: ${(performance.now()-streamStart).toFixed(2)} ms`);
+    reportMemUsage();return {success:true,meshes};
+  }finally{stream.delete();}
 }
 
 // ============================================================
@@ -443,9 +301,9 @@ async function main() {
   try {
     if (isUrl) {
       // URL-based examples
-      await exampleStreamFetch(input);
+      (await exampleStreamFetch(input)).usdInstance.delete();
       console.log('\n');
-      await exampleLoadWithStreaming(input);
+      (await exampleLoadWithStreaming(input)).delete();
     } else {
       // File-based examples
       if (doLoadOnly) {
@@ -455,7 +313,7 @@ async function main() {
       } else if (doCompare) {
         await exampleComparePerformance(input);
       } else {
-        await exampleStreamFile(input);
+        (await exampleStreamFile(input)).usdInstance.delete();
       }
     }
 
@@ -467,7 +325,7 @@ async function main() {
 }
 
 // Run if executed directly
-const isMainModule = import.meta.url === `file://${process.argv[1]}`;
+const isMainModule = typeof process!=='undefined' && import.meta.url === `file://${process.argv[1]}`;
 if (isMainModule) {
   main();
 }

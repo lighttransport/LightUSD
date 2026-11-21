@@ -72,7 +72,9 @@ legacy/ARKit target is requested (`IsAllowedTextureExt` allows `ktx2` as an
 
 ### Authoring the companions: `usd-texcomp`
 
-`examples/usd-texcomp` is the producer side. For every `UsdUVTexture.inputs:file`
+`examples/usd-texcomp` is a core example built with
+`LIGHTUSD_BUILD_EXAMPLES=ON`, Tydra and textools enabled; it does not require
+`LIGHTUSD_BUILD_LEGACY`. Both USDA and USDC input are supported. For every `UsdUVTexture.inputs:file`
 image it writes a `.ktx2` (private `uni`, full mip chain) next to the output and adds
 the `customData ktx2` hint to the attribute — leaving `inputs:file` untouched:
 
@@ -176,7 +178,7 @@ lusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
   transcoded to the chosen format), so minification stays correct without
   re-generating mips. Disabled by default; size-cap / budget resize falls back to
   the normal decode path.
-- Both scene loaders take this path: the default (tydra-next) loader resolves the
+- Both scene loaders take this path: the default (Tydra) loader resolves the
   `customData ktx2` hint through `RenderTexture::ktx2_hint` and reads the sibling
   asset itself, and the legacy loader (`--legacy-load`) goes through
   `RenderSceneConverterConfig::keep_compressed_textures`. `--texture-compress`

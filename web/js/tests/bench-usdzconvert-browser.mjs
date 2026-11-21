@@ -12,7 +12,7 @@
 //     --case browser:png:1024 --case wasm:png:1024
 //
 // Each --case is codec:textureFormat:resize
-// (codec = browser|wasm, optionally prefixed with stream- or stream-next-).
+// (codec = browser|wasm, optionally prefixed with stream- or stream-core-).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,14 +53,14 @@ function parseArgs(argv = process.argv.slice(2)) {
       pendingDir = null;
     }
     else if (a === '--case') {
-      // codec:format:resize. codec may carry a "stream-" or "stream-next-"
+      // codec:format:resize. codec may carry a "stream-" or "stream-core-"
       // prefix to use the lazy streaming source path instead of the in-memory
       // folder upload.
       let [codec, textureFormat, resize] = argv[++i].split(':');
       let pipeline = 'memory';
-      if (codec.startsWith('stream-next-')) { pipeline = 'stream-next'; codec = codec.slice(12); }
+      if (codec.startsWith('stream-core-')) { pipeline = 'stream-core'; codec = codec.slice(12); }
       if (codec.startsWith('stream-')) { pipeline = 'stream'; codec = codec.slice(7); }
-      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be [stream-|stream-next-]browser|wasm (got ${codec})`);
+      if (codec !== 'browser' && codec !== 'wasm') throw new Error(`--case codec must be [stream-|stream-core-]browser|wasm (got ${codec})`);
       opts.cases.push({ codec, pipeline, textureFormat: textureFormat || 'keep', resize: Number(resize || 0) });
     }
     else if (a === '--out') opts.out = path.resolve(argv[++i]);
@@ -99,9 +99,9 @@ function printHelp() {
 
 Options:
   --scene <dir> --root <rel>   Scene folder + root USD (repeatable, in pairs)
-  --case codec:fmt:resize      [stream-|stream-next-]browser|wasm : png|jpeg|keep : N
+  --case codec:fmt:resize      [stream-|stream-core-]browser|wasm : png|jpeg|keep : N
                                (repeatable; stream prefixes = lazy streaming
-                               pipeline; stream-next uses next flattening;
+                               pipeline; stream-core uses core flattening;
                                keep:0 = passthrough)
                                default: wasm/browser x png/jpeg @1024
   --hw                         ANGLE/Vulkan GPU path; run under xvfb-run -a
@@ -109,7 +109,7 @@ Options:
   --headful                    Visible browser
   --wasm32                     Use the wasm32 module (default: wasm64)
   --concurrency <n>            Browser texture-processor concurrency (default 8)
-  --include-unused-textures    With stream-next, package unreferenced texture files
+  --include-unused-textures    With stream-core, package unreferenced texture files
   --max-usdc-mb <n>            Raise USDC writer size cap (0 = conservative default;
                                2048 = cross-browser-safe 2 GB ceiling)
   --max-mem-mb <n>             Raise USDC writer memory cap (0 = default)
@@ -332,7 +332,7 @@ async function main() {
       console.log(`\n== ${sceneName} (${manifest.length} files) root=${scene.root}`);
 
       for (const kase of opts.cases) {
-        const prefix = kase.pipeline === 'stream-next' ? 'stream-next-' : (kase.pipeline === 'stream' ? 'stream-' : '');
+        const prefix = kase.pipeline === 'stream-core' ? 'stream-core-' : (kase.pipeline === 'stream' ? 'stream-' : '');
         const label = `${prefix}${kase.codec}:${kase.textureFormat}:${kase.resize}`;
         process.stdout.write(`  ...   ${label}`);
         // eslint-disable-next-line no-await-in-loop

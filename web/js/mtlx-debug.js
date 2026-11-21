@@ -1,9 +1,12 @@
 // LightUSD MaterialX/OpenPBR Demo with Three.js
 // This demo showcases OpenPBR material loading and editing with synthetic HDR environments
 
+import {hasImageBytes,createDecodedImageTexture} from 'lightusd/CoreImageTexture.js';
+import {createCoreRenderInspector,getCoreInspectorMesh} from 'lightusd/CoreRenderInspector.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import {DisplayP3ColorSpace} from 'three/examples/jsm/math/ColorSpaces.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
@@ -144,7 +147,7 @@ let raycaster, mouse;
 let selectedObject = null;
 let boundingBoxHelper = null; // Bounding box helper for selected object
 let currentLoader = null; // LightUSDLoader instance
-let currentNativeLoader = null; // Native LightUSDLoaderNative instance for low-level API
+let currentNativeLoader = null; // Core RenderStream retained for inspection.
 let materials = [];
 let meshes = [];
 let gui = null;
@@ -2030,7 +2033,7 @@ function createColorWithSpace(r, g, b) {
     if (currentColorSpace === 'display-p3' && displayP3Supported) {
         const [r2, g2, b2] = srgbToDisplayP3(r, g, b);
         const color = new THREE.Color(r2, g2, b2);
-        color.colorSpace = THREE.DisplayP3ColorSpace || THREE.SRGBColorSpace;
+        color.colorSpace = DisplayP3ColorSpace;
         return color;
     } else {
         const color = new THREE.Color(r, g, b);
@@ -2136,7 +2139,7 @@ async function loadTextureFromUSD(textureId) {
 
         // Handle 3 cases: URI only, embedded undecoded, and decoded
         // Case 1: URI only (need to fetch from external file)
-        if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
+        if (imgData.uri && !hasImageBytes(imgData)) {
             console.log(`Loading texture from URI: ${imgData.uri}`);
             const loader = new THREE.TextureLoader();
 
@@ -2154,32 +2157,12 @@ async function loadTextureFromUSD(textureId) {
         }
 
         // Case 2 & 3: Embedded texture (either decoded or needs decoding)
-        if (imgData.bufferId >= 0 && imgData.data) {
+        if (hasImageBytes(imgData)) {
             if (imgData.decoded) {
                 // Case 3: Already decoded - use DataTexture
                 console.log(`Creating DataTexture for texture ${textureId}: ${imgData.width}x${imgData.height}, ${imgData.channels} channels`);
 
-                const image8Array = new Uint8ClampedArray(imgData.data);
-                const texture = new THREE.DataTexture(image8Array, imgData.width, imgData.height);
-
-                if (imgData.channels === 1) {
-                    texture.format = THREE.RedFormat;
-                } else if (imgData.channels === 2) {
-                    texture.format = THREE.RGFormat;
-                } else if (imgData.channels === 3) {
-                    console.error(`RGB format (3 channels) is not supported in recent Three.js. Texture ${textureId} will not display correctly.`);
-                    return null;
-                } else if (imgData.channels === 4) {
-                    texture.format = THREE.RGBAFormat;
-                } else {
-                    console.error(`Unsupported image channels: ${imgData.channels}`);
-                    return null;
-                }
-
-                texture.flipY = true;
-                texture.needsUpdate = true;
-                // TODO: Temporarily disabled - causes shader error
-                // texture.colorSpace = THREE.SRGBColorSpace;
+                const texture = createDecodedImageTexture(imgData);
 
                 textureCache.set(textureId, texture);
                 console.log(`Loaded decoded texture ${textureId}`);
@@ -2383,7 +2366,7 @@ function setupScene() {
     // Set output color space based on current setting
     if (displayP3Supported && currentColorSpace === 'display-p3') {
         // Use Display-P3 color space
-        renderer.outputColorSpace = THREE.DisplayP3ColorSpace || THREE.SRGBColorSpace;
+        renderer.outputColorSpace = DisplayP3ColorSpace;
         console.log('Using Display-P3 output color space');
     } else {
         // Use sRGB color space (default)
@@ -2608,7 +2591,7 @@ function applyCustomToneMapping(type) {
 
 // Load HDR environment map from file
 function loadHDREnvironment(filepath) {
-    const loader = new RGBELoader();
+    const loader = new HDRLoader();
 
     loader.load(filepath, (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -2686,7 +2669,7 @@ function createSyntheticHDR(type) {
     // Create texture from canvas
     const texture = new THREE.CanvasTexture(canvas);
     texture.mapping = THREE.EquirectangularReflectionMapping;
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = THREE.SRGBColorSpace;
 
     // Generate environment map
     const renderTarget = pmremGenerator.fromEquirectangular(texture);
@@ -2750,7 +2733,7 @@ function switchColorSpace(colorSpace) {
 
     // Update renderer output color space
     if (colorSpace === 'display-p3' && displayP3Supported) {
-        renderer.outputColorSpace = THREE.DisplayP3ColorSpace || THREE.SRGBColorSpace;
+        renderer.outputColorSpace = DisplayP3ColorSpace;
 
         // Update WebGL context if possible
         if (renderer.domElement && renderer.domElement.getContext) {
@@ -2840,8 +2823,7 @@ function applyUpAxisConversionToScene() {
     if (applyUpAxisConversion && currentFileUpAxis === 'Z') {
         // Apply Z-up to Y-up conversion (-90 degrees around X axis)
         console.log(`  -> Applying Z-up to Y-up conversion...`);
-        // HACK
-        //sceneRoot.rotation.x = -Math.PI / 2;
+        sceneRoot.rotation.x = -Math.PI / 2;
         sceneRoot.rotation.y = 0;
         sceneRoot.rotation.z = 0;
         console.log(`  ✓ Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}")`);
@@ -4402,18 +4384,9 @@ async function loadUSDFile(arrayBuffer, filename) {
         // Clear the scene
         clearScene();
 
-        // Create new native loader from the LightUSDLoader instance
-        currentNativeLoader = new currentLoader.native_.LightUSDLoaderNative();
-
-        // Convert ArrayBuffer to Uint8Array
-        const uint8Array = new Uint8Array(arrayBuffer);
-
-        // Load the USD file
-        const success = currentNativeLoader.loadFromBinary(uint8Array, filename);
-
-        if (!success) {
-            throw new Error('Failed to parse USD file');
-        }
+        currentNativeLoader = await createCoreRenderInspector(
+            currentLoader.native_, new Uint8Array(arrayBuffer), filename,
+            {maxMemoryLimitMB:512});
 
         // Get scene metadata (including upAxis)
         console.log(`=== Extracting scene metadata ===`);
@@ -4518,6 +4491,9 @@ async function loadUSDFile(arrayBuffer, filename) {
         console.log(`================================================\n`);
 
     } catch (error) {
+        clearScene();
+        currentNativeLoader?.delete();
+        currentNativeLoader = null;
         console.error('Error loading USD file:', error);
         updateStatus(`Error: ${error.message}`, 'error');
     } finally {
@@ -5424,7 +5400,7 @@ function loadMeshes() {
 
     for (let i = 0; i < numMeshes; i++) {
         try {
-            const meshData = currentNativeLoader.getMeshCopy(i);
+            const meshData = getCoreInspectorMesh(currentNativeLoader,i);
             console.log(`Mesh ${i} data:`, meshData);
 
             if (!meshData) {
@@ -7169,7 +7145,7 @@ function loadExternalTexture(file, onLoad, onError) {
 
     } else if (filename.endsWith('.hdr')) {
         // Use Three.js RGBELoader
-        const loader = new RGBELoader();
+        const loader = new HDRLoader();
         const reader = new FileReader();
 
         reader.onload = (e) => {
@@ -7360,3 +7336,13 @@ function reportError(context, error, severity = 'error') {
 
     updateStatus(userMessage, severity);
 }
+
+// Retain inspector state for interactive debugging and browser regressions.
+window._debugMtlx = {
+    get nativeLoader() { return currentNativeLoader; },
+    get materials() { return materials; },
+    get scene() { return scene; },
+    get root() { return sceneRoot; },
+    get camera() { return camera; },
+    get renderer() { return renderer; }
+};

@@ -63,7 +63,7 @@ def test_concurrent_clip_resolve_reuses_and_revalidates(tmp_path):
     must resolve the right value, and a rewritten clip file must be observed by
     the next query instead of serving a stale cached stage. True parallel entry
     (beyond the GIL) is covered by TestConcurrentValueClipCache in
-    tests/next/test_aousd_conformance.cc.
+    tests/core/test_aousd_conformance.cc.
     """
     clip = tmp_path / "clip.usda"
     clip.write_text(

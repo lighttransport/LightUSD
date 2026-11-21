@@ -14,7 +14,6 @@ cd ${builddir} && cmake \
   -DCMAKE_TOOLCHAIN_FILE=${curdir}/cmake/llvm-mingw-cross.cmake \
   -G "Ninja" \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 
 cd ${curdir}

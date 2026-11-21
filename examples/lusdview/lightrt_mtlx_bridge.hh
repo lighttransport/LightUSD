@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <memory>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "gpu_material_abi.h"
 #include "gpu_scene.hh"
@@ -110,6 +113,75 @@ bool EvaluateMaterialXStringToLightRtOpenPBRWithBaseDir(
 
 // UV-aware variant used by graph baking/runtime probes. `u` and `v` are
 // normalized texture coordinates; the legacy overload samples the center.
+// Persistent surface evaluator used by CPU validation rendering. The resolved
+// document and preloaded texture cache are shared across shading points; the
+// implementation keeps per-thread evaluation scratch.
+class MaterialXSurfaceRuntime;
+bool MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+    const MaterialXSurfaceRuntime* runtime, int index);
+
+// Category of the selected surface shader node.
+std::string MaterialXSurfaceRuntimeSurfaceCategory(
+    const MaterialXSurfaceRuntime* runtime);
+// True when the evaluator has a dedicated model for `category`. Other
+// categories are shaded with the standard_surface fallback.
+bool IsMaterialXSurfaceCategorySupported(const std::string& category);
+
+enum class MaterialXGeomPropType : uint8_t {
+  Float,
+  Integer,
+  Boolean,
+  Color3,
+  Color4,
+  Vector2,
+  Vector3,
+  Vector4,
+};
+
+struct MaterialXGeomPropValue {
+  std::string name;
+  MaterialXGeomPropType type{MaterialXGeomPropType::Float};
+  float value[4]{};
+};
+
+bool MaterialXSurfaceRuntimeGeomPropRequests(
+    const MaterialXSurfaceRuntime* runtime,
+    std::vector<MaterialXGeomPropValue>* out);
+
+struct MaterialXSurfaceContext {
+  float uv[2]{0.0f, 0.0f};
+  float uv_dx[2]{0.0f, 0.0f};
+  float uv_dy[2]{0.0f, 0.0f};
+  float uv1[2]{0.0f, 0.0f};
+  float uv1_dx[2]{0.0f, 0.0f};
+  float uv1_dy[2]{0.0f, 0.0f};
+  float position[3]{0.0f, 0.0f, 0.0f};
+  float shading_normal[3]{0.0f, 0.0f, 1.0f};
+  float geometric_normal[3]{0.0f, 0.0f, 1.0f};
+  float view_direction[3]{0.0f, 0.0f, 1.0f};
+  float dpdu[3]{1.0f, 0.0f, 0.0f};
+  float dpdv[3]{0.0f, 1.0f, 0.0f};
+  bool has_uv_derivatives{false};
+  bool has_uv1{false};
+  // Borrowed per-sample primvar values. The vector must outlive evaluation.
+  // A matching name and exact MaterialX type override geompropvalue's default.
+  const std::vector<MaterialXGeomPropValue>* geomprops{nullptr};
+};
+
+struct MaterialXNodeValue {
+  float rgb[3]{0.0f, 0.0f, 0.0f};
+};
+
+std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
+    const char* xml, const char* materialName, const char* baseDir,
+    std::string* err, bool buildMipmaps = false, size_t textureBudgetBytes = 0);
+bool EvaluateMaterialXSurfaceRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    tydra::LightRtOpenPBRParams* out, std::string* err);
+bool EvaluateMaterialXNodeRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    const char* nodeName, MaterialXNodeValue* out, std::string* err);
+
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,
     float v, tydra::LightRtOpenPBRParams* out, std::string* err);

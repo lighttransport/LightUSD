@@ -2,7 +2,7 @@
 // lusdview — view-dependent district LOD pre-pass (see lod_stream.hh). Mirrors
 // tools/lusdrender/lusdr_lod.cc: compose the proxy scene, walk it at prim
 // granularity to aggregate per-district world bounds + proxy vert counts (the
-// viewer's --next DrawScene merges meshes, losing district granularity, so we
+// viewer's --core DrawScene merges meshes, losing district granularity, so we
 // walk the composed Stage through C/POD prim handles), rank by view importance,
 // promote the nearest
 // under host/VRAM budgets, and emit a wrapper layer the viewer then loads.

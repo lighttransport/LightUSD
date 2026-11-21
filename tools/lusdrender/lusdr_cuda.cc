@@ -371,7 +371,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         sample->tex = texture;
         sample->channel = channel;
         // Which geometry UV stream this lane samples, recorded per material by
-        // ResolveMeshMaterialTydraNext. RouteSemanticTextures turns it into the
+        // ResolveMeshMaterialTydraCore. RouteSemanticTextures turns it into the
         // Texcoord node's second-set flag consumed by the vkr shader.
         sample->uvSet =
             static_cast<int>(RtTexUvSet(material_src.uv_set_bits, lane));

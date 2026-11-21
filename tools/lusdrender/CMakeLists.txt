@@ -82,6 +82,7 @@ if(NOT TARGET lightusd_gpu_rt_common)
     ${LIGHTUSD_GPU_RT_VIEW_DIR}
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/external
+    ${PROJECT_SOURCE_DIR}/src/external/lightrt
     ${LIGHTUSD_GPU_RT_COMMON_DIR}
     ${LIGHTUSD_GPU_RT_COMMON_DIR}/cuew
     ${PROJECT_SOURCE_DIR}/src/external/hipew)
@@ -90,7 +91,7 @@ if(NOT TARGET lightusd_gpu_rt_common)
       ${LIGHTUSD_GPU_RT_KERNEL_DIR})
   endif()
   target_link_libraries(lightusd_gpu_rt_common PUBLIC
-    ${LIGHTUSD_TARGET_STATIC} ${CMAKE_DL_LIBS})
+    lightusd_preview_images tydra lightusd_core ${CMAKE_DL_LIBS})
   if(LIGHTUSD_WITH_TEXTOOLS)
     target_link_libraries(lightusd_gpu_rt_common PUBLIC lightusd_textools)
     target_compile_definitions(lightusd_gpu_rt_common PRIVATE LUSDVIEW_WITH_TEXTOOLS=1)
@@ -99,6 +100,31 @@ if(NOT TARGET lightusd_gpu_rt_common)
         LIGHTUSD_WITH_ZSTD_COMPRESSION)
     endif()
   endif()
+endif()
+
+# Fixed binary32 schedules for opt-in graph math and conservative-energy
+# helpers compile separately from renderer fast-math/SIMD settings.
+add_library(lightusd_verified_graph_math STATIC
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_float.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_math.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_eval.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_bounds.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_ranges.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_fixed.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_normal.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_direction.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_vndf.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_local_geometry.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/verified_single_power.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/passive_film.c)
+target_include_directories(lightusd_verified_graph_math PUBLIC
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+target_compile_features(lightusd_verified_graph_math PRIVATE c_std_11)
+if(MSVC)
+  target_compile_options(lightusd_verified_graph_math PRIVATE /fp:strict)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(lightusd_verified_graph_math PRIVATE
+    -fno-fast-math -frounding-math -ffp-contract=off)
 endif()
 
 add_library(lightrt_c STATIC
@@ -160,17 +186,16 @@ endif()
 add_executable(lusdrender
   lusdrender.cc
   lusdr_args.cc
-  lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
   lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
-  lusdr_next.cc
+  lusdr_core.cc
   lusdr_lod.cc
+  lusdr_scene.cc
   lusdr_rt_lod.cc
-  lusdr_legacy.cc
   lusdr_gpu_common.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
@@ -219,7 +244,8 @@ if(LUSDRENDER_USE_FAST_LINKER AND UNIX AND NOT APPLE AND
 endif()
 
 target_link_libraries(lusdrender
-  ${LIGHTUSD_TARGET_STATIC}
+  lightusd_preview_images
+  lightusd_verified_graph_math
   lightrt_c
 )
 
@@ -233,22 +259,8 @@ if(LIGHTUSD_WITH_TEXTOOLS)
   target_compile_definitions(lusdrender PRIVATE LUSDR_WITH_TEXTOOLS)
 endif()
 
-# lusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
-# parse) as the default for the RT preview path, plus tydra_next for bit-exact
-# world transforms. Build those targets on demand and link them.
-# Parallel composition (per-prim opinion fill across cores) needs the next lib's
-# std::thread paths; output is byte-identical to the serial fill. Force it on for
-# lusdrender's on-demand next build.
-set(LIGHTUSD_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
-if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
-                   ${CMAKE_BINARY_DIR}/lusdrender_next_build)
-endif()
-target_link_libraries(lusdrender lightusd_next tydra_next)
-# tydra_next's lazy Ptex decoder uses symbols supplied by the main static
-# library.  Keep that archive after tydra_next so single-pass static linkers
-# resolve the dependency (the initial common-library link above precedes it).
-target_link_libraries(lusdrender ${LIGHTUSD_TARGET_STATIC})
+# Core loader + tydra; the shared image code comes from lightusd_preview_images.
+target_link_libraries(lusdrender lightusd_core tydra)
 
 # lusdrender itself spawns std::thread workers for the mesh-stream and render
 # passes, so link the threading runtime explicitly (not just transitively via
@@ -266,6 +278,7 @@ target_include_directories(lusdrender PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/src/external/lightrt
+  ${PROJECT_SOURCE_DIR}/examples/common
 )
 
 # Warning flags (same policy as the core library)
@@ -279,7 +292,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   if(${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-switch-default")
   endif()
-  # libc++ annotates std::mutex, so next headers (pcp/layer-registry.hh) trip
+  # libc++ annotates std::mutex, so core headers (pcp/layer-registry.hh) trip
   # -Wthread-safety-negative on macOS; the core library suppresses it too.
   if(LIGHTUSD_HAS_WTHREAD_SAFETY_NEGATIVE)
     set(LUSDRENDER_CXX_FLAGS "${LUSDRENDER_CXX_FLAGS} -Wno-thread-safety-negative")
@@ -298,17 +311,16 @@ endif()
 set(LUSDRENDER_CXX_SOURCES
   lusdrender.cc
   lusdr_args.cc
-  lusdr_material.cc
   lusdr_lighting.cc
   lusdr_geom.cc
   lusdr_generated.cc
   lusdr_integrator.cc
   lusdr_scripting.cc
   lusdr_stream.cc
-  lusdr_next.cc
+  lusdr_core.cc
   lusdr_lod.cc
+  lusdr_scene.cc
   lusdr_rt_lod.cc
-  lusdr_legacy.cc
   lusdr_gpu_common.cc
   lusdr_vulkan.cc
   lusdr_d3d.cc
@@ -329,9 +341,12 @@ set_source_files_properties(
 
 # When the project is built with QuickJS, enable lusdrender's -js (scripting)
 # and -mcp (MCP stdio control) modes for memory-persistent / interactive
-# rendering. The library defines LIGHTUSD_WITH_QJS PRIVATEly, so re-declare it
-# for the tool. The JS engine + MCP plumbing come from lightusd_static.
+# rendering. Enable the tool's script host and link the stage-independent
+# vendored JavaScript runtime.
 if(LIGHTUSD_WITH_QJS)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/lightusd-quickjs.cmake)
+  lightusd_add_quickjs(${CMAKE_CURRENT_SOURCE_DIR}/../../src/external/quickjs-ng)
+  target_link_libraries(lusdrender lightusd_quickjs)
   target_compile_definitions(lusdrender PRIVATE LIGHTUSD_WITH_QJS)
 endif()
 
@@ -439,4 +454,602 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(
     ${LIGHTUSD_GPU_RT_VIEW_DIR}/lightrt_mtlx_graph_compile.cc PROPERTIES
     COMPILE_OPTIONS "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O0>")
+endif()
+
+# ---------------------------------------------------------------------------
+# Tests (CPU checks run headless; GPU checks skip with 77 without a device).
+# ---------------------------------------------------------------------------
+if(LIGHTUSD_BUILD_TESTS)
+  set(LUSDR_MTLX_BSDF_DIR
+      ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+  add_executable(lusdrender-texture-sampling
+    tests/texture_sampling.c
+    ${LUSDR_MTLX_BSDF_DIR}/texture.c
+    ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/third_party_impl.c)
+  target_include_directories(lusdrender-texture-sampling PRIVATE
+    ${LUSDR_MTLX_BSDF_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external)
+  target_compile_features(lusdrender-texture-sampling PRIVATE c_std_11)
+  if(UNIX)
+    target_link_libraries(lusdrender-texture-sampling PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-texture-sampling
+    COMMAND $<TARGET_FILE:lusdrender-texture-sampling>
+            ${CMAKE_CURRENT_BINARY_DIR}/texture-sampling.ppm)
+  set_tests_properties(tool-lusdrender-texture-sampling PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;materialx;texture")
+
+  # Skinned OBJ (skeleton lines + FBX animation sidecar) at two time codes.
+  if(LIGHTUSD_WITH_UFBX)
+    add_test(NAME tool-lusdrender-obj-skel
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/obj-skel/render_smoke.py
+              $<TARGET_FILE:lusdrender> ${CMAKE_CURRENT_BINARY_DIR}/obj-skel-render)
+    set_tests_properties(tool-lusdrender-obj-skel PROPERTIES TIMEOUT 120 LABELS "lusdrender;obj;skel")
+  endif()
+
+  # Verified binary32 special values versus MtlxSpec/Binary32Special.lean.
+  add_executable(lusdrender-mtlx-vf-special tests/mtlx_vf_special.c)
+  target_link_libraries(lusdrender-mtlx-vf-special PRIVATE lightusd_verified_graph_math)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-vf-special PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-vf-special
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-vf-special>)
+  set_tests_properties(tool-lusdrender-mtlx-vf-special PROPERTIES
+    TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "lusdrender;cpu;materialx")
+
+  # --energy-mode conservative: certified glass R/T scale never creates energy.
+  add_executable(lusdrender-mtlx-cert-energy
+    tests/mtlx_cert_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-cert-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-cert-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-cert-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-cert-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-cert-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-cert-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-cert-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-cert-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  # --layering graph diagnostic: transmission-only scaling, physical default unchanged.
+  add_executable(lusdrender-mtlx-layering-graph
+    tests/mtlx_layering_graph.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-layering-graph PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-layering-graph PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-layering-graph PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-layering-graph PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-layering-graph PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-layering-graph
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-layering-graph>)
+  set_tests_properties(tool-lusdrender-mtlx-layering-graph PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  # Measured binary32 lobe-evaluation error behind the conservative-mode reserve.
+  add_executable(lusdrender-mtlx-f32-lobe-error
+    tests/mtlx_f32_lobe_error.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-f32-lobe-error PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-f32-lobe-error PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-f32-lobe-error PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-f32-lobe-error PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-f32-lobe-error PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-f32-lobe-error
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-f32-lobe-error>)
+  set_tests_properties(tool-lusdrender-mtlx-f32-lobe-error PROPERTIES
+    TIMEOUT 120 LABELS "lusdrender;cpu;materialx")
+
+  # --energy-mode conservative creates no energy for any swept material (sampler estimate).
+  add_executable(lusdrender-mtlx-conservative-sweep
+    tests/mtlx_conservative_sweep.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-conservative-sweep PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-conservative-sweep PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-conservative-sweep PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-conservative-sweep PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-conservative-sweep PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-conservative-sweep
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-conservative-sweep>)
+  set_tests_properties(tool-lusdrender-mtlx-conservative-sweep PROPERTIES
+    TIMEOUT 600 LABELS "lusdrender;cpu;material;materialx")
+
+  # Partially transmissive OpenPBR seen from inside: diffuse respects TIR reflection.
+  add_executable(lusdrender-mtlx-interior-energy
+    tests/mtlx_interior_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-interior-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-interior-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-interior-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-interior-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-interior-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-interior-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-interior-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-interior-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  # Thin film on glass: transmission uses 1 - the film Fresnel (no energy creation).
+  add_executable(lusdrender-mtlx-film-energy
+    tests/mtlx_film_energy.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c
+    ${LUSDR_MTLX_BSDF_DIR}/passive_film.c)
+  target_include_directories(lusdrender-mtlx-film-energy PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-film-energy PRIVATE c_std_11)
+  target_compile_definitions(lusdrender-mtlx-film-energy PRIVATE _POSIX_C_SOURCE=200809L)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-film-energy PRIVATE m)
+  endif()
+  if(Threads_FOUND)
+    target_link_libraries(lusdrender-mtlx-film-energy PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-film-energy
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-film-energy>)
+  set_tests_properties(tool-lusdrender-mtlx-film-energy PROPERTIES
+    TIMEOUT 300 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-mtlx-conductor-mixture
+    tests/mtlx_conductor_mixture.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-conductor-mixture PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-conductor-mixture PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-conductor-mixture PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-conductor-mixture
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-conductor-mixture>)
+  set_tests_properties(tool-lusdrender-mtlx-conductor-mixture PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-mtlx-conductor-response
+    tests/mtlx_conductor_response.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-conductor-response PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-conductor-response PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-conductor-response PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-conductor-response
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-conductor-response>)
+  set_tests_properties(tool-lusdrender-mtlx-conductor-response PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-mtlx-volume-lobes
+    tests/mtlx_volume_lobes.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c)
+  target_include_directories(lusdrender-mtlx-volume-lobes PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-volume-lobes PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-volume-lobes PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-volume-lobes
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-volume-lobes>)
+  set_tests_properties(tool-lusdrender-mtlx-volume-lobes PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;materialx;volume")
+
+  add_executable(lusdrender-mtlx-sheen-mixture
+    tests/mtlx_sheen_mixture.c tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-sheen-mixture PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-sheen-mixture PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-sheen-mixture PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-sheen-mixture
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-sheen-mixture>)
+  set_tests_properties(tool-lusdrender-mtlx-sheen-mixture PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-mtlx-diffuse-mixture
+    tests/mtlx_diffuse_mixture.c
+    tests/mtlx_texture_stub.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_doc.c ${LUSDR_MTLX_BSDF_DIR}/mtlx_xml.c
+    ${LUSDR_MTLX_BSDF_DIR}/mtlx_eval.c ${LUSDR_MTLX_BSDF_DIR}/color.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-mtlx-diffuse-mixture PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-mtlx-diffuse-mixture PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-mtlx-diffuse-mixture PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-mtlx-diffuse-mixture
+    COMMAND $<TARGET_FILE:lusdrender-mtlx-diffuse-mixture>)
+  set_tests_properties(tool-lusdrender-mtlx-diffuse-mixture PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-bsdf-rough-diffuse
+    tests/bsdf_rough_diffuse.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-rough-diffuse PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-rough-diffuse PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-bsdf-rough-diffuse PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-rough-diffuse
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-rough-diffuse>)
+  set_tests_properties(tool-lusdrender-bsdf-rough-diffuse PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-bsdf-eon-response
+    tests/bsdf_eon_response.c ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-eon-response PRIVATE ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-eon-response PRIVATE c_std_11)
+  if(NOT WIN32)
+    target_link_libraries(lusdrender-bsdf-eon-response PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-eon-response
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-eon-response>)
+  set_tests_properties(tool-lusdrender-bsdf-eon-response PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;materialx")
+
+  add_executable(lusdrender-bsdf-white-furnace
+    tests/bsdf_white_furnace.c
+    ${LUSDR_MTLX_BSDF_DIR}/bsdf.c)
+  target_include_directories(lusdrender-bsdf-white-furnace PRIVATE
+    ${LUSDR_MTLX_BSDF_DIR})
+  target_compile_features(lusdrender-bsdf-white-furnace PRIVATE c_std_11)
+  if(UNIX)
+    target_link_libraries(lusdrender-bsdf-white-furnace PRIVATE m)
+  endif()
+  add_test(NAME tool-lusdrender-bsdf-white-furnace
+    COMMAND $<TARGET_FILE:lusdrender-bsdf-white-furnace>)
+  set_tests_properties(tool-lusdrender-bsdf-white-furnace PROPERTIES
+    TIMEOUT 30 LABELS "lusdrender;cpu;material;white-furnace")
+
+  if(LIGHTUSD_PYTHON_EXECUTABLE)
+    set(LUSDR_PYTHON "${LIGHTUSD_PYTHON_EXECUTABLE}")
+  else()
+    find_program(LUSDR_PYTHON NAMES python3 python)
+  endif()
+  if(TARGET lusdrender AND LUSDR_PYTHON)
+    add_test(NAME tool-view-control-headless
+      COMMAND ${LUSDR_PYTHON} -m unittest discover
+              -s ${PROJECT_SOURCE_DIR}/tools/view_control -p test_headless.py)
+    set_tests_properties(tool-view-control-headless PROPERTIES
+      TIMEOUT 30 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;headless;mcp")
+    # MuJoCo consumer matrix (source MJCF vs converted USD). Skips (77) unless
+    # LIGHTUSD_MUJOCO_WORKER / LIGHTUSD_MUJOCO_USD_PLUGIN point at a build made by
+    # tools/view_control/setup_mujoco_usd.sh.
+    add_test(NAME tool-mujoco-usd-matrix
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/view_control/check_mujoco_usd_matrix.py)
+    set_tests_properties(tool-mujoco-usd-matrix PROPERTIES
+      TIMEOUT 600 SKIP_RETURN_CODE 77 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+      LABELS "tools;physics;mujoco")
+    set(LUSDR_SPARSE_QJS_ARG)
+    if(LIGHTUSD_WITH_QJS)
+      set(LUSDR_SPARSE_QJS_ARG --with-qjs)
+    endif()
+    add_test(
+      NAME tool-lusdrender-sparse-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_sparse_volume.py
+              "$<TARGET_FILE:lusdrender>" ${LUSDR_SPARSE_QJS_ARG})
+    set_tests_properties(tool-lusdrender-sparse-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume")
+    add_test(NAME tool-lusdrender-materialx-volume-cpu
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_volume.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-volume-cpu PROPERTIES
+                         TIMEOUT 180 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;volume;materialx")
+    add_test(
+      NAME tool-lusdrender-smoke
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_lusdrender_smoke.py
+              "$<TARGET_FILE:lusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
+    )
+    # This smoke mixes CPU assertions with optional HIP/Vulkan requests, so
+    # exclude it from explicitly CPU-only profiles even when those backends
+    # happen to be installed on the test host.
+    set_tests_properties(tool-lusdrender-smoke PROPERTIES
+                         LABELS "lusdrender;cpu;gpu")
+
+    add_test(
+      NAME tool-lusdrender-analytic-primitives
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_analytic_primitives.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/analytic-primitives)
+    set_tests_properties(tool-lusdrender-analytic-primitives PROPERTIES
+                         TIMEOUT 90 LABELS "lusdrender;cpu;geometry;regression")
+
+    add_test(
+      NAME tool-lusdrender-cpu-preview-opacity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_cpu_preview_opacity.py
+              "$<TARGET_FILE:lusdrender>"
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/cpu-preview-opacity)
+    set_tests_properties(tool-lusdrender-cpu-preview-opacity PROPERTIES
+                         TIMEOUT 60 LABELS "lusdrender;cpu;material;regression")
+
+    # MaterialX-in-MTL (tinyobjloader mtlx-mtl.md): .mtlx -> mtl lines ->
+    # tobj_mtlx -> .mtlx renders pixel-identically, and the OBJ importer's
+    # UsdShade network renders like the .mtlx bound through a USD reference.
+    add_executable(lusdr_mtlx_mtl_dump
+                   ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/mtlx_dump.c
+                   ${PROJECT_SOURCE_DIR}/src/external/tinyobjloader-c/tobj_mtlx.c)
+    target_include_directories(lusdr_mtlx_mtl_dump PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(
+      NAME tool-lusdrender-mtlx-mtl
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/run_mtlx_mtl.py --usd
+              --lusdrender "$<TARGET_FILE:lusdrender>"
+              --mtlx-dump "$<TARGET_FILE:lusdr_mtlx_mtl_dump>"
+              --mtlx2mtl ${PROJECT_SOURCE_DIR}/tests/mtlx-mtl/mtlx2mtl.py
+              --size 48 --samples 1
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_copper.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_brass_tiled.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_greysphere_calibration.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/StandardSurface/standard_surface_wood_tiled.mtlx
+              ${PROJECT_SOURCE_DIR}/data/materialx/UsdPreviewSurface/usd_preview_surface_gold.mtlx
+              ${PROJECT_SOURCE_DIR}/web/demo/public/assets/mtlx/open_pbr_red_metal.mtlx)
+    set_tests_properties(tool-lusdrender-mtlx-mtl PROPERTIES
+                         TIMEOUT 300 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;cpu;materialx;mtlx;obj")
+
+    add_test(
+      NAME tool-lusdrender-materialx-cpu-graph
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_cpu_graph.py
+              "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR})
+    set_tests_properties(tool-lusdrender-materialx-cpu-graph PROPERTIES
+                         TIMEOUT 45 LABELS "lusdrender;cpu;materialx;graph")
+
+    add_test(
+      NAME tool-lusdrender-materialx-validation
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_validation.py
+              "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/lusdrender/materialx-validation)
+    set_tests_properties(tool-lusdrender-materialx-validation PROPERTIES
+                         TIMEOUT 45 LABELS "lusdrender;cpu;materialx;validation")
+
+    add_test(
+      NAME tool-lusdrender-materialx-flake-parity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_flake_parity.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-flake-parity PROPERTIES
+                         TIMEOUT 100 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;gpu;materialx;graph;parity")
+
+    add_test(
+      NAME tool-lusdrender-materialx-projection-parity
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_projection_parity.py
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-materialx-projection-parity PROPERTIES
+                         TIMEOUT 100 SKIP_RETURN_CODE 77
+                         LABELS "lusdrender;gpu;materialx;graph;parity")
+
+    # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
+    # every UsdUVTexture and render a flat constant base color.
+    add_test(
+      NAME tool-lusdrender-legacy-texture
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_legacy_texture.py
+              "$<TARGET_FILE:lusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
+    )
+    set_tests_properties(tool-lusdrender-legacy-texture
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(
+      NAME tool-lusdrender-colorspace-regression
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_colorspace_regression.py
+              "$<TARGET_FILE:lusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/colorspace-regression
+    )
+    set_tests_properties(tool-lusdrender-colorspace-regression
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Analytic oracle for the usd-assets ColorSpaceTests/UsdPreviewSurface tile grid
+    # (all 25 tiles must equal the asset's stated {200,100,50}); skips (77)
+    # without the usd-assets checkout or a Vulkan renderer.
+    add_test(
+      NAME tool-lusdrender-uvtexture-colorspace-tiles
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_uvtexture_colorspace_tiles.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/uvtexture-colorspace-tiles
+    )
+    set_tests_properties(tool-lusdrender-uvtexture-colorspace-tiles
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240
+                         LABELS "lusdrender;gpu;colorspace")
+
+    # Vulkan descriptor-path Ptex oracle: a real Island quad mesh rendered with
+    # -vkr, every visible pixel's base colour checked against OpenPtex. Skips (77)
+    # without the Island corpus, OpenPtex sources (LIGHTUSD_PTEX_INCLUDE), g++ or
+    # Vulkan.
+    add_test(
+      NAME tool-lusdrender-vkr-ptex-openptex
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_vkr_ptex.py
+              "$<TARGET_FILE:lusdrender>"
+              --output ${CMAKE_BINARY_DIR}/tools/lusdrender/vkr-ptex-openptex
+    )
+    set_tests_properties(tool-lusdrender-vkr-ptex-openptex
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900
+                         LABELS "lusdrender;gpu;ptex")
+
+    # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
+    # edge-on and render black.
+    add_test(
+      NAME tool-lusdrender-autoframe-flat
+      COMMAND ${LUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_autoframe_flat.py
+              "$<TARGET_FILE:lusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/lusdrender
+    )
+    set_tests_properties(tool-lusdrender-autoframe-flat
+                         PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+
+  # lusdrender's shell regressions in tools/lusdrender/tests/. These existed for
+  # a long time with NO add_test() anywhere, so nothing ran them and the docs
+  # cited ctest names that did not resolve; run-degraded-material.sh had been
+  # segfaulting (infinite MtlxConverter <-> ConvertMaterial recursion) unnoticed.
+  # Each takes the binary as $1 and exits 77 to skip.
+  #
+  # Only the hermetic ones are registered: run-gpu-render.sh needs a GPU, and
+  # run-large-scene-profiles.sh / run-material-resolver.sh /
+  # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
+  #
+  # bash is required (Git Bash/WSL on Windows). Without this find_program guard
+  # -- mirroring LUSDR_PYTHON's guard on the smoke tests above -- ctest can't
+  # find/launch the COMMAND at all on a native Windows box with neither on
+  # PATH, which fails hard rather than the intended SKIP_RETURN_CODE 77 skip
+  # (that property only takes effect once the test process actually runs).
+  find_program(LUSDR_BASH NAMES bash)
+  if(TARGET lusdrender AND LUSDR_BASH)
+    add_test(
+      NAME tool-lusdrender-gpu-render
+      COMMAND ${LIGHTUSD_BASH_CMD}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-gpu-render.sh
+              "$<TARGET_FILE:lusdrender>")
+    set_tests_properties(tool-lusdrender-gpu-render PROPERTIES
+                         SKIP_RETURN_CODE 77 LABELS "lusdrender;gpu;rt;materialx;openpbr")
+    if(LUSDR_PYTHON)
+      add_test(
+        NAME tool-lusdrender-materialx-openpbr-parity
+        COMMAND ${LUSDR_PYTHON}
+                ${PROJECT_SOURCE_DIR}/tools/lusdrender/check_materialx_openpbr_parity.py
+                "$<TARGET_FILE:lusdrender>" ${PROJECT_SOURCE_DIR})
+      set_tests_properties(tool-lusdrender-materialx-openpbr-parity PROPERTIES
+                           SKIP_RETURN_CODE 77
+                           TIMEOUT 180
+                           RESOURCE_LOCK lusdview_semantic_gpu
+                           LABELS "lusdrender;gpu;rt;materialx;openpbr;parity")
+    endif()
+    set(LUSDR_SHELL_TESTS
+        backplate
+        backface-material
+        camera-modes
+        cli-robustness
+        gpu-test-status
+        cmyk-jpeg-texture
+        degraded-material
+        diagnostic-material
+        diagnostic-material-gpu
+        diagnostic-opacity
+        diagnostic-opacity-chunks-gpu
+        diagnostic-opacity-cpu-chunks
+        diagnostic-opacity-gpu
+        dome-format
+        double-sided-cull
+        frames-framespec
+        geomsubset-materials
+        hermite-curves
+        mixed-flat-curve-gpu
+        ibl-specular-bound
+        instancer-invisible-ids
+        instancer-orientation
+        light-double-count
+        light-normalize
+        light-shadow-enable
+        material-shading-bsdf-sample
+        mesh-light-gaps
+        mtlx-usdz-texture-equivalence
+        mtlx-usdz-udim-equivalence
+        opacity-texture-alpha
+        payload-mask
+        purpose-filtering
+        purpose-visibility
+        shaped-area-lights
+        sphere-light-nee
+        subdivision-schemes
+        textureless-dome
+        texture-value-modifiers
+        texture-value-modifiers-gpu
+        texture-chunk-uvs-gpu
+        timecode-blendshape-animation
+        timecode-normals-animation
+        capture-normals
+        timecode-points-animation
+        timecode-transform-animation
+        transparency
+        usdrender-settings
+        usdz-texture-equivalence
+        uv-set-routing
+        gaussian-carrier-dispatch
+        gaussian-schema-aliases
+        vk-instanced-lifetime
+        vk-data-aovs
+        vk-instanced-curves
+        vk-blas-batches
+        vk-ray-tiling)
+    foreach(t ${LUSDR_SHELL_TESTS})
+      add_test(
+        NAME tool-lusdrender-${t}
+        COMMAND ${LIGHTUSD_BASH_CMD}
+                ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-${t}.sh
+                "$<TARGET_FILE:lusdrender>"
+      )
+      set_tests_properties(tool-lusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+      if(t MATCHES "gpu|^vk-blas-batches$|^vk-instanced-curves$|^vk-data-aovs$|^vk-instanced-lifetime$|^vk-ray-tiling$|^hermite-curves$|^gaussian-carrier-dispatch$")
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;gpu")
+      else()
+        set_tests_properties(tool-lusdrender-${t} PROPERTIES
+                             LABELS "lusdrender;cpu")
+      endif()
+    endforeach()
+
+    # run-material-resolver.sh takes the binary via $LUSDRENDER (its positional
+    # args are options) and skips itself when USD_ASSETS_ROOT is unset, so it is
+    # safe to register: it runs on machines that have the corpus, skips on those
+    # that don't. README.md already told people to run it by this ctest name.
+    add_test(
+      NAME tool-lusdrender-material-resolver
+      COMMAND ${LIGHTUSD_BASH_CMD} ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-material-resolver.sh
+    )
+    set_tests_properties(tool-lusdrender-material-resolver
+                         PROPERTIES SKIP_RETURN_CODE 77
+                         ENVIRONMENT "LUSDRENDER=$<TARGET_FILE:lusdrender>")
+
+    add_test(
+      NAME tool-lusdrender-alpha-blend-sort-external
+      COMMAND ${LIGHTUSD_BASH_CMD}
+              ${PROJECT_SOURCE_DIR}/tools/lusdrender/tests/run-alpha-blend-sort-external.sh
+              "$<TARGET_FILE:lusdrender>"
+    )
+    set_tests_properties(tool-lusdrender-alpha-blend-sort-external
+                         PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND LIGHTUSD_WITH_QJS AND LUSDR_PYTHON)
+  add_test(NAME tool-lusdrender-qjs
+    COMMAND ${LUSDR_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/check_qjs.py
+      $<TARGET_FILE:lusdrender>)
+  set_tests_properties(tool-lusdrender-qjs PROPERTIES LABELS "tools;scripting;core" TIMEOUT 120)
 endif()

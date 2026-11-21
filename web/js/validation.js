@@ -464,12 +464,7 @@ function escapeHTML(text) {
     .replaceAll("'", '&#039;');
 }
 
-const backend = new URLSearchParams(location.search).get('backend') === 'legacy' ? 'legacy' : 'next';
-const backendSelect = document.getElementById('backend');
-backendSelect.value = backend;
-backendSelect.addEventListener('change', () => {
-  const url = new URL(location.href); url.searchParams.set('backend', backendSelect.value); location.href = url.href;
-});
+const backend = 'core';
 let worker, requestId = 0;
 const pending = new Map();
 function request(type, payload = {}) {
@@ -521,17 +516,11 @@ function updateProfile() {
   document.getElementById('ruleGroups').disabled = fullProfile;
   for (const id of ['strictWarnings', 'composed', 'allSamples']) {
     const input = document.getElementById(id);
-    input.disabled = fullProfile || backend === 'legacy';
+    input.disabled = fullProfile;
     if (fullProfile) input.checked = id !== 'strictWarnings' || profile.value === 'strict';
   }
 }
 profile.addEventListener('change', () => { updateProfile(); invalidateResult(); });
-if (backend === 'legacy') {
-  profile.disabled = true;
-  for (const id of ['definitions', 'advancedChecks']) document.getElementById(id).hidden = true;
-  for (const id of ['groupRender', 'groupPackage', 'groupArkit']) document.getElementById(id).disabled = true;
-  document.getElementById('profileHelp').textContent = 'Legacy checks only. Select the next backend for lusdchecker profiles, dependencies, and conformance reports.';
-}
 updateProfile();
 const manifestOptions = async id => Promise.all(Array.from(document.getElementById(id).files)
   .map(async file => {
@@ -550,7 +539,7 @@ async function validateCurrentInput(format = 'json') {
   try {
     setStatus('Validating...');
     let options = {groups: selectedGroups()};
-    if (backend === 'next') {
+    if (backend === 'core') {
       options = {profile: profile.value, format,
         maxSamples: Number(document.getElementById('maxSamples').value),
         maxMemoryMB: Number(document.getElementById('maxMemory').value),
@@ -574,7 +563,7 @@ async function validateCurrentInput(format = 'json') {
     controls.forEach((control, i) => { control.disabled = disabledBefore[i]; });
     state.busy = false; validateBtn.disabled = !state.ready;
     document.getElementById('cancel').disabled = true;
-    document.getElementById('downloadSarif').disabled = backend !== 'next' || !state.lastResult;
+    document.getElementById('downloadSarif').disabled = backend !== 'core' || !state.lastResult;
   }
 }
 document.getElementById('cancel').addEventListener('click', async () => {

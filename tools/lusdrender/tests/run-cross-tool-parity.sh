@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cross-tool parity oracle: lusdview and lusdrender consume the SAME tydra-next
+# Cross-tool parity oracle: lusdview and lusdrender consume the SAME tydra
 # RenderScene, so they must interpret it the same way. Nothing else in the suite
 # renders one scene through both binaries and compares -- which is exactly how a
 # string of lusdview-only material/UV regressions stayed invisible while every
@@ -48,7 +48,7 @@ trap 'rm -rf "$TMP"' EXIT
 # lusdview --headless is windowless Vulkan: it needs a real Vulkan DEVICE but no
 # display, so there is no DISPLAY/Xvfb dance here. Without a device the render
 # fails and we skip -- a software stack cannot answer this question.
-if ! timeout 300 "$LUSDVIEW" --headless --backend vk --next --frames 3 \
+if ! timeout 300 "$LUSDVIEW" --headless --backend vk --core --frames 3 \
         --camera Cam --screenshot "$TMP/lusdview.ppm" "$MODEL" \
         > "$TMP/lusdview.log" 2>&1; then
   echo "SKIP: lusdview headless render failed (no Vulkan device?)"

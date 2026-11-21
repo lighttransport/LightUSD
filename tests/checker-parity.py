@@ -58,7 +58,9 @@ def main():
     p.add_argument('--generated-only', action='store_true')
     a = p.parse_args()
     if not a.usdchecker:
-        candidates = [ROOT/'ref/dist/bin/usdchecker', ROOT.parents[1]/'OpenUSD/dist/bin/usdchecker']
+        # An OpenUSD build next to the repository (../OpenUSD/dist) first.
+        candidates = [ROOT.parent/'OpenUSD/dist/bin/usdchecker', ROOT/'ref/dist/bin/usdchecker',
+                      ROOT.parents[1]/'OpenUSD/dist/bin/usdchecker']
         a.usdchecker = next((str(c) for c in candidates if c.is_file()), shutil.which('usdchecker'))
     if not a.usdchecker or not Path(a.usdchecker).is_file():
         if a.require_reference: p.error('reference usdchecker is required')

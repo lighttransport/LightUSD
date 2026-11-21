@@ -24,22 +24,59 @@ Capabilities:
 ## Build
 
 ```bash
-cmake -S . -B build_ninja/legacy-convert -G Ninja \
-      -DLIGHTUSD_NATIVE_PRODUCT=legacy \
-      -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON \
-      -DLIGHTUSD_WITH_FPNGE=ON -DLIGHTUSD_FPNGE_SIMD=avx2
-cmake --build build_ninja/legacy-convert --target lusdzconvert -j16
-# binary: build_ninja/legacy-convert/tools/lusdzconvert/lusdzconvert
+cmake -S . -B build -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_WITH_TYDRA=ON
+make -C build -j16 lusdzconvert
+# binary: build/lusdzconvert
 ```
 
-The native converter currently uses the legacy API and requires the explicit
-product selection above. The default next product supports the JavaScript
-`usdzconvert` path through the next WASM module.
+The converter is `src/usdz/usdz-converter.{hh,cc}` on the core library.
+`-optimizeMaterials dedupe` merges identical material subtrees and retargets
+bindings on the core. It requires flattening. `-optimizeGeometry mergeMeshes`
+(or `-optimizeMeshes mergeMeshes`) aggregates compatible static meshes on core,
+including subdivision topology, indexed numeric primvars, transformed normals,
+and face material subsets. Public root prims stay in place; aggregates live
+under the same root as their sources. Merged mesh paths change. Animated,
+instanced, or unsupported meshes stay intact. The mesh-merge tuning flags limit
+source sizes, aggregate face counts, and minimum group size.
+`-optimizeMaterials preview` also merges equivalent supported PreviewSurface
+graphs with different surface shader names or unused shader children. It keeps
+unsupported graphs, cycles and extra material outputs on the exact comparison
+path.
 
-`LIGHTUSD_FPNGE_SIMD` selects the fpnge code path at compile time:
-`avx2` (default), `sse41`, `sse2`, or `scalar`. fpnge upstream requires SSE4.1
-minimum, so `sse2` and `scalar` do not compile fpnge and PNG encoding falls back
-to `fpng`.
+`-optimizeMaterials atlas` applies preview deduplication, then packs compatible
+diffuse textures into shared PNG atlases. Compatible materials use the same
+UsdPreviewSurface graph with one clamp-wrapped UsdUVTexture, explicit `sRGB` or
+`raw` color space, and a reader for `primvars:st`. The diffuse texture can also
+supply opacity. Directly bound leaf meshes with static UVs in [0, 1] receive a
+dedicated atlas UV primvar, including the original interpolation and indices.
+Graphs with additional texture inputs, other wrapping modes, or unsupported
+bindings keep their original materials. Native conversion packages the generated
+images into USDZ or writes them beside a flat USDA/USDC file.
+
+`-materialAtlasSize` caps the atlas edge, `-materialAtlasTileSize` sets the
+square tile size, and `-materialAtlasPadding` sets the replicated border
+(defaults 4096, 512 and 2 respectively). Atlas mode requires at least one
+padding pixel. `-materialAtlasMinGroupSize` defaults to two materials.
+The core JS folder and streaming converters accept the corresponding camelCase
+options and package the generated atlases alongside their source assets.
+Streaming atlas generation stages source images within the converter's
+configured asset budget.
+`--bake-udim grid|dense` uses the same atlas/geometry algorithms and core layer
+adapter as WASM. It supports flat USDA/USDC and both USDZ root formats, including
+root-layer variant contents with `-noFlatten`. Floating-point tiles remain EXR;
+16-bit PNG tiles retain their precision. `LIGHTUSD_WITH_EXR` enables the optional
+vendored native EXR backend (on by default). Ordinary textures are processed
+serially (`-numThreads` and `--texture-memory-budget` are accepted and ignored).
+Without UDIM baking, `-noFlatten` packages the root and its resolved dependency
+layers inside the input directory unchanged. Ordinary texture processing
+applies to flattened USDZ output only; UDIM baking also supports flat outputs
+and non-flattened root-layer contents.
+
+Core builds enable `LIGHTUSD_WITH_TEXTOOLS` by default. With it, KTX2
+textures are decoded and packaged as PNG (or JPEG when requested). A KTX2
+texture that cannot be decoded fails conversion with a diagnostic instead
+of silently producing an incomplete package. Disable the optional vendored
+texture stack with `-DLIGHTUSD_WITH_TEXTOOLS=OFF`.
 
 ## Usage
 
@@ -83,8 +120,8 @@ but root-layer discovery itself is not recursive.
 supports non-flattened layers, including variant contents. `--bake-udim dense`
 packs sorted tile IDs into a compact atlas with gutters and a reserved blank
 cell, then authors separate face-varying UVs for each texture layout. Original
-UVs and other texture consumers remain intact. Dense mode requires flattened
-native output.
+UVs and other texture consumers remain intact. Both modes support baking
+root-layer variant contents with `-noFlatten`.
 
 ```sh
 lusdzconvert scene.usda scene.usdz --bake-udim grid --udim-max-tiles 32

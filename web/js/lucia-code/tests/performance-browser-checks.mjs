@@ -12,9 +12,12 @@ export async function runPerformanceBrowserChecks(page) {
       int[] faceVertexCounts=[${Array(n*n*2).fill(3).join(',')}]
       int[] faceVertexIndices=[${indices.join(',')}]
       uniform token subdivisionScheme="none"
-    }}`;
+    }
+}
+`;
     const loadStart=performance.now();
     await app.openFile(new File([source],'performance.usda'));
+    if (!app.session.usda.includes('def Mesh "Grid"')) throw new Error('Performance scene failed to load: '+app.$('#activity-list').textContent.slice(-2000));
     const importMs=performance.now()-loadStart;
     const rebuilds=[];
     for(let i=0;i<2;i++){const start=performance.now();await app.refreshAll(false);rebuilds.push(performance.now()-start);}

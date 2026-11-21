@@ -5,8 +5,8 @@
 # `map2`, ...). A texture's UsdPrimvarReader selects which one it samples, and
 # the renderer must honour that selection rather than always using the first set.
 #
-# Both the viewer's CPU ray tracer (`lusdview --cpu-rt`, the `next` converter)
-# and the standalone CPU renderer (`lusdrender`, the legacy converter) are
+# Both the viewer's CPU ray tracer (`lusdview --cpu-rt`, the `core` converter)
+# and the standalone CPU renderer (`lusdrender`, the core converter) are
 # checked against the same scenes.
 #
 # Oracle, all three scenes share the same geometry and the same 2x2 swatch:
@@ -258,6 +258,8 @@ mixed_scene('mixed_ctl', 'st', 'st1', IDENTITY, IDENTITY)
 # normal texture samples. A constant tilted tangent-space normal is rotated by
 # the UV mapping, so the same lookup must match whether it is written as `st1`
 # or as a pre-transformed `st`.
+# An oblique key illuminates both tangent directions. An axis-aligned key
+# makes the transposed-UV tilt control vacuous on the CPU renderer.
 NORMAL_TEMPLATE = """#usda 1.0
 (
     defaultPrim = "World"
@@ -270,7 +272,7 @@ def Xform "World"
     def DistantLight "Key"
     {
         float inputs:intensity = 6.0
-        float3 xformOp:rotateXYZ = (0, -90, 0)
+        float3 xformOp:rotateXYZ = (45, -45, 0)
         uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
     }
 
@@ -404,8 +406,8 @@ done
 # ignore the second UV set entirely: the material's UV primvar was not registered
 # by the legacy scene converter, so the mesh exported without texcoords and every
 # texture lookup collapsed to (0, 0). The check below pins the fix from the
-# converter side, independently of the viewer's `next` path.
-RENDER="${LUSDRENDER:-$REPO_ROOT/build_ninja/lusdview_lightrt_c_build/lusdrender}"
+# converter side, independently of the viewer's `core` path.
+RENDER="${LUSDRENDER:-$REPO_ROOT/build_ninja/tools/lusdrender/lusdrender}"
 [ -x "$RENDER" ] || { echo "SKIP: lusdrender not found: $RENDER"; exit "$SKIP"; }
 
 render_legacy() {

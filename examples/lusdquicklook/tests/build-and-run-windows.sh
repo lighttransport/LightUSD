@@ -29,7 +29,7 @@ elif command -v x86_64-w64-mingw32-g++-posix >/dev/null 2>&1 || \
   TOOLCHAIN="$ROOT/cmake/mingw64-cross.cmake"
   note "using system mingw-w64 GCC"
   # mingw-w64 GCC reports a -Wmaybe-uninitialized false positive inside
-  # src/usdMtlx.cc (via value-types.hh placement new), and the library builds
+  # src/legacy/usdMtlx.cc (via value-types.hh placement new), and the library builds
   # with -Werror. That is pre-existing library code, unrelated to
   # lusdquicklook, so downgrade just that warning rather than patching it here.
   GCC_WORKAROUND="-Wno-error=maybe-uninitialized"

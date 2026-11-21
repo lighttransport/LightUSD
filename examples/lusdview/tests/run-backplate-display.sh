@@ -6,7 +6,7 @@ ROOT="${2:?repository root required}"
 if [[ "${LUSDVIEW_BACKPLATE_GL_CHILD:-0}" == 1 ]]; then
   TMP="${3:?temporary directory required}"
   VISIBLE="$ROOT/tests/usda/lusdrender-backplate-001.usda"
-  common=(--next --frames 3 --size 128x96 --no-grid --mode shaded --camera /World/Camera)
+  common=(--core --frames 3 --size 128x96 --no-grid --mode shaded --camera /World/Camera)
   "$BIN" --backend gl "${common[@]}" --screenshot "$TMP/visible-gl.ppm" \
     "$VISIBLE" >"$TMP/visible-gl.log" 2>&1 ||
     { cat "$TMP/visible-gl.log"; exit 1; }
@@ -35,7 +35,7 @@ sed 's/plateVisibility = "render"/plateVisibility = "invisible"/' \
 sed -e 's/, "BackPlateAPI:accent"//' -e '/backPlate:accent:/d' \
   "$VISIBLE" > "$TMP/single.usda"
 
-common=(--next --frames 3 --size 128x96 --no-grid --mode shaded --camera /World/Camera)
+common=(--core --frames 3 --size 128x96 --no-grid --mode shaded --camera /World/Camera)
 render_vk() {
   "$BIN" --headless --backend vk "${common[@]}" --screenshot "$2" "$1" \
     >"$2.log" 2>&1

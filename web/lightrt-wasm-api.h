@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-/* Stateless next-WASM mesh simplification. Counts are element counts; output
+/* Stateless raytrace-WASM mesh simplification. Counts are element counts; output
  * has room for at least idx_count uint32 values. Optional normals, UVs, and
  * locks may be null only when their count is zero. Returns the output index
  * count, or -1 for invalid input. */
@@ -17,7 +17,7 @@ int32_t lightusd_meshopt_simplify(
     uint32_t lock_count, uint32_t target_index_count, float target_error,
     uint32_t options, uint32_t* out, uint32_t out_cap, float* result_error);
 
-/* Generation-checked next-WASM path tracer. All lengths are element counts,
+/* Generation-checked raytrace-WASM path tracer. All lengths are element counts,
  * except string and scene-buffer copy capacities, which are bytes. Negative
  * results mean invalid handles/inputs; build/trace/query return 1 on success
  * and 0 on a valid-handle failure. */

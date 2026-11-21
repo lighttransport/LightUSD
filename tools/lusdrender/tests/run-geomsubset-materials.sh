@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # Regression test: per-face GeomSubset material bindings must render on the
-# tydra-next (-rtPreview) path.
+# tydra (-rtPreview) path.
 #
 # The streaming path resolved exactly ONE material per mesh
 # (ResolveMeshMaterialCached on the mesh prim) and stamped it on every triangle;
 # no GeomSubset traversal existed, so a mesh whose materials were bound only via
 # face subsets rendered entirely in the default gray. The fix
-# (ExpandGeomSubsetJobsNext) splits such a mesh into one job per bound subset
+# (ExpandGeomSubsetJobsCore) splits such a mesh into one job per bound subset
 # (face mask + the subset prim as binding source) plus a remainder job.
 #
 # The fixture is one 3-quad mesh whose faces are bound Red/Green/Blue through

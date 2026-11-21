@@ -1,7 +1,7 @@
 # LightUSD vs OpenUSD v26.11.1 on the benchmark scene scenes
 
 Reference measurement of the same work in pxrUSD, for context on what the
-`src/next` rounds (see [large-scene.md](large-scene.md) §10) bought, plus the
+`src/` rounds (see [large-scene.md](large-scene.md) §10) bought, plus the
 USDA text-syntax corner that the comparison uncovered.
 
 Examples use `$WORK_ROOT`, `$BENCH_ROOT`, and `$ASSET_ROOT` for local checkouts
@@ -235,7 +235,7 @@ Takeaways for LightUSD:
 - Unrelated detail visible in the rewritten snippets: LightUSD's USDA writer
   omits the deprecated `custom` qualifier unless `--openusd-compat` is passed
   (the flag itself is preserved in USDC — `Usd.Attribute.IsCustom()` is true).
-  That is deliberate (see `src/next/writer/usda-writer-print.cc`,
+  That is deliberate (see `src/writer/usda-writer-print.cc`,
   `opts.emit_custom`), not a round-trip loss.
 
 ## 9. Reproducing

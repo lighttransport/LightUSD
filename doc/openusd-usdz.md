@@ -190,8 +190,8 @@ runtime-side limit.
 
 ## 5. Status in lightusd — `lusdchecker --arkit`
 
-The rules above are **implemented** in the dependency-free `next` validator
-(`src/next/validation/usd-validation.{hh,cc}`) as an opt-in `arkit` rule group, and are exposed by
+The rules above are **implemented** in the dependency-free `core` validator
+(`src/validation/usd-validation.{hh,cc}`) as an opt-in `arkit` rule group, and are exposed by
 the `lusdchecker` CLI (`tools/lusdchecker/`):
 
 ```sh
@@ -234,7 +234,7 @@ valid USD, just not ARKit-deliverable.
 - **Full SDR-driven `ShaderPropertyTypeConformance`.** lightusd has no shader-definition registry;
   input types are checked against the generated `UsdPreviewSurface` table and the `UsdUVTexture` /
   `UsdPrimvarReader` schemas only. Arbitrary `ND_*` MaterialX node inputs are not type-checked.
-- **Composed-stage / per-variant evaluation.** The `arkit` rules run on the uncomposed `next::Layer`
+- **Composed-stage / per-variant evaluation.** The `arkit` rules run on the uncomposed `lightusd::Layer`
   (like every other group). Target-resolution rules (`arkit.material.binding`) only hard-fail when
   the layer is self-contained — no sublayers, no external reference/payload arcs — which is exactly
   what an ARKit `.usdz` root layer must be anyway. `--composed` can be combined with `--arkit` to

@@ -4,7 +4,7 @@ Lightweight, dependency-free **USD** (Universal Scene Description) library for
 Python: load and author USDA / USDC / USDZ, resolve composition, and extract
 GPU-ready render data — with **zero-copy NumPy interop**.
 
-Built on the LightUSD *next* core + *tydra-next* (no pxrUSD install required,
+Built on the LightUSD core + Tydra (no pxrUSD install required,
 no legacy core in the wheel; native `cmake -S .` and WASM still
 provide the legacy path via `web/binding.cc`). **v1.0.0**, npm `preview`
 dist-tag. Wheels:
@@ -222,7 +222,7 @@ through `stage.warnings()`.
 
 ## Performance and memory
 
-- `lightusd.load` runs the same next core as the CLI; the binding does not add
+- `lightusd.load` runs the same core as the CLI; the binding does not add
   a second copy of geometry. Numeric attributes are zero-copy buffer views, and
   `Stage.flattened()` is the one call that deliberately builds a second stage.
 - Live memory is released on `Stage.close()`. RSS may stay high afterwards

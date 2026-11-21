@@ -426,30 +426,26 @@ export class LuciaOperations {
       packedSlots[slot] = { path: descriptor.path, channel: options[slot].channel };
     }
     if (!Object.keys(packedSlots).length) throw new LuciaError('LUCIA_PACK_INPUT', 'Choose at least one source texture channel.');
-    const native = new this.session.module.LightUSDLoaderNative();
-    try {
-      const result = native.repackChannels(options);
-      validatePackedResult(result, outputChannels);
-      this.project.assets.set(name, { bytes: new Uint8Array(result.data), mimeType: 'image/png', generated: true, colorSpace, dataTexture: colorSpace !== 'srgb', packedSlots, width: result.width, height: result.height, channels: result.channels });
-      this.project.emit();
-      // sessionCommand uses the operation return value as the USDA snapshot.
-      // Packing changes only project assets, but returning the unchanged stage
-      // text keeps undo/redo valid while project snapshots restore the asset.
-      return this.session.exportUSDA();
-    } finally { native.delete(); }
+    const native = this.session.module;
+    const result = native.repackChannels(options);
+    validatePackedResult(result, outputChannels);
+    this.project.assets.set(name, { bytes: new Uint8Array(result.data), mimeType: 'image/png', generated: true, colorSpace, dataTexture: colorSpace !== 'srgb', packedSlots, width: result.width, height: result.height, channels: result.channels });
+    this.project.emit();
+    // sessionCommand uses the operation return value as the USDA snapshot.
+    // Packing changes only project assets, but returning the unchanged stage
+    // text keeps undo/redo valid while project snapshots restore the asset.
+    return this.session.exportUSDA();
   }
   async stripUnusedAlpha(name) {
     const asset = this.project.assets.get(name);
     if (!asset?.bytes?.length) throw new LuciaError('LUCIA_ASSET_NOT_FOUND', `No image asset is available at ${name}.`);
     if (asset.bakeStats?.unusedAlpha !== true && asset.unusedAlpha !== true) throw new LuciaError('LUCIA_ALPHA_UNKNOWN', 'Alpha removal requires a deterministic opaque-alpha analysis result.');
-    const native = new this.session.module.LightUSDLoaderNative();
-    try {
-      const result = native.repackChannels({ channels: 3, format: 'png', r: { data: asset.bytes, channel: 0 }, g: { data: asset.bytes, channel: 1 }, b: { data: asset.bytes, channel: 2 } });
-      if (!result?.success || !isByteBuffer(result.data) || !result.data.length || !Number.isSafeInteger(result.width) || result.width < 1 || result.width > 8192 || !Number.isSafeInteger(result.height) || result.height < 1 || result.height > 8192 || result.channels !== 3) throw new LuciaError('LUCIA_ALPHA_STRIP', result?.error || 'LightUSD returned invalid encoded RGB texture data while removing the unused alpha channel.');
-      this.project.assets.set(name, { ...asset, bytes: new Uint8Array(result.data), channels: 3, unusedAlpha: false, alphaRemoved: true, width: result.width, height: result.height });
-      this.project.emit();
-      return this.session.exportUSDA();
-    } finally { native.delete(); }
+    const native = this.session.module;
+    const result = native.repackChannels({ channels: 3, format: 'png', r: { data: asset.bytes, channel: 0 }, g: { data: asset.bytes, channel: 1 }, b: { data: asset.bytes, channel: 2 } });
+    if (!result?.success || !isByteBuffer(result.data) || !result.data.length || !Number.isSafeInteger(result.width) || result.width < 1 || result.width > 8192 || !Number.isSafeInteger(result.height) || result.height < 1 || result.height > 8192 || result.channels !== 3) throw new LuciaError('LUCIA_ALPHA_STRIP', result?.error || 'LightUSD returned invalid encoded RGB texture data while removing the unused alpha channel.');
+    this.project.assets.set(name, { ...asset, bytes: new Uint8Array(result.data), channels: 3, unusedAlpha: false, alphaRemoved: true, width: result.width, height: result.height });
+    this.project.emit();
+    return this.session.exportUSDA();
   }
   async convertNormalMapY(name, from, to) {
     const asset = this.project.assets.get(name), source = String(from || asset?.normalY || '').toLowerCase(), target = String(to || '').toLowerCase();

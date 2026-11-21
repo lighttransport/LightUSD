@@ -76,7 +76,9 @@ def file_fingerprint(path):
     stat=path.stat()
     identity=(stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
     cached=_FILE_HASH_CACHE.get(str(path))
-    if cached is None or cached[0]!=identity:
+    # Windows st_ctime is the creation time, so it cannot reveal a same-size edit
+    # that preserved mtime: never trust the cache there.
+    if cached is None or cached[0]!=identity or os.name=='nt':
         with path.open('rb') as source:digest=hashlib.file_digest(source,'sha256').hexdigest()
         after=path.stat()
         if identity!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns):

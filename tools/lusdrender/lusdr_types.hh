@@ -7,6 +7,7 @@
 #include "cpu/ptex-sample.hh"  // lusdview::CpuPtexSampler (lazy Ptex source)
 #include "core/host-services.hh"
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -15,35 +16,31 @@
 
 #include "lusdr_math.hh"
 #include "core/color-transform.hh"
-#include "lightusd.hh"
-#include "value-types.hh"
-#include "xform.hh"
-#include "mmap-array-ref.hh"
+#include "lusdr_value.hh"
+#include "image-types.hh"
+#include <iostream>
 #include "tydra/render-data.hh"
-#include "next/prim/path.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
-#include "next/types/value.hh"
-#include "tydra/next/scene-access.hh"
-#include "tydra/next/texture-cache.hh"
+#include "prim/path.hh"
+#include "schema/geom-mesh.hh"
+#include "reader/usdz-reader.hh"
+#include "stage/stage.hh"
+#include "lightusd-core.hh"
+#include "types/value.hh"
+#include "../../src/tydra/scene-access.hh"
+#include "tydra/texture-cache.hh"
 extern "C" {
 #include "lightrt_c_tri.h"
 }
 
+namespace lusdview {
+class MaterialXSurfaceRuntime;
+}
+
 namespace lusdr {
 
-using lightusd::value::color3f;
-using lightusd::value::float3;
-using lightusd::value::matrix4d;
-using lightusd::tydra::Node;
-using lightusd::tydra::NodeType;
-using lightusd::tydra::RenderCamera;
-using lightusd::tydra::RenderLight;
-using lightusd::tydra::RenderMaterial;
-using lightusd::tydra::RenderMesh;
-using lightusd::tydra::RenderScene;
+using lusdr::value::color3f;
+using lusdr::value::float3;
+using lusdr::value::matrix4d;
 
 enum class WrapMode { Repeat, Clamp, Mirror, Black };
 
@@ -99,7 +96,7 @@ struct Texture {
   };
   std::vector<Mip> mips;
   // Keep decoder budget reservations alive for retained pixels and mips.
-  std::vector<std::shared_ptr<lightusd::next::TextureBudgetLease>>
+  std::vector<std::shared_ptr<lightusd::TextureBudgetLease>>
       budget_leases;
   bool is_udim{false};
   std::vector<UdimTile> udim_tiles;
@@ -508,8 +505,10 @@ struct PreviewLight {
   // rather than collapsing it to its center. UsdLux puts a RectLight/DiskLight in
   // the local XY plane emitting along -Z (so `normal` is local +Z... times -1 of
   // `direction`), and runs a CylinderLight's axis along local +X.
-  Vec3 axis_u{1.0f, 0.0f, 0.0f};   // local +X in world space
-  Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
+  // Mesh lights use these as world-space triangle edges p1-p0 and p2-p0;
+  // position is their centroid. Other shapes use normalized local axes.
+  Vec3 axis_u{1.0f, 0.0f, 0.0f};
+  Vec3 axis_v{0.0f, 1.0f, 0.0f};
   float power{0.0f};
   float cdf{0.0f};
   bool shadow_enable{true};
@@ -611,7 +610,27 @@ struct CameraFrame {
   bool ortho{false};
 };
 
-enum class CaptureAov { Color, Depth, WorldNormal, GeometricNormal, ShadingNormal, PrimId };
+enum class CaptureAov {
+  Color,
+  Depth,
+  WorldNormal,
+  GeometricNormal,
+  ShadingNormal,
+  PrimId,
+  MaterialXNode,
+  MaterialXDiffuseWeight,
+  MaterialXSpecularWeight,
+  MaterialXCoatWeight,
+  MaterialXTransmissionWeight
+};
+
+inline bool IsMaterialXAov(CaptureAov aov) {
+  return aov == CaptureAov::MaterialXNode ||
+         aov == CaptureAov::MaterialXDiffuseWeight ||
+         aov == CaptureAov::MaterialXSpecularWeight ||
+         aov == CaptureAov::MaterialXCoatWeight ||
+         aov == CaptureAov::MaterialXTransmissionWeight;
+}
 enum class MaterialDiagnostic { None, Roughness, Metallic };
 
 struct Options {
@@ -662,7 +681,7 @@ struct Options {
   Vec3 view_dir{0.0f, 0.0f, 0.0f};
   bool has_view_dir{false};
   uint32_t purpose_mask{kPurposeDefaultMask};
-  double timecode{lightusd::value::TimeCode::Default()};
+  double timecode{lusdr::value::TimeCode::Default()};
   int samples{1};
   Vec3 bg{0.0f, 0.0f, 0.0f};
   float ambient{0.05f};
@@ -688,14 +707,13 @@ struct Options {
   bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
   bool scene_preview_albedo{false};
-  bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool diagnostic_emission{false}; // unlit channel wrapper, sRGB without tone map
   MaterialDiagnostic diagnostic_material{MaterialDiagnostic::None};
   bool smooth{false};       // interpolate authored normals (smooth shading)
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
-  enum class MaterialResolver { Legacy, TydraNext, Compare };
-  MaterialResolver material_resolver{MaterialResolver::TydraNext};
+  enum class MaterialResolver { Legacy, Tydra, Compare };
+  MaterialResolver material_resolver{MaterialResolver::Tydra};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
   // Level-set volumes (UsdVol fieldClass "levelSet"): shade the isosurface as
@@ -807,6 +825,19 @@ struct Options {
   TextureCompress texture_compress{TextureCompress::Off};  // -texCompress
   enum class UdimMode { Sparse, Atlas };
   UdimMode udim_mode{UdimMode::Sparse};  // -udim; sparse is the large-scene default
+  // MaterialX validation entry point. Kept at the end to preserve offsets of
+  // the existing Options fields used by other renderer translation units.
+  bool verified_math{false};
+  std::string mtlx_file;
+  std::string mtlx_material;
+  std::string volume_mtlx_file;
+  std::string volume_mtlx_look;
+  bool mtlx_mipmaps{false};
+  std::shared_ptr<lusdview::MaterialXSurfaceRuntime> mtlx_runtime;
+  std::string mtlx_aov_node;
+  // --energy-mode: 0 reference (default), 1 conservative certified glass R/T scale.
+  int energy_mode{0};
+  bool layering_graph{false};  // --layering graph (bsdf_set_layering_graph)
 };
 
 struct DirectShape {
@@ -816,7 +847,7 @@ struct DirectShape {
   matrix4d inv_world{matrix4d::identity()};
   double radius{1.0};
   double height{2.0};
-  lightusd::Axis axis{lightusd::Axis::Z};
+  lusdr::Axis axis{lusdr::Axis::Z};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
 };
@@ -962,18 +993,18 @@ struct BorrowedArrayView {
   std::vector<T> owned;
 };
 
-struct MeshJob {
-  const lightusd::GeomMesh *mesh{nullptr};
-  matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
-  std::string prim_path;
-};
-
 struct PurposeFilter {
   const std::vector<FlatTri> *tris{nullptr};
   uint32_t mask{kPurposeDefaultMask};
   size_t first{0};
   size_t count{0};
+};
+
+struct MtlxGeomPropRequest {
+  std::string name;
+  uint8_t type{0};  // ordinal of lusdview::MaterialXGeomPropType
+  uint8_t components{1};
+  bool integer{false};
 };
 
 struct Blas {
@@ -988,6 +1019,11 @@ struct Blas {
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
   std::vector<lightusd::tydra::LightRtOpenPBRParams> openpbr_table;
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
+  FloatVec tri_uvs1;  // second UV set, when a MaterialX graph requests it
+  // Requested MaterialX geomprop values, packed as 3 corners x 4 lanes per
+  // property per triangle. A parallel bit marks attributes absent on a mesh.
+  FloatVec tri_geomprops;
+  ByteVec tri_geomprops_valid;
   ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
   // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
   // for cache-coherent hit reads -- adjacent leaf triangles -> adjacent entries.
@@ -1017,6 +1053,9 @@ struct Blas {
       mat_table = std::move(o.mat_table);
       openpbr_table = std::move(o.openpbr_table);
       tri_uvs = std::move(o.tri_uvs);
+      tri_uvs1 = std::move(o.tri_uvs1);
+      tri_geomprops = std::move(o.tri_geomprops);
+      tri_geomprops_valid = std::move(o.tri_geomprops_valid);
       tri_colors = std::move(o.tri_colors);
       tri_colors_slot = std::move(o.tri_colors_slot);
       tri_normals = std::move(o.tri_normals);
@@ -1063,6 +1102,11 @@ struct VolumeSparseSampler {
 };
 
 struct VolumeData {
+  lightusd::tydra::RenderVolume materialx_volume;
+  std::shared_ptr<lightusd::tydra::vol::FieldCache> materialx_fields;
+  matrix4d materialx_world{matrix4d::identity()};
+  matrix4d materialx_inv_world{matrix4d::identity()};
+  float materialx_time{0.0f}, materialx_frame{0.0f};
   std::vector<float> density;  // dense grid, x-contiguous
   std::shared_ptr<const VolumeSparseSampler> sparse_density;
   // Optional scalar fields on the same index-space lattice as `density`.
@@ -1128,11 +1172,11 @@ inline float SampleVolumeDensity(const VolumeData &vd, const Vec3 &p) {
 
 struct ResolvedMat;
 
-struct MeshJobNext {
-  lightusd::next::UsdPrim prim;
+struct MeshJobCore {
+  lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
-  // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
+  // Face-GeomSubset split (ExpandGeomSubsetJobsCore): a mesh whose faces are
   // material-bound per GeomSubset becomes one job per bound subset + a
   // remainder job.
   // `subset_faces` (indexed by AUTHORED face id; empty = whole mesh) masks which
@@ -1140,7 +1184,7 @@ struct MeshJobNext {
   // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
   // finds the subset's own binding first, then falls back up the ancestry.
   std::vector<char> subset_faces;
-  lightusd::next::UsdPrim bind_prim;
+  lightusd::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
@@ -1192,10 +1236,10 @@ struct TextureCache {
   std::vector<Texture> *textures{nullptr};
   std::unordered_map<std::string, int32_t> by_key;
   std::string base_dir;  // directory of the input file, for relative paths
-  const lightusd::next::USDZReader *usdz{nullptr};
+  const lightusd::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
-  // Shared decode + size cap + byte budget (built on first use in lusdr_next).
-  std::shared_ptr<lightusd::tydra::next::TextureDecoder> decoder;
+  // Shared decode + size cap + byte budget (built on first use in lusdr_core).
+  std::shared_ptr<lightusd::tydra::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
   size_t *unsupported_mtlx{nullptr};  // -> RTPreviewStats::unsupported_mtlx
@@ -1271,14 +1315,14 @@ struct ResolvedMat {
 
 struct ProtoBuildReq {
   std::string path;
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
   uint32_t blas_id{0};  // index into RenderContext::blas
 };
 
-struct CurveJobNext {
-  lightusd::next::UsdPrim prim;
+struct CurveJobCore {
+  lightusd::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
-  lightusd::Purpose purpose{lightusd::Purpose::Default};
+  lusdr::Purpose purpose{lusdr::Purpose::Default};
 };
 
 // One placement of a curve prototype's curve BLAS (deduped curve geometry stored

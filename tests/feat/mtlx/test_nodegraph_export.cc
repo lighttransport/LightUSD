@@ -38,8 +38,8 @@ int main(int argc, char** argv) {
 
   // Test 1: Parse MaterialX with nodegraph
   std::cout << "Test 1: Parsing MaterialX with nodegraph...\n";
-  lightusd::MtlxModel mtlx;
-  bool ret = lightusd::ReadMaterialXFromString(
+  lightusd::legacy::MtlxModel mtlx;
+  bool ret = lightusd::legacy::ReadMaterialXFromString(
       test_mtlx_with_nodegraph, "test_nodegraph.mtlx", &mtlx, &warn, &err);
 
   if (!ret) {
@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
   warn.clear();
   err.clear();
 
-  ret = lightusd::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
+  ret = lightusd::legacy::WriteMaterialXToString(mtlx, xml_out, &warn, &err);
 
   if (!ret) {
     std::cerr << "ERROR: Failed to export MaterialX\n";

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """LightUSD — a lightweight USD (Universal Scene Description) library.
 
-Built on the lightusd "next" core: load USDA/USDC/USDZ (composed or
+Built on the LightUSD core: load USDA/USDC/USDZ (composed or
 layer-level), inspect and author stages, and extract render-ready geometry
 via the ``lightusd.tydra`` submodule.
 

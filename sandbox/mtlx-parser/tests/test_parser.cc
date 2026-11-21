@@ -7,6 +7,8 @@
 
 using namespace lightusd::mtlx;
 
+using namespace lightusd::legacy::mtlx;  // NOLINT
+
 void test_tokenizer() {
   std::cout << "Testing XML Tokenizer..." << std::endl;
 

@@ -31,7 +31,7 @@
 #endif
 
 #include "asset-resolution.hh"
-#include "lightusd.hh"  // for the complete lightusd::PrimSpec definition
+#include "lightusd.hh"  // for the complete lightusd::legacy::PrimSpec definition
 #include "usdMtlx.hh"
 
 namespace {
@@ -128,7 +128,7 @@ int main() {
     return 1;
   }
 
-  lightusd::AssetResolutionResolver resolver;
+  lightusd::legacy::AssetResolutionResolver resolver;
   resolver.set_search_paths({kBaseDir});
 
   int failures = 0;
@@ -136,9 +136,9 @@ int main() {
   // --- Test 1: "../" traversal must be rejected -------------------------
   {
     std::cout << "Test 1: parent-directory ('../') include is rejected...\n";
-    lightusd::MtlxModel mtlx;
+    lightusd::legacy::MtlxModel mtlx;
     std::string warn, err;
-    bool ret = lightusd::ReadMaterialXFromFile(resolver, "main_traversal.mtlx",
+    bool ret = lightusd::legacy::ReadMaterialXFromFile(resolver, "main_traversal.mtlx",
                                                &mtlx, &warn, &err);
     if (ret) {
       std::cerr << "  FAIL: traversal include was accepted (expected "
@@ -156,9 +156,9 @@ int main() {
   // --- Test 2: absolute path must be rejected ---------------------------
   {
     std::cout << "Test 2: absolute-path include is rejected...\n";
-    lightusd::MtlxModel mtlx;
+    lightusd::legacy::MtlxModel mtlx;
     std::string warn, err;
-    bool ret = lightusd::ReadMaterialXFromFile(resolver, "main_absolute.mtlx",
+    bool ret = lightusd::legacy::ReadMaterialXFromFile(resolver, "main_absolute.mtlx",
                                                &mtlx, &warn, &err);
     if (ret) {
       std::cerr << "  FAIL: absolute-path include was accepted (expected "
@@ -176,9 +176,9 @@ int main() {
   // --- Test 3: benign contained relative include still works ------------
   {
     std::cout << "Test 3: contained relative include still loads...\n";
-    lightusd::MtlxModel mtlx;
+    lightusd::legacy::MtlxModel mtlx;
     std::string warn, err;
-    bool ret = lightusd::ReadMaterialXFromFile(resolver, "main_ok.mtlx", &mtlx,
+    bool ret = lightusd::legacy::ReadMaterialXFromFile(resolver, "main_ok.mtlx", &mtlx,
                                                &warn, &err);
     if (Contains(err, kRejectMsg)) {
       std::cerr << "  FAIL: legitimate relative include was wrongly rejected "

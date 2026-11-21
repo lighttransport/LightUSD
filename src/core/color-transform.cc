@@ -55,6 +55,9 @@ const ChromaDef kBuiltins[] = {
     {"g18_rec709_scene", {0.640f, 0.330f}, {0.300f, 0.600f},
      {0.150f, 0.060f}, {kD65[0], kD65[1]}, 1.8f, 0.0f,
      ColorSpaceKind::Color},
+    {"g24_rec709_scene", {0.640f, 0.330f}, {0.300f, 0.600f},
+     {0.150f, 0.060f}, {kD65[0], kD65[1]}, 2.4f, 0.0f,
+     ColorSpaceKind::Color},
     {"srgb_ap1_scene", {0.71319588766205f, 0.29268891446333f},
      {0.15950855654178f, 0.83878851615096f},
      {0.128672995285350f, 0.043895571160528f}, {kD65[0], kD65[1]},
@@ -68,6 +71,11 @@ const ChromaDef kBuiltins[] = {
      ColorSpaceKind::Color},
     {"g22_adobergb_scene", {0.640f, 0.330f}, {0.210f, 0.710f},
      {0.150f, 0.060f}, {kD65[0], kD65[1]}, 2.2f, 0.0f,
+     ColorSpaceKind::Color},
+    // MaterialX cmlib uses the Adobe RGB (1998) exponent 563/256. Keep the
+    // existing g22_adobergb_scene token intact for OpenUSD compatibility.
+    {"g563_adobergb_scene", {0.640f, 0.330f}, {0.210f, 0.710f},
+     {0.150f, 0.060f}, {kD65[0], kD65[1]}, 563.0f / 256.0f, 0.0f,
      ColorSpaceKind::Color},
 };
 
@@ -126,6 +134,7 @@ void TransferParams(const ColorSpaceDesc &space, float *k0, float *phi) {
 }
 
 float ToLinear(const ColorSpaceDesc &space, float value) {
+  if (space.clamp_negative && value < 0.0f) return 0.0f;
   const float sign = value < 0.0f ? -1.0f : 1.0f;
   const float v = std::fabs(value);
   float k0 = 0.0f, phi = 1.0f;
@@ -136,6 +145,7 @@ float ToLinear(const ColorSpaceDesc &space, float value) {
 }
 
 float FromLinear(const ColorSpaceDesc &space, float value) {
+  if (space.clamp_negative && value < 0.0f) return 0.0f;
   const float sign = value < 0.0f ? -1.0f : 1.0f;
   const float v = std::fabs(value);
   float k0 = 0.0f, phi = 1.0f;
@@ -155,7 +165,9 @@ std::string CanonicalizeToken(const std::string &token) {
       {"lin_rec709", "lin_rec709_scene"}, {"lin_srgb", "lin_rec709_scene"},
       {"srgb_texture", "srgb_rec709_scene"}, {"sRGB", "srgb_rec709_scene"},
       {"srgb", "srgb_rec709_scene"}, {"g22_rec709", "g22_rec709_scene"},
-      {"g18_rec709", "g18_rec709_scene"}, {"g22_ap1", "g22_ap1_scene"},
+      {"g18_rec709", "g18_rec709_scene"}, {"g24_rec709", "g24_rec709_scene"},
+      {"g22_ap1", "g22_ap1_scene"},
+      {"g563_adobergb", "g563_adobergb_scene"},
       {"lin_displayp3", "lin_p3d65_scene"},
       {"srgb_displayp3", "srgb_p3d65_scene"},
       {"lin_rec2020", "lin_rec2020_scene"},
@@ -203,6 +215,12 @@ bool MakeColorSpaceFromChromaticities(
 
 bool GetBuiltinColorSpace(const std::string &token, ColorSpaceDesc *out) {
   if (!out) return false;
+  if (token == "rec709_display") {
+    if (!GetBuiltinColorSpace("g24_rec709_scene", out)) return false;
+    out->name = "rec709_display";
+    out->clamp_negative = true;
+    return true;
+  }
   const std::string name = CanonicalizeToken(token);
   if (name == "lin_ciexyzd65_scene") {
     *out = ColorSpaceDesc{};

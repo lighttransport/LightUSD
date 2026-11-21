@@ -147,6 +147,19 @@ export function installTextureColorTransform(material, mapProperty, transform) {
   material.onBeforeCompile = (shader, renderer) => {
     if (previousCompile) previousCompile(shader, renderer);
     const configured = material.userData.lightusdTextureColorTransforms || {};
+    if (material.isOpenPBRMaterial) {
+      // The compact OpenPBR shader samples maps directly, without Three's
+      // standard material chunks.
+      if (configured.map) shader.fragmentShader = shader.fragmentShader.replace(
+        'diffuseColor *= texelColor;',
+        `texelColor.rgb = ${textureTransformExpression(
+          'texelColor.rgb', configured.map)};\n        diffuseColor *= texelColor;`);
+      if (configured.emissiveMap) shader.fragmentShader = shader.fragmentShader.replace(
+        'emission *= texture2D(emissiveMap, vUv).rgb;',
+        `emission *= ${textureTransformExpression(
+          'texture2D(emissiveMap, vUv).rgb', configured.emissiveMap)};`);
+      return;
+    }
     if (configured.map) {
       const chunk = THREE.ShaderChunk.map_fragment.replace(
         'diffuseColor *= sampledDiffuseColor;',

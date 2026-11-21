@@ -175,7 +175,7 @@ std::vector<CompressionFormat> Formats(const std::string& s) {
 }
 
 bool IsLdr(const lightusd::Image& img) {
-  return img.width > 0 && img.height > 0 && img.bpp == 8 &&
+  return img.width > 0 && img.height > 0 && (img.bpp == 8 || img.bpp == 16) &&
          img.format == lightusd::Image::PixelFormat::UInt &&
          (img.channels == 3 || img.channels == 4);
 }
@@ -203,6 +203,11 @@ bool Load(const std::string& path, ImageInput* out) {
   auto loaded = lightusd::image::LoadImageFromFile(path);
   if (!loaded) { std::fprintf(stderr, "SKIP image %s: %s\n", path.c_str(), loaded.error().c_str()); return false; }
   const lightusd::Image& image = loaded->image;
+  if (image.width <= 0 || image.height <= 0 || image.channels < 3 || image.channels > 4 ||
+      (image.bpp != 8 && image.bpp != 16 && image.bpp != 32)) return false;
+  const uint64_t pixelCount = uint64_t(image.width) * uint64_t(image.height);
+  const size_t pixelBytes = size_t(image.channels) * size_t(image.bpp / 8);
+  if (pixelCount > SIZE_MAX / 16 || pixelCount > image.data.size() / pixelBytes) return false;
   if (image.format == lightusd::Image::PixelFormat::Float && image.width > 0 && image.height > 0 && image.channels >= 3 && (image.bpp == 16 || image.bpp == 32)) {
     out->path = path; out->width = static_cast<uint32_t>(image.width); out->height = static_cast<uint32_t>(image.height); out->hdr = true;
     const size_t n = static_cast<size_t>(out->width) * out->height; out->rgbf.resize(n * 3u); out->rgba.resize(n * 4u, 255);
@@ -215,11 +220,17 @@ bool Load(const std::string& path, ImageInput* out) {
   if (!IsLdr(image)) return false;
   out->path = path; out->width = static_cast<uint32_t>(image.width); out->height = static_cast<uint32_t>(image.height);
   out->rgba.resize(static_cast<size_t>(out->width) * out->height * 4u);
+  const auto channel = [&](size_t index) {
+    if (image.bpp == 8) return image.data[index];
+    uint16_t value = 0;
+    std::memcpy(&value, image.data.data() + index * 2, sizeof(value));
+    return static_cast<uint8_t>((uint32_t(value) + 128u) / 257u);
+  };
   for (size_t i = 0; i < static_cast<size_t>(out->width) * out->height; ++i) {
-    out->rgba[i*4+0] = image.data[i*image.channels+0];
-    out->rgba[i*4+1] = image.data[i*image.channels+1];
-    out->rgba[i*4+2] = image.data[i*image.channels+2];
-    out->rgba[i*4+3] = image.channels == 4 ? image.data[i*4+3] : 255;
+    out->rgba[i*4+0] = channel(i*size_t(image.channels)+0);
+    out->rgba[i*4+1] = channel(i*size_t(image.channels)+1);
+    out->rgba[i*4+2] = channel(i*size_t(image.channels)+2);
+    out->rgba[i*4+3] = image.channels == 4 ? channel(i*4+3) : 255;
   }
   return true;
 }

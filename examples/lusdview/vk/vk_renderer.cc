@@ -3208,7 +3208,7 @@ void VulkanRenderer::createTessPipeline() {
   }
 }
 
-// Instanced flat-shaded prototype pipeline (large-scene --next path). Mirrors the
+// Instanced flat-shaded prototype pipeline (large-scene --core path). Mirrors the
 // GL instanced program: per-instance 3x4 o2w + instance color + per-vertex color,
 // drawn with vkCmdDrawIndexed(indexCount, instanceCount, ...). Uses only push
 // constants (no descriptor sets), so it has its own pipeline layout.
@@ -7621,7 +7621,7 @@ void VulkanRenderer::syncSceneResources(
   if (!device_) return;
   // Same job GLRenderer::syncSceneResources does: make room for the texture
   // slots and materials that streamed in after beginScene. Materials are
-  // append-only in the next loader, so repacking the whole table is safe.
+  // append-only in the core loader, so repacking the whole table is safe.
   growTextureSlots(textureCount);
   rtMaterialsCpu_ = materials;
   selectFullRtShaderIfNeeded(materials);
@@ -8934,7 +8934,7 @@ void VulkanRenderer::finishMeshVertexUpdate(
     }
   }
   if (rtActive_) {
-    // Both callers (legacy RT skinning, --next RT deform) rewrite this vbo every
+    // Both callers (legacy RT skinning, --core RT deform) rewrite this vbo every
     // pose, so mark the mesh dynamic: its next BLAS build uses ALLOW_UPDATE and
     // later poses REFIT in place (rebuildTlas drains blasRefitPending) instead
     // of paying a full destroy + MODE_BUILD per frame.
@@ -9959,7 +9959,7 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
   }
 
-  // Raster GPU instancing buffers (flat --next path; independent of RT support).
+  // Raster GPU instancing buffers (flat --core path; independent of RT support).
   // The VK raster pipeline draws these prototypes with vkCmdDrawIndexed(...,
   // instanceCount, ...) using per-instance rows + colors as instance-rate vertex
   // attributes -- mirroring the GL instanced program.
@@ -12588,6 +12588,7 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   const size_t rtShaderBytes = sizeof(raytrace_comp_spv);
 #endif
 #endif
+  rtUsesInteractiveShader_ = interactiveShader;
   VkShaderModule cs = createShader(rtShaderCode, rtShaderBytes);
   if (!cs) {
     if (err) *err = "rt shader module";
@@ -14043,10 +14044,15 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   info.stage.module = shader;
   info.stage.pName = "main";
   info.layout = liveLayout;
-  if (pipelineCompileRequiredSupported_) {
+  const bool allowColdCompileHere = [] {
+    const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
+    return value != nullptr && std::atoi(value) != 0;
+  }();
+  if (pipelineCompileRequiredSupported_ && !allowColdCompileHere) {
     // Live full-shader promotion is optional. A cache miss must not strand the
     // viewer in the driver's pipeline compiler; the active compact pipeline
     // remains in service when this returns VK_PIPELINE_COMPILE_REQUIRED.
+    // LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 opts into the blocking compile.
     info.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
   }
   // Reuse the same persistent driver cache as startup pipeline creation. This
@@ -14078,7 +14084,13 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   // FAIL_ON_PIPELINE_COMPILE_REQUIRED. A shared cache may contain only other
   // shaders; require evidence that this variant completed compilation before
   // entering the driver compiler on the render thread.
-  if (pipelineCompileRequiredSupported_ &&
+  // LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 (the same opt-in that lets the initial
+  // hardware pipeline compile cold) also permits a cold compile here.
+  const bool allowColdReload = [] {
+    const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
+    return value != nullptr && std::atoi(value) != 0;
+  }();
+  if (pipelineCompileRequiredSupported_ && !allowColdReload &&
       (cacheBlob.empty() || readyPath.empty() ||
        !std::filesystem::is_regular_file(readyPath))) {
     vkDestroyShaderModule(device_, shader, nullptr);
@@ -15016,6 +15028,41 @@ void VulkanRenderer::renderFrame(const RenderFrameParams& params) {
   // Initial scene upload precedes the first frame's path-tracing parameters.
   // Revisit optional graph promotion when path tracing becomes active.
   if (enteringPathTrace) selectFullRtShaderIfNeeded(rtMaterialsCpu_);
+#if defined(LUSDVIEW_HAVE_INTERACTIVE_RT_SHADER) && \
+    LUSDVIEW_HAVE_INTERACTIVE_RT_SHADER
+  // The hardware ray-query pipeline starts as the interactive-only variant,
+  // which has no production path tracer: rendering --path-trace with it gave a
+  // flat preview shade (materialx-conformance issues/lightusd/05). Swap in the
+  // full (MaterialX graphs) or fast variant when path tracing starts.
+  if (params.pathTrace.enabled && rtTechnique_ == RtTechnique::kHardware &&
+      rtUsesInteractiveShader_ && rtPipeline_ != VK_NULL_HANDLE) {
+    // LUSDVIEW_RT_FULL_SHADER=1 forces the full variant (diagnostics).
+    const char* forceFull = std::getenv("LUSDVIEW_RT_FULL_SHADER");
+    const bool graphs = MaterialsNeedFullRtShader(rtMaterialsCpu_) ||
+                        (forceFull && std::atoi(forceFull) != 0);
+#if defined(LUSDVIEW_HAVE_FAST_RT_SHADER) && LUSDVIEW_HAVE_FAST_RT_SHADER
+    const uint32_t* words = graphs ? raytrace_comp_spv : raytrace_fast_comp_spv;
+    const size_t count = graphs ? sizeof(raytrace_comp_spv) / sizeof(uint32_t)
+                                : sizeof(raytrace_fast_comp_spv) / sizeof(uint32_t);
+#else
+    const uint32_t* words = raytrace_comp_spv;
+    const size_t count = sizeof(raytrace_comp_spv) / sizeof(uint32_t);
+#endif
+    std::string reloadErr;
+    if (reloadRayTracingShader(words, count, &reloadErr)) {
+      rtUsesInteractiveShader_ = false;
+      rtUsesFullShader_ = graphs;
+      LOGI("Vulkan ray query: path tracing uses the %s shader",
+           graphs ? "full" : "fast");
+    } else {
+      // Try once per pipeline; do not retry (and warn) every frame.
+      rtUsesInteractiveShader_ = false;
+      LOGW("Vulkan ray query: cannot switch to the path-tracing shader (%s); "
+           "path tracing stays on the interactive preview shader",
+           reloadErr.c_str());
+    }
+  }
+#endif
   if (cameraLens_.focusDistance != params.cameraLens.focusDistance ||
       cameraLens_.apertureRadius != params.cameraLens.apertureRadius) {
     cameraLens_ = params.cameraLens;
@@ -17316,7 +17363,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
     }
 
-    // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--next path) ----
+    // ---- Instanced pass: flat-shaded GPU-instanced prototypes (--core path) ----
     bool anyInstanced = false;
     for (const auto& m : meshes_) {
       if (m.instanceCount > 0) { anyInstanced = true; break; }

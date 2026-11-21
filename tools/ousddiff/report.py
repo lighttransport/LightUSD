@@ -51,5 +51,5 @@ function draw(){let rows=data.rows.filter(r=>r.id.toLowerCase().includes(el('sea
 for(const id of ['search','dataset','status','code'])el(id).oninput=()=>{page=0;draw()};el('previous').onclick=()=>{page=Math.max(0,page-1);draw()};el('next').onclick=()=>{page++;draw()};el('close').onclick=()=>el('detail').close();for(const th of document.querySelectorAll('th[data-key]'))th.onclick=()=>{direction=sort===th.dataset.key?-direction:1;sort=th.dataset.key;draw()};draw();
 </script></html>'''
     temporary = path.with_suffix('.html.tmp')
-    temporary.write_text(template.replace('__DATA__', payload))
+    temporary.write_text(template.replace('__DATA__', payload), encoding='utf-8')
     temporary.replace(path)

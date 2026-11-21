@@ -91,7 +91,7 @@ the legacy and next/tydra archives. `LIGHTUSD_PTEX_ENABLE_FILEIO` adds `tptex_fi
   files are not filtered, and sanitizer allocation/error settings remain unchanged.
   Env: `LIGHTUSD_PTX_DIFF_FILES=a.ptx:b.ptx` adds real files,
   `LIGHTUSD_PTX_DUMP_CORPUS=dir` dumps the corpus (fuzzer seeds).
-- `fuzz_tptex` (`-DLIGHTUSD_NEXT_BUILD_FUZZERS=ON`, Clang; `tests/fuzzer/tptex_fuzzmain.c`):
+- `fuzz_tptex` (`-DLIGHTUSD_BUILD_FUZZERS=ON`, Clang; `tests/fuzzer/tptex_fuzzmain.c`):
   libFuzzer with ASan/UBSan over open (lazy and eager), face decode at stored and reduced
   resolutions, metadata, seam-aware sampling and all filters. The legacy `src/ptex` core and
   `fuzz_lptex` are gone; the frozen reference reader lives in `tests/unit/ptx-legacy-reader.inc`.

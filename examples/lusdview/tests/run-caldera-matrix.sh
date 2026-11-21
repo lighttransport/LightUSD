@@ -88,7 +88,7 @@ for rel_scene in "${REL_SCENES[@]}"; do
   [[ -f "${detail}" ]] && log="${detail}"
   value() { grep -m1 -E "$1" "${log}" 2>/dev/null | sed -E 's/.* ([0-9]+(\.[0-9]+)?) s.*/\1/' || true; }
   early="$(value 'composition preview uploaded')"
-  compose="$(value 'next timing: compose ')"
+  compose="$(value 'core timing: compose ')"
   collection="$(value 'render-prim collection ')"
   geometry="$(value 'geometry estimates ')"
   useful="$(value 'first useful frame ')"

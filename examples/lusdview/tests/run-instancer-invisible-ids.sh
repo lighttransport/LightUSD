@@ -110,7 +110,7 @@ run_case() {
   local out="$TMP_DIR/${label}.png"
   local log
   log="$(timeout --kill-after=5s 30s "${RUN[@]}" "$LUSDVIEW" --headless \
-         --backend "$BACKEND" --next --config "$CONFIG" --frames 1 \
+         --backend "$BACKEND" --core --config "$CONFIG" --frames 1 \
          --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
 

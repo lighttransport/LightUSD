@@ -25,12 +25,12 @@ int main(int argc, char **argv) {
   std::string warn, err;
 
   // Parse: file -> Stage
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   bench::run("parse", iters, [&]() {
-    stage = lightusd::Stage();
+    stage = lightusd::legacy::Stage();
     warn.clear();
     err.clear();
-    return lightusd::LoadUSDFromFile(input, &stage, &warn, &err);
+    return lightusd::legacy::LoadUSDFromFile(input, &stage, &warn, &err);
   });
   if (!err.empty()) {
     std::fprintf(stderr, "parse error: %s\n", err.c_str());
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
   bench::run("write_usda", iters, [&]() {
     warn.clear();
     err.clear();
-    return lightusd::usda::SaveAsUSDA(out_usda, stage, &warn, &err);
+    return lightusd::legacy::usda::SaveAsUSDA(out_usda, stage, &warn, &err);
   });
 
   // Write USDC: Stage -> Crate binary (in-memory)
@@ -50,39 +50,39 @@ int main(int argc, char **argv) {
     warn.clear();
     err.clear();
     std::vector<uint8_t> data;
-    return lightusd::usdc::SaveAsUSDCToMemory(stage, &data, &warn, &err);
+    return lightusd::legacy::usdc::SaveAsUSDCToMemory(stage, &data, &warn, &err);
   });
 
   // Composite: load as layer, apply composition arcs, build Stage
   bench::run("composite", iters, [&]() {
     warn.clear();
     err.clear();
-    lightusd::Layer root_layer;
-    if (!lightusd::LoadLayerFromFile(input, &root_layer, &warn, &err)) {
+    lightusd::legacy::Layer root_layer;
+    if (!lightusd::legacy::LoadLayerFromFile(input, &root_layer, &warn, &err)) {
       return false;
     }
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     resolver.set_current_working_path(
         lightusd::io::GetBaseDir(input).empty()
             ? "."
             : lightusd::io::GetBaseDir(input));
     resolver.set_search_paths({resolver.current_working_path()});
 
-    lightusd::Layer sublayered, referenced, payloaded;
-    if (!lightusd::CompositeSublayers(resolver, root_layer, &sublayered, &warn,
+    lightusd::legacy::Layer sublayered, referenced, payloaded;
+    if (!lightusd::legacy::CompositeSublayers(resolver, root_layer, &sublayered, &warn,
                                       &err)) {
       return false;
     }
-    if (!lightusd::CompositeReferences(resolver, sublayered, &referenced,
+    if (!lightusd::legacy::CompositeReferences(resolver, sublayered, &referenced,
                                        &warn, &err)) {
       return false;
     }
-    if (!lightusd::CompositePayload(resolver, referenced, &payloaded, &warn,
+    if (!lightusd::legacy::CompositePayload(resolver, referenced, &payloaded, &warn,
                                     &err)) {
       return false;
     }
-    lightusd::Stage composited;
-    return lightusd::LayerToStage(std::move(payloaded), &composited, &warn,
+    lightusd::legacy::Stage composited;
+    return lightusd::legacy::LayerToStage(std::move(payloaded), &composited, &warn,
                                   &err);
   });
   if (!err.empty()) {

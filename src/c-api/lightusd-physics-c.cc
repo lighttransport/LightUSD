@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "lightusd-physics-c.h"
 #include "c-internal.hh"
-#include "next/c/lightusd-core-c.h"
-#include "next/schema/physics-query.hh"
+#include "c/lightusd-core-c.h"
+#include "schema/physics-query.hh"
 #include <cmath>
 #include <cstring>
 #include <new>
 #include <string>
 #include <vector>
-namespace n = lightusd::next;
+namespace n = lightusd;
 using lightusd_internal::Fail;
 struct lightusd_physics_snapshot { n::PhysicsSnapshot data; };
 static_assert(static_cast<uint8_t>(n::PhysicsGroup::Count) == LIGHTUSD_PHYSICS_GROUP_COUNT,

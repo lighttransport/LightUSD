@@ -85,7 +85,7 @@ def Xform "Model" (
 }
 USDA
 
-VIEW_ARGS=(--config "$TMP/config.json" --backend "$BACKEND" --next --frames 1)
+VIEW_ARGS=(--config "$TMP/config.json" --backend "$BACKEND" --core --frames 1)
 [ "$BACKEND" = vk ] && VIEW_ARGS+=(--headless)
 if ! "$LUSDVIEW" "${VIEW_ARGS[@]}" "$TMP/texture.usda" >"$TMP/probe.log" 2>&1; then
   echo "SKIP: $BACKEND renderer is unavailable"
@@ -96,7 +96,7 @@ fi
 BACKEND="$BACKEND" node - "$LUSDVIEW" "$TMP/config.json" "$TMP/texture.usda" <<'NODE'
 const {spawn} = require('child_process');
 const backend = process.env.BACKEND || 'vk';
-const args = ['--config', process.argv[3], '--backend', backend, '--next',
+const args = ['--config', process.argv[3], '--backend', backend, '--core',
   '--frames', '100000', '--mcp-stdio', process.argv[4]];
 if (backend === 'vk') args.splice(2, 0, '--headless');
 const child = spawn(process.argv[2], args, {stdio: ['pipe', 'pipe', 'pipe']});

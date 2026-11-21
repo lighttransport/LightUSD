@@ -1,0 +1,70 @@
+[
+  {
+    "legacyMethod": "applyVariantSelection",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "setVariantOverride",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeInherits",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composePayload",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeReferences",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeSublayers",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "addSublayer",
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "composeVariants",
+    "coreSurface": "FlattenSession",
+    "workflow": [
+      "begin",
+      "provideLayer",
+      "step",
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  }
+]

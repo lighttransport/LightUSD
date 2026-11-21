@@ -1,27 +1,13 @@
 import { defineConfig } from 'vite'
 import path from 'path'
-import { copyFile, mkdir } from 'node:fs/promises'
+import { copyLocalWasmProducts } from '../build-utils.mjs'
 import { compression } from 'vite-plugin-compression2'
-
-function copyLocalWasmProducts(sourceDir) {
-  return {
-    name: 'copy-local-wasm-products',
-    apply: 'build',
-    async writeBundle(output) {
-      const assetsDir = path.join(output.dir || path.resolve(__dirname, 'dist'), 'assets');
-      await mkdir(assetsDir, { recursive: true });
-      for (const filename of ['lightusd.js', 'lightusd.wasm', 'lightusd_next.js', 'lightusd_next.wasm']) {
-        await copyFile(path.join(sourceDir, filename), path.join(assetsDir, filename));
-      }
-    },
-  };
-}
 
 // Do not minify(we want to make demo website simple)
 // base: "./" => make asset path relative(required for static hosting of lightusd demo page at github pages)
 export default defineConfig(() => {
   const lightusdRoot = path.resolve(__dirname, '../js/src/lightusd');
-  const nextUtils = path.resolve(lightusdRoot, 'NextRenderSceneUtils.js');
+  const coreUtils = path.resolve(lightusdRoot, 'RenderSceneUtils.js');
 
   return {
     base: "./",
@@ -36,7 +22,7 @@ export default defineConfig(() => {
     },
     resolve: {
         alias: [
-            { find: 'lightusd-next-demo-utils', replacement: nextUtils },
+            { find: 'lightusd-core-demo-utils', replacement: coreUtils },
             { find: 'lightusd', replacement: lightusdRoot },
             { find: 'fzstd', replacement: path.resolve(__dirname, 'node_modules/fzstd') },
             { find: 'three', replacement: path.resolve(__dirname, 'node_modules/three') },

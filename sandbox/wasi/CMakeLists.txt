@@ -24,60 +24,60 @@ set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} -z stack-size=65536 -Wl,--initial-memo
 list(
   APPEND
   LIGHTUSD_SOURCES
-  ../../src/lightusd.cc
+  ../../src/legacy/lightusd.cc
   ../../src/io-util.cc
-  ../../src/prim-types.cc
-  ../../src/pprinter.cc
-  ../../src/path-util.cc
-  ../../src/str-util.cc
-  ../../src/value-pprint.cc
-  ../../src/value-types.cc
-  ../../src/primvar.cc
-  ../../src/prim-types.cc
-  ../../src/crate-format.cc
-  ../../src/crate-reader.cc
-  ../../src/crate-reader-arrays.cc
-  ../../src/crate-reader-values.cc
-  ../../src/crate-reader-paths.cc
-  ../../src/crate-writer.cc
-  ../../src/crate-pprint.cc
-  ../../src/ascii-parser.cc
-  ../../src/ascii-parser-props.cc
-  ../../src/ascii-parser-entry.cc
-  ../../src/ascii-parser-basetype.cc
-  ../../src/ascii-parser-timesamples.cc
-  ../../src/ascii-parser-timesamples-array.cc
-  ../../src/usda-reader.cc
-  ../../src/usda-writer.cc
-  ../../src/usdc-reader.cc
-  ../../src/usdc-reader-property.cc
-  ../../src/usdc-reader-prim.cc
-  ../../src/usdc-reader-reconstruct.cc
-  ../../src/usdc-writer.cc
+  ../../src/legacy/prim-types.cc
+  ../../src/legacy/pprinter.cc
+  ../../src/legacy/path-util.cc
+  ../../src/legacy/str-util.cc
+  ../../src/legacy/value-pprint.cc
+  ../../src/legacy/value-types.cc
+  ../../src/legacy/primvar.cc
+  ../../src/legacy/prim-types.cc
+  ../../src/legacy/crate-format.cc
+  ../../src/legacy/crate-reader.cc
+  ../../src/legacy/crate-reader-arrays.cc
+  ../../src/legacy/crate-reader-values.cc
+  ../../src/legacy/crate-reader-paths.cc
+  ../../src/legacy/crate-writer.cc
+  ../../src/legacy/crate-pprint.cc
+  ../../src/legacy/ascii-parser.cc
+  ../../src/legacy/ascii-parser-props.cc
+  ../../src/legacy/ascii-parser-entry.cc
+  ../../src/legacy/ascii-parser-basetype.cc
+  ../../src/legacy/ascii-parser-timesamples.cc
+  ../../src/legacy/ascii-parser-timesamples-array.cc
+  ../../src/legacy/usda-reader.cc
+  ../../src/legacy/usda-writer.cc
+  ../../src/legacy/usdc-reader.cc
+  ../../src/legacy/usdc-reader-property.cc
+  ../../src/legacy/usdc-reader-prim.cc
+  ../../src/legacy/usdc-reader-reconstruct.cc
+  ../../src/legacy/usdc-writer.cc
   ../../src/image-loader.cc
-  ../../src/prim-reconstruct.cc
-  ../../src/prim-reconstruct-shader.cc
-  ../../src/prim-composition.cc
-  ../../src/tiny-format.cc
-  ../../src/xform.cc
-  ../../src/usdGeom.cc
-  ../../src/usdLux.cc
-  ../../src/usdShade.cc
-  ../../src/usdSkel.cc
-  ../../src/usdMtlx.cc
-  ../../src/usdObj.cc
-  ../../src/tydra/render-data.cc
-  ../../src/tydra/render-data-mesh.cc
-  ../../src/tydra/render-data-material.cc
-  ../../src/tydra/render-data-anim.cc
-  ../../src/tydra/scene-access.cc
-  ../../src/tydra/shader-network.cc
-  ../../src/stage.cc
+  ../../src/legacy/prim-reconstruct.cc
+  ../../src/legacy/prim-reconstruct-shader.cc
+  ../../src/legacy/prim-composition.cc
+  ../../src/legacy/tiny-format.cc
+  ../../src/legacy/xform.cc
+  ../../src/legacy/usdGeom.cc
+  ../../src/legacy/usdLux.cc
+  ../../src/legacy/usdShade.cc
+  ../../src/legacy/usdSkel.cc
+  ../../src/legacy/usdMtlx.cc
+  ../../src/legacy/usdObj.cc
+  ../../src/legacy/tydra/render-data.cc
+  ../../src/legacy/tydra/render-data-mesh.cc
+  ../../src/legacy/tydra/render-data-material.cc
+  ../../src/legacy/tydra/render-data-anim.cc
+  ../../src/legacy/tydra/scene-access.cc
+  ../../src/legacy/tydra/shader-network.cc
+  ../../src/legacy/stage.cc
 )
 
 set(LIGHTUSD_DEP_SOURCES
-  ../../src/integerCoding.cpp
-  ../../src/lz4-compression.cc
+  ../../src/legacy/integerCoding.cpp
+  ../../src/legacy/lz4-compression.cc
   ../../src/lz4/lz4.c
   ../../src/external/fpng.cpp
   #../../src/external/string_id/string_id.cpp

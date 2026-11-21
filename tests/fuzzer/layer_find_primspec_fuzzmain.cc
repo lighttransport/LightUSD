@@ -15,6 +15,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 // Build a layer with same-leaf-name prims at different depths,
 // then exercise find_primspec_at with paths derived from the input bytes.
 static void fuzz_find_primspec_at(const uint8_t *data, size_t size)

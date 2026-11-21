@@ -4400,7 +4400,7 @@ test('texture rename rejects unsafe package paths', async () => {
 test('channel packing uses LightUSD and records deterministic provenance', async () => {
   const project = new LuciaProject();
   project.assets.set('ao.png', { bytes: new Uint8Array([1, 2, 3]) });
-  const session = { module: { LightUSDLoaderNative: class { repackChannels(options) { assert.equal(options.channels, 4); assert.equal(options.r.channel, 0); return { success: true, data: new Uint8Array([9, 8]), width: 2, height: 2, channels: 4 }; } delete() {} } }, exportUSDA: () => '#usda 1.0\n' };
+  const session = { module: { repackChannels(options) { assert.equal(options.channels, 4); assert.equal(options.r.channel, 0); return { success: true, data: new Uint8Array([9, 8]), width: 2, height: 2, channels: 4 }; } }, exportUSDA: () => '#usda 1.0\n' };
   const operations = new LuciaOperations(session, project, {});
   await assert.rejects(operations.packChannels({ name: 'textures/bad.png', channels: { r: { path: 'ao.png', channel: 4 } } }), /source channels/);
   await assert.rejects(operations.packChannels({ name: 'textures/bad.png', colorSpace: 'display-p3', channels: { r: { path: 'ao.png', channel: 0 } } }), /color space/);
@@ -4417,11 +4417,11 @@ test('channel packing uses LightUSD and records deterministic provenance', async
 test('channel packing rejects malformed native result metadata before authoring an asset', async () => {
   const project = new LuciaProject();
   project.assets.set('ao.png', { bytes: new Uint8Array([1, 2, 3]) });
-  const session = { module: { LightUSDLoaderNative: class { repackChannels() { return { success: true, data: new Uint8Array([9]), width: 0, height: 2, channels: 4 }; } delete() {} } }, exportUSDA: () => '#usda 1.0\n' };
+  const session = { module: { repackChannels() { return { success: true, data: new Uint8Array([9]), width: 0, height: 2, channels: 4 }; } }, exportUSDA: () => '#usda 1.0\n' };
   const operations = new LuciaOperations(session, project, {});
   await assert.rejects(operations.packChannels({ name: 'textures/orm.png', channels: { r: { path: 'ao.png', channel: 0 } } }), /invalid packed texture dimensions/);
   assert.equal(project.assets.has('textures/orm.png'), false);
-  const floatSession = { module: { LightUSDLoaderNative: class { repackChannels() { return { success: true, data: new Float32Array([1]), width: 1, height: 1, channels: 4 }; } delete() {} } }, exportUSDA: () => '#usda 1.0\n' };
+  const floatSession = { module: { repackChannels() { return { success: true, data: new Float32Array([1]), width: 1, height: 1, channels: 4 }; } }, exportUSDA: () => '#usda 1.0\n' };
   await assert.rejects(new LuciaOperations(floatSession, project, {}).packChannels({ name: 'textures/float.png', channels: { r: { path: 'ao.png', channel: 0 } } }), /encoded byte data/);
   assert.equal(project.assets.has('textures/float.png'), false);
 });
@@ -4429,7 +4429,7 @@ test('channel packing rejects malformed native result metadata before authoring 
 test('unused alpha stripping requires proof and preserves project metadata', async () => {
   const project = new LuciaProject();
   project.assets.set('baked.png', { bytes: new Uint8Array([1, 2, 3]), generated: true, bakeStats: { unusedAlpha: true }, colorSpace: 'srgb' });
-  const session = { module: { LightUSDLoaderNative: class { repackChannels(options) { assert.equal(options.channels, 3); assert.equal(options.r.channel, 0); assert.equal(options.g.channel, 1); assert.equal(options.b.channel, 2); return { success: true, data: new Uint8Array([7]), width: 1, height: 1, channels: 3 }; } delete() {} } }, exportUSDA: () => '#usda 1.0\n' };
+  const session = { module: { repackChannels(options) { assert.equal(options.channels, 3); assert.equal(options.r.channel, 0); assert.equal(options.g.channel, 1); assert.equal(options.b.channel, 2); return { success: true, data: new Uint8Array([7]), width: 1, height: 1, channels: 3 }; } }, exportUSDA: () => '#usda 1.0\n' };
   const operations = new LuciaOperations(session, project, {});
   await operations.stripUnusedAlpha('baked.png');
   assert.equal(project.assets.get('baked.png').alphaRemoved, true);
@@ -4500,7 +4500,7 @@ test('flatten selected reference rejects resolver and traversal paths', async ()
 test('unused alpha stripping restores package state through undo and redo', async () => {
   const project = new LuciaProject(), original = new Uint8Array([1, 2, 3]);
   project.assets.set('baked.png', { bytes: original, bakeStats: { unusedAlpha: true } });
-  const session = { value: '#usda 1.0\n', module: { LightUSDLoaderNative: class { repackChannels() { return { success: true, data: new Uint8Array([7]), width: 1, height: 1, channels: 3 }; } delete() {} } }, exportUSDA: () => session.value, restore: (value) => { session.value = value; } };
+  const session = { value: '#usda 1.0\n', module: { repackChannels() { return { success: true, data: new Uint8Array([7]), width: 1, height: 1, channels: 3 }; } }, exportUSDA: () => session.value, restore: (value) => { session.value = value; } };
   const operations = new LuciaOperations(session, project, {}), stack = new LuciaCommandStack();
   await stack.execute(sessionCommand(session, 'Remove unused alpha', [], () => operations.stripUnusedAlpha('baked.png'), project));
   assert.equal(project.assets.get('baked.png').alphaRemoved, true);

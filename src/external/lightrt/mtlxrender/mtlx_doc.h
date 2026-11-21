@@ -27,9 +27,11 @@ typedef struct {
     int      has_value;   /* 1 if a literal value was given */
     MtlxValue value;
     int      src_node;    /* connected upstream node id, or -1 */
+    int      has_connection; /* an authored connection, including unresolved ones */
     char    *src_output;  /* sub-output name on a multi-output node, or NULL */
     char    *channels;    /* MaterialX input channels selector, e.g. "g" */
-    int      colorspace_srgb; /* 1 if colorspace="srgb_texture" */
+    int      colorspace_srgb; /* supported Rec.709 sRGB texture aliases */
+    char    *colorspace;  /* authored token for renderer color management */
 } MtlxInput;
 
 typedef struct {
@@ -37,6 +39,7 @@ typedef struct {
     char    *name;        /* node instance name */
     MtlxType type;        /* declared output type */
     int      graph_id;    /* owning nodegraph index, or -1 for document scope */
+    char    *nodedef;     /* explicit `nodedef` attribute, or NULL */
     MtlxInput *inputs;
     int      ninput;
 } MtlxNode;

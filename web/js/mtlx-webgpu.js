@@ -6,6 +6,9 @@
 // - Minimal draw calls through material batching
 
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import {Matrix4,Vector3} from 'three';
+import {createCoreRenderInspector,getCoreInspectorMesh} from './src/lightusd/CoreRenderInspector.js';
+import {coreWebGPUImage} from './src/lightusd/CoreWebGPUTexture.js';
 
 // ============================================================================
 // WGSL Uber Shader for OpenPBR
@@ -1181,7 +1184,7 @@ class WebGPURenderer {
         this.device.queue.writeTexture(
             { texture },
             imageData,
-            { bytesPerRow: width * 4 },
+            { bytesPerRow: width * (format==='rgba16float'?8:4) },
             { width, height }
         );
 
@@ -2677,10 +2680,10 @@ class Application {
     async loadEnvironmentMap(preset) {
         // Environment map presets - using actual HDR files in the assets folder
         const envMaps = {
-            'studio': './assets/textures/goegap_1k.hdr',
-            'outdoor': './assets/textures/goegap_1k.hdr',
-            'sunset': './assets/textures/env_sunsky_sunset.hdr',
-            'night': './assets/textures/goegap_1k.hdr'
+            'studio': new URL('./assets/textures/goegap_1k.hdr',import.meta.url).href,
+            'outdoor': new URL('./assets/textures/goegap_1k.hdr',import.meta.url).href,
+            'sunset': new URL('./assets/textures/env_sunsky_sunset.hdr',import.meta.url).href,
+            'night': new URL('./assets/textures/goegap_1k.hdr',import.meta.url).href
         };
 
         const url = envMaps[preset] || envMaps['studio'];
@@ -2798,7 +2801,7 @@ class Application {
         this.updateStatus('Loading default teapot...');
 
         try {
-            const response = await fetch('./assets/fancy-teapot-mtlx.usdz');
+            const response = await fetch(new URL('./assets/fancy-teapot-mtlx.usdz',import.meta.url));
             if (!response.ok) throw new Error('Failed to fetch default scene');
 
             const arrayBuffer = await response.arrayBuffer();
@@ -2827,15 +2830,12 @@ class Application {
     async loadUSDFromData(data, filename) {
         // Clear previous scene (only mesh buffers, keep uniform buffers)
         this.renderer.clearMeshes();
+        for(const texture of this.loadedUSDTextures||[])texture.destroy();
+        this.loadedUSDTextures=[];
 
-        // Create new native loader
-        this.nativeLoader = new this.loader.native_.LightUSDLoaderNative();
-
-        const success = this.nativeLoader.loadFromBinary(data, filename);
-        if (!success) {
-            this.updateStatus('Failed to parse USD file');
-            return;
-        }
+        this.nativeLoader?.delete();
+        this.nativeLoader=null;
+        this.nativeLoader=await createCoreRenderInspector(this.loader.native_,data,filename);
 
         const numMeshes = this.nativeLoader.numMeshes();
         const numMaterials = this.nativeLoader.numMaterials();
@@ -2882,14 +2882,18 @@ class Application {
         if (numTextures > 0 && this.nativeLoader.getTexture) {
             for (let i = 0; i < numTextures; i++) {
                 try {
-                    const texData = this.nativeLoader.getTexture(i);
+                    const meta=this.nativeLoader.getTextureRecord(i);
+                    const image=this.nativeLoader.getImageCopy(meta.imageId);
+                    const texData=image.decoded?{...coreWebGPUImage(image),name:meta.name||meta.uri}:null;
                     if (texData && texData.data && texData.width > 0 && texData.height > 0) {
                         const texture = await this.renderer.loadTexture(
                             texData.data,
                             texData.width,
-                            texData.height
+                            texData.height,
+                            texData.format
                         );
                         loadedTextures.set(i, texture);
+                        this.loadedUSDTextures.push(texture);
 
                         // Assign textures based on usage (simplified - first texture is base color, etc.)
                         const name = (texData.name || '').toLowerCase();
@@ -2951,7 +2955,7 @@ class Application {
         let boundingBox = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
 
         for (let i = 0; i < numMeshes; i++) {
-            const meshData = this.nativeLoader.getMeshCopy(i);
+            const meshData = getCoreInspectorMesh(this.nativeLoader,i);
             if (!meshData) continue;
 
             // Convert mesh to WebGPU buffers
@@ -2970,9 +2974,10 @@ class Application {
             }
 
             // Create instance
+            const world=new Matrix4().fromArray(meshData.worldMatrix||mat4Identity());
             instances.push({
-                modelMatrix: mat4Identity(),
-                normalMatrix: mat4Identity(),
+                modelMatrix: world.toArray(),
+                normalMatrix: world.clone().invert().transpose().toArray(),
                 materialIndex: materialIndex
             });
 
@@ -2980,14 +2985,14 @@ class Application {
             gpuMesh.firstInstance = instances.length - 1;
             this.renderer.meshes.push(gpuMesh);
 
-            // Update bounding box
-            for (let j = 0; j < meshData.points.length; j += 3) {
-                boundingBox.min[0] = Math.min(boundingBox.min[0], meshData.points[j]);
-                boundingBox.min[1] = Math.min(boundingBox.min[1], meshData.points[j + 1]);
-                boundingBox.min[2] = Math.min(boundingBox.min[2], meshData.points[j + 2]);
-                boundingBox.max[0] = Math.max(boundingBox.max[0], meshData.points[j]);
-                boundingBox.max[1] = Math.max(boundingBox.max[1], meshData.points[j + 1]);
-                boundingBox.max[2] = Math.max(boundingBox.max[2], meshData.points[j + 2]);
+            // Bounds and camera framing use the same authored world transform.
+            const point=new Vector3();
+            for(let j=0;j<meshData.points.length;j+=3) {
+                point.fromArray(meshData.points,j).applyMatrix4(world);
+                for(let c=0;c<3;c++) {
+                    boundingBox.min[c]=Math.min(boundingBox.min[c],point.getComponent(c));
+                    boundingBox.max[c]=Math.max(boundingBox.max[c],point.getComponent(c));
+                }
             }
         }
 
@@ -3233,6 +3238,7 @@ window.loadFile = () => document.getElementById('file-input').click();
 // ============================================================================
 
 const app = new Application();
+window._debugOpenPBRWebGPU=app;
 app.init().catch(err => {
     console.error('Failed to initialize:', err);
     document.getElementById('status').textContent = 'Error: ' + err.message;
