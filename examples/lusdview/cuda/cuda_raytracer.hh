@@ -30,6 +30,14 @@ namespace lusdview {
 
 class CudaRayTracer {
  public:
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
+  void setGsplatShutterSegment(float center, float width) {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
   CudaRayTracer() = default;
   ~CudaRayTracer();
 
@@ -93,7 +101,8 @@ class CudaRayTracer {
              std::string* err, float displacementScale = 0.0f,
              BuildProgress* progress = nullptr,
              bool retainForRefit = false,
-             uint32_t purposeVisibleMask = 0x3u);
+             uint32_t purposeVisibleMask = 0x3u,
+             GsplatGpuData* packedSplats = nullptr);
   bool refit(const DrawScene& scene, std::string* err);
   bool canRefit() const { return retained_ != nullptr && refitMap_.valid; }
   bool updateMaterialConstants(int materialId,
@@ -207,6 +216,9 @@ class CudaRayTracer {
   uintptr_t dPointDepth_{0};
   int pointCount_{0};
   int pointChunkCount_{0};
+  // --gsplat-kernel cycles (pointCount_ < 0 selects the kernel path).
+  bool gsplatCycles_{false}, gsplatSrgb_{false}, gsActive_{false};
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};  // app shutter segment
   bool sceneAllLevelSetVolumes_{true};
   int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image

@@ -113,15 +113,17 @@ void AppendPreviewExtras(const Build& build, usd::Layer& layer) {
   builder.finalize();
 }
 bool WriteProxy(Build& build) {
-  if (build.cells.empty()) {
+  if (build.cells.size() == 0) {
     build.result.error = "scene contains no visible preview surfaces";
     return false;
   }
   std::vector<std::pair<Key, Accum>> ordered;
   ordered.reserve(build.cells.size());
-  for (const auto& item : build.cells) ordered.push_back(item);
-  build.cells.clear();
-  build.cells.rehash(0);
+  for (auto& shard : build.cells.shards) {
+    for (const auto& item : shard) ordered.push_back(item);
+    shard = CellMap{};
+  }
+  build.cells.count = 0;
   std::sort(ordered.begin(), ordered.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
   std::vector<Sample> samples;

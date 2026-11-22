@@ -15,6 +15,8 @@
 #   scripts/xctest.sh build_ninja/lusdview model.usda      # any GUI command
 #
 # Environment:
+#   XCTEST_GPU=1              Serialize GPU suites across cooperating Linux checkouts.
+#   XCTEST_GPU_LOCK=path      Override the shared advisory lock file.
 #   XCTEST_SCREEN=WxHxD       Xvfb screen (default 1920x1080x24)
 #   XCTEST_REAL_DISPLAY=1     Opt out and use the real session (e.g. to run the
 #                             GPU-only tests that Mesa llvmpipe skips). Use only
@@ -33,6 +35,14 @@ fi
 # Windows/macOS have no Xvfb; nothing to isolate here.
 if [[ "$(uname -s)" != "Linux" ]]; then
   exec "$@"
+fi
+
+# Lock before launching Xvfb so waiting suites consume no display resources.
+if [[ "${XCTEST_GPU:-0}" == "1" && "${XCTEST_GPU_LOCKED:-0}" != "1" ]]; then
+  # Keep the descriptor in the flock supervisor. Xvfb launchers may close
+  # inherited descriptors before ctest or the viewer starts.
+  exec flock --close "${XCTEST_GPU_LOCK:-/tmp/lightusd_gpu_device.lock}" \
+    env XCTEST_GPU_LOCKED=1 "$0" "$@"
 fi
 
 # Already isolated (nested call), or the caller explicitly opted out.

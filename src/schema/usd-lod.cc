@@ -396,4 +396,3 @@ float ComputeLodIndex(const LodScreenSizeQuery& q, double size) {
 }
 
 }  // namespace lightusd
-

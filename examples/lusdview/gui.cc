@@ -829,8 +829,10 @@ void Gui::drawDockspaceAndMenu() {
           pathTrace_.maxDepth = static_cast<uint32_t>(depth);
         if (ImGui::SliderInt("Roulette depth", &rrDepth, 0, depth))
           pathTrace_.russianRouletteDepth = static_cast<uint32_t>(rrDepth);
-        if (ImGui::SliderInt("Motion segments", &motion, 1, 64))
+        if (ImGui::SliderInt("Motion segments", &motion, 1, 64)) {
           pathTrace_.motionSegments = static_cast<uint32_t>(motion);
+          pathTrace_.motionSegmentsExplicit = true;
+        }
         int denoise = static_cast<int>(pathTrace_.denoise);
         const char* modes[] = {"Off", "Auto", "On"};
         if (ImGui::Combo("Denoise", &denoise, modes, 3))
@@ -847,6 +849,17 @@ void Gui::drawDockspaceAndMenu() {
         ImGui::TextDisabled("%s profile, seed %u",
                             PathTraceQualityLabel(pathTrace_.quality),
                             pathTrace_.seed);
+        ImGui::EndMenu();
+      }
+      // Scene -> Gaussian preview conversion preset (--preview-preset);
+      // choosing one re-converts in the background and reloads.
+      if (ImGui::BeginMenu("Scene Preview Preset", scenePreviewActive_)) {
+        static const char* kPresets[] = {"Fast", "Standard", "Quality"};
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::MenuItem(kPresets[i], nullptr, scenePreviewPreset_ == i) &&
+              scenePreviewPreset_ != i)
+            requestedScenePreviewPreset_ = i;
+        if (scenePreviewBusy_) ImGui::TextDisabled("converting...");
         ImGui::EndMenu();
       }
       if (ImGui::BeginMenu("Skinning")) {

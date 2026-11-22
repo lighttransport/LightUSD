@@ -195,6 +195,7 @@ class App
   void setUseCoreLoader(bool on) { useCoreLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
+  void setBackgroundPreset(bool white) { gui_.setBackgroundPreset(white); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setVirtualHumanProfile(bool on) {
     virtualHumanProfile_ = on;
@@ -255,6 +256,15 @@ class App
   // same shape as --hip/--cuda. Headless + --screenshot: a one-shot trace (no
   // device-async upload step needed, so it's simpler than CUDA/HIP's path).
   void setCpuRt(bool on) { cpuRt_ = on; }
+  void setGsplatSegment(double frameTime, double sampleTime, uint32_t count);
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+    cpuTracer_.setGsplatKernel(cycles, srgb);
+    cudaTracer_.setGsplatKernel(cycles, srgb);
+    hipTracer_.setGsplatKernel(cycles, srgb);
+    if (renderer_) renderer_->setGsplatKernel(cycles, srgb);
+  }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   void setPathTraceSettings(PathTraceSettings settings) {
@@ -647,6 +657,7 @@ class App
   // handling in the main loop.
   int headlessWinW_{0};
   int headlessWinH_{0};
+  bool gsplatCycles_{false}, gsplatSrgb_{false};  // --gsplat-kernel cycles
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
   std::string cameraName_;  // --camera: named USD camera to frame (--core path)
@@ -708,6 +719,11 @@ class App
   std::future<PreviewRefinement> previewRefinement_;
   std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
   bool previewRefinementTried_ = false;
+  // GUI preset change: -1 none; otherwise ScenePreviewPreset as int. The
+  // conversion runs in previewRefinement_; its options apply on success.
+  int pendingPreviewPreset_ = -1;
+  int previewPresetInFlight_ = -1;
+  lightusd::tydra::ScenePreviewOptions previewPresetOptions_;
   bool previewLodReloadPending_ = false;
   bool previewLodHaveCamera_ = false;
   double previewLodLastFocalPixels_ = 0;

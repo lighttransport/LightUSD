@@ -1274,6 +1274,23 @@ struct DrawPointsCPU {
   std::vector<float> ellipseRadii;
   std::vector<float> ellipseNormals;
   std::vector<float> ellipseMajorAxes;
+  // Full 3D Gaussian data (LoadOptions::gaussianKernelData), parallel to
+  // points: linear sigmas xyz, quaternion (w,x,y,z), and
+  // (gaussianShDegree+1)^2 RGB SH coefficients per point.
+  std::vector<float> gaussianScales;
+  std::vector<float> gaussianRotations;
+  std::vector<float> gaussianSh;
+  int gaussianShDegree{0};
+  // Motion keys across the camera shutter (gaussianMotionKeys > 1), splat-major
+  // (splat i's key k at [i*keys + k]): positions (3), rotations (4, wxyz),
+  // scales (3), opacities (1), plus one column-major world matrix per key.
+  int gaussianMotionKeys{1};
+  std::vector<float> gaussianMotionPositions;
+  std::vector<float> gaussianMotionRotations;
+  std::vector<float> gaussianMotionScales;
+  std::vector<float> gaussianMotionOpacities;
+  std::vector<float> gaussianMotionWorld;
+  std::vector<float> gaussianMotionDc;  // DC (SH band 0) RGB per key, 3 floats
   int colorsInterpolation{0};
   int opacitiesInterpolation{0};
   int materialId{-1};

@@ -73,6 +73,15 @@ struct LoadOptions {
   // Gaussian/Points carriers are emitted in bounded records so a large point
   // field never requires one giant DrawPointsCPU allocation. Zero selects 64K.
   size_t pointChunkSamples{0};
+  // Keep per-splat scales, rotations and SH coefficients on Gaussian carriers
+  // for the Cycles splat kernel (--gsplat-kernel cycles). Off by default: the
+  // disc carriers need only the 2D radii.
+  bool gaussianKernelData{false};
+  // Motion blur for the Cycles splat kernel: when this camera's
+  // shutter:open < shutter:close, splats are also sampled at
+  // gaussianMotionSteps times across the shutter (DrawPointsCPU motion keys).
+  std::string gaussianMotionCamera;
+  int gaussianMotionSteps{3};
   // Register ordinary texture slots during material conversion, then decode,
   // resize and compress them after geometry publication on bounded workers.
   bool asyncTextureDecode{false};

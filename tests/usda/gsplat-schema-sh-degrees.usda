@@ -1,0 +1,35 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def ParticleField3DGaussianSplat "Deg2Tangential"
+    {
+        uniform token projectionModeHint = "tangential"
+        uniform token sortingModeHint = "cameraDistance"
+        point3f[] positions = [(0, 0, 0)]
+        quatf[] orientations = [(1, 0, 0, 0)]
+        float3[] scales = [(0.1, 0.2, 0.05)]
+        float[] opacities = [0.8]
+        int radiance:sphericalHarmonicsDegree = 2
+        float3[] radiance:sphericalHarmonicsCoefficients = [(1, 0.5, 0.25), (0, 0, 0), (0.1, 0, 0), (0, 0.1, 0), (0, 0, 0.1), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)]
+    }
+
+    def ParticleField3DGaussianSplat "Deg3"
+    {
+        point3f[] positions = [(1, 0, 0)]
+        int radiance:sphericalHarmonicsDegree = 3
+        float3[] radiance:sphericalHarmonicsCoefficients = [(1, 1, 1), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0.2, 0.2, 0.2)]
+    }
+
+    def ParticleField "Surflet" (
+        prepend apiSchemas = ["ParticleFieldPositionAttributeAPI", "ParticleFieldKernelGaussianSurfletAPI"]
+    )
+    {
+        point3f[] positions = [(0, 1, 0)]
+    }
+}

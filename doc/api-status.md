@@ -293,7 +293,9 @@ The C entry point is `lightusd_vdb_inspect`.
 **Validation.** On top of the existing checks:
 - `vol.volume.fieldTargetCount`: exactly one target;
 - `vol.volume.fieldTargetType`: same-layer targets must be VolumeFieldBase;
-- `vol.particleField.shCount` / `shDegree`.
+- `vol.particleField.*`: SH count/degree, array sizes, and value rules
+  (quaternions, scales, opacities, non-finite values, time-sample counts);
+  see [gsplat-rendering-spec.md](gsplat-rendering-spec.md).
 
 The capability ledger lists usdVol as a required domain.
 

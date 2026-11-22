@@ -92,7 +92,6 @@ prune dist
 prune .git
 prune .github
 prune .clusterfuzzlite
-prune .serena
 prune screenshots
 
 # Repository-only metadata and alternate build-system entry points are not

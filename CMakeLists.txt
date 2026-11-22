@@ -332,3 +332,49 @@ function(lightusd_keep_test_asserts dir)
   endforeach()
 endfunction()
 lightusd_keep_test_asserts("${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Serialize every GPU-using test on one shared lock. Tests sharing the
+# device under `ctest -j` fail intermittently (VRAM pressure, driver
+# contention). A test is a GPU test when it is labelled gpu/vulkan/hip/cuda
+# or its name names a GPU backend. Needs CMake >= 3.28 for cross-directory
+# test properties; older CMake keeps the per-group locks only.
+set(LIGHTUSD_GPU_TEST_EXTRA
+    lusdview-core-mesh-materials lusdview-openchess-path-trace
+    lusdview-opacity-material
+    lusdview-rt-geomsubset-material lightrt-gsplat tool-lusdrender-smoke
+    tool-lusdrender-materialx-flake-parity
+    tool-lusdrender-materialx-projection-parity
+    tool-lusdrender-uvtexture-colorspace-tiles tool-lusdrender-hermite-curves
+    tool-lusdrender-gaussian-carrier-dispatch)
+function(lightusd_lock_gpu_tests dir)
+  get_property(_visited GLOBAL PROPERTY LIGHTUSD_GPU_LOCK_VISITED)
+  if("${dir}" IN_LIST _visited)
+    return()
+  endif()
+  set_property(GLOBAL APPEND PROPERTY LIGHTUSD_GPU_LOCK_VISITED "${dir}")
+  get_property(_tests DIRECTORY "${dir}" PROPERTY TESTS)
+  foreach(_t IN LISTS _tests)
+    get_test_property(${_t} LABELS DIRECTORY "${dir}" _labels)
+    set(_gpu OFF)
+    if(_t IN_LIST LIGHTUSD_GPU_TEST_EXTRA OR
+       _t MATCHES "-(vk|vkr|hip|cuda|gpu|vulkan|rt)(-|$)")
+      set(_gpu ON)
+    endif()
+    foreach(_l IN ITEMS gpu vulkan hip cuda)
+      if(_labels AND _l IN_LIST _labels)
+        set(_gpu ON)
+      endif()
+    endforeach()
+    if(_gpu)
+      set_property(TEST ${_t} DIRECTORY "${dir}" APPEND PROPERTY
+                   RESOURCE_LOCK lightusd_gpu_device)
+    endif()
+  endforeach()
+  get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+  foreach(_d IN LISTS _subdirs)
+    lightusd_lock_gpu_tests("${_d}")
+  endforeach()
+endfunction()
+if(NOT CMAKE_VERSION VERSION_LESS 3.28)
+  lightusd_lock_gpu_tests("${CMAKE_CURRENT_SOURCE_DIR}")
+endif()

@@ -42,8 +42,15 @@ struct ScenePreviewOptions {
   uint64_t host_budget_bytes = uint64_t(16) << 30;
   uint64_t texture_budget_bytes = uint64_t(256) << 20;
   uint32_t texture_max_edge = 512;
-  // Longest-axis sampling resolution. Zero automatically coarsens to budget.
+  // Longest-axis sampling resolution. Zero automatically coarsens to budget,
+  // starting from auto_resolution cells along the longest axis.
   uint32_t resolution = 0;
+  uint32_t auto_resolution = 2048;
+  // Max surface samples per source triangle in automatic sampling.
+  uint32_t triangle_sample_limit = 64;
+  // Multiplies the budget-derived sample cap (quality: 2 = up to twice the
+  // planned renderer memory for finer cells).
+  double cell_budget_scale = 1.0;
   double time_code = 0;
   // Internal world-space sampling window for camera-driven source refinement.
   bool region_enabled = false;
@@ -54,6 +61,12 @@ struct ScenePreviewOptions {
   size_t batch_roots = 0;  // deterministic small-batch qualification
   std::string cache_directory;
   bool refresh = false;
+  // Write the per-prototype source triangle index used by camera-driven
+  // source refinement. Disabling it (fast preset) roughly halves cold
+  // conversion; later refinement then re-composes the source.
+  bool source_index = true;
+  // Overlap batch composition with sampling (one extra composed batch alive).
+  bool compose_pipeline = false;
   ::lightusd::pcp::CompositionOptions composition;
   // False cancels. Called at bounded composition/sampling/output boundaries.
   std::function<bool(const std::string&, uint64_t)> progress;
@@ -88,6 +101,21 @@ struct ScenePreviewResult {
 };
 
 const char* ScenePreviewKindName(ScenePreviewKind kind);
+
+// Conversion quality presets (lusdpreview --preset, apps --preview-preset).
+//  fast:     skip the source refinement index, 128 px texture samples,
+//            400K-prim batches with composition overlapped with sampling,
+//            1024-cell automatic grid, <= 16 samples per triangle.
+//  standard: library defaults (index on, 512 px, 2048 cells, <= 64).
+//  quality:  index on, 2048 px texture samples, 1 GiB texture budget,
+//            4096-cell automatic grid, <= 256 samples per triangle, and
+//            twice the budget-derived sample cap (cell_budget_scale = 2).
+// The automatic grid still coarsens to the renderer budget in every preset;
+// --preview-resolution / --preview-budget-mib override it.
+enum class ScenePreviewPreset { Fast, Standard, Quality };
+bool ParseScenePreviewPreset(const std::string& name, ScenePreviewPreset* out);
+void ApplyScenePreviewPreset(ScenePreviewPreset preset,
+                             ScenePreviewOptions* options);
 bool ParseScenePreviewKind(const std::string& text, ScenePreviewKind* kind);
 // Quarter of installed VRAM, reduced under memory pressure. Zero capacity
 // (CPU-only conversion) selects the portable 2 GiB preview ceiling.
@@ -189,6 +217,8 @@ struct PreviewVolumeSettings {
 };
 struct ScenePreviewRequest {
   bool enabled = false;
+  // Last --preview-preset (ScenePreviewPreset as int); -1 = none given.
+  int preset = -1;
   bool budget_explicit = false;
   bool camera_lod = true;
   bool source_refinement = true;

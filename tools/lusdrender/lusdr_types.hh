@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "lusdr_math.hh"
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 #include "core/color-transform.hh"
 #include "lusdr_value.hh"
 #include "image-types.hh"
@@ -608,6 +610,9 @@ struct CameraFrame {
   float znear{0.001f};
   float zfar{1.0e30f};
   bool ortho{false};
+  // UsdGeomCamera shutter:open/close, in frames relative to the render time
+  // (open < close enables motion blur where supported).
+  float shutter_open{0.0f}, shutter_close{0.0f};
 };
 
 enum class CaptureAov {
@@ -671,6 +676,8 @@ struct Options {
   // default; lower values bring the preview closer to a plain sRGB encode.
   float exposure{1.0f};
   bool aov_explicit{false};
+  bool ambient_explicit{false};
+  bool material_shading_explicit{false};
   bool all_render_products{false};
   std::string input;
   std::string output;
@@ -725,6 +732,15 @@ struct Options {
   int threads{0};
   int subdivision_level{0};
   bool autoframe{false};  // OpenUSD usdrecord-style auto camera framing
+  // Gaussian splat kernel: false = analytic disc (default), true = the
+  // Blender Cycles 3D ellipsoid with stochastic opacity (CPU reference).
+  bool gsplat_cycles{false};
+  // Treat splat SH radiance as sRGB-encoded (Blender convention). USD
+  // specifies linear radiance, so this is off by default.
+  // --gsplat-motion-steps: shutter samples per splat for motion blur (Cycles
+  // motion steps); 1 disables. Active when the camera shutter is open.
+  int gsplat_motion_steps{3};
+  bool gsplat_srgb{false};
   std::string js_script;  // -js <file>: drive rendering from a JS script
   bool mcp{false};        // -mcp: run an MCP stdio control server
   int stream_http{0};     // -streamHttp <port>: WebSocket browser stream server
@@ -858,6 +874,7 @@ struct DirectHit {
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   bool hit{false};
+  bool unlit{false};  // emission only (Cycles Gaussian splats)
 };
 
 struct TetPrim {
@@ -931,6 +948,19 @@ struct DirectScene {
   std::vector<TetPrim> tet_prims;
   std::vector<DirectShape> shapes;
   std::unordered_set<std::string> direct_paths;
+
+  // --gsplat-kernel cycles in mixed scenes: 3D Gaussians traced with the
+  // Blender Cycles stochastic kernel (LightRT) on primary, bounce and shadow
+  // rays; radiance from the SH in gsplat_tracer (indices = lrt prim ids).
+  std::shared_ptr<lrt_gsplat_scene> gsplat_scene;
+  std::shared_ptr<lightusd::gsplat::GSplatTracer> gsplat_tracer;
+  bool gsplat_srgb{false};
+  bool gsplat_motion{false};  // splat/colour/camera motion across the shutter
+  uint32_t gsplat_nkeys{1};
+  // Animated DC colour, key-major (nkeys * splats * 3); null = static.
+  std::shared_ptr<const std::vector<float>> gsplat_dc;
+  // Camera frames at the shutter keys (camera motion blur; empty = static).
+  std::vector<CameraFrame> camera_keys;
 
   bool has_ellipses() const { return ellipses || !ellipse_chunks.empty(); }
   bool has_round_curves() const {

@@ -2754,7 +2754,9 @@ auto Cache::Impl::ParallelWarmSources(const std::vector<std::string> &root_names
       wp->layer_stacks = layer_stacks;
       wp->stack_by_id = stack_by_id;
       wp->source_seed_cache = &sources_cache;
-      wp->nm_pool_ = nm_pool_;  // seed the mapping pool (map_idx < seed are shared)
+      wp->nm_pool_.clear();
+      wp->nm_seed_ = &nm_pool_;
+      wp->nm_seed_count_ = seed_pool_count;
       wp->warm_drop_inert_ = warm_drop_inert_;
       workers.push_back(std::move(wp));
     }

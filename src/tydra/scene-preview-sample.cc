@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+#include <atomic>
+#include <thread>
 #include <algorithm>
+#include <set>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -72,16 +76,25 @@ float Attribute(const FloatChunked& data, Interpolation mode, uint32_t vertex,
   return i < data.size() / components ? data[i * components + channel]
                                       : fallback;
 }
-bool Visible(usd::UsdPrim prim, double time) {
+// `stop_at`: prototype roots. Visibility/purpose above a prototype root do
+// not apply to it (PointInstancer prototypes are commonly kept under an
+// invisible scope; the instancer still draws them). Inactive and class
+// ancestors still exclude it.
+bool Visible(usd::UsdPrim prim, double time,
+             const std::set<std::string>* stop_at = nullptr) {
+  bool above_root = false;
   for (size_t depth = 0; prim && depth < 1024;
        ++depth, prim = prim.GetParent()) {
     if (!prim.GetMeta().active ||
         prim.GetSpecifier() == usd::PrimSpecifier::Class)
       return false;
-    const auto visibility = prim.GetValueAtTime("visibility", time);
-    const auto purpose = prim.GetPropertyValue("purpose");
-    if (visibility && visibility->as_token() == "invisible") return false;
-    if (purpose && purpose->as_token() == "guide") return false;
+    if (!above_root) {
+      const auto visibility = prim.GetValueAtTime("visibility", time);
+      const auto purpose = prim.GetPropertyValue("purpose");
+      if (visibility && visibility->as_token() == "invisible") return false;
+      if (purpose && purpose->as_token() == "guide") return false;
+      if (stop_at && stop_at->count(prim.GetPath().str())) above_root = true;
+    }
   }
   return true;
 }
@@ -187,13 +200,25 @@ bool Build::insert(const Sample& s, bool filter_region) {
       return false;
     }
   }
-  const Key k = Cell(s, cell_size);
-  const uint64_t rank = Rank(s);
-  auto it = cells.find(k);
-  if (it == cells.end())
-    cells.emplace(k, Accum{s, rank});
-  else if (rank < it->second.rank)
-    it->second = {s, rank};
+  return place(s, Cell(s, cell_size), Rank(s));
+}
+// True when insert() would accept `s` (region filtering aside) and its grid
+// coordinates are representable at `size`; mirrors insert()'s checks so the
+// parallel replay can pre-key samples.
+bool InsertableSample(const Sample& s, double size) {
+  if (!std::isfinite(s.p[0]) || !std::isfinite(s.p[1]) ||
+      !std::isfinite(s.p[2]) || !std::isfinite(s.radius) || s.radius <= 0 ||
+      s.opacity <= 0 || !std::isfinite(s.opacity))
+    return false;
+  for (int k = 0; k < 3; ++k)
+    if (!std::isfinite(s.n[k]) || !std::isfinite(s.color[k])) return false;
+  for (int axis = 0; axis < 3; ++axis)
+    if (!std::isfinite(s.p[axis] / size) || std::abs(s.p[axis] / size) > 9e18)
+      return false;
+  return true;
+}
+bool Build::place(const Sample& s, const Key& k, uint64_t rank) {
+  cells.place(k, s, rank);
   while (cells.size() > max_cells) {
     if (opts.resolution) {
       result.error =
@@ -202,17 +227,19 @@ bool Build::insert(const Sample& s, bool filter_region) {
       return false;
     }
     cell_size *= 2;
-    std::unordered_map<Key, Accum, KeyHash> coarse;
-    coarse.reserve(cells.size() / 2);
-    for (const auto& item : cells) {
-      const Key key = Cell(item.second.representative, cell_size);
-      auto found = coarse.find(key);
-      if (found == coarse.end())
-        coarse.emplace(key, item.second);
-      else if (item.second.rank < found->second.rank)
-        found->second = item.second;
-    }
-    cells.swap(coarse);
+    // Replay fine cells in first-insertion order, including equal-rank ties.
+    std::vector<const Accum*> ordered;
+    ordered.reserve(cells.size());
+    for (const auto& shard : cells.shards)
+      for (const auto& item : shard) ordered.push_back(&item.second);
+    std::sort(ordered.begin(), ordered.end(), [](const Accum* a, const Accum* b) {
+      return a->order < b->order;
+    });
+    CellGrid coarse;
+    for (const Accum* item : ordered)
+      coarse.place(Cell(item->representative, cell_size), item->representative,
+                   item->rank);
+    cells = std::move(coarse);
   }
   return true;
 }
@@ -242,8 +269,12 @@ bool Build::replay(
   if (!flush_prototype(key)) return false;
   std::ifstream f(prototype_file(key), std::ios::binary);
   if (!f) {
-    result.error = "missing cross-batch preview prototype: " + key;
-    return false;
+    // Never traversed as a prototype (finish_placements runs after every
+    // batch): the target is pruned, inactive or absent and renders nothing.
+    if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
+      result.warning += "scene preview: instance target not composed (inactive, pruned or absent), skipped: " +
+                        key + "\n";
+    return true;
   }
   const SampleTransform transform(world);
   Sample buffer[4096];
@@ -427,35 +458,34 @@ bool Build::plan(usd::pcp::ComposedBatch& batch) {
       copy.clear_child_indices();
       extras.push_back(std::move(copy));
     }
-    if (prim.GetTypeName() == "Mesh" && Visible(prim, opts.time_code)) {
-      const auto* extent = prim.GetPropertyValue("extent");
-      if (extent && extent->array_size() == 2) {
-        auto view = extent->view().as_float_array();
-        if (view.size() >= 6) {
-          auto m = Identity();
-          usd::ComputeWorldTransform(stage, prim, m.data(), opts.time_code);
-          std::array<double, 6> b = {1e300,  1e300,  1e300,
-                                     -1e300, -1e300, -1e300};
-          for (int c = 0; c < 8; ++c) {
-            Sample p;
-            for (int k = 0; k < 3; ++k)
-              p.p[k] = view[(c & (1 << k) ? 3 : 0) + k];
-            p = Transform(p, m.data());
-            for (int k = 0; k < 3; ++k) {
-              b[k] = std::min(b[k], p.p[k]);
-              b[k + 3] = std::max(b[k + 3], p.p[k]);
-            }
-          }
-          ++seen_extents;
-          if (extent_reservoir.size() < 4096)
-            extent_reservoir.push_back(b);
-          else {
-            const uint64_t slot = Hash(prim.GetPath().str()) % seen_extents;
-            if (slot < 4096) extent_reservoir[slot] = b;
-          }
-        }
+    if (type != "Mesh") continue;
+    const auto* extent = prim.GetPropertyValue("extent");
+    if (!extent || extent->array_size() != 2 || !Visible(prim, opts.time_code))
+      continue;
+    const auto view = extent->view().as_float_array();
+    if (view.size() < 6) continue;
+    // The reservoir decision depends only on the count and path. Compute
+    // world-space corners only for extents that actually enter the sample.
+    ++seen_extents;
+    const size_t slot = extent_reservoir.size() < 4096
+                            ? extent_reservoir.size()
+                            : Hash(prim.GetPath().str()) % seen_extents;
+    if (slot >= 4096) continue;
+    auto m = Identity();
+    usd::ComputeWorldTransform(stage, prim, m.data(), opts.time_code);
+    std::array<double, 6> bounds = {1e300, 1e300, 1e300, -1e300, -1e300, -1e300};
+    for (int c = 0; c < 8; ++c) {
+      const double x = view[(c & 1) ? 3 : 0];
+      const double y = view[(c & 2) ? 4 : 1];
+      const double z = view[(c & 4) ? 5 : 2];
+      for (int k = 0; k < 3; ++k) {
+        const double coord = m[k] * x + m[4 + k] * y + m[8 + k] * z + m[12 + k];
+        bounds[k] = std::min(bounds[k], coord);
+        bounds[k + 3] = std::max(bounds[k + 3], coord);
       }
     }
+    if (slot == extent_reservoir.size()) extent_reservoir.push_back(bounds);
+    else extent_reservoir[slot] = bounds;
   }
   batch.layer = stage.ReleaseRootLayer();
   return check("plan", prims.size());
@@ -581,8 +611,21 @@ std::array<float, 4> Build::shade(const std::string& path,
                       t.source_color_space != "data" &&
                       t.source_color_space != "linear" &&
                       (!t.color_transform_valid || t.source_gamma != 1.f);
-    const std::string key = file + (srgb ? ":srgb" : ":linear");
-    if (failed_images.count(key)) return out;
+    const bool ptex = (file.size() > 4 && file.substr(file.size() - 4) == ".ptx") ||
+                      (file.size() > 5 && file.substr(file.size() - 5) == ".ptex");
+    // Ptex decodes one face per entry: the face must be part of the key, or
+    // whichever face a worker decoded first is reused for every face of the
+    // file (wrong colours that vary with thread timing).
+    const std::string key = file + (srgb ? ":srgb" : ":linear") +
+                            (ptex ? ":face" + std::to_string(face) : std::string());
+    std::shared_ptr<DecodedImage> held;
+    {
+    std::lock_guard<std::mutex> lock(shade_mutex);
+    // Ptex failures are recorded per file (a missing .ptx would otherwise be
+    // re-read and re-reported for every face).
+    const auto file_key = std::make_pair(file, srgb);
+    if (failed_images.count(file_key))
+      return out;
     auto image = images.find(key);
     if (image == images.end()) {
       auto decoded = std::make_shared<DecodedImage>();
@@ -591,22 +634,21 @@ std::array<float, 4> Build::shade(const std::string& path,
         images.clear();
       dependencies.insert(file);
       bool ok = false;
-      if (file.size() > 4 && (file.substr(file.size() - 4) == ".ptx" ||
-                              file.substr(file.size() - 5) == ".ptex"))
+      if (ptex)
         ok = decoder.DecodePtexFace(file, static_cast<uint32_t>(face), 0, srgb,
                                     decoded.get());
       else
         ok = decoder.Decode(file, srgb, decoded.get());
       if (!ok) {
-        failed_images.insert(key);
-        if (result.warning.size() < 16384)
-          result.warning += "Preview texture unavailable: " + file + "\n";
+        failed_images.insert(file_key);
         return out;
       }
       dependencies.insert(file);
       image = images.emplace(key, std::move(decoded)).first;
     }
-    const auto& img = *image->second;
+    held = image->second;
+    }  // shade_mutex
+    const auto& img = *held;
     if (img.empty()) return out;
     auto wrap = [](double q, WrapMode mode) {
       if (mode == WrapMode::Repeat) return q - std::floor(q);
@@ -686,16 +728,32 @@ std::array<float, 4> Build::shade(const std::string& path,
   return value;
 }
 
+void Build::appendTextureWarnings() {
+  // Workers discover missing textures in varying orders. Publish them by path.
+  for (const auto& entry : failed_images) {
+    if (result.warning.size() >= 16384) break;
+    result.warning += "Preview texture unavailable: " + entry.first + "\n";
+  }
+  failed_images.clear();
+}
+
 bool Build::mesh(
     const usd::Stage& stage, const usd::UsdPrim& prim, const double* world,
     const std::vector<std::pair<std::string, std::array<double, 16>>>&
-        ancestors) {
+        ancestors,
+    MeshJobOut* out) {
   RenderMesh geometry;
-  converter.SetTimeCode(opts.time_code);
-  if (!converter.ConvertRenderableMesh(stage, prim, &geometry)) return true;
+  // Streaming releases geometry after each mesh. Scope its cumulative
+  // conversion budget to that same lifetime, independently of worker order.
+  RenderSceneConverter cv;
+  cv.SetTimeCode(opts.time_code);
+  if (!cv.ConvertRenderableMesh(stage, prim, &geometry)) return true;
   if (geometry.points.empty() || geometry.triangulated_indices.empty())
     return true;
-  ++result.source_meshes;
+  if (out)
+    ++out->meshes;
+  else
+    ++result.source_meshes;
   if (source_capture || (opts.region_enabled && !ancestors.empty())) {
     if (!source_mesh(stage, prim, geometry, world, ancestors)) return false;
     for (const auto& ancestor : ancestors)
@@ -756,7 +814,8 @@ bool Build::mesh(
                     .triangulated_face_vertex_indices[ti * 3 +
                                                       static_cast<size_t>(c)];
       if (vi[c] >= geometry.point_count()) {
-        result.error = "preview triangulation index out of bounds";
+        (out ? out->error : result.error) =
+            "preview triangulation index out of bounds";
         return false;
       }
       for (int k = 0; k < 3; ++k)
@@ -790,9 +849,11 @@ bool Build::mesh(
     const double twice_area = Length(normal);
     if (twice_area < 1e-20) continue;
     using Weight = std::array<float, 3>;
-    std::vector<Weight> polygon = {Weight{1, 0, 0}, Weight{0, 1, 0},
-                                   Weight{0, 0, 1}};
+    static constexpr std::array<Weight, 3> triangle = {
+        Weight{1, 0, 0}, Weight{0, 1, 0}, Weight{0, 0, 1}};
+    std::vector<Weight> polygon;
     if (opts.region_enabled) {
+      polygon.assign(triangle.begin(), triangle.end());
       double world_points[3][3];
       for (int c = 0; c < 3; ++c) {
         Sample point;
@@ -826,9 +887,35 @@ bool Build::mesh(
           polygon.swap(clipped);
         }
     }
-    for (size_t patch = 1; patch + 1 < polygon.size(); ++patch) {
-      const Weight patch_weights[] = {polygon[0], polygon[patch],
-                                      polygon[patch + 1]};
+    const size_t corners = opts.region_enabled ? polygon.size() : triangle.size();
+    const Weight* weights = opts.region_enabled ? polygon.data() : triangle.data();
+    struct VertexAttributes {
+      float normal[3], color[3], uv[2], opacity;
+    };
+    VertexAttributes attributes[3];
+    for (size_t c = 0; c < 3; ++c) {
+      auto& attr = attributes[c];
+      for (size_t k = 0; k < 3; ++k) {
+        attr.normal[k] = Attribute(geometry.normals, geometry.normals_interp,
+                                   vi[c], ci[c], uint32_t(face), 3, k,
+                                   float(normal[k] / twice_area));
+        attr.color[k] = Attribute(geometry.colors, geometry.colors_interp,
+                                  vi[c], ci[c], uint32_t(face), 3, k, 1);
+      }
+      for (size_t k = 0; k < 2; ++k)
+        attr.uv[k] = Attribute(geometry.texcoords_0, geometry.texcoords_0_interp,
+                               vi[c], ci[c], uint32_t(face), 2, k, 0);
+      attr.opacity = Attribute(geometry.opacities, geometry.opacities_interp,
+                               vi[c], ci[c], uint32_t(face), 1, 0, 1);
+    }
+    const std::string* face_material = &material;
+    for (const auto& subset : subsets)
+      if (subset.second.count(static_cast<int32_t>(face))) {
+        face_material = &subset.first;
+        break;
+      }
+    for (size_t patch = 1; patch + 1 < corners; ++patch) {
+      const Weight patch_weights[] = {weights[0], weights[patch], weights[patch + 1]};
       double patch_points[3][3] = {};
       for (int c = 0; c < 3; ++c)
         for (int k = 0; k < 3; ++k)
@@ -849,7 +936,9 @@ bool Build::mesh(
       // preserving a bounded prototype working set. Convert world spacing back
       // into the mesh's local units when evaluating the requested resolution.
       const double sample_limit =
-          (opts.resolution || (opts.region_enabled)) ? 4096.0 : 64.0;
+          (opts.resolution || (opts.region_enabled))
+              ? 4096.0
+              : double(std::max(1u, opts.triangle_sample_limit));
       if ((opts.resolution || opts.region_enabled) && transform.scale > 0)
         spacing /= transform.scale;
       const size_t count = std::max(
@@ -868,15 +957,8 @@ bool Build::mesh(
                           world[8 + k] * patch_points[c][2];
             vertex.color[k] = 0;
             for (size_t q = 0; q < 3; ++q) {
-              object_normal[k] +=
-                  patch_weights[c][q] *
-                  Attribute(geometry.normals, geometry.normals_interp, vi[q],
-                            ci[q], uint32_t(face), 3, k,
-                            float(normal[k] / twice_area));
-              vertex.color[k] +=
-                  patch_weights[c][q] *
-                  Attribute(geometry.colors, geometry.colors_interp, vi[q],
-                            ci[q], uint32_t(face), 3, k, 1);
+              object_normal[k] += patch_weights[c][q] * attributes[q].normal[k];
+              vertex.color[k] += patch_weights[c][q] * attributes[q].color[k];
             }
           }
           for (size_t k = 0; k < 3; ++k)
@@ -888,30 +970,20 @@ bool Build::mesh(
                     : object_normal[k];
           for (size_t q = 0; q < 3; ++q) {
             for (size_t k = 0; k < 2; ++k)
-              texcoords[c * 2 + k] +=
-                  patch_weights[c][q] *
-                  Attribute(geometry.texcoords_0, geometry.texcoords_0_interp,
-                            vi[q], ci[q], uint32_t(face), 2, k, 0);
-            vertex.opacity +=
-                patch_weights[c][q] *
-                Attribute(geometry.opacities, geometry.opacities_interp, vi[q],
-                          ci[q], uint32_t(face), 1, 0, 1);
+              texcoords[c * 2 + k] += patch_weights[c][q] * attributes[q].uv[k];
+            vertex.opacity += patch_weights[c][q] * attributes[q].opacity;
           }
         }
-        std::string mat = material;
-        for (const auto& subset : subsets)
-          if (subset.second.count(static_cast<int32_t>(face))) {
-            mat = subset.first;
-            break;
-          }
         const float radius =
             float(std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5 *
                   transform.scale);
-        if (!queue_geometry(vertices, texcoords, count, radius, mat, face,
+        if (!queue_geometry(vertices, texcoords, count, radius, *face_material, face,
                             ancestors, world + 12))
           return false;
         continue;
       }
+      const float radius = static_cast<float>(
+          std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5);
       for (size_t j = 0; j < count; ++j) {
         const double u = std::sqrt((j + .5) / count),
                      v = std::fmod((j + .5) * .6180339887498949, 1.0);
@@ -929,57 +1001,102 @@ bool Build::mesh(
           s.n[k] = 0;
           for (int c = 0; c < 3; ++c) {
             s.p[k] += w[c] * p[c][k];
-            s.n[k] +=
-                w[c] * Attribute(geometry.normals, geometry.normals_interp,
-                                 vi[c], ci[c], static_cast<uint32_t>(face), 3,
-                                 static_cast<size_t>(k),
-                                 static_cast<float>(normal[k] / twice_area));
+            s.n[k] += w[c] * attributes[c].normal[k];
           }
         }
         Normalize(s.n);
         for (int k = 0; k < 2; ++k)
           for (int c = 0; c < 3; ++c)
-            uv[k] += w[c] * Attribute(geometry.texcoords_0,
-                                      geometry.texcoords_0_interp, vi[c], ci[c],
-                                      static_cast<uint32_t>(face), 2,
-                                      static_cast<size_t>(k), 0);
+            uv[k] += w[c] * attributes[c].uv[k];
         // Authored texcoords can be non-finite on degenerate or broken mesh
         // data; keep them from poisoning shading and the GPU sample buffer.
         if (!std::isfinite(uv[0]) || !std::isfinite(uv[1])) uv[0] = uv[1] = 0.0f;
-        std::string mat = material;
-        for (const auto& subset : subsets)
-          if (subset.second.count(static_cast<int32_t>(face))) {
-            mat = subset.first;
-            break;
-          }
-        auto color = shade(mat, geometry, face, uv);
+        auto color = shade(*face_material, geometry, face, uv);
         for (int k = 0; k < 3; ++k) {
           float display = 0;
           for (int c = 0; c < 3; ++c)
-            display +=
-                w[c] * Attribute(geometry.colors, geometry.colors_interp, vi[c],
-                                 ci[c], static_cast<uint32_t>(face), 3,
-                                 static_cast<size_t>(k), 1);
+            display += w[c] * attributes[c].color[k];
           s.color[k] = color[k] * display;
         }
         float alpha = 0;
         for (int c = 0; c < 3; ++c)
-          alpha += w[c] * Attribute(geometry.opacities,
-                                    geometry.opacities_interp, vi[c], ci[c],
-                                    static_cast<uint32_t>(face), 1, 0, 1);
+          alpha += w[c] * attributes[c].opacity;
         s.opacity = color[3] * alpha;
-        s.radius = static_cast<float>(
-            std::sqrt(area * stride / (3.141592653589793 * count)) * 1.5);
-        if (opts.region_enabled) {
+        s.radius = radius;
+        if (out) {
+          out->samples.push_back(transform(s));
+        } else if (opts.region_enabled) {
           if (!insert(transform(s))) return false;
         } else if (!emit(transform(s), ancestors))
           return false;
       }
     }  // clipped triangle patches
+    if (out) continue;  // workers report progress via drain_meshes
     ++triangle_count;
-    if ((triangle_count & 4095) == 0 && !check("sample", triangle_count))
+    if ((triangle_count & 4095) == 0 &&
+        !check("sample", triangle_count))
       return false;
   }
+  return true;
+}
+
+bool Build::parallel_meshes() {
+  // Paths that write spills/GPU queues or adapt cell_size per mesh stay serial.
+  if (source_capture || opts.region_enabled || cell_size <= 0) return false;
+  return !geometry_backend();
+}
+
+bool Build::drain_meshes(const usd::Stage& stage) {
+  if (mesh_jobs.empty() && pending_flushes.empty()) return true;
+  const auto* layer = stage.GetRootLayer();
+  const auto& prims = layer->prims();
+  const size_t n = mesh_jobs.size();
+  std::vector<MeshJobOut> outs(n);
+  size_t threads = 1;
+#if defined(LIGHTUSD_ENABLE_THREAD)
+  threads = std::max(1u, std::thread::hardware_concurrency());
+  threads = std::max(size_t(1), std::min({threads, size_t(8), (n + 3) / 4}));
+#endif
+  std::atomic<size_t> next{0};
+  auto work = [&]() {
+    for (size_t j; (j = next.fetch_add(1)) < n;) {
+      const MeshJob& job = mesh_jobs[j];
+      usd::UsdPrim prim(&prims[job.prim], layer, job.prim);
+      mesh(stage, prim, job.world.data(), job.ancestors, &outs[j]);
+      if (!outs[j].error.empty()) {
+        next.store(n);  // stop early; the serial pass reports in order
+        return;
+      }
+    }
+  };
+  if (threads == 1) {
+    work();
+  } else {
+    std::vector<std::thread> pool;
+    for (size_t w = 1; w < threads; ++w) pool.emplace_back(work);
+    work();
+    for (auto& t : pool) t.join();
+  }
+  // Emit in traversal order so output matches the serial path's ordering.
+  for (size_t j = 0; j < n; ++j) {
+    result.source_meshes += outs[j].meshes;
+    if (!outs[j].error.empty()) {
+      result.error = outs[j].error;
+      mesh_jobs.clear();
+      return false;
+    }
+    for (const Sample& sample : outs[j].samples)
+      if (!emit(sample, mesh_jobs[j].ancestors)) return false;
+    std::vector<Sample>().swap(outs[j].samples);
+    triangle_count += 64;  // coarse progress for the cancel callback
+    if ((j & 63) == 63 && !check("sample", triangle_count)) return false;
+  }
+  mesh_jobs.clear();
+  for (const auto& name : pending_flushes) {
+    if (!flush_prototype(name)) return false;
+    prototype_buffers.erase(name);
+  }
+  pending_flushes.clear();
   return true;
 }
 
@@ -999,21 +1116,30 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
       longest = std::max(longest, highs[highs.size() - 1 - trim] - lows[trim]);
     }
     if (longest > 0)
-      cell_size = longest / (opts.resolution ? opts.resolution : 2048);
+      cell_size = longest / (opts.resolution ? opts.resolution
+                                              : std::max(1u, opts.auto_resolution));
   }
   usd::Stage stage;
   stage.SetRootLayer(std::move(*batch.layer));
   const auto* layer = stage.GetRootLayer();
   const auto& prims = layer->prims();
   std::vector<std::pair<std::string, std::array<double, 16>>> ancestors;
+  mesh_jobs.clear();
+  const bool parallel = parallel_meshes();
+  if (!result.error.empty()) return false;
   for (size_t i = 0; i < prims.size(); ++i) {
     if (i < batch.repeated.size() && batch.repeated[i]) continue;
     usd::UsdPrim prim(&prims[i], layer, static_cast<uint32_t>(i));
     const std::string path = prim.GetPath().str();
     ++result.source_prims;
     while (!ancestors.empty() && !Prefix(path, ancestors.back().first)) {
-      if (!flush_prototype(ancestors.back().first)) return false;
-      prototype_buffers.erase(ancestors.back().first);
+      if (parallel) {
+        // Deferred jobs may still emit into this prototype; flush after them.
+        pending_flushes.push_back(ancestors.back().first);
+      } else {
+        if (!flush_prototype(ancestors.back().first)) return false;
+        prototype_buffers.erase(ancestors.back().first);
+      }
       ancestors.pop_back();
     }
     const auto& type = prim.GetTypeName();
@@ -1028,9 +1154,14 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
         type != "PointInstancer" && type != "Camera" &&
         type.find("Light") == std::string::npos)
       continue;
-    if (!Visible(prim, opts.time_code)) continue;
+    if (!Visible(prim, opts.time_code, &prototypes)) continue;
     auto world = Identity();
     usd::ComputeWorldTransform(stage, prim, world.data(), opts.time_code);
+    if (renderable && !native_instance && !proto_root && parallel) {
+      mesh_jobs.push_back({static_cast<uint32_t>(i), world, ancestors});
+      if (mesh_jobs.size() >= 4096 && !drain_meshes(stage)) return false;
+      continue;
+    }
     if (proto_root && !native_instance) {
       auto inv = Identity();
       if (!Inverse(world.data(), inv.data())) {
@@ -1074,6 +1205,7 @@ bool Build::consume(usd::pcp::ComposedBatch& batch) {
     }
     if ((i & 4095) == 0 && !check("compose", result.source_prims)) return false;
   }
+  if (!drain_meshes(stage)) return false;
   if (!flush_geometry()) return false;
   for (const auto& pending : prototype_buffers)
     if (!flush_prototype(pending.first)) return false;
@@ -1131,11 +1263,206 @@ bool Build::queue_placement(
   }
   return true;
 }
+// Replays a batch of top-level placements (no enclosing prototypes, no source
+// capture/region): samples are transformed, validated, ranked and keyed on
+// worker threads. Each shard merges consecutive groups in placement order.
+// A possible budget crossing replays the original samples to preserve the
+// exact coarsening point.
+bool Build::replay_top_batch(std::vector<TopPlacement>* batch) {
+  if (batch->empty()) return true;
+  struct Item {
+    Sample s;
+    Key k;
+    uint64_t rank;
+    bool keyed;
+  };
+  struct Range {
+    size_t placement, begin, end;
+  };
+  // Bound the prototype cache between batches only: `sources` below points
+  // into it for the whole batch.
+  if (prototype_sample_cache_bytes > (size_t(512) << 20)) {
+    prototype_sample_cache.clear();
+    prototype_sample_cache_bytes = 0;
+  }
+  std::vector<const std::vector<Sample>*> sources(batch->size(), nullptr);
+  std::vector<Range> ranges;
+  size_t total = 0;
+  for (size_t i = 0; i < batch->size(); ++i) {
+    const std::string& key = (*batch)[i].key;
+    auto it = prototype_sample_cache.find(key);
+    if (it == prototype_sample_cache.end()) {
+      if (!flush_prototype(key)) return false;
+      std::vector<Sample> samples;
+      std::ifstream f(prototype_file(key), std::ios::binary);
+      if (!f) {
+        if (missing_prototypes.insert(key).second && missing_prototypes.size() <= 8)
+          result.warning += "scene preview: instance target not composed (inactive, pruned or absent), skipped: " +
+                            key + "\n";
+      } else {
+        f.seekg(0, std::ios::end);
+        const auto bytes = static_cast<size_t>(f.tellg());
+        f.seekg(0);
+        if (bytes % sizeof(Sample)) {
+          result.error = "truncated preview prototype spill";
+          return false;
+        }
+        samples.resize(bytes / sizeof(Sample));
+        if (!samples.empty() &&
+            !f.read(reinterpret_cast<char*>(samples.data()),
+                    static_cast<std::streamsize>(bytes))) {
+          result.error = "preview prototype spill read failed";
+          return false;
+        }
+      }
+      prototype_sample_cache_bytes += samples.size() * sizeof(Sample);
+      it = prototype_sample_cache.emplace(key, std::move(samples)).first;
+    }
+    sources[i] = &it->second;
+    const size_t n = it->second.size();
+    for (size_t b = 0; b < n; b += 16384)
+      ranges.push_back({i, b, std::min(n, b + 16384)});
+    total += n;
+  }
+  std::vector<SampleTransform> transforms;
+  transforms.reserve(batch->size());
+  for (const auto& p : *batch) transforms.emplace_back(p.world.data());
+  const size_t threads_max =
+      std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
+  static const bool shard_replay = [] {
+    const char* setting = std::getenv("LIGHTUSD_PREVIEW_SHARD_REPLAY");
+    return !setting || std::strcmp(setting, "0") != 0;
+  }();
+  // Group by sample count. A placement can contain a single sample, so a
+  // fixed number of placements per window creates many tiny thread teams.
+  struct Group {
+    size_t begin, end, offset;
+    bool slow = false;
+    size_t unique = 0, new_cells = 0;
+    std::array<CellMap, CellGrid::kShards> local;
+  };
+  for (size_t r = 0; r < ranges.size();) {
+    const double cs = cell_size;
+    const size_t space = max_cells - cells.size();
+    const size_t target = std::min(size_t(131072), std::max(size_t(16384), space));
+    size_t n = 0;
+    std::vector<Group> groups;
+    while (r < ranges.size() && n < target) {
+      const size_t begin = r, offset = n;
+      do {
+        n += ranges[r].end - ranges[r].begin;
+        ++r;
+      } while (r < ranges.size() && n - offset < 2048);
+      groups.push_back({begin, r, offset, false, 0, 0, {}});
+    }
+    const bool reduce = shard_replay && cs > 0 && n >= 4096;
+    std::vector<Item> items(reduce ? 0 : n);
+    auto parallel = [&](size_t jobs, auto&& task) {
+      std::atomic<size_t> next{0};
+      auto work = [&]() {
+        for (size_t i; (i = next.fetch_add(1, std::memory_order_relaxed)) < jobs;)
+          task(i);
+      };
+      std::vector<std::thread> pool;
+      const size_t workers = std::min(threads_max, jobs);
+      for (size_t i = 1; i < workers; ++i) pool.emplace_back(work);
+      work();
+      for (auto& thread : pool) thread.join();
+    };
+    parallel(groups.size(), [&](size_t g) {
+      Group& group = groups[g];
+      size_t pos = group.offset;
+      for (size_t ri = group.begin; ri < group.end; ++ri) {
+        const Range& range = ranges[ri];
+        const auto& src = *sources[range.placement];
+        const SampleTransform& transform = transforms[range.placement];
+        for (size_t j = range.begin; j < range.end; ++j, ++pos) {
+          const Sample sample = transform(src[j]);
+          if (cs <= 0 || !InsertableSample(sample, cs)) {
+            if (reduce) {
+              group.slow = true;
+            } else {
+              items[pos].s = sample;
+              items[pos].keyed = false;
+            }
+            continue;
+          }
+          const Key key = Cell(sample, cs);
+          const uint64_t rank = Rank(sample);
+          if (reduce) {
+            // A dense placement can hit the same cell thousands of times.
+            // Keep its first input ordinal and its lowest-rank representative.
+            const size_t shard = CellGrid::shardIndex(key);
+            if (CellGrid::placeInShard(group.local[shard], key, sample, rank, pos)) {
+              ++group.unique;
+              if (n > space && cells.shards[shard].find(key) == cells.shards[shard].end())
+                ++group.new_cells;
+            }
+          } else {
+            items[pos] = Item{sample, key, rank, true};
+          }
+        }
+      }
+    });
+    if (reduce) {
+      size_t unique = 0, new_upper_bound = 0;
+      bool slow = false;
+      for (const Group& group : groups) {
+        unique += group.unique;
+        new_upper_bound += group.new_cells;
+        slow |= group.slow;
+      }
+      if (slow || new_upper_bound > space) {
+        // Recover the exact input position of a budget crossing or invalid
+        // coordinate. No global cells have been changed by the local pass.
+        for (const auto& group : groups)
+          for (size_t i = group.begin; i < group.end; ++i) {
+            const auto& range = ranges[i];
+            const auto& src = *sources[range.placement];
+            for (size_t j = range.begin; j < range.end; ++j)
+              if (!insert(transforms[range.placement](src[j]))) return false;
+          }
+        continue;
+      }
+      std::array<size_t, CellGrid::kShards> added{};
+      auto merge_shard = [&](size_t shard) {
+        size_t count = 0;
+        for (const Group& group : groups)
+          for (const auto& entry : group.local[shard]) {
+            const Accum& cell = entry.second;
+            count += CellGrid::placeInShard(cells.shards[shard], entry.first,
+                                            cell.representative, cell.rank,
+                                            cells.next_order + cell.order);
+          }
+        added[shard] = count;
+      };
+      if (unique >= 4096) {
+        parallel(CellGrid::kShards, merge_shard);
+      } else {
+        for (size_t shard = 0; shard < CellGrid::kShards; ++shard)
+          merge_shard(shard);
+      }
+      cells.next_order += n;
+      for (size_t count : added) cells.count += count;
+    } else {
+      for (const auto& it : items) {
+        const bool ok = it.keyed && cell_size == cs
+                            ? place(it.s, it.k, it.rank)
+                            : insert(it.s);
+        if (!ok) return false;
+      }
+    }
+  }
+  batch->clear();
+  return check("prototype-samples", total);
+}
 bool Build::finish_placements() {
   if (!placements.is_open()) return true;
   placements.close();
   const fs::path current = directory / "prototypes" / "placements",
                  next = directory / "prototypes" / "placements.next";
+  std::vector<TopPlacement> top_batch;
+  size_t top_batch_samples = 0;
   for (size_t round = 0; round < 1024; ++round) {
     std::ifstream input(current, std::ios::binary);
     std::ofstream deferred(next, std::ios::binary);
@@ -1175,6 +1502,33 @@ bool Build::finish_placements() {
         const auto local = point_prototype_local.find(key);
         if (is_point && local != point_prototype_local.end())
           Multiply(world.data(), local->second.data(), placed.data());
+        static const bool serial_replay =
+            std::getenv("LIGHTUSD_PREVIEW_SERIAL_REPLAY") != nullptr;
+        if (!serial_replay && ancestors.empty() && !source_capture &&
+            !opts.region_enabled) {
+          top_batch.push_back({key, placed});
+          auto known = prototype_sample_counts.find(key);
+          if (known == prototype_sample_counts.end()) {
+            if (!flush_prototype(key)) return false;
+            std::error_code size_ec;
+            const auto bytes = fs::file_size(prototype_file(key), size_ec);
+            known = prototype_sample_counts
+                        .emplace(key, size_ec ? 0 : size_t(bytes / sizeof(Sample)))
+                        .first;
+          }
+          top_batch_samples += std::max<size_t>(1, known->second);
+          if (top_batch_samples >= (size_t(1) << 20)) {
+            if (!replay_top_batch(&top_batch)) return false;
+            top_batch_samples = 0;
+          }
+          ++done;
+          if (((done + waiting) & 4095) == 0 && !check("instances", done + waiting))
+            return false;
+          continue;
+        }
+        // Keep placement order: flush queued top-level work first.
+        if (!replay_top_batch(&top_batch)) return false;
+        top_batch_samples = 0;
         if (!replay(key, placed.data(), ancestors)) return false;
         for (const auto& a : ancestors) {
           if (!flush_prototype(a.first)) return false;
@@ -1197,6 +1551,8 @@ bool Build::finish_placements() {
       if (((done + waiting) & 4095) == 0 && !check("instances", done + waiting))
         return false;
     }
+    if (!replay_top_batch(&top_batch)) return false;
+    top_batch_samples = 0;
     if (!input.eof() || !deferred) {
       result.error = "preview placement spill I/O failed";
       return false;

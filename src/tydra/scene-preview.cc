@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
 #include "../pcp/cache.hh"
@@ -21,6 +22,12 @@ using json = nlohmann::json;
 namespace {
 // Invalidate previews sampled before inactiveIds metadata affected visibility.
 constexpr int kVersion = 4;
+void SortOutputs(json& outputs) {
+  std::sort(outputs.begin(), outputs.end(), [](const json& a, const json& b) {
+    return a.at("path").get_ref<const std::string&>() <
+           b.at("path").get_ref<const std::string&>();
+  });
+}
 json FileStamp(const std::string& path) {
   // Package dependencies are invalidated by their containing archive.
   const std::string file = path.substr(0, path.find('['));
@@ -38,14 +45,39 @@ json FileStamp(const std::string& path) {
               {"size", size},
               {"mtime", time.time_since_epoch().count()}};
 }
+// Keep manifest order stable, including package members which share one
+// archive stamp. Match the original stamp when a path is encountered again.
+bool CollectDependencyStamps(const std::set<std::string>& files, json& stamps) {
+  std::unordered_map<std::string, size_t> index;
+  index.reserve(stamps.size() + files.size());
+  for (size_t i = 0; i < stamps.size(); ++i) {
+    const auto path = stamps[i].find("path");
+    if (path == stamps[i].end() || !path->is_string()) return false;
+    index.emplace(path->get_ref<const std::string&>(), i);
+  }
+  for (const auto& file : files) {
+    auto stamp = FileStamp(file);
+    if (stamp.is_null()) continue;
+    auto entry = index.emplace(stamp["path"].get_ref<const std::string&>(),
+                               stamps.size());
+    if (entry.second) stamps.push_back(std::move(stamp));
+    else if (stamps[entry.first->second] != stamp) return false;
+  }
+  for (const auto& stamp : stamps)
+    if (FileStamp(stamp["path"].get_ref<const std::string&>()) != stamp)
+      return false;
+  return true;
+}
 std::string Fingerprint(const std::string& source,
                         const ScenePreviewOptions& o) {
   std::error_code ec;
   const auto path = fs::absolute(source, ec);
   std::ostringstream s;
   s << kVersion << ':' << (ec ? source : path.lexically_normal().string())
-    << ':' << ScenePreviewKindName(o.kind) << ':' << o.gpu_budget_bytes << ':'
-    << o.resolution << ':' << std::setprecision(17) << o.time_code << ':'
+    << ":mesh-budget-2:" << ScenePreviewKindName(o.kind) << ':' << o.gpu_budget_bytes << ':'
+    << o.resolution << ':' << o.auto_resolution << ':'
+    << o.triangle_sample_limit << ':' << o.cell_budget_scale << ':'
+    << std::setprecision(17) << o.time_code << ':'
     << o.texture_max_edge << ':' << o.texture_budget_bytes << ':'
     << o.composition.load_payloads << ':'
     << static_cast<int>(o.composition.expression_variable_policy);
@@ -156,6 +188,46 @@ json Statistics(const ScenePreviewResult& r) {
   return j;
 }
 }  // namespace
+bool ParseScenePreviewPreset(const std::string& name,
+                             ScenePreviewPreset* out) {
+  if (name == "fast") *out = ScenePreviewPreset::Fast;
+  else if (name == "standard") *out = ScenePreviewPreset::Standard;
+  else if (name == "quality") *out = ScenePreviewPreset::Quality;
+  else return false;
+  return true;
+}
+void ApplyScenePreviewPreset(ScenePreviewPreset preset,
+                             ScenePreviewOptions* o) {
+  switch (preset) {
+    case ScenePreviewPreset::Fast:
+      o->source_index = false;
+      o->texture_max_edge = 128;
+      o->compose_pipeline = true;
+      o->batch_prims = 400000;  // fewer batches; composer default size
+      o->auto_resolution = 1024;
+      o->triangle_sample_limit = 16;
+      o->cell_budget_scale = 1.0;
+      break;
+    case ScenePreviewPreset::Standard:
+      o->source_index = true;
+      o->texture_max_edge = 512;
+      o->texture_budget_bytes = uint64_t(256) << 20;
+      o->batch_prims = 100000;
+      o->auto_resolution = 2048;
+      o->triangle_sample_limit = 64;
+      o->cell_budget_scale = 1.0;
+      break;
+    case ScenePreviewPreset::Quality:
+      o->source_index = true;
+      o->texture_max_edge = 2048;
+      o->texture_budget_bytes = uint64_t(1) << 30;
+      o->batch_prims = 100000;
+      o->auto_resolution = 4096;
+      o->triangle_sample_limit = 256;
+      o->cell_budget_scale = 2.0;
+      break;
+  }
+}
 const char* ScenePreviewKindName(ScenePreviewKind kind) {
   switch (kind) {
     case ScenePreviewKind::Gaussian:
@@ -197,10 +269,12 @@ ScenePreviewResult ConvertScenePreview(
 
   const auto start = std::chrono::steady_clock::now();
   ScenePreviewResult result;
+  preview_impl::Build* active_build = nullptr;
   result.refinement_region = options.region_enabled;
   result.refinement_min = options.region_min;
   result.refinement_max = options.region_max;
   auto finish = [&]() {
+    if (active_build) active_build->appendTextureWarnings();
     result.elapsed_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
             .count();
@@ -336,6 +410,7 @@ ScenePreviewResult ConvertScenePreview(
     }
   } cleanup{work};
   preview_impl::Build build(options, result, work);
+  active_build = &build;
   json dependencies = json::array();
   json sample_cache;
   if (options.kind != ScenePreviewKind::Gaussian) {
@@ -445,7 +520,7 @@ ScenePreviewResult ConvertScenePreview(
           }
           preview_impl::Key key;
           key.x = static_cast<int64_t>(build.cells.size());
-          build.cells.emplace(key, preview_impl::Accum{sample, 0});
+          build.cells.place(key, sample, 0);
         }
       return build.check("reuse-samples", build.cells.size());
     });
@@ -489,9 +564,10 @@ ScenePreviewResult ConvertScenePreview(
       }
 
     } else {
-      build.source_capture = true;
+      build.source_capture = options.source_index;
       build.source_directory = work / "source-index";
-      fs::create_directories(build.source_directory, ec);
+      if (build.source_capture)
+        fs::create_directories(build.source_directory, ec);
       if (ec) {
         result.error = "cannot create source geometry index";
         return finish();
@@ -505,7 +581,7 @@ ScenePreviewResult ConvertScenePreview(
       ::lightusd::pcp::BatchedComposeOptions batches;
       batches.target_batch_prims = options.batch_prims;
       batches.roots_per_batch = options.batch_roots;
-      batches.pipeline = false;
+      batches.pipeline = options.compose_pipeline;
       ::lightusd::pcp::BatchedComposer composer;
       if (!build.check("open", 0) ||
           !composer.Open(source, resolver, compose, batches, &result.warning,
@@ -536,8 +612,10 @@ ScenePreviewResult ConvertScenePreview(
               &result.warning, &result.error))
         return finish();
       if (!build.flush_geometry() || !build.finish_placements() ||
-          !build.flush_geometry() || !build.source_save_index())
+          !build.flush_geometry() ||
+          (build.source_capture && !build.source_save_index()))
         return finish();
+      if (build.source_capture) {
       json indexed_outputs = json::array();
       for (fs::directory_iterator it(build.source_directory, ec), end;
            !ec && it != end; it.increment(ec)) {
@@ -545,18 +623,11 @@ ScenePreviewResult ConvertScenePreview(
           indexed_outputs.push_back({{"path", it->path().filename().string()},
                                      {"size", it->file_size(ec)}});
       }
-      for (const auto& file : build.dependencies) {
-        const auto dep = FileStamp(file);
-        if (!dep.is_null() &&
-            std::find(dependencies.begin(), dependencies.end(), dep) ==
-                dependencies.end())
-          dependencies.push_back(dep);
+      SortOutputs(indexed_outputs);
+      if (!CollectDependencyStamps(build.dependencies, dependencies)) {
+        result.error = "source changed while indexing";
+        return finish();
       }
-      for (const auto& dep : dependencies)
-        if (FileStamp(dep["path"].get<std::string>()) != dep) {
-          result.error = "source changed while indexing";
-          return finish();
-        }
       {
         std::ofstream f(build.source_directory / "manifest.json");
         f << json{{"dependencies", dependencies}, {"outputs", indexed_outputs}}
@@ -578,6 +649,7 @@ ScenePreviewResult ConvertScenePreview(
           return finish();
         }
       }
+      }  // build.source_capture
       build.source_capture = false;
     }
   }
@@ -642,21 +714,15 @@ ScenePreviewResult ConvertScenePreview(
     for (const auto& sample : outside)
       if (!build.insert(sample, false)) return finish();
   }
+  build.appendTextureWarnings();
   if (!build.bake_lights()) return finish();
   if (!build.check("write", build.cells.size()) ||
       !preview_impl::WriteProxy(build))
     return finish();
-  for (const auto& file : build.dependencies) {
-    const auto dep = FileStamp(file);
-    if (!dep.is_null() && std::find(dependencies.begin(), dependencies.end(),
-                                    dep) == dependencies.end())
-      dependencies.push_back(dep);
+  if (!CollectDependencyStamps(build.dependencies, dependencies)) {
+    result.error = "source dependency changed during preview conversion";
+    return finish();
   }
-  for (const auto& dep : dependencies)
-    if (FileStamp(dep["path"].get<std::string>()) != dep) {
-      result.error = "source dependency changed during preview conversion";
-      return finish();
-    }
   json outputs = json::array();
   for (fs::directory_iterator it(work, ec), end; !ec && it != end;
        it.increment(ec)) {
@@ -669,6 +735,7 @@ ScenePreviewResult ConvertScenePreview(
     return finish();
   }
   // Prototype scratch is not part of a published cache entry.
+  SortOutputs(outputs);
   fs::remove_all(work / "prototypes", ec);
   {
     std::ofstream f(work / "manifest.json");
@@ -849,10 +916,15 @@ uint64_t Hash(const std::string& s) {
   return h;
 }
 Build::Build(const ScenePreviewOptions& o, ScenePreviewResult& r, fs::path d)
-    : opts(o), result(r), directory(std::move(d)), converter(), decoder([&] {
+    : opts(o), result(r), directory(std::move(d)), decoder([&] {
         TextureDecodeOptions t;
         t.max_edge = o.texture_max_edge;
-        t.budget_bytes = o.texture_budget_bytes;
+        // No admission budget: a budget-limited decode shrinks or drops an
+        // image depending on what other sampling threads still hold, which
+        // made preview colours vary between runs. max_edge bounds each image
+        // and sample_texture clears its cache at 3/4 of texture_budget_bytes
+        // (residency is still tracked), which affects speed, not results.
+        t.budget_bytes = 0;
         t.max_source_bytes = uint64_t(256) << 20;
         return t;
       }()) {
@@ -863,6 +935,10 @@ Build::Build(const ScenePreviewOptions& o, ScenePreviewResult& r, fs::path d)
       std::min(o.gpu_budget_bytes / 2, uint64_t(512) << 20);
   max_cells = static_cast<size_t>(std::min(
       (o.gpu_budget_bytes - reserve) / 1024, o.host_budget_bytes / 1024));
+  if (o.cell_budget_scale > 0 && std::isfinite(o.cell_budget_scale))
+    max_cells = static_cast<size_t>(std::min(
+        double(max_cells) * o.cell_budget_scale,
+        double(o.host_budget_bytes / 1024)));
   max_cells = std::max(size_t(1), max_cells);
   if (o.region_enabled && o.kind == ScenePreviewKind::Gaussian &&
       !o.base_preview_path.empty()) {

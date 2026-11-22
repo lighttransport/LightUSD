@@ -14,6 +14,9 @@
 
 #include "gpu_scene.hh"  // DrawScene
 #include "rt_bvh.hh"     // Node
+#include <memory>
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 
 namespace lusdview {
 
@@ -168,7 +171,8 @@ void BuildHostTextureTable(const std::vector<DrawTextureCPU>& sourceTextures,
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact = false,
                                                   size_t maxTriangles = 0,
-                                                  bool tessellateAnalytic = false);
+                                                  bool tessellateAnalytic = false,
+                                                  bool skipGaussianPoints = false);
 
 // Fully-built host scene, device-upload ready. Arrays mirror the kernel inputs.
 struct HostScene {
@@ -270,7 +274,10 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     size_t textureBudgetBytes = 0,
                     const std::vector<uint8_t>* meshVisible = nullptr,
                     uint32_t purposeVisibleMask = 0x3u,
-                    bool nativePointCarriers = true);
+                    bool nativePointCarriers = true,
+                    // Leave Gaussian carriers out (traced separately by the
+                    // Cycles splat kernel, --gsplat-kernel cycles).
+                    bool skipGaussianPoints = false);
 
 // Re-pose `hs` in place from `scene`'s CURRENT vertex data: rewrite tris/nrms
 // in the recorded leaf order, then refit every BLAS/TLAS node bound over the
@@ -283,5 +290,59 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 // the caller should fall back to a full build.
 bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
                     std::string* err);
+
+// --gsplat-kernel cycles on the GPU backends: the Blender Cycles splat scene in
+// the LightRT encoding (src/external/lightrt/lightrt_c_gsplat.h), shared by the
+// Vulkan shader (raytrace.comp, bindings 15-18) and the CUDA/HIP kernel.
+//   splats : 16 floats per splat: mu.xyz, opacity, A (row-major 3x3, world ->
+//            unit Gaussian frame), radius, SH offset (uint bits, floats into
+//            shData), meta (uint bits: degree | srgb << 2 | field << 8)
+//   nodes  : 8 words per node: lo.xyz, hi.xyz (float bits), first, count;
+//            count == 0 => inner node, children first and first + 1 (chunk
+//            local); leaf splats first..first+count-1 (chunk local)
+//   chunks : {nodeFirst, splatFirst} per BVH chunk
+//   shData : 4-word header {dcBase, 0, fieldBase, 0} (uint bits),
+//            per field 12 floats from fieldBase (row-major inverse linear
+//            part, padded), the SH coefficients, then (dcBase != 0) animated
+//            DC colour keys at dcBase + (splat * nkeys + key) * 3
+struct GsplatGpuData {
+  std::vector<float> splats;
+  std::vector<uint32_t> nodes;
+  std::vector<int32_t> chunks;
+  std::vector<float> shData;
+  uint32_t splatCount = 0, nodeCount = 0, chunkCount = 0;
+  uint32_t nkeys = 1;  // motion keys: splats holds nkeys records per splat
+  size_t skipped = 0;  // carriers without kernel data or culled splats
+  size_t bytes() const {
+    return splats.size() * 4 + nodes.size() * 4 + chunks.size() * 4 +
+           shData.size() * 4;
+  }
+};
+
+// Index-aligned Cycles splat motion keys from the carriers' kernel data:
+// center = splats at the render time (SH + per-field transforms for radiance;
+// placeholders keep indices aligned), keys = nkeys key-major LightRT records
+// (nkeys > 1 when a carrier has motion keys across the camera shutter).
+struct GsplatKeys {
+  std::shared_ptr<lightusd::gsplat::GSplatTracer> center;
+  std::vector<lrt_gsplat> keys;
+  uint32_t nkeys = 1;
+  size_t count = 0;
+  // Animated DC colour (Cycles motion radiance_base): key-major
+  // nkeys * count * 3; empty = render-time colour.
+  std::vector<float> dc;
+  size_t skipped = 0;
+};
+bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out);
+
+// Collects every Gaussian carrier that has kernel data (LoadOptions::
+// gaussianKernelData). Returns false when no splat survives.
+bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
+                        GsplatGpuData* out);
+
+bool BuildGsplatGpuData(const GsplatKeys& keys, bool srgb, GsplatGpuData* out);
+
+// Device budget for the splat buffers: LUSDVIEW_GSPLAT_VRAM_MB, default 4 GiB.
+uint64_t GsplatGpuBudgetBytes();
 
 }  // namespace lusdview

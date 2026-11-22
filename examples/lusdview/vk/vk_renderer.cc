@@ -7491,6 +7491,7 @@ void VulkanRenderer::destroyScene() {
   if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
   if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
   rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
   if (rtPointBuf_) { vkDestroyBuffer(device_, rtPointBuf_, nullptr); rtPointBuf_ = VK_NULL_HANDLE; }
   if (rtPointMem_) { vkFreeMemory(device_, rtPointMem_, nullptr); rtPointMem_ = VK_NULL_HANDLE; }
   if (rtPointNodeBuf_) { vkDestroyBuffer(device_, rtPointNodeBuf_, nullptr); rtPointNodeBuf_ = VK_NULL_HANDLE; }
@@ -7500,6 +7501,7 @@ void VulkanRenderer::destroyScene() {
   if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
   if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
   rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
   tlasDirty_ = true;
 
   for (auto v : texSlotViews_) {
@@ -11455,6 +11457,7 @@ void VulkanRenderer::rebuildTlas() {
   if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
   if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
   rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
 
   // Ensure every mesh has a BLAS, and build the instance + descriptor arrays. A
   // non-instanced mesh contributes ONE TLAS instance at its world transform; an
@@ -11530,8 +11533,29 @@ void VulkanRenderer::rebuildTlas() {
   std::vector<InstanceInfoGPU> instInfos;
   std::vector<RtPointGPU> pointDescs;
   if (!skipAnalyticGaussian) pointDescs.reserve(1024);
+  // --gsplat-kernel cycles: the point bindings carry the LightRT splat
+  // encoding instead of disc carriers (see raytrace.comp GsSplats).
+  GsplatGpuData gsData;
+  bool gsActive = false;
+  if (gsplatCycles_ && !skipAnalyticGaussian) {
+    if (BuildGsplatGpuData(nativePoints_, gsplatSrgb_, &gsData)) {
+      if (gsData.bytes() > GsplatGpuBudgetBytes()) {
+        LOGW("[vk_rt] Cycles gsplat buffers %.1f MiB exceed the %.1f MiB budget "
+             "(LUSDVIEW_GSPLAT_VRAM_MB); using the raster splat fallback",
+             double(gsData.bytes()) / (1024.0 * 1024.0),
+             double(GsplatGpuBudgetBytes()) / (1024.0 * 1024.0));
+        gaussianRtDisabled_ = true;
+      } else {
+        gsActive = true;
+        LOGI("Vulkan RT: Cycles gsplat kernel, %u splat(s) in %u chunk(s), "
+             "%.1f MiB",
+             gsData.splatCount, gsData.chunkCount,
+             double(gsData.bytes()) / (1024.0 * 1024.0));
+      }
+    }
+  }
   for (const DrawPointsCPU& src : nativePoints_) {
-    if (skipAnalyticGaussian) break;
+    if (skipAnalyticGaussian || gsplatCycles_) break;
     const size_t n = src.points.size() / 3;
     if (!src.gaussian || src.ellipseRadii.size() < n * 2 ||
         src.ellipseNormals.size() < n * 3 || src.ellipseMajorAxes.size() < n * 3)
@@ -11647,6 +11671,13 @@ void VulkanRenderer::rebuildTlas() {
   rtPointCount_ = static_cast<uint32_t>(pointDescs.size());
   rtPointNodeCount_ = static_cast<uint32_t>(pointNodes.size());
   rtPointChunkCount_ = static_cast<uint32_t>(pointChunks.size());
+  rtGsplatCycles_ = gsActive;
+  if (gsActive) {
+    rtPointCount_ = gsData.splatCount;
+    rtPointNodeCount_ = gsData.nodeCount;
+    rtPointChunkCount_ = gsData.chunkCount;
+    rtGsplatKeys_ = gsData.nkeys;
+  }
   // One descriptor per mesh + one trailing slot for the shared box proxy
   // (boxMeshId == meshes_.size()).
   const uint32_t boxMeshId = static_cast<uint32_t>(meshes_.size());
@@ -11849,7 +11880,10 @@ void VulkanRenderer::rebuildTlas() {
     info.tint[3] = s.opacity;
     instInfos.push_back(info);
   }
-  if (insts.empty() && !pointDescs.empty() && boxMesh_.blasAddr != 0) {
+  // Splat-only scenes still need a (masked-off) TLAS instance; that holds for
+  // the Cycles splat encoding as well as disc carriers.
+  if (insts.empty() && (!pointDescs.empty() || gsActive) &&
+      boxMesh_.blasAddr != 0) {
     VkAccelerationStructureInstanceKHR inst{};
     inst.instanceCustomIndex = boxMeshId & 0xFFFFFFu;
     inst.mask = 0;
@@ -12176,6 +12210,24 @@ void VulkanRenderer::rebuildTlas() {
     rtPointChunkBuf_ = VK_NULL_HANDLE; rtPointChunkMem_ = VK_NULL_HANDLE;
   };
   const auto createPointBuffers = [&]() {
+    if (rtGsplatCycles_) {
+      const bool a = createHostBuffer(gsData.splats.size() * sizeof(float),
+                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                      gsData.splats.data(), &rtPointBuf_, &rtPointMem_);
+      const bool b = createHostBuffer(gsData.nodes.size() * sizeof(uint32_t),
+                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                      gsData.nodes.data(), &rtPointNodeBuf_,
+                                      &rtPointNodeMem_);
+      const bool c = createHostBuffer(gsData.chunks.size() * sizeof(int32_t),
+                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                      gsData.chunks.data(), &rtPointOrderBuf_,
+                                      &rtPointOrderMem_);
+      const bool d = createHostBuffer(gsData.shData.size() * sizeof(float),
+                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                      gsData.shData.data(), &rtPointChunkBuf_,
+                                      &rtPointChunkMem_);
+      return a && b && c && d;
+    }
     const bool points = createHostBuffer(
         pointDescs.empty() ? sizeof(dummyPoint) : pointDescs.size() * sizeof(RtPointGPU),
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -12203,7 +12255,7 @@ void VulkanRenderer::rebuildTlas() {
         &rtPointChunkBuf_, &rtPointChunkMem_);
     return points && nodes && order && chunks;
   };
-  const uint64_t pointBytes =
+  const uint64_t pointBytes = rtGsplatCycles_ ? uint64_t(gsData.bytes()) :
       uint64_t(pointDescs.size()) * sizeof(RtPointGPU) +
       uint64_t(pointNodes.size()) * sizeof(Node) +
       uint64_t(pointOrder.size()) * sizeof(int) +
@@ -12216,6 +12268,8 @@ void VulkanRenderer::rebuildTlas() {
          double(forcedPointBudget) / (1024.0 * 1024.0));
     pointDescs.clear(); pointNodes.clear(); pointOrder.clear(); pointChunks.clear();
     rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
+    rtGsplatCycles_ = false;
     gaussianRtDisabled_ = true;
   }
   if (!createPointBuffers()) {
@@ -12223,6 +12277,8 @@ void VulkanRenderer::rebuildTlas() {
     destroyPointBuffers();
     pointDescs.clear(); pointNodes.clear(); pointOrder.clear(); pointChunks.clear();
     rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
+    rtGsplatCycles_ = false;
     gaussianRtDisabled_ = true;
     if (!createPointBuffers()) {
       LOGE("[vk_rt] Gaussian fallback descriptor buffers could not be allocated");
@@ -12652,10 +12708,15 @@ bool VulkanRenderer::createRtResources(std::string* err) {
   // optimization; the resulting cache still gives deterministic startup and
   // is preferable to never reaching the first frame. Existing warm caches keep
   // their normal optimized creation path.
-  const bool allowBlockingColdCompile = [] {
+  // --gsplat-kernel cycles needs this pipeline (the compute-BVH fallback has
+  // no Cycles splat path), so it accepts the one-time blocking compile too.
+  const bool allowBlockingColdCompile = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
+  if (gsplatCycles_ && !rtCacheWarm)
+    LOGI("Vulkan RT: compiling the ray-query pipeline for Cycles splats "
+         "(cold cache; one-time)");
   if (pipelineCompileRequiredSupported_ && !allowBlockingColdCompile) {
     cpci.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
   } else if (!cacheHit) {
@@ -12956,7 +13017,7 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   // SW-technique-specific (BVH/triangle data) and free to reuse numbers the
   // hardware layout spends on AS(0)/MeshDesc(2)/InstInfo(4)/points(15-18),
   // since the two layouts never coexist in one pipeline.
-  VkDescriptorSetLayoutBinding b[27]{};
+  VkDescriptorSetLayoutBinding b[31]{};
   auto img = [](VkDescriptorSetLayoutBinding& x, uint32_t bnd) {
     x.binding = bnd; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     x.descriptorCount = 1; x.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -13007,14 +13068,15 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
   b[26].binding = 26;
   VkDescriptorSetLayoutCreateInfo lci{};
   lci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  lci.bindingCount = 27;
+  for (uint32_t i = 27; i < 31; ++i) buf(b[i], i);
+  lci.bindingCount = 31;
   lci.pBindings = b;
   VK_CHECK(vkCreateDescriptorSetLayout(device_, &lci, nullptr, &swRtSetLayout_),
            "sw-rt descriptor set layout");
 
   VkDescriptorPoolSize ps[3]{};
   ps[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
-  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 21};
+  ps[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 25};
   ps[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
            3 + LUSDVIEW_RT_PTEXTURE_IMAGE_CAP};
   VkDescriptorPoolCreateInfo pci{};
@@ -13148,7 +13210,18 @@ bool VulkanRenderer::createSwRtResources(std::string* err) {
 #endif
 }
 
+void VulkanRenderer::destroySwGsBuffers() {
+  for (size_t i = 0; i < 4; ++i) {
+    if (swGsBuffers_[i]) vkDestroyBuffer(device_, swGsBuffers_[i], nullptr);
+    if (swGsMemory_[i]) vkFreeMemory(device_, swGsMemory_[i], nullptr);
+    swGsBuffers_[i] = VK_NULL_HANDLE;
+    swGsMemory_[i] = VK_NULL_HANDLE;
+  }
+  swGsCount_ = 0;
+}
+
 void VulkanRenderer::destroySwRt() {
+  destroySwGsBuffers();
   if (swTriBuf_) { vkDestroyBuffer(device_, swTriBuf_, nullptr); swTriBuf_ = VK_NULL_HANDLE; }
   if (swTriMem_) { vkFreeMemory(device_, swTriMem_, nullptr); swTriMem_ = VK_NULL_HANDLE; }
   if (swNrmBuf_) { vkDestroyBuffer(device_, swNrmBuf_, nullptr); swNrmBuf_ = VK_NULL_HANDLE; }
@@ -13291,7 +13364,14 @@ void VulkanRenderer::rebuildSwBvh() {
     tlasDirty_ = false;
     return;
   }
-  if (hostSceneSource_->meshes.empty()) {
+  GsplatGpuData gs;
+  if (gsplatCycles_) BuildGsplatGpuData(hostSceneSource_->points, gsplatSrgb_, &gs);
+  if (gs.bytes() > GsplatGpuBudgetBytes()) {
+    LOGW("compute-BVH: Cycles Gaussian buffers exceed device budget");
+    gs = GsplatGpuData{};
+  }
+  swGsCount_ = 0;
+  if (hostSceneSource_->meshes.empty() && !gs.splatCount) {
     swTriCount_ = swBlasNodeCount_ = swTlasNodeCount_ = swInstCount_ = 0;
     tlasDirty_ = false;
     return;
@@ -13303,17 +13383,19 @@ void VulkanRenderer::rebuildSwBvh() {
   // simple for the v1 fallback rather than threading through the same knobs
   // the CUDA/HIP tracers expose (loadOpts_/rtMaxInstances_) -- revisit once
   // this path is validated.
-  if (!BuildHostScene(*hostSceneSource_, /*maxTris=*/0, /*maxInstances=*/0,
+  if (!hostSceneSource_->meshes.empty() && !BuildHostScene(*hostSceneSource_, /*maxTris=*/0, /*maxInstances=*/0,
                       /*displacementScale=*/0.0f, &hs, &buildErr,
                       /*progress=*/nullptr, /*refitOut=*/nullptr,
                       /*textureBudgetBytes=*/0, &rtMeshVisible_,
-                      rtPurposeMask_)) {
+                      rtPurposeMask_, true, gs.splatCount != 0)) {
     LOGW("compute-BVH: BuildHostScene failed: %s", buildErr.c_str());
     tlasDirty_ = false;
     return;
   }
 
   const auto destroySwBvhBuffers = [&]() {
+    destroySwGsBuffers();
+    swTlasNodeCount_ = 0;
     if (swTriBuf_) { vkDestroyBuffer(device_, swTriBuf_, nullptr); swTriBuf_ = VK_NULL_HANDLE; }
     if (swTriMem_) { vkFreeMemory(device_, swTriMem_, nullptr); swTriMem_ = VK_NULL_HANDLE; }
     if (swNrmBuf_) { vkDestroyBuffer(device_, swNrmBuf_, nullptr); swNrmBuf_ = VK_NULL_HANDLE; }
@@ -13387,6 +13469,14 @@ void VulkanRenderer::rebuildSwBvh() {
   };
 
   bool ok = true;
+  const auto uploadGs = [&](const auto& v, size_t i) {
+    return createHostBuffer(v.empty() ? 4 : v.size() * sizeof(v[0]),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            v.empty() ? static_cast<const void*>(&kDummyI) : v.data(),
+                            &swGsBuffers_[i], &swGsMemory_[i]);
+  };
+  ok = uploadGs(gs.splats, 0) && uploadGs(gs.nodes, 1) &&
+       uploadGs(gs.chunks, 2) && uploadGs(gs.shData, 3);
   ok = uploadFloats(hs.tris, &swTriBuf_, &swTriMem_) && ok;
   ok = uploadFloats(hs.nrms, &swNrmBuf_, &swNrmMem_) && ok;
   ok = uploadFloats(hs.cols, &swColBuf_, &swColMem_) && ok;
@@ -13433,6 +13523,8 @@ void VulkanRenderer::rebuildSwBvh() {
     return;
   }
 
+  swGsCount_ = gs.splatCount;
+  if (swGsCount_) LOGI("Vulkan compute-BVH: Cycles gsplat kernel: %u splats", swGsCount_);
   swTriCount_ = static_cast<uint32_t>(hs.triCount);
   swBlasNodeCount_ = static_cast<uint32_t>(hs.blas.size());
   swTlasNodeCount_ = static_cast<uint32_t>(hs.tlas.size());
@@ -13527,7 +13619,7 @@ void VulkanRenderer::rebuildSwBvh() {
                                                         : whiteView_;
     ptexImages[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   }
-  VkWriteDescriptorSet w[27]{};
+  VkWriteDescriptorSet w[31]{};
   bufW(w[0], 0, &tlasInfo);
   imgW(w[1], 1, &outImgInfo);
   bufW(w[2], 2, &blasInfo);
@@ -13560,7 +13652,12 @@ void VulkanRenderer::rebuildSwBvh() {
   w[26].descriptorCount = static_cast<uint32_t>(ptexImages.size());
   w[26].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   w[26].pImageInfo = ptexImages.data();
-  vkUpdateDescriptorSets(device_, 27, w, 0, nullptr);
+  VkDescriptorBufferInfo gsInfo[4]{};
+  for (uint32_t i = 0; i < 4; ++i) {
+    gsInfo[i] = {swGsBuffers_[i], 0, VK_WHOLE_SIZE};
+    bufW(w[27 + i], 27 + i, &gsInfo[i]);
+  }
+  vkUpdateDescriptorSets(device_, 31, w, 0, nullptr);
   if (directPtexCount > 0) {
     std::fprintf(stderr, "[vk_swrt] direct compressed Ptex images: %zu\n",
                  directPtexCount);
@@ -13773,9 +13870,12 @@ void VulkanRenderer::traceRt(VkCommandBuffer cb) {
   pc.lens[3] = static_cast<float>(rtTlasChunkStride_);
   pc.context[0] = materialXTime_;
   pc.context[1] = materialXFrame_;
+  pc.context[2] = gsSegCenter_;  // Cycles splat shutter segment (centre, width)
+  pc.context[3] = gsSegWidth_;
   pc.pointParams[0] = rtPointCount_;
-  pc.pointParams[1] = rtPointNodeCount_;
-  pc.pointParams[2] = rtPointChunkCount_;
+  pc.pointParams[1] = rtPointNodeCount_ | (rtGsplatCycles_ ? 0x80000000u : 0u);
+  pc.pointParams[2] = rtPointChunkCount_ |
+                      (rtGsplatCycles_ ? (std::min(rtGsplatKeys_, 64u) << 24u) : 0u);
   pc.pointParams[3] = pathTrace_.enabled
                           ? ((pathTrace_.maxDepth & 0xffu) |
                              ((pathTrace_.russianRouletteDepth & 0xffu) << 8u) |
@@ -13882,6 +13982,12 @@ void VulkanRenderer::traceRtBvh(VkCommandBuffer cb) {
   pc.tlasNodeCount = swTlasNodeCount_;
   pc.sampleIndex = rtAccumFrame_;
   pc.accumEnabled = rtAccumEnabled_ ? 1u : 0u;
+  // Keep the SW push block within Vulkan's guaranteed 128 bytes.
+  if (swGsCount_ && gsSegCenter_ >= 0) {
+    pc.accumEnabled |= 2u |
+        (uint32_t(std::lround(std::clamp(gsSegCenter_, 0.f, 1.f) * 32767.f)) << 2) |
+        (uint32_t(std::lround(std::clamp(gsSegWidth_, 0.f, 1.f) * 32767.f)) << 17);
+  }
   pc.pathParams = pathTrace_.enabled
                       ? ((pathTrace_.maxDepth & 0xffu) |
                          ((pathTrace_.russianRouletteDepth & 0xffu) << 8u) |
@@ -14044,9 +14150,10 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   info.stage.module = shader;
   info.stage.pName = "main";
   info.layout = liveLayout;
-  const bool allowColdCompileHere = [] {
+  // Cycles splats need the full path-tracing shader (see createRtResources).
+  const bool allowColdCompileHere = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
   if (pipelineCompileRequiredSupported_ && !allowColdCompileHere) {
     // Live full-shader promotion is optional. A cache miss must not strand the
@@ -14086,9 +14193,9 @@ bool VulkanRenderer::reloadRayTracingShader(const uint32_t* words,
   // entering the driver compiler on the render thread.
   // LUSDVIEW_RT_ALLOW_COLD_COMPILE=1 (the same opt-in that lets the initial
   // hardware pipeline compile cold) also permits a cold compile here.
-  const bool allowColdReload = [] {
+  const bool allowColdReload = [this] {
     const char* value = std::getenv("LUSDVIEW_RT_ALLOW_COLD_COMPILE");
-    return value != nullptr && std::atoi(value) != 0;
+    return (value != nullptr && std::atoi(value) != 0) || gsplatCycles_;
   }();
   if (pipelineCompileRequiredSupported_ && !allowColdReload &&
       (cacheBlob.empty() || readyPath.empty() ||
@@ -14428,6 +14535,7 @@ void VulkanRenderer::destroyRt() {
   if (rtPointChunkBuf_) { vkDestroyBuffer(device_, rtPointChunkBuf_, nullptr); rtPointChunkBuf_ = VK_NULL_HANDLE; }
   if (rtPointChunkMem_) { vkFreeMemory(device_, rtPointChunkMem_, nullptr); rtPointChunkMem_ = VK_NULL_HANDLE; }
   rtPointCount_ = rtPointNodeCount_ = rtPointChunkCount_ = 0;
+  rtGsplatCycles_ = false;
   if (rtImageView_) { vkDestroyImageView(device_, rtImageView_, nullptr); rtImageView_ = VK_NULL_HANDLE; }
   if (rtImage_) { vkDestroyImage(device_, rtImage_, nullptr); rtImage_ = VK_NULL_HANDLE; }
   if (rtImageMem_) { vkFreeMemory(device_, rtImageMem_, nullptr); rtImageMem_ = VK_NULL_HANDLE; }
@@ -16455,7 +16563,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     // the ImGui composite below sample it. Consumed once.
     externalColorValid_ = false;
   } else if (rtFrame && rtTechnique_ == RtTechnique::kComputeBvh &&
-             swTlasNodeCount_ > 0) {
+             (swTlasNodeCount_ > 0 || swGsCount_ > 0)) {
     // Compute-BVH fallback: same offscreen-image target as traceRt(), just a
     // different trace step (no hardware acceleration structure).
     traceRtBvh(cb);
@@ -16498,7 +16606,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
   } else if (rtFrame && (tlas_ != VK_NULL_HANDLE ||
                          (rtTechnique_ == RtTechnique::kComputeBvh &&
-                          swTlasNodeCount_ > 0))) {
+                          (swTlasNodeCount_ > 0 || swGsCount_ > 0)))) {
     traceRt(cb);
     // Overlay pass: ray query writes the offscreen color image via compute (no
     // render pass), so helpers/skeleton/selection-highlight would be missing.

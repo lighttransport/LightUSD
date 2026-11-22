@@ -6828,3 +6828,33 @@ All own handles terminal; both workspace whitespace checks pass. No native C
 changes, commits or pushes. Full original objective remains active: width ≤0.0002,
 full finite numerical reserve, useful all-view compensation and original
 layers/film/OSL end state remain unachieved. No smaller completion criterion is used.
+
+## Sharing a GPU across Linux checkouts
+
+Prefix GPU suite invocations with `XCTEST_GPU=1` in each checkout that
+shares the device. For example:
+
+```sh
+XCTEST_GPU=1 scripts/xctest.sh ctest --test-dir build_ninja -j4 -R '^lusdview' --output-on-failure
+```
+
+The launcher uses util-linux flock on `/tmp/lightusd_gpu_device.lock`
+for the duration of the command. Processes must share the same lock file.
+Set `XCTEST_GPU_LOCK` to an accessible common file when checkouts use
+different temporary directories or user accounts. CTest's resource lock
+continues to serialize GPU tests within the suite.
+
+### Gaussian splat regression coverage
+
+The offline mixed-scene reference tests exercise visibility and emitted light
+with fixed geometry, moving splats, and a moving camera on CPU, Vulkan ray
+queries, and HIP. The Vulkan compute-BVH path also runs the pure and mixed
+viewer references with software traversal forced. Set `LIGHTUSD_BLENDER` to
+the Blender 5.3 executable to run the live comparisons. CUDA kernel
+compilation runs independently of NVIDIA runtime qualification.
+
+`tool-lusdpreview-sharded-replay` compares cold exports from the default
+sharded path, grouped transforms with serial insertion, and fully serial replay,
+including equal-rank colour collisions, repeated coarsening, and explicit
+resolution failure. `core_test_lazy_array` compares float3 and half3 range
+reads with full decode and exercises the released parse-buffer path.

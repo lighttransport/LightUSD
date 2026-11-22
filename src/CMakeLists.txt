@@ -1872,6 +1872,12 @@ if(LIGHTUSD_BUILD_TESTS)
     if(LIGHTUSD_WITH_TYDRA)
         add_test(NAME core_test_tydra COMMAND test_tydra
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+        # Header-only Cycles-ported Gaussian splat kernel.
+        add_executable(test_gsplat_kernel
+            ${CMAKE_CURRENT_SOURCE_DIR}/../tests/tydra/test_gsplat_kernel.cc)
+        target_include_directories(test_gsplat_kernel PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME core_test_gsplat_kernel COMMAND test_gsplat_kernel)
         # Convex hull for face-less MJCF mesh assets; lives in asset-import.
         if(TARGET lightusd_asset_import)
             add_executable(test_convex_hull

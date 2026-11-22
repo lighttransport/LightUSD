@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "cpu_raytracer.hh"
+#include "log.hh"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,10 @@
 #include "shading-normal.hh"
 
 namespace lusdview {
+
+// Shutter time of the camera sample being traced on this thread (Cycles
+// motion-blurred splats; shadow rays reuse it).
+static thread_local float g_cpuGsplatTime = 0.5f;
 
 namespace {
 inline void TransformPoint(const float m[12], const float p[3], float out[3]);
@@ -197,10 +202,28 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
                          const float* viewProj16) {
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
+  gsplats_.Clear();
+  if (gsplatCycles_ && BuildGsplatKeys(scene.points, &gsplats_.keys)) {
+    lrt_result lerr = LRT_RESULT_OK;
+    lrt_gsplat_scene* ls = lrt_gsplat_scene_build_motion(
+        gsplats_.keys.keys.data(), gsplats_.keys.count, gsplats_.keys.nkeys,
+        nullptr, &lerr);
+    if (ls) gsplats_.scene.reset(ls, lrt_gsplat_scene_free);
+    LOGI("CPU RT: Cycles gsplat kernel, %zu splat(s), %u motion key(s)%s",
+         gsplats_.size(), gsplats_.keys.nkeys,
+         gsplats_.keys.skipped ? " (some carriers lacked kernel data and were skipped)"
+                               : "");
+  }
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
-                      purposeVisibleMask, /*nativePointCarriers=*/false)) {
-    return false;
+                      purposeVisibleMask, /*nativePointCarriers=*/false,
+                      /*skipGaussianPoints=*/gsplatCycles_)) {
+    if (gsplats_.empty()) return false;
+    // Splat-only scene: no triangles to flatten, trace splats alone.
+    hs_ = HostScene();
+    if (err) err->clear();
+    truncated_ = false;
+    return true;
   }
   truncated_ = hs_.truncated;
   // One streamed source per packed PTex table entry. The loader's coarse atlas
@@ -1665,7 +1688,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                float sampleX, float sampleY, float pixelAngle,
                                const RtCameraLens* lens,
                                std::vector<uint8_t>* rgba, std::string* err) {
-  if (!tlas_ || w < 1 || h < 1) {
+  if ((!tlas_ && gsplats_.empty()) || w < 1 || h < 1) {
     if (err) *err = "no instance TLAS / invalid size";
     return false;
   }
@@ -2279,6 +2302,23 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           }
         }
 
+        // Cycles splat motion blur: this sample's shutter time (shared by
+        // its shadow rays), inside the app's shutter segment when set.
+        g_cpuGsplatTime = 0.5f;
+        if (!gsplats_.empty() && gsplats_.motion()) {
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          uint32_t th = ((static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+                          static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+                         sx * 0x85ebca77u ^ sy * 0xc2b2ae3du) ^ 0x6b43a9b5u;
+          th ^= th >> 16; th *= 0x85ebca6bu; th ^= th >> 13; th *= 0xc2b2ae35u;
+          th ^= th >> 16;
+          g_cpuGsplatTime = float(th >> 8) * (1.0f / 16777216.0f);
+          if (gsSegCenter_ >= 0.0f)
+            g_cpuGsplatTime = std::clamp(
+                gsSegCenter_ + (g_cpuGsplatTime - 0.5f) * gsSegWidth_, 0.0f, 1.0f);
+        }
         lrt_ray ray{};
         ray.org[0] = rayOrg[0]; ray.org[1] = rayOrg[1]; ray.org[2] = rayOrg[2];
         ray.dir[0] = dir[0]; ray.dir[1] = dir[1]; ray.dir[2] = dir[2];
@@ -2291,6 +2331,45 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         const bool flatHit = Intersect(ray, &hit.t, &hit.u, &hit.v, &hitInst,
                                        &hitSrc);
         if (flatHit) hit.prim_id = static_cast<uint32_t>(hitSrc);
+        if (!gsplats_.empty()) {
+          namespace gs = lightusd::gsplat;
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          const uint32_t seed =
+              (static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+               static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+              sx * 0x85ebca77u ^ sy * 0xc2b2ae3du;
+          gs::GSplatTracer::Hit splatHit;
+          const gs::Vec3 ro = {rayOrg[0], rayOrg[1], rayOrg[2]};
+          const gs::Vec3 rd = {dir[0], dir[1], dir[2]};
+          if (gsplats_.Trace(ro, rd, ray.tmin, flatHit ? hit.t : ray.tmax, seed,
+                             &splatHit, g_cpuGsplatTime)) {
+            const gs::Vec3 c = gsplats_.Radiance(
+                splatHit, rd,
+                gsplatSrgb_ ? gs::GSplatColorSpace::SRGB
+                            : gs::GSplatColorSpace::Linear,
+                g_cpuGsplatTime);
+            // Same viewport encode as shaded surfaces (tonemap + sRGB).
+            const auto encode = [&](float value) {
+              value = std::max(value * (renderMode == 0 ? exposureMul : 1.0f),
+                               0.0f);
+              if (renderMode != 0) return std::min(value, 1.0f);
+              value = std::clamp(
+                  value * (2.51f * value + 0.03f) /
+                      (value * (2.43f * value + 0.59f) + 0.14f),
+                  0.0f, 1.0f);
+              return value <= 0.0031308f
+                         ? value * 12.92f
+                         : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+            };
+            px[0] = static_cast<uint8_t>(encode(c.x) * 255.0f);
+            px[1] = static_cast<uint8_t>(encode(c.y) * 255.0f);
+            px[2] = static_cast<uint8_t>(encode(c.z) * 255.0f);
+            px[3] = 255;
+            continue;
+          }
+        }
         if (!flatHit) {
           const auto environment = cpuEnvironment(dir);
           const auto encode = [](float value) {
@@ -2882,6 +2961,25 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                 shadow = 0.2126f * transmittance[0] +
                          0.7152f * transmittance[1] +
                          0.0722f * transmittance[2];
+              }
+              // --gsplat-kernel cycles: splats block shadow rays with the
+              // same stochastic opaque test as camera rays (Cycles'
+              // shadow_all). The seed mixes the shading point and light.
+              if (shadow > 0.0f && !gsplats_.empty()) {
+                namespace gs = lightusd::gsplat;
+                uint32_t bx, by, bz;
+                std::memcpy(&bx, &shadowRay.org[0], 4);
+                std::memcpy(&by, &shadowRay.org[1], 4);
+                std::memcpy(&bz, &shadowRay.org[2], 4);
+                const uint32_t seed = (bx * 0x9e3779b1u) ^ (by * 0x85ebca77u) ^
+                                      (bz * 0xc2b2ae3du) ^
+                                      (static_cast<uint32_t>(li) * 0x27d4eb2fu);
+                gs::GSplatTracer::Hit sh;
+                if (gsplats_.Trace({shadowRay.org[0], shadowRay.org[1],
+                                    shadowRay.org[2]},
+                                   {L[0], L[1], L[2]}, 1e-4f, maxShadowT, seed,
+                                   &sh, g_cpuGsplatTime))
+                  shadow = 0.0f;
               }
             }
             const float lightToPoint[3] = {-L[0], -L[1], -L[2]};

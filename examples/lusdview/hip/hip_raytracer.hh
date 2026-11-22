@@ -25,6 +25,14 @@ namespace lusdview {
 
 class HipRayTracer {
  public:
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
+  void setGsplatShutterSegment(float center, float width) {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
   HipRayTracer() = default;
   ~HipRayTracer();
 
@@ -55,7 +63,8 @@ class HipRayTracer {
   bool build(const DrawScene& scene, size_t maxTris, size_t maxInstances,
              std::string* err, float displacementScale = 0.0f,
              BuildProgress* progress = nullptr, bool retainForRefit = false,
-             uint32_t purposeVisibleMask = 0x3u);
+             uint32_t purposeVisibleMask = 0x3u,
+             GsplatGpuData* packedSplats = nullptr);
   bool updateMaterialConstants(int materialId,
                                const DrawMaterialCPU& material,
                                std::string* err);
@@ -147,6 +156,9 @@ class HipRayTracer {
   uintptr_t dPointDepth_{0};
   int pointCount_{0};
   int pointChunkCount_{0};
+  // --gsplat-kernel cycles (pointCount_ < 0 selects the kernel path).
+  bool gsplatCycles_{false}, gsplatSrgb_{false}, gsActive_{false};
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};  // app shutter segment
   int numVols_{0};           // UsdVol: volume count
   uintptr_t dOut_{0};        // RGBA8 output image
   size_t outCap_{0};         // bytes currently allocated for dOut_

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -14,6 +15,7 @@
 
 #include "image-writer.hh"
 #include "lusdr_context.hh"
+#include "lusdr_gsplat_cycles.hh"
 #include "tydra/materialx.hh"
 #include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
@@ -745,6 +747,46 @@ Vec3 EvalIblSpecularSplitSum(const Vec3 &spec_env, const Vec3 &f0, float brdf_a,
   return Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
 }
 
+// Shutter time in [0,1] of the camera sample being shaded on this thread.
+// Motion-blurred splats are traced at it on the camera ray and on every
+// shadow/bounce ray it spawns (Cycles keeps ray time along a path).
+static thread_local float g_gsplat_ray_time = 0.5f;
+
+// Stochastic-hit seed for a ray (Cycles relies on per-sample ray jitter; the
+// hit-position hash then decorrelates). Mixes the ray's bits.
+static uint32_t GsplatRaySeed(const lrt_ray &ray) {
+  uint32_t h = 0x811c9dc5u;
+  const float v[6] = {ray.org[0], ray.org[1], ray.org[2],
+                      ray.dir[0], ray.dir[1], ray.dir[2]};
+  for (float f : v) {
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    h = (h ^ b) * 0x01000193u;
+    h ^= h >> 15;
+  }
+  return h;
+}
+
+// Shadow/visibility test against the Cycles splats: any accepted splat in
+// (tmin, tmax) blocks (opaque stochastic hit, as Cycles' shadow_all).
+static bool OccludedGsplat(const DirectScene *direct, const Vec3 &p,
+                           const Vec3 &n, const Vec3 &l, float max_t) {
+  if (!direct || !direct->gsplat_scene) return false;
+  const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                             std::fabs(p.z));
+  const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+  const Vec3 o = Add(p, Mul(n, eps));
+  lrt_ray ray;
+  ray.org[0] = o.x; ray.org[1] = o.y; ray.org[2] = o.z;
+  ray.tmin = eps;
+  ray.dir[0] = l.x; ray.dir[1] = l.y; ray.dir[2] = l.z;
+  ray.tmax = max_t;
+  lrt_hit h;
+  return lrt_gsplat_intersect1_time(direct->gsplat_scene.get(), &ray,
+                                    g_gsplat_ray_time, GsplatRaySeed(ray),
+                                    &h) != 0;
+}
+
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
                           const Vec3 &ray_dir, float tmin, float tmax,
                           DirectHit *best) {
@@ -758,6 +800,37 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
   ray.dir[1] = ray_dir.y;
   ray.dir[2] = ray_dir.z;
   ray.tmax = tmax;
+  if (direct->gsplat_scene && direct->gsplat_tracer) {
+    lrt_ray gr = ray;
+    gr.tmax = std::min(tmax, best->t);
+    lrt_hit h;
+    if (lrt_gsplat_intersect1_time(direct->gsplat_scene.get(), &gr,
+                                   g_gsplat_ray_time, GsplatRaySeed(gr), &h) &&
+        h.t < best->t) {
+      // Cycles' default splat shader: pure emission, no lighting response.
+      lightusd::gsplat::GSplatTracer::Hit th;
+      th.t = h.t;
+      th.index = h.prim_id;
+      const auto cs = direct->gsplat_srgb ? lightusd::gsplat::GSplatColorSpace::SRGB
+                                          : lightusd::gsplat::GSplatColorSpace::Linear;
+      lightusd::gsplat::Vec3 c;
+      if (direct->gsplat_dc) {
+        float dcv[3];
+        GSplatDcAt(*direct->gsplat_dc, direct->gsplat_nkeys,
+                   direct->gsplat_tracer->size(), h.prim_id, g_gsplat_ray_time, dcv);
+        c = direct->gsplat_tracer->Radiance(th, {ray_dir.x, ray_dir.y, ray_dir.z},
+                                            cs, dcv);
+      } else {
+        c = direct->gsplat_tracer->Radiance(th, {ray_dir.x, ray_dir.y, ray_dir.z}, cs);
+      }
+      best->t = h.t;
+      best->n = Normalize(Mul(ray_dir, -1.0f));
+      best->base_color = Vec3{0.0f, 0.0f, 0.0f};
+      best->emission = Vec3{c.x, c.y, c.z};
+      best->hit = true;
+      best->unlit = true;
+    }
+  }
   auto test_scene = [&](lrt_tri_scene *scene, const std::vector<TriInfo> &info,
                         size_t first, size_t count, bool sphere) {
     if (!scene) return;
@@ -781,6 +854,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->base_color = ti.base_color;
     best->emission = ti.emission;
     best->hit = true;
+    best->unlit = false;
   };
   test_scene(direct->spheres.get(), direct->sphere_info, 0,
              direct->sphere_info.size(), true);
@@ -809,6 +883,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
     best->base_color = ti.base_color;
     best->emission = ti.emission;
     best->hit = true;
+    best->unlit = false;
   };
   if (!direct->ellipse_chunks.empty()) {
     for (const EllipseSceneChunk &chunk : direct->ellipse_chunks)
@@ -830,6 +905,7 @@ bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
         best->base_color = tet.base_color;
         best->emission = tet.emission;
         best->hit = true;
+        best->unlit = false;
       }
     }
   }
@@ -1641,6 +1717,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri_openpbr = hit_openpbr;
   }
   if (primary_hit_t) *primary_hit_t = hit_t;
+  if (direct_hit.hit && direct_hit.unlit && opt.aov == CaptureAov::Color)
+    return direct_hit.emission;  // Cycles splat: emission shader only
   if (!IsMaterialXAov(opt.aov)) {
     if (opt.aov == CaptureAov::Depth) return Vec3{hit_t, hit_t, hit_t};
     if (opt.aov == CaptureAov::WorldNormal) return Normalize(tri.n);
@@ -1861,9 +1939,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
                       float omax) -> bool {
-    return tlas ? OccludedTLAS(tlas, op, on, ol, omax)
-                : Occluded(scene, tris, op, on, ol, omax, direct,
-                           opt.purpose_mask, triangle_chunks);
+    return (tlas ? OccludedTLAS(tlas, op, on, ol, omax)
+                 : Occluded(scene, tris, op, on, ol, omax, direct,
+                            opt.purpose_mask, triangle_chunks)) ||
+           OccludedGsplat(direct, op, on, ol, omax);
   };
   Vec3 n = tri.n;
   if (Dot(n, ray_dir) > 0.0f) {
@@ -3092,7 +3171,14 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
   const bool data_aov = opt.aov != CaptureAov::Color;
   const bool linear_color_pfm = opt.mtlx_runtime && opt.path_trace &&
       opt.output.size() >= 4 && opt.output.substr(opt.output.size()-4) == ".pfm";
-  const bool float_output = data_aov || linear_color_pfm;
+  // --gsplat-kernel cycles: .exr is scene-linear (no display transform), as
+  // in the splat-only Cycles renderer and Blender's EXR output.
+  std::string out_ext = opt.output.size() >= 4
+                            ? opt.output.substr(opt.output.size() - 4)
+                            : std::string();
+  for (char &ch : out_ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+  const bool linear_color_exr = opt.gsplat_cycles && out_ext == ".exr";
+  const bool float_output = data_aov || linear_color_pfm || linear_color_exr;
   img.bpp = float_output ? 32 : 8;
   img.format = float_output ? lightusd::Image::PixelFormat::Float : lightusd::Image::PixelFormat::UInt;
   img.data.resize(size_t(img.width) * size_t(img.height) * 4 * (float_output ? 4 : 1));
@@ -3150,20 +3236,36 @@ lightusd::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           PixelJitter(s, spp, &jx, &jy);
           float fx = (float(x) + jx) / float(img.width);
           float fy = (float(y) + jy) / float(img.height);
+          if (direct && direct->gsplat_motion) {
+            // Stratified shutter time per pixel (Cramer-Patterson rotation);
+            // it drives the camera and every splat along this sample's path.
+            uint32_t hpx = (uint32_t(y) * uint32_t(img.width) + uint32_t(x)) *
+                           0x9e3779b1u;
+            hpx ^= hpx >> 16;
+            hpx *= 0x85ebca6bu;
+            hpx ^= hpx >> 13;
+            const float tm = (float(s) + 0.5f) / float(spp) +
+                             float(hpx >> 8) * (1.0f / 16777216.0f);
+            g_gsplat_ray_time = tm - std::floor(tm);
+          }
+          const CameraFrame sample_camera =
+              direct && direct->camera_keys.size() > 1
+                  ? LerpCameraFrame(direct->camera_keys, g_gsplat_ray_time)
+                  : camera;
           Vec3 org;
           Vec3 dir;
-          MakeRay(camera, aspect, fx, fy, &org, &dir);
+          MakeRay(sample_camera, aspect, fx, fy, &org, &dir);
           // One-pixel ray differentials for texture footprint / mip LOD
           // (origin + dir cover both pinhole and ortho cameras).
           RayDiff rd;
-          MakeRay(camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
+          MakeRay(sample_camera, aspect, fx + 1.0f / float(img.width), fy, &rd.ox,
                   &rd.dx);
-          MakeRay(camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
+          MakeRay(sample_camera, aspect, fx, fy + 1.0f / float(img.height), &rd.oy,
                   &rd.dy);
           rd.valid = true;
-          CameraFrame ray_camera=camera;
-          if (!camera.ortho) {
-            const float cosine=std::max(1.0e-6f,Dot(camera.forward,dir));
+          CameraFrame ray_camera=sample_camera;
+          if (!sample_camera.ortho) {
+            const float cosine=std::max(1.0e-6f,Dot(sample_camera.forward,dir));
             ray_camera.znear/=cosine; ray_camera.zfar/=cosine;
           }
           float primary_hit_t = ray_camera.zfar;

@@ -77,6 +77,27 @@ scope; new properties on supported schemas require fallback/validation tests.
   the renderer-neutral LightUSD API.
 - `UsdVol` ParticleField schemas: registered and validated, with lazy typed
   accessors and Gaussian conversion recognizing official float/half attributes.
+  `radiance:sphericalHarmonicsCoefficients` is read per particle, band-major
+  (`(degree+1)^2` RGB triples, m = -l..l), using the reference 3DGS real-SH
+  basis. Colour is `SH(dir) + 0.5`. That radiance is linear per USD; Blender
+  5.3 treats splats as sRGB (`--gsplat-colorspace srgb` matches it). The
+  Cycles-ported kernel (`src/tydra/gsplat-kernel.hh`, `--gsplat-kernel cycles`)
+  intersects full 3D ellipsoids; the default disc carriers keep two axes.
+  lusdrender traces it through LightRT (`lightrt_c_gsplat.h`) on the CPU,
+  Vulkan (`-vk`) or HIP (`-hip`), chunked under `-maxVram` (default 4 GiB).
+  The schema defaults, validation rules and Cycles rendering semantics are
+  specified in [gsplat-rendering-spec.md](gsplat-rendering-spec.md).
+- 3D Gaussian splat PLY (`src/reader/ply-reader.cc`, usdPly-style): a `.ply`
+  opens as a root layer or a reference/payload target. It contains one
+  `ParticleField3DGaussianSplat` prim, `/Splats`, which is the default prim.
+  Decoding follows the reference 3DGS layout, as Blender 5.3's importer does:
+  sigmoid(opacity), exp(scale), `rot_0..3` = wxyz, and `f_rest_*`
+  channel-major.
+- Blender 5.3 USD export of splats is lossy. It writes a `Points` prim with
+  `primvars:scale`, `primvars:rotation` and `primvars:radiance:sh_*`, but drops
+  the float4 `radiance:base` (DC colour and opacity). Blender's PLY exporter
+  writes no splat vertices. `tests/gsplat/blender_make_and_export.py` exports
+  Blender splats losslessly as OpenUSD ParticleField USDA and 3DGS PLY.
 - `UsdRender` settings, products, variables, and passes: registered, validated,
   and exposed through typed accessors. `lusdrender` resolves settings/products/
   passes, resolution, camera, purposes, and local render-visibility pruning.

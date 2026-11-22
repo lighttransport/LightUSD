@@ -54,8 +54,25 @@ bool ExtractScenePreviewArguments(int* argc, char** argv,
                                   std::string* error) {
   if (!argc || !argv || !request) return false;
   int keep = 1;
+  for (int i = 1; i + 1 < *argc; ++i)
+    if (std::string(argv[i]) == "--preview-preset") {
+      ScenePreviewPreset preset;
+      if (!ParseScenePreviewPreset(argv[i + 1], &preset)) {
+        if (error)
+          *error = std::string("unknown --preview-preset: ") + argv[i + 1] +
+                   " (fast|standard|quality)";
+        return false;
+      }
+      ApplyScenePreviewPreset(preset, &request->options);
+      request->preset = static_cast<int>(preset);
+    }
   for (int i = 1; i < *argc; ++i) {
     const std::string a = argv[i];
+    if (a == "--preview-preset" && i + 1 < *argc) {
+      request->enabled = true;
+      ++i;
+      continue;
+    }
     if (a == "--scene-preview") {
       request->enabled = true;
       continue;

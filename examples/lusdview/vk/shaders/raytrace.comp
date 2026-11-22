@@ -5,6 +5,7 @@
 // hard shadows from one shadow ray. Supports GPU instancing (one BLAS shared by
 // many TLAS instances), per-vertex + per-instance displayColor, and authored
 // (interpolated) vs geometric (face) normals.
+#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : require
@@ -150,6 +151,14 @@ layout(set = 0, binding = 15, scalar) readonly buffer RtPoints { RtPoint points[
 layout(set = 0, binding = 16, scalar) readonly buffer RtPointNodes { RtPointNode pointNodes[]; };
 layout(set = 0, binding = 17, scalar) readonly buffer RtPointOrder { int pointOrder[]; };
 layout(set = 0, binding = 18, scalar) readonly buffer RtPointChunks { RtPointChunk pointChunks[]; };
+// --gsplat-kernel cycles: the same four bindings carry the LightRT splat
+// encoding instead (gsplat_gpu_data.hh): 15 = splats (16 floats), 16 = BVH
+// nodes (8 words), 17 = chunk table {nodeFirst, splatFirst}, 18 = per-field
+// inverse linear (12 floats) + SH coefficients. Selected by pointParams.y bit 31.
+layout(set = 0, binding = 15, scalar) readonly buffer GsSplats { float gsS[]; };
+layout(set = 0, binding = 16, scalar) readonly buffer GsNodes { uint gsN[]; };
+layout(set = 0, binding = 17, scalar) readonly buffer GsChunks { int gsC[]; };
+layout(set = 0, binding = 18, scalar) readonly buffer GsShData { float gsF[]; };
 // Native compressed Ptex images. Unused entries are bound to the white image;
 // descriptor indexing lets RT sample the same BC7 VkImage that raster uses.
 #ifndef LUSDVIEW_RT_PTEXTURE_IMAGE_CAP
@@ -1926,6 +1935,29 @@ bool pointBoxHit(RtPointNode n, vec3 o, vec3 inv, float best) {
          min(min(hi.x, hi.y), min(hi.z, best));
 }
 
+// Blender Cycles 3D Gaussian splat kernel (Apache-2.0, Blender Foundation;
+// ported via src/external/lightrt/lightrt_c_gsplat.c): peak response along the
+// ray in the unit Gaussian frame, stochastic opaque acceptance
+// hash(x, seed) <= alpha, closest accepted hit.
+bool gsplatCyclesMode() { return (pc.pointParams.y & 0x80000000u) != 0u; }
+// pointParams.z = chunk count | motion keys << 24 in Cycles mode.
+uint gsChunkCount() { return pc.pointParams.z & 0xffffffu; }
+uint gsKeyCount() { return max(pc.pointParams.z >> 24u, 1u); }
+#include "../../../../src/external/lightrt/vk/shaders/gsplat_cycles.glsl"
+
+// Shadow-ray visibility through Cycles splats: 0 when an accepted splat lies
+// in (0, maxT), as Cycles' shadow_all treats splats as opaque stochastic hits.
+uint gsPointSeed(vec3 p, uint salt) {
+  return hashU(floatBitsToUint(p.x) ^ hashU(floatBitsToUint(p.y) ^
+               hashU(floatBitsToUint(p.z) ^ salt)));
+}
+float gsShadow(vec3 o, vec3 L, float maxT, uint seed) {
+  if (!gsplatCyclesMode()) return 1.0;
+  int h;
+  traceCyclesSplats(o, L, maxT, seed, h);
+  return h >= 0 ? 0.0 : 1.0;
+}
+
 float tracePointEllipses(vec3 o, vec3 d, out int hit, out float gaussianWeight) {
   hit = -1;
   gaussianWeight = 0.0;
@@ -2555,6 +2587,10 @@ vec3 ptShadowVisibility(PtSurface s, vec3 direction, float maxT,
   vec3 origin = s.p + s.n * 1.0e-4;
   float cursor = 1.0e-4;
   vec3 visibility = vec3(1.0);
+  if (gsShadow(origin, direction, maxT,
+               gsPointSeed(origin, lightIndex * 977u +
+                                       uint(pc.sceneMin.w + 0.5) * 26699u)) <= 0.0)
+    return vec3(0.0);
   [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
     uint iid = 0u; int prim = -1; vec2 bc = vec2(0.0); bool front = true;
     mat4x3 o2w; float hitT = maxT;
@@ -2704,8 +2740,20 @@ vec3 traceProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
     uint iid = 0u; int prim = 0; vec2 bc = vec2(0); bool front = true;
     mat4x3 o2w; float hitT = 1.0e30;
-    if (!traceAcceptedPrimary(ro, rd, 1.0e-4, 1.0e30, iid, prim, bc,
-                              front, o2w, hitT)) {
+    // --gsplat-kernel cycles: splats are emission-only geometry on camera and
+    // bounce rays. A splat in front of the next surface ends the path with its
+    // emission (BSDF-sampled; splats are not light-sampled, weight 1).
+    int gsId = -1;
+    float gsT = 1.0e30;
+    if (gsplatCyclesMode() && !inSubsurface)
+      gsT = traceCyclesSplats(ro, rd, 1.0e30,
+                              hashU(floatBitsToUint(rnd(seed)) ^ bounce), gsId);
+    if (!traceAcceptedPrimary(ro, rd, 1.0e-4, gsId >= 0 ? gsT : 1.0e30, iid,
+                              prim, bc, front, o2w, hitT)) {
+      if (gsId >= 0) {
+        radiance += throughput * cyclesSplatRadiance(gsId, rd);
+        break;
+      }
       if (!inSubsurface) {
         float mis = previousDelta
                         ? 1.0
@@ -3004,6 +3052,19 @@ void main() {
   // sample point inside the pixel by a Halton(2,3) offset for anti-aliasing.
   vec2 jit = accumulate ? (vec2(halton(fi + 1u, 2u), halton(fi + 1u, 3u)) - 0.5)
                         : vec2(0.0);
+  // Motion-blurred splats: stratified shutter time (Halton base 5 over the
+  // accumulated frames, Cramer-Patterson rotated per pixel).
+  // When the app renders the shutter in segments (camera/mesh motion,
+  // --pt-motion-segments), context.z/.w give this segment's centre and width
+  // so splats move in step with the camera.
+  if (gsplatCyclesMode() && gsKeyCount() > 1u) {
+    float jit = fract(halton(fi + 1u, 5u) +
+                      float(hashU(uint(px.y) * uint(size.x) + uint(px.x)) >> 8u) *
+                          (1.0 / 16777216.0));
+    g_gsTime = pc.context.z >= 0.0
+                   ? clamp(pc.context.z + (jit - 0.5) * pc.context.w, 0.0, 1.0)
+                   : jit;
+  }
   vec2 uv = (vec2(px) + 0.5 + jit) / vec2(size);
   vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec4 nearH = pc.invViewProj * vec4(ndc, 0.0, 1.0);
@@ -3075,7 +3136,13 @@ void main() {
   bool primaryPoint = false;
   int pointId = -1;
   float pointWeight = 0.0;
-  float pointT = tracePointEllipses(origin, dir, pointId, pointWeight);
+  const bool cyclesSplats = gsplatCyclesMode();
+  float pointT = cyclesSplats
+      ? traceCyclesSplats(origin, dir, 1e30,
+                          hashU(uint(px.y) * uint(size.x) + uint(px.x)) ^
+                              hashU(fi * 0x9e3779b9u + 1u),
+                          pointId)
+      : tracePointEllipses(origin, dir, pointId, pointWeight);
   if (pointId >= 0) {
     primaryHit = true; primaryPoint = true; primaryT = pointT;
   }
@@ -3118,7 +3185,12 @@ void main() {
     }
   }
 
-  if (!productionPath && primaryPoint) {
+  if (!productionPath && primaryPoint && cyclesSplats) {
+    // Cycles' default splat shader is pure emission.
+    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 6) outc = vec3(clamp(primaryT / max(pc.lightDir.w, 1e-6), 0.0, 1.0), 0.0, 0.0);
+    else outc = cyclesSplatRadiance(pointId, dir);
+  } else if (!productionPath && primaryPoint) {
     RtPoint p = points[pointId];
     vec3 N = normalize(p.normal);
     if (dot(N, dir) > 0.0) N = -N;
@@ -3541,6 +3613,11 @@ void main() {
             if (rayQueryGetIntersectionTypeEXT(sq, true) ==
                 gl_RayQueryCommittedIntersectionTriangleEXT) shadow = 0.0;
           }
+          if (shadow > 0.0)
+            shadow *= gsShadow(hit + N * 1.0e-3, L,
+                               int(l0.x + 0.5) == 5 ? 1.0e30
+                                                    : sqrt(1.0 / attenuation),
+                               gsPointSeed(hit, li * 977u + fi * 26699u));
         }
         vec3 H = normalize(V + L);
         float nh = max(dot(N, H), 0.0), nv = max(dot(N, V), 1.0e-4);
@@ -4244,6 +4321,9 @@ void main() {
           }
           if (tailHit) shadow = 0.0;
         }
+        if (shadow > 0.0)
+          shadow *= gsShadow(shadowOrigin, L, maxShadowT,
+                             gsPointSeed(hit, li * 977u + fi * 26699u));
       }
       vec3 H = normalize(L + V);
       vec3 tangent = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0))

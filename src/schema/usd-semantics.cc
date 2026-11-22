@@ -94,4 +94,3 @@ std::vector<std::string> ComputeUniqueSemanticsLabels(const Stage& stage, const 
 }
 
 }  // namespace lightusd
-

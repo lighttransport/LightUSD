@@ -343,6 +343,8 @@ int main(int argc, char** argv) {
   std::string cudaCacheDir;   // --cuda-cache-dir: override compiled PTX cache
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   bool wantCpuRt = false;     // --cpu-rt: CPU (lightrt_c) ray tracer
+  bool gsplatCycles = false, gsplatSrgb = false;  // --gsplat-kernel/-colorspace
+  int gsplatMotionSteps = 3;  // --gsplat-motion-steps (camera shutter)
   int rtSamples = 1;          // --rt-samples: AA supersamples for RT paths
   bool wantPathTrace = false;
   lusdview::PathTraceSettings pathTraceSettings;
@@ -397,6 +399,7 @@ int main(int argc, char** argv) {
   bool useCoreLoader = true;              // core is the default scene path
   bool noCull = false;                     // --no-cull: disable frustum culling
   bool showGrid = true;                    // --no-grid: deterministic clean capture
+  std::string backgroundPreset;            // --background black|white
   bool showSkeleton = true;                // --no-skeleton: hide skeleton helpers
   float camDolly = 1.0f;                    // --cam-dolly: fitted-distance scale
   std::string cameraName;                   // --camera: USD camera to frame (--core)
@@ -708,6 +711,12 @@ int main(int argc, char** argv) {
       LOGW("--legacy-load was removed; every scene uses the core loader");
     } if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
+    } if (std::strcmp(argv[i], "--background") == 0 && i + 1 < argc) {
+      backgroundPreset = argv[++i];
+      if (backgroundPreset != "black" && backgroundPreset != "white") {
+        LOGE("--background expects black|white");
+        return 1;
+      }
     } if (std::strcmp(argv[i], "--no-grid") == 0) {
       showGrid = false;
     } if (std::strcmp(argv[i], "--no-skeleton") == 0) {
@@ -1116,6 +1125,26 @@ int main(int argc, char** argv) {
       wantHip = true;
     } if (std::strcmp(argv[i], "--cpu-rt") == 0) {
       wantCpuRt = true;
+    } if (std::strcmp(argv[i], "--gsplat-kernel") == 0 && i + 1 < argc) {
+      const std::string k = argv[++i];
+      if (k != "cycles" && k != "disc") {
+        LOGE("--gsplat-kernel expects disc|cycles");
+        return 1;
+      }
+      gsplatCycles = k == "cycles";
+    } if (std::strcmp(argv[i], "--gsplat-motion-steps") == 0 && i + 1 < argc) {
+      gsplatMotionSteps = std::atoi(argv[++i]);
+      if (gsplatMotionSteps < 1 || gsplatMotionSteps > 64) {
+        LOGE("--gsplat-motion-steps expects 1..64");
+        return 1;
+      }
+    } if (std::strcmp(argv[i], "--gsplat-colorspace") == 0 && i + 1 < argc) {
+      const std::string k = argv[++i];
+      if (k != "linear" && k != "srgb") {
+        LOGE("--gsplat-colorspace expects linear|srgb");
+        return 1;
+      }
+      gsplatSrgb = k == "srgb";
     } if (std::strcmp(argv[i], "--rt-samples") == 0 && i + 1 < argc) {
       rtSamples = std::atoi(argv[++i]);
       if (rtSamples < 1) rtSamples = 1;
@@ -1340,6 +1369,7 @@ int main(int argc, char** argv) {
           "  --no-cull / --no-robust-frame  Disable frustum culling or robust "
           "outlier-resistant auto framing.\n"
           "  --no-grid     Hide the ground grid (useful for deterministic captures).\n"
+          "  --background black|white  Viewport background / RT environment colour.\n"
           "  --no-skeleton Hide skeleton helper overlays (useful for AOV comparisons).\n"
           "  --dome-ibl off|low|high  Control DomeLight IBL precomputation.\n"
           "  --envmap PATH  Override authored DomeLights with an HDR/EXR/image.\n"
@@ -1767,7 +1797,12 @@ int main(int argc, char** argv) {
     if (ptSamples) pathTraceSettings.targetSamples = *ptSamples;
     if (ptMaxDepth) pathTraceSettings.maxDepth = *ptMaxDepth;
     if (ptRrDepth) pathTraceSettings.russianRouletteDepth = *ptRrDepth;
-    if (ptMotionSegments) pathTraceSettings.motionSegments = *ptMotionSegments;
+    // Without --pt-motion-segments the app raises the segment count to 16
+    // once a camera with an open shutter is framed (App::applyShutterDefaults).
+    if (ptMotionSegments) {
+      pathTraceSettings.motionSegments = *ptMotionSegments;
+      pathTraceSettings.motionSegmentsExplicit = true;
+    }
     if (ptSeed) pathTraceSettings.seed = *ptSeed;
     if (ptMaxSssEvents)
       pathTraceSettings.maxSubsurfaceEvents = *ptMaxSssEvents;
@@ -2000,6 +2035,9 @@ int main(int argc, char** argv) {
   // screenshots are complete.
   {
     lusdview::LoadOptions lo;
+    lo.gaussianKernelData = gsplatCycles;
+    lo.gaussianMotionCamera = cameraName;
+    lo.gaussianMotionSteps = gsplatMotionSteps;
     if (rasterQualityHigh && !materialPurposeExplicit) materialPurpose = "full";
     if (rasterQualityHigh && !domeIblExplicit) textureOptions.domeIbl = 2;
     lo.materialPurpose = materialPurpose;
@@ -2172,6 +2210,7 @@ int main(int argc, char** argv) {
     app.setScenePreviewLods(scenePreview.lods,scenePreview.lod_pixel_error);
   app.setCullEnabled(!noCull);
   app.setShowGrid(showGrid);
+  if (!backgroundPreset.empty()) app.setBackgroundPreset(backgroundPreset == "white");
   app.setShowSkeleton(showSkeleton || virtualHumanProfile);
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
@@ -2210,7 +2249,14 @@ int main(int argc, char** argv) {
   app.setCudaRtBackend(cudaRtBackend);
   app.setCudaCacheDir(cudaCacheDir);
   app.setHipRt(wantHip);
+  if (gsplatCycles && !wantCpuRt && !wantRt && !wantCuda && !wantHip) {
+    // The Cycles splat kernel runs in the ray tracers (CPU, Vulkan --rt,
+    // --cuda, --hip); raster has no equivalent, so default to the CPU one.
+    LOGW("--gsplat-kernel cycles: no ray tracer requested; using --cpu-rt");
+    wantCpuRt = true;
+  }
   app.setCpuRt(wantCpuRt);
+  app.setGsplatKernel(gsplatCycles, gsplatSrgb);
   app.setRtSamples(rtSamples);
   app.setPathTraceSettings(pathTraceSettings);
   app.setLinearOutput(linearOutput);
