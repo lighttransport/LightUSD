@@ -107,7 +107,7 @@ if [ "$GPU_ACCEL" = nvidia ] &&
 fi
 
 markers=("timing: first useful frame" "timing: full scene converted" \
-         "next timing: geometry estimates")
+         "core timing: geometry estimates")
 if [ "$ENDPOINT" = upload ]; then
   markers+=("timing: full scene uploaded and presented")
 fi

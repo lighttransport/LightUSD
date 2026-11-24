@@ -8,17 +8,12 @@ set(LUSDDIFF_TARGET "lusddiff")
 add_executable(${LUSDDIFF_TARGET}
     lusddiff.cc
     collection-diff.cc
+    instance-canon.cc
     )
 add_sanitizers(${LUSDDIFF_TARGET})
 
-target_include_directories(${LUSDDIFF_TARGET} PRIVATE
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR})
-if(NOT TARGET lightusd_next)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
-                   ${CMAKE_BINARY_DIR}/lusddiff_next_build)
-endif()
-target_link_libraries(${LUSDDIFF_TARGET} ${LIGHTUSD_TARGET_STATIC} lightusd_next)
+target_include_directories(${LUSDDIFF_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(${LUSDDIFF_TARGET} PRIVATE lightusd_core)
 
 # Warning flags (same policy as the core library)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -72,4 +67,34 @@ def Xform "Root" {
     COMMAND lusddiff -n -q -f
             ${LUSDDIFF_TESTDATA_DIR}/composed.usda
             ${LUSDDIFF_TESTDATA_DIR}/flattened.usda)
+endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  foreach(fixture uint2-type-001 uint2-array-001 sceneLibrary-001)
+    add_test(NAME core_reader_parity_${fixture}
+      COMMAND $<TARGET_FILE:lusddiff>
+        ${PROJECT_SOURCE_DIR}/tests/usda/${fixture}.usda
+        ${PROJECT_SOURCE_DIR}/tests/usdc/${fixture}.usdc)
+    set_tests_properties(core_reader_parity_${fixture} PROPERTIES LABELS "core;readers")
+  endforeach()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME core_reader_extension_parity
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-reader-extension-parity.py
+        $<TARGET_FILE:lusddiff> ${PROJECT_SOURCE_DIR})
+    set_tests_properties(core_reader_extension_parity PROPERTIES LABELS "core;readers;diff")
+  endif()
+endif()
+
+if(LIGHTUSD_BUILD_TESTS AND TARGET lusdcat)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME core_reader_variant_parity
+      COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-reader-variant-parity.py
+        $<TARGET_FILE:lusddiff> $<TARGET_FILE:lusdcat> ${PROJECT_SOURCE_DIR})
+    set_tests_properties(core_reader_variant_parity PROPERTIES LABELS "core;readers;variants")
+  endif()
 endif()

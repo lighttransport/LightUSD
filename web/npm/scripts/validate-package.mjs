@@ -21,12 +21,6 @@ const REQUIRED_STAGED_FILES = [
   'lightusd_64.js',
   'lightusd_64.wasm',
   'lightusd_64.wasm.zst',
-  'lightusd_next.js',
-  'lightusd_next.wasm',
-  'lightusd_next.wasm.zst',
-  'lightusd_next_64.js',
-  'lightusd_next_64.wasm',
-  'lightusd_next_64.wasm.zst',
   'lightusd_geometry.js',
   'lightusd_geometry.wasm',
   'lightusd_geometry.wasm.zst',
@@ -135,36 +129,40 @@ assert.equal(require.resolve('lightusd/lightusd.wasm').endsWith('lightusd.wasm')
 assert.equal(require.resolve('lightusd/lightusd.wasm.zst').endsWith('lightusd.wasm.zst'), true);
 assert.equal(require.resolve('lightusd/lightusd_64.wasm').endsWith('lightusd_64.wasm'), true);
 assert.equal(require.resolve('lightusd/lightusd_64.wasm.zst').endsWith('lightusd_64.wasm.zst'), true);
-assert.equal(require.resolve('lightusd/lightusd_next.wasm').endsWith('lightusd_next.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd_next.wasm.zst').endsWith('lightusd_next.wasm.zst'), true);
-assert.equal(require.resolve('lightusd/lightusd_next_64.wasm').endsWith('lightusd_next_64.wasm'), true);
-assert.equal(require.resolve('lightusd/lightusd_next_64.wasm.zst').endsWith('lightusd_next_64.wasm.zst'), true);
 
-// Instantiate the lean next-only modules (wasm32 + wasm64) and check the
-// C API surface and independently linked features used by the next-first loader.
-for (const nextModule of ['lightusd/lightusd_next.js', 'lightusd/lightusd_next_64.js']) {
-  const factory = (await import(nextModule)).default;
-  assert.equal(typeof factory, 'function', nextModule + ' default export is a module factory');
+// Instantiate the core modules (wasm32 + wasm64) and check the C API surface
+// and the independently linked features used by the loader.
+for (const coreModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
+  const factory = (await import(coreModule)).default;
+  assert.equal(typeof factory, 'function', coreModule + ' default export is a module factory');
   const instance = await factory();
   for (const name of ['geometry', 'raytrace', 'validator', 'exr']) {
     const feature = await instance.loadFeature(name);
     assert.notEqual(feature.HEAPU8.buffer, instance.HEAPU8.buffer);
     assert.deepEqual(feature.featureInfo, instance.featureInfo);
   }
-  for (const api of ['NextUSDZConverterNative', 'NextFlattenSession', 'RenderStream']) {
-    assert.equal(typeof instance[api], 'function', nextModule + ' exposes ' + api);
+  for (const api of ['USDZConverterNative', 'FlattenSession', 'RenderStream']) {
+    assert.equal(typeof instance[api], 'function', coreModule + ' exposes ' + api);
   }
 }
 
-// The default lightusd product is the explicit legacy-compatible module.
-for (const legacyModule of ['lightusd/lightusd.js', 'lightusd/lightusd_64.js']) {
-  const factory = (await import(legacyModule)).default;
-  assert.equal(typeof factory, 'function', legacyModule + ' default export is a module factory');
-  const instance = await factory();
-  assert.equal(typeof instance.LightUSDLoaderNative, 'function',
-    legacyModule + ' exposes the legacy loader');
-  assert.equal(typeof instance.NextUSDZConverterNative, 'undefined',
-    legacyModule + ' must not silently include the next-only converter');
+// The legacy and combined modules are never published.
+for (const legacyModule of ['lightusd/lightusd_legacy.js', 'lightusd/lightusd_legacy_64.js',
+                            'lightusd/lightusd_combined.js',
+                            'lightusd/lightusd_combined_64.js']) {
+  await assert.rejects(import(legacyModule), legacyModule + ' must not be published');
+}
+
+// The loader runs on the core module; a requested legacy backend is ignored
+// with a warning.
+for (const useMemory64 of [false, true]) {
+  for (const backend of ['core', 'legacy']) {
+    const loader = new pkg.LightUSDLoader();
+    await loader.init({ backend, useMemory64 });
+    const usda = new TextEncoder().encode('#usda 1.0\\ndef Xform "Root" {}\\n');
+    const scene = await loader.parseAsync(usda.buffer, 'root.usda', { backend });
+    assert.ok(scene, 'loader parses with backend=' + backend + ' wasm64=' + useMemory64);
+  }
 }
 `;
 

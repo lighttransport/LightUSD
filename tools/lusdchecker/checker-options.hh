@@ -7,7 +7,7 @@ struct CheckerOptions {
   std::string input;
   std::string usage_error;
   std::string output = "stdout";
-  lightusd::next::ValidationOptions groups = lightusd::next::MakeValidateAllOptions();
+  lightusd::ValidationOptions groups = lightusd::MakeValidateAllOptions();
   size_t max_memory_mb = 1024;
   bool json = false;
   bool sarif = false;
@@ -39,8 +39,8 @@ struct CheckerOptions {
 };
 std::vector<std::string> Split(const std::string&, char);
 std::vector<std::string> KeywordToGroups(const std::string&);
-bool SetGroups(const std::string&, lightusd::next::ValidationOptions*, std::string*);
+bool SetGroups(const std::string&, lightusd::ValidationOptions*, std::string*);
 bool NormalizeOptions(CheckerOptions*, std::string*);
-int RunConfiguredChecker(CheckerOptions, const lightusd::next::ValidationRegistry&,
+int RunConfiguredChecker(CheckerOptions, const lightusd::ValidationRegistry&,
                          const Environment* = nullptr);
 }

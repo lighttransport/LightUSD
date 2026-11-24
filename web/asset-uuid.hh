@@ -2,6 +2,6 @@
 #pragma once
 #include <string>
 
-namespace lightusd::web_next {
+namespace lightusd::web_core {
 std::string GenerateAssetUuid();
 }

@@ -45,11 +45,20 @@ def Xform "World" {
 }
 USDA
 
+python3 - "$OUT" <<'PY'
+import pathlib,sys,zipfile
+root=pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(root/"clip.usdz",'w',compression=zipfile.ZIP_STORED) as archive:
+ archive.write(root/"clip.usda","clip.usda")
+ for image in sorted(root.iterdir()):
+  if image.suffix.lower() in ('.png','.ppm','.jpg','.jpeg','.exr'): archive.write(image,image.name)
+PY
+
 render() {
   local backend="$1" loader="$2" camera="$3" image="$4" log="$5"
   local args=(--backend "$backend" --config "$OUT/config.json" --camera "$camera"
               --frames 3 --no-grid --screenshot "$image" "$OUT/clip.usda")
-  [ "$loader" = legacy ] && args=(--legacy-load "${args[@]}")
+  [ "$loader" = packaged ] && args[${#args[@]}-1]="$OUT/clip.usdz"
   if [ "$backend" = vk ]; then
     "$BIN" --headless "${args[@]}" >"$log" 2>&1
   else
@@ -58,7 +67,7 @@ render() {
 }
 
 for backend in gl vk; do
-  for loader in next legacy; do
+  for loader in loose packaged; do
     render "$backend" "$loader" /World/Full "$OUT/$backend-$loader-full.ppm" "$OUT/$backend-$loader-full.log" || {
       if [ "$backend" = vk ] && grep -Eqi 'Vulkan.*(unavailable|failed)|no Vulkan' "$OUT/$backend-$loader-full.log"; then
         echo "SKIP: Vulkan unavailable"; exit "$SKIP"
@@ -94,7 +103,7 @@ root = pathlib.Path(sys.argv[1])
 counts = {}
 foreground_counts = {}
 for backend in ("gl", "vk"):
-    for loader in ("next", "legacy"):
+    for loader in ("loose", "packaged"):
         wf, hf, full = foreground(root / f"{backend}-{loader}-full.ppm")
         wc, hc, clipped = foreground(root / f"{backend}-{loader}-clipped.ppm")
         if (wf, hf) != (wc, hc) or full < 1000:
@@ -108,16 +117,16 @@ for backend in ("gl", "vk"):
         counts[f"{backend}-{loader}"] = ratio
         foreground_counts[f"{backend}-{loader}-full"] = full
         foreground_counts[f"{backend}-{loader}-clipped"] = clipped
-    if abs(counts[f"{backend}-next"] - counts[f"{backend}-legacy"]) > 0.02:
-        raise SystemExit(f"FAIL: {backend} next/legacy clipping ratios differ: {counts}")
+    if abs(counts[f"{backend}-loose"] - counts[f"{backend}-packaged"]) > 0.02:
+        raise SystemExit(f"FAIL: {backend} loose/USDZ clipping ratios differ: {counts}")
     for camera in ("full", "clipped"):
-        a = foreground_counts[f"{backend}-next-{camera}"]
-        b = foreground_counts[f"{backend}-legacy-{camera}"]
+        a = foreground_counts[f"{backend}-loose-{camera}"]
+        b = foreground_counts[f"{backend}-packaged-{camera}"]
         if abs(a-b) > max(a, b) * 0.02:
             raise SystemExit(
-                f"FAIL: {backend} next/legacy {camera} coverage differs: {a} vs {b}")
-if abs(counts["gl-next"] - counts["vk-next"]) > 0.08:
+                f"FAIL: {backend} loose/USDZ {camera} coverage differs: {a} vs {b}")
+if abs(counts["gl-loose"] - counts["vk-loose"]) > 0.08:
     raise SystemExit(f"FAIL: GL/Vulkan clipping ratios differ: {counts}")
-print(f"PASS: camera clipping planes GL={counts['gl-next']:.3f} "
-      f"VK={counts['vk-next']:.3f}; default/legacy images equivalent")
+print(f"PASS: camera clipping planes GL={counts['gl-loose']:.3f} "
+      f"VK={counts['vk-loose']:.3f}; loose/USDZ images equivalent")
 PY

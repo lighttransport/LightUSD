@@ -60,7 +60,7 @@ for space in ('raw','sRGB','negative'):
  root.joinpath(space+'.usda').write_text(scene)
 PY
 ARGS=(-rtPreview); if [ "$BACKEND" = vkr ]; then ARGS=(-vkr); fi
-for RESOLVER in legacy tydra-next; do
+for RESOLVER in legacy tydra; do
  for SPACE in raw sRGB negative; do
  for CHANNEL in roughness metallic; do
   "$BIN" "$TMP/$SPACE.usda" "$TMP/$RESOLVER-$SPACE-$CHANNEL.png" "${ARGS[@]}" \
@@ -78,7 +78,7 @@ sys.path.insert(0,str(Path(sys.argv[2])/'examples/lusdview/tests'))
 from asset_fingerprint import _read_image
 root=Path(sys.argv[1])
 def encode(x):return round(255*(12.92*x if x<=.0031308 else 1.055*x**(1/2.4)-.055))
-for resolver in ('legacy','tydra-next'):
+for resolver in ('legacy','tydra'):
  for space in ('raw','sRGB','negative'):
   for channel in ('roughness','metallic'):
    w,h,pixels=_read_image(str(root/f'{resolver}-{space}-{channel}.png'));assert (w,h)==(16,16)

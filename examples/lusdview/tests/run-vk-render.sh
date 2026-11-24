@@ -276,8 +276,11 @@ run_asset_pass() {
     echo "SKIP: Vulkan ray query unavailable; raster fallback is not an RT pass"
     return $SKIP
   fi
+  # Curves render as instanced native carriers (not counted in the mesh
+  # triangle stats), so a curve-only asset passes on a nonzero carrier count.
   if grep -q "load failed" <<< "$log" ||
-     ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log"; then
+     { ! grep -Eq 'drawn tris [1-9][0-9]*' <<< "$log" &&
+       ! grep -Eq 'native carriers: [1-9][0-9]* persistent' <<< "$log"; }; then
     echo "FAIL: $label produced no renderable triangles"
     return 1
   fi
@@ -291,7 +294,7 @@ run_asset_pass() {
     # so assert that a positive budget was resolved, not a number that only holds
     # on a 16 GiB card.
     for expected in "large-scene-profile instance-heavy resolved" "backend=vulkan" \
-                    "--next=on" "--raster-lod=on" "--rt-lod=on" \
+                    "--core=on" "--raster-lod=on" "--rt-lod=on" \
                     "--max-gpu-mem=[1-9][0-9]*\.[0-9]"; do
       if ! grep -Eq -- "$expected" <<< "$log"; then
         echo "FAIL: profile pass did not apply expected default: $expected"
@@ -353,18 +356,18 @@ if ! binary_opacity "$TMP/vk_opacity-aov.ppm"; then
 fi
 
 # 4) Generated raster mesh coverage for unsupported-but-renderable schemas.
-run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --legacy-load --time 0
+run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --legacy-load --time 0
+run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
 # 5) Large-scene realtime profile wiring. Uses the same tiny fixture so CI does
-#    not need Caldera/Island/ALab, but exercises the preset resolver, --next,
+#    not need Caldera/Island/ALab, but exercises the preset resolver, --core,
 #    Vulkan headless rendering, raster LOD defaults, and startup diagnostics.
 run_pass profile --large-scene-profile instance-heavy
 rc=$?

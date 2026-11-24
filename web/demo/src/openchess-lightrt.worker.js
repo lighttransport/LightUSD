@@ -1,4 +1,4 @@
-// LightRTPathTracer is retained in the deprecated combined module for this path tracing worker.
+// Ray tracing uses the optional feature shipped with the core distribution.
 import createLightUSDModule from 'lightusd/lightusd.js';
 
 let native = null;
@@ -6,7 +6,10 @@ let tracer = null;
 let cancelledGeneration = 0;
 
 async function ensureNative() {
-  if (!native) native = await createLightUSDModule();
+  if (!native) {
+    native = createLightUSDModule().then(module => module.loadFeature('raytrace'));
+    native.catch(() => { native = null; });
+  }
   return native;
 }
 

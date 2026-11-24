@@ -1,0 +1,6 @@
+Upstream: https://github.com/ufbx/ufbx
+Tag: v0.23.1 (commit 26a482a)
+License: MIT or public domain (Unlicense), see LICENSE
+Files: ufbx.c, ufbx.h, LICENSE, copied verbatim. Used by src/reader/fbx-reader.cc
+(FBX -> UsdGeom/UsdSkel layers) and by the OBJ importer for skel_lib /
+skel_anim sidecars (tinyobjloader skel-obj.md).

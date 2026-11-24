@@ -1,13 +1,16 @@
 ﻿// Test for compact 16-byte ValueView implementation
-#include "src/value-types.hh"
-#include "src/typed-array.hh"
+#include "src/legacy/value-types.hh"
+#include "src/legacy/typed-array.hh"
 #include <iostream>
 #include <cassert>
 #include <vector>
 #include <cstring>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 int main() {
     std::cout << "Testing compact ValueView implementation...\n\n";

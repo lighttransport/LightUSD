@@ -71,7 +71,7 @@ MODES="${LUSDVIEW_USD_ASSETS_MODES:-vk-raster,vk-rt,cuda-rt,lusdr-cpu,lusdr-vk,l
 VK_DEVICE="${LUSDVIEW_VK_DEVICE:-}"
 # Permit '..' (parent-directory) segments in composition asset paths for the
 # lusdview modes. lusdview defaults this OFF (security policy); lusdrender's
-# next path allows parent refs by default. External asset suites (e.g.
+# core path allows parent refs by default. External asset suites (e.g.
 # usd-wg/assets) routinely reference `../_common/*.usda`, so enable this to
 # exercise them fairly. Off by default here to preserve the strict default.
 ALLOW_PARENT="${LUSDVIEW_USD_ASSETS_ALLOW_PARENT:-0}"

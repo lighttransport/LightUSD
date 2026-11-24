@@ -6,26 +6,25 @@ pass it on the command line) and get a shaded, framed preview with a timeline.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DLIGHTUSD_NATIVE_PRODUCT=next \
       -DLIGHTUSD_BUILD_EXAMPLES=ON \
-      -DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON
+      -DLIGHTUSD_BUILD_LMETALVIEW=ON
 cmake --build build -j16
 
-open build/src/next/lmetalview_example/lmetalview.app --args model.usdz
+open build/src/lmetalview_example/lmetalview.app --args model.usdz
 # or, with a file argument:
-build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview model.usdz
+build/src/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview model.usdz
 ```
 
 The bundle is `lmetalview.app`; Finder's *Open With* lists it for USD files.
-`LIGHTUSD_NEXT_BUILD_LMETALVIEW` defaults to `LIGHTUSD_NEXT_BUILD_EXAMPLES` and
-is only available in the `next` product. The Swift + Metal app is macOS only;
+`LIGHTUSD_BUILD_LMETALVIEW` defaults to `LIGHTUSD_BUILD_EXAMPLES` and
+is only available in the core product. The Swift + Metal app is macOS only;
 on Windows the option builds just the portable core (`lmetalview_core`) that
 [`ld3d12view`](../ld3d12view/README.md) renders with Direct3D 12.
 
 Headless mode (used by CTest) renders one frame without a window:
 
 ```sh
-build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
+build/src/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
   --headless --size 640x480 --screenshot out.png models/cube-previewsurface.usdc
 ```
 
@@ -53,9 +52,9 @@ build/src/next/lmetalview_example/lmetalview.app/Contents/MacOS/lmetalview \
 
 | Layer | Source | Notes |
 | --- | --- | --- |
-| Composition + conversion | `lightusd_next` + `tydra_next` through the C API (`lightusd-c.h`, `lightusd-render-c.h`) | Only the `next` product is linked; no legacy `lightusd_static` |
+| Composition + conversion | `lightusd_core` + `tydra` through the C API (`lightusd-c.h`, `lightusd-render-c.h`) | The core product is linked |
 | Preview scene ABI | `examples/lmetalview/core/lmv.h` | Flat meshes, draws, packed OpenPBR materials, decoded images, lights, cameras |
-| Texture pixels | `stb_image`, vendored tinyexr (EXR), texpipe/texcomp + zstd (KTX2), `next::USDZReader` | tydra records texture metadata only; the viewer decodes preview-sized pixels itself |
+| Texture pixels | `stb_image`, vendored tinyexr (EXR), texpipe/texcomp + zstd (KTX2), `lightusd::USDZReader` | tydra records texture metadata only; the viewer decodes preview-sized pixels itself |
 | Ptex | `src/ptx-loader.cc` + a bounded preview atlas (`core/lmv-ptex.*`) | one atlas sampled by authored face index + face-local UV |
 | Skinning / morph | `lightusd_skel_sample_*` + GPU palette in `lmv_scene.cc` | 4 influences per vertex plus blend-shape deltas; the vertex shader poses the bind-pose geometry every frame |
 | Camera | `examples/common/light3d/camera-nav.hh` | The same `OrbitCamera` lusdview uses (moved there so both examples share it) |
@@ -79,7 +78,7 @@ re-composing the file, and decoded textures are cached across conversions.
 
 ## Materials
 
-tydra-next resolves `UsdPreviewSurface`, OpenPBR and MaterialX
+Tydra resolves `UsdPreviewSurface`, OpenPBR and MaterialX
 (`standard_surface`, `open_pbr_surface`, preview-surface, and material-local
 node graphs with constant/arithmetic/mix/image nodes) into the canonical packed
 OpenPBR block (`src/tydra/openpbr-params.hh`). The Metal shader evaluates an
@@ -138,7 +137,7 @@ color slots.
   decoded and the material falls back to its constant inputs.
 * Shadows use one 2×2 atlas for up to four directional/spot casters. There are
   no cascades, contact shadows or per-light shadow resolutions.
-* MaterialX node graphs are evaluated on the CPU by tydra-next and reduced to
+* MaterialX node graphs are evaluated on the CPU by Tydra and reduced to
   PBR parameters; arbitrary graph evaluation on the GPU is out of scope (the
   lusdview lightrt/MaterialX path covers that case).
 * The in-place path covers node transforms, light transforms plus
@@ -173,7 +172,7 @@ color slots.
 | `lmetalview-headless-animated-proto-index` | Switches PointInstancer prototypes in place |
 | `lmetalview-headless-animated-instance-count` | Grows and shrinks the PointInstancer instance count |
 
-Registered by CTest when the next tests are enabled. The headless test is the
+Registered by CTest when the core tests are enabled. The headless test is the
 guard against shader regressions, because the MSL is compiled at runtime.
 
 Format fixtures live in `tests/`: `udim-texture.usda` + four PNG tiles,
@@ -187,8 +186,8 @@ The C++ core (`core/`) is also the scene source for the Windows viewer
 scene keeps the load options and `lmv_scene_set_time()` calls the progress
 callback again, so `progress_user` must stay valid until `lmv_scene_free()`.
 
-This example intentionally does **not** reuse lusdview's `next_scene_loader`
+This example intentionally does **not** reuse lusdview's `core_scene_loader`
 (~10k lines coupled to the GPU ray tracer's `DrawScene`) or its metal-cpp/GLFW
 backend. It shares the pieces that are genuinely reusable — the orbit camera,
-`light3d` math, the `tydra` OpenPBR packing, and the `next` C API — and keeps the
+`light3d` math, the `tydra` OpenPBR packing, and the core C API — and keeps the
 Swift/Metal side small enough to read in one sitting.

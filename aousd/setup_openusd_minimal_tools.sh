@@ -3,7 +3,7 @@
 # Mirrors setup_openusd_nopython.sh but ENABLES tools (drops --no-tools) so the
 # C++ usdcat binary is built, and installs to dist_minimal. usdcat only needs USD
 # core + TBB; we still disable python/imaging/usdview/materialx/etc. to keep it
-# small and fast. Used to cross-check lusdview's --next flatten vs `usdcat
+# small and fast. Used to cross-check lusdview's --core flatten vs `usdcat
 # --flatten`.
 set -e
 

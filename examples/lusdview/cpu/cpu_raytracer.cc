@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "cpu_raytracer.hh"
+#include "log.hh"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,10 @@
 #include "shading-normal.hh"
 
 namespace lusdview {
+
+// Shutter time of the camera sample being traced on this thread (Cycles
+// motion-blurred splats; shadow rays reuse it).
+static thread_local float g_cpuGsplatTime = 0.5f;
 
 namespace {
 inline void TransformPoint(const float m[12], const float p[3], float out[3]);
@@ -197,10 +202,28 @@ bool CpuRayTracer::build(const DrawScene& scene, size_t maxTris, size_t maxInsta
                          const float* viewProj16) {
   freeScene();
   hs_ = HostScene();  // drop the previous flatten before building the next one
+  gsplats_.Clear();
+  if (gsplatCycles_ && BuildGsplatKeys(scene.points, &gsplats_.keys)) {
+    lrt_result lerr = LRT_RESULT_OK;
+    lrt_gsplat_scene* ls = lrt_gsplat_scene_build_motion(
+        gsplats_.keys.keys.data(), gsplats_.keys.count, gsplats_.keys.nkeys,
+        nullptr, &lerr);
+    if (ls) gsplats_.scene.reset(ls, lrt_gsplat_scene_free);
+    LOGI("CPU RT: Cycles gsplat kernel, %zu splat(s), %u motion key(s)%s",
+         gsplats_.size(), gsplats_.keys.nkeys,
+         gsplats_.keys.skipped ? " (some carriers lacked kernel data and were skipped)"
+                               : "");
+  }
   if (!BuildHostScene(scene, maxTris, maxInstances, displacementScale, &hs_, err,
                       progress, /*refitOut=*/nullptr, textureBudgetBytes_, nullptr,
-                      purposeVisibleMask, /*nativePointCarriers=*/false)) {
-    return false;
+                      purposeVisibleMask, /*nativePointCarriers=*/false,
+                      /*skipGaussianPoints=*/gsplatCycles_)) {
+    if (gsplats_.empty()) return false;
+    // Splat-only scene: no triangles to flatten, trace splats alone.
+    hs_ = HostScene();
+    if (err) err->clear();
+    truncated_ = false;
+    return true;
   }
   truncated_ = hs_.truncated;
   // One streamed source per packed PTex table entry. The loader's coarse atlas
@@ -519,7 +542,8 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
                                   const CpuPtexSampler* ptex = nullptr,
                                   uint32_t ptex_mip = 0,
                                   const CpuPtexSampler::Footprint* ptex_fp =
-                                      nullptr) {
+                                      nullptr,
+                                  int transfer_correction = 0) {
   if (texId < 0 || static_cast<size_t>(texId) >= textures.size()) {
     out[0] = out[1] = out[2] = 1.0f;
     return;
@@ -533,6 +557,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
         : ptex->Sample(static_cast<uint32_t>(ptex_face), ptex_mip, u, v,
                        srgb, rgb);
     if (ok) {
+      MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
       out[0] = rgb[0];
       out[1] = rgb[1];
       out[2] = rgb[2];
@@ -599,6 +624,7 @@ inline void SampleTextureBilinear(const std::vector<HostTextureDesc>& textures,
       rgb[1] = srgbToLinear(rgb[1]);
       rgb[2] = srgbToLinear(rgb[2]);
     }
+    MaterialXGraphCorrectSampleTransfer(rgb, transfer_correction);
   };
   float c00[3], c10[3], c01[3], c11[3];
   texel(x0, y0, c00); texel(x1, y0, c10);
@@ -1011,6 +1037,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       const auto a = ia >= 0 && ia < count ? values[ia] : fallback(0);
       const auto b = ib >= 0 && ib < count ? values[ib] : fallback(1);
       const auto c = ic >= 0 && ic < count ? values[ic] : fallback(2);
+      const int vectorComponents = std::clamp(static_cast<int>(std::floor(
+          scene.matGraph[p + 3] + 0.5f)), 1, 4);
       const int textureId = static_cast<int>(std::floor(
           scene.matGraph[p + 16] + 0.5f));
       auto& dst = values[i];
@@ -1062,8 +1090,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         else if (uvInput == 2) { gu = c[0]; gv = c[1]; }
         const float su = gu * scene.matGraph[p + 17] + scene.matGraph[p + 19];
         const float sv = gv * scene.matGraph[p + 18] + scene.matGraph[p + 20];
-        SampleTextureBilinear(scene.textures, scene.texels, textureId, su, sv,
-                              rgb);
+        SampleTextureBilinear(
+            scene.textures, scene.texels, textureId, su, sv, rgb, -1, nullptr,
+            0, nullptr,
+            static_cast<int>(std::floor(scene.matGraph[p + 13] + 0.5f)));
+        MaterialXGraphToLinearRec709(
+            rgb, static_cast<int>(std::floor(scene.matGraph[p + 12] + 0.5f)));
         dst = {rgb[0], rgb[1], rgb[2], 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::NormalMap)) {
         float nx = a[0] * 2.0f - 1.0f, ny = a[1] * 2.0f - 1.0f,
@@ -1087,15 +1119,26 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Clamp)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::clamp(a[cidx], b[cidx], c[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Dot)) {
-        const float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        float d = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          d += a[lane] * b[lane];
         dst = {d, d, d, d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Normalized)) {
-        const float length = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
-        dst = length > 1.0e-6f ? std::array<float, 4>{a[0] / length, a[1] / length,
-                                                       a[2] / length, a[3]} : a;
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float length = std::sqrt(squaredLength);
+        dst = a;
+        if (length > 1.0e-6f)
+          for (int lane = 0; lane < vectorComponents; ++lane)
+            dst[lane] = a[lane] / length;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Power)) {
         for (int cidx = 0; cidx < 4; ++cidx)
           dst[cidx] = std::pow(std::max(a[cidx], 0.0f), b[cidx]);
+      } else if (op == static_cast<int>(MaterialXGraphOpCPU::SafePower)) {
+        for (int cidx = 0; cidx < 4; ++cidx)
+          dst[cidx] = a[cidx] == 0.0f ? 0.0f :
+              std::copysign(std::pow(std::fabs(a[cidx]), b[cidx]), a[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Minimum)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::min(a[cidx], b[cidx]);
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Maximum)) {
@@ -1114,7 +1157,7 @@ std::array<float, 4> EvalCpuMaterialXGraph(
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Select)) {
         dst = (a[0] >= 0.5f) ? b : c;
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Texcoord)) {
-        const bool secondSet = c[2] > 0.5f;
+        const bool secondSet = ic >= 0 ? c[0] == 1.0f : c[2] > 0.5f;
         dst = {secondSet ? u1 : u, secondSet ? v1 : v, 0.0f, 1.0f};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Floor)) {
         for (int cidx = 0; cidx < 4; ++cidx) dst[cidx] = std::floor(a[cidx]);
@@ -1135,7 +1178,10 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         dst = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
                a[0] * b[1] - a[1] * b[0], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Length)) {
-        const float l = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        float squaredLength = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane)
+          squaredLength += a[lane] * a[lane];
+        const float l = std::sqrt(squaredLength);
         dst = {l, l, l, l};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Noise2D)) {
         const int channels=std::clamp(static_cast<int>(std::floor(c[3]+.5f)),1,4);
@@ -1243,8 +1289,8 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         }
         hue = hue + b[0] - std::floor(hue + b[0]);
         const float sat = mx > 1.0e-6f ? chroma / mx : 0.0f;
-        const float s2 = std::clamp(sat * b[1], 0.0f, 1.0f);
-        const float v2 = std::max(mx * b[2], 0.0f);
+        const float s2 = sat * b[1];
+        const float v2 = mx * b[2];
         const float hp = hue * 6.0f, x = v2 * s2 *
             (1.0f - std::fabs(std::fmod(hp, 2.0f) - 1.0f));
         const float cc = v2 * s2, m = v2 - cc;
@@ -1392,8 +1438,12 @@ std::array<float, 4> EvalCpuMaterialXGraph(
         const float cs = std::cos(angle), sn = std::sin(angle);
         dst = {a[0] * cs - a[1] * sn, a[0] * sn + a[1] * cs, a[2], a[3]};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Distance)) {
-        const float x=a[0]-b[0], y=a[1]-b[1], z=a[2]-b[2];
-        const float d=std::sqrt(x*x+y*y+z*z); dst={d,d,d,d};
+        float squaredDistance = 0.0f;
+        for (int lane = 0; lane < vectorComponents; ++lane) {
+          const float delta = a[lane] - b[lane];
+          squaredDistance += delta * delta;
+        }
+        const float d = std::sqrt(squaredDistance); dst={d,d,d,d};
       } else if (op == static_cast<int>(MaterialXGraphOpCPU::Reflect)) {
         const float d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
         dst={a[0]-2*d*b[0],a[1]-2*d*b[1],a[2]-2*d*b[2],a[3]};
@@ -1638,7 +1688,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                                float sampleX, float sampleY, float pixelAngle,
                                const RtCameraLens* lens,
                                std::vector<uint8_t>* rgba, std::string* err) {
-  if (!tlas_ || w < 1 || h < 1) {
+  if ((!tlas_ && gsplats_.empty()) || w < 1 || h < 1) {
     if (err) *err = "no instance TLAS / invalid size";
     return false;
   }
@@ -2252,6 +2302,23 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           }
         }
 
+        // Cycles splat motion blur: this sample's shutter time (shared by
+        // its shadow rays), inside the app's shutter segment when set.
+        g_cpuGsplatTime = 0.5f;
+        if (!gsplats_.empty() && gsplats_.motion()) {
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          uint32_t th = ((static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+                          static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+                         sx * 0x85ebca77u ^ sy * 0xc2b2ae3du) ^ 0x6b43a9b5u;
+          th ^= th >> 16; th *= 0x85ebca6bu; th ^= th >> 13; th *= 0xc2b2ae35u;
+          th ^= th >> 16;
+          g_cpuGsplatTime = float(th >> 8) * (1.0f / 16777216.0f);
+          if (gsSegCenter_ >= 0.0f)
+            g_cpuGsplatTime = std::clamp(
+                gsSegCenter_ + (g_cpuGsplatTime - 0.5f) * gsSegWidth_, 0.0f, 1.0f);
+        }
         lrt_ray ray{};
         ray.org[0] = rayOrg[0]; ray.org[1] = rayOrg[1]; ray.org[2] = rayOrg[2];
         ray.dir[0] = dir[0]; ray.dir[1] = dir[1]; ray.dir[2] = dir[2];
@@ -2264,6 +2331,45 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
         const bool flatHit = Intersect(ray, &hit.t, &hit.u, &hit.v, &hitInst,
                                        &hitSrc);
         if (flatHit) hit.prim_id = static_cast<uint32_t>(hitSrc);
+        if (!gsplats_.empty()) {
+          namespace gs = lightusd::gsplat;
+          uint32_t sx, sy;
+          std::memcpy(&sx, &sampleX, 4);
+          std::memcpy(&sy, &sampleY, 4);
+          const uint32_t seed =
+              (static_cast<uint32_t>(y) * static_cast<uint32_t>(w) +
+               static_cast<uint32_t>(x)) * 0x9e3779b1u ^
+              sx * 0x85ebca77u ^ sy * 0xc2b2ae3du;
+          gs::GSplatTracer::Hit splatHit;
+          const gs::Vec3 ro = {rayOrg[0], rayOrg[1], rayOrg[2]};
+          const gs::Vec3 rd = {dir[0], dir[1], dir[2]};
+          if (gsplats_.Trace(ro, rd, ray.tmin, flatHit ? hit.t : ray.tmax, seed,
+                             &splatHit, g_cpuGsplatTime)) {
+            const gs::Vec3 c = gsplats_.Radiance(
+                splatHit, rd,
+                gsplatSrgb_ ? gs::GSplatColorSpace::SRGB
+                            : gs::GSplatColorSpace::Linear,
+                g_cpuGsplatTime);
+            // Same viewport encode as shaded surfaces (tonemap + sRGB).
+            const auto encode = [&](float value) {
+              value = std::max(value * (renderMode == 0 ? exposureMul : 1.0f),
+                               0.0f);
+              if (renderMode != 0) return std::min(value, 1.0f);
+              value = std::clamp(
+                  value * (2.51f * value + 0.03f) /
+                      (value * (2.43f * value + 0.59f) + 0.14f),
+                  0.0f, 1.0f);
+              return value <= 0.0031308f
+                         ? value * 12.92f
+                         : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
+            };
+            px[0] = static_cast<uint8_t>(encode(c.x) * 255.0f);
+            px[1] = static_cast<uint8_t>(encode(c.y) * 255.0f);
+            px[2] = static_cast<uint8_t>(encode(c.z) * 255.0f);
+            px[3] = 255;
+            continue;
+          }
+        }
         if (!flatHit) {
           const auto environment = cpuEnvironment(dir);
           const auto encode = [](float value) {
@@ -2856,6 +2962,25 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
                          0.7152f * transmittance[1] +
                          0.0722f * transmittance[2];
               }
+              // --gsplat-kernel cycles: splats block shadow rays with the
+              // same stochastic opaque test as camera rays (Cycles'
+              // shadow_all). The seed mixes the shading point and light.
+              if (shadow > 0.0f && !gsplats_.empty()) {
+                namespace gs = lightusd::gsplat;
+                uint32_t bx, by, bz;
+                std::memcpy(&bx, &shadowRay.org[0], 4);
+                std::memcpy(&by, &shadowRay.org[1], 4);
+                std::memcpy(&bz, &shadowRay.org[2], 4);
+                const uint32_t seed = (bx * 0x9e3779b1u) ^ (by * 0x85ebca77u) ^
+                                      (bz * 0xc2b2ae3du) ^
+                                      (static_cast<uint32_t>(li) * 0x27d4eb2fu);
+                gs::GSplatTracer::Hit sh;
+                if (gsplats_.Trace({shadowRay.org[0], shadowRay.org[1],
+                                    shadowRay.org[2]},
+                                   {L[0], L[1], L[2]}, 1e-4f, maxShadowT, seed,
+                                   &sh, g_cpuGsplatTime))
+                  shadow = 0.0f;
+              }
             }
             const float lightToPoint[3] = {-L[0], -L[1], -L[2]};
             const float radiance = std::max(0.0f, emitter[0]) * 0.3333333f +
@@ -2885,6 +3010,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           float sheenWeight = 0.0f, sheenRoughness = 0.3f;
           float coatAffectColor = 0.0f, coatAffectRoughness = 0.0f;
           float coatDarkening = 0.0f;
+          float coatIorDark = 1.5f;
           float thinFilmWeight = 0.0f, thinFilmThickness = 0.0f;
           float thinFilmIor = 1.5f;
           float emission[3] = {0.0f, 0.0f, 0.0f};
@@ -2931,6 +3057,7 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
               coatAffectColor = std::clamp(lrt[67], 0.0f, 1.0f);
               coatAffectRoughness = std::clamp(lrt[68], 0.0f, 1.0f);
               coatDarkening = std::clamp(lrt[70], 0.0f, 1.0f);
+              coatIorDark = std::max(lrt[45], 1.0001f);
               emission[0] += lrt[76] * std::max(lrt[79], 0.0f);
               emission[1] += lrt[77] * std::max(lrt[79], 0.0f);
               emission[2] += lrt[78] * std::max(lrt[79], 0.0f);
@@ -3200,10 +3327,19 @@ bool CpuRayTracer::traceSingle(const float invViewProj[16],
           // brightness spike on grazing views.
           const float coatColorMix = std::clamp(coatWeight * coatAffectColor,
                                                 0.0f, 1.0f);
-          for (int c = 0; c < 3; ++c) {
-            base[c] *= 1.0f - 0.2f * std::clamp(coatWeight * coatDarkening,
-                                                0.0f, 1.0f);
-            base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+          {
+            // OpenPBR coat darkening (1 - K) / (1 - Ebase K), as in the GPU
+            // path tracers and LightRT's verified CPU BSDF.
+            const float n = std::max(coatIorDark, 1.0f);
+            const float cr = (n - 1.0f) / (n + 1.0f);
+            const float k = std::clamp(1.0f - (1.0f - cr * cr) / (n * n), 0.0f, 0.9999f);
+            const float t = std::clamp(coatWeight * coatDarkening, 0.0f, 1.0f);
+            for (int c = 0; c < 3; ++c) {
+              const float e = base[c] + (base[c] * std::max(specWeight, 0.0f) - base[c]) * metallic;
+              const float f = (1.0f - k) / std::max(1.0e-4f, 1.0f - e * k);
+              base[c] *= 1.0f + (f - 1.0f) * t;
+              base[c] *= 1.0f + (coatColor[c] - 1.0f) * coatColorMix;
+            }
           }
           const float coatRoughMix = std::clamp(coatWeight * coatAffectRoughness,
                                                 0.0f, 1.0f);

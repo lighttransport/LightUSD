@@ -33,6 +33,7 @@
 #include "cuda/cuda_raytracer.hh"
 #include "frame_packet.hh"
 #include "gpu_scene.hh"
+#include "physics_preview.hh"
 #include "gui.hh"
 #include "hip/hip_raytracer.hh"
 #include "lightusd-render-cpp.hh"
@@ -45,20 +46,17 @@
 #include "rt_scene_build.hh"  // BuildProgress (threaded RT build)
 #include "scene_loader.hh"
 #include "stream/stream_server.hh"
-#include "tydra/next/scene-preview-compute.hh"
-#include "tydra/next/scene-preview.hh"
-#include "tydra/rb-dynamics.hh"
+#include "tydra/scene-preview-compute.hh"
+#include "tydra/scene-preview.hh"
 #include "viewer_document.hh"
 #if defined(LUSDVIEW_HAVE_MCP)
 #include "mcp/mcp_host.hh"
 #include "mcp/mcp_server.hh"
-#include "tydra/js-script.hh"    // complete JSEngineState (held in Context)
-#include "tydra/mcp-context.hh"  // lightusd::tydra::mcp::Context (library tool bridge)
 #endif
 
 struct GLFWwindow;
 
-namespace lightusd { namespace next { class Stage; } }
+namespace lightusd {  class Stage;  }
 namespace lusdview {
 
 // The orbit camera is shared with examples/lmetalview
@@ -125,13 +123,13 @@ class App
     if (fullPx > 0.f) rasterLodFullPx_ = fullPx;
     if (cullPx >= 0.f) rasterLodCullPx_ = cullPx;
   }
-  void setScenePreviewLods(const lightusd::tydra::next::ScenePreviewLods& lods,
+  void setScenePreviewLods(const lightusd::tydra::ScenePreviewLods& lods,
                            double pixelError) {
     previewLods_ = lods;
     previewLodPixelError_ = pixelError;
   }
   void setScenePreviewRequest(
-      const lightusd::tydra::next::ScenePreviewRequest& request) {
+      const lightusd::tydra::ScenePreviewRequest& request) {
     previewRequest_ = request;
   }
   void setDynamicPrototypeLod(bool enabled) {
@@ -192,11 +190,12 @@ class App
     loadOpts_.forceTextureDecode = on;
   }
 
-  // Use the `next` lazy loader + tydra-next converter (flat-shaded large-scene
-  // mesh preview) instead of the default Tydra path. See next_scene_loader.cc.
-  void setUseNextLoader(bool on) { useNextLoader_ = on; }
+  // Use the core lazy loader + Tydra converter (flat-shaded large-scene
+  // mesh preview) instead of the default Tydra path. See core_scene_loader.cc.
+  void setUseCoreLoader(bool on) { useCoreLoader_ = on; }
   void setCullEnabled(bool on) { gui_.setCullEnabled(on); }
   void setShowGrid(bool on) { gui_.setShowGrid(on); }
+  void setBackgroundPreset(bool white) { gui_.setBackgroundPreset(white); }
   void setShowSkeleton(bool on) { gui_.setShowSkeleton(on); }
   void setVirtualHumanProfile(bool on) {
     virtualHumanProfile_ = on;
@@ -257,6 +256,15 @@ class App
   // same shape as --hip/--cuda. Headless + --screenshot: a one-shot trace (no
   // device-async upload step needed, so it's simpler than CUDA/HIP's path).
   void setCpuRt(bool on) { cpuRt_ = on; }
+  void setGsplatSegment(double frameTime, double sampleTime, uint32_t count);
+  void setGsplatKernel(bool cycles, bool srgb) {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+    cpuTracer_.setGsplatKernel(cycles, srgb);
+    cudaTracer_.setGsplatKernel(cycles, srgb);
+    hipTracer_.setGsplatKernel(cycles, srgb);
+    if (renderer_) renderer_->setGsplatKernel(cycles, srgb);
+  }
   // --rt-samples N: supersampled AA for the CUDA/HIP screenshot path (1 = off).
   void setRtSamples(int n) { rtSamples_ = n < 1 ? 1 : n; }
   void setPathTraceSettings(PathTraceSettings settings) {
@@ -284,7 +292,7 @@ class App
   void setRtMaxInstances(size_t n) { rtMaxInstances_ = n; }
   // --max-tris N bounds unique prototype triangles in the CUDA/HIP 2-level RT scene.
   void setRtMaxTris(size_t n) { if (n > 0) cudaMaxTris_ = n; }
-  // --lod-stream: view-dependent district LOD pre-pass (needs --next). Promotes
+  // --lod-stream: view-dependent district LOD pre-pass (needs --core). Promotes
   // the camera-nearest districts to districtLod=full under the memory budgets.
   void setLodStream(bool on) { lodStream_ = on; }
   void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
@@ -410,10 +418,6 @@ class App
   std::future<vchar::AutoriggerResult> autoriggerFuture_;
   std::string autoriggerOutput_;
   std::future<vchar::AutoriggerResult> dnaWorkerFuture_;
-  TydraPhysWorld physicsWorld_{};
-  bool physicsWorldReady_{false};
-  std::uint64_t physicsSceneGen_{~std::uint64_t(0)};
-  std::unique_ptr<lightusd::Stage> physicsInitialStage_;
   bool initWindow(std::string* err);
   bool initImGui(std::string* err);
   void getRequestedWindowSize(int* width, int* height) const;
@@ -438,9 +442,9 @@ class App
   void startRecomposeAsync(const std::set<std::string>& addPrimPaths);
   void startLayerReloadAsync(const std::string& resolvedLayerId);
   void finishLoadIfReady();
-  bool tryApplyNextSceneUpdate(
+  bool tryApplyCoreSceneUpdate(
       DrawScene* next, const ViewerChanges& changes);
-  void prepareNextRenderTransaction(const DrawScene& next);
+  void prepareCoreRenderTransaction(const DrawScene& next);
   void applyLoaded(bool ok, bool progressive,
                    bool alreadyUploaded = false);  // upload + bind on main thread
   void stepProgressiveUpload();  // stream meshes then textures, budgeted per frame
@@ -482,22 +486,22 @@ class App
   void readAnimationRange();
   void updateSkinningEffective();
   void updateGpuSkinningFrameIfNeeded();
-  // --next per-frame GPU morph: upload blendshape coefficients for instanced
-  // prototypes from the retained next stage at animTime_. Runs independently of
-  // the Tydra-path GPU-skinning gate (which --next does not engage).
-  void updateNextDeformFrameIfNeeded();
-  // Does the --next scene carry deform data (skeleton bone rows / morph channels)?
-  bool sceneIsNextDeformable() const;
+  // --core per-frame GPU morph: upload blendshape coefficients for instanced
+  // prototypes from the retained core stage at animTime_. Runs independently of
+  // the Tydra-path GPU-skinning gate (which --core does not engage).
+  void updateCoreDeformFrameIfNeeded();
+  // Does the --core scene carry deform data (skeleton bone rows / morph channels)?
+  bool sceneIsCoreDeformable() const;
   // Write the pose at `time` into draw_ geometry, for the CUDA/HIP tracers: they
   // build their BVH from draw_ meshes, not from renderer-owned vertex buffers, so
   // they cannot be fed the way Vulkan RT is. Restores the retained rest pose
   // first, so it is idempotent across time codes. True when draw_ now holds `time`.
-  bool poseNextDrawForTracer(double time);
-  // Undo poseNextDrawForTracer: put draw_ back to the retained rest pose and
-  // clear nextTracerPosedTime_. Call whenever no draw_-posing tracer
+  bool poseCoreDrawForTracer(double time);
+  // Undo poseCoreDrawForTracer: put draw_ back to the retained rest pose and
+  // clear coreTracerPosedTime_. Call whenever no draw_-posing tracer
   // (CUDA/HIP/CPU RT) owns draw_ any more, so the rest-pose invariant every
   // other consumer relies on holds again.
-  void restoreNextDrawRestPose();
+  void restoreCoreDrawRestPose();
   // Re-decode any draw_ texture whose CPU payload the raster residency
   // streamer released, so the CUDA/HIP/CPU tracers (which build their texture
   // table from draw_) see real pixels instead of empty slots. Main thread;
@@ -508,13 +512,13 @@ class App
   // change, re-bake the deformed geometry + BLAS via an async reconvert.
   void maybeReconvertForManualBlend();
   bool wantsGpuSkinningLoad() const;
-  bool wantsNextGpuSkinning() const;
+  bool wantsCoreGpuSkinning() const;
   // True when some RT backend still needs draw_'s per-mesh CPU geometry to
   // (re)build its own BVH from -- CUDA/HIP (cudaRt_/hipRt_, screenshot-only)
   // or Vulkan's compute-BVH fallback (rt_scene_build.cc's BuildHostScene(),
   // called lazily from VulkanRenderer::rebuildSwBvh() whenever the scene
   // changes, unlike hardware ray-query which reads already-uploaded GPU
-  // buffers and hardware AS, not CPU arrays). The --next loader's
+  // buffers and hardware AS, not CPU arrays). The --core loader's
   // FreeMeshSurfaceCPU/FreeMeshAuxCPU/FreeMeshGeometryCPU calls must all skip
   // affected meshes while this is true, or the next Vulkan sw-BVH rebuild
   // fails with "no geometry".
@@ -595,22 +599,27 @@ class App
   float startupEnvmapRotationDegrees_{0.0f};
   LoadOptions loadOpts_;
   double uploadBudgetMs_{8.0};
-  bool useNextLoader_{false};  // --next: next loader + tydra-next flat preview
+  bool useCoreLoader_{false};  // --core: core loader + Tydra flat preview
   // Persistent public-C document owner, with temporary native query views.
-  std::shared_ptr<ViewerDocument> nextSession_;
-  std::shared_ptr<ViewerDocument> pendingNextSession_;
-  ViewerChanges pendingNextChanges_;
-  std::shared_ptr<lightusd::api::RenderSession> nextRenderSession_;
+  std::shared_ptr<ViewerDocument> coreSession_;
+  std::shared_ptr<ViewerDocument> pendingCoreSession_;
+  ViewerChanges pendingCoreChanges_;
+  std::shared_ptr<lightusd::api::RenderSession> coreRenderSession_;
   std::shared_ptr<lightusd::api::RenderSession>
-      pendingNextRenderSession_;
+      pendingCoreRenderSession_;
   std::unique_ptr<lightusd::api::PreparedRenderUpdate>
-      pendingNextRenderUpdate_;
-  bool pendingNextRenderBootstrap_{false};
+      pendingCoreRenderUpdate_;
+  bool pendingCoreRenderBootstrap_{false};
   // Immutable published stage used by the render/UI thread while a shared
   // document recomposes on the loader thread.
-  lightusd::api::Stage nextStageSnapshot_;
-  uint64_t nextStageRevision_{0};
-  bool hasNextMorph_{false};   // any --next draw mesh carries GPU morph channels
+  lightusd::api::Stage coreStageSnapshot_;
+  uint64_t coreStageRevision_{0};
+  const lightusd_stage* animatedStage() const {
+    return physicsPreview_.stage() && physicsSceneGen_ == sceneGen_ &&
+           physicsRevision_ == coreStageRevision_
+        ? physicsPreview_.stage() : coreStageSnapshot_.get();
+  }
+  bool hasCoreMorph_{false};   // any --core draw mesh carries GPU morph channels
   float camDolly_{1.0f};       // --cam-dolly: fitted-distance scale (<1 zooms in)
   OrbitCamera camera_;
   Gui gui_;
@@ -648,9 +657,10 @@ class App
   // handling in the main loop.
   int headlessWinW_{0};
   int headlessWinH_{0};
+  bool gsplatCycles_{false}, gsplatSrgb_{false};  // --gsplat-kernel cycles
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool cpuRt_{false};     // --cpu-rt: CPU (lightrt_c) ray tracer
-  std::string cameraName_;  // --camera: named USD camera to frame (--next path)
+  std::string cameraName_;  // --camera: named USD camera to frame (--core path)
   bool stereoRequested_{false};  // --stereo: resolve a left/right authored pair
   bool rasterMotionEnabled_{true};  // native raster shutter accumulation
   bool stereoLiveComposed_{false};
@@ -698,17 +708,22 @@ class App
   void stepScenePreviewLods();
   bool renderScenePreviewVolume(std::vector<uint8_t>*, int*, int*,
                                 std::string*, bool advance = true);
-  std::unique_ptr<lightusd::tydra::next::PreviewVolumeRenderer>
+  std::unique_ptr<lightusd::tydra::PreviewVolumeRenderer>
       previewVolumeRenderer_;
   std::string previewVolumeRoot_;
-  lightusd::tydra::next::ScenePreviewLods previewLods_;
+  lightusd::tydra::ScenePreviewLods previewLods_;
   double previewLodPixelError_ = 2;
-  lightusd::tydra::next::ScenePreviewRequest previewRequest_;
-  using PreviewRefinement = std::pair<lightusd::tydra::next::ScenePreviewResult,
-                                      lightusd::tydra::next::ScenePreviewLods>;
+  lightusd::tydra::ScenePreviewRequest previewRequest_;
+  using PreviewRefinement = std::pair<lightusd::tydra::ScenePreviewResult,
+                                      lightusd::tydra::ScenePreviewLods>;
   std::future<PreviewRefinement> previewRefinement_;
   std::shared_ptr<std::atomic<bool>> previewRefinementCancel_;
   bool previewRefinementTried_ = false;
+  // GUI preset change: -1 none; otherwise ScenePreviewPreset as int. The
+  // conversion runs in previewRefinement_; its options apply on success.
+  int pendingPreviewPreset_ = -1;
+  int previewPresetInFlight_ = -1;
+  lightusd::tydra::ScenePreviewOptions previewPresetOptions_;
   bool previewLodReloadPending_ = false;
   bool previewLodHaveCamera_ = false;
   double previewLodLastFocalPixels_ = 0;
@@ -979,10 +994,10 @@ class App
   std::string skinningReason_{"CPU path"};
   SkinningFrameCPU skinFrame_;
   double skinFrameTime_{std::numeric_limits<double>::quiet_NaN()};
-  // CUDA/HIP tracer re-pose (poseNextDrawForTracer): the retained rest vertices of
+  // CUDA/HIP tracer re-pose (poseCoreDrawForTracer): the retained rest vertices of
   // the deformable meshes, and the time code draw_ currently holds.
-  std::unordered_map<int, std::vector<DrawVertex>> nextRestVerts_;
-  double nextTracerPosedTime_{std::numeric_limits<double>::quiet_NaN()};
+  std::unordered_map<int, std::vector<DrawVertex>> coreRestVerts_;
+  double coreTracerPosedTime_{std::numeric_limits<double>::quiet_NaN()};
   bool lastRtActiveForSkinning_{false};
   bool warnedMeshIndexMismatch_{false};
 
@@ -1091,7 +1106,6 @@ class App
   // Rest-pose scene cache so a same-timecode reconvert (interactive blendshape
   // edit on the RT/CPU path) reuses the conversion instead of re-running it.
   // Touched only by the reconvert worker; cleared on reload (worker joined first).
-  RestSceneCache reconvRestCache_;
 
   // Progressive GPU upload (interactive path): stream meshes then textures.
   bool progressiveActive_{false};
@@ -1169,7 +1183,7 @@ class App
   std::uint64_t windowGeneration_{0};
   std::uint64_t rendererGeneration_{0};
   bool liveShaderWatchRequested_{false};
-  std::chrono::steady_clock::time_point liveShaderNextPoll_{};
+  std::chrono::steady_clock::time_point liveShaderCorePoll_{};
   size_t materialXVulkanShaderMaxSourceBytes_{129u * 1024u};
   int materialXVulkanCompileTimeoutSec_{30};
   LiveShaderState liveVulkanShader_;
@@ -1198,6 +1212,9 @@ class App
   // Bumped on each successful load so the MCP library-tool bridge knows when to
   // re-snapshot the Stage into its Context.
   std::uint64_t sceneGen_{0};
+  PhysicsPreview physicsPreview_;
+  std::uint64_t physicsSceneGen_{~std::uint64_t(0)}, physicsRevision_{0};
+  bool physicsPreviewVisible_{false};
 #if defined(LUSDVIEW_HAVE_MCP)
   std::unique_ptr<MCPServer> mcp_;
   double mcpCpuFrameSeconds_{0.0};
@@ -1214,8 +1231,6 @@ class App
   std::vector<std::filesystem::path> mcpTempFiles_;
   // Context for the lightusd library tools; its Stage is a lazy snapshot of
   // loaded_.stage, refreshed when sceneGen_ changes.
-  lightusd::tydra::mcp::Context mcpCtx_;
-  std::uint64_t mcpCtxGen_{~std::uint64_t(0)};
 #endif
 };
 

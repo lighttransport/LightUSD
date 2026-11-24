@@ -59,16 +59,16 @@ class LightUSDLoader {
   /// fs.readFileSync) std::string can be used as UInt8Array in JS layer.
   ///
   LightUSDLoader(const std::string &binary) {
-    lightusd::Stage stage;
+    lightusd::legacy::Stage stage;
 
-    loaded_ = lightusd::LoadUSDFromMemory(
+    loaded_ = lightusd::legacy::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         "dummy.usda", &stage, &warn_, &error_);
 
-    bool is_usdz = lightusd::IsUSDZ(
+    bool is_usdz = lightusd::legacy::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
-    lightusd::tydra::RenderSceneConverterEnv env(stage);
+    lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
 
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -77,18 +77,18 @@ class LightUSDLoader {
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
-      if (!lightusd::ReadUSDZAssetInfoFromMemory(
+      if (!lightusd::legacy::ReadUSDZAssetInfoFromMemory(
               reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
         loaded_ = false;
       }
 
-      lightusd::AssetResolutionResolver arr;
+      lightusd::legacy::AssetResolutionResolver arr;
 
       // NOTE: Pointer address of usdz_asset must be valid until the call of
       // RenderSceneConverter::ConvertToRenderScene.
-      if (!lightusd::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+      if (!lightusd::legacy::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         loaded_ = false;
       }
@@ -97,7 +97,7 @@ class LightUSDLoader {
     }
 
     // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
-    lightusd::tydra::RenderSceneConverter converter;
+    lightusd::legacy::tydra::RenderSceneConverter converter;
 
     // env.timecode = timecode; // TODO
     loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
@@ -198,7 +198,7 @@ class LightUSDLoader {
       return mesh;
     }
 
-    const lightusd::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    const lightusd::legacy::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
 
     // TODO: Use three.js scene description format?
     mesh.set("prim_name", rmesh.prim_name);
@@ -238,8 +238,8 @@ class LightUSDLoader {
   std::string warn_;
   std::string error_;
 
-  lightusd::tydra::RenderScene render_scene_;
-  lightusd::USDZAsset usdz_asset_;
+  lightusd::legacy::tydra::RenderScene render_scene_;
+  lightusd::legacy::USDZAsset usdz_asset_;
 };
 
 // Register STL

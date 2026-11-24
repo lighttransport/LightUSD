@@ -6,7 +6,7 @@
 #include <random>
 #include <iomanip>
 
-using namespace lightusd::spatial;
+using namespace lightusd::legacy::spatial;
 
 class CityGenerator {
     std::mt19937 rng_;

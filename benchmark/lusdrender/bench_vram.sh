@@ -28,7 +28,7 @@
 #
 # Examples:
 #   benchmark/lusdrender/bench_vram.sh -l island-rt -i /tmp/out.ppm -- \
-#     ./build/lusdview --headless --next --rt --rt-lod --camera shotCam \
+#     ./build/lusdview --headless --core --rt --rt-lod --camera shotCam \
 #       --frames 8 --screenshot /tmp/out.ppm /mnt/disk1/data/island/usd/island.usda
 #
 set -uo pipefail

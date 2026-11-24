@@ -1,0 +1,1852 @@
+[{"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef SkelRoot \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nuniform token[] skel:joints = [\"root\"]\ndef Mesh \"Geometry\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointIndices = [0] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\n",
+  "id": "skinning-inherited-influences-fix",
+  "diagnosticPrim": "/Subject/Geometry",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef SkelRoot \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nuniform token[] skel:joints = [\"root\"]\ndef Mesh \"Geometry\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\nint[] primvars:skel:jointIndices = [0] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\n",
+  "id": "skinning-inherited-influences-break",
+  "diagnosticPrim": "/Subject/Geometry",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nuniform token[] skel:joints = [\"root\"]\nint[] primvars:skel:jointIndices = [0,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nint[] primvars:skel:jointIndices:indices = [1,1]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointIndices:indices = [0,0]\n}\n",
+  "id": "skinning-selected-joint-indices-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nuniform token[] skel:joints = [\"root\"]\nint[] primvars:skel:jointIndices = [0,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nint[] primvars:skel:jointIndices:indices = [0,0]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointIndices:indices = [1,1]\n}\n",
+  "id": "skinning-selected-joint-indices-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nint[] primvars:skel:jointIndices = [0,0] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,inf] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nint[] primvars:skel:jointWeights:indices = [1,1]\n}\n",
+  "rule": "geom.skel.skinning.weight",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointWeights:indices = [0,0]\n}\n",
+  "id": "skinning-selected-joint-weights-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nint[] primvars:skel:jointIndices = [0,0] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,inf] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nint[] primvars:skel:jointWeights:indices = [0,0]\n}\n",
+  "rule": "geom.skel.skinning.weight",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:skel:jointWeights:indices = [1,1]\n}\n",
+  "id": "skinning-selected-joint-weights-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nint[] primvars:skel:jointIndices = [0,0] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\npoint3f[] points = [(0,0,0)]\n}\n",
+  "rule": "geom.skel.skinning.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\n}\n",
+  "id": "skinning-vertex-group-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nint[] primvars:skel:jointIndices = [0,0] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\nfloat[] primvars:skel:jointWeights = [1,1] (\nelementSize = 1\ninterpolation = \"vertex\"\n)\npoint3f[] points = [(0,0,0),(1,0,0)]\n}\n",
+  "rule": "geom.skel.skinning.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] points = [(0,0,0)]\n}\n",
+  "id": "skinning-vertex-group-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef SkelRoot \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\ndef Mesh \"Geometry\" {\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\nrel skel:skeleton = </ShortRig>\n}\ndef Skeleton \"ShortRig\" {\nuniform token[] joints = [\"root\"]\n}\ndef Skeleton \"LongRig\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel skel:skeleton = </LongRig>\n}\n",
+  "id": "skinning-inherited-skeleton-fix",
+  "diagnosticPrim": "/Subject/Geometry",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef SkelRoot \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\ndef Mesh \"Geometry\" {\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\n}\nrel skel:skeleton = </LongRig>\n}\ndef Skeleton \"ShortRig\" {\nuniform token[] joints = [\"root\"]\n}\ndef Skeleton \"LongRig\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel skel:skeleton = </ShortRig>\n}\n",
+  "id": "skinning-inherited-skeleton-break",
+  "diagnosticPrim": "/Subject/Geometry",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nrel skel:skeleton = </Rig>\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nuniform token[] skel:joints = [\"root\"]\n}\ndef Skeleton \"Rig\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] skel:joints = [\"root/child\", \"root\"]\n}\n",
+  "id": "skinning-local-joint-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\nrel skel:skeleton = </Rig>\nint[] primvars:skel:jointIndices = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nfloat[] primvars:skel:jointWeights = [1] (\nelementSize = 1\ninterpolation = \"constant\"\n)\nuniform token[] skel:joints = [\"root/child\", \"root\"]\n}\ndef Skeleton \"Rig\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.skinning.index",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] skel:joints = [\"root\"]\n}\n",
+  "id": "skinning-local-joint-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] normals = [(0,1,0)]\nnormal3f[] primvars:normals = [(0,0,1),(0,0,1),(0,0,1)]\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] primvars:normals = [(0,0,1)]\n}\n",
+  "id": "mesh-normal-primvar-precedence-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] normals = [(0,1,0)]\nnormal3f[] primvars:normals = [(0,0,1)]\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] primvars:normals = [(0,0,1),(0,0,1),(0,0,1)]\n}\n",
+  "id": "mesh-normal-primvar-precedence-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] primvars:normals = [(1,0,0),(1,0,0),(1,0,0)] (interpolation = \"vertex\")\nint[] primvars:normals:indices = []\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:normals:indices = [0,1,2]\n}\n",
+  "id": "mesh-normal-primvar-empty-selectors-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] primvars:normals = [(1,0,0),(1,0,0),(1,0,0)] (interpolation = \"vertex\")\nint[] primvars:normals:indices = [0,1,2]\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:normals:indices = []\n}\n",
+  "id": "mesh-normal-primvar-empty-selectors-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] primvars:normals = [(0,0,1),(0,0,1)] (interpolation = \"faceVarying\"\nelementSize = 2\n)\nint[] primvars:normals:indices = [0,0,1]\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:normals:indices = [0,0,0]\n}\n",
+  "id": "mesh-normal-primvar-indexed-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] primvars:normals = [(0,0,1),(0,0,1)] (interpolation = \"faceVarying\"\nelementSize = 2\n)\nint[] primvars:normals:indices = [0,0,0]\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:normals:indices = [0,0,1]\n}\n",
+  "id": "mesh-normal-primvar-indexed-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = \"faceVarying\")\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = \"faceVarying\")\n}\n",
+  "id": "mesh-normal-face-varying-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = \"faceVarying\")\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1)] (interpolation = \"faceVarying\")\n}\n",
+  "id": "mesh-normal-face-varying-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] normals.timeSamples = {1: [(0,0,1),(0,0,1),(0,0,1)], 2: [(0,0,1)]}\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals.timeSamples = {1: [(0,0,1),(0,0,1),(0,0,1)], 2: [(0,0,1),(0,0,1),(0,0,1)]}\n}\n",
+  "id": "mesh-normal-vertex-sampled-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\nnormal3f[] normals.timeSamples = {1: [(0,0,1),(0,0,1),(0,0,1)], 2: [(0,0,1),(0,0,1),(0,0,1)]}\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals.timeSamples = {1: [(0,0,1),(0,0,1),(0,0,1)], 2: [(0,0,1)]}\n}\n",
+  "id": "mesh-normal-vertex-sampled-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] normals = [(0,0,1)] (interpolation = \"uniform\")\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1),(0,0,1)] (interpolation = \"uniform\")\n}\n",
+  "id": "mesh-normal-uniform-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\nnormal3f[] normals = [(0,0,1),(0,0,1)] (interpolation = \"uniform\")\n}\n",
+  "rule": "geom.mesh.normals",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1)] (interpolation = \"uniform\")\n}\n",
+  "id": "mesh-normal-uniform-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Cube \"Subject\" {\n\nfloat3[] extent.timeSamples = {0: [(-1,-1,-1), (1,1,1)], 1: [(0,3,0), (2,2,2)]}\n}\n",
+  "rule": "geom.gprim.extent",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] extent.timeSamples = {0: [(-1,-1,-1), (1,1,1)], 1: [(0,0,0), (2,2,2)]}\n}\n",
+  "id": "geom-extent-sampled-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Cube \"Subject\" {\n\nfloat3[] extent.timeSamples = {0: [(-1,-1,-1), (1,1,1)], 1: [(0,0,0), (2,2,2)]}\n}\n",
+  "rule": "geom.gprim.extent",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] extent.timeSamples = {0: [(-1,-1,-1), (1,1,1)], 1: [(0,3,0), (2,2,2)]}\n}\n",
+  "id": "geom-extent-sampled-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [2, 0],
+  "weak":
+  "#usda 1.0\ndef Cube \"Subject\" {\n\nfloat3[] extent.timeSamples = {0: None, 1: [(0,0,0)], 2: [(0,0,0), (nan,2,2)]}\n}\n",
+  "rule": "geom.gprim.extent",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] extent.timeSamples = {0: None, 1: [(0,0,0), (2,2,2)], 2: [(0,0,0), (2,2,2)]}\n}\n",
+  "id": "geom-extent-sampled-value-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Cube \"Subject\" {\n\nfloat3[] extent.timeSamples = {0: None, 1: [(0,0,0), (2,2,2)], 2: [(0,0,0), (2,2,2)]}\n}\n",
+  "rule": "geom.gprim.extent",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] extent.timeSamples = {0: None, 1: [(0,0,0)], 2: [(0,0,0), (nan,2,2)]}\n}\n",
+  "id": "geom-extent-sampled-value-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [2, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\n\nfloat focalLength.timeSamples = {0: 35, 1: 0}\n}\n",
+  "rule": "geom.camera.optics",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat focalLength.timeSamples = {0: 35, 1: 50}\n}\n",
+  "id": "camera-focal-length-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\n\nfloat focalLength.timeSamples = {0: 35, 1: 50}\n}\n",
+  "rule": "geom.camera.optics",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat focalLength.timeSamples = {0: 35, 1: 0}\n}\n",
+  "id": "camera-focal-length-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\nfloat2 clippingRange = (0,10)\nfloat2 clippingRange.timeSamples = {0: (0,10), 1: (10,1)}\n}\n",
+  "rule": "geom.camera.range",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat2 clippingRange.timeSamples = {0: (0,10), 1: (1,10)}\n}\n",
+  "id": "camera-clipping-range-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\nfloat2 clippingRange = (0,10)\nfloat2 clippingRange.timeSamples = {0: (0,10), 1: (1,10)}\n}\n",
+  "rule": "geom.camera.range",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat2 clippingRange.timeSamples = {0: (0,10), 1: (10,1)}\n}\n",
+  "id": "camera-clipping-range-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\n\ntoken projection.timeSamples = {0: \"perspective\", 1: \"fisheye\"}\n}\n",
+  "rule": "geom.camera.tokens",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken projection.timeSamples = {0: \"perspective\", 1: \"orthographic\"}\n}\n",
+  "id": "camera-projection-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\n\ntoken projection.timeSamples = {0: \"perspective\", 1: \"orthographic\"}\n}\n",
+  "rule": "geom.camera.tokens",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken projection.timeSamples = {0: \"perspective\", 1: \"fisheye\"}\n}\n",
+  "id": "camera-projection-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\ndouble shutter:open.timeSamples = {1: -1, 2: 1}\ndouble shutter:close.timeSamples = {1: 0, 2: 0}\n}\n",
+  "rule": "geom.camera.shutter",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble shutter:close.timeSamples = {1: 0, 2: 2}\n}\n",
+  "id": "camera-shutter-sampled-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\ndouble shutter:open.timeSamples = {1: -1, 2: 1}\ndouble shutter:close.timeSamples = {1: 0, 2: 2}\n}\n",
+  "rule": "geom.camera.shutter",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble shutter:close.timeSamples = {1: 0, 2: 0}\n}\n",
+  "id": "camera-shutter-sampled-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\ndouble shutter:open = 0\ndouble shutter:close = -1\n}\n",
+  "rule": "geom.camera.shutter",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble shutter:close = 1\n}\n",
+  "id": "camera-shutter-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Camera \"Subject\" {\ndouble shutter:open = 0\ndouble shutter:close = 1\n}\n",
+  "rule": "geom.camera.shutter",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble shutter:close = -1\n}\n",
+  "id": "camera-shutter-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef HermiteCurves \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nvector3f[] tangents = [(1,0,0)]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] tangents = [(1,0,0),(1,0,0)]\n}\n",
+  "id": "hermite-tangent-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef HermiteCurves \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nvector3f[] tangents = [(1,0,0),(1,0,0)]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] tangents = [(1,0,0)]\n}\n",
+  "id": "hermite-tangent-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef HermiteCurves \"Subject\" {\npoint3f[] points.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nvector3f[] tangents.timeSamples = {1: [(1,0,0)], 2: [(1,0,0)]}\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] tangents.timeSamples = {1: [(1,0,0)], 2: [(1,0,0),(1,0,0)]}\n}\n",
+  "id": "hermite-tangent-count-sampled-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef HermiteCurves \"Subject\" {\npoint3f[] points.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nvector3f[] tangents.timeSamples = {1: [(1,0,0)], 2: [(1,0,0),(1,0,0)]}\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] tangents.timeSamples = {1: [(1,0,0)], 2: [(1,0,0)]}\n}\n",
+  "id": "hermite-tangent-count-sampled-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2]\nint[] order = [2]\ndouble[] knots.timeSamples = {1: [0,0,1,1], 2: [2,2,3,3]}\ndouble2[] ranges.timeSamples = {1: [(0,1)], 2: [(0,1)]}\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] ranges.timeSamples = {1: [(0,1)], 2: [(2,3)]}\n}\n",
+  "id": "nurbs-curves-sampled-knot-range-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2]\nint[] order = [2]\ndouble[] knots.timeSamples = {1: [0,0,1,1], 2: [2,2,3,3]}\ndouble2[] ranges.timeSamples = {1: [(0,1)], 2: [(2,3)]}\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] ranges.timeSamples = {1: [(0,1)], 2: [(0,1)]}\n}\n",
+  "id": "nurbs-curves-sampled-knot-range-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2,3]\nint[] order = [2,3]\ndouble[] knots = [0,0,1,1,0,0,1,0,1,1]\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] knots = [0,0,1,1,0,0,0,1,1,1]\n}\n",
+  "id": "nurbs-curves-batched-knots-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2,3]\nint[] order = [2,3]\ndouble[] knots = [0,0,1,1,0,0,0,1,1,1]\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] knots = [0,0,1,1,0,0,1,0,1,1]\n}\n",
+  "id": "nurbs-curves-batched-knots-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2,2]\nint[] order = [2,2]\ndouble[] knots = [0,0,1,1,2,2,3,3]\ndouble2[] ranges = [(0,1),(1,3)]\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] ranges = [(0,1),(2,3)]\n}\n",
+  "id": "nurbs-curves-batched-range-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsCurves \"Subject\" {\nint[] curveVertexCounts = [2,2]\nint[] order = [2,2]\ndouble[] knots = [0,0,1,1,2,2,3,3]\ndouble2[] ranges = [(0,1),(2,3)]\n}\n",
+  "rule": "geom.nurbsCurves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] ranges = [(0,1),(1,3)]\n}\n",
+  "id": "nurbs-curves-batched-range-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [3,2]\nint[] trimCurve:vertexCounts = [3,2]\ndouble[] trimCurve:knots = [0,1,2,3,4,5,0,0,1,1]\ndouble2[] trimCurve:ranges = [(2,3),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(2,0,2),(4,0,1),(2,0,1),(0,0,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(2,0,2),(4,0,1),(2,0,1),(2,0,3)]\n}\n",
+  "id": "nurbs-trim-unclamped-endpoints-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [3,2]\nint[] trimCurve:vertexCounts = [3,2]\ndouble[] trimCurve:knots = [0,1,2,3,4,5,0,0,1,1]\ndouble2[] trimCurve:ranges = [(2,3),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(2,0,2),(4,0,1),(2,0,1),(2,0,3)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(2,0,2),(4,0,1),(2,0,1),(0,0,1)]\n}\n",
+  "id": "nurbs-trim-unclamped-endpoints-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [3,2]\nint[] trimCurve:vertexCounts = [3,2]\ndouble[] trimCurve:knots = [0,0,0,1,1,1,0,0,1,1]\ndouble2[] trimCurve:ranges = [(0.25,0.75),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,1),(1.5,0,1),(0,0,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,1),(1.5,0,1),(0.5,0,1)]\n}\n",
+  "id": "nurbs-trim-interior-endpoints-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [3,2]\nint[] trimCurve:vertexCounts = [3,2]\ndouble[] trimCurve:knots = [0,0,0,1,1,1,0,0,1,1]\ndouble2[] trimCurve:ranges = [(0.25,0.75),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,1),(1.5,0,1),(0.5,0,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,1),(1.5,0,1),(0,0,1)]\n}\n",
+  "id": "nurbs-trim-interior-endpoints-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1,0,0,1,1]\ndouble2[] trimCurve:ranges = [(0,1),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,2),(1,1,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,2),(0,0,1)]\n}\n",
+  "id": "nurbs-trim-loop-closure-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1,0,0,1,1]\ndouble2[] trimCurve:ranges = [(0,1),(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,2),(0,0,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimClosure",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble3[] trimCurve:points = [(0,0,1),(1,0,1),(2,0,2),(1,1,1)]\n}\n",
+  "id": "nurbs-trim-loop-closure-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:vertexCounts = [2,3]\ndouble[] trimCurve:knots = [0,0,1,1,1,1,1,2,2,2]\nint[] trimCurve:orders = [3,2]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] trimCurve:orders = [2,3]\n}\n",
+  "id": "nurbs-trim-curve-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:vertexCounts = [2,3]\ndouble[] trimCurve:knots = [0,0,1,1,1,1,1,2,2,2]\nint[] trimCurve:orders = [2,3]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] trimCurve:orders = [3,2]\n}\n",
+  "id": "nurbs-trim-curve-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1,3,3,4,4]\ndouble2[] trimCurve:ranges = [(0,1),(0,1)]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] trimCurve:ranges = [(0,1),(3,4)]\n}\n",
+  "id": "nurbs-trim-knot-range-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1,3,3,4,4]\ndouble2[] trimCurve:ranges = [(0,1),(3,4)]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble2[] trimCurve:ranges = [(0,1),(0,1)]\n}\n",
+  "id": "nurbs-trim-knot-range-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1, 0,1,0,1]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] trimCurve:knots = [0,0,1,1, 0,0,1,1]\n}\n",
+  "id": "nurbs-trim-knot-segments-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [2]\nint[] trimCurve:orders = [2,2]\nint[] trimCurve:vertexCounts = [2,2]\ndouble[] trimCurve:knots = [0,0,1,1, 0,0,1,1]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] trimCurve:knots = [0,0,1,1, 0,1,0,1]\n}\n",
+  "id": "nurbs-trim-knot-segments-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [3, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:orders = [2]\nint[] trimCurve:vertexCounts = [2]\ndouble[] trimCurve:knots = [0,0,1,1]\ndouble2[] trimCurve:ranges = [(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,1,1)]\nint[] trimCurve:counts = [2]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] trimCurve:counts = [1]\n}\n",
+  "id": "nurbs-trim-loop-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:orders = [2]\nint[] trimCurve:vertexCounts = [2]\ndouble[] trimCurve:knots = [0,0,1,1]\ndouble2[] trimCurve:ranges = [(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,1,1)]\nint[] trimCurve:counts = [1]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] trimCurve:counts = [2]\n}\n",
+  "id": "nurbs-trim-loop-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [3, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [1]\nint[] trimCurve:orders = [2]\nint[] trimCurve:vertexCounts = [2]\ndouble2[] trimCurve:ranges = [(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,1,1)]\ndouble[] trimCurve:knots = [0,0,1]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] trimCurve:knots = [0,0,1,1]\n}\n",
+  "id": "nurbs-trim-knot-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint[] trimCurve:counts = [1]\nint[] trimCurve:orders = [2]\nint[] trimCurve:vertexCounts = [2]\ndouble2[] trimCurve:ranges = [(0,1)]\ndouble3[] trimCurve:points = [(0,0,1),(1,1,1)]\ndouble[] trimCurve:knots = [0,0,1,1]\n}\n",
+  "rule": "geom.nurbsPatch.trimTopology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] trimCurve:knots = [0,0,1]\n}\n",
+  "id": "nurbs-trim-knot-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint vVertexCount = 2\nint vOrder = 2\ndouble2 vRange = (1,5)\ndouble[] vKnots = [0,2,4,5]\n}\n",
+  "rule": "geom.nurbsPatch.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] vKnots = [0,1,4,5]\n}\n",
+  "id": "nurbs-patch-knot-range-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint vVertexCount = 2\nint vOrder = 2\ndouble2 vRange = (1,5)\ndouble[] vKnots = [0,1,4,5]\n}\n",
+  "rule": "geom.nurbsPatch.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndouble[] vKnots = [0,2,4,5]\n}\n",
+  "id": "nurbs-patch-knot-range-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint vVertexCount = 2\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0),(1,1,0)]\nint uVertexCount = 3\n}\n",
+  "rule": "geom.nurbsPatch.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint uVertexCount = 2\n}\n",
+  "id": "nurbs-patch-control-grid-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef NurbsPatch \"Subject\" {\nint vVertexCount = 2\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0),(1,1,0)]\nint uVertexCount = 2\n}\n",
+  "rule": "geom.nurbsPatch.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint uVertexCount = 3\n}\n",
+  "id": "nurbs-patch-control-grid-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nint[] faceVertexIndices = [0,1,2]\nint[] faceVertexCounts = [4]\n}\n",
+  "rule": "geom.mesh.topology.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] faceVertexCounts = [3]\n}\n",
+  "id": "mesh-index-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nint[] faceVertexIndices = [0,1,2]\nint[] faceVertexCounts = [3]\n}\n",
+  "rule": "geom.mesh.topology.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] faceVertexCounts = [4]\n}\n",
+  "id": "mesh-index-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subsetFamily:groups:familyType = \"partition\"\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nint[] indices = [0,2]\n}\n}\n",
+  "rule": "geom.subset.familyPartition",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nint[] indices = [0,1]\n}\n}\n",
+  "id": "subset-face-partition-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subsetFamily:groups:familyType = \"partition\"\nint[] faceVertexCounts = [3,3]\nint[] faceVertexIndices = [0,1,2,0,2,3]\npoint3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0)]\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nint[] indices = [0,1]\n}\n}\n",
+  "rule": "geom.subset.familyPartition",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nint[] indices = [0,2]\n}\n}\n",
+  "id": "subset-face-partition-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subsetFamily:groups:familyType = \"partition\"\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nuniform token elementType = \"edge\"\nint[] indices = [0,1,1,2,2,3]\n}\n}\n",
+  "rule": "geom.subset.familyPartition",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nuniform token elementType = \"edge\"\nint[] indices = [0,1,1,2,2,0]\n}\n}\n",
+  "id": "subset-edge-partition-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\nuniform token subsetFamily:groups:familyType = \"partition\"\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0,1,2]\npoint3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nuniform token elementType = \"edge\"\nint[] indices = [0,1,1,2,2,0]\n}\n}\n",
+  "rule": "geom.subset.familyPartition",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ndef GeomSubset \"Group\" {\nuniform token familyName = \"groups\"\nuniform token elementType = \"edge\"\nint[] indices = [0,1,1,2,2,3]\n}\n}\n",
+  "id": "subset-edge-partition-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\npoint3f[] points.timeSamples = {1: [(0,0,0),(1,0,0)], 2: [(0,0,0),(1,0,0),(0,1,0)]}\nfloat[] widths = [1,2] (interpolation = \"varying\")\nfloat[] widths.timeSamples = {1: [1,2], 2: [1,2]}\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths.timeSamples = {1: [1,2], 2: [1,2,3]}\n}\n",
+  "id": "points-varying-topology-widths-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\npoint3f[] points.timeSamples = {1: [(0,0,0),(1,0,0)], 2: [(0,0,0),(1,0,0),(0,1,0)]}\nfloat[] widths = [1,2] (interpolation = \"varying\")\nfloat[] widths.timeSamples = {1: [1,2], 2: [1,2,3]}\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths.timeSamples = {1: [1,2], 2: [1,2]}\n}\n",
+  "id": "points-varying-topology-widths-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nnormal3f[] normals = [(0,0,1),(0,0,1)] (interpolation = \"constant\")\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1)] (interpolation = \"constant\")\n}\n",
+  "id": "points-constant-normals-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nnormal3f[] normals = [(0,0,1)] (interpolation = \"constant\")\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nnormal3f[] normals = [(0,0,1),(0,0,1)] (interpolation = \"constant\")\n}\n",
+  "id": "points-constant-normals-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nfloat[] widths = [1] (interpolation = \"varying\")\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths = [1,2] (interpolation = \"varying\")\n}\n",
+  "id": "points-varying-widths-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nfloat[] widths = [1,2] (interpolation = \"varying\")\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths = [1] (interpolation = \"varying\")\n}\n",
+  "id": "points-varying-widths-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nint64[] ids = [7]\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint64[] ids = [7,8]\n}\n",
+  "id": "points-ids-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" {\npoint3f[] points = [(0,0,0),(1,0,0)]\nint64[] ids = [7,8]\n}\n",
+  "rule": "geom.points.size",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint64[] ids = [7]\n}\n",
+  "id": "points-ids-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\n\nint[] curveVertexCounts = [4,5]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts = [4,7]\n}\n",
+  "id": "basis-curves-cubic-bezier-segments-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\n\nint[] curveVertexCounts = [4,7]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts = [4,5]\n}\n",
+  "id": "basis-curves-cubic-bezier-segments-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token type = \"cubic\"\nuniform token basis = \"bezier\"\nuniform token wrap = \"periodic\"\nint[] curveVertexCounts = [3,7]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts = [3,6]\n}\n",
+  "id": "basis-curves-periodic-bezier-segments-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token type = \"cubic\"\nuniform token basis = \"bezier\"\nuniform token wrap = \"periodic\"\nint[] curveVertexCounts = [3,6]\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts = [3,7]\n}\n",
+  "id": "basis-curves-periodic-bezier-segments-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token basis = \"bezier\"\nuniform token wrap = \"periodic\"\nint[] curveVertexCounts.timeSamples = {1: [3], 2: [7]}\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts.timeSamples = {1: [3], 2: [6]}\n}\n",
+  "id": "basis-curves-periodic-bezier-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token basis = \"bezier\"\nuniform token wrap = \"periodic\"\nint[] curveVertexCounts.timeSamples = {1: [3], 2: [6]}\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] curveVertexCounts.timeSamples = {1: [3], 2: [7]}\n}\n",
+  "id": "basis-curves-periodic-bezier-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token basis = \"bspline\"\nint[] curveVertexCounts = [2]\nuniform token wrap = \"nonperiodic\"\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token wrap = \"pinned\"\n}\n",
+  "id": "basis-curves-pinned-segments-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nuniform token basis = \"bspline\"\nint[] curveVertexCounts = [2]\nuniform token wrap = \"pinned\"\n}\n",
+  "rule": "geom.curves.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token wrap = \"nonperiodic\"\n}\n",
+  "id": "basis-curves-pinned-segments-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nint[] curveVertexCounts = [4,7]\nfloat[] widths = [1,1] (interpolation = \"varying\")\n}\n",
+  "rule": "geom.curves.widths",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths = [1,1,1,1,1] (interpolation = \"varying\")\n}\n",
+  "id": "basis-curves-varying-widths-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BasisCurves \"Subject\" {\nint[] curveVertexCounts = [4,7]\nfloat[] widths = [1,1,1,1,1] (interpolation = \"varying\")\n}\n",
+  "rule": "geom.curves.widths",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] widths = [1,1] (interpolation = \"varying\")\n}\n",
+  "id": "basis-curves-varying-widths-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [4, 5],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\nint[] protoIndices = [0]\npoint3f[] positions = [(99,0,0)]\nfloat3[] scales.timeSamples = {3: [(1,1,1)], 5: [(1,1,1)]}\npoint3f[] positions.timeSamples = {2: [(0,0,0)], 4: None, 6: [(2,0,0)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.requiredArray",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions.timeSamples = {2: [(0,0,0)], 4: [(1,0,0)], 6: [(2,0,0)]}\n}\n",
+  "id": "instancer-blocked-required-sample-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\nint[] protoIndices = [0]\npoint3f[] positions = [(99,0,0)]\nfloat3[] scales.timeSamples = {3: [(1,1,1)], 5: [(1,1,1)]}\npoint3f[] positions.timeSamples = {2: [(0,0,0)], 4: [(1,0,0)], 6: [(2,0,0)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.requiredArray",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions.timeSamples = {2: [(0,0,0)], 4: None, 6: [(2,0,0)]}\n}\n",
+  "id": "instancer-blocked-required-sample-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [4, 5],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = None\nint[] protoIndices = None\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.requiredArray",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions.timeSamples = {1: []}\nint[] protoIndices.timeSamples = {1: []}\n}\n",
+  "id": "instancer-required-array-fix",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions.timeSamples = {1: []}\nint[] protoIndices.timeSamples = {1: []}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.requiredArray",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions = None\nint[] protoIndices = None\n}\n",
+  "id": "instancer-required-array-break",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [2, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nrel prototypes = </Missing>\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.prototypes",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = </Prototype>\n}\n",
+  "id": "instancer-unresolved-prototype-fix",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nrel prototypes = </Prototype>\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.prototypes",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = </Missing>\n}\n",
+  "id": "instancer-unresolved-prototype-break",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0),(1,0,0)]\nint[] protoIndices = [0,0]\nquath[] orientations = [(1,0,0,0),(1,0,0,0)]\nquatf[] orientationsf.timeSamples = {1: [(1,0,0,0),(1,0,0,0)], 2: [(1,0,0,0)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.arraySize",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquatf[] orientationsf.timeSamples = {1: [], 2: [(1,0,0,0)]}\n}\n",
+  "id": "instancer-selected-orientation-cardinality-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0),(1,0,0)]\nint[] protoIndices = [0,0]\nquath[] orientations = [(1,0,0,0),(1,0,0,0)]\nquatf[] orientationsf.timeSamples = {1: [], 2: [(1,0,0,0)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.arraySize",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquatf[] orientationsf.timeSamples = {1: [(1,0,0,0),(1,0,0,0)], 2: [(1,0,0,0)]}\n}\n",
+  "id": "instancer-selected-orientation-cardinality-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nquath[] orientations = [(0,0,0,0)]\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.orientation",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquath[] orientations = [(0.70703125,0.70703125,0,0)]\n}\n",
+  "id": "instancer-half-orientation-norm-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nquath[] orientations = [(0.70703125,0.70703125,0,0)]\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.orientation",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquath[] orientations = [(0,0,0,0)]\n}\n",
+  "id": "instancer-half-orientation-norm-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [2, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nquatf[] orientationsf.timeSamples = {1: [(2,0,0,0)], 2: [(nan,0,0,1)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.orientation",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquatf[] orientationsf.timeSamples = {1: [(1,0,0,0)], 2: [(0,0,0,1)]}\n}\n",
+  "id": "instancer-float-orientation-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nquatf[] orientationsf.timeSamples = {1: [(1,0,0,0)], 2: [(0,0,0,1)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.orientation",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nquatf[] orientationsf.timeSamples = {1: [(2,0,0,0)], 2: [(nan,0,0,1)]}\n}\n",
+  "id": "instancer-float-orientation-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [2, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel route = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nrel prototypes = </Subject.route>\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.prototypes",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = </Prototype>\n}\n",
+  "id": "instancer-forwarding-prototype-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel route = </Prototype>\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [0]\nrel prototypes = </Prototype>\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.prototypes",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = </Subject.route>\n}\n",
+  "id": "instancer-forwarding-prototype-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [1]\nrel prototypes = </First>\n}\ndef Xform \"First\" {}\ndef Xform \"Second\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = [</First>, </Second>]\n}\n",
+  "id": "instancer-prototype-index-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\npoint3f[] positions = [(0,0,0)]\nint[] protoIndices = [1]\nrel prototypes = [</First>, </Second>]\n}\ndef Xform \"First\" {}\ndef Xform \"Second\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel prototypes = </First>\n}\n",
+  "id": "instancer-prototype-index-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nint[] protoIndices = [0]\nint[] protoIndices.timeSamples = {1: [0], 2: [0,0]}\nfloat3[] scales = [(1,1,1)]\nfloat3[] scales.timeSamples = {1: [(1,1,1)], 2: [(1,1,1)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.arraySize",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] scales.timeSamples = {1: [(1,1,1)], 2: [(1,1,1),(2,2,2)]}\n}\n",
+  "id": "instancer-varying-topology-scales-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\npoint3f[] positions = [(0,0,0)]\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nint[] protoIndices = [0]\nint[] protoIndices.timeSamples = {1: [0], 2: [0,0]}\nfloat3[] scales = [(1,1,1)]\nfloat3[] scales.timeSamples = {1: [(1,1,1)], 2: [(1,1,1),(2,2,2)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.arraySize",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] scales.timeSamples = {1: [(1,1,1)], 2: [(1,1,1)]}\n}\n",
+  "id": "instancer-varying-topology-scales-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\nint[] protoIndices.timeSamples = {1: [0], 2: []}\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0)]}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: []}\n}\n",
+  "id": "instancer-empty-frame-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = </Prototype>\nint[] protoIndices.timeSamples = {1: [0], 2: []}\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: []}\n}\ndef Xform \"Prototype\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0)]}\n}\n",
+  "id": "instancer-empty-frame-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [2],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = [</First>, </Second>]\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nint[] protoIndices.timeSamples = {1: [0], 2: [1]}\n}\ndef Xform \"First\" {}\ndef Xform \"Second\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] protoIndices.timeSamples = {1: [0], 2: [1, 0]}\n}\n",
+  "id": "instancer-sampled-topology-fix",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [],
+  "composedCounts": [0, 0]},
+ {"weakErrorTimes": [],
+  "weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PointInstancer \"Subject\" {\nrel prototypes = [</First>, </Second>]\npoint3f[] positions.timeSamples = {1: [(0,0,0)], 2: [(0,0,0),(1,0,0)]}\nint[] protoIndices.timeSamples = {1: [0], 2: [1, 0]}\n}\ndef Xform \"First\" {}\ndef Xform \"Second\" {}\n",
+  "rule": "geom.pointInstancer.indices",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] protoIndices.timeSamples = {1: [0], 2: [1]}\n}\n",
+  "id": "instancer-sampled-topology-break",
+  "diagnosticPrim": "/Subject",
+  "composedErrorTimes": [2],
+  "composedCounts": [0, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Skeleton \"Subject\" {\n\nuniform token[] joints = [\"root/child\", \"root\"]\n}\n",
+  "rule": "geom.skel.skeleton.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "id": "skeleton-parent-order-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Skeleton \"Subject\" {\n\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.skeleton.topology",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] joints = [\"root/child\", \"root\"]\n}\n",
+  "id": "skeleton-parent-order-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [2, 0],
+  "weak":
+  "#usda 1.0\ndef SkelAnimation \"Subject\" {\nfloat3[] translations.timeSamples = {0: [(0,0,0),(0,0,1)], 1: [(0,0,0),(1,0,0)]}\nuniform token[] joints = [\"root\"]\n}\n",
+  "rule": "geom.skel.animation.transforms",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "id": "animation-translation-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef SkelAnimation \"Subject\" {\nfloat3[] translations.timeSamples = {0: [(0,0,0),(0,0,1)], 1: [(0,0,0),(1,0,0)]}\nuniform token[] joints = [\"root\", \"root/child\"]\n}\n",
+  "rule": "geom.skel.animation.transforms",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token[] joints = [\"root\"]\n}\n",
+  "id": "animation-translation-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [2, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef BlendShape \"Subject\" {\nuniform vector3f[] offsets = [(0,0,0),(1,0,0)]\nuniform point3f[] inbetweens:half = [(0,0,0),(1,0,0)] (weight = 0.5)\nvector3f[] inbetweens:half:normalOffsets = [(0,0,0)]\n}\n",
+  "rule": "geom.skel.blendShape.inbetween",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,1,0)]\n}\n",
+  "id": "blend-shape-inbetween-normals-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef BlendShape \"Subject\" {\nuniform vector3f[] offsets = [(0,0,0),(1,0,0)]\nuniform point3f[] inbetweens:half = [(0,0,0),(1,0,0)] (weight = 0.5)\nvector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,1,0)]\n}\n",
+  "rule": "geom.skel.blendShape.inbetween",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nvector3f[] inbetweens:half:normalOffsets = [(0,0,0)]\n}\n",
+  "id": "blend-shape-inbetween-normals-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Xform \"Subject\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) {\n\nrel physics:simulationOwner = [</SceneA>, </Wrong>]\n}\ndef PhysicsScene \"SceneA\" {}\ndef PhysicsScene \"SceneB\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "physics.relationship.target",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:simulationOwner = [</SceneA>, </SceneB>]\n}\n",
+  "id": "simulation-owner-target-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Xform \"Subject\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) {\n\nrel physics:simulationOwner = [</SceneA>, </SceneB>]\n}\ndef PhysicsScene \"SceneA\" {}\ndef PhysicsScene \"SceneB\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "physics.relationship.target",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:simulationOwner = [</SceneA>, </Wrong>]\n}\n",
+  "id": "simulation-owner-target-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef PhysicsCollisionGroup \"Subject\" {\nstring physics:mergeGroup = \"\"\nbool physics:invertFilteredGroups = true\nrel physics:filteredGroups = [</Other>, </Wrong>]\n}\ndef PhysicsCollisionGroup \"Other\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "physics.collisionGroup.filteredGroups",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:filteredGroups = [</Other>]\n}\n",
+  "id": "collision-filter-group-target-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsCollisionGroup \"Subject\" {\nstring physics:mergeGroup = \"\"\nbool physics:invertFilteredGroups = true\nrel physics:filteredGroups = [</Other>]\n}\ndef PhysicsCollisionGroup \"Other\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "physics.collisionGroup.filteredGroups",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:filteredGroups = [</Other>, </Wrong>]\n}\n",
+  "id": "collision-filter-group-target-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] widths = [2,4]\nfloat[] primvars:widths = None\nfloat[] primvars:widths.timeSamples = {1: [2,4]}\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] primvars:widths = [2,4]\n}\n",
+  "id": "points-collider-width-sample-only-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] widths = [2,4]\nfloat[] primvars:widths = [2,4]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat[] primvars:widths = None\nfloat[] primvars:widths.timeSamples = {1: [2,4]}\n}\n",
+  "id": "points-collider-width-sample-only-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] primvars:widths = [2,4]\nint[] primvars:widths:indices = None\nint[] primvars:widths:indices.timeSamples = {1: [1,0]}\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = [0,1]\n}\n",
+  "id": "points-collider-index-sample-only-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] primvars:widths = [2,4]\nint[] primvars:widths:indices = [0,1]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = None\nint[] primvars:widths:indices.timeSamples = {1: [1,0]}\n}\n",
+  "id": "points-collider-index-sample-only-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] widths = [1]\nfloat[] primvars:widths = [2,4] (elementSize = 2)\nint[] primvars:widths:indices = [0,0]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = [0]\n}\n",
+  "id": "points-collider-width-groups-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] widths = [1]\nfloat[] primvars:widths = [2,4] (elementSize = 2)\nint[] primvars:widths:indices = [0]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = [0,0]\n}\n",
+  "id": "points-collider-width-groups-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] primvars:widths = [2,4,-1,8] (elementSize = 2)\nint[] primvars:widths:indices = [1]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = [0]\n}\n",
+  "id": "points-collider-selected-widths-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Points \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\npoint3f[] points = [(0,0,0), (1,0,0)]\nfloat[] primvars:widths = [2,4,-1,8] (elementSize = 2)\nint[] primvars:widths:indices = [0]\n}\n",
+  "rule": "physics.collider.points",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint[] primvars:widths:indices = [1]\n}\n",
+  "id": "points-collider-selected-widths-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = </Scene>\n}\ndef Xform \"Body\" {}\ndef PhysicsScene \"Scene\" {}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = </Body>\n}\n",
+  "id": "joint-body-type-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = </Body>\n}\ndef Xform \"Body\" {}\ndef PhysicsScene \"Scene\" {}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = </Scene>\n}\n",
+  "id": "joint-body-type-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = </Links.body>\n}\ndef Xform \"Body\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\ndef Scope \"Links\" {\nrel body = </Body>\n}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = </Body>\n}\n",
+  "id": "joint-body-forwarded-property-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = </Body>\n}\ndef Xform \"Body\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\ndef Scope \"Links\" {\nrel body = </Body>\n}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = </Links.body>\n}\n",
+  "id": "joint-body-forwarded-property-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body1 = </Missing>\n}\ndef Xform \"Body\" {}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body1 = </Body>\n}\n",
+  "id": "joint-body-unresolved-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body1 = </Body>\n}\ndef Xform \"Body\" {}\n",
+  "rule": "physics.joint.bodyTarget",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body1 = </Missing>\n}\n",
+  "id": "joint-body-unresolved-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = [</Body>, </Other>]\n}\ndef Xform \"Body\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "physics.joint.bodyCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = None\n}\n",
+  "id": "joint-body-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\n\nrel physics:body0 = None\n}\ndef Xform \"Body\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "physics.joint.bodyCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel physics:body0 = [</Body>, </Other>]\n}\n",
+  "id": "joint-body-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\nfloat physics:upperLimit = inf\nfloat physics:lowerLimit = inf\n}\n",
+  "rule": "physics.joint.limit",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat physics:lowerLimit = -inf\n}\n",
+  "id": "joint-bound-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" {\nfloat physics:upperLimit = inf\nfloat physics:lowerLimit = -inf\n}\n",
+  "rule": "physics.joint.limit",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat physics:lowerLimit = inf\n}\n",
+  "id": "joint-bound-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:surface:source = [</Graph>, </Second>]\n}\n}\n}\ndef NodeGraph \"Graph\" {}\ndef NodeGraph \"Second\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = </Graph>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-target-count-fix",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:surface:source = </Graph>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\ndef NodeGraph \"Second\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = [</Graph>, </Second>]\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-target-count-break",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:surface:source = </Missing.outputs:out>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = </Graph>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-property-target-fix",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:surface:source = </Graph>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = </Missing.outputs:out>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-property-target-break",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:volume:source = </Wrong>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:volume:source = </Graph>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-target-type-fix",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\n\nrel mtlx:volume:source = </Graph>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\ndef Xform \"Wrong\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:volume:source = </Wrong>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-target-type-break",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\nrel mtlx:volume:source = None\nrel mtlx:surface:source = None\n}\n}\n}\ndef NodeGraph \"Graph\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = </Graph>\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-block-fix",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Scope \"MaterialX\" {\ndef Scope \"Materials\" {\ndef Material \"Subject\" {\nrel mtlx:volume:source = None\nrel mtlx:surface:source = </Graph>\n}\n}\n}\ndef NodeGraph \"Graph\" {}\n",
+  "rule": "shade.materialX.nodeReference",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"MaterialX\" {\nover \"Materials\" {\nover \"Subject\" {\nrel mtlx:surface:source = None\n}\n}\n}\n",
+  "id": "materialx-synthetic-terminal-block-break",
+  "diagnosticPrim": "/MaterialX/Materials/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n\nstring config:mtlx:sourceUri = \"library.usdz[looks/surface.usda]\"\n}\n",
+  "rule": "shade.materialX.sourceUri",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nstring config:mtlx:sourceUri = \"library.usdz[looks/surface.mtlx]\"\n}\n",
+  "id": "materialx-packaged-source-uri-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n\nstring config:mtlx:sourceUri = \"library.usdz[looks/surface.mtlx]\"\n}\n",
+  "rule": "shade.materialX.sourceUri",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nstring config:mtlx:sourceUri = \"library.usdz[looks/surface.usda]\"\n}\n",
+  "id": "materialx-packaged-source-uri-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\ncolor3f inputs:value = (0,1,0)\nuniform token info:id = \"ND_standard_surface_surfaceshader\"\n}\n",
+  "rule": "shade.materialX.unknownPort",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token info:id = \"ND_constant_color3\"\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_constant_color3",
+    "name": "value"},
+   {"type": "",
+    "output": false,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "value"}],
+  "id": "materialx-nodedef-port-membership-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\ncolor3f inputs:value = (0,1,0)\nuniform token info:id = \"ND_constant_color3\"\n}\n",
+  "rule": "shade.materialX.unknownPort",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nuniform token info:id = \"ND_standard_surface_surfaceshader\"\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_constant_color3",
+    "name": "value"},
+   {"type": "",
+    "output": false,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "value"}],
+  "id": "materialx-nodedef-port-membership-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\nuniform token info:id = \"ND_constant_color3\"\nfloat outputs:out = 1\n}\n",
+  "rule": "shade.shader.typeMismatch",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ncolor3f outputs:out = (0,1,0)\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_constant_color3",
+    "name": "value"},
+   {"type": "color3f",
+    "output": true,
+    "node": "ND_constant_color3",
+    "name": "out"}],
+  "id": "materialx-nodedef-output-type-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\nuniform token info:id = \"ND_constant_color3\"\ncolor3f outputs:out = (0,1,0)\n}\n",
+  "rule": "shade.shader.typeMismatch",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat outputs:out = 1\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_constant_color3",
+    "name": "value"},
+   {"type": "color3f",
+    "output": true,
+    "node": "ND_constant_color3",
+    "name": "out"}],
+  "id": "materialx-nodedef-output-type-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\nuniform token info:id = \"ND_standard_surface_surfaceshader\"\ncolor3f inputs:base_color.connect = </Scalar.outputs:out>\n}\ndef Shader \"Color\" {\ncolor3f outputs:out\n}\ndef Shader \"Scalar\" {\nfloat outputs:out\n}\n",
+  "rule": "shade.materialX.connectionType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ncolor3f inputs:base_color.connect = </Color.outputs:out>\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "base_color"},
+   {"type": "token",
+    "output": true,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "out"}],
+  "id": "materialx-connection-port-type-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Shader \"Subject\" {\nuniform token info:id = \"ND_standard_surface_surfaceshader\"\ncolor3f inputs:base_color.connect = </Color.outputs:out>\n}\ndef Shader \"Color\" {\ncolor3f outputs:out\n}\ndef Shader \"Scalar\" {\nfloat outputs:out\n}\n",
+  "rule": "shade.materialX.connectionType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ncolor3f inputs:base_color.connect = </Scalar.outputs:out>\n}\n",
+  "materialXPorts":
+  [{"type": "color3f",
+    "output": false,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "base_color"},
+   {"type": "token",
+    "output": true,
+    "node": "ND_standard_surface_surfaceshader",
+    "name": "out"}],
+  "id": "materialx-connection-port-type-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n\nstring config:mtlx:version = \"2.0\"\n}\n",
+  "rule": "shade.materialX.version",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nstring config:mtlx:version = \"1.39\"\n}\n",
+  "id": "materialx-version-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n\nstring config:mtlx:version = \"1.39\"\n}\n",
+  "rule": "shade.materialX.version",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nstring config:mtlx:version = \"2.0\"\n}\n",
+  "id": "materialx-version-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\nint fieldIndex.timeSamples = {0: 0, 1: -1}\n}\n",
+  "rule": "vol.fieldAsset.fieldIndex",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint fieldIndex.timeSamples = {0: 0, 1: 1}\n}\n",
+  "id": "volume-field-index-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\nint fieldIndex.timeSamples = {0: 0, 1: 1}\n}\n",
+  "rule": "vol.fieldAsset.fieldIndex",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nint fieldIndex.timeSamples = {0: 0, 1: -1}\n}\n",
+  "id": "volume-field-index-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Untyped>\n}\ndef OpenVDBAsset \"Field\" {}\ndef \"Untyped\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Field>\n}\n",
+  "id": "volume-untyped-composed-field-fix",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Field>\n}\ndef OpenVDBAsset \"Field\" {}\ndef \"Untyped\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Untyped>\n}\n",
+  "id": "volume-untyped-composed-field-break",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Inactive>\n}\ndef OpenVDBAsset \"Present\" {}\ndef OpenVDBAsset \"Inactive\" (active = false) {}\n",
+  "rule": "vol.volume.fieldTargetMissing",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Present>\n}\n",
+  "id": "volume-inactive-field-fix",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Present>\n}\ndef OpenVDBAsset \"Present\" {}\ndef OpenVDBAsset \"Inactive\" (active = false) {}\n",
+  "rule": "vol.volume.fieldTargetMissing",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Inactive>\n}\n",
+  "id": "volume-inactive-field-break",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Missing>\n}\ndef OpenVDBAsset \"Field\" {}\n",
+  "rule": "vol.volume.fieldTargetMissing",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Field>\n}\n",
+  "id": "volume-unresolved-field-fix",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Field>\n}\ndef OpenVDBAsset \"Field\" {}\n",
+  "rule": "vol.volume.fieldTargetMissing",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Missing>\n}\n",
+  "id": "volume-unresolved-field-break",
+  "diagnosticPrim": "/Subject",
+  "composedOnly": true,
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel route = []\nrel field:density = </Subject.route>\n}\n",
+  "rule": "vol.volume.fieldRel",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = None\n}\n",
+  "id": "volume-blocked-field-fix",
+  "flattenedCounts": [0, 1],
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel route = []\nrel field:density = None\n}\n",
+  "rule": "vol.volume.fieldRel",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Subject.route>\n}\n",
+  "id": "volume-blocked-field-break",
+  "flattenedCounts": [0, 1],
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = [</Subject.left>, </Subject.right>]\nrel left = </First>\nrel right = </Second>\n}\ndef OpenVDBAsset \"First\" {}\ndef OpenVDBAsset \"Second\" {}\n",
+  "rule": "vol.volume.fieldTargetCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel right = </First>\n}\n",
+  "id": "volume-forwarded-shared-field-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = [</Subject.left>, </Subject.right>]\nrel left = </First>\nrel right = </First>\n}\ndef OpenVDBAsset \"First\" {}\ndef OpenVDBAsset \"Second\" {}\n",
+  "rule": "vol.volume.fieldTargetCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel right = </Second>\n}\n",
+  "id": "volume-forwarded-shared-field-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = [</Field>, </Second>]\n}\ndef OpenVDBAsset \"Field\" {}\ndef OpenVDBAsset \"Second\" {}\n",
+  "rule": "vol.volume.fieldTargetCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Field>\n}\n",
+  "id": "volume-forwarded-field-count-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Field>\n}\ndef OpenVDBAsset \"Field\" {}\ndef OpenVDBAsset \"Second\" {}\n",
+  "rule": "vol.volume.fieldTargetCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = [</Field>, </Second>]\n}\n",
+  "id": "volume-forwarded-field-count-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Field.fieldName>\n}\ndef OpenVDBAsset \"Field\" { token fieldName = \"density\" }\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Field>\n}\n",
+  "id": "volume-forwarded-attribute-target-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Field>\n}\ndef OpenVDBAsset \"Field\" { token fieldName = \"density\" }\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Field.fieldName>\n}\n",
+  "id": "volume-forwarded-attribute-target-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Other>\n}\ndef OpenVDBAsset \"Field\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Field>\n}\n",
+  "id": "volume-forwarded-field-type-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\nrel field:density = </Subject.route>\nrel route = </Field>\n}\ndef OpenVDBAsset \"Field\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel route = </Other>\n}\n",
+  "id": "volume-forwarded-field-type-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Other>\n}\ndef OpenVDBAsset \"Field\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Field>\n}\n",
+  "id": "volume-target-type-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n\nrel field:density = </Field>\n}\ndef OpenVDBAsset \"Field\" {}\ndef Xform \"Other\" {}\n",
+  "rule": "vol.volume.fieldTargetType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nrel field:density = </Other>\n}\n",
+  "id": "volume-target-type-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\n\nasset filePath.timeSamples = {1: None, 2: @@}\n}\n",
+  "rule": "vol.fieldAsset.filePath",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nasset filePath.timeSamples = {1: None, 2: @frame.vdb@}\n}\n",
+  "id": "volume-empty-file-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\n\nasset filePath.timeSamples = {1: None, 2: @frame.vdb@}\n}\n",
+  "rule": "vol.fieldAsset.filePath",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nasset filePath.timeSamples = {1: None, 2: @@}\n}\n",
+  "id": "volume-empty-file-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType.timeSamples = {1: None, 2: None}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {1: None, 2: \"float\"}\n}\n",
+  "id": "volume-blocked-data-type-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType.timeSamples = {1: None, 2: \"float\"}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {1: None, 2: None}\n}\n",
+  "id": "volume-blocked-data-type-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType = \"float\"\ntoken fieldClass.timeSamples = {1: \"levelSet\", 2: \"FloatGrid\"}\n}\n",
+  "rule": "vol.fieldAsset.fieldClass",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldClass.timeSamples = {1: \"levelSet\", 2: \"fogVolume\"}\n}\n",
+  "id": "volume-openvdb-class-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType = \"float\"\ntoken fieldClass.timeSamples = {1: \"levelSet\", 2: \"fogVolume\"}\n}\n",
+  "rule": "vol.fieldAsset.fieldClass",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldClass.timeSamples = {1: \"levelSet\", 2: \"FloatGrid\"}\n}\n",
+  "id": "volume-openvdb-class-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Field3DAsset \"Subject\" {\nasset filePath = @frame.f3d@\ntoken fieldDataType = \"float3\"\ntoken vectorDataRoleHint.timeSamples = {1: \"Vector\", 2: \"vector\"}\n}\n",
+  "rule": "vol.fieldAsset.vectorDataRoleHint",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken vectorDataRoleHint.timeSamples = {1: \"Vector\", 2: \"Color\"}\n}\n",
+  "id": "volume-field3d-vector-role-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Field3DAsset \"Subject\" {\nasset filePath = @frame.f3d@\ntoken fieldDataType = \"float3\"\ntoken vectorDataRoleHint.timeSamples = {1: \"Vector\", 2: \"Color\"}\n}\n",
+  "rule": "vol.fieldAsset.vectorDataRoleHint",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken vectorDataRoleHint.timeSamples = {1: \"Vector\", 2: \"vector\"}\n}\n",
+  "id": "volume-field3d-vector-role-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef Field3DAsset \"Subject\" {\nasset filePath = @frame.f3d@\ntoken fieldDataType.timeSamples = {1: \"float\", 2: \"int3\"}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {1: \"float\", 2: \"float3\"}\n}\n",
+  "id": "volume-field3d-type-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef Field3DAsset \"Subject\" {\nasset filePath = @frame.f3d@\ntoken fieldDataType.timeSamples = {1: \"float\", 2: \"float3\"}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {1: \"float\", 2: \"int3\"}\n}\n",
+  "id": "volume-field3d-type-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [1, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType.timeSamples = {0: \"float\", 1: \"invalidTestToken\"}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {0: \"float\", 1: \"half\"}\n}\n",
+  "id": "volume-field-type-samples-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\nasset filePath = @frame.vdb@\ntoken fieldDataType.timeSamples = {0: \"float\", 1: \"half\"}\n}\n",
+  "rule": "vol.fieldAsset.dataType",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\ntoken fieldDataType.timeSamples = {0: \"float\", 1: \"invalidTestToken\"}\n}\n",
+  "id": "volume-field-type-samples-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [1, 0]},
+ {"weakCounts": [0, 1],
+  "weak":
+  "#usda 1.0\ndef ParticleField3DGaussianSplat \"Subject\" {\npoint3f[] positions = [(0,0,0), (1,0,0)]\nuniform int radiance:sphericalHarmonicsDegree = 0\nfloat3[] radiance:sphericalHarmonicsCoefficients = [(1,1,1)]\n}\n",
+  "rule": "vol.particleField.shCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] radiance:sphericalHarmonicsCoefficients = [(1,1,1), (1,1,1)]\n}\n",
+  "id": "particle-harmonics-fix",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 0]},
+ {"weakCounts": [0, 0],
+  "weak":
+  "#usda 1.0\ndef ParticleField3DGaussianSplat \"Subject\" {\npoint3f[] positions = [(0,0,0), (1,0,0)]\nuniform int radiance:sphericalHarmonicsDegree = 0\nfloat3[] radiance:sphericalHarmonicsCoefficients = [(1,1,1), (1,1,1)]\n}\n",
+  "rule": "vol.particleField.shCount",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\nfloat3[] radiance:sphericalHarmonicsCoefficients = [(1,1,1)]\n}\n",
+  "id": "particle-harmonics-break",
+  "diagnosticPrim": "/Subject",
+  "composedCounts": [0, 1]}]

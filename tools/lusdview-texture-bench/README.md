@@ -2,6 +2,9 @@
 
 This is a standalone, headless texture-processing benchmark. It does not link
 the lusdview renderer and is safe to build while renderer work is in progress.
+It links the core image/Ptex providers and works with `LIGHTUSD_BUILD_LEGACY=OFF`.
+Native TIFF/DNG decoding is enabled by `LIGHTUSD_WITH_TIFF` (default ON);
+16-bit integer RGB/RGBA inputs normalize to RGBA8 for the LDR benchmarks.
 
 ```sh
 cmake -S . -B build_ninja -G Ninja \
@@ -10,8 +13,8 @@ cmake -S . -B build_ninja -G Ninja \
 cmake --build build_ninja --target lusdview_texture_gpu_bench
 
 build_ninja/lusdview_texture_gpu_bench \
-  --backend vulkan --root /mnt/disk1/data/alab \
-  --report alab-vulkan.json
+  --backend vulkan --root /path/to/texture-corpus \
+  --report texture-vulkan.json
 ```
 
 The input corpus is external and must be supplied at runtime. A single image

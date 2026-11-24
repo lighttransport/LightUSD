@@ -287,6 +287,17 @@ struct Mesh {
   std::vector<int32_t> normal_indices, uv_indices;
   std::vector<float> joint_weights;
   int32_t influences = 0;
+  // Subdivision tags (tinyobjloader subd-obj.md), accepted by tobj_subd.
+  // Indices refer to this mesh's points and faces. Scalars are -1 when the
+  // tag is absent; `subd` is false for a mesh without (accepted) tags.
+  struct Subd {
+    bool subd = false;
+    int scheme = -1, interp_boundary = -1, fvar_interp_boundary = -1;
+    int crease_method = -1, smooth_triangles = -1;
+    std::vector<int32_t> crease_indices, corner_indices, hole_indices;
+    std::vector<float> crease_sharpnesses, corner_sharpnesses;
+    std::vector<std::string> unknown;  // canonical lines of unknown tags
+  } subd;
 };
 // MuJoCo's analytic SDF plugins (mujoco.sdf.torus, bowl, gear, nut, bolt),
 // meshed as MuJoCo's compiler meshes a plugin mesh asset. `config` holds the
@@ -301,6 +312,19 @@ struct OBJ {
   // and the file has no polygon primitives. MuJoCo hulls such mesh assets.
   std::vector<float> vertices;
   Json materials = Json::array();
+  // Skeleton for the vw skin weights (tinyobjloader skel-obj.md), accepted by
+  // tobj_skel. Joint i is vw joint id i. Matrices are 16 doubles, row-major,
+  // translation in the last row; empty when not given inline. A sidecar's
+  // bytes are read here (budgeted, through the importer's asset hooks).
+  struct Skel {
+    bool present = false;
+    std::vector<std::string> names;
+    std::vector<int> parents;
+    std::vector<std::vector<double>> bind, rest;
+    std::string lib, lib_skeleton, anim, anim_name;  // as written
+    std::vector<uint8_t> lib_bytes, anim_bytes;
+    size_t max_memory = SIZE_MAX;  // budget for decoding the sidecars
+  } skel;
 };
 template <class T>
 Json Array(const std::vector<T>& values) {

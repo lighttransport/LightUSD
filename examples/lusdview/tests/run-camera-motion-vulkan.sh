@@ -39,7 +39,7 @@ def Xform "World" {
 }
 USDA
 
-if ! env XDG_CONFIG_HOME="$OUT/config-home-probe" "$BIN" --next --headless \
+if ! env XDG_CONFIG_HOME="$OUT/config-home-probe" "$BIN" --core --headless \
     --backend vk "${VK_DEVICE_ARGS[@]}" --frames 1 --size 16x16 --camera Shot --time 1 \
     --render-report "$OUT/probe.json" "$OUT/motion.usda" >"$OUT/probe.log" 2>&1; then
   if grep -Eqi 'Vulkan.*(unavailable|failed)|no Vulkan' "$OUT/probe.log"; then
@@ -52,7 +52,7 @@ if grep -Eqi 'caps:.*device=cpu|renderer: Vulkan .*GPU:.*(llvmpipe|SwiftShader)'
   exit "$SKIP"
 fi
 
-if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --next --headless \
+if ! env XDG_CONFIG_HOME="$OUT/config-home" "$BIN" --core --headless \
     --backend vk "${VK_DEVICE_ARGS[@]}" --rt --frames 4 --size 32x32 --camera Shot --time 1 \
     --pt-motion-segments 2 --render-report "$OUT/open.json" \
     --screenshot "$OUT/open.ppm" "$OUT/motion.usda" >"$OUT/open.log" 2>&1; then
@@ -72,7 +72,7 @@ fi
 
 cp "$OUT/motion.usda" "$OUT/closed.usda"
 sed -i 's/double shutter:open = -0.5/double shutter:open = 0/; s/double shutter:close = 0.5/double shutter:close = 0/' "$OUT/closed.usda"
-env XDG_CONFIG_HOME="$OUT/config-home-closed" "$BIN" --next --headless \
+env XDG_CONFIG_HOME="$OUT/config-home-closed" "$BIN" --core --headless \
   --backend vk "${VK_DEVICE_ARGS[@]}" --rt --frames 1 --size 32x32 \
   --camera Shot --time 1 --pt-motion-segments 2 \
   --render-report "$OUT/closed.json" --screenshot "$OUT/closed.ppm" \
@@ -84,7 +84,7 @@ env XDG_CONFIG_HOME="$OUT/config-home-closed" "$BIN" --next --headless \
 # acceleration data.
 cp "$ROOT/examples/lusdview/tests/deform-morph-skin.usda" "$OUT/deform.usda"
 sed -i '/float focalLength = 24/a\        double shutter:open = -0.5\n        double shutter:close = 0.5' "$OUT/deform.usda"
-env XDG_CONFIG_HOME="$OUT/config-home-deform" "$BIN" --next --headless \
+env XDG_CONFIG_HOME="$OUT/config-home-deform" "$BIN" --core --headless \
   --backend vk "${VK_DEVICE_ARGS[@]}" --rt --frames 4 --size 32x32 --camera /root/Cam --time 10 \
   --pt-motion-segments 2 --render-report "$OUT/deform.json" \
   --screenshot "$OUT/deform.ppm" "$OUT/deform.usda" >"$OUT/deform.log" 2>&1

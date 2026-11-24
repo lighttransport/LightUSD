@@ -2,7 +2,7 @@
 #
 # lusdrender texture resolver regression: a texture referenced from the
 # filesystem and the same texture embedded in a USDZ package must render to the
-# same pixels through the next-loader path.
+# same pixels through the core-loader path.
 set -euo pipefail
 
 SKIP=77

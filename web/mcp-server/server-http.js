@@ -93,7 +93,7 @@ const transports = {};
 
 const session = new Map();
 
-// The MCP server product (lightusd_mcp module, next backend) is the default;
+// The MCP server product (lightusd_mcp module, core backend) is the default;
 // set LIGHTUSD_MCP_BACKEND=legacy, or use a lightusd package without
 // lightusd_mcp.js, to serve the legacy LightUSDLoaderNative MCP tools. Both
 // expose the same mcp* session functions.
@@ -102,7 +102,7 @@ async function loadMCPBackend() {
     try {
       const { default: createLightUSDMCP } = await import("lightusd/lightusd_mcp.js");
       const mcp = await createLightUSDMCP();
-      console.log("LightUSD MCP backend: next (lightusd_mcp)");
+      console.log("LightUSD MCP backend: core (lightusd_mcp)");
       return mcp;
     } catch (e) {
       console.warn("lightusd_mcp.js unavailable; falling back to the legacy MCP backend:", e.message);

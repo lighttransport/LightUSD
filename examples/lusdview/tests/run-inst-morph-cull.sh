@@ -49,7 +49,7 @@ fi
 
 # --frames loads synchronously (deterministic); the morph weight is 1.0 (static),
 # so no timeline is needed -- this exercises the culling path at full morph.
-LOG="$("${RUN[@]}" "$LUSDVIEW" --backend "$BACKEND" --next --config "$CONFIG" \
+LOG="$("${RUN[@]}" "$LUSDVIEW" --backend "$BACKEND" --core --config "$CONFIG" \
        --frames 4 --screenshot "$OUT" "$ASSET" 2>&1)"
 echo "$LOG"
 

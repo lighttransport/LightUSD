@@ -144,6 +144,15 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
     for (int input = 0; input < 3; ++input)
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    if (node.op == MaterialXGraphOpCPU::Image ||
+        node.op == MaterialXGraphOpCPU::TiledImage) {
+      // Image nodes do not consume a third value fallback. Keep the authored
+      // primaries conversion in that lane without changing the shared graph ABI.
+      dst[base + 12] = static_cast<float>(
+          MaterialXGraphColorSpaceMode(node.colorSpaceToken));
+      dst[base + 13] =
+          static_cast<float>(node.colorSpaceTransferCorrection);
+    }
     const bool usesAuxInput = node.op == MaterialXGraphOpCPU::SplitLR ||
                               node.op == MaterialXGraphOpCPU::SplitTB ||
                               node.op == MaterialXGraphOpCPU::IfGreater ||
@@ -170,6 +179,13 @@ void PackMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst,
       textureId = (*sourceToTable)[static_cast<size_t>(textureId)];
     }
     dst[base + 16] = static_cast<float>(textureId);
+    if (node.op == MaterialXGraphOpCPU::Normalized ||
+        node.op == MaterialXGraphOpCPU::Length ||
+        node.op == MaterialXGraphOpCPU::Distance) {
+      dst[base + 3] = static_cast<float>(
+          node.op == MaterialXGraphOpCPU::Normalized ? node.components
+                                                     : node.inputComponents);
+    }
     if (node.op == MaterialXGraphOpCPU::GeomProp) {
       const uint32_t hash = MaterialXGeomPropHash(node.geomPropName);
       float encoded = 0.0f;
@@ -238,6 +254,21 @@ void PackRasterMaterialXGraphRuntime(const DrawMaterialCPU& mat, float* dst) {
     for (int input = 0; input < 3; ++input)
       for (int lane = 0; lane < 4; ++lane)
         dst[base + 4 + input * 4 + lane] = node.value[input][lane];
+    if (node.op == MaterialXGraphOpCPU::Image ||
+        node.op == MaterialXGraphOpCPU::TiledImage)
+      dst[base + 12] = static_cast<float>(
+          MaterialXGraphColorSpaceMode(node.colorSpaceToken));
+    if (node.op == MaterialXGraphOpCPU::Image ||
+        node.op == MaterialXGraphOpCPU::TiledImage)
+      dst[base + 13] =
+          static_cast<float>(node.colorSpaceTransferCorrection);
+    if (node.op == MaterialXGraphOpCPU::Normalized ||
+        node.op == MaterialXGraphOpCPU::Length ||
+        node.op == MaterialXGraphOpCPU::Distance) {
+      dst[base + 3] = static_cast<float>(
+          node.op == MaterialXGraphOpCPU::Normalized ? node.components
+                                                     : node.inputComponents);
+    }
     if (node.op == MaterialXGraphOpCPU::SplitLR ||
         node.op == MaterialXGraphOpCPU::SplitTB ||
         node.op == MaterialXGraphOpCPU::IfGreater ||

@@ -1,6 +1,6 @@
 # ld3d12view - native Windows (Direct3D 12) minimal USD viewer example.
 #
-# Added from src/next/CMakeLists.txt after examples/lmetalview, whose portable
+# Added from src/CMakeLists.txt after examples/lmetalview, whose portable
 # C++ core (lmetalview_core: USD load -> flat preview scene behind core/lmv.h,
 # plus the shared OrbitCamera wrapper) it reuses. The window and input come from
 # the vendored lightui (examples/common/lightui); D3D12 renders onto its HWND.
@@ -52,7 +52,7 @@ if(MSVC)
   # Console subsystem on purpose: diagnostics go to stderr; main() is the entry.
 endif()
 
-if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_NEXT_BUILD_TESTS)
+if(LIGHTUSD_BUILD_TESTS OR LIGHTUSD_BUILD_TESTS)
   # Hidden window on the WARP software adapter: runs on machines without a GPU.
   add_test(NAME ld3d12view-smoke-warp
       COMMAND ld3d12view --hidden --warp --size 320x200 --frames 5

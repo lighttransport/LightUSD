@@ -4,9 +4,9 @@
 // LightUSD C API implementation (core: stage/prim/attr/authoring).
 
 #include "core/native-io.hh"
-#include "next/schema/schema-registry.hh"
+#include "schema/schema-registry.hh"
 #include "c-internal.hh"
-#include "next/format-detect.hh"
+#include "format-detect.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -16,26 +16,26 @@
 #include <map>
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
-#include "next/prim/identifier.hh"
-#include "next/schema/usd-geom-camera.hh"
-#include "next/schema/usd-shade.hh"
-#include "next/layer/layer.hh"
-#include "next/layer/prim-spec.hh"
-#include "next/load-usd.hh"
-#include "next/types/type-info.hh"
-#include "next/types/value-view.hh"
-#include "next/crate/crate-data-source.hh"
-#include "next/pipeline/flatten.hh"
-#include "next/writer/usda-writer.hh"
-#include "next/writer/usdc-writer.hh"
-#include "next/writer/usdz-writer.hh"
-#include "next/eval/xform-eval.hh"
-#include "next/eval/value-clip.hh"
-#include "next/eval/property-trace.hh"
-#include "next/pcp/cache.hh"
-#include "next/resolver/asset-resolver.hh"
+#include "prim/identifier.hh"
+#include "schema/usd-geom-camera.hh"
+#include "schema/usd-shade.hh"
+#include "layer/layer.hh"
+#include "layer/prim-spec.hh"
+#include "load-usd.hh"
+#include "types/type-info.hh"
+#include "types/value-view.hh"
+#include "crate/crate-data-source.hh"
+#include "pipeline/flatten.hh"
+#include "writer/usda-writer.hh"
+#include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
+#include "eval/xform-eval.hh"
+#include "eval/value-clip.hh"
+#include "eval/property-trace.hh"
+#include "../pcp/cache.hh"
+#include "resolver/asset-resolver.hh"
 
-namespace n = lightusd::next;
+namespace n = lightusd;
 namespace fs = ghc::filesystem;
 using lightusd_internal::Fail;
 using lightusd_internal::FromC;
@@ -172,7 +172,7 @@ uint32_t lightusd_api_version(void) {
          uint32_t(LIGHTUSD_API_VERSION_PATCH);
 }
 
-const char* lightusd_version_string(void) { return "1.0.0"; }
+const char* lightusd_version_string(void) { return "1.1.0"; }
 
 const char* lightusd_last_error(void) {
   return lightusd_internal::t_last_error.c_str();
@@ -495,7 +495,7 @@ lightusd_status LoadFailureStatus(const std::string& error,
 }
 
 bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
-                      lightusd::next::pcp::CompositionOptions* co) {
+                      lightusd::pcp::CompositionOptions* co) {
   if (!opts) return true;
   constexpr uint32_t kPriorLoadOptionsSize =
       static_cast<uint32_t>(offsetof(lightusd_load_options, progress_callback));
@@ -575,7 +575,7 @@ bool ApplyLoadOptions(const lightusd_load_options* opts, n::LoadUSDOptions* lo,
     if (opts->preserve_native_instances) {
       co->flatten_instances = false;
       co->instance_flatten_mode =
-          lightusd::next::pcp::InstanceFlattenMode::Native;
+          lightusd::pcp::InstanceFlattenMode::Native;
     }
     co->load_payloads = opts->load_payloads != 0;
     co->max_depth = opts->max_composition_depth;
@@ -809,14 +809,14 @@ lightusd_status lightusd_stage_load(const char* filename,
   *out = nullptr;
 
   n::LoadUSDOptions lo;
-  lightusd::next::pcp::CompositionOptions co;
+  lightusd::pcp::CompositionOptions co;
   // The binding's composed stage is consumed by value readers AND by
   // export/save round-trips: Native instancing would export instance prims as
   // empty husks (no prototype linkage in usda text). Holder mode keeps the
   // flattened layer self-contained: the prototype member holds the content,
   // other members reference it internally.
   co.flatten_instances = true;
-  co.instance_flatten_mode = lightusd::next::pcp::InstanceFlattenMode::Holder;
+  co.instance_flatten_mode = lightusd::pcp::InstanceFlattenMode::Holder;
   if (!ApplyLoadOptions(opts, &lo, &co)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "invalid v2 load options or zero resource limit");
@@ -928,10 +928,10 @@ lightusd_status lightusd_stage_load_from_memory(const uint8_t* data, size_t size
   *out = nullptr;
 
   n::LoadUSDOptions lo;
-  lightusd::next::pcp::CompositionOptions co;
+  lightusd::pcp::CompositionOptions co;
   // Same instancing policy as lightusd_stage_load (see comment there).
   co.flatten_instances = true;
-  co.instance_flatten_mode = lightusd::next::pcp::InstanceFlattenMode::Holder;
+  co.instance_flatten_mode = lightusd::pcp::InstanceFlattenMode::Holder;
   if (!ApplyLoadOptions(opts, &lo, &co)) {
     return Fail(LIGHTUSD_ERR_INVALID_ARG,
                 "invalid v2 load options or zero resource limit");
@@ -1731,7 +1731,7 @@ lightusd_status lightusd_attr_would_materialize_array(
   if (!value) return Fail(LIGHTUSD_ERR_NOT_FOUND, "default value not found");
   if (!value->is_array())
     return Fail(LIGHTUSD_ERR_TYPE_MISMATCH, "property is not an array");
-  *out = value->is_lazy() && !lightusd::next::CanBorrowLazyFlat(*value);
+  *out = value->is_lazy() && !lightusd::CanBorrowLazyFlat(*value);
   return LIGHTUSD_OK;
 }
 
@@ -2925,7 +2925,7 @@ void RetainImportedAssets(lightusd_stage* stage, const n::ImportedAssets& assets
   }
 }
 
-lightusd::next::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
+lightusd::Layer* MutableNativeRootLayer(lightusd_stage* stage) {
   if (!stage || stage->snapshot_stage) return nullptr;
   n::Layer* layer = RootLayerOf(stage);
   // The caller may edit structure: invalidate every borrowed handle.

@@ -11,6 +11,9 @@
 
 #include "external/filesystem/include/ghc/filesystem.hpp"
 #include "external/tinyobjloader-c/tiny_obj_c.h"
+#include "external/tinyobjloader-c/tobj_mtlx.h"
+#include "external/tinyobjloader-c/tobj_subd.h"
+#include "external/tinyobjloader-c/tobj_skel.h"
 #include "import.hh"
 
 namespace lightusd {
@@ -262,6 +265,62 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     if (!influence_count)
       reader.Warn("OBJ vw records have no influences; omitted skin binding", "obj.empty_skin_weights", source);
   }
+  // Skeleton lines (skel-obj.md): checked against the vw joint ids; sidecar
+  // files are read here and parsed by the layer reader.
+  if (a.num_skel_lines) {
+    long max_id = -1;
+    for (size_t i = 0; i < a.num_skin_weights; ++i)
+      for (size_t k = 0; k < a.skin_weights[i].num_weights; ++k)
+        max_id = std::max<long>(max_id, a.skin_weights[i].weights[k].joint_id);
+    tobj_skel sk;
+    if (tobj_skel_parse_lines(a.skel_lines, a.num_skel_lines, max_id, &sk) != 0) {
+      if (err) *err = "OBJ skeleton: out of memory";
+      return false;
+    }
+    struct SkelGuard {
+      tobj_skel* s;
+      ~SkelGuard() { tobj_skel_free(s); }
+    } skel_guard{&sk};
+    if (!sk.ok) {
+      reader.Warn(std::string("OBJ skeleton rejected (") +
+                      (sk.num_errors ? sk.errors[0] : "invalid") + "); skin weights kept",
+                  "obj.skel_invalid", source);
+    } else {
+      auto& s = obj->skel;
+      s.present = true;
+      s.max_memory = reader.options.max_memory;
+      for (size_t j = 0; j < sk.num_joints; ++j) {
+        const tobj_skel_joint& jt = sk.joints[j];
+        s.names.emplace_back(jt.name);
+        s.parents.push_back(static_cast<int>(jt.parent));
+        std::vector<double> bind, rest;
+        for (int k = 0; jt.bind && k < 16; ++k) bind.push_back(tobj_skel_number(jt.bind[k]));
+        for (int k = 0; jt.rest && k < 16; ++k) rest.push_back(tobj_skel_number(jt.rest[k]));
+        s.bind.push_back(std::move(bind));
+        s.rest.push_back(std::move(rest));
+      }
+      auto read = [&](const char* name, std::vector<uint8_t>* bytes) {
+        std::string resolved, why;
+        if (!reader.Read(name, source, bytes, &resolved, &why)) {
+          reader.Warn(std::string("OBJ skeleton sidecar '") + name + "' not read: " + why,
+                      "obj.skel_sidecar_unresolved", source);
+          return false;
+        }
+        return true;
+      };
+      if (sk.lib) {
+        s.lib = sk.lib;
+        if (sk.lib_skeleton) s.lib_skeleton = sk.lib_skeleton;
+        read(sk.lib, &s.lib_bytes);
+      }
+      if (sk.anim) {
+        s.anim = sk.anim;
+        if (sk.anim_name) s.anim_name = sk.anim_name;
+        if (s.anim == s.lib && !s.lib_bytes.empty()) s.anim_bytes = s.lib_bytes;
+        else read(sk.anim, &s.anim_bytes);
+      }
+    }
+  }
   auto skin = [&](Mesh* mesh) {
     if (!influence_count) return true;
     if (influence_count > size_t(INT32_MAX) ||
@@ -369,6 +428,80 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
               "obj.shading_unsupported", "obj.shading", materials.anchors[info.source],
               0, std::move(data), "json")) { if (err) *err = reader.failure; return false; }
     }
+    if (m.num_mtlx_lines) {
+      // MaterialX-in-MTL (tinyobjloader mtlx-mtl.md): emit the node graph for
+      // the USD MaterialX network; an ill-formed graph keeps the classic keys.
+      tobj_mtlx_doc doc;
+      if (tobj_mtlx_parse_lines(name.c_str(), m.mtlx_lines, m.num_mtlx_lines, &doc)) {
+        if (err) *err = "out of memory parsing MaterialX-in-MTL";
+        return false;
+      }
+      const tobj_mtlx_material& x = doc.materials[0];
+      if (!x.ok) {
+        std::string why = x.num_errors ? x.errors[0] : "graph is not well-formed";
+        reader.Warn("MTL material '" + name + "': MaterialX-in-MTL ignored (" + why + ")",
+                    "obj.mtlx_invalid", materials.anchors[info.source]);
+      } else {
+        const std::string& anchor = materials.anchors[info.source];
+        auto inputs_of = [&](const char* node) {
+          Json ins = Json::array();
+          for (size_t i = 0; i < x.num_inputs; i++) {
+            const tobj_mtlx_input& in = x.inputs[i];
+            if (std::strcmp(in.node, node)) continue;
+            bool connected = false;
+            for (size_t c = 0; c < x.num_conns && !connected; c++)
+              connected = !std::strcmp(x.conns[c].dst, node) && !std::strcmp(x.conns[c].port, in.port);
+            if (connected) continue;
+            Json j{{"name", in.port}, {"type", in.type}};
+            if (!std::strcmp(in.type, "filename")) {
+              AssetBytes bytes;
+              std::string resolved, why;
+              if (!reader.ReadTexture(in.value, anchor, &bytes, &resolved, &why)) {
+                reader.Warn("Texture: " + why, "import.texture_unresolved", anchor);
+                resolved = in.value;
+              }
+              j["value"] = resolved;
+            } else if (!std::strcmp(in.type, "string")) {
+              j["value"] = in.value;
+            } else if (!std::strcmp(in.type, "boolean")) {
+              j["value"] = std::string(in.value) == "true";
+            } else {
+              Json nums = Json::array();
+              for (const char* p = in.value; *p;) {
+                char* e = nullptr;
+                double v = std::strtod(p, &e);
+                if (e == p) break;
+                nums.push_back(v);
+                p = e;
+                while (*p == ',' || *p == ' ') p++;
+              }
+              j["value"] = std::move(nums);
+            }
+            for (size_t c = 0; c < x.num_colorspaces; c++)
+              if (!std::strcmp(x.colorspaces[c].node, node) &&
+                  !std::strcmp(x.colorspaces[c].port, in.port))
+                j["colorSpace"] = x.colorspaces[c].colorspace;
+            ins.push_back(std::move(j));
+          }
+          for (size_t c = 0; c < x.num_conns; c++)
+            if (!std::strcmp(x.conns[c].dst, node)) {
+              ins.push_back(Json{{"name", x.conns[c].port}, {"type", x.conns[c].type},
+                                 {"node", x.conns[c].src}});
+            }
+          return ins;
+        };
+        Json nodes = Json::array();
+        for (size_t n = 0; n < x.num_nodes; n++)
+          nodes.push_back(Json{{"name", x.nodes[n].name}, {"category", x.nodes[n].category},
+                               {"type", x.nodes[n].type}, {"inputs", inputs_of(x.nodes[n].name)}});
+        mat["mtlx"] = Json{
+            {"version", x.num_versions ? x.versions[0] : "1.39"},
+            {"surface", Json{{"name", x.surface[0]}, {"category", x.surface[1]},
+                             {"inputs", inputs_of(x.surface[0])}}},
+            {"nodes", std::move(nodes)}};
+      }
+      tobj_mtlx_free(&doc);
+    }
     mat["maps"] = std::move(maps);
     obj->materials.push_back(std::move(mat));
   }
@@ -469,6 +602,31 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     if (!shape.mesh.num_faces) continue;
     Mesh mesh;
     mesh.name = shape.name && *shape.name ? shape.name : "mesh";
+    // Subdivision tags are checked against the faces as written (this import
+    // does not triangulate). An accepted mesh keeps shared points (compact
+    // topology), which the tags' vertex numbers refer to.
+    tobj_subd sd;
+    std::memset(&sd, 0, sizeof(sd));
+    struct SubdGuard {
+      tobj_subd* s;
+      ~SubdGuard() { tobj_subd_free(s); }
+    } sd_guard{&sd};
+    bool use_subd = false;
+    if (shape.mesh.num_tag_lines) {
+      std::vector<int> vi(shape.mesh.num_indices);
+      for (size_t i = 0; i < vi.size(); ++i) vi[i] = shape.mesh.indices[i].vertex_index;
+      if (tobj_subd_parse_lines(shape.mesh.tag_lines, shape.mesh.num_tag_lines,
+                                shape.mesh.num_face_vertices, shape.mesh.num_faces, vi.data(),
+                                &sd) != 0) {
+        if (err) *err = "OBJ subdivision tags: out of memory";
+        return false;
+      }
+      use_subd = sd.ok != 0;
+      if (!use_subd)
+        reader.Warn("OBJ subdivision tags of '" + mesh.name + "' rejected (" +
+                        (sd.num_errors ? sd.errors[0] : "invalid") + "); mesh is not subdivided",
+                    "obj.subd_invalid", source);
+    }
     size_t off = 0;
     bool uv_complete = true;
     // Corner dedup on (vertex, normal, uv, smoothing group, face): open
@@ -522,7 +680,7 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
     mesh.materials.reserve(shape.mesh.num_faces);
     if (a.texcoords.count) mesh.uvs.reserve(initial_points * 2);
     if (a.colors.count) mesh.colors.reserve(initial_points * 3);
-    if (reader.obj_indexed) {
+    if (reader.obj_indexed || use_subd) {
       // Compact topology: points are the shape's source vertices (first-use
       // order); normals and UVs are face-varying tables with per-corner
       // indices, so positions and per-vertex skin weights are not split.
@@ -592,6 +750,31 @@ bool ReadOBJ(std::string_view text, const std::string& source, Reader& reader,
         off += count;
       }
       if (!uv_complete) mesh.uv_indices.clear();
+      if (use_subd) {
+        // File-global vertex numbers -> this mesh's points (all are used by
+        // the mesh's faces, which tobj_subd checked).
+        auto& d = mesh.subd;
+        d.subd = true;
+        d.scheme = sd.scheme;
+        d.interp_boundary = sd.interp_boundary;
+        d.fvar_interp_boundary = sd.fvar_interp_boundary;
+        d.crease_method = sd.crease_method;
+        d.smooth_triangles = sd.smooth_triangles;
+        for (size_t i = 0; i < sd.num_creases; ++i) {
+          d.crease_indices.push_back(point_of[sd.creases[i].v0]);
+          d.crease_indices.push_back(point_of[sd.creases[i].v1]);
+          d.crease_sharpnesses.push_back(
+              static_cast<float>(std::min(tobj_subd_sharpness(sd.creases[i].sharpness), 10.0)));
+        }
+        for (size_t i = 0; i < sd.num_corners; ++i) {
+          d.corner_indices.push_back(point_of[sd.corners[i].v]);
+          d.corner_sharpnesses.push_back(
+              static_cast<float>(std::min(tobj_subd_sharpness(sd.corners[i].sharpness), 10.0)));
+        }
+        for (size_t i = 0; i < sd.num_holes; ++i)
+          d.hole_indices.push_back(static_cast<int32_t>(sd.holes[i]));
+        for (size_t i = 0; i < sd.num_unknown; ++i) d.unknown.emplace_back(sd.unknown[i]);
+      }
     } else
     {
     for (size_t f = 0; f < shape.mesh.num_faces; f++) {

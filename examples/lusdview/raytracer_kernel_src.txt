@@ -15,7 +15,14 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // index of this prototype's BLAS subtree root.
 struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId;
               unsigned int directLightMask; unsigned int shadowLightMask; };
-struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; int srgb; int isUdim; int isPtex; int ptexCols; int ptexRows; int ptexTileEdge; int ptexRectTexelOffset; int ptexFaceCount; int mipCount; int firstMip; int imageSlot; int udimLayer[100]; };
+// Must match HostTextureDesc in rt_scene_build.hh.
+struct TexDesc {
+  int offset, width, height, wrapS, wrapT, srgb, isUdim, isPtex;
+  int ptexCols, ptexRows, ptexTileEdge, ptexRectTexelOffset, ptexFaceCount;
+  int ptexMipLevels, mipCount, firstMip, imageSlot;
+  int udimLayer[100];
+};
+static_assert(sizeof(TexDesc) == 468, "RT texture descriptor layout mismatch");
 struct GeomPropDesc { unsigned int hash; unsigned int components; unsigned int valueOffset; };
 
 typedef struct { float x, y, z; } F3;
@@ -73,8 +80,22 @@ __device__ float wrapCoord(float x, int mode){
 __device__ float srgbToLinear(float x){
   return x<=0.04045f ? x*(1.f/12.92f) : powf((x+0.055f)*(1.f/1.055f),2.4f);
 }
+__device__ float mtlxCorrectTransfer1(float x,int correction){
+  if(correction==0)return x;
+  if((correction>=1&&correction<=5)||correction==11){
+    float a=fabsf(x);
+    x=copysignf(a<=0.0031308f?12.92f*a:1.055f*powf(a,1.f/2.4f)-0.055f,x);
+    if(correction==1)return x;
+  }
+  int transfer=correction>=11?6:(correction>=6?correction-5:correction);
+  float a=fabsf(x),y;
+  if(transfer==1)y=a<=0.04045f?a/12.92f:powf((a+0.055f)/1.055f,2.4f);
+  else if(transfer==6)y=x>0.f?powf(a,2.4f):0.f;
+  else {float gamma=transfer==2?2.2f:(transfer==3?1.8f:(transfer==4?2.4f:(563.f/256.f)));y=powf(a,gamma);}
+  return copysignf(y,x);
+}
 __device__ F4 sampleTexLevel(const unsigned char* texels, TexDesc td,
-                             float u, float v){
+                             float u, float v, int transferCorrection=0){
   float su=wrapCoord(u,td.wrapS)*(td.width-1);
   float sv=wrapCoord(v,td.wrapT)*(td.height-1);
   int x0=(int)floorf(su), y0=(int)floorf(sv);
@@ -95,13 +116,18 @@ __device__ F4 sampleTexLevel(const unsigned char* texels, TexDesc td,
     c01.x=srgbToLinear(c01.x); c01.y=srgbToLinear(c01.y); c01.z=srgbToLinear(c01.z);
     c11.x=srgbToLinear(c11.x); c11.y=srgbToLinear(c11.y); c11.z=srgbToLinear(c11.z);
   }
+  c00.x=mtlxCorrectTransfer1(c00.x,transferCorrection); c00.y=mtlxCorrectTransfer1(c00.y,transferCorrection); c00.z=mtlxCorrectTransfer1(c00.z,transferCorrection);
+  c10.x=mtlxCorrectTransfer1(c10.x,transferCorrection); c10.y=mtlxCorrectTransfer1(c10.y,transferCorrection); c10.z=mtlxCorrectTransfer1(c10.z,transferCorrection);
+  c01.x=mtlxCorrectTransfer1(c01.x,transferCorrection); c01.y=mtlxCorrectTransfer1(c01.y,transferCorrection); c01.z=mtlxCorrectTransfer1(c01.z,transferCorrection);
+  c11.x=mtlxCorrectTransfer1(c11.x,transferCorrection); c11.y=mtlxCorrectTransfer1(c11.y,transferCorrection); c11.z=mtlxCorrectTransfer1(c11.z,transferCorrection);
   F4 a=mk4(c00.x+(c10.x-c00.x)*tx,c00.y+(c10.y-c00.y)*tx,c00.z+(c10.z-c00.z)*tx,c00.w+(c10.w-c00.w)*tx);
   F4 b=mk4(c01.x+(c11.x-c01.x)*tx,c01.y+(c11.y-c01.y)*tx,c01.z+(c11.z-c01.z)*tx,c01.w+(c11.w-c01.w)*tx);
   return mk4(a.x+(b.x-a.x)*ty,a.y+(b.y-a.y)*ty,a.z+(b.z-a.z)*ty,a.w+(b.w-a.w)*ty);
 }
 __device__ F4 sampleTexRGBAFallbackLod(const unsigned char* texels,
                                       const TexDesc* tex, int numTex, int id,
-                                      float u, float v, float lod, F4 missing){
+                                      float u, float v, float lod, F4 missing,
+                                      int transferCorrection=0){
   if (!texels || !tex || id<0 || id>=numTex) return missing;
   TexDesc td=tex[id];
   int baseId=id;
@@ -120,7 +146,7 @@ __device__ F4 sampleTexRGBAFallbackLod(const unsigned char* texels,
   int id1=l1==0?baseId:td.firstMip+l1-1;
   TexDesc t0=l0==0?td:tex[id0];
   TexDesc t1=l1==0?td:tex[id1];
-  F4 a=sampleTexLevel(texels,t0,u,v), b=sampleTexLevel(texels,t1,u,v);
+  F4 a=sampleTexLevel(texels,t0,u,v,transferCorrection), b=sampleTexLevel(texels,t1,u,v,transferCorrection);
   float f=cl-floorf(cl);
   return mk4(a.x+(b.x-a.x)*f,a.y+(b.y-a.y)*f,a.z+(b.z-a.z)*f,a.w+(b.w-a.w)*f);
 }
@@ -141,6 +167,10 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
                                     const TexDesc* tex, int numTex, int id,
                                     float u, float v, unsigned int face,
                                     float lod, F4 missing);
+__device__ F4 sampleMaterialTextureGraph(const unsigned char* texels,
+                                         const TexDesc* tex, int numTex, int id,
+                                         float u, float v, unsigned int face,
+                                         int transferCorrection, F4 missing);
 __device__ F4 mtlxBlackbody(float kelvin){float temperature=fminf(fmaxf(kelvin,800.f),25000.f),t=1000.f/temperature,t2=t*t,t3=t2*t;float x=temperature<4000.f?-0.2661239f*t3-0.2343580f*t2+0.8776956f*t+0.179910f:-3.0258469f*t3+2.1070379f*t2+0.2226347f*t+0.240390f,x2=x*x,x3=x2*x,y=temperature<2222.f?-1.1063814f*x3-1.34811020f*x2+2.18555832f*x-0.20219683f:(temperature<4000.f?-0.9549476f*x3-1.37418593f*x2+2.09137015f*x-0.16748867f:3.0817580f*x3-5.87338670f*x2+3.75112997f*x-0.37001483f);if(y<=0.f)return mk4(1,1,1,1);float X=x/y,Z=(1.f-x-y)/y;return mk4(fmaxf(3.2406f*X-1.5372f-.4986f*Z,0.f),fmaxf(-.9689f*X+1.8758f+.0415f*Z,0.f),fmaxf(.0557f*X-.2040f+1.057f*Z,0.f),1.f);}
 
 // Compact MaterialX graph interpreter shared by CUDA and HIP. Graph blocks
@@ -217,10 +247,18 @@ __device__ F4 evalMaterialXGraphUv(const float* graph, int mid, int route,
         else if (uvInput==2) { gu=c.x; gv=c.y; }
         gu=gu*graph[p+17]+graph[p+19];
         gv=gv*graph[p+18]+graph[p+20];
-        values[i]=tex>=0 ? sampleMaterialTexture(texels,textures,numTextures,
+        const int transferCorrection=(int)floorf(graph[p+13]+0.5f);
+        values[i]=tex>=0 ? sampleMaterialTextureGraph(texels,textures,numTextures,
                                                   tex,gu,gv,(unsigned int)face,
-                                                  0.f,mk4(1.f,1.f,1.f,1.f))
+                                                  transferCorrection,mk4(1.f,1.f,1.f,1.f))
                          : fallback;
+        const int colorMode=(int)floorf(graph[p+12]+0.5f);
+        const float cr=values[i].x,cg=values[i].y,cb=values[i].z;
+        if(colorMode==1){values[i].x=1.70505f*cr-.62179f*cg-.08326f*cb;values[i].y=-.13026f*cr+1.14080f*cg-.01054f*cb;values[i].z=-.02400f*cr-.12897f*cg+1.15297f*cb;}
+        else if(colorMode==2){values[i].x=2.52169f*cr-1.13413f*cg-.38756f*cb;values[i].y=-.27648f*cr+1.37272f*cg-.09624f*cb;values[i].z=-.01538f*cr-.15298f*cg+1.16836f*cb;}
+        else if(colorMode==3){values[i].x=1.66049f*cr-.58764f*cg-.07285f*cb;values[i].y=-.12455f*cr+1.13290f*cg-.00835f*cb;values[i].z=-.01815f*cr-.10058f*cg+1.11873f*cb;}
+        else if(colorMode==4){values[i].x=1.22494f*cr-.22494f*cg;values[i].y=-.04206f*cr+1.04206f*cg;values[i].z=-.01964f*cr-.07864f*cg+1.09828f*cb;}
+        else if(colorMode==5){values[i].x=1.39835536f*cr;values[i].y=-.39835569f*cr+cg-.04292889f*cb;values[i].z=1.04292905f*cb;}
       }
       else if (op==3) {
         F3 n=norm3(mk(a.x*2.f-1.f,a.y*2.f-1.f,a.z*2.f-1.f));
@@ -385,6 +423,20 @@ __device__ F4 sampleMaterialTexture(const unsigned char* texels,
   }
   return sampleTexRGBAFallbackLod(texels, tex, numTex, id, u, v, lod,
                                   missing);
+}
+__device__ F4 sampleMaterialTextureGraph(const unsigned char* texels,
+                                         const TexDesc* tex, int numTex, int id,
+                                         float u, float v, unsigned int face,
+                                         int transferCorrection, F4 missing) {
+  if (tex && id >= 0 && id < numTex && tex[id].isPtex) {
+    F4 value = samplePtexRGBA(texels, tex, numTex, id, u, v, face, 0.f);
+    value.x=mtlxCorrectTransfer1(value.x,transferCorrection);
+    value.y=mtlxCorrectTransfer1(value.y,transferCorrection);
+    value.z=mtlxCorrectTransfer1(value.z,transferCorrection);
+    return value;
+  }
+  return sampleTexRGBAFallbackLod(texels, tex, numTex, id, u, v, 0.f,
+                                  missing, transferCorrection);
 }
 __device__ float textureLod(const TexDesc* tex, int numTex, int id,
                             float u, float v, float uvFootprint){
@@ -961,6 +1013,7 @@ struct PtMat {
   float metal, rough, transmission, ior, subsurface, specularWeight;
   float coatWeight, coatRoughness, coatIor, sheenWeight, sheenRoughness;
   float coatAffectColor, coatAffectRoughness, coatDarkening;
+  F3 coatDark;
   float subsurfaceAnisotropy, subsurfaceScatterAnisotropy;
   float anisotropy, anisotropyRotation, coatAnisotropy, coatRotation;
   float thinFilmWeight, thinFilmThickness, thinFilmIor;
@@ -1015,6 +1068,59 @@ __device__ float ptGgxDirectionPdf(F3 n,F3 v,F3 l,float rough,float anisotropy,f
 __device__ float ptPowerHeuristic(float a,float b){
   float aa=a*a,bb=b*b;return aa/fmaxf(aa+bb,1e-20f);
 }
+/* OpenPBR coat darkening (open_pbr_surface 1.1, the bounded ratio LightRT's
+ * verified CPU BSDF uses): Kcoat = 1 - (1 - F0)/n^2, Ebase = the base albedo
+ * estimate, factor = (1 - K)/(1 - Ebase K) per channel, mixed toward 1 by
+ * coat_weight * coat_darkening. A white base is not darkened (energy stays
+ * at 1 in a white furnace); the previous fixed 0.8 scale lost 20%. */
+__device__ F3 ptCoatDarkening(F3 base,F3 ssColor,float ss,float metal,float specW,float coatIor,float t){
+  float n=fmaxf(coatIor,1.f),c=(n-1.f)/(n+1.f),k=fminf(fmaxf(1.f-(1.f-c*c)/(n*n),0.f),.9999f);
+  t=fminf(fmaxf(t,0.f),1.f);
+  F3 diel=mk(base.x+(ssColor.x-base.x)*ss,base.y+(ssColor.y-base.y)*ss,base.z+(ssColor.z-base.z)*ss);
+  F3 met=scale(base,fmaxf(specW,0.f));
+  F3 e=mk(diel.x+(met.x-diel.x)*metal,diel.y+(met.y-diel.y)*metal,diel.z+(met.z-diel.z)*metal);
+  return mk(1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.x*k)-1.f)*t,1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.y*k)-1.f)*t,
+            1.f+((1.f-k)/fmaxf(1e-4f,1.f-e.z*k)-1.f)*t);
+}
+/* MaterialX GGX multiple-scattering compensation (mx_ggx_energy_compensation,
+ * Turquin): comp = 1 + Favg (1 - Ess) / Ess with the mx_ggx_dir_albedo_analytic
+ * fit and Favg = F0 + (1 - F0)/21. Applied to the metallic share of the GGX
+ * reflection, matching LightRT's verified conductor (bsdf.c conductor_response);
+ * dielectric layering is left unchanged. */
+__device__ F3 ptGgxEnergyComp(float nv,float rough,F3 f0,float metal){
+  float x=fminf(fmaxf(nv,0.f),1.f),y=fmaxf(rough*rough,.002f),x2=x*x,y2=y*y;
+  float r0=.1003f-.6303f*x+9.748f*y-2.038f*x*y+29.34f*x2-8.245f*y2-26.44f*x2*y+19.99f*x*y2-5.448f*x2*y2;
+  float r1=.9345f-2.323f*x+2.229f*y-3.748f*x*y+1.424f*x2-.7684f*y2+1.436f*x2*y+.2913f*x*y2+.6286f*x2*y2;
+  float r2=1.f-1.765f*x+8.263f*y+11.53f*x*y+28.96f*x2-7.507f*y2-36.11f*x2*y+15.86f*x*y2+33.37f*x2*y2;
+  float r3=1.f+.2281f*x+15.94f*y-55.83f*x*y+13.08f*x2+41.26f*y2+54.9f*x2*y+300.2f*x*y2-285.1f*x2*y2;
+  float ess=fminf(fmaxf(r0/r2,0.f),1.f)+fminf(fmaxf(r1/r3,0.f),1.f);
+  if(!(ess>1e-4f))return mk(1.f,1.f,1.f);
+  float k=(1.f-ess)/ess,m=fminf(fmaxf(metal,0.f),1.f);
+  return mk(1.f+m*(f0.x+(1.f-f0.x)/21.f)*k,1.f+m*(f0.y+(1.f-f0.y)/21.f)*k,1.f+m*(f0.z+(1.f-f0.z)/21.f)*k);
+}
+/* OpenPBR coat directional albedo with Turquin compensation, as LightRT's
+ * coat_substrate_attenuation: albedo=(a f0+b) comp, comp=1+Favg(1-Ess)/Ess. The coat
+ * lobe is scaled by comp and the base by 1-coatWeight*albedo. */
+__device__ F3 ptCoatComp(float nv,float rough,F3 f0,F3* albedo){
+  float x=fminf(fmaxf(nv,0.f),1.f),y=fmaxf(rough*rough,.002f),x2=x*x,y2=y*y;
+  float r0=.1003f-.6303f*x+9.748f*y-2.038f*x*y+29.34f*x2-8.245f*y2-26.44f*x2*y+19.99f*x*y2-5.448f*x2*y2;
+  float r1=.9345f-2.323f*x+2.229f*y-3.748f*x*y+1.424f*x2-.7684f*y2+1.436f*x2*y+.2913f*x*y2+.6286f*x2*y2;
+  float r2=1.f-1.765f*x+8.263f*y+11.53f*x*y+28.96f*x2-7.507f*y2-36.11f*x2*y+15.86f*x*y2+33.37f*x2*y2;
+  float r3=1.f+.2281f*x+15.94f*y-55.83f*x*y+13.08f*x2+41.26f*y2+54.9f*x2*y+300.2f*x*y2-285.1f*x2*y2;
+  float a=fminf(fmaxf(r0/r2,0.f),1.f),b=fminf(fmaxf(r1/r3,0.f),1.f),ess=a+b;
+  if(!(ess>1e-4f)){*albedo=fresnelSchlick(nv,f0);return mk(1.f,1.f,1.f);}
+  float k=(1.f-ess)/ess;
+  F3 comp=mk(1.f+(f0.x+(1.f-f0.x)/21.f)*k,1.f+(f0.y+(1.f-f0.y)/21.f)*k,1.f+(f0.z+(1.f-f0.z)/21.f)*k);
+  *albedo=mk((a*f0.x+b)*comp.x,(a*f0.y+b)*comp.y,(a*f0.z+b)*comp.z);
+  return comp;
+}
+/* Base-layer Fresnel with F90 = specular weight for dielectrics (1 for metals), as LightRT's
+ * L.F90: a zero specular weight must remove the grazing reflection too. */
+__device__ F3 ptFresnelBase(float c,F3 f0,float specW,float metal){
+  float f90=1.f+(fminf(fmaxf(specW,0.f),1.f)-1.f)*(1.f-fminf(fmaxf(metal,0.f),1.f));
+  float q=powf(1.f-fminf(fmaxf(c,0.f),1.f),5.f);
+  return mk(f0.x+(f90-f0.x)*q,f0.y+(f90-f0.y)*q,f0.z+(f90-f0.z)*q);
+}
 __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
     F3 diffuseC,F3 f0,F3 sheenC,F3 coatF0,float coatWeight,
     float diffuseP,float glossyP,float coatP,
@@ -1022,16 +1128,27 @@ __device__ F3 ptEvaluateReflection(PtMat s,F3 n,F3 coatN,F3 v,F3 l,
   float nl=fmaxf(dot3(n,l),0.f),nv=fmaxf(dot3(n,v),1e-6f);
   if(nl<=0.f){*pdf=0.f;return mk(0.f,0.f,0.f);}F3 h=norm3(add(v,l));
   float nh=fmaxf(dot3(n,h),0.f),vh=fmaxf(dot3(v,h),0.f);
-  F3 F=fresnelSchlick(vh,f0);F3 t,b;ptRotatedBasis(n,s.anisotropyRotation,&t,&b);
+  F3 F=ptFresnelBase(vh,f0,s.specularWeight,s.metal);F3 t,b;ptRotatedBasis(n,s.anisotropyRotation,&t,&b);
   float gs=ggxDAniso(nh,dot3(h,t),dot3(h,b),s.rough,s.anisotropy)*ggxG1Aniso(nv,dot3(v,t),dot3(v,b),s.rough,s.anisotropy)*ggxG1Aniso(nl,dot3(l,t),dot3(l,b),s.rough,s.anisotropy)/fmaxf(4.f*nv*nl,1e-6f);
-  F3 ch=norm3(add(v,l)),ct,cb;ptRotatedBasis(coatN,s.coatRotation,&ct,&cb);float cnl=fmaxf(dot3(coatN,l),0.f),cnv=fmaxf(dot3(coatN,v),1e-6f),cnh=fmaxf(dot3(coatN,ch),0.f);F3 cF=scale(fresnelSchlick(fmaxf(dot3(v,ch),0.f),coatF0),coatWeight);
+  F3 ch=norm3(add(v,l)),ct,cb;ptRotatedBasis(coatN,s.coatRotation,&ct,&cb);float cnl=fmaxf(dot3(coatN,l),0.f),cnv=fmaxf(dot3(coatN,v),1e-6f),cnh=fmaxf(dot3(coatN,ch),0.f);F3 cAlb;F3 cComp=ptCoatComp(cnv,s.coatRoughness,coatF0,&cAlb);F3 cF=scale(fresnelSchlick(fmaxf(dot3(v,ch),0.f),coatF0),coatWeight);cF=mk(cF.x*cComp.x,cF.y*cComp.y,cF.z*cComp.z);
   float cs=ggxDAniso(cnh,dot3(ch,ct),dot3(ch,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(cnv,dot3(v,ct),dot3(v,cb),s.coatRoughness,s.coatAnisotropy)*ggxG1Aniso(fmaxf(cnl,1e-6f),dot3(l,ct),dot3(l,cb),s.coatRoughness,s.coatAnisotropy)/fmaxf(4.f*cnv*fmaxf(cnl,1e-6f),1e-6f);
   *pdf=diffuseP*nl*.31830988618f+
        glossyP*ptGgxDirectionPdf(n,v,l,s.rough,s.anisotropy,s.anisotropyRotation)+
        coatP*ptGgxDirectionPdf(coatN,v,l,s.coatRoughness,s.coatAnisotropy,s.coatRotation);
   float sheenShape=(.5f+.5f*s.sheenRoughness)*powf(1.f-nl,5.f)*.31830988618f;
-  F3 diffuse=mk((1.f-F.x)*diffuseC.x*.31830988618f,(1.f-F.y)*diffuseC.y*.31830988618f,(1.f-F.z)*diffuseC.z*.31830988618f);return add(add(diffuse,scale(sheenC,sheenShape)),
-             add(scale(F,gs),scale(cF,cs)));
+  /* Energy-conserving layering (see materialx-conformance issues/lightusd/04):
+   * the diffuse base sits under the specular layer, attenuated by 1 - F(view);
+   * the sheen attenuates what lies below it by its directional albedo;
+   * the coat attenuates the whole base by 1 - coatWeight F_coat(view). */
+  F3 Fv=ptFresnelBase(nv,f0,s.specularWeight,s.metal);
+  float sheenAlb=(.5f+.5f*s.sheenRoughness)*(1.f/21.f);
+  F3 sheenAtt=mk(1.f-fminf(sheenC.x*sheenAlb,1.f),1.f-fminf(sheenC.y*sheenAlb,1.f),1.f-fminf(sheenC.z*sheenAlb,1.f));
+  F3 diffuse=mk((1.f-Fv.x)*sheenAtt.x*diffuseC.x*.31830988618f,(1.f-Fv.y)*sheenAtt.y*diffuseC.y*.31830988618f,(1.f-Fv.z)*sheenAtt.z*diffuseC.z*.31830988618f);
+  F3 cFv=scale(cAlb,coatWeight);
+  F3 ec=ptGgxEnergyComp(nv,s.rough,f0,s.metal);
+  F3 base=add(add(diffuse,scale(sheenC,sheenShape)),mk(F.x*gs*ec.x,F.y*gs*ec.y,F.z*gs*ec.z));
+  base=mk(base.x*(1.f-cFv.x)*s.coatDark.x,base.y*(1.f-cFv.y)*s.coatDark.y,base.z*(1.f-cFv.z)*s.coatDark.z);
+  return add(base,scale(cF,cs));
 }
 __device__ F3 ptSampleHg(F3 forward,float g,unsigned& seed){
   g=fminf(fmaxf(g,-.95f),.95f);float u=rndf(seed),cosTheta;
@@ -1074,7 +1191,7 @@ __device__ PtMat ptResolveMaterial(
   m.sheenColor=mk(1.f,1.f,1.f);
   m.radius=mk(1.f,1.f,1.f);m.metal=0.f;m.rough=.5f;m.transmission=0.f;
   m.ior=1.5f;m.subsurface=0.f;m.specularWeight=1.f;m.coatWeight=0.f;
-  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;m.coatAffectColor=0.f;m.coatAffectRoughness=0.f;m.coatDarkening=0.f;
+  m.coatRoughness=.1f;m.coatIor=1.5f;m.sheenWeight=0.f;m.coatAffectColor=0.f;m.coatAffectRoughness=0.f;m.coatDarkening=0.f;m.coatDark=mk(1.f,1.f,1.f);
   m.sheenRoughness=.3f;m.subsurfaceAnisotropy=0.f;m.subsurfaceScatterAnisotropy=0.f;
   m.anisotropy=0.f;m.anisotropyRotation=0.f;m.coatAnisotropy=0.f;m.coatRotation=0.f;
   m.thinFilmWeight=0.f;m.thinFilmThickness=0.f;m.thinFilmIor=1.5f;
@@ -1130,9 +1247,17 @@ __device__ PtMat ptResolveMaterial(
     }
     if(matGraph&&matLightRt&&matGraph[mid*LIGHTUSD_GPU_GRAPH_FLOATS+9]>=0.f)
       m.radius=scale(m.radius,fmaxf(matLightRt[mid*LIGHTUSD_GPU_OPENPBR_FLOATS+23],0.f));
+    F3 coatDark=ptCoatDarkening(m.base,m.subsurfaceColor,m.subsurface,m.metal,m.specularWeight,m.coatIor,m.coatWeight*m.coatDarkening);
     float coatColorMix=fminf(fmaxf(m.coatWeight*m.coatAffectColor,0.f),1.f);
     m.base=mk(m.base.x*(1.f+(m.coatColor.x-1.f)*coatColorMix),m.base.y*(1.f+(m.coatColor.y-1.f)*coatColorMix),m.base.z*(1.f+(m.coatColor.z-1.f)*coatColorMix));
-    m.base=scale(m.base,1.f-.2f*fminf(fmaxf(m.coatWeight*m.coatDarkening,0.f),1.f));
+    m.coatDark=coatDark;
+    if(m.coatWeight>0.f&&m.transmission<=0.f){ /* OpenPBR graph: base specular IOR is relative to the coat; base roughness is raised toward the coat's */
+      float cw=m.coatWeight,ratio=m.ior/fmaxf(m.coatIor,1e-4f),rel=fmaxf(ratio,1.f/ratio);
+      m.ior=(1.f-cw)*m.ior+cw*rel;
+      float sr=fminf(fmaxf(m.rough,0.f),1.f),cr=fminf(fmaxf(m.coatRoughness,0.f),1.f);
+      float aff=powf(fminf(1.f,2.f*cr*cr*cr*cr+sr*sr*sr*sr),.25f);
+      m.rough=(1.f-cw)*m.rough+cw*aff;
+    }
     float coatRoughMix=fminf(fmaxf(m.coatWeight*m.coatAffectRoughness,0.f),1.f);
     m.rough=m.rough*(1.f-coatRoughMix)+m.coatRoughness*coatRoughMix;
   }
@@ -1227,6 +1352,168 @@ __device__ float ptEnvironmentPdf(const float* lights,int count,F3 clear,
 }
 __device__ float ptSpectralIor(float iorD,float abbe,float dispersion,int channel){if(dispersion<=0.f||abbe<=0.f)return iorD;float lc=.6562725f,ld=.5875618f,lf=.4861327f,delta=(iorD-1.f)/fmaxf(abbe,1.f)*dispersion;float ic=1.f/(lc*lc),id=1.f/(ld*ld),iff=1.f/(lf*lf),B=delta/fmaxf(iff-ic,1e-6f),A=iorD-B*id,lambda=channel==0?lc:(channel==1?ld:lf);return fmaxf(A+B/(lambda*lambda),1.0001f);}
 
+// --gsplat-kernel cycles: Blender Cycles 3D Gaussian splat kernel (Apache-2.0,
+// Blender Foundation; ported via src/external/lightrt/lightrt_c_gsplat.c).
+// Host encoding (rt_scene_build.hh GsplatGpuData), signalled by pointCount < 0:
+// pointCenters = splats (16 floats), pointRadii = nodes (8 words), pointOrder =
+// chunks {nodeFirst, splatFirst}, pointMajor = per-field linv + SH.
+__device__ float gsHash(F3 p, unsigned seed) {
+  unsigned h = 0x9e3779b9u ^ (seed * 0x85ebca6bu);
+  const float v[3] = {p.x, p.y, p.z};
+  for (int i = 0; i < 3; ++i) {
+    unsigned b = __float_as_uint(v[i]);
+    h ^= b + 0x7f4a7c15u + (h << 6) + (h >> 2);
+    h = h * 747796405u + 2891336453u;
+    h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+    h = (h >> 22u) ^ h;
+  }
+  return (float)(h >> 8) * (1.f / 16777216.f);
+}
+__device__ bool gsBox(const unsigned* N, unsigned n, F3 o, const float* inv,
+                      float tmax, float* tnear) {
+  const unsigned* b = N + n * 8u;
+  const float oo[3] = {o.x, o.y, o.z};
+  float t0 = 0.f, t1 = tmax;
+  for (int k = 0; k < 3; ++k) {
+    float a = (__uint_as_float(b[k]) - oo[k]) * inv[k];
+    float c = (__uint_as_float(b[3 + k]) - oo[k]) * inv[k];
+    t0 = fmaxf(t0, fminf(a, c));
+    t1 = fminf(t1, fmaxf(a, c));
+  }
+  *tnear = t0;
+  return t0 <= t1;
+}
+// chunkPacked = chunk count | motion keys << 24; time = shutter time [0,1].
+__device__ float gsTraceCycles(const float* S, const unsigned* N, const int* C,
+                               int chunkPacked, F3 o, F3 d, float tmax,
+                               unsigned seed, int* hit, float time = 0.5f) {
+  *hit = -1;
+  const int chunkCount = chunkPacked & 0xffffff;
+  const unsigned K = (unsigned)chunkPacked >> 24 > 1u ? (unsigned)chunkPacked >> 24 : 1u;
+  unsigned kstep = 0u; float kt = 0.f;
+  if (K > 1u) {
+    const float f = fminf(fmaxf(time, 0.f), 1.f) * (float)(K - 1u);
+    kstep = (unsigned)f; if (kstep > K - 2u) kstep = K - 2u;
+    kt = f - (float)kstep;
+  }
+  float inv[3];
+  const float dv[3] = {d.x, d.y, d.z};
+  for (int k = 0; k < 3; ++k) {
+    float v = 1.f / dv[k];
+    if (!(v >= -1e18f && v <= 1e18f)) v = (dv[k] < 0.f) ? -1e18f : 1e18f;
+    inv[k] = v;
+  }
+  const float dd = dot3(d, d);
+  float best = tmax;
+  for (int c = 0; c < chunkCount; ++c) {
+    const unsigned nb = (unsigned)C[c * 2], sb0 = (unsigned)C[c * 2 + 1];
+    unsigned stk[64]; int sp = 0; float tn;
+    if (gsBox(N, nb, o, inv, best, &tn)) stk[sp++] = 0u;
+    while (sp > 0) {
+      const unsigned n = nb + stk[--sp];
+      const unsigned first = N[n * 8u + 6u], count = N[n * 8u + 7u];
+      if (count == 0u) {
+        float ta, tb;
+        const bool ha = gsBox(N, nb + first, o, inv, best, &ta);
+        const bool hb = gsBox(N, nb + first + 1u, o, inv, best, &tb);
+        if (ha && hb && sp + 2 <= 64) {
+          if (ta <= tb) { stk[sp++] = first + 1u; stk[sp++] = first; }
+          else { stk[sp++] = first; stk[sp++] = first + 1u; }
+        } else if (ha && sp < 64) stk[sp++] = first;
+        else if (hb && sp < 64) stk[sp++] = first + 1u;
+        continue;
+      }
+      for (unsigned i = sb0 + first; i < sb0 + first + count; ++i) {
+        float g[14];
+        const float* g0 = S + ((size_t)i * K + kstep) * 16u;
+        const float* g1 = K > 1u ? g0 + 16 : g0;
+        for (int q = 0; q < 14; ++q) g[q] = g0[q] + (g1[q] - g0[q]) * kt;
+        if (!(g[13] > 0.f)) continue;
+        const F3 oc = mk(o.x - g[0], o.y - g[1], o.z - g[2]);
+        const float b = dot3(oc, d);
+        if (b * b - dd * (dot3(oc, oc) - g[13] * g[13]) < 0.f) continue;
+        const F3 og = mk(g[4]*oc.x + g[5]*oc.y + g[6]*oc.z,
+                         g[7]*oc.x + g[8]*oc.y + g[9]*oc.z,
+                         g[10]*oc.x + g[11]*oc.y + g[12]*oc.z);
+        const F3 dg = mk(g[4]*d.x + g[5]*d.y + g[6]*d.z,
+                         g[7]*d.x + g[8]*d.y + g[9]*d.z,
+                         g[10]*d.x + g[11]*d.y + g[12]*d.z);
+        const float t = -dot3(og, dg) / dot3(dg, dg);
+        if (!(t > 0.f && t <= best)) continue;
+        const F3 e = add(og, scale(dg, t));
+        const float alpha = g[3] * expf(-0.5f * dot3(e, e));
+        if (gsHash(add(o, scale(d, t)), seed) > alpha) continue;
+        best = t; *hit = (int)i;
+      }
+    }
+  }
+  return best;
+}
+__device__ float gsSrgbToLinear(float c) {
+  return c < 0.04045f ? fmaxf(c, 0.f) * (1.f / 12.92f)
+                      : powf((c + 0.055f) * (1.f / 1.055f), 2.4f);
+}
+__device__ F3 gsRadiance(const float* S, const float* F, int id, F3 d,
+                         int chunkPacked = 0, float time = 0.5f) {
+  const unsigned K = (unsigned)chunkPacked >> 24 > 1u ? (unsigned)chunkPacked >> 24 : 1u;
+  const float* g = S + (size_t)id * K * 16u;
+  const unsigned shOff = __float_as_uint(g[14]);
+  const unsigned meta = __float_as_uint(g[15]);
+  const unsigned deg = meta & 3u;
+  const float* L = F + __float_as_uint(F[2]) + (size_t)(meta >> 8u) * 12u;
+  F3 v = mk(L[0]*d.x + L[1]*d.y + L[2]*d.z, L[3]*d.x + L[4]*d.y + L[5]*d.z,
+            L[6]*d.x + L[7]*d.y + L[8]*d.z);
+  const float l = sqrtf(dot3(v, v));
+  v = l > 0.f ? scale(v, 1.f / l) : mk(0.f, 0.f, 1.f);
+  const float x = v.x, y = v.y, z = v.z;
+  float bs[16];
+  bs[0] = 0.282094792f;
+  unsigned nb = 1u;
+  if (deg >= 1u) { bs[1] = -0.488602512f*y; bs[2] = 0.488602512f*z; bs[3] = -0.488602512f*x; nb = 4u; }
+  if (deg >= 2u) {
+    bs[4] = 1.092548431f*x*y; bs[5] = -1.092548431f*y*z;
+    bs[6] = 0.315391565f*(3.f*z*z - 1.f); bs[7] = -1.092548431f*x*z;
+    bs[8] = 0.546274215f*(x*x - y*y); nb = 9u;
+  }
+  if (deg >= 3u) {
+    bs[9] = -0.590043589f*y*(3.f*x*x - y*y); bs[10] = 2.890611442f*x*y*z;
+    bs[11] = -0.457045799f*y*(5.f*z*z - 1.f); bs[12] = 0.373176332f*z*(5.f*z*z - 3.f);
+    bs[13] = -0.457045799f*x*(5.f*z*z - 1.f); bs[14] = 1.445305721f*z*(x*x - y*y);
+    bs[15] = -0.590043590f*x*(x*x - 3.f*y*y); nb = 16u;
+  }
+  float r = 0.5f, gg = 0.5f, bb = 0.5f;
+  const float* c = F + shOff;
+  for (unsigned i = 0u; i < nb; ++i) {
+    r += c[i*3] * bs[i]; gg += c[i*3+1] * bs[i]; bb += c[i*3+2] * bs[i];
+  }
+  // Animated DC colour at the sample's shutter time (Cycles radiance_base).
+  const unsigned dcBase = __float_as_uint(F[0]);
+  if (dcBase != 0u && K > 1u) {
+    const float fk = fminf(fmaxf(time, 0.f), 1.f) * (float)(K - 1u);
+    unsigned st = (unsigned)fk; if (st > K - 2u) st = K - 2u;
+    const float tk = fk - (float)st;
+    const float* d0 = F + dcBase + ((size_t)id * K + st) * 3u;
+    r += (d0[0] + (d0[3] - d0[0]) * tk - c[0]) * bs[0];
+    gg += (d0[1] + (d0[4] - d0[1]) * tk - c[1]) * bs[0];
+    bb += (d0[2] + (d0[5] - d0[2]) * tk - c[2]) * bs[0];
+  }
+  if (meta & 4u) return mk(gsSrgbToLinear(r), gsSrgbToLinear(gg), gsSrgbToLinear(bb));
+  return mk(fmaxf(r, 0.f), fmaxf(gg, 0.f), fmaxf(bb, 0.f));
+}
+// Shadow visibility through the splats (0 = blocked), as Cycles' shadow_all.
+__device__ float gsShadowK(const float* S, const unsigned* N, const int* C,
+                           int chunkCount, F3 o, F3 d, float maxT,
+                           unsigned seed, float time = 0.5f) {
+  if (!S || chunkCount <= 0) return 1.f;
+  int h;
+  gsTraceCycles(S, N, C, chunkCount, o, d, maxT, seed, &h, time);
+  return h >= 0 ? 0.f : 1.f;
+}
+__device__ unsigned gsPointSeed(F3 p, unsigned salt) {
+  return hashU(__float_as_uint(p.x) ^ hashU(__float_as_uint(p.y) ^
+               hashU(__float_as_uint(p.z) ^ salt)));
+}
+
 __device__ F3 productionPath(
     const float* tris,const float* nrms,const float* cols,const int* mats,
     const int* backMats,const float* matPbr,const float* matLightRt,
@@ -1237,7 +1524,9 @@ __device__ F3 productionPath(
     unsigned seed,int maxDepth,int rrDepth,int maxSubsurfaceEvents,
     float graphSceneTime,float graphSceneFrame,
     const GeomPropDesc* geomProps,const float* geomPropValues,
-    int geomPropCount){
+    int geomPropCount,
+    const float* gsS,const unsigned* gsN,const int* gsC,const float* gsF,
+    int gsChunks,float gsTime){
   F3 L=mk(0.f,0.f,0.f),beta=mk(1.f,1.f,1.f);
   int subsurfaceEvents=0,transparentEvents=0,transmissionEvents=0;
   bool inSubsurface=false;
@@ -1250,9 +1539,16 @@ __device__ F3 productionPath(
   float mediumIor[8]={1.f,1.f,1.f,1.f,1.f,1.f,1.f,1.f};F3 mediumSigma[8]={};F3 mediumSigmaS[8]={};F3 mediumEmission[8]={};float mediumG[8]={};int mediumInstance[8]={-1,-1,-1,-1,-1,-1,-1,-1};int mediumDepth=0,heroChannel=-1;
   for(int bounce=0;bounce<maxDepth;++bounce){
     int tri=-1,ii=-1;float bu=0.f,bv=0.f;
-    float t=traverseCutout(tlas,insts,blas,tris,ro,rd,1e30f,&tri,&bu,&bv,&ii,
+    // --gsplat-kernel cycles: emission-only splats on camera/bounce rays; a
+    // splat in front of the next surface ends the path (BSDF-sampled, w=1).
+    int gsId=-1;float gsT=1e30f;
+    if(gsChunks>0&&!inSubsurface)
+      gsT=gsTraceCycles(gsS,gsN,gsC,gsChunks,ro,rd,1e30f,
+                        hashU(__float_as_uint(rndf(seed))^(unsigned)bounce),&gsId,gsTime);
+    float t=traverseCutout(tlas,insts,blas,tris,ro,rd,gsId>=0?gsT:1e30f,&tri,&bu,&bv,&ii,
       cols,mats,backMats,matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,
       texels,textures,numTextures,uvs,uvs1,-1,false);
+    if((tri<0||ii<0)&&gsId>=0){L=add(L,ptMul(beta,gsRadiance(gsS,gsF,gsId,rd,gsChunks,gsTime)));break;}
     if(tri<0||ii<0){
       if(!inSubsurface){float mis=previousDelta?1.f:ptPowerHeuristic(previousBsdfPdf,previousEnvironmentPdf);L=add(L,scale(ptMul(beta,ptEnvironment(lightParams,numLights,rd,clear,texels,textures,numTextures)),mis));}
       break;
@@ -1351,7 +1647,12 @@ __device__ F3 productionPath(
               fmaxf(maxT-2e-4f,1e-4f),&st,&su,&sv,&si,cols,mats,backMats,
               matPbr,matLightRt,matGraph,numMats,matTex,matTexParam,texels,
               textures,numTextures,uvs,uvs1,li,(lflags&(1<<6))!=0);
-          if(st<0){
+          // shadow:enable = false skips splat occlusion too (as the mesh
+          // traversal above), matching Vulkan's ptShadowVisibility.
+          if(st<0&&((lflags&2)==0||
+                    gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),ld,
+                             fmaxf(maxT-2e-4f,1e-4f),
+                             gsPointSeed(p,(unsigned)li*977u+(unsigned)bounce),gsTime)>0.f)){
             F3 v=scale(rd,-1.f);
             float r=(m.ior-1.f)/(m.ior+1.f),dielectricF0=r*r;
             F3 dielectric=scale(m.specularColor,dielectricF0*m.specularWeight);
@@ -1413,7 +1714,8 @@ __device__ F3 productionPath(
           1e30f,&et,&eu,&ev,&ei,cols,mats,backMats,matPbr,matLightRt,
           matGraph,numMats,matTex,matTexParam,texels,textures,numTextures,
           uvs,uvs1,-1,false);
-      if(et<0){
+      if(et<0&&gsShadowK(gsS,gsN,gsC,gsChunks,add(p,scale(n,1e-4f)),envDir,
+                         1e30f,gsPointSeed(p,0x51ed27u+(unsigned)bounce),gsTime)>0.f){
         float mis=ptPowerHeuristic(envPdf,reflectionPdf);
         F3 c=ptMul(ptMul(beta,reflection),ptEnvironment(lightParams,numLights,envDir,clear,texels,textures,numTextures));
         L=add(L,scale(c,envNl*mis/envPdf));}
@@ -1704,6 +2006,9 @@ __device__ float pointHitChunks(const Node* bvh, const int* order,
   }
   return best;
 }
+
+)CUDA"
+R"CUDA(
 )CUDA"
 R"CUDA(
 
@@ -1738,6 +2043,23 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   int px=blockIdx.x*blockDim.x+threadIdx.x;
   int py=blockIdx.y*blockDim.y+threadIdx.y;
   if (px>=W||py>=H) return;
+  // Motion-blurred Cycles splats: stratified shutter time of this sample
+  // (radical inverse base 5 over samples, rotated per pixel), shared by the
+  // camera ray and its shadow/bounce rays.
+  float gsTime=0.5f;
+  if (pointCount<0 && ((unsigned)pointChunkCount>>24)>1u){
+    unsigned si=(unsigned)sampleIdx+1u; float f=1.f, r=0.f;
+    while(si>0u){ f*=0.2f; r+=f*(float)(si%5u); si/=5u; }
+    r+=(float)(hashU((unsigned)(py*W+px))>>8)*(1.f/16777216.f);
+    gsTime=r-floorf(r);
+    // Shutter segment (camera/mesh motion rendered per segment by the app):
+    // context[3] = 4*segments + centre.
+    if (cam.context[3]>=0.f){
+      const float S=floorf(cam.context[3]*0.25f);
+      const float c=cam.context[3]-4.f*S;
+      gsTime=fminf(fmaxf(c+(gsTime-0.5f)/fmaxf(S,1.f),0.f),1.f);
+    }
+  }
   // Sub-pixel jitter for supersampled AA rides the spare sceneMin.w/sceneExtent.w
   // lanes (0 for the 1-spp / center-sample case, so unchanged then).
   float u=(px+0.5f+cam.sceneMin[3])/W, vv=(py+0.5f+cam.sceneExtent[3])/H;
@@ -1775,7 +2097,9 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
         textures,numTextures,uvs,uvs1,blas,tlas,insts,o,d,
         mk(cam.clear[0],cam.clear[1],cam.clear[2]),pathSeed,
         maxDepth>0?maxDepth:1,rrDepth,(int)fmaxf(cam.pathLimits[0],1.f),
-        cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount);
+        cam.context[0],cam.context[1],geomProps,geomPropValues,geomPropCount,
+        pointCount<0?pointCenters:nullptr,(const unsigned*)pointRadii,pointOrder,
+        pointMajor,pointCount<0?pointChunkCount:0,gsTime);
     float volumeDepth=1e30f;
     if(numVols>0 && tris && tlas && insts){
       int vh=-1,vi=-1;float vu=0.f,vv=0.f;
@@ -1811,11 +2135,22 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   } else { ht=-1; hitInst=-1; }
   int pointHit = -1;
   float pointWeight = 0.f;
-  float pointT = pointHitChunks(pointBvh, pointOrder, pointChunks,
-                                pointChunkCount, pointCenters, pointMajor,
-                                pointNormals, pointRadii, o, d, &pointHit,
-                                &pointWeight);
-  if (pointChunkCount <= 0) {
+  const bool cyclesSplats = pointCount < 0;
+  float pointT = 1e30f;
+  if (cyclesSplats) {
+    pointT = gsTraceCycles(pointCenters, (const unsigned*)pointRadii, pointOrder,
+                           pointChunkCount, o, d, t,
+                           hashU((unsigned)(py*W+px)) ^
+                               hashU((unsigned)sampleIdx*0x9e3779b9u+1u),
+                           &pointHit, gsTime);
+    pointWeight = 1.f;
+  } else {
+    pointT = pointHitChunks(pointBvh, pointOrder, pointChunks,
+                            pointChunkCount, pointCenters, pointMajor,
+                            pointNormals, pointRadii, o, d, &pointHit,
+                            &pointWeight);
+  }
+  if (!cyclesSplats && pointChunkCount <= 0) {
     pointT = pointHitBvh(pointBvh, pointOrder, pointCenters, pointMajor,
                          pointNormals, pointRadii, o, d, pointCount,
                          &pointHit, &pointWeight);
@@ -2001,7 +2336,8 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     base=mk(base.x*(1.f-subsurface)+subsurfaceColor.x*subsurface,
             base.y*(1.f-subsurface)+subsurfaceColor.y*subsurface,
             base.z*(1.f-subsurface)+subsurfaceColor.z*subsurface);
-    base=scale(base,1.f-0.2f*fminf(fmaxf(coatWeight*coatDarkening,0.f),1.f));
+    {F3 d=ptCoatDarkening(base,base,0.f,metallic,specWeight,lrt?lrt[45]:1.5f,coatWeight*coatDarkening);
+     base=mk(base.x*d.x,base.y*d.y,base.z*d.z);}
     base=mk(base.x*(1.f+(coatColor.x-1.f)*coatWeight*coatAffectColor),
             base.y*(1.f+(coatColor.y-1.f)*coatWeight*coatAffectColor),
             base.z*(1.f+(coatColor.z-1.f)*coatWeight*coatAffectColor));
@@ -2390,6 +2726,11 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
                     texels,textures,numTextures,uvs,uvs1,li,
                     (lflags&(1<<6))!=0);
         if (sht>=0 && st<maxT-2e-3f) shadow=0.f;
+        if (shadow>0.f && cyclesSplats)
+          shadow*=gsShadowK(pointCenters,(const unsigned*)pointRadii,pointOrder,
+                            pointChunkCount,so,Ll,fmaxf(maxT-2e-3f,1e-3f),
+                            gsPointSeed(hit,(unsigned)li*977u+(unsigned)sampleIdx*26699u),
+                            gsTime);
       }
       F3 Hh=norm3(add(Ll,V)); float nh=fmaxf(dot3(Ns,Hh),0.f),vh=fmaxf(dot3(V,Hh),0.f);
       F3 f0=materialF0;
@@ -2711,7 +3052,11 @@ R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
       float v=vis/float(NS); outc=mk(v,v,v);
     }
   }
-  if (pointHit >= 0) {
+  if (pointHit >= 0 && cyclesSplats) {
+    // Cycles' default splat shader is pure emission.
+    if (rmodePre == 6) outc = mk(fminf(t / fmaxf(cam.lightDir[3], 1e-6f), 1.f), 0.f, 0.f);
+    else outc = gsRadiance(pointCenters, pointMajor, pointHit, d, pointChunkCount, gsTime);
+  } else if (pointHit >= 0) {
     F3 N = norm3(mk(pointNormals[pointHit*3], pointNormals[pointHit*3+1],
                     pointNormals[pointHit*3+2]));
     if (dot3(N, d) > 0.f) N = scale(N, -1.f);

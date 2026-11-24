@@ -80,7 +80,7 @@ PY
 for item in "front:0,0,1:red" "back:0,0,-1:blue"; do
   tag="${item%%:*}"; rest="${item#*:}"; direction="${rest%%:*}"; color="${rest##*:}"
   out="$TMP/$tag.png"; log="$TMP/$tag.log"
-  "$BIN" "$TMP/back.usda" "$out" -rtPreview --materialResolver tydra-next \
+  "$BIN" "$TMP/back.usda" "$out" -rtPreview --materialResolver tydra \
     -w 96 -height 96 -viewDir "$direction" -ambient 1 -noShadows \
     -samples 1 -stats >"$log" 2>&1
   rc=$?; cat "$log"

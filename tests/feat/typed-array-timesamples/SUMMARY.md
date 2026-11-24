@@ -121,4 +121,4 @@ Net result: −1544 lines across 9 files.
 - TypedArray implementation: `src/typed-array.hh`
 - TimeSamples storage: `src/timesamples.hh`
 - Crate format reader: `src/crate-reader-timesamples.cc`
-- Refactoring history: `doc/archive/refactor-opportunities.md`
+- Refactoring history: Git history of `doc/archive/refactor-opportunities.md` (removed; the refactor is complete)

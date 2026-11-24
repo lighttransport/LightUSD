@@ -276,8 +276,14 @@ typedef struct lrt_vk_material_path_desc {
      * 1 = material id, 2 = first texture id of the material, 3 = UV. */
     uint32_t debug_aov;
     /* Display transform: 0 = filmic beauty curve, 1 = plain sRGB encode
-     * (usdrecord's colorCorrectionMode=sRGB). */
+     * (usdrecord's colorCorrectionMode=sRGB), 2 = scene-linear radiance. */
     uint32_t display_transform;
+    /* Optional Cycles Gaussian BVH, SH and shutter camera projections. */
+    const float *gs_records, *gs_sh, *gs_camera_matrices;
+    const uint32_t *gs_nodes;
+    const int32_t *gs_chunks;
+    size_t gs_record_floats, gs_sh_floats, gs_node_words, gs_chunk_words;
+    uint32_t gs_camera_count;
 } lrt_vk_material_path_desc;
 
 /* Packed light ABI consumed by trace_materialx_path.comp. */
@@ -394,6 +400,28 @@ int lrt_vk_shade_scene_render(lrt_vk_engine *e, lrt_vk_shade_scene *s,
                               lrt_result *err);
 
 void lrt_vk_shade_scene_free(lrt_vk_engine *e, lrt_vk_shade_scene *s);
+
+
+/* --- 3D Gaussian splats (lightrt_c_gsplat.h) -------------------------------
+ *
+ * Trace n rays against a splat scene with the Cycles stochastic splat kernel
+ * (trace_gsplat.comp). Ray i uses seed seed_base + i, matching
+ * lrt_gsplat_intersect1N. Chunks are uploaded one at a time and every ray's
+ * tmax is clamped to its best hit so far, so the result equals a single-BVH
+ * trace. max_device_bytes bounds the device memory resident at once (chunk +
+ * ray/hit tile); 0 = no limit. A chunk larger than the budget fails with
+ * LRT_RESULT_BUILD_LIMIT (build with lrt_gsplat_chunk_splats_for_budget()).
+ * Returns the hit count, or -1 on error. */
+struct lrt_gsplat_scene;
+int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                        const lrt_ray *rays, uint32_t n, uint32_t seed_base,
+                        uint64_t max_device_bytes, lrt_hit *out,
+                        lrt_result *err);
+/* Motion-blurred scenes: times = n shutter times in [0,1] (NULL = 0.5). */
+int lrt_vk_gsplat_trace_time(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                             const lrt_ray *rays, const float *times, uint32_t n,
+                             uint32_t seed_base, uint64_t max_device_bytes,
+                             lrt_hit *out, lrt_result *err);
 
 #ifdef __cplusplus
 }

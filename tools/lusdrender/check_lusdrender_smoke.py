@@ -966,19 +966,14 @@ def Xform "World"
         stderr=subprocess.PIPE,
         text=True,
     )
+    # Analytic gprims, Points, TetMesh and NurbsPatch are tessellated; curves
+    # are native curve chunks (round + flat).
     for expected in (
-        "direct spheres: 1",
-        "direct round curve segments: 2",
-        "direct flat curve segments: 1",
-        "direct Hermite/Bezier curve segments: 1",
-        "direct points: 3",
-        "direct tetrahedra: 1",
-        "direct analytic shapes: 3",
-        "lights: 1",
-        "mesh light triangles: 2",
+        "native curves: round 2 chunk(s), flat 1 chunk(s)",
+        "rt curve strands: 3",
+        "rt finite lights: 1",
+        "rt mesh light triangles: 2",
         "domelight: 1",
-        "light sampling finite cdf entries: 1",
-        "light sampling mesh cdf entries: 2",
     ):
         if expected not in stats.stderr:
             raise RuntimeError(f"missing direct primitive stat {expected!r}:\n{stats.stderr}")

@@ -2,7 +2,7 @@
 // Build-time extension example: no plugin loader or OpenUSD dependency.
 #include "checker.hh"
 int main(int argc, char** argv) {
-  using namespace lightusd::next;
+  using namespace lightusd;
   ValidationRegistry registry;
   ValidatorDefinition rule;
   rule.id = "example.pipeline.tag";
@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
   rule.scope = ValidationScope::Prim;
   rule.metadata.category = "recommendation";
   rule.callback = [](const ValidationContext&, const PrimSpec* prim)
-      -> lightusd::next::expected<USDValidationResult, std::string> {
+      -> lightusd::expected<USDValidationResult, std::string> {
     USDValidationResult result;
     result.checked_groups.core = false;
     if (!prim->property("pipeline:tag"))

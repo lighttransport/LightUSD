@@ -14,11 +14,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>  // ProcessRSS()/AvailableSystemMemory() use std::ifstream
+#include <iomanip>
 
 #include "preview_gpu_budget.hh"
-#include "tydra/next/scene-preview-compute.hh"
-#include "tydra/next/scene-preview.hh"
-#include "tydra/next/render-converter.hh"
+#include "tydra/scene-preview-compute.hh"
+#include "tydra/scene-preview.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/materialx.hh"
 // unconditionally (was only included under LIGHTUSD_WITH_QJS)
 #include <iostream>
 #include <mutex>
@@ -41,35 +43,41 @@
 #include <unordered_set>
 #include <vector>
 
-#include "asset-resolution.hh"
 #include "image-loader.hh"
 #include "image-writer.hh"
 #include "io-util.hh"
-#include "mmap-array-ref.hh"
-#include "lightusd.hh"
+#include "c/lightusd-mtlx.h"
 #include "tsd/tinysubdiv.hh"
-#include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
-#include "usdVol.hh"  // OpenVDB (.vdb) loader for the `next` volume path
-#include "usdGeom.hh"
-#include "value-types.hh"
-#include "xform.hh"
+#include "usdVol.hh"  // OpenVDB (.vdb) loader for the `core` volume path
 
-// Experimental `next` lazy loader: fast, low-memory USDC parse used as the
-// default backend for the RT preview path. tydra_next provides bit-exact
-// world transforms (see src/tydra/next/scene-access.cc).
-#include "next/layer/prim-spec.hh"
-#include "next/pcp/prim-index.hh"
-#include "next/prim/path.hh"
-#include "next/reader/usdz-reader.hh"
-#include "next/schema/geom-mesh.hh"
-#include "next/stage/stage.hh"
-#include "next/lightusd-next.hh"
-#include "next/types/value.hh"
-#include "tydra/next/scene-access.hh"
+// Experimental `core` lazy loader: fast, low-memory USDC parse used as the
+// default backend for the RT preview path. tydra provides bit-exact
+// world transforms (see src/tydra/scene-access.cc).
+#include "layer/prim-spec.hh"
+#include "pcp/prim-index.hh"
+#include "prim/path.hh"
+#include "reader/usdz-reader.hh"
+#include "schema/geom-mesh.hh"
+#include "stage/stage.hh"
+#include "lightusd-core.hh"
+#include "types/value.hh"
+#include "../../src/tydra/scene-access.hh"
+#include "../../examples/lusdview/lightrt_mtlx_bridge.hh"
 
 extern "C" {
 #include "lightrt_c_tri.h"
+#include "verified_math.h"
+
+// Vendored LightRT mtlxrender BSDF (bsdf.c): --energy-mode switch.
+extern "C" void bsdf_set_energy_mode(int mode);
+extern "C" void bsdf_set_layering_graph(int on);
+/* Conservative-mode thin film uses the proved passive channel model. */
+extern "C" int mtlx_passive_film(float cosTheta, const float eta[3],
+                                 const float extinction[3], float thickness_nm,
+                                 float film_ior, float out[3]);
+extern "C" void bsdf_set_conservative_film_fn(
+    int (*fn)(float, const float[3], const float[3], float, float, float[3]));
 }
 
 #ifdef LIGHTUSD_WITH_QJS
@@ -77,7 +85,6 @@ extern "C" {
 #include <sstream>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
-#include "tydra/js-script.hh"
 extern "C" {
 #include "external/quickjs-ng/quickjs.h"
 }
@@ -88,6 +95,7 @@ extern "C" {
 #include "lusdr_context.hh"
 #include "lusdr_generated.hh"
 #include "lusdr_rt_lod.hh"
+#include "lusdr_gsplat_cycles.hh"
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
 #include "lusdr_gpu_common.hh"  // GpuInstancedScene, RunVulkanLightRTInstanced
 #endif
@@ -98,6 +106,240 @@ extern "C" {
 using namespace lusdr;
 
 namespace {
+
+struct GeneratedMtlxScene {
+  std::string path;
+  ~GeneratedMtlxScene() {
+    if (!path.empty()) std::remove(path.c_str());
+  }
+};
+
+bool BuildMtlxValidationScene(Options &opt, GeneratedMtlxScene *generated,
+                              std::string *error) {
+  if (!generated || opt.mtlx_file.empty()) return false;
+  std::unique_ptr<lu_mtlx_document, decltype(&lu_mtlx_document_destroy)> resolved_document(
+      lu_mtlx_document_create(), &lu_mtlx_document_destroy);
+  if (!resolved_document ||
+      !lu_mtlx_document_parse_file(resolved_document.get(), opt.mtlx_file.c_str())) {
+    if (error)
+      *error = std::string("MaterialX resolution failed: ") +
+               (resolved_document ? lu_mtlx_document_error(resolved_document.get())
+                                  : "out of memory");
+    return false;
+  }
+  {
+    char **graph_order = nullptr;
+    size_t graph_count = 0;
+    char *graph_error = nullptr;
+    const int graphs_ok = lu_mtlx_document_resolve_graphs(
+        resolved_document.get(), nullptr, &graph_order, &graph_count, &graph_error);
+    const std::string graph_message = graph_error ? graph_error : "";
+    std::free(graph_error);
+    lu_mtlx_free_strings(graph_order, graph_count);
+    if (!graphs_ok) {
+      if (error) *error = "MaterialX graph validation failed: " + graph_message;
+      return false;
+    }
+  }
+  std::string xml_text;
+  if (char *xml = lu_mtlx_document_resolved_xml(resolved_document.get())) {
+    xml_text = xml;
+    std::free(xml);
+  }
+  if (xml_text.empty()) {
+    if (error) *error = "MaterialX resolution produced an empty document";
+    return false;
+  }
+  const size_t slash = opt.mtlx_file.find_last_of("/\\");
+  const std::string base_dir = slash == std::string::npos
+                                   ? "."
+                                   : opt.mtlx_file.substr(0, slash);
+  std::string runtime_error;
+  const uint64_t texture_budget = opt.texture_budget_mb > 0
+      ? uint64_t(opt.texture_budget_mb) * 1024u * 1024u : 0;
+  const size_t texture_budget_bytes = static_cast<size_t>((std::min)(
+      texture_budget, static_cast<uint64_t>((std::numeric_limits<size_t>::max)())));
+  opt.mtlx_runtime = lusdview::CreateMaterialXSurfaceRuntime(
+      xml_text.c_str(),
+      opt.mtlx_material.empty() ? nullptr : opt.mtlx_material.c_str(),
+      base_dir.c_str(), &runtime_error, opt.mtlx_mipmaps, texture_budget_bytes);
+  if (!opt.mtlx_runtime) {
+    if (error) *error = "LightRT MaterialX runtime creation failed: " +
+                        runtime_error;
+    return false;
+  }
+  {
+    const std::string category =
+        lusdview::MaterialXSurfaceRuntimeSurfaceCategory(opt.mtlx_runtime.get());
+    if (!lusdview::IsMaterialXSurfaceCategorySupported(category)) {
+      std::cerr << "warning: MaterialX surface shader category '" << category
+                << "' is not supported by the LightRT evaluator; shading it "
+                   "as standard_surface.\n";
+    }
+  }
+  if (opt.aov == CaptureAov::MaterialXNode) {
+    lusdview::MaterialXSurfaceContext context;
+    lusdview::MaterialXNodeValue value;
+    if (!lusdview::EvaluateMaterialXNodeRuntimeAt(
+            opt.mtlx_runtime.get(), context, opt.mtlx_aov_node.c_str(), &value,
+            &runtime_error)) {
+      if (error) *error = "MaterialX node AOV is invalid: " + runtime_error;
+      return false;
+    }
+  }
+  lightusd::tydra::LightRtOpenPBRParams pbr;
+  std::string eval_error;
+  lusdview::MaterialXSurfaceContext initial_context;
+  initial_context.uv[0] = initial_context.uv[1] = 0.5f;
+  if (!lusdview::EvaluateMaterialXSurfaceRuntimeAt(
+          opt.mtlx_runtime.get(), initial_context, &pbr, &eval_error)) {
+    if (error) *error = "LightRT MaterialX graph evaluation failed: " + eval_error;
+    return false;
+  }
+  auto scalar = [](float v) {
+    std::ostringstream out;
+    out << std::setprecision(9) << (std::isfinite(v) ? v : 0.0f);
+    return out.str();
+  };
+  auto color = [&](const float p[3]) {
+    return "(" + scalar(p[0]) + ", " + scalar(p[1]) + ", " +
+           scalar(p[2]) + ")";
+  };
+
+  static std::atomic<uint64_t> sequence{0};
+  const std::string temp_dir = lightusd::io::GetTempDir(opt.temp_directory,
+                                                        opt.host_services);
+  generated->path = temp_dir + "/lusdr_mtlx_validation_" +
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+      "_" + std::to_string(sequence.fetch_add(1)) + ".usda";
+  std::ofstream out(generated->path, std::ios::out | std::ios::trunc);
+  if (!out) {
+    if (error) *error = "cannot write temporary MaterialX validation scene: " + generated->path;
+    generated->path.clear();
+    return false;
+  }
+  const bool needs_indexed_uv =
+      lusdview::MaterialXSurfaceRuntimeNeedsTexcoordIndex(opt.mtlx_runtime.get(), 1);
+  std::vector<lusdview::MaterialXGeomPropValue> geomprop_requests;
+  lusdview::MaterialXSurfaceRuntimeGeomPropRequests(opt.mtlx_runtime.get(),
+                                                    &geomprop_requests);
+  const bool needs_geomprop_mesh = !geomprop_requests.empty();
+  out << "#usda 1.0\n(\n    defaultPrim = \"World\"\n"
+         "    metersPerUnit = 1\n    upAxis = \"Y\"\n)\n\n"
+         "def Xform \"World\" {\n";
+  if (needs_indexed_uv || needs_geomprop_mesh) {
+    out << "    def Mesh \"MaterialMesh\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        point3f[] points = [(-1, -1, 0), (1, -1, 0), "
+           "(1, 1, 0), (-1, 1, 0)]\n"
+           "        int[] faceVertexCounts = [4]\n"
+           "        int[] faceVertexIndices = [0, 1, 2, 3]\n"
+           "        texCoord2f[] primvars:st = [(0.1, 0.2), (0.1, 0.2), "
+           "(0.1, 0.2), (0.1, 0.2)] (interpolation = \"vertex\")\n"
+           "        texCoord2f[] primvars:st1 = [(0.75, 0.25), (0.75, 0.25), "
+           "(0.75, 0.25), (0.75, 0.25)] (interpolation = \"vertex\")\n"
+           "        color3f[] primvars:mtlxTestColor = [(1, 0, 0), (0, 1, 0), "
+           "(0, 0, 1), (1, 1, 1)] (interpolation = \"faceVarying\")\n"
+           "        int[] primvars:mtlxTestColor:indices = [0, 2, 1, 3]\n"
+           "        int[] primvars:mtlxTestId = [11, 42] (interpolation = \"constant\")\n"
+           "        int[] primvars:mtlxTestId:indices = [1]\n"
+           "        float[] primvars:mtlxTestUniform = [0.65] (interpolation = \"uniform\")\n"
+           "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  } else {
+    out << "    def Sphere \"MaterialSphere\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        double radius = 1\n"
+        << (opt.path_trace ? "        uniform bool doubleSided = true\n" : "")
+        << "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  }
+  if (needs_geomprop_mesh) {
+    out << "    def PointInstancer \"GeomPropInstances\" {\n"
+           "        rel prototypes = [</World/GeomPropInstances/Prototype>]\n"
+           "        int[] protoIndices = [0, 0]\n"
+           "        point3f[] positions = [(-1.5, 0, 0), (1.5, 0, 0)]\n"
+           "        def Mesh \"Prototype\" (\n"
+           "            prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "        ) {\n"
+           "            point3f[] points = [(-0.45, -0.45, 0), (0.45, -0.45, 0), "
+           "(0.45, 0.45, 0), (-0.45, 0.45, 0)]\n"
+           "            int[] faceVertexCounts = [4]\n"
+           "            int[] faceVertexIndices = [0, 1, 2, 3]\n"
+           "            color3f[] primvars:mtlxTestColor = [(0.123, 0.456, 0.789), "
+           "(0.123, 0.456, 0.789), (0.123, 0.456, 0.789), "
+           "(0.123, 0.456, 0.789)] (interpolation = \"vertex\")\n"
+           "            int[] primvars:mtlxTestId = [11, 42] (interpolation = \"constant\")\n"
+           "            int[] primvars:mtlxTestId:indices = [1]\n"
+           "            float[] primvars:mtlxTestUniform = [0.35] (interpolation = \"uniform\")\n"
+           "            rel material:binding = </World/Material>\n"
+           "        }\n"
+           "    }\n";
+    out << "    def Sphere \"GeomPropSphere\" (\n"
+           "        prepend apiSchemas = [\"MaterialBindingAPI\"]\n"
+           "    ) {\n"
+           "        double radius = 0.5\n"
+           "        double3 xformOp:translate = (0, 0, 1.5)\n"
+           "        uniform token[] xformOpOrder = [\"xformOp:translate\"]\n"
+           "        color3f[] primvars:mtlxTestColor = [(0.81, 0.27, 0.53)] "
+           "(interpolation = \"constant\")\n"
+           "        rel material:binding = </World/Material>\n"
+           "    }\n";
+  }
+  out <<
+         "    def Material \"Material\" {\n"
+         "        token outputs:surface.connect = </World/Material/Surface.outputs:surface>\n"
+         "        def Shader \"Surface\" {\n"
+         "            uniform token info:id = \"ND_open_pbr_surface_surfaceshader\"\n"
+      << "            float inputs:base_weight = " << scalar(pbr.baseWeight) << "\n"
+      << "            color3f inputs:base_color = " << color(pbr.baseColor) << "\n"
+      << "            float inputs:base_roughness = " << scalar(pbr.diffuseRoughness) << "\n"
+      << "            float inputs:base_metalness = " << scalar(pbr.metalness) << "\n"
+      << "            float inputs:specular_weight = " << scalar(pbr.specularWeight) << "\n"
+      << "            color3f inputs:specular_color = " << color(pbr.specularColor) << "\n"
+      << "            float inputs:specular_roughness = " << scalar(pbr.specularRoughness) << "\n"
+      << "            float inputs:specular_ior = " << scalar(pbr.specularIor) << "\n"
+      << "            float inputs:transmission_weight = " << scalar(pbr.transmission) << "\n"
+      << "            color3f inputs:transmission_color = " << color(pbr.transmissionColor) << "\n"
+      << "            float inputs:transmission_depth = " << scalar(pbr.transmissionDepth) << "\n"
+      << "            float inputs:subsurface_weight = " << scalar(pbr.subsurface) << "\n"
+      << "            color3f inputs:subsurface_color = " << color(pbr.subsurfaceColor) << "\n"
+      << "            color3f inputs:subsurface_radius = " << color(pbr.subsurfaceRadius) << "\n"
+      << "            float inputs:subsurface_scale = " << scalar(pbr.subsurfaceScale) << "\n"
+      << "            float inputs:coat_weight = " << scalar(pbr.coatWeight) << "\n"
+      << "            color3f inputs:coat_color = " << color(pbr.coatColor) << "\n"
+      << "            float inputs:coat_roughness = " << scalar(pbr.coatRoughness) << "\n"
+      << "            float inputs:coat_ior = " << scalar(pbr.coatIor) << "\n"
+      << "            float inputs:coat_darkening = " << scalar(pbr.coatDarkening) << "\n"
+      << "            float inputs:sheen_weight = " << scalar(pbr.sheenWeight) << "\n"
+      << "            color3f inputs:sheen_color = " << color(pbr.sheenColor) << "\n"
+      << "            float inputs:sheen_roughness = " << scalar(pbr.sheenRoughness) << "\n"
+      << "            float inputs:thin_film_weight = " << scalar(pbr.thinFilmWeight) << "\n"
+      << "            float inputs:thin_film_thickness = " << scalar(pbr.thinFilmThicknessNm * 0.001f) << "\n"
+      << "            float inputs:thin_film_ior = " << scalar(pbr.thinFilmIor) << "\n"
+      << "            float inputs:emission_luminance = " << scalar(pbr.emission) << "\n"
+      << "            color3f inputs:emission_color = " << color(pbr.emissionColor) << "\n"
+      << "            float inputs:opacity = " << scalar(pbr.opacity) << "\n"
+      << "            bool inputs:thin_walled = " << (pbr.geometryThinWalled ? "true" : "false") << "\n"
+         "            token outputs:surface\n"
+         "        }\n"
+         "    }\n"
+         "    def DomeLight \"UniformWhite\" {\n"
+         "        color3f inputs:color = (1, 1, 1)\n"
+         "        float inputs:intensity = 1\n"
+         "    }\n"
+         "}\n";
+  out.close();
+  if (!out) {
+    if (error) *error = "failed writing temporary MaterialX validation scene";
+    std::remove(generated->path.c_str());
+    generated->path.clear();
+    return false;
+  }
+  return true;
+}
 
 uint8_t FloatToByte(float v) {
   if (!std::isfinite(v)) return 0;
@@ -233,7 +475,7 @@ void AppendGpuPointDisc(const Vec3 &center, const Vec3 &normal, float radius,
 }
 
 void CollectGpuPointsRec(
-    const lightusd::next::Stage &stage, const lightusd::next::UsdPrim &prim,
+    const lightusd::Stage &stage, const lightusd::UsdPrim &prim,
     const matrix4d &parent_world,
     double time, std::vector<Vec3> *base_colors,
     std::vector<RTPreviewStats::MeshGeometry> *geos, size_t depth,
@@ -247,24 +489,31 @@ void CollectGpuPointsRec(
   }
   if (!prim.IsActive()) return;
   double dmat[16];
-  lightusd::tydra::next::ComputeLocalTransform(prim, dmat, time);
+  lightusd::tydra::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
   const matrix4d world = local * parent_world;
-  if (lightusd::next::IsParticleField(prim)) {
-    lightusd::next::ParticleFieldData field;
+  if (lightusd::IsParticleField(prim)) {
+    lightusd::ParticleFieldData field;
     std::string field_warning;
-    if (!lightusd::next::GetParticleFieldData(
+    if (!lightusd::GetParticleFieldData(
             stage, prim, &field, time, &field_warning)) {
       std::cerr << "Gaussian fallback: invalid ParticleField data at "
                 << prim.GetPath().str() << ".\n";
       return;
     }
     if (!field_warning.empty()) std::cerr << field_warning << "\n";
-    lightusd::tydra::next::ValueArrayRead<float> points;
-    lightusd::tydra::next::ValueArrayRead<float> scales;
-    lightusd::tydra::next::ValueArrayRead<float> orientations;
-    lightusd::tydra::next::ValueArrayRead<float> opacities;
-    lightusd::tydra::next::ValueArrayRead<float> sh;
+    if (opt.gsplat_cycles && opt.path_trace &&
+        (prim.GetTypeName() == "ParticleField3DGaussianSplat" ||
+         field.kernel == lightusd::ParticleKernel::GaussianEllipsoid)) {
+      for (const auto& child : prim.GetChildren())
+        CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
+                            depth + 1, opt);
+      return;
+    }
+    lightusd::tydra::ValueArrayRead<float> points;
+    lightusd::tydra::ValueArrayRead<float> scales;
+    lightusd::tydra::ValueArrayRead<float> orientations;
+    lightusd::tydra::ValueArrayRead<float> opacities;
     const bool have_points = !field.positions_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.positions_property.c_str(), time,
                                &points);
@@ -277,23 +526,16 @@ void CollectGpuPointsRec(
     const bool have_opacities = !field.opacities_property.empty() &&
         ReadFloatArrayViewLazy(prim, field.opacities_property.c_str(), time,
                                &opacities);
-    const bool allow_sh = AllowGaussianSHDecode(prim);
-    const bool have_sh = allow_sh &&
-        !field.spherical_harmonics_property.empty() && ReadFloatArrayViewLazy(
-        prim, field.spherical_harmonics_property.c_str(), time, &sh);
-    if (!allow_sh)
-      std::cerr << "Gaussian fallback: skipping oversized compressed SH payload at "
-                << prim.GetPath().str() << "; using fallback color.\n";
     const size_t count = have_points ? points.size() / 3 : 0;
     if (!have_points || !have_scales || count == 0 || scales.size() < 3) {
-      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1, opt);
       return;
     }
     size_t limit = opt.gaussian_max ? std::min(count, opt.gaussian_max) : count;
 
-    const size_t sh_stride = (have_sh && count) ? (sh.size() / 3) / count : 0;
+    GaussianDcReader dc(prim, field.spherical_harmonics_property, time, count);
     std::array<RTPreviewStats::MeshGeometry, 64> batches;
     const size_t batch_limit = opt.gpu_triangle_chunk;
     const size_t gaussian_geo_first = geos->size();
@@ -332,14 +574,14 @@ void CollectGpuPointsRec(
       Vec3 major_axis{1.0f, 0.0f, 0.0f};
       const size_t orientation_index = orientations.size() == 4 ? 0 : i * 4;
       if (have_orientations && orientation_index + 3 < orientations.size()) {
-        lightusd::value::quatf q;
+        lusdr::value::quatf q;
         q.real = orientations[orientation_index + 0];
         q.imag[0] = orientations[orientation_index + 1];
         q.imag[1] = orientations[orientation_index + 2];
         q.imag[2] = orientations[orientation_index + 3];
-        const lightusd::value::matrix3d r = lightusd::to_matrix3x3(q);
-        const lightusd::value::matrix4d r4 =
-            lightusd::to_matrix(r, lightusd::value::double3{0.0, 0.0, 0.0});
+        const lusdr::value::matrix3d r = lusdr::to_matrix3x3(q);
+        const lusdr::value::matrix4d r4 =
+            lusdr::to_matrix(r, lusdr::value::double3{0.0, 0.0, 0.0});
         normal = TransformVector(world, TransformVector(
             r4, Vec3{0.0f, 0.0f, 1.0f}));
         major_axis = TransformVector(world, TransformVector(
@@ -350,11 +592,10 @@ void CollectGpuPointsRec(
       const float ry = std::max(
           1.0e-6f, 2.0f * std::fabs(scales[scale_index + 1]) * wy);
       Vec3 color{0.72f, 0.72f, 0.72f};
-      if (have_sh && sh_stride > 0 && i * sh_stride * 3 + 2 < sh.size()) {
-        const size_t j = i * sh_stride * 3;
-        color = Vec3{0.5f + 0.2820948f * sh[j + 0],
-                     0.5f + 0.2820948f * sh[j + 1],
-                     0.5f + 0.2820948f * sh[j + 2]};
+      if (const float* sh = dc.get(i)) {
+        color = Vec3{0.5f + 0.2820948f * sh[0],
+                     0.5f + 0.2820948f * sh[1],
+                     0.5f + 0.2820948f * sh[2]};
         color.x = std::max(0.0f, std::min(1.0f, color.x));
         color.y = std::max(0.0f, std::min(1.0f, color.y));
         color.z = std::max(0.0f, std::min(1.0f, color.z));
@@ -390,9 +631,9 @@ void CollectGpuPointsRec(
               << ", GPU chunks: " << (geos->size() - gaussian_geo_first)
               << ", limit: " << batch_limit << " tris\n";
   } else if (prim.GetTypeName() == "Points") {
-    lightusd::tydra::next::ValueArrayRead<float> points;
-    lightusd::tydra::next::ValueArrayRead<float> widths;
-    lightusd::tydra::next::ValueArrayRead<float> normals;
+    lightusd::tydra::ValueArrayRead<float> points;
+    lightusd::tydra::ValueArrayRead<float> widths;
+    lightusd::tydra::ValueArrayRead<float> normals;
     const bool have_points = ReadFloatArrayViewLazy(prim, "points", time, &points);
     ReadFloatArrayViewLazy(prim, "widths", time, &widths);
     ReadFloatArrayViewLazy(prim, "normals", time, &normals);
@@ -407,7 +648,7 @@ void CollectGpuPointsRec(
       emitted = 0;
     };
     if (!have_points) {
-      for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+      for (const lightusd::UsdPrim &child : prim.GetChildren())
         CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                             depth + 1, opt);
       return;
@@ -444,7 +685,7 @@ void CollectGpuPointsRec(
     }
     flush();
   }
-  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::UsdPrim &child : prim.GetChildren())
     CollectGpuPointsRec(stage, child, world, time, base_colors, geos,
                         depth + 1, opt);
 }
@@ -555,15 +796,15 @@ static void ApplyLargeSceneProfile(Options *opt) {
   const uint64_t host_capacity =
       host_available
           ? std::min<uint64_t>(host_available,
-                               lightusd::tydra::next::GiB(32))
-          : lightusd::tydra::next::GiB(32);
-  const lightusd::tydra::next::ResourceBudget budget =
-      lightusd::tydra::next::ComputeResourceBudget(
+                               lightusd::tydra::GiB(32))
+          : lightusd::tydra::GiB(32);
+  const lightusd::tydra::ResourceBudget budget =
+      lightusd::tydra::ComputeResourceBudget(
           host_capacity, QueryDeviceLocalVRAMBytes());
   const double host_gib = double(budget.host_limit) /
-                          double(lightusd::tydra::next::GiB(1));
+                          double(lightusd::tydra::GiB(1));
   const double vram_gib = double(budget.vram_limit) /
-                          double(lightusd::tydra::next::GiB(1));
+                          double(lightusd::tydra::GiB(1));
 
   if (!opt->backend_explicit) {
     opt->vulkan = true;
@@ -575,8 +816,8 @@ static void ApplyLargeSceneProfile(Options *opt) {
   // Bound texture residency the way geometry already is. -texMaxSize /
   // -texBudgetMb still win; these only fill in the profile defaults.
   {
-    const lightusd::tydra::next::TextureBudget texture_budget =
-        lightusd::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::TextureBudget texture_budget =
+        lightusd::tydra::DeriveTextureBudget(budget);
     if (!opt->texture_max_size_explicit && texture_budget.max_edge > 0) {
       opt->texture_max_size = int(texture_budget.max_edge);
     }
@@ -629,9 +870,9 @@ static void ApplyLargeSceneProfile(Options *opt) {
 // Resolve the GPU render camera exactly like the flat -vk/-vkr path (named
 // camera, else USD record camera for -autoframe, else auto-fit). *out_height
 // starts at opt.height (<=0 = derive).
-static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
+static CameraFrame ResolveGpuCameraInst(const lightusd::Stage &stage,
                                         const Options &opt, const Bounds &bounds,
-                                        lightusd::Axis usdUp, int *out_height) {
+                                        lusdr::Axis usdUp, int *out_height) {
   const int cam_width = opt.width > 0 ? opt.width : 960;
   CameraFrame camera;
   Options auto_opt = opt;
@@ -639,7 +880,7 @@ static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
   auto_opt.width = cam_width;
   if (!opt.camera.empty()) {
     float cam_aspect = 16.0f / 9.0f;
-    if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
+    if (FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
       if (*out_height <= 0) {
         // Clamp: a hostile aperture ratio must not overflow the int conversion
         // (UB) or demand a multi-GB framebuffer.
@@ -651,13 +892,13 @@ static CameraFrame ResolveGpuCameraInst(const lightusd::next::Stage &stage,
       std::cerr << "WARN: camera not found: " << opt.camera
                 << ". Using auto-fit.\n";
       if (*out_height <= 0) *out_height = 540;
-      camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+      camera = MakeCameraFrame(auto_opt, bounds, *out_height, usdUp);
     }
   } else if (opt.autoframe) {
     camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, out_height);
   } else {
     if (*out_height <= 0) *out_height = 540;
-    camera = MakeCameraFrame({}, auto_opt, bounds, *out_height, usdUp);
+    camera = MakeCameraFrame(auto_opt, bounds, *out_height, usdUp);
   }
   return camera;
 }
@@ -688,21 +929,21 @@ static void NormalMatrixFromO2W(const float o2w[12], float n2w[9]) {
 // across placements. Six-sided tubes are a declared GPU approximation; they are
 // not an analytic-curve or material-fidelity claim.
 static bool ExtractCurveProto(const Options& opt,
-                              const lightusd::next::UsdPrim& prim,
-                              const lightusd::next::EvalOptions& evaluation,
+                              const lightusd::UsdPrim& prim,
+                              const lightusd::EvalOptions& evaluation,
                               GpuInstProto* out) {
   if (prim.GetTypeName() != "BasisCurves") {
     std::cerr << "[vkInstanced] unsupported curve type: "
               << prim.GetPath().str() << "\n";
     return false;
   }
-  lightusd::tydra::next::ConverterConfig config;
+  lightusd::tydra::ConverterConfig config;
   config.time_code = opt.timecode;
   config.curves.retain_control_points = false;
   config.curves.tessellation_segments = opt.curve_segments;
   config.animation.clip_stage_loader = evaluation.clip_stage_loader;
-  lightusd::tydra::next::RenderSceneConverter converter(config);
-  lightusd::tydra::next::RenderCurves curves;
+  lightusd::tydra::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderCurves curves;
   if (!converter.ConvertCurves(prim, &curves) || curves.has_alloc_failure()) {
     std::cerr << "[vkInstanced] curve conversion: " << prim.GetPath().str()
               << ": " << converter.GetLastError() << "\n";
@@ -808,31 +1049,31 @@ static bool EndsWithPtxPath(const std::string &path) {
 // Cheap material-subtree scan: does any authored asset property name a .ptx?
 // This avoids resolving/loading ordinary image textures for the many
 // non-Ptex prototypes in an Island-scale instanced scene.
-static bool PrimSubtreeHasPtex(const lightusd::next::UsdPrim &prim) {
+static bool PrimSubtreeHasPtex(const lightusd::UsdPrim &prim) {
   if (!prim.IsValid()) return false;
   for (const std::string &name : prim.GetPropertyNames()) {
-    const lightusd::next::Value *value = prim.GetPropertyValue(name);
+    const lightusd::Value *value = prim.GetPropertyValue(name);
     if (!value) continue;
     std::optional<std::string> asset = value->as_asset_path();
     if (!asset) asset = value->as_string();
     if (asset && EndsWithPtxPath(*asset)) return true;
   }
-  for (const lightusd::next::UsdPrim &child : prim.GetChildren())
+  for (const lightusd::UsdPrim &child : prim.GetChildren())
     if (PrimSubtreeHasPtex(child)) return true;
   return false;
 }
 
 static bool ExtractProtoGeo(
-    const lightusd::next::Stage& stage, const Options& opt, TextureCache& tc,
+    const lightusd::Stage& stage, const Options& opt, TextureCache& tc,
     std::unordered_map<std::string, ResolvedMat>& material_cache,
     std::unordered_map<std::string, bool>& ptex_material_cache,
-    const lightusd::next::UsdPrim& prim,
-    const lightusd::next::EvalOptions& evaluation, GpuInstProto* out) {
+    const lightusd::UsdPrim& prim,
+    const lightusd::EvalOptions& evaluation, GpuInstProto* out) {
   // Resolve the prototype's base-colour material only when its subtree binds a
   // .ptx. The instanced path previously carried only primvars:displayColor, so
   // a Ptex-bound material rendered with its constant fallback.
   const std::string material_path =
-      lightusd::next::GetInheritedBoundMaterialPath(stage,
+      lightusd::GetInheritedBoundMaterialPath(stage,
                                                     prim.GetPath().str());
   bool has_ptex = false;
   if (!material_path.empty()) {
@@ -845,7 +1086,7 @@ static bool ExtractProtoGeo(
     }
   }
   if (has_ptex) {
-    MeshJobNext resolved;
+    MeshJobCore resolved;
     resolved.prim = prim;
     ResolveMeshMaterialCached(stage, prim, tc, material_cache, &resolved);
     if (resolved.tex_id >= 0 && tc.textures &&
@@ -859,16 +1100,16 @@ static bool ExtractProtoGeo(
   std::vector<Vec3> vn;
   bool perVertexN = false;
   std::vector<float> generated_uvs;
-  if (IsCurvePrimNext(prim)) {
+  if (IsCurvePrimCore(prim)) {
     if (!ExtractCurveProto(opt, prim, evaluation, out)) return false;
     nv = uint32_t(out->verts.size() / 3);
-  } else if (lightusd::tydra::next::IsAnalyticGeomTypeName(
+  } else if (lightusd::tydra::IsAnalyticGeomTypeName(
                  prim.GetTypeName())) {
-    GeneratedMeshNext generated;
-    if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+    GeneratedMeshCore generated;
+    if (!GenerateAnalyticMeshCore(stage, prim, opt.timecode, &generated))
       return false;
     std::vector<float> normals;
-    ExpandGeneratedMeshCornersNext(generated, &out->verts, &normals,
+    ExpandGeneratedMeshCornersCore(generated, &out->verts, &normals,
                                    &generated_uvs, &out->idx);
     nv = uint32_t(out->verts.size() / 3);
     vn.resize(nv);
@@ -876,8 +1117,8 @@ static bool ExtractProtoGeo(
       vn[j] = Vec3{normals[j * 3], normals[j * 3 + 1], normals[j * 3 + 2]};
     perVertexN = true;
   } else {
-    lightusd::tydra::next::ValueArrayRead<float> point_values, normal_values;
-    if (!lightusd::tydra::next::ReadFloatArray(prim, "points", evaluation,
+    lightusd::tydra::ValueArrayRead<float> point_values, normal_values;
+    if (!lightusd::tydra::ReadFloatArray(prim, "points", evaluation,
                                                &point_values) ||
         point_values.empty() || point_values.size() % 3 != 0 ||
         point_values.size() / 3 > UINT32_MAX)
@@ -886,7 +1127,7 @@ static bool ExtractProtoGeo(
     std::vector<float> skinned_points;
     std::vector<double> skin_normals;
     std::string skin_error;
-    if (!lightusd::tydra::next::EvaluateSkinnedPoints(
+    if (!lightusd::tydra::EvaluateSkinnedPoints(
             stage, prim, opt.timecode, point_values, &skinned_points,
             &skin_error,
             (prim.GetPropertyValue("normals") ||
@@ -901,27 +1142,27 @@ static bool ExtractProtoGeo(
       out->verts.assign(point_values.begin(), point_values.end());
     else
       out->verts = std::move(skinned_points);
-    lightusd::tydra::next::ValueArrayRead<int32_t> index_values, count_values;
-    lightusd::tydra::next::ReadIntArray(prim, "faceVertexIndices", evaluation,
+    lightusd::tydra::ValueArrayRead<int32_t> index_values, count_values;
+    lightusd::tydra::ReadIntArray(prim, "faceVertexIndices", evaluation,
                                         &index_values);
-    lightusd::tydra::next::ReadIntArray(prim, "faceVertexCounts", evaluation,
+    lightusd::tydra::ReadIntArray(prim, "faceVertexCounts", evaluation,
                                         &count_values);
-    lightusd::tydra::next::MeshFloatAttribute normals;
-    bool have_normals = lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
-                              (lightusd::tydra::next::ReadMeshFloatAttribute(
+    lightusd::tydra::MeshFloatAttribute normals;
+    bool have_normals = lightusd::tydra::MeshUsesAuthoredNormals(prim) &&
+                              (lightusd::tydra::ReadMeshFloatAttribute(
                                   prim, "primvars:normals", evaluation, 3, nv,
                                   index_values.size(), &normals) ||
-                              lightusd::tydra::next::ReadMeshFloatAttribute(
+                              lightusd::tydra::ReadMeshFloatAttribute(
                                   prim, "normals", evaluation, 3, nv,
                                   index_values.size(), &normals));
     std::vector<float> generated_smooth_normals;
     if (!have_normals && opt.smooth &&
-        lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
-      lightusd::tydra::next::ValueArrayRead<float> posed_points;
+        lightusd::tydra::MeshUsesGeneratedSmoothNormals(prim)) {
+      lightusd::tydra::ValueArrayRead<float> posed_points;
       posed_points.view={out->verts.data(),out->verts.size(),false};
       const auto* orientation=prim.GetPropertyValue("orientation");
       const bool left_handed=orientation && orientation->as_token() && *orientation->as_token()=="leftHanded";
-      if (lightusd::tydra::next::ComputeMeshSmoothNormals(posed_points,count_values,index_values,
+      if (lightusd::tydra::ComputeMeshSmoothNormals(posed_points,count_values,index_values,
               left_handed,&generated_smooth_normals)) {
         normals.components=3;normals.interpolation="vertex";
         normals.values.view={generated_smooth_normals.data(),generated_smooth_normals.size(),false};
@@ -972,8 +1213,8 @@ static bool ExtractProtoGeo(
     const auto* cnt = &count_values;
     if (!idx || idx->empty()) return false;
     if (cnt && !cnt->empty()) {
-      lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
-      lightusd::tydra::next::ReadIntArray(prim, "holeIndices", evaluation,
+      lightusd::tydra::ValueArrayRead<int32_t> hole_values;
+      lightusd::tydra::ReadIntArray(prim, "holeIndices", evaluation,
                                           &hole_values);
       const std::unordered_set<int32_t> holes(hole_values.begin(),
                                               hole_values.end());
@@ -1025,27 +1266,27 @@ static bool ExtractProtoGeo(
   // primvars:st) and offset each vertex along its area-weighted smooth normal.
   if (opt.displace && opt.displace_scale != 0.0f) {
     std::vector<float> uvs = std::move(generated_uvs);
-    if (const lightusd::next::Value* uv =
+    if (const lightusd::Value* uv =
             prim.GetPropertyValue("primvars:st")) {
       const auto u = uv->as_float_array();
       if (u && !u->empty()) uvs.assign(u.begin(), u.end());
     }
     float disp_const = 0.0f;
     ScalarTex disp_tex;
-    const std::vector<lightusd::next::Path>* bind =
+    const std::vector<lightusd::Path>* bind =
         prim.GetRelationship("material:binding");
     if (bind && !bind->empty()) {
-      lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+      lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
       if (mat.IsValid()) {
-        lightusd::next::UsdPrim surf =
-            ConnectedPrimNext(stage, mat, "outputs:surface");
+        lightusd::UsdPrim surf =
+            ConnectedPrimCore(stage, mat, "outputs:surface");
         if (!surf.IsValid())
-          surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+          surf = ConnectedPrimCore(stage, mat, "outputs:mtlx:surface");
         if (surf.IsValid()) {
-          if (const lightusd::next::Value* d =
+          if (const lightusd::Value* d =
                   surf.GetPropertyValue("inputs:displacement"))
             if (const float* f = d->as_float()) disp_const = *f;
-          ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+          ResolveScalarTextureCore(stage, surf, "inputs:displacement", tc,
                                    &disp_tex);
         }
       }
@@ -1100,7 +1341,7 @@ static bool ExtractProtoGeo(
   }
 
   out->base_color = Vec3{0.5f, 0.5f, 0.5f};
-  if (const lightusd::next::Value* dcv =
+  if (const lightusd::Value* dcv =
           prim.GetPropertyValue("primvars:displayColor")) {
     const auto dc = dcv->as_float_array();
     if (dc && dc->size() >= 3)
@@ -1160,14 +1401,14 @@ static void ChunkProto(const GpuInstProto& src, uint32_t chunk,
 // two-level GPU TLAS. Returns true if it produced an image; false to fall back to
 // the flat path. Geometry is stored ONCE per prototype regardless of instance
 // count (the memory-sharing win over the flat world-space soup).
-static int TryRunInstancedVk(const lightusd::next::Stage &stage,
+static int TryRunInstancedVk(const lightusd::Stage &stage,
                              const Options &opt,
-                             const lightusd::next::ValueClipStageLoader& clip_loader) {
-  lightusd::next::EvalOptions evaluation;
-  evaluation.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
+                             const lightusd::ValueClipStageLoader& clip_loader) {
+  lightusd::EvalOptions evaluation;
+  evaluation.time = lightusd::TimeQuery::Numeric(opt.timecode);
   evaluation.follow_connections = false;
   evaluation.clip_stage_loader = clip_loader;
-  evaluation.clip_stage_cache = std::make_shared<lightusd::next::ValueClipStageCache>();
+  evaluation.clip_stage_cache = std::make_shared<lightusd::ValueClipStageCache>();
   bool invalid_prototype = false;
   GpuInstancedScene scene;
   // Each source prim maps to one OR MORE sub-prototype indices (a huge prototype
@@ -1208,11 +1449,11 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
 
   // Group each placement into (prototype, per-instance transform) on the fly. The
   // streaming collector calls this sink once per placement (prim, world, purpose)
-  // WITHOUT materializing a MeshJobNext per instance, so a huge instanced scene
+  // WITHOUT materializing a MeshJobCore per instance, so a huge instanced scene
   // (Moana island: tens of millions) costs ~one GpuInstPlacement (88 B) of host
-  // memory per placement instead of a ~392 B MeshJobNext.
-  auto place = [&](const lightusd::next::UsdPrim &prim, const matrix4d &world,
-                   lightusd::Purpose purpose) {
+  // memory per placement instead of a ~392 B MeshJobCore.
+  auto place = [&](const lightusd::UsdPrim &prim, const matrix4d &world,
+                   lusdr::Purpose purpose) {
     if (!PurposeVisible(PurposeBit(purpose), opt.purpose_mask)) return;
     const std::string key = prim.GetPath().str();
     auto it = proto_id.find(key);
@@ -1264,8 +1505,8 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
   size_t emitted = 0;
   for (const auto &root : stage.GetRootPrims()) {
     if (emitted > budget) break;
-    emitted += CollectRTInstancePlacementsNext(
-        stage, root, matrix4d::identity(), lightusd::Purpose::Default,
+    emitted += CollectRTInstancePlacementsCore(
+        stage, root, matrix4d::identity(), lusdr::Purpose::Default,
         opt.timecode, opt.mask, place, budget + 1 - emitted);
   }
   if (invalid_prototype) return -1;
@@ -1300,9 +1541,9 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
     if (up == "Z") up_axis = 2.0;
     else if (up == "X") up_axis = 0.0;
   }
-  lightusd::Axis usdUp = (up_axis == 2.0)   ? lightusd::Axis::Z
-                         : (up_axis == 0.0) ? lightusd::Axis::X
-                                            : lightusd::Axis::Y;
+  lusdr::Axis usdUp = (up_axis == 2.0)   ? lusdr::Axis::Z
+                         : (up_axis == 0.0) ? lusdr::Axis::X
+                                            : lusdr::Axis::Y;
   int out_height = opt.height;
   CameraFrame camera = ResolveGpuCameraInst(stage, opt, bounds, usdUp, &out_height);
 
@@ -1447,9 +1688,9 @@ static int TryRunInstancedVk(const lightusd::next::Stage &stage,
 
 int main(int argc, char **argv) {
   lusdview::PreviewGpuBudgetReport previewBudgetReport;
-  lightusd::tydra::next::ScenePreviewRequest scenePreview;
+  lightusd::tydra::ScenePreviewRequest scenePreview;
   std::string scenePreviewError;
-  if (!lightusd::tydra::next::ExtractScenePreviewArguments(
+  if (!lightusd::tydra::ExtractScenePreviewArguments(
           &argc, argv, &scenePreview, &scenePreviewError)) {
     std::cerr << scenePreviewError << "\n";
     return EXIT_FAILURE;
@@ -1478,6 +1719,48 @@ int main(int argc, char **argv) {
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
   }
+  if (opt.verified_math && !mtlx_verified_math_enable(1)) {
+    std::cerr << "--verified-math requires binary32, nearest/even and gradual underflow.\n";
+    return EXIT_FAILURE;
+  }
+  if (opt.verified_math) {
+    std::cerr << "MaterialX graph math: strict binary32 sine/cosine\n";
+  }
+  bsdf_set_energy_mode(opt.energy_mode);
+  if (opt.energy_mode == 1) {
+    /* Only conservative mode selects the passive, proved per-channel film model;
+     * reference mode keeps the MaterialX CIE-fit Airy behaviour bit for bit. */
+    bsdf_set_conservative_film_fn(mtlx_passive_film);
+  }
+  if (opt.layering_graph && opt.energy_mode == 1) {
+    std::cerr << "--layering graph (diagnostic) cannot be combined with --energy-mode conservative.\n";
+    return EXIT_FAILURE;
+  }
+  bsdf_set_layering_graph(opt.layering_graph ? 1 : 0);
+  if (scenePreview.enabled && !opt.volume_mtlx_file.empty()) {
+    std::cerr << "MaterialX volume looks cannot be combined with scene-preview conversion.\n";
+    return EXIT_FAILURE;
+  }
+  GeneratedMtlxScene generated_mtlx_scene;
+  if (!opt.mtlx_file.empty()) {
+    if (scenePreview.enabled) {
+      std::cerr << "--mtlx cannot be combined with scene-preview options.\n";
+      return EXIT_FAILURE;
+    }
+    std::string mtlx_error;
+    if (!BuildMtlxValidationScene(opt, &generated_mtlx_scene, &mtlx_error)) {
+      std::cerr << "MaterialX validation scene: " << mtlx_error << "\n";
+      return EXIT_FAILURE;
+    }
+    opt.input = generated_mtlx_scene.path;
+    if (!opt.width_explicit) opt.width = 512;
+    if (!opt.height_explicit) opt.height = 512;
+    opt.rt_preview = true;
+    opt.material_shading = Options::MaterialShading::LightRtBsdf;
+    opt.ambient = 0.0f;
+    std::cerr << "MaterialX validation: sphere, uniform white environment, CPU LightRT BSDF"
+              << (opt.path_trace ? " path tracing\n" : "\n");
+  }
   if (scenePreview.enabled) {
     scenePreview.options.time_code = std::isfinite(opt.timecode) ? opt.timecode : 0.0;
     scenePreview.options.composition.variant_overrides = opt.variant_overrides;
@@ -1485,7 +1768,7 @@ int main(int argc, char **argv) {
       std::cerr << "scene preview does not yet accept -mask; use a USD wrapper layer\n";
       return EXIT_FAILURE;
     }
-    if (!lightusd::tydra::next::PrepareScenePreview(
+    if (!lightusd::tydra::PrepareScenePreview(
             &opt.input, scenePreview, 0, &scenePreviewError)) {
       std::cerr << "scene preview: " << scenePreviewError << "\n";
       return EXIT_FAILURE;
@@ -1493,13 +1776,13 @@ int main(int argc, char **argv) {
     if (scenePreview.camera_lod ||
         (scenePreview.direct_volume &&
          scenePreview.options.kind ==
-             lightusd::tydra::next::ScenePreviewKind::Volume)) {
+             lightusd::tydra::ScenePreviewKind::Volume)) {
       std::array<double,3> direction={1,.6,1};
       if(opt.has_view_dir) direction={-opt.view_dir.x,-opt.view_dir.y,-opt.view_dir.z};
-      const auto camera=lightusd::tydra::next::InitialScenePreviewLodCamera(
+      const auto camera=lightusd::tydra::InitialScenePreviewLodCamera(
           scenePreview.result,opt.input,opt.camera,opt.height>0?opt.height:540,opt.fit_scale,direction);
       if (scenePreview.source_refinement) {
-        const auto refined = lightusd::tydra::next::RefineScenePreview(
+        const auto refined = lightusd::tydra::RefineScenePreview(
             scenePreview.source, scenePreview.result, scenePreview.options,
             camera, std::max(1, opt.width), opt.height > 0 ? opt.height : 540,
             scenePreview.lod_pixel_error);
@@ -1510,9 +1793,9 @@ int main(int argc, char **argv) {
         if (refined.usd_path != scenePreview.result.usd_path) {
           scenePreview.result = refined;
           if (scenePreview.options.kind !=
-                  lightusd::tydra::next::ScenePreviewKind::Volume ||
+                  lightusd::tydra::ScenePreviewKind::Volume ||
               !scenePreview.direct_volume) {
-            scenePreview.lods = lightusd::tydra::next::BuildScenePreviewLods(
+            scenePreview.lods = lightusd::tydra::BuildScenePreviewLods(
                 refined, scenePreview.options);
             if (!scenePreview.lods.success) {
               std::cerr << scenePreview.lods.error << "\n";
@@ -1523,9 +1806,9 @@ int main(int argc, char **argv) {
         }
       }
       if (scenePreview.options.kind ==
-              lightusd::tydra::next::ScenePreviewKind::Volume &&
+              lightusd::tydra::ScenePreviewKind::Volume &&
           scenePreview.direct_volume) {
-        namespace preview = lightusd::tydra::next;
+        namespace preview = lightusd::tydra;
         const auto backend =
             opt.cuda ? preview::PreviewComputeBackend::Cuda
             : (opt.vulkan || opt.vulkan_rt || opt.vulkan_instanced)
@@ -1582,13 +1865,12 @@ int main(int argc, char **argv) {
                   << " accumulated_frames=" << renderer.accumulatedFrames() << "\n";
         return EXIT_SUCCESS;
       }
-      opt.preview_variant_overrides=lightusd::tydra::next::SelectScenePreviewLods(
+      opt.preview_variant_overrides=lightusd::tydra::SelectScenePreviewLods(
           scenePreview.lods,camera,scenePreview.lod_pixel_error);
       if(opt.preview_variant_overrides.empty()) {std::cerr<<"preview LOD selection exceeds budget\n";return EXIT_FAILURE;}
     }
     opt.rt_preview = true;
-    opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::next::ScenePreviewKind::Volume;
-    opt.legacy_load = false;
+    opt.scene_preview_albedo=scenePreview.options.kind!=lightusd::tydra::ScenePreviewKind::Volume;
     opt.max_vram_gib = double(scenePreview.options.gpu_budget_bytes) /
                        double(uint64_t(1) << 30);
     opt.texture_budget_mb = 32;
@@ -1606,6 +1888,7 @@ int main(int argc, char **argv) {
     }
   }
   SetIblBackendEnvmap(opt.ibl_envmap);
+  SetPreviewSubdivisionLevel(opt.subdivision_level);
   // The application explicitly opts into host memory observations.
   opt.host_services = lightusd::CreateNativeHostServices();
   ApplyLargeSceneProfile(&opt);
@@ -1619,11 +1902,11 @@ int main(int argc, char **argv) {
   // profile. Explicit texture flags remain authoritative, including an
   // explicit zero when a caller intentionally requests source resolution.
   {
-    const lightusd::tydra::next::ResourceBudget budget =
-        lightusd::tydra::next::ComputeResourceBudget(
+    const lightusd::tydra::ResourceBudget budget =
+        lightusd::tydra::ComputeResourceBudget(
             MemBudget::Get().Cap(), QueryDeviceLocalVRAMBytes());
-    const lightusd::tydra::next::TextureBudget texture_budget =
-        lightusd::tydra::next::DeriveTextureBudget(budget);
+    const lightusd::tydra::TextureBudget texture_budget =
+        lightusd::tydra::DeriveTextureBudget(budget);
     if (!opt.texture_max_size_explicit && texture_budget.max_edge > 0)
       opt.texture_max_size = static_cast<int>(texture_budget.max_edge);
     if (!opt.texture_budget_explicit && texture_budget.budget_bytes > 0) {
@@ -1670,7 +1953,7 @@ int main(int argc, char **argv) {
   // View-dependent district LOD (-lodStream): compose the scene in proxy LOD,
   // promote the districts nearest the camera to `full` under the host/VRAM
   // budget, and rewrite opt.input to a generated wrapper layer. Then fall
-  // through to the normal next-loader render. Best-effort: on failure (no
+  // through to the normal core-loader render. Best-effort: on failure (no
   // districts / compose error) opt.input is left untouched and we render as-is.
   std::string lod_wrapper;
   if (opt.lod_stream) {
@@ -1681,25 +1964,113 @@ int main(int argc, char **argv) {
     PrepareLodStream(&opt, &lod_wrapper);
   }
 
-  // Use the `next` streaming CPU path when requested, and by default for USDC
-  // where mmap-backed arrays provide the largest memory win. Ordinary USDA/USDZ
-  // stays on the schema-rich converter for direct lights/primitives and uniform
-  // subdivision until those paths have full streaming parity.
-  const std::string lower_input = LowerAscii(opt.input);
-  const bool default_next_usdc =
-      lower_input.size() >= 5 &&
-      lower_input.compare(lower_input.size() - 5, 5, ".usdc") == 0;
-  if (!opt.legacy_load && opt.subdivision_level == 0 &&
-      (opt.rt_preview || default_next_usdc) && !opt.vulkan && !opt.use_d3d &&
-      !opt.hip && !opt.cuda) {
-    return RunRTPreviewNext(opt);
+  // --gsplat-kernel cycles: render a splat scene with the Blender Cycles
+  // kernel through LightRT (CPU, or -vk/-vkr Vulkan / -hip HIP compute under
+  // the -maxVram budget, default 4 GiB). Scenes without splats fall through.
+  MixedGsplatFrame mixed_frame;
+  bool mixed_gpu = false;
+  bool gsplat_mixed = false;
+  if (opt.gsplat_cycles) {
+    lightusd::Stage stage;
+    lightusd::ValueClipStageLoader clip_stage_loader;
+    std::string warn, err;
+    if (!LoadCoreStageBudgeted(opt, &stage, &warn, &err, &clip_stage_loader)) {
+      if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+      std::cerr << "Failed to load USD: " << err << "\n";
+      return EXIT_FAILURE;
+    }
+    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
+    GSplatCyclesScene splats;
+    gsplat_mixed = StageHasNonSplatGeometry(stage);
+    if (!gsplat_mixed &&
+        BuildGSplatCyclesScene(stage, opt.timecode, &splats)) {
+      const std::string up = stage.GetUpAxis();
+      const lusdr::Axis usd_up = up == "Z"   ? lusdr::Axis::Z
+                                 : up == "X" ? lusdr::Axis::X
+                                             : lusdr::Axis::Y;
+      CameraFrame camera;
+      const int cam_width = opt.width > 0 ? opt.width : 960;
+      int out_height = opt.height;
+      Options auto_opt = opt;
+      auto_opt.camera.clear();
+      auto_opt.width = cam_width;
+      float cam_aspect = 16.0f / 9.0f;
+      if (!opt.camera.empty() &&
+          FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera,
+                              &cam_aspect)) {
+        if (out_height <= 0)
+          out_height = std::max(
+              1, int(std::lround(std::min(32768.0, double(cam_width) /
+                                                       double(cam_aspect)))));
+      } else if (opt.camera.empty() && opt.autoframe) {
+        camera = MakeUsdRecordCamera(splats.bounds, usd_up, cam_width,
+                                     &out_height);
+      } else {
+        if (!opt.camera.empty())
+          std::cerr << "WARN: camera not found: " << opt.camera
+                    << ". Using auto-fit.\n";
+        if (out_height <= 0) out_height = 540;
+        camera = MakeCameraFrame(auto_opt, splats.bounds, out_height, usd_up);
+      }
+      // Motion blur across the camera shutter (Cycles motion steps).
+      if (camera.shutter_close > camera.shutter_open &&
+          opt.gsplat_motion_steps > 1) {
+        std::vector<double> times(size_t(opt.gsplat_motion_steps));
+        for (size_t k = 0; k < times.size(); ++k)
+          times[k] = opt.timecode + double(camera.shutter_open) +
+                     double(camera.shutter_close - camera.shutter_open) *
+                         double(k) / double(times.size() - 1);
+        const bool splat_motion = BuildGSplatCyclesMotion(stage, times, &splats);
+        const bool cam_motion = BuildCameraMotion(stage, opt.camera, times, &splats);
+        if ((splat_motion || cam_motion) && opt.stats)
+          std::cerr << "Cycles gsplat motion blur: shutter ["
+                    << camera.shutter_open << ", " << camera.shutter_close
+                    << "] frames, " << times.size() << " steps"
+                    << (splat_motion ? ", splats" : "")
+                    << (!splats.motion_dc.empty() ? ", colour" : "")
+                    << (cam_motion ? ", camera" : "") << "\n";
+      }
+      Options render_opt = opt;
+      render_opt.width = cam_width;
+      return RenderGSplatCycles(render_opt, splats, camera, out_height)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
+    }
+    mixed_gpu = gsplat_mixed && (opt.hip || opt.vulkan);
+    if (mixed_gpu) {
+      opt.path_trace = true;
+      opt.vulkan_rt = opt.vulkan;
+      if (!opt.path_trace_samples)
+        opt.path_trace_samples = std::max(1, opt.samples);
+    } else if (gsplat_mixed) {
+      // Meshes + splats: the CPU integrator traces the splats with the Cycles
+      // kernel on primary, bounce and shadow rays (lusdr_core.cc).
+      if (opt.vulkan || opt.vulkan_rt || opt.use_d3d || opt.hip || opt.cuda)
+        std::cerr << "WARN: --gsplat-kernel cycles with meshes renders on the "
+                     "CPU integrator; the GPU backend flag is ignored.\n";
+      opt.vulkan = opt.vulkan_rt = opt.use_d3d = opt.hip = opt.cuda = false;
+      // Cycles-like defaults: physically based BSDF with a sampled bounce
+      // (splat emission lights surfaces, as Cycles' BSDF-sampled direct
+      // light does) and no ad-hoc ambient term.
+      if (!opt.material_shading_explicit)
+        opt.material_shading = Options::MaterialShading::LightRtBsdf;
+      if (!opt.ambient_explicit) opt.ambient = 0.0f;
+    } else {
+      std::cerr << "WARN: --gsplat-kernel cycles: no Gaussian splats found; "
+                   "using the default renderer.\n";
+    }
+  }
+
+  // Every CPU render uses the core streaming path.
+  if (!opt.vulkan && !opt.use_d3d && !opt.hip && !opt.cuda) {
+    return RunRTPreviewCore(opt);
   }
 
   // PrimId is intentionally not in this gate: the next CPU path owns the
   // prim-id sidecar map, while the vkr data path writes numeric AOVs. Depth and
   // the two normal channels are the supported vkr diagnostics.
   const bool gpu_data_aov = opt.aov_explicit && opt.vulkan &&
-      !opt.path_trace && !opt.legacy_load &&
+      !opt.path_trace &&
       opt.subdivision_level == 0 && opt.samples == 1 &&
       (opt.aov == CaptureAov::Depth || opt.aov == CaptureAov::GeometricNormal ||
        opt.aov == CaptureAov::ShadingNormal);
@@ -1708,26 +2079,26 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  // -frames (per-timecode animation output) is implemented only by the `next`
+  // -frames (per-timecode animation output) is implemented only by the `core`
   // path above. It used to be silently ignored here -- the run produced one
   // image literally named with the `####` token and no animation. Fail loudly
   // instead so the user adds -rtPreview (or drops the flag).
   if (!opt.frames.empty()) {
-    std::cerr << "-frames is only supported on the next path (a .usdc input or "
+    std::cerr << "-frames is only supported on the core path (a .usdc input or "
                  "-rtPreview); this run would render a single frame and ignore "
                  "it. Add -rtPreview, or drop -frames.\n";
     return EXIT_FAILURE;
   }
 
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
-  // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
+  // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `core`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) {
-    // Load through next loader.
-    lightusd::next::Stage stage;
-    lightusd::next::ValueClipStageLoader clip_stage_loader;
+    // Load through core loader.
+    lightusd::Stage stage;
+    lightusd::ValueClipStageLoader clip_stage_loader;
     std::string warn, err;
-    if (!LoadNextStageBudgeted(opt, &stage, &warn, &err,
+    if (!LoadCoreStageBudgeted(opt, &stage, &warn, &err,
                                &clip_stage_loader)) {
       if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
       std::cerr << "Failed to load USD: " << err << "\n";
@@ -1739,9 +2110,9 @@ int main(int argc, char **argv) {
     // -vkInstanced: true two-level GPU TLAS (per-prototype BLAS shared across
     // instances). TryRunInstancedVk STREAMS the expanded placements (grouping each
     // by source prim into shared prototypes + per-instance transforms as it goes,
-    // no per-instance MeshJobNext), then renders. On any failure (no shares, ray
+    // no per-instance MeshJobCore), then renders. On any failure (no shares, ray
     // query unavailable) it falls through to the flat GPU path below.
-    if (opt.vulkan_instanced && opt.vulkan_rt) {
+    if (opt.vulkan_instanced && opt.vulkan_rt && !mixed_gpu) {
       const int result = TryRunInstancedVk(stage, opt, clip_stage_loader);
       if (result < 0) return EXIT_FAILURE;
       if (result > 0) return EXIT_SUCCESS;
@@ -1757,7 +2128,7 @@ int main(int argc, char **argv) {
     std::vector<lusdr::Texture> gpu_textures;
     LightCache gpu_lights;
     for (const auto &root : stage.GetRootPrims()) {
-      CollectLightsNext(stage, root, matrix4d::identity(), opt.timecode,
+      CollectLightsCore(stage, root, matrix4d::identity(), opt.timecode,
                         &gpu_lights);
     }
     RenderContext gaussian_ctx;
@@ -1775,7 +2146,7 @@ int main(int argc, char **argv) {
 
     {
       // Collect meshes WITH their world transforms, purpose, and -mask, exactly
-      // like the CPU -rtPreview path (CollectRTPreviewMeshesNext). The GPU
+      // like the CPU -rtPreview path (CollectRTPreviewMeshesCore). The GPU
       // backends previously walked every Mesh and emitted its RAW LOCAL points,
       // ignoring world transforms, purpose, and -mask -- correct only for a
       // single mesh at the origin (suzanne), but for any composed/production
@@ -1793,34 +2164,34 @@ int main(int argc, char **argv) {
       tc.usdz = nullptr;
       tc.options = &opt;
       std::unordered_map<std::string, ResolvedMat> material_cache;
-      lightusd::next::EvalOptions mesh_eval;
-      mesh_eval.time = lightusd::next::TimeQuery::Numeric(opt.timecode);
+      lightusd::EvalOptions mesh_eval;
+      mesh_eval.time = lightusd::TimeQuery::Numeric(opt.timecode);
       mesh_eval.follow_connections = false;
       mesh_eval.clip_stage_loader = clip_stage_loader;
       mesh_eval.clip_stage_cache =
-          std::make_shared<lightusd::next::ValueClipStageCache>();
+          std::make_shared<lightusd::ValueClipStageCache>();
       for (const auto &root : stage.GetRootPrims()) {
         // Keep only one root's traversal records alive.  A production stage can
         // contain thousands of roots (or large instancer expansions); collecting
-        // every MeshJobNext before converting any geometry creates a needless
+        // every MeshJobCore before converting any geometry creates a needless
         // scene-wide transient peak on top of the final GPU chunk stream.
-        std::vector<MeshJobNext> mesh_jobs;
-        CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                                   lightusd::Purpose::Default, opt.timecode,
+        std::vector<MeshJobCore> mesh_jobs;
+        CollectRTPreviewMeshesCore(stage, root, matrix4d::identity(),
+                                   lusdr::Purpose::Default, opt.timecode,
                                    opt.mask, &mesh_jobs,
                                    /*expand_instancers=*/true);
 
         // Stream geometry in WORLD space.
-        for (MeshJobNext &job : mesh_jobs) {
+        for (MeshJobCore &job : mesh_jobs) {
         // Purpose visibility: hide guide (and others per -purpose) like the CPU
         // path; the GPU path used to render every purpose unconditionally, so the
         // 26M-triangle guide breadcrumb/endpoint Points engulfed the camera.
         if (!PurposeVisible(PurposeBit(job.purpose), opt.purpose_mask)) continue;
-        lightusd::next::UsdPrim &prim = job.prim;
+        lightusd::UsdPrim &prim = job.prim;
         ResolveMeshMaterialCached(stage, prim, tc, material_cache, &job);
         if (opt.stats && gpu_materials.size() < 8u) {
           std::cerr << "GPU material: prim=" << prim.GetPath().str()
-                    << " binding=" << lightusd::next::GetInheritedBoundMaterialPath(stage,prim.GetPath().str())
+                    << " binding=" << lightusd::GetInheritedBoundMaterialPath(stage,prim.GetPath().str())
                     << " base=" << job.base_color.x << "," << job.base_color.y << "," << job.base_color.z
                     << " emission=" << job.emission.x << "," << job.emission.y << "," << job.emission.z
                     << " openpbr=" << job.has_openpbr
@@ -1828,12 +2199,12 @@ int main(int argc, char **argv) {
         }
         RTPreviewStats::MeshGeometry geo;
         uint32_t nv = 0;
-        if (lightusd::tydra::next::IsAnalyticGeomTypeName(
+        if (lightusd::tydra::IsAnalyticGeomTypeName(
                 prim.GetTypeName())) {
-          GeneratedMeshNext generated;
-          if (!GenerateAnalyticMeshNext(stage, prim, opt.timecode, &generated))
+          GeneratedMeshCore generated;
+          if (!GenerateAnalyticMeshCore(stage, prim, opt.timecode, &generated))
             continue;
-          ExpandGeneratedMeshCornersNext(generated, &geo.positions,
+          ExpandGeneratedMeshCornersCore(generated, &geo.positions,
                                           &geo.normals, &geo.uvs, &geo.indices);
           nv = uint32_t(geo.positions.size() / 3);
           for (size_t j = 0; j < size_t(nv); ++j) {
@@ -1851,13 +2222,13 @@ int main(int argc, char **argv) {
             geo.normals[j * 3 + 2] = normal.z;
           }
         } else {
-        lightusd::tydra::next::ValueArrayRead<float> point_values;
-        lightusd::tydra::next::ReadFloatArray(
+        lightusd::tydra::ValueArrayRead<float> point_values;
+        lightusd::tydra::ReadFloatArray(
             prim, "points", mesh_eval, &point_values);
         std::vector<float> skinned_points;
         std::vector<double> skin_normals;
         std::string skin_error;
-        if (!lightusd::tydra::next::EvaluateSkinnedPoints(
+        if (!lightusd::tydra::EvaluateSkinnedPoints(
                 stage, prim, opt.timecode, point_values, &skinned_points, &skin_error,
                 (prim.GetPropertyValue("normals") || prim.GetPropertyValue("primvars:normals")) ? &skin_normals : nullptr)) {
           std::cerr << "Skinning failed: " << prim.GetPath().str()
@@ -1882,11 +2253,11 @@ int main(int argc, char **argv) {
 
         // Resolve UV and normal tuples by authored interpolation and optional
         // indices. Split a shared point only when a corner needs another tuple.
-        using lightusd::tydra::next::MeshFloatAttribute;
-        using lightusd::tydra::next::ReadMeshFloatAttribute;
-        lightusd::tydra::next::ValueArrayRead<int32_t> index_values, count_values;
-        lightusd::tydra::next::ReadIntArray(prim, "faceVertexIndices", mesh_eval, &index_values);
-        lightusd::tydra::next::ReadIntArray(prim, "faceVertexCounts", mesh_eval, &count_values);
+        using lightusd::tydra::MeshFloatAttribute;
+        using lightusd::tydra::ReadMeshFloatAttribute;
+        lightusd::tydra::ValueArrayRead<int32_t> index_values, count_values;
+        lightusd::tydra::ReadIntArray(prim, "faceVertexIndices", mesh_eval, &index_values);
+        lightusd::tydra::ReadIntArray(prim, "faceVertexCounts", mesh_eval, &count_values);
         MeshFloatAttribute uvs, uvs1, normals;
         bool have_uvs = false;
         if (!job.uv_primvar.empty()) {
@@ -1894,7 +2265,7 @@ int main(int argc, char **argv) {
               mesh_eval, 2, nv, index_values.size(), &uvs);
         }
         if (!have_uvs) {
-          for (const std::string& name : lightusd::tydra::next::MeshConfig{}.uv_primvar_names) {
+          for (const std::string& name : lightusd::tydra::MeshConfig{}.uv_primvar_names) {
             if (ReadMeshFloatAttribute(prim, "primvars:" + name, mesh_eval,
                 2, nv, index_values.size(), &uvs)) { have_uvs = true; break; }
           }
@@ -1908,17 +2279,17 @@ int main(int argc, char **argv) {
               "primvars:" + job.uv_primvar1, mesh_eval, 2, nv,
               index_values.size(), &uvs1);
         }
-        bool have_normals = lightusd::tydra::next::MeshUsesAuthoredNormals(prim) &&
+        bool have_normals = lightusd::tydra::MeshUsesAuthoredNormals(prim) &&
             (ReadMeshFloatAttribute(prim, "primvars:normals", mesh_eval,
             3, nv, index_values.size(), &normals) ||
             ReadMeshFloatAttribute(prim, "normals", mesh_eval,
             3, nv, index_values.size(), &normals));
         std::vector<float> generated_smooth_normals;
         if (!have_normals && opt.smooth &&
-        lightusd::tydra::next::MeshUsesGeneratedSmoothNormals(prim)) {
+        lightusd::tydra::MeshUsesGeneratedSmoothNormals(prim)) {
           const auto* orientation=prim.GetPropertyValue("orientation");
           const bool left_handed=orientation && orientation->as_token() && *orientation->as_token()=="leftHanded";
-          if (lightusd::tydra::next::ComputeMeshSmoothNormals(point_values,count_values,index_values,
+          if (lightusd::tydra::ComputeMeshSmoothNormals(point_values,count_values,index_values,
                   left_handed,&generated_smooth_normals)) {
             normals.components=3;normals.interpolation="vertex";
             normals.values.view={generated_smooth_normals.data(),generated_smooth_normals.size(),false};
@@ -1940,7 +2311,7 @@ int main(int argc, char **argv) {
         geo.uvs1.assign(have_uvs1 ? (split ? 0 : size_t(nv) * 2) : 0u,
                         0.0f);
         matrix4d inverse_world;
-        const bool invertible = lightusd::inverse(job.world, inverse_world, 1.0e-12);
+        const bool invertible = lusdr::inverse(job.world, inverse_world, 1.0e-12);
         std::map<std::array<size_t, 4>, uint32_t> corners;
         auto emit = [&](size_t corner, size_t face) {
           const int32_t point = index_values[corner];
@@ -1987,8 +2358,8 @@ int main(int argc, char **argv) {
           return true;
         };
         bool valid_geometry = true;
-        lightusd::tydra::next::ValueArrayRead<int32_t> hole_values;
-        lightusd::tydra::next::ReadIntArray(prim, "holeIndices", mesh_eval, &hole_values);
+        lightusd::tydra::ValueArrayRead<int32_t> hole_values;
+        lightusd::tydra::ReadIntArray(prim, "holeIndices", mesh_eval, &hole_values);
         std::unordered_set<int32_t> holes(hole_values.begin(), hole_values.end());
         const auto visible_face = [&](size_t face) {
           return (job.subset_faces.empty() ||
@@ -2071,20 +2442,20 @@ int main(int argc, char **argv) {
         if (opt.displace && opt.displace_scale != 0.0f && !geo.indices.empty()) {
           float disp_const = 0.0f;
           ScalarTex disp_tex;
-          const std::vector<lightusd::next::Path> *bind =
+          const std::vector<lightusd::Path> *bind =
               prim.GetRelationship("material:binding");
           if (bind && !bind->empty()) {
-            lightusd::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+            lightusd::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
             if (mat.IsValid()) {
-              lightusd::next::UsdPrim surf =
-                  ConnectedPrimNext(stage, mat, "outputs:surface");
+              lightusd::UsdPrim surf =
+                  ConnectedPrimCore(stage, mat, "outputs:surface");
               if (!surf.IsValid())
-                surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
+                surf = ConnectedPrimCore(stage, mat, "outputs:mtlx:surface");
               if (surf.IsValid()) {
-                if (const lightusd::next::Value *d =
+                if (const lightusd::Value *d =
                         surf.GetPropertyValue("inputs:displacement"))
                   if (const float *f = d->as_float()) disp_const = *f;
-                ResolveScalarTextureNext(stage, surf, "inputs:displacement", tc,
+                ResolveScalarTextureCore(stage, surf, "inputs:displacement", tc,
                                          &disp_tex);
               }
             }
@@ -2135,7 +2506,7 @@ int main(int argc, char **argv) {
 
         // Base color from primvars:displayColor (constant); mid-grey default.
         Vec3 display_color{1.0f, 1.0f, 1.0f};
-        if (const lightusd::next::Value *dcv =
+        if (const lightusd::Value *dcv =
                 prim.GetPropertyValue("primvars:displayColor")) {
           const auto dc = dcv->as_float_array();
           if (dc && dc->size() >= 3)
@@ -2180,7 +2551,7 @@ int main(int argc, char **argv) {
         resolved.openpbr = job.openpbr;
         // UsdPreviewSurface's default opacityMode is "transparent": alpha
         // attenuates the diffuse lobe and the surface stays opaque. Only
-        // "presence" is true coverage; ResolveOpacityPresenceNext already
+        // "presence" is true coverage; ResolveOpacityPresenceCore already
         // distinguishes them for non-PreviewSurface materials as well.
         resolved.openpbr.opacityTransparent = !job.opacity_presence;
         resolved.materialx_graph_json = job.materialx_graph_json;
@@ -2192,17 +2563,17 @@ int main(int argc, char **argv) {
           float intensity = 1.0f, exposure = 0.0f;
           Vec3 light_color{1.0f, 1.0f, 1.0f};
           bool normalize = false;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:intensity"))
             if (const float *f = v->as_float()) intensity = *f;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:exposure"))
             if (const float *f = v->as_float()) exposure = *f;
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:color"))
             if (const float *f = v->as_float3())
               light_color = Vec3{f[0], f[1], f[2]};
-          if (const lightusd::next::Value *v =
+          if (const lightusd::Value *v =
                   job.prim.GetPropertyValue("inputs:normalize"))
             if (const bool *b = v->as_bool()) normalize = *b;
           float area = 0.0f;
@@ -2245,8 +2616,8 @@ int main(int argc, char **argv) {
     bool has_flat_curves = false;
     Bounds gpu_flat_bounds;
     RenderContext gpu_curve_ctx;
-    std::vector<CurveJobNext> gpu_curve_jobs;
-    stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
+    std::vector<CurveJobCore> gpu_curve_jobs;
+    stage.Traverse([&](const lightusd::UsdPrim &prim) {
       const std::string &type = prim.GetTypeName();
       if (type == "BasisCurves" || type == "HermiteCurves" ||
           type == "NurbsCurves") {
@@ -2267,19 +2638,19 @@ int main(int argc, char **argv) {
       gpu_curve_ctx.opt = opt;
       gpu_curve_ctx.clip_stage_loader = clip_stage_loader;
       for (const auto &root : stage.GetRootPrims()) {
-        CollectCurvesNextRec(root, matrix4d::identity(),
-                             lightusd::Purpose::Default, opt.timecode,
+        CollectCurvesCoreRec(root, matrix4d::identity(),
+                             lusdr::Purpose::Default, opt.timecode,
                              &gpu_curve_jobs);
       }
-      if (!BuildNextCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
+      if (!BuildCoreCurves(gpu_curve_ctx, gpu_curve_jobs, opt.timecode,
                            /*include_flat=*/false) ||
           !AppendGpuRoundCurves(gpu_curve_ctx.direct, &base_colors, &geos, opt)) {
         return EXIT_FAILURE;
       }
-      for (const CurveJobNext &job : gpu_curve_jobs)
+      for (const CurveJobCore &job : gpu_curve_jobs)
         has_flat_curves |= job.prim.GetPropertyValue("normals") != nullptr;
       if (has_flat_curves &&
-          !BuildNextFlatCurveBounds(gpu_curve_jobs, opt.timecode,
+          !BuildCoreFlatCurveBounds(gpu_curve_jobs, opt.timecode,
                                     clip_stage_loader, &gpu_flat_bounds)) {
         std::cerr << "Failed to read GPU flat/ribbon curve bounds.\n";
         return EXIT_FAILURE;
@@ -2289,7 +2660,7 @@ int main(int argc, char **argv) {
     // Mixed mesh+splat scenes use the same bounded oriented-ellipse mesh
     // fallback as HIP/ROCm and D3D11 so all geometry reaches one flat trace.
     if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty()) {
-      stage.Traverse([&](const lightusd::next::UsdPrim &prim) {
+      stage.Traverse([&](const lightusd::UsdPrim &prim) {
         const std::string &type = prim.GetTypeName();
         if (type == "Points" || type == "BasisCurves" ||
             type == "HermiteCurves" || type == "NurbsCurves") {
@@ -2299,10 +2670,10 @@ int main(int argc, char **argv) {
         return true;
       });
     }
-    if (gpu_backend && (opt.vulkan || opt.hip || opt.cuda) && geos.empty() &&
-        !has_other_native_carrier) {
+    if (gpu_backend && !mixed_gpu && (opt.vulkan || opt.hip || opt.cuda) &&
+        geos.empty() && !has_other_native_carrier) {
       native_gaussian =
-          BuildNextGaussianEllipses(stage, gaussian_ctx, opt.timecode,
+          BuildCoreGaussianEllipses(stage, gaussian_ctx, opt.timecode,
                                     /*defer_gpu_bvh=*/true) &&
           gaussian_ctx.direct.has_ellipses();
     }
@@ -2314,7 +2685,10 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    if (geos.empty() && !native_gaussian && !gpu_flat_bounds.valid) {
+    GSplatCyclesScene splats;
+    const bool have_splats =
+        mixed_gpu && BuildGSplatCyclesScene(stage, opt.timecode, &splats);
+    if (geos.empty() && !native_gaussian && !gpu_flat_bounds.valid && !have_splats) {
       std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
       return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
                  ? EXIT_SUCCESS
@@ -2329,11 +2703,12 @@ int main(int argc, char **argv) {
       if (up == "Z") up_axis = 2.0;
       else if (up == "X") up_axis = 0.0;
     }
-    lightusd::Axis usdUp = (up_axis == 2.0) ? lightusd::Axis::Z
-                           : (up_axis == 0.0) ? lightusd::Axis::X
-                           : lightusd::Axis::Y;
+    lusdr::Axis usdUp = (up_axis == 2.0) ? lusdr::Axis::Z
+                           : (up_axis == 0.0) ? lusdr::Axis::X
+                           : lusdr::Axis::Y;
 
     Bounds bounds = gpu_flat_bounds;
+    if (have_splats) MergeBounds(&bounds, splats.bounds);
     for (const auto &g : geos) {
       for (size_t j = 0; j < g.positions.size() / 3; ++j) {
         bounds.lo.x = std::min(bounds.lo.x, g.positions[j * 3 + 0]);
@@ -2347,7 +2722,7 @@ int main(int argc, char **argv) {
     if (native_gaussian && gaussian_ctx.bounds.valid) bounds = gaussian_ctx.bounds;
     bounds.valid = true;
     // Resolve the camera the SAME way the CPU -rtPreview path does
-    // (ResolveCameraNext): a named camera, else the USD record camera for
+    // (ResolveCameraCore): a named camera, else the USD record camera for
     // -autoframe, else auto-fit. This keeps -vk/-vkr framed identically to the
     // -rtPreview reference (the GPU backends previously used the tilted auto-fit
     // camera here, so the same scene framed differently from the CPU image).
@@ -2358,7 +2733,7 @@ int main(int argc, char **argv) {
     auto_opt.width = cam_width;
     if (!opt.camera.empty()) {
       float cam_aspect = 16.0f / 9.0f;
-      if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera,
+      if (FindCoreCameraFrame(stage, opt.camera, opt.timecode, &camera,
                               &cam_aspect)) {
         if (out_height <= 0) {
           double dh = double(cam_width) / double(cam_aspect);
@@ -2369,18 +2744,18 @@ int main(int argc, char **argv) {
         std::cerr << "WARN: camera not found: " << opt.camera
                   << ". Using auto-fit.\n";
         if (out_height <= 0) out_height = 540;
-        camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+        camera = MakeCameraFrame(auto_opt, bounds, out_height, usdUp);
       }
     } else if (opt.autoframe) {
       camera = MakeUsdRecordCamera(bounds, usdUp, cam_width, &out_height);
     } else {
       if (out_height <= 0) out_height = 540;
-      camera = MakeCameraFrame({}, auto_opt, bounds, out_height, usdUp);
+      camera = MakeCameraFrame(auto_opt, bounds, out_height, usdUp);
     }
 
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP) || defined(HAVE_CUDA_RT)
     if ((opt.vulkan || opt.use_d3d || opt.hip || opt.cuda) && has_flat_curves) {
-      if (!BuildNextFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
+      if (!BuildCoreFlatCurveMeshes(gpu_curve_jobs, opt.timecode,
                                     clip_stage_loader, camera, opt, &geos,
                                     &base_colors)) {
         std::cerr << "Failed to build GPU flat/ribbon curve carriers.\n";
@@ -2407,6 +2782,28 @@ int main(int argc, char **argv) {
                  : EXIT_FAILURE;
     }
 #endif
+
+    if (mixed_gpu) {
+      if (camera.shutter_close > camera.shutter_open && opt.gsplat_motion_steps > 1) {
+        std::vector<double> times(size_t(opt.gsplat_motion_steps));
+        for (size_t i = 0; i < times.size(); ++i)
+          times[i] = opt.timecode + camera.shutter_open +
+                     (camera.shutter_close - camera.shutter_open) *
+                         double(i) / double(times.size() - 1);
+        if (have_splats) BuildGSplatCyclesMotion(stage, times, &splats);
+        BuildCameraMotion(stage, opt.camera, times, &splats);
+        mixed_frame.cameras = std::move(splats.camera_keys);
+      }
+      if (have_splats && !PackGSplatCyclesScene(&splats, opt.gsplat_srgb, &mixed_frame.data)) {
+        std::cerr << "Could not pack Cycles splats for GPU path tracing.\n";
+        return EXIT_FAILURE;
+      }
+      const double budget_gib = opt.max_vram_gib > 0 ? opt.max_vram_gib : 4.0;
+      if (mixed_frame.data.bytes() > budget_gib * double(uint64_t(1) << 30)) {
+        std::cerr << "Cycles splat buffers exceed the GPU budget.\n";
+        return EXIT_FAILURE;
+      }
+    }
 
     // Flatten-side view-dependent LOD for the GPU backends (-vk/-vkr/-d3d/-hip).
     // LightRT's Vulkan/D3D paths build a single flat world-space BLAS (no GPU
@@ -2564,7 +2961,8 @@ int main(int argc, char **argv) {
 #ifdef HAVE_VULKAN
     if (opt.vulkan) {
       if (!RunVulkanLightRT(opt, base_colors, geos, gpu_materials,
-                            gpu_textures, gpu_lights, camera, out_height)) {
+                            gpu_textures, gpu_lights, camera, out_height,
+                            mixed_gpu ? &mixed_frame : nullptr)) {
         return EXIT_FAILURE;
       }
       return EXIT_SUCCESS;
@@ -2579,7 +2977,7 @@ int main(int argc, char **argv) {
                                           out_height)
                           : RunHipSharedRT(opt, base_colors, geos, gpu_materials,
                                            gpu_textures, gpu_lights, camera,
-                                           out_height);
+                                           out_height, mixed_gpu ? &mixed_frame : nullptr);
       if (!ok) {
         return EXIT_FAILURE;
       }
@@ -2601,374 +2999,6 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  lightusd::Stage stage;
-  std::string warn;
-  std::string err;
-  lightusd::USDLoadOptions load_options;
-  load_options.mmap_zero_copy = opt.rt_preview;
-  load_options.max_memory_limit_in_mb = opt.rt_preview ? 65536 : 16384;
-  load_options.load_assets = !opt.rt_preview;
-  if (opt.progress) {
-    load_options.progress_callback = LoadProgress;
-  }
-  const auto load_t0 = std::chrono::steady_clock::now();
-  // Composes references / payloads / sublayers / inherits / variants; plain
-  // LoadUSDFromFile expands no arcs, so anything they contribute (a Material in a
-  // referenced look layer, payload-gated geometry) was missing from the render.
-  if (!LoadStageComposedLegacy(opt.input, load_options, &stage, &warn, &err)) {
-    if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
-    std::cerr << "Failed to load USD: " << err << "\n";
-    return EXIT_FAILURE;
-  }
-  const auto load_t1 = std::chrono::steady_clock::now();
-  const double load_seconds =
-      std::chrono::duration<double>(load_t1 - load_t0).count();
-  if (!warn.empty()) {
-    std::cerr << "WARN: " << warn << "\n";
-  }
-
-  if (opt.rt_preview) {
-    if (lightusd::IsUSDC(opt.input) && !stage.has_mmap_zero_copy()) {
-      std::cerr << "RT preview requires mmap zero-copy metadata for USDC input. "
-                << "Write flattened USDC without --compress-float-arrays.\n";
-      return EXIT_FAILURE;
-    }
-
-    std::vector<float> vertices;
-    std::vector<TriInfo> tris;
-    Bounds bounds;
-    RTPreviewStats rt_stats;
-    std::string rt_err;
-    if (!BuildRTPreviewScene(stage, opt, &vertices, &tris, &bounds, &rt_stats,
-                             &rt_err)) {
-      if (opt.stats) {
-        std::cerr << "rt preview: 1\n";
-        std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
-        std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
-        std::cerr << "rt mmap point meshes: "
-                  << rt_stats.meshes_with_mmap_points << "\n";
-        std::cerr << "rt owned point meshes: "
-                  << rt_stats.meshes_with_owned_points << "\n";
-        std::cerr << "rt mmap deferred bytes: "
-                  << rt_stats.mmap_deferred_bytes << "\n";
-        std::cerr << "rt copied point bytes: " << rt_stats.copied_point_bytes
-                  << "\n";
-        std::cerr << "rt copied topology bytes: "
-                  << rt_stats.copied_topology_bytes << "\n";
-        std::cerr << "rt purpose default triangles: "
-                  << rt_stats.purpose_default_triangles << "\n";
-        std::cerr << "rt purpose render triangles: "
-                  << rt_stats.purpose_render_triangles << "\n";
-        std::cerr << "rt purpose proxy triangles: "
-                  << rt_stats.purpose_proxy_triangles << "\n";
-        std::cerr << "rt purpose guide triangles: "
-                  << rt_stats.purpose_guide_triangles << "\n";
-      }
-      std::cerr << rt_err << "\n";
-      return EXIT_FAILURE;
-    }
-    if (tris.empty()) {
-      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
-      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
-                 ? EXIT_SUCCESS
-                 : EXIT_FAILURE;
-    }
-
-    lrt_tri_build_options build_opts;
-    std::memset(&build_opts, 0, sizeof(build_opts));
-    build_opts.quality = opt.quality;
-    build_opts.layout = LRT_TRI_LAYOUT_AUTO;
-    build_opts.max_leaf_size = 0;
-    build_opts.num_threads = WorkerThreadCount(opt.threads);
-
-    const auto bvh_t0 = std::chrono::steady_clock::now();
-    lrt_result lrt_err = LRT_RESULT_OK;
-    lrt_tri_scene *lrt_scene =
-        lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
-    const auto bvh_t1 = std::chrono::steady_clock::now();
-    if (!lrt_scene) {
-      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-      return EXIT_FAILURE;
-    }
-
-    int height = opt.height > 0 ? opt.height : 540;
-    RenderScene empty_render_scene;
-    CameraFrame camera;
-    if (!FindStageCameraFrame(stage, opt.camera, opt.timecode, &camera)) {
-      if (!opt.camera.empty()) {
-        std::cerr << "WARN: Camera not found: " << opt.camera
-                  << ". Using auto-fit camera.\n";
-      }
-      Options auto_opt = opt;
-      auto_opt.camera.clear();
-      camera = MakeCameraFrame(empty_render_scene, auto_opt, bounds, height,
-                               stage.metas().upAxis.get_value());
-    }
-    DirectScene direct_scene;
-    LightCache light_cache;
-    IblCache ibl_cache;
-
-    if (opt.stats) {
-      lrt_tri_stats st;
-      std::memset(&st, 0, sizeof(st));
-      lrt_tri_scene_stats(lrt_scene, &st);
-      double bvh_seconds =
-          std::chrono::duration<double>(bvh_t1 - bvh_t0).count();
-      std::cerr << "rt preview: 1\n";
-      std::cerr << "rt meshes: " << rt_stats.meshes << "\n";
-      std::cerr << "rt skipped meshes: " << rt_stats.skipped_meshes << "\n";
-      std::cerr << "rt mmap point meshes: "
-                << rt_stats.meshes_with_mmap_points << "\n";
-      std::cerr << "rt owned point meshes: "
-                << rt_stats.meshes_with_owned_points << "\n";
-      std::cerr << "rt mmap deferred bytes: "
-                << rt_stats.mmap_deferred_bytes << "\n";
-      std::cerr << "rt copied point bytes: " << rt_stats.copied_point_bytes
-                << "\n";
-      std::cerr << "rt copied topology bytes: "
-                << rt_stats.copied_topology_bytes << "\n";
-      std::cerr << "rt purpose default triangles: "
-                << rt_stats.purpose_default_triangles << "\n";
-      std::cerr << "rt purpose render triangles: "
-                << rt_stats.purpose_render_triangles << "\n";
-      std::cerr << "rt purpose proxy triangles: "
-                << rt_stats.purpose_proxy_triangles << "\n";
-      std::cerr << "rt purpose guide triangles: "
-                << rt_stats.purpose_guide_triangles << "\n";
-      std::cerr << "rt packed triangle bytes: "
-                << rt_stats.packed_triangle_bytes << "\n";
-      std::cerr << "load seconds: " << load_seconds << "\n";
-      std::cerr << "rt triangle stream seconds: " << rt_stats.build_seconds
-                << "\n";
-      std::cerr << "rt bvh build seconds: " << bvh_seconds << "\n";
-      std::cerr << "triangles: " << tris.size() << "\n";
-      std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
-      std::cerr << "bvh nodes: " << st.node_count << ", leaves: "
-                << st.leaf_count << ", memory: " << st.memory_bytes
-                << " bytes\n";
-    }
-
-    const auto render_t0 = std::chrono::steady_clock::now();
-    std::vector<FlatTri> flat_tris;
-    std::vector<TriMat> flat_mats;
-    SplitTriInfos(tris, &flat_tris, &flat_mats);
-    lightusd::Image img =
-        RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
-                    nullptr, camera, opt, height);
-    const auto render_t1 = std::chrono::steady_clock::now();
-    if (opt.stats) {
-      std::cerr << "render seconds: "
-                << std::chrono::duration<double>(render_t1 - render_t0).count()
-                << "\n";
-    }
-    lrt_tri_scene_free(lrt_scene);
-
-    lightusd::image::WriteOption wopt;
-    wopt.format = lightusd::image::WriteImageFormat::Autodetect;
-    auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
-    if (!ret) {
-      std::cerr << "Failed to write image: " << ret.error() << "\n";
-      return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
-  }
-
-  lightusd::tydra::RenderScene render_scene;
-  lightusd::tydra::RenderSceneConverter converter;
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
-  env.timecode = opt.timecode;
-  env.mesh_config.triangulate = !opt.direct_prims;
-  env.mesh_config.subdivision_level = opt.subdivision_level;
-  env.mesh_config.build_vertex_indices = !opt.direct_prims;
-  env.mesh_config.compute_tangents_and_binormals = false;
-  env.scene_config.load_texture_assets = true;
-  // The next path's volume density budget, applied while decoding: an
-  // oversized grid is box-filtered instead of decoded in full first.
-  env.scene_config.volume_max_voxels =
-      std::max<size_t>(size_t(64) << 20,
-                       std::min<size_t>(size_t(512) << 20, MemBudget::Get().Cap() / 16)) /
-      sizeof(float);
-  env.set_search_paths({lightusd::io::GetBaseDir(opt.input)});
-  if (opt.no_assetresolver) {
-    SetupNullAssetResolution(&env.asset_resolver);
-  }
-  if (!converter.ConvertToRenderScene(env, &render_scene)) {
-    std::cerr << "Failed to convert USD Stage to RenderScene:\n"
-              << converter.GetError() << "\n";
-    return EXIT_FAILURE;
-  }
-  std::string converter_warn = converter.GetWarning();
-  if (!converter_warn.empty()) {
-    std::cerr << "WARN: " << converter_warn << "\n";
-  }
-
-  std::vector<float> vertices;
-  std::vector<TriInfo> tris;
-  Bounds bounds;
-  DirectScene direct_scene;
-  LightCache light_cache;
-  if (opt.direct_prims) {
-    std::string direct_err;
-    if (!BuildDirectScene(stage, render_scene, opt, &vertices, &tris, &bounds,
-                          &direct_scene, &direct_err)) {
-      std::cerr << direct_err << "\n";
-      return EXIT_FAILURE;
-    }
-  }
-  // Decode the materials' UsdUVTextures (tydra already resolved them) and bind
-  // them per triangle. Without this the legacy path flattens every material to a
-  // constant base color, so .usda/.usdz — which do not route to the `next` path —
-  // render untextured.
-  std::vector<lusdr::Texture> legacy_textures;
-  const std::vector<LegacyMaterialTex> legacy_mat_tex =
-      BuildLegacyTextures(render_scene, &legacy_textures);
-  std::vector<float> tri_uvs;
-  // Second UV set, allocated lazily by AddMeshTriangles only when a textured
-  // lane references a different primvar than the material's first UV set.
-  std::vector<float> tri_uvs1;
-  const bool want_uvs = !legacy_textures.empty();
-  if (want_uvs) {
-    // tri_uvs must stay parallel to `tris`; any triangles the direct-primitive
-    // builder already emitted carry no UVs (and no texture), so pad them.
-    tri_uvs.assign(tris.size() * 6, 0.0f);
-  }
-  // Inherited purpose + visibility from the source Stage (the tydra
-  // RenderScene carries neither): guide/proxy filtering (-purpose et al.) and
-  // visibility="invisible" now apply on the legacy path like the next path.
-  PurposeVisibilityMap purpose_vis;
-  BuildLegacyPurposeVisibility(stage, &purpose_vis);
-  CollectAllGeometry(render_scene, &vertices, &tris, &bounds,
-                     opt.direct_prims ? &direct_scene.direct_paths : nullptr,
-                     &light_cache, want_uvs ? &tri_uvs : nullptr,
-                     want_uvs ? &tri_uvs1 : nullptr,
-                     want_uvs ? &legacy_mat_tex : nullptr, &purpose_vis);
-    const bool has_direct = direct_scene.spheres ||
-                          direct_scene.has_round_curves() ||
-                          direct_scene.has_flat_curves() || direct_scene.points ||
-                          direct_scene.bez_curves || direct_scene.has_ellipses() ||
-                          direct_scene.tets ||
-                          !direct_scene.shapes.empty();
-
-  // UsdVol volumes (OpenVDB) -> dense grids for raymarching. Built here so a
-  // volume-only scene still renders and contributes to camera-framing bounds.
-  std::vector<VolumeData> volumes = BuildVolumes(render_scene);
-  ExpandBoundsByVolume(volumes, &bounds);
-
-  if (tris.empty() && !has_direct && volumes.empty()) {
-    std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
-    return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
-               ? EXIT_SUCCESS
-               : EXIT_FAILURE;
-  }
-
-  lrt_tri_build_options build_opts;
-  std::memset(&build_opts, 0, sizeof(build_opts));
-  build_opts.quality = opt.quality;
-  build_opts.layout = LRT_TRI_LAYOUT_AUTO;
-  build_opts.max_leaf_size = 0;
-  build_opts.num_threads = WorkerThreadCount(opt.threads);
-
-  lrt_result lrt_err = LRT_RESULT_OK;
-  lrt_tri_scene *lrt_scene = nullptr;
-  if (!tris.empty()) {
-    lrt_scene = lrt_tri_scene_build(vertices.data(), tris.size(), &build_opts, &lrt_err);
-    if (!lrt_scene) {
-      std::cerr << "Failed to build LightRT scene (err=" << int(lrt_err) << ").\n";
-      return EXIT_FAILURE;
-    }
-  }
-
-  int height = opt.height;
-  if (height <= 0) {
-    height = 540;
-    const Node *cam_node = FindCameraNode(render_scene, opt.camera);
-    if (cam_node) {
-      const RenderCamera &cam = render_scene.cameras[size_t(cam_node->id)];
-      if (cam.verticalAspectRatio > 0.0f) {
-        double dh = double(opt.width) * double(cam.verticalAspectRatio);
-        if (!std::isfinite(dh)) dh = 540.0;
-        height = std::max(1, int(std::lround(std::min(32768.0, dh))));
-      }
-    }
-  }
-
-  lightusd::Axis up_axis = GetUpAxis(render_scene.meta.upAxis);
-  CameraFrame camera = MakeCameraFrame(render_scene, opt, bounds, height,
-                                       up_axis);
-  CollectLights(render_scene, &light_cache);
-  IblCache ibl_cache;
-  BuildIblCache(render_scene, light_cache, &ibl_cache);
-
-  if (opt.stats) {
-    lrt_tri_stats st;
-    std::memset(&st, 0, sizeof(st));
-    if (lrt_scene) lrt_tri_scene_stats(lrt_scene, &st);
-    std::cerr << "triangles: " << tris.size() << "\n";
-    std::cerr << "direct spheres: " << direct_scene.sphere_info.size() << "\n";
-    std::cerr << "direct round curve segments: "
-              << direct_scene.round_curve_info.size() << "\n";
-    std::cerr << "direct flat curve segments: "
-              << direct_scene.flat_curve_info.size() << "\n";
-    std::cerr << "direct Hermite/Bezier curve segments: "
-              << direct_scene.bez_curve_info.size() << "\n";
-    std::cerr << "direct points: " << direct_scene.point_info.size() << "\n";
-    std::cerr << "direct tetrahedra: " << direct_scene.tet_prims.size()
-              << "\n";
-    std::cerr << "direct analytic shapes: " << direct_scene.shapes.size()
-              << "\n";
-    std::cerr << "subdivision level: " << opt.subdivision_level << "\n";
-    std::cerr << "lights: " << light_cache.finite.size() << "\n";
-    std::cerr << "mesh light triangles: " << light_cache.mesh.size() << "\n";
-    std::cerr << "domelight: " << (light_cache.has_dome ? 1 : 0) << "\n";
-    std::cerr << "light sampling finite cdf entries: "
-              << light_cache.finite_cdf.size() << "\n";
-    std::cerr << "light sampling mesh cdf entries: "
-              << light_cache.mesh_cdf.size() << "\n";
-    std::cerr << "light sampling env cdf entries: "
-              << light_cache.env_cdf.size() << "\n";
-    std::cerr << "ibl envmap: " << (ibl_cache.valid ? 1 : 0) << "\n";
-    std::cerr << "ibl diffuse size: "
-              << (ibl_cache.diffuse.width * ibl_cache.diffuse.height) << "\n";
-    std::cerr << "ibl prefilter levels: " << ibl_cache.prefiltered.size()
-              << "\n";
-    std::cerr << "ibl brdf lut size: "
-              << (ibl_cache.brdf_size * ibl_cache.brdf_size) << "\n";
-    if (lrt_scene) std::cerr << "lightrt: " << lrt_tri_kernel_name(lrt_scene) << "\n";
-    std::cerr << "bvh nodes: " << st.node_count << ", leaves: " << st.leaf_count
-              << ", memory: " << st.memory_bytes << " bytes\n";
-    std::cerr << "load seconds: " << load_seconds << "\n";
-  }
-
-  if (opt.stats) {
-    std::cerr << "volumes: " << volumes.size() << "\n";
-  }
-
-  const auto render_t0 = std::chrono::steady_clock::now();
-  std::vector<FlatTri> flat_tris;
-  std::vector<TriMat> flat_mats;
-  SplitTriInfos(tris, &flat_tris, &flat_mats);
-  lightusd::Image img =
-      RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
-                  ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
-                  legacy_textures.empty() ? nullptr : &legacy_textures,
-                  tri_uvs.empty() ? nullptr : &tri_uvs,
-                  tri_uvs1.empty() ? nullptr : &tri_uvs1, /*tlas*/ nullptr,
-                  /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
-                  /*tri_normals*/ nullptr, &volumes);
-  const auto render_t1 = std::chrono::steady_clock::now();
-  if (opt.stats) {
-    std::cerr << "render seconds: "
-              << std::chrono::duration<double>(render_t1 - render_t0).count()
-              << "\n";
-  }
-  if (lrt_scene) lrt_tri_scene_free(lrt_scene);
-
-  lightusd::image::WriteOption wopt;
-  wopt.format = lightusd::image::WriteImageFormat::Autodetect;
-  auto ret = lightusd::image::WriteImageToFile(opt.output, img, wopt);
-  if (!ret) {
-    std::cerr << "Failed to write image: " << ret.error() << "\n";
-    return EXIT_FAILURE;
-  }
-  return EXIT_SUCCESS;
+  // Every CPU render runs on the core streaming path.
+  return RunRTPreviewCore(opt);
 }

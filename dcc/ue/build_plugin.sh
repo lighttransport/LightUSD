@@ -37,14 +37,14 @@ UE_LLVM_AR="$(dirname "${UE_CLANGXX}")/llvm-ar"
 }
 
 LIGHTUSD_BUILD_DIR="${BUILD_DIR}/lightusd-ue-x86_64"
-cmake -S "${ROOT_DIR}/src/next" -B "${LIGHTUSD_BUILD_DIR}" -G Ninja \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+cmake -S "${ROOT_DIR}/src" -B "${LIGHTUSD_BUILD_DIR}" -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_C_COMPILER="${UE_CLANG}" \
   -DCMAKE_CXX_COMPILER="${UE_CLANGXX}" \
   -DCMAKE_AR="${UE_LLVM_AR}" \
   -DCMAKE_CXX_FLAGS="-stdlib=libc++"
-cmake --build "${LIGHTUSD_BUILD_DIR}" --target lightusd_c
+cmake --build "${LIGHTUSD_BUILD_DIR}" --target lightusd_render_c lightusd_validation_c
 
 stage_one() {
   local destination="$1"
@@ -54,9 +54,17 @@ stage_one() {
   cp "${ROOT_DIR}/dcc/ue/LightUSDUE.uplugin" "${destination}/"
   cp "${ROOT_DIR}/src/c-api/lightusd-c.h" "${destination}/ThirdParty/Linux/include/"
   cp "${ROOT_DIR}/src/c-api/lightusd-render-c.h" "${destination}/ThirdParty/Linux/include/"
-  cp "${LIGHTUSD_BUILD_DIR}/liblightusd_c.a" "${destination}/ThirdParty/Linux/lib/"
-  cp "${LIGHTUSD_BUILD_DIR}/liblightusd_next.a" "${destination}/ThirdParty/Linux/lib/"
-  cp "${LIGHTUSD_BUILD_DIR}/tydra_next_build/libtydra_next.a" "${destination}/ThirdParty/Linux/lib/"
+  cp "${ROOT_DIR}/src/c-api/lightusd-session-c.h" "${destination}/ThirdParty/Linux/include/"
+  mkdir -p "${destination}/ThirdParty/Linux/include/c"
+  cp "${ROOT_DIR}"/src/c/{descriptor,value,storage,lightusd-core-c,chunks}.h "${destination}/ThirdParty/Linux/include/c/"
+  # Stages everything the Python binding links; lightusd_validation[_c] is
+  # included for completeness but unused by the UE module itself (see
+  # LightUSDUE.Build.cs).
+  local archive
+  while IFS= read -r archive; do
+    cp "${archive}" "${destination}/ThirdParty/Linux/lib/"
+  done < "${LIGHTUSD_BUILD_DIR}/lightusd-python-libraries-Release.txt"
+  cp "${LIGHTUSD_BUILD_DIR}/tydra_build/liblightusd_rb_solver.a" "${destination}/ThirdParty/Linux/lib/"
   echo "staged LightUSDUE: ${destination}"
 }
 

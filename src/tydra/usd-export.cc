@@ -1,1118 +1,762 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2024 - Present, Light Transport Entertainment Inc.
-//
-#include <sstream>
-#include <numeric>
-#include <unordered_set>
-
+// SPDX-License-Identifier: Apache-2.0
 #include "usd-export.hh"
-#include "core/model-scope.hh"  // Model, Scope
-#include "common-macros.inc"
-#include "tiny-format.hh"
-#include "math-util.inc"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <locale>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include "export-text.hh"
 
 namespace lightusd {
 namespace tydra {
-
-#define PushError(msg) { \
-  if (err) { \
-    (*err) += msg + "\n"; \
-  } \
-}
-
-namespace detail {
-
-static void CountNodes(const SkelNode &node, size_t &count, int32_t depth = 0) {
-  if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
-
-  count++;
-
-  for (const auto &child : node.children) {
-    CountNodes(child, count, depth + 1);
+namespace {
+std::string Quote(const std::string& text) {
+  std::string result = "\"";
+  for (unsigned char c : text) {
+    if (c == '"' || c == '\\') {
+      result += '\\';
+      result += static_cast<char>(c);
+    } else if (c == '\n')
+      result += "\\n";
+    else if (c == '\r')
+      result += "\\r";
+    else if (c == '\t')
+      result += "\\t";
+    else if (c == 0)
+      result += "\\x00";
+    else
+      result += static_cast<char>(c);
   }
+  return result + '"';
 }
-
-static bool FlattenSkelNode(const SkelNode &node,
-  std::vector<value::token> &joints,
-  std::vector<value::token> &jointNames,
-  std::vector<value::matrix4d> &bindTransforms,
-  std::vector<value::matrix4d> &restTransforms, std::string *err,
-  int32_t depth = 0) {
-
-  if (size_t(depth) >= kMaxDefaultTraversalLimit) {
-    if (err) {
-      (*err) += "FlattenSkelNode: recursion too deep.\n";
-    }
+const char* Interp(Interpolation i) {
+  switch (i) {
+    case Interpolation::Constant:
+      return "constant";
+    case Interpolation::Uniform:
+      return "uniform";
+    case Interpolation::Vertex:
+      return "vertex";
+    case Interpolation::Varying:
+      return "varying";
+    case Interpolation::FaceVarying:
+      return "faceVarying";
+  }
+  return "invalid";
+}
+struct Exporter {
+  const RenderScene& scene;
+  std::ostream& out;
+  std::string* warning;
+  std::string* error;
+  bool fail(const char* message) {
+    if (error) *error += std::string(message) + '\n';
     return false;
   }
-
-  size_t idx = size_t(node.joint_id);
-  if (idx >= joints.size()) {
-    if (err) {
-      (*err) += "joint_id out-of-bounds.";
-    }
-    return false;
+  void warn(const char* message) {
+    if (warning) *warning += std::string(message) + '\n';
   }
-
-  joints[idx] = value::token(node.joint_path);
-  jointNames[idx] = value::token(node.joint_name);
-  bindTransforms[idx] = node.bind_transform;
-  restTransforms[idx] = node.rest_transform;
-
-  for (const auto &child : node.children) {
-    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err, depth + 1)) {
-      return false;
-    }
+  template <class T>
+  bool number(T value) {
+    if (!std::isfinite(static_cast<double>(value)))
+      return fail("Non-finite render value");
+    out << value;
+    return static_cast<bool>(out);
   }
-
-  return true;
-}
-
-
-static bool ExportSkeleton(const SkelHierarchy &skel,
-                           const std::vector<std::string> &animSourcePaths,
-                           Skeleton *dst, std::string *err) {
-
-  size_t num_joints{0};
-  CountNodes(skel.root_node, num_joints);
-
-  std::vector<value::token> joints(num_joints);
-  std::vector<value::token> jointNames(num_joints);
-  std::vector<value::matrix4d> bindTransforms(num_joints);
-  std::vector<value::matrix4d> restTransforms(num_joints);
-
-  // Flatten hierachy.
-  if (!FlattenSkelNode(skel.root_node, joints, jointNames, bindTransforms, restTransforms, err)) {
-    return false;
-  }
-
-  dst->joints.set_value(joints);
-
-  // Do not author jointNames when for all i: joints[i] == jointNames[i];
-  bool name_is_same = true;
-  for (size_t i = 0; i < num_joints; i++) {
-    if (joints[i].str() != jointNames[i].str()) {
-      name_is_same = false;
-      break;
-    }
-  }
-
-  if (!name_is_same) {
-    dst->jointNames.set_value(jointNames);
-  }
-
-  dst->bindTransforms.set_value(bindTransforms);
-  dst->restTransforms.set_value(restTransforms);
-
-  if (animSourcePaths.size() == 1) {
-    Path animSourceTarget(animSourcePaths[0], "");
-    Relationship animSourceRel;
-    animSourceRel.set(animSourceTarget);
-    // TODO: add `prepend` qualifier?
-    dst->animationSource = animSourceRel;
-  } else if (animSourcePaths.size() > 1) {
-    std::vector<Path> animSourceTargets;
-    animSourceTargets.reserve(animSourcePaths.size());
-    for (const auto &path : animSourcePaths) {
-      animSourceTargets.emplace_back(path, "");
-    }
-    Relationship animSourceRel;
-    animSourceRel.set(animSourceTargets);
-    dst->animationSource = animSourceRel;
-  }
-
-  dst->name = skel.prim_name;
-
-  return true;
-}
-
-static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::string *err) {
-  (void)err;
-
-  dst->name = target.prim_name;
-  if (target.display_name.size()) {
-    dst->metas().set_displayName(target.display_name);
-  }
-
-  if (target.pointIndices.size()) {
-    std::vector<int> indices(target.pointIndices.size());
-    for (size_t i = 0; i < target.pointOffsets.size(); i++) {
-      indices[i] = int(target.pointIndices[i]);
-    }
-    dst->pointIndices = indices;
-  }
-
-  if (target.pointOffsets.size()) {
-    std::vector<value::vector3f> offsets(target.pointOffsets.size());
-    for (size_t i = 0; i < target.pointOffsets.size(); i++) {
-      offsets[i][0] = target.pointOffsets[i][0];
-      offsets[i][1] = target.pointOffsets[i][1];
-      offsets[i][2] = target.pointOffsets[i][2];
-    }
-    dst->offsets = offsets;
-  }
-
-  if (target.normalOffsets.size()) {
-    std::vector<value::vector3f> normalOffsets(target.normalOffsets.size());
-    for (size_t i = 0; i < target.normalOffsets.size(); i++) {
-      normalOffsets[i][0] = target.normalOffsets[i][0];
-      normalOffsets[i][1] = target.normalOffsets[i][1];
-      normalOffsets[i][2] = target.normalOffsets[i][2];
-    }
-    dst->normalOffsets = normalOffsets;
-  }
-
-  return true;
-}
-
-static bool ExportSkelAnimation(const AnimationClip &anim, SkelAnimation *dst, std::string *err) {
-  // TODO: This function needs to be updated to work with the new AnimationClip structure
-  // (glTF/Three.js compatible) which uses samplers[] and channels[] instead of the old
-  // channels_map and blendshape_weights_map. For now, just return false.
-  (void)anim;
-  (void)dst;
-  if (err) {
-    *err = "ExportSkelAnimation: Not yet implemented for new AnimationClip structure";
-  }
-  return false;
-}
-
-
-static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMesh *dst, std::vector<GeomSubset> *dst_subsets, std::string *err) {
-
-  std::vector<int> fvCounts(rmesh.faceVertexCounts().size());
-  for (size_t i = 0; i < rmesh.faceVertexCounts().size(); i++) {
-    fvCounts[i] = int(rmesh.faceVertexCounts()[i]);
-  }
-  dst->faceVertexCounts.set_value(fvCounts);
-
-  std::vector<int> fvIndices(rmesh.faceVertexIndices().size());
-  for (size_t i = 0; i < rmesh.faceVertexIndices().size(); i++) {
-    fvIndices[i] = int(rmesh.faceVertexIndices()[i]);
-  }
-  dst->faceVertexIndices.set_value(fvIndices);
-
-  std::vector<value::point3f> points(rmesh.points.size());
-  for (size_t i = 0; i < rmesh.points.size(); i++) {
-    points[i][0] = rmesh.points[i][0];
-    points[i][1] = rmesh.points[i][1];
-    points[i][2] = rmesh.points[i][2];
-  }
-
-  dst->points = points;
-
-  dst->name = rmesh.prim_name;
-  if (rmesh.display_name.size()) {
-    dst->meta.set_displayName(rmesh.display_name);
-  }
-
-  if (!rmesh.vertex_colors.empty()) {
-
-    const auto &vattr = rmesh.vertex_colors;
-    std::vector<value::color3f> displayColor(vattr.vertex_count());
-    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
-    for (size_t i = 0; i < vattr.vertex_count(); i++) {
-      displayColor[i][0] = psrc[3 * i + 0];
-      displayColor[i][1] = psrc[3 * i + 1];
-      displayColor[i][2] = psrc[3 * i + 2];
-    }
-
-    GeomPrimvar displayColorPvar;
-    displayColorPvar.set_name("displayColor");
-    displayColorPvar.set_value(displayColor);
-    if (vattr.is_facevarying()) {
-      displayColorPvar.set_interpolation(Interpolation::FaceVarying);
-    } else if (vattr.is_vertex()) {
-      displayColorPvar.set_interpolation(Interpolation::Vertex);
-    } else if (vattr.is_uniform()) {
-      displayColorPvar.set_interpolation(Interpolation::Uniform);
-    } else if (vattr.is_constant()) {
-      displayColorPvar.set_interpolation(Interpolation::Constant);
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.vertex_colors");
-    }
-
-    // primvar name is extracted from Primvar::name
-    dst->set_primvar(displayColorPvar);
-  }
-
-  if (!rmesh.vertex_opacities.empty()) {
-
-    const auto &vattr = rmesh.vertex_opacities;
-    std::vector<float> displayOpacity(vattr.vertex_count());
-    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
-    for (size_t i = 0; i < vattr.vertex_count(); i++) {
-      displayOpacity[i] = psrc[i];
-    }
-
-    GeomPrimvar displayOpacityPvar;
-    displayOpacityPvar.set_name("displayOpacity");
-    displayOpacityPvar.set_value(displayOpacity);
-    if (vattr.is_facevarying()) {
-      displayOpacityPvar.set_interpolation(Interpolation::FaceVarying);
-    } else if (vattr.is_vertex()) {
-      displayOpacityPvar.set_interpolation(Interpolation::Vertex);
-    } else if (vattr.is_uniform()) {
-      displayOpacityPvar.set_interpolation(Interpolation::Uniform);
-    } else if (vattr.is_constant()) {
-      displayOpacityPvar.set_interpolation(Interpolation::Constant);
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.vertex_opacities");
-    }
-
-    // primvar name is extracted from Primvar::name
-    dst->set_primvar(displayOpacityPvar);
-  }
-
-  if (!rmesh.normals.empty()) {
-    // export as primvars:normals
-
-    const auto &vattr = rmesh.normals;
-    std::vector<value::normal3f> normals(vattr.vertex_count());
-    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
-    for (size_t i = 0; i < vattr.vertex_count(); i++) {
-      normals[i][0] = psrc[3 * i + 0];
-      normals[i][1] = psrc[3 * i + 1];
-      normals[i][2] = psrc[3 * i + 2];
-    }
-
-    GeomPrimvar normalPvar;
-    normalPvar.set_name("normals");
-    normalPvar.set_value(normals);
-    if (vattr.is_facevarying()) {
-      normalPvar.set_interpolation(Interpolation::FaceVarying);
-    } else if (vattr.is_vertex()) {
-      normalPvar.set_interpolation(Interpolation::Vertex);
-    } else if (vattr.is_uniform()) {
-      normalPvar.set_interpolation(Interpolation::Uniform);
-    } else if (vattr.is_constant()) {
-      normalPvar.set_interpolation(Interpolation::Constant);
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.normals");
-    }
-
-    // primvar name is extracted from Primvar::name
-    dst->set_primvar(normalPvar);
-  }
-
-  // Primary texcoord only.
-  // TODO: Multi-texcoords support
-  if (rmesh.texcoords.count(0)) {
-    const auto &vattr = rmesh.texcoords.at(0);
-    DCOUT("export UV: " << vattr.name);
-    std::vector<value::texcoord2f> texcoords(vattr.vertex_count());
-    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
-    for (size_t i = 0; i < vattr.vertex_count(); i++) {
-      texcoords[i][0] = psrc[2 * i + 0];
-      texcoords[i][1] = psrc[2 * i + 1];
-    }
-
-    GeomPrimvar uvPvar;
-    uvPvar.set_name(vattr.name);
-    uvPvar.set_value(texcoords);
-    if (vattr.is_facevarying()) {
-      uvPvar.set_interpolation(Interpolation::FaceVarying);
-    } else if (vattr.is_vertex()) {
-      uvPvar.set_interpolation(Interpolation::Vertex);
-    } else if (vattr.is_uniform()) {
-      uvPvar.set_interpolation(Interpolation::Uniform);
-    } else if (vattr.is_constant()) {
-      uvPvar.set_interpolation(Interpolation::Constant);
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.texcoord0");
-    }
-
-    dst->set_primvar(uvPvar);
-  }
-
-  if (rmesh.joint_and_weights.jointIndices.size() && rmesh.joint_and_weights.jointWeights.size() && (rmesh.joint_and_weights.elementSize > 0)) {
-    GeomPrimvar weightpvar;
-    weightpvar.set_name("skel:jointWeights");
-    weightpvar.set_value(rmesh.joint_and_weights.jointWeights);
-    weightpvar.set_elementSize(uint32_t(rmesh.joint_and_weights.elementSize));
-    weightpvar.set_interpolation(Interpolation::Vertex);
-    dst->set_primvar(weightpvar);
-
-    GeomPrimvar idxpvar;
-    idxpvar.set_name("skel:jointIndices");
-    idxpvar.set_value(rmesh.joint_and_weights.jointIndices);
-    idxpvar.set_elementSize(uint32_t(rmesh.joint_and_weights.elementSize));
-    idxpvar.set_interpolation(Interpolation::Vertex);
-    dst->set_primvar(idxpvar);
-
-    // matrix4d primvars:skel:geomBindTransform
-    GeomPrimvar geomBindTransform;
-    geomBindTransform.set_name("skel:geomBindTransform");
-    geomBindTransform.set_value(rmesh.joint_and_weights.geomBindTransform);
-    dst->set_primvar(geomBindTransform);
-  }
-
-  dst->doubleSided = rmesh.doubleSided;
-  if (!rmesh.is_rightHanded) {
-    dst->orientation.set_value(Orientation::LeftHanded);
-  }
-
-  bool has_material{false};
-
-  if (rmesh.material_id > -1) {
-    const RenderMaterial &rmat = scene.materials[size_t(rmesh.material_id)];
-    Relationship mat_rel;
-
-    Path mat_path("/materials/" + rmat.name, "");
-    mat_rel.set(mat_path);
-    dst->set_materialBinding(mat_rel);
-
-    has_material = true;
-
-    // TODO: backface material
-  }
-
-  if (rmesh.material_subsetMap.size()) {
-    // Unrestricted for now.
-    dst->set_subsetFamilyType(value::token("materialBind"), GeomSubset::FamilyType::Unrestricted);
-    for (const auto &matsubset : rmesh.material_subsetMap) {
-      GeomSubset subset;
-      subset.name = matsubset.first;
-
-      std::vector<int> indices;
-      for (size_t i = 0; i < matsubset.second.indices().size(); i++) {
-        indices.push_back(int(matsubset.second.indices()[i]));
+  template <class T>
+  bool matrix(const T* data) {
+    out << '(';
+    for (size_t r = 0; r < 4; r++) {
+      if (r) out << ", ";
+      out << '(';
+      for (size_t c = 0; c < 4; c++) {
+        if (c) out << ", ";
+        if (!number(data[r * 4 + c])) return false;
       }
-      subset.indices = indices;
-      subset.familyName = value::token("materialBind");
-
-      if (matsubset.second.material_id == -1) {
-        PUSH_ERROR_AND_RETURN(fmt::format("material_id is not assigned to material_subset {}", matsubset.first));
-      }
-      const RenderMaterial &rmat = scene.materials[size_t(matsubset.second.material_id)];
-
-      Path mat_path("/materials/" + rmat.name, "");
-      Relationship mat_rel;
-      mat_rel.set(mat_path);
-      subset.set_materialBinding(mat_rel);
-
-      // TODO: backface material
-
-      dst_subsets->emplace_back(std::move(subset));
+      out << ')';
     }
-
-    has_material = true;
+    out << ')';
+    return static_cast<bool>(out);
   }
-
-  if (has_material) {
-
-    APISchemas mbAPISchema;
-    mbAPISchema.listOpQual = ListEditQual::Prepend;
-    mbAPISchema.names.push_back({APISchemas::APIName::MaterialBindingAPI, ""});
-
-    dst->metas().set_apiSchemas(mbAPISchema);
+  bool tuple(const Float4& value) {
+    out << '(';
+    if (!number(value.x)) return false;
+    out << ", ";
+    if (!number(value.y)) return false;
+    out << ", ";
+    if (!number(value.z)) return false;
+    out << ", ";
+    if (!number(value.w)) return false;
+    out << ')';
+    return static_cast<bool>(out);
   }
-
-  return true;
-}
-
-///
-/// Convert Material and Shader graph as Material Prim(it encloses Shaders).
-///
-static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path, size_t material_id, Prim *dst, std::string *err) {
-
-  const RenderMaterial &rmat = scene.materials[material_id];
-
-  // Check if the material has a surface shader
-  if (!rmat.surfaceShader.has_value()) {
-    // Create a material with default/empty values if no surface shader
-    Material mat;
-    mat.name = rmat.name;
-    (*dst) = Prim(std::move(mat));
+  bool material_path(int32_t id) {
+    if (id < 0 || static_cast<size_t>(id) >= scene.materials.size())
+      return fail("Material index out of range");
+    out << "</World/Materials/Material_" << id << '>';
     return true;
   }
-
-  // TODO: create two UsdUVTextures for RGBA imagge(rgb and alpha)
-  auto ConstructUVTexture = [&](const UVTexture &tex, const std::string &param_name, const std::string &abs_mat_path, /* inout */std::vector<Shader> &shader_nodes) -> bool {
-
-
-    std::string preaderPrimPath = abs_mat_path + "/uvmap_" + param_name + ".outputs:result";
-    Path preaderPath(preaderPrimPath, "");
-
-    if ((tex.texture_image_id < 0) || (size_t(tex.texture_image_id) >= scene.images.size())) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture_image_id for `{}`", param_name));
+  bool parameter(const char* name, const ShaderParam& p, bool color) {
+    const char* type =
+        color ? (std::string(name) == "normal" ? "normal3f " : "color3f ")
+              : "float ";
+    out << type << "inputs:" << name << " = ";
+    if (color) out << '(';
+    if (!number(p.value.x)) return false;
+    if (color) {
+      out << ", ";
+      if (!number(p.value.y)) return false;
+      out << ", ";
+      if (!number(p.value.z)) return false;
+      out << ')';
     }
-
-    const TextureImage &src_teximg = scene.images[size_t(tex.texture_image_id)];
-
-    UsdUVTexture image_tex;
-    image_tex.name = "Image_Texture_" + param_name;
-
-    // For a sparse (keep-as-is) UDIM texture, write back the original
-    // `<UDIM>` pattern rather than the representative tile's path, so the
-    // UDIM asset round-trips through USDA/USDC.
-    std::string file_asset_path = src_teximg.asset_identifier;
-    if (tex.is_udim && tex.udim_texture_id >= 0 &&
-        size_t(tex.udim_texture_id) < scene.udim_textures.size()) {
-      const std::string &udim_path =
-          scene.udim_textures[size_t(tex.udim_texture_id)].asset_identifier;
-      if (!udim_path.empty()) {
-        file_asset_path = udim_path;
-      }
+    out << '\n';
+    if (p.is_texture()) {
+      if (static_cast<size_t>(p.texture_id) >= scene.textures.size())
+        return fail("Texture index out of range");
+      const auto channel =
+          scene.textures[static_cast<size_t>(p.texture_id)].output_channel;
+      const char* scalar = channel == RenderTexture::Channel::G   ? "g"
+                           : channel == RenderTexture::Channel::B ? "b"
+                           : channel == RenderTexture::Channel::A ? "a"
+                                                                  : "r";
+      out << type << "inputs:" << name
+          << ".connect = </World/Materials/Material_" << active_material
+          << "/Texture_" << p.texture_id << ".outputs:"
+          << ((color && (channel == RenderTexture::Channel::RGB ||
+                         channel == RenderTexture::Channel::RGBA))
+                  ? "rgb"
+                  : scalar)
+          << ">\n";
     }
-
-    DCOUT("asset_identifier: " << file_asset_path);
-    if (file_asset_path.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("file asset name is empty for texture image `{}`", param_name));
-    }
-    value::AssetPath fileAssetPath(file_asset_path);
-    image_tex.file = fileAssetPath;
-
-    // TODO: Set colorSpace in attribute meta.
-    Animatable<UsdUVTexture::SourceColorSpace> sourceColorSpace;
-    if (src_teximg.colorSpace == ColorSpace::sRGB) {
-      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::SRGB);
-    } else if (src_teximg.colorSpace == ColorSpace::Raw) {
-      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::Raw);
-    } else {
-      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::Auto);
-    }
-    image_tex.sourceColorSpace.set_value(sourceColorSpace);
-
-    image_tex.st.set_connection(preaderPath);
-    image_tex.st.set_value_empty(); // connection only
-
-    Animatable<UsdUVTexture::Wrap> wrapS;
-    if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_EDGE) {
-      wrapS.set_default(UsdUVTexture::Wrap::Clamp);
-    } else if (tex.wrapS == UVTexture::WrapMode::REPEAT) {
-      wrapS.set_default(UsdUVTexture::Wrap::Repeat);
-    } else if (tex.wrapS == UVTexture::WrapMode::MIRROR) {
-      wrapS.set_default(UsdUVTexture::Wrap::Mirror);
-    } else if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_BORDER) {
-      wrapS.set_default(UsdUVTexture::Wrap::Black);
-    } else {
-      wrapS.set_default(UsdUVTexture::Wrap::Repeat);
-    }
-    image_tex.wrapS.set_value(wrapS);
-
-    Animatable<UsdUVTexture::Wrap> wrapT;
-    if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_EDGE) {
-      wrapT.set_default(UsdUVTexture::Wrap::Clamp);
-    } else if (tex.wrapT == UVTexture::WrapMode::REPEAT) {
-      wrapT.set_default(UsdUVTexture::Wrap::Repeat);
-    } else if (tex.wrapT == UVTexture::WrapMode::MIRROR) {
-      wrapT.set_default(UsdUVTexture::Wrap::Mirror);
-    } else if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_BORDER) {
-      wrapT.set_default(UsdUVTexture::Wrap::Black);
-    } else {
-      wrapT.set_default(UsdUVTexture::Wrap::Repeat);
-    }
-    image_tex.wrapT.set_value(wrapS);
-
-    for (const auto &c : tex.authoredOutputChannels) {
-      if (c == UVTexture::Channel::R) {
-        image_tex.outputsR.set_authored(true);
-      } else if (c == UVTexture::Channel::G) {
-        image_tex.outputsG.set_authored(true);
-      } else if (c == UVTexture::Channel::B) {
-        image_tex.outputsB.set_authored(true);
-      } else if (c == UVTexture::Channel::RGB) {
-        image_tex.outputsRGB.set_authored(true);
-      } else if (c == UVTexture::Channel::RGBA) {
-        PUSH_ERROR_AND_RETURN("rgba texture is not supported yet.");
-      }
-    }
-
-    UsdTransform2d uv_xform;
-    uv_xform.name = "place2d_" + param_name;
-    if (tex.has_transform2d) {
-      // TODO: Deompose tex.transform and use it?
-      uv_xform.translation = tex.tx_translation;
-      uv_xform.rotation = tex.tx_rotation;
-      uv_xform.scale = tex.tx_scale;
-
-      Shader uv_xformShader;
-      uv_xformShader.name = "place2d_" + param_name;
-      uv_xformShader.info_id = kUsdTransform2d;
-      uv_xformShader.value = uv_xform;
-      shader_nodes.emplace_back(std::move(uv_xformShader));
-    }
-
-    UsdPrimvarReader_float2 preader;
-    preader.name = "primvar_reader_" + param_name;
-
-    value::float2 fallback_value;
-    fallback_value[0] = tex.fallback_uv[0];
-    fallback_value[1] = tex.fallback_uv[1];
-    if (!math::is_close(fallback_value, {0.0f, 0.0f})) {
-      preader.fallback = fallback_value;
-    }
-
-    Animatable<std::string> varname;
-    // TODO: Ensure primvar with 'varname_uv' exists in bound RenderMesh.
-    DCOUT("varname = " << tex.varname_uv);
-    varname.set_default(tex.varname_uv);
-    preader.varname.set_value(varname);
-    preader.result.set_authored(true);
-
-
-    Shader preaderShader;
-    preaderShader.name = "uvmap_" + param_name;
-    preaderShader.info_id = kUsdPrimvarReader_float2;
-    preaderShader.value = preader;
-
-    shader_nodes.emplace_back(std::move(preaderShader));
-
-    Shader imageTexShader;
-    imageTexShader.name = "Image_Texture_" + param_name;
-    imageTexShader.info_id = kUsdUVTexture;
-    imageTexShader.value = image_tex;
-
-    shader_nodes.emplace_back(std::move(imageTexShader));
-
-    return true;
+    return static_cast<bool>(out);
+  }
+  struct Topology {
+    bool triangles = false;
+    size_t faces = 0, corners = 0;
+    std::vector<size_t> source_faces;
   };
-
-
-  // Layout
-  //
-  // - Material
-  //   - Shader(UsdPreviewSurface)
-  //     - UsdUVTexture(Shader)
-  //     - TexTransform2d(Shader)
-  //     - PrimvarReader
-  //
-
-  Material mat;
-
-  mat.name = rmat.name;
-
-  Shader shader;  // root Shader
-  shader.name = "defaultPBR";
-
-  std::string abs_mat_path = abs_path + "/" + mat.name;
-  std::string abs_shader_path = abs_mat_path + "/" + shader.name;
-
-  std::vector<Shader> shader_nodes;
-
-  {
-    UsdPreviewSurface surfaceShader;  // Concrete Shader node object
-
-    //
-    // Asssign actual shader object to Shader::value.
-    // Also do not forget set its shader node type name through Shader::info_id
-    //
-    shader.info_id = kUsdPreviewSurface;  // "UsdPreviewSurface" token
-
-    //
-    // Currently no shader network/connection API.
-    // Manually construct it.
-    //
-    surfaceShader.outputsSurface.set_authored(
-        true);  // Author `token outputs:surface`
-
-    surfaceShader.useSpecularWorkflow = rmat.surfaceShader->useSpecularWorkflow ? 1 : 0;
-
-    if (rmat.surfaceShader->diffuseColor.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->diffuseColor.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'diffuseColor' texture.");
+  bool mesh(const RenderMesh& value, size_t id, const Matrix4& transform);
+  bool skeletons();
+  template <class Array>
+  bool array(const Array& values, size_t components = 1) {
+    if (values.size() % components) return fail("Incomplete array element");
+    out << '[';
+    for (size_t i = 0; i < values.size(); i += components) {
+      if (i) out << ", ";
+      if (components > 1) out << '(';
+      for (size_t c = 0; c < components; c++) {
+        if (c) out << ", ";
+        if (!number(values[i + c])) return false;
       }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->diffuseColor.texture_id)], "diffuseColor", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'diffuseColor' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "diffuseColor", "outputs:rgb");
-      surfaceShader.diffuseColor.set_connection(connPath);
-      surfaceShader.diffuseColor.set_value_empty();
-    } else {
-      value::color3f diffuseCol;
-      diffuseCol.r = rmat.surfaceShader->diffuseColor.value[0];
-      diffuseCol.g = rmat.surfaceShader->diffuseColor.value[1];
-      diffuseCol.b = rmat.surfaceShader->diffuseColor.value[2];
-
-      surfaceShader.diffuseColor.set_value(diffuseCol);
+      if (components > 1) out << ')';
     }
-
-    if (rmat.surfaceShader->specularColor.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->specularColor.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'specularColor' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->specularColor.texture_id)], "specularColor", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'specularColor' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "specularColor", "outputs:rgb");
-      surfaceShader.specularColor.set_connection(connPath);
-      surfaceShader.specularColor.set_value_empty();
-    } else {
-      value::color3f col;
-      col.r = rmat.surfaceShader->specularColor.value[0];
-      col.g = rmat.surfaceShader->specularColor.value[1];
-      col.b = rmat.surfaceShader->specularColor.value[2];
-      surfaceShader.specularColor = col;
-    }
-
-    if (rmat.surfaceShader->emissiveColor.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->emissiveColor.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'emissiveColor' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->emissiveColor.texture_id)], "emissiveColor", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'emissiveColor' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "emissiveColor", "outputs:rgb");
-      surfaceShader.emissiveColor.set_connection(connPath);
-      surfaceShader.emissiveColor.set_value_empty();
-    } else {
-      value::color3f col;
-      col.r = rmat.surfaceShader->emissiveColor.value[0];
-      col.g = rmat.surfaceShader->emissiveColor.value[1];
-      col.b = rmat.surfaceShader->emissiveColor.value[2];
-      surfaceShader.emissiveColor = col;
-    }
-
-    if (rmat.surfaceShader->metallic.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->metallic.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'metallic' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->metallic.texture_id)], "metallic", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'metallic' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "metallic", "outputs:r");
-      surfaceShader.metallic.set_connection(connPath);
-      surfaceShader.metallic.set_value_empty();
-    } else {
-      surfaceShader.metallic = rmat.surfaceShader->metallic.value;
-    }
-
-    if (rmat.surfaceShader->roughness.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->roughness.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'roughness' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->roughness.texture_id)], "roughness", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'roughness' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "roughness", "outputs:r");
-      surfaceShader.roughness.set_connection(connPath);
-      surfaceShader.roughness.set_value_empty();
-    } else {
-      surfaceShader.roughness = rmat.surfaceShader->roughness.value;
-    }
-
-    if (rmat.surfaceShader->clearcoat.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->clearcoat.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoat' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoat.texture_id)], "clearcoat", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoat' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoat", "outputs:r");
-      surfaceShader.clearcoat.set_connection(connPath);
-      surfaceShader.clearcoat.set_value_empty();
-    } else {
-      surfaceShader.clearcoat = rmat.surfaceShader->clearcoat.value;
-    }
-
-    if (rmat.surfaceShader->clearcoatRoughness.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->clearcoatRoughness.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoatRoughness' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->clearcoatRoughness.texture_id)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoatRoughness' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoatRoughness", "outputs:r");
-      surfaceShader.clearcoatRoughness.set_connection(connPath);
-      surfaceShader.clearcoatRoughness.set_value_empty();
-    } else {
-      surfaceShader.clearcoatRoughness = rmat.surfaceShader->clearcoatRoughness.value;
-    }
-
-    if (rmat.surfaceShader->opacity.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->opacity.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacity' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacity.texture_id)], "opacity", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'opacity' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "opacity", "outputs:r");
-      surfaceShader.opacity.set_connection(connPath);
-      surfaceShader.opacity.set_value_empty();
-    } else {
-      surfaceShader.opacity = rmat.surfaceShader->opacity.value;
-    }
-
-    if (rmat.surfaceShader->opacityThreshold.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->opacityThreshold.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacityThreshold' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->opacityThreshold.texture_id)], "opacityThreshold", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'opacityThreshold' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "opacityThreshold", "outputs:r");
-      surfaceShader.opacityThreshold.set_connection(connPath);
-      surfaceShader.opacityThreshold.set_value_empty();
-    } else {
-      surfaceShader.opacityThreshold = rmat.surfaceShader->opacityThreshold.value;
-    }
-
-    if (rmat.surfaceShader->ior.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->ior.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'ior' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->ior.texture_id)], "ior", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'ior' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "ior", "outputs:r");
-      surfaceShader.ior.set_connection(connPath);
-      surfaceShader.ior.set_value_empty();
-    } else {
-      surfaceShader.ior = rmat.surfaceShader->ior.value;
-    }
-
-    if (rmat.surfaceShader->occlusion.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->occlusion.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'occlusion' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->occlusion.texture_id)], "occlusion", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'occlusion' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "occlusion", "outputs:r");
-      surfaceShader.occlusion.set_connection(connPath);
-      surfaceShader.occlusion.set_value_empty();
-    } else {
-      surfaceShader.occlusion = rmat.surfaceShader->occlusion.value;
-    }
-
-    if (rmat.surfaceShader->normal.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->normal.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'normal' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->normal.texture_id)], "normal", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'normal' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "normal", "outputs:rgb");
-      surfaceShader.normal.set_connection(connPath);
-      surfaceShader.normal.set_value_empty();
-    } else {
-      value::normal3f n;
-      n[0] = rmat.surfaceShader->normal.value[0];
-      n[1] = rmat.surfaceShader->normal.value[1];
-      n[2] = rmat.surfaceShader->normal.value[2];
-      surfaceShader.normal = n;
-    }
-
-    if (rmat.surfaceShader->displacement.is_texture()) {
-
-      if (size_t(rmat.surfaceShader->displacement.texture_id) > scene.textures.size()) {
-        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'displacement' texture.");
-      }
-
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader->displacement.texture_id)], "displacement", abs_mat_path, shader_nodes)) {
-        PUSH_ERROR_AND_RETURN("Failed to convert 'displacement' texture.");
-      }
-
-      Path connPath(abs_mat_path + "/Image_Texture_" + "displacement", "outputs:rgb");
-      surfaceShader.displacement.set_connection(connPath);
-      surfaceShader.displacement.set_value_empty();
-
-    } else {
-      surfaceShader.displacement = rmat.surfaceShader->displacement.value;
-    }
-
-    // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
-    //
-    // token outputs:surface = </path/to/mat/defaultPBR.outputs:surface>
-    mat.surface.set(Path(/* prim path */ abs_shader_path,
-                                   /* prop path */ "outputs:surface"));
-
-    //
-    // Shaer::value is `value::Value` type, so can use '=' to assign Shader
-    // object.
-    //
-    shader.value = std::move(surfaceShader);
+    out << ']';
+    return static_cast<bool>(out);
   }
-
-  Prim shaderPrim(shader);
-
-  Prim matPrim(mat);
-
-  matPrim.add_child(std::move(shaderPrim));
-
-  for (const auto &node : shader_nodes) {
-    Prim shaderNodePrim(node);
-
-    if (!matPrim.add_child(std::move(shaderNodePrim), /* rename_primname */false, err)) {
-      return false;
-    }
-  }
-
-  (*dst) = std::move(matPrim);
-  return true;
-}
-
-} // namespace detail
-
-bool export_to_usda(const RenderScene &scene,
-  std::string &usda_str, std::string *warn, std::string *err) {
-
-  (void)warn;
-
-  Stage stage;
-
-  stage.metas().comment = "Exported from LightUSD Tydra.";
-  if (scene.meta.upAxis == "X") {
-    stage.metas().upAxis = Axis::X;
-  } else if (scene.meta.upAxis == "Y") {
-    stage.metas().upAxis = Axis::Y;
-  } else if (scene.meta.upAxis == "Z") {
-    stage.metas().upAxis = Axis::Z;
-  }
-
-  SkelRoot skelRoot;
-  skelRoot.set_name("skelRoot");
-  Prim skelRootPrim(skelRoot);
-
-  bool has_skelroot{false};
-
-  // TODO: Construct Node hierarchy
-
-  std::unordered_map<uint32_t, Skeleton> skelMap;
-
-  for (size_t i = 0; i < scene.meshes.size(); i++) {
-    GeomMesh mesh;
-    std::vector<GeomSubset> subsets;
-    if (!detail::ToGeomMesh(scene, scene.meshes[i], &mesh, &subsets, err)) {
-      return false;
-    }
-
-    bool has_skel{false};
-
-    if ((scene.meshes[i].skel_id > -1) && (size_t(scene.meshes[i].skel_id) < scene.skeletons.size())) {
-      DCOUT("Export Skeleton");
-
-      uint32_t skel_id = uint32_t(scene.meshes[i].skel_id);
-      std::string skel_name;
-      if (!skelMap.count(skel_id)) {
-        const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
-
-        std::vector<std::string> src_animsources;
-        if (!src_skel.anim_ids.empty()) {
-          src_animsources.reserve(src_skel.anim_ids.size());
-          for (int anim_id : src_skel.anim_ids) {
-            if ((anim_id > -1) && (size_t(anim_id) < scene.animations.size())) {
-              src_animsources.push_back("/animations/" + scene.animations[size_t(anim_id)].prim_name);
-            }
-          }
-        } else if ((src_skel.anim_id > -1) && (size_t(src_skel.anim_id) < scene.animations.size())) {
-          src_animsources.push_back("/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name);
-        }
-
-        Skeleton skel;
-        if (!detail::ExportSkeleton(src_skel, src_animsources, &skel, err)) {
+  template <class Array>
+  bool attribute(const char* type, const std::string& name, const Array& values,
+                 size_t components, Interpolation interpolation,
+                 const RenderMesh& mesh, const Topology& topology,
+                 const UInt32Chunked* indices = nullptr,
+                 size_t source_components = 0, size_t component_offset = 0) {
+    if (values.empty()) return true;
+    const size_t stride = source_components ? source_components : components;
+    if (!components || !stride || values.size() % stride ||
+        component_offset > stride || components > stride - component_offset)
+      return fail("Incomplete vertex attribute");
+    if (static_cast<unsigned>(interpolation) >
+        static_cast<unsigned>(Interpolation::Varying))
+      return fail("Invalid vertex interpolation");
+    size_t count = interpolation == Interpolation::Constant  ? 1
+                   : interpolation == Interpolation::Uniform ? topology.faces
+                   : interpolation == Interpolation::FaceVarying
+                       ? topology.corners
+                       : mesh.point_count();
+    out << type << "[] " << name << " = [";
+    for (size_t element = 0; element < count; element++) {
+      size_t source = element;
+      if (interpolation == Interpolation::Uniform)
+        source = topology.source_faces[element];
+      if (interpolation == Interpolation::FaceVarying && topology.triangles) {
+        if (mesh.triangulated_face_vertex_indices.size() == topology.corners)
+          source = mesh.triangulated_face_vertex_indices[element];
+        else if (!mesh.face_vertex_indices.empty())
+          return fail("Missing source corner mapping");
+      }
+      if (indices && !indices->empty()) {
+        if (source >= indices->size()) return fail("Invalid primvar index");
+        source = (*indices)[source];
+      }
+      if (source >= values.size() / stride)
+        return fail("Vertex attribute index out of range");
+      if (element) out << ", ";
+      if (components > 1) out << '(';
+      for (size_t c = 0; c < components; c++) {
+        if (c) out << ", ";
+        const size_t row = components == 9 ? 3 : 4;
+        if (components > 4 && c % row == 0) out << '(';
+        if (!number(values[source * stride + component_offset + c]))
           return false;
-        }
-        skel_name = skel.name;
-
-        APISchemas skelAPISchema;
-        skelAPISchema.listOpQual = ListEditQual::Prepend;
-        skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-        skel.metas().set_apiSchemas(skelAPISchema);
-
-        skelMap[skel_id] = std::move(skel);
-      } else {
-        skel_name = skelMap[skel_id].name;
+        if (components > 4 && c % row == row - 1) out << ')';
       }
-
-      has_skel = true;
-      has_skelroot = true;
-
-      // Add some skel settings to GeomMesh.
-
-      // rel skel:skeleton
-      Relationship skelRel;
-      // FIXME: Set abs_path
-      Path skelTargetPath("/skelRoot/" + skel_name, "");
-      skelRel.set(skelTargetPath);
-      mesh.skeleton = skelRel;
-
-
-      // Add apiSchemas both for GeomMesh and Skeleton
-      //
-      // prepend apiSchemas = ["SkelBindingAPI"]
-      //
-      APISchemas meshSkelAPISchema;
-      meshSkelAPISchema.listOpQual = ListEditQual::Prepend;
-      meshSkelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-      if (mesh.metas().has_apiSchemas()) {
-        // Assume existing apiSchemas uses prepend listEditOp.
-        APISchemas existingSchemas = mesh.metas().get_apiSchemas();
-        existingSchemas.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-        mesh.metas().set_apiSchemas(existingSchemas);
-      } else {
-        mesh.metas().set_apiSchemas(meshSkelAPISchema);
-      }
-
+      if (components > 1) out << ')';
     }
-
-    std::vector<BlendShape> bss;
-    if (scene.meshes[i].targets.size()) {
-
-      std::vector<value::token> bsNames;
-      std::vector<Path> bsTargetPaths;
-
-      for (const auto &target : scene.meshes[i].targets) {
-        BlendShape bs;
-        if (!detail::ExportBlendShape(target.second, &bs, err)) {
-          return false;
-        }
-
-        bss.emplace_back(bs);
-        bsNames.push_back(value::token(target.first));
-        // TODO: Set abs_path
-        std::string bs_path;
-        if (has_skel) {
-          bs_path = "/skelRoot/" + mesh.name + "/" + target.first;
-        } else {
-          bs_path = "/" + mesh.name + "/" + target.first;
-        }
-        Path targetPath = Path(bs_path, "");
-        bsTargetPaths.push_back(targetPath);
-      }
-
-      Relationship bsTargetRel;
-      bsTargetRel.set(bsTargetPaths);
-
-      mesh.blendShapeTargets = bsTargetRel;
-      mesh.blendShapes.set_value(bsNames);
-
-    }
-
-    Prim meshPrim(mesh);
-
-    // Add BlendShape prim under GeomMesh prim.
-    if (bss.size()) {
-      for (size_t t = 0; t < bss.size(); t++) {
-        Prim bsPrim(bss[t]);
-        if (!meshPrim.add_child(std::move(bsPrim), /* rename_primname_if_requred */false, err)) {
-          return false;
-        }
-      }
-    }
-
-    // Add GeomSubset prim under GeomMesh prim.
-    if (subsets.size()) {
-      for (size_t s = 0; s < subsets.size(); s++) {
-        Prim subsetPrim(subsets[s]);
-        if (!meshPrim.add_child(std::move(subsetPrim), /* rename_primname_if_required */false, err)) {
-          return false;
-        }
-      }
-    }
-
-    if (has_skel) {
-
-      skelRootPrim.add_child(std::move(meshPrim), /* rename_primname_if_require */false);
-
-    } else {
-      // Put Prims under Scope Prim
-      Scope scope;
-      scope.name = "scope" + std::to_string(i);
-
-      Prim scopePrim(scope);
-      scopePrim.add_child(std::move(meshPrim));
-
-      stage.add_root_prim(std::move(scopePrim));
-    }
-
+    out << "] (interpolation=" << Quote(Interp(interpolation)) << ")\n";
+    return static_cast<bool>(out);
   }
-
-  if (has_skelroot) {
-
-    for (const auto &item : skelMap) {
-      Prim skelPrim(item.second);
-      skelRootPrim.add_child(std::move(skelPrim), /* rename_primname_if_require */false);
-    }
-
-    stage.add_root_prim(std::move(skelRootPrim));
-  }
-
-  // TODO: Move to SkelRoot
-  {
-    Scope animGroup;
-    animGroup.name = "animations";
-
-    Prim animGroupPrim(animGroup);
-
-    for (size_t i = 0; i < scene.animations.size(); i++) {
-      SkelAnimation skelAnim;
-      if (!detail::ExportSkelAnimation(scene.animations[i], &skelAnim, err)) {
-        return false;
-      }
-
-      // TODO: Put SkelAnimation under SkelRoot
-      Prim prim(skelAnim);
-      animGroupPrim.add_child(std::move(prim));
-    }
-    stage.add_root_prim(std::move(animGroupPrim));
-  }
-
-  {
-    Scope matGroup;
-    matGroup.name = "materials";
-
-    Prim matGroupPrim(matGroup);
-
-    DCOUT("export " << scene.materials.size() << " materials");
-
+  size_t active_material = 0;
+  bool materials() {
+    out << "def Scope \"Materials\" {\n";
     for (size_t i = 0; i < scene.materials.size(); i++) {
-      // init with dummy object(Model Prim)
-      Model dummy;
-      Prim matPrim(std::move(dummy));
-      if (!detail::ToMaterialPrim(scene, "/materials", i, &matPrim, err)) {
+      active_material = i;
+      const auto& material = scene.materials[i];
+      out << "def Material \"Material_" << i
+          << "\" (displayName=" << Quote(material.name) << ") {\n"
+          << "token outputs:surface.connect = </World/Materials/Material_" << i
+          << "/Surface.outputs:surface>\n"
+          << "def Shader \"Surface\" {\nuniform token info:id = "
+             "\"UsdPreviewSurface\"\n";
+      PreviewSurfaceShader shader;
+      if (material.preview_surface)
+        shader = *material.preview_surface;
+      else if (material.openpbr) {
+        const auto& p = *material.openpbr;
+        shader.diffuse_color = p.base_color;
+        shader.metallic = p.base_metalness;
+        shader.roughness = p.specular_roughness;
+        shader.ior = p.specular_ior;
+        shader.clearcoat = p.coat_weight;
+        shader.clearcoat_roughness = p.coat_roughness;
+        shader.opacity = p.opacity;
+        shader.normal = p.normal;
+        shader.emissive_color = p.emission_color;
+        if (!p.emission_luminance.is_texture() &&
+            !shader.emissive_color.is_texture()) {
+          shader.emissive_color.value.x *= p.emission_luminance.value.x;
+          shader.emissive_color.value.y *= p.emission_luminance.value.x;
+          shader.emissive_color.value.z *= p.emission_luminance.value.x;
+        }
+        warn("OpenPBR material approximated by UsdPreviewSurface");
+      }
+      if (!parameter("diffuseColor", shader.diffuse_color, true) ||
+          !parameter("emissiveColor", shader.emissive_color, true) ||
+          !parameter("specularColor", shader.specular_color, true) ||
+          !parameter("metallic", shader.metallic, false) ||
+          !parameter("roughness", shader.roughness, false) ||
+          !parameter("opacity", shader.opacity, false) ||
+          !parameter("opacityThreshold", shader.opacity_threshold, false) ||
+          !parameter("clearcoat", shader.clearcoat, false) ||
+          !parameter("clearcoatRoughness", shader.clearcoat_roughness, false) ||
+          !parameter("ior", shader.ior, false) ||
+          !parameter("occlusion", shader.occlusion, false) ||
+          !parameter("normal", shader.normal, true) ||
+          !parameter("displacement", shader.displacement, false))
         return false;
+      out << "int inputs:useSpecularWorkflow = "
+          << (shader.use_specular_workflow ? 1 : 0)
+          << "\ntoken outputs:surface\n}\n";
+      std::vector<int32_t> textures;
+      for (const auto* p :
+           {&shader.diffuse_color, &shader.emissive_color,
+            &shader.specular_color, &shader.metallic, &shader.roughness,
+            &shader.opacity, &shader.opacity_threshold, &shader.clearcoat,
+            &shader.clearcoat_roughness, &shader.ior, &shader.occlusion,
+            &shader.normal, &shader.displacement})
+        if (p->is_texture() && std::find(textures.begin(), textures.end(),
+                                         p->texture_id) == textures.end())
+          textures.push_back(p->texture_id);
+      for (int32_t id : textures) {
+        const auto& texture = scene.textures[static_cast<size_t>(id)];
+        std::string file = texture.asset_path;
+        if (file.empty() && texture.image_id >= 0 &&
+            static_cast<size_t>(texture.image_id) < scene.images.size())
+          file = scene.images[static_cast<size_t>(texture.image_id)]
+                     .asset_identifier;
+        if (file.empty() ||
+            (file.find_first_of("\r\n") != std::string::npos ||
+             file.find("@@@") != std::string::npos) ||
+            file.find('\0') != std::string::npos)
+          return fail("Invalid external texture asset path");
+        const auto wrap = [](WrapMode mode) {
+          switch (mode) {
+            case WrapMode::Repeat:
+              return "repeat";
+            case WrapMode::Clamp:
+              return "clamp";
+            case WrapMode::Mirror:
+              return "mirror";
+            case WrapMode::Black:
+              return "black";
+          }
+          return "clamp";
+        };
+        out << "def Shader \"Texture_" << id
+            << "\" {\nuniform token info:id = \"UsdUVTexture\"\nasset "
+               "inputs:file = @@@"
+            << file << "@@@\n"
+            << "token inputs:sourceColorSpace = "
+            << Quote(texture.source_color_space)
+            << "\ntoken inputs:wrapS = " << Quote(wrap(texture.wrap_s))
+            << "\ntoken inputs:wrapT = " << Quote(wrap(texture.wrap_t)) << '\n'
+            << "float2 inputs:st.connect = </World/Materials/Material_" << i
+            << "/UVTransform_" << id
+            << ".outputs:result>\nfloat3 outputs:rgb\nfloat outputs:r\nfloat "
+               "outputs:g\nfloat outputs:b\nfloat outputs:a\n";
+        out << "float4 inputs:scale=";
+        if (!tuple(texture.scale_value)) return false;
+        out << "\nfloat4 inputs:bias=";
+        if (!tuple(texture.bias)) return false;
+        out << "\n}\n";
+        out << "def Shader \"UV_" << id
+            << "\" {\nuniform token info:id = "
+               "\"UsdPrimvarReader_float2\"\nstring inputs:varname = "
+            << Quote(texture.uv_primvar.empty() ? "st" : texture.uv_primvar)
+            << "\nfloat2 outputs:result\n}\n"
+            << "def Shader \"UVTransform_" << id
+            << "\" {\nuniform token info:id = \"UsdTransform2d\"\nfloat2 "
+               "inputs:in.connect = </World/Materials/Material_"
+            << i << "/UV_" << id << ".outputs:result>\nfloat2 inputs:scale = (";
+        if (!number(texture.scale.x)) return false;
+        out << ", ";
+        if (!number(texture.scale.y)) return false;
+        out << ")\nfloat2 inputs:translation = (";
+        if (!number(texture.offset.x)) return false;
+        out << ", ";
+        if (!number(texture.offset.y)) return false;
+        out << ")\nfloat inputs:rotation = ";
+        if (!number(texture.rotation * 57.29577951308232)) return false;
+        out << "\nfloat2 outputs:result\n}\n";
       }
-      if (!matGroupPrim.add_child(std::move(matPrim), /* rename_primname_if_required */false, err)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to add child Prim: {}", err));
-      }
-
+      out << "}\n";
     }
-    stage.add_root_prim(std::move(matGroupPrim));
+    out << "}\n";
+    return static_cast<bool>(out);
   }
-
-  usda_str =stage.ExportToString();
-
+};
+}  // namespace
+namespace {
+bool Identifier(const std::string& value, bool namespaces = false) {
+  if (value.empty()) return false;
+  bool first = true;
+  for (unsigned char c : value) {
+    if (c == ':' && namespaces) {
+      if (first) return false;
+      first = true;
+      continue;
+    }
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
+          (!first && c >= '0' && c <= '9')))
+      return false;
+    first = false;
+  }
+  return !first;
+}
+bool Exporter::mesh(const RenderMesh& mesh, size_t id,
+                    const Matrix4& transform) {
+  Topology t;
+  t.triangles = !mesh.triangulated_indices.empty();
+  const auto& indices =
+      t.triangles ? mesh.triangulated_indices : mesh.face_vertex_indices;
+  t.corners = indices.size();
+  t.faces = t.triangles ? t.corners / 3 : mesh.face_vertex_counts.size();
+  if (mesh.points.size() % 3 || (t.triangles && t.corners % 3))
+    return fail("Invalid mesh topology");
+  t.source_faces.resize(t.faces);
+  size_t count = 0;
+  for (size_t f = 0; f < t.faces; f++) {
+    t.source_faces[f] = f;
+    const size_t corners = t.triangles ? 3 : mesh.face_vertex_counts[f];
+    if (corners < 3 || corners > indices.size() - count)
+      return fail("Invalid face counts");
+    count += corners;
+  }
+  if (count != indices.size()) return fail("Face counts do not match indices");
+  for (uint32_t vertex : indices)
+    if (vertex >= mesh.point_count()) return fail("Mesh vertex out of range");
+  if (t.triangles && !mesh.face_triangle_offsets.empty()) {
+    const auto& ranges = mesh.face_triangle_offsets;
+    if (ranges.size() != mesh.face_count() + 1 || ranges.front() != 0 ||
+        ranges.back() != t.faces)
+      return fail("Invalid triangle face mapping");
+    for (size_t f = 0; f + 1 < ranges.size(); f++) {
+      if (ranges[f] > ranges[f + 1] || ranges[f + 1] > t.faces)
+        return fail("Invalid triangle face mapping");
+      for (size_t i = ranges[f]; i < ranges[f + 1]; i++) t.source_faces[i] = f;
+    }
+  }
+  out << "def Mesh \"Mesh_" << id << "\" (displayName=" << Quote(mesh.name);
+  if (mesh.skin || !mesh.blend_shapes.empty())
+    out << "; prepend apiSchemas=[\"SkelBindingAPI\"]";
+  out << ") {\nuniform token subdivisionScheme=\"none\"\n"
+      << "uniform token orientation="
+      << Quote(t.triangles || !mesh.left_handed ? "rightHanded" : "leftHanded")
+      << "\nbool doubleSided=" << (mesh.double_sided ? "true" : "false") << '\n'
+      << "matrix4d xformOp:transform = ";
+  if (!matrix(transform.m)) return false;
+  out << "\nuniform token[] xformOpOrder=[\"xformOp:transform\"]\npoint3f[] "
+         "points=";
+  if (!array(mesh.points, 3)) return false;
+  out << "\nint[] faceVertexCounts=[";
+  for (size_t f = 0; f < t.faces; f++) {
+    if (f) out << ", ";
+    out << (t.triangles ? 3 : mesh.face_vertex_counts[f]);
+  }
+  out << "]\nint[] faceVertexIndices=";
+  if (!array(indices)) return false;
+  out << '\n';
+  if (!t.triangles && !mesh.hole_faces.empty()) {
+    for (uint32_t f : mesh.hole_faces)
+      if (f >= t.faces) return fail("Invalid hole face");
+    out << "int[] holeIndices=";
+    if (!array(mesh.hole_faces)) return false;
+    out << '\n';
+  }
+  if (!attribute("normal3f", "normals", mesh.normals, 3, mesh.normals_interp,
+                 mesh, t))
+    return false;
+  const std::string uv0 =
+      mesh.texcoords_0_name.empty() ? "st" : mesh.texcoords_0_name;
+  const std::string uv1 =
+      mesh.texcoords_1_name.empty() ? "st1" : mesh.texcoords_1_name;
+  if (!Identifier(uv0, true) || !Identifier(uv1, true))
+    return fail("Invalid UV primvar name");
+  if (!attribute("texCoord2f", "primvars:" + uv0, mesh.texcoords_0, 2,
+                 mesh.texcoords_0_interp, mesh, t) ||
+      !attribute("texCoord2f", "primvars:" + uv1, mesh.texcoords_1, 2,
+                 mesh.texcoords_1_interp, mesh, t))
+    return false;
+  const size_t color_elements =
+      mesh.colors_interp == Interpolation::Constant ? 1
+      : mesh.colors_interp == Interpolation::Uniform
+          ? (mesh.face_count() ? mesh.face_count() : t.faces)
+      : mesh.colors_interp == Interpolation::FaceVarying
+          ? (mesh.face_vertex_indices.empty() ? t.corners
+                                              : mesh.face_vertex_indices.size())
+          : mesh.point_count();
+  const size_t color_stride =
+      color_elements <= std::numeric_limits<size_t>::max() / 4 &&
+              mesh.colors.size() == color_elements * 4
+          ? 4
+          : 3;
+  if (!attribute("color3f", "primvars:displayColor", mesh.colors, 3,
+                 mesh.colors_interp, mesh, t, nullptr, color_stride))
+    return false;
+  if (color_stride == 4 && !mesh.colors.empty()) {
+    // Combine RGBA alpha with separately authored opacity in output-corner
+    // order, so differing interpolation modes retain their rendered product.
+    out << "float[] primvars:displayOpacity=[";
+    size_t corner = 0;
+    const auto source_index = [&](Interpolation interpolation, size_t face,
+                                  size_t c, size_t vertex) {
+      if (interpolation == Interpolation::Constant) return size_t{0};
+      if (interpolation == Interpolation::Uniform) return t.source_faces[face];
+      if (interpolation == Interpolation::FaceVarying)
+        return t.triangles && !mesh.triangulated_face_vertex_indices.empty()
+                   ? static_cast<size_t>(
+                         mesh.triangulated_face_vertex_indices[c])
+                   : c;
+      return vertex;
+    };
+    for (size_t f = 0; f < t.faces; f++)
+      for (size_t k = 0; k < (t.triangles ? 3 : mesh.face_vertex_counts[f]);
+           k++, corner++) {
+        const size_t vertex = indices[corner];
+        const size_t color =
+            source_index(mesh.colors_interp, f, corner, vertex);
+        if (color >= mesh.colors.size() / 4)
+          return fail("Color alpha index out of range");
+        float opacity = 1;
+        if (!mesh.opacities.empty()) {
+          const size_t index =
+              source_index(mesh.opacities_interp, f, corner, vertex);
+          if (index >= mesh.opacities.size())
+            return fail("Opacity index out of range");
+          opacity = mesh.opacities[index];
+        }
+        if (corner) out << ", ";
+        if (!number(mesh.colors[color * 4 + 3] * opacity)) return false;
+      }
+    out << "] (interpolation=\"faceVarying\")\n";
+  } else if (!attribute("float", "primvars:displayOpacity", mesh.opacities, 1,
+                        mesh.opacities_interp, mesh, t))
+    return false;
+  for (const auto& primvar : mesh.primvars) {
+    if (!Identifier(primvar.name, true))
+      return fail("Invalid custom primvar name");
+    // VertexFormat groups are scalar, vec2/3/4 for float, signed and unsigned.
+    const char* type = nullptr;
+    size_t components = 0;
+    bool floats = false, signed_values = false;
+    switch (primvar.format) {
+      case VertexFormat::Float:
+        type = "float";
+        components = 1;
+        floats = true;
+        break;
+      case VertexFormat::Vec2:
+        type = "float2";
+        components = 2;
+        floats = true;
+        break;
+      case VertexFormat::Vec3:
+        type = "float3";
+        components = 3;
+        floats = true;
+        break;
+      case VertexFormat::Vec4:
+        type = "float4";
+        components = 4;
+        floats = true;
+        break;
+      case VertexFormat::Int:
+        type = "int";
+        components = 1;
+        signed_values = true;
+        break;
+      case VertexFormat::IVec2:
+        type = "int2";
+        components = 2;
+        signed_values = true;
+        break;
+      case VertexFormat::IVec3:
+        type = "int3";
+        components = 3;
+        signed_values = true;
+        break;
+      case VertexFormat::IVec4:
+        type = "int4";
+        components = 4;
+        signed_values = true;
+        break;
+      case VertexFormat::UInt:
+        type = "uint";
+        components = 1;
+        break;
+      case VertexFormat::UVec2:
+        type = "uint2";
+        components = 2;
+        break;
+      case VertexFormat::UVec3:
+        type = "uint3";
+        components = 3;
+        break;
+      case VertexFormat::UVec4:
+        type = "uint4";
+        components = 4;
+        break;
+      case VertexFormat::Matrix33:
+        type = "matrix3d";
+        components = 9;
+        floats = true;
+        break;
+      case VertexFormat::Matrix44:
+        type = "matrix4d";
+        components = 16;
+        floats = true;
+        break;
+      default:
+        return fail("Invalid custom primvar format");
+    }
+    const std::string name = "primvars:" + primvar.name;
+    if (floats) {
+      if (!attribute(type, name, primvar.float_data, components,
+                     primvar.interpolation, mesh, t, &primvar.indices))
+        return false;
+    } else if (signed_values) {
+      if (!attribute(type, name, primvar.int_data, components,
+                     primvar.interpolation, mesh, t, &primvar.indices))
+        return false;
+    } else if (!attribute(type, name, primvar.uint_data, components,
+                          primvar.interpolation, mesh, t, &primvar.indices))
+      return false;
+  }
+  if (mesh.material_id >= 0) {
+    out << "rel material:binding=";
+    if (!material_path(mesh.material_id)) return false;
+    out << '\n';
+  }
+  for (size_t s = 0; s < mesh.material_subsets.size(); s++) {
+    const auto& subset = mesh.material_subsets[s];
+    const bool tri_ranges = t.triangles && !mesh.face_triangle_offsets.empty();
+    const size_t limit = tri_ranges ? t.faces : mesh.face_count();
+    if (subset.face_start > limit ||
+        subset.face_count > limit - subset.face_start)
+      return fail("Invalid subset face range");
+    out << "def GeomSubset \"Subset_" << s
+        << "\" (displayName=" << Quote(subset.name)
+        << ") {\nuniform token elementType=\"face\"\nuniform token "
+           "familyName=\"materialBind\"\nint[] indices=[";
+    bool first = true;
+    for (size_t f = 0; f < t.faces; f++) {
+      const size_t source = tri_ranges ? f : t.source_faces[f];
+      if (source >= subset.face_start &&
+          source - subset.face_start < subset.face_count) {
+        if (!first) out << ", ";
+        out << f;
+        first = false;
+      }
+    }
+    out << "]\nrel material:binding=";
+    if (!material_path(subset.material_id)) return false;
+    out << "\n}\n";
+  }
+  if (mesh.skin) {
+    const auto& skin = *mesh.skin;
+    if (!skin.influences_per_vertex ||
+        skin.joint_indices.size() != skin.joint_weights.size() ||
+        skin.joint_weights.size() / skin.influences_per_vertex !=
+            mesh.point_count() ||
+        skin.joint_weights.size() % skin.influences_per_vertex)
+      return fail("Invalid skin weights");
+    if (skin.skeleton_id >= 0) {
+      if (static_cast<size_t>(skin.skeleton_id) >= scene.skeletons.size())
+        return fail("Invalid skeleton binding");
+      out << "rel skel:skeleton=</World/Skeleton_" << skin.skeleton_id << ">\n";
+    }
+    out << "int[] primvars:skel:jointIndices=";
+    if (!array(skin.joint_indices)) return false;
+    out << " (interpolation=\"vertex\"; elementSize="
+        << skin.influences_per_vertex
+        << ")\nfloat[] primvars:skel:jointWeights=";
+    if (!array(skin.joint_weights)) return false;
+    out << " (interpolation=\"vertex\"; elementSize="
+        << skin.influences_per_vertex
+        << ")\nmatrix4d primvars:skel:geomBindTransform=";
+    if (!matrix(skin.geom_bind_transform.m)) return false;
+    out << '\n';
+  }
+  if (!mesh.blend_shapes.empty()) {
+    out << "uniform token[] skel:blendShapes=[";
+    for (size_t b = 0; b < mesh.blend_shapes.size(); b++) {
+      if (b) out << ", ";
+      out << Quote(mesh.blend_shapes[b].name);
+    }
+    out << "]\nrel skel:blendShapeTargets=[";
+    for (size_t b = 0; b < mesh.blend_shapes.size(); b++) {
+      if (b) out << ", ";
+      out << "</World/Mesh_" << id << "/Shape_" << b << '>';
+    }
+    out << "]\n";
+    for (size_t b = 0; b < mesh.blend_shapes.size(); b++) {
+      const auto& shape = mesh.blend_shapes[b];
+      const size_t elements = shape.point_indices.empty()
+                                  ? mesh.point_count()
+                                  : shape.point_indices.size();
+      if (shape.point_offsets.size() != elements * 3 ||
+          (!shape.normal_offsets.empty() &&
+           shape.normal_offsets.size() != elements * 3))
+        return fail("Invalid blend shape offsets");
+      for (uint32_t point : shape.point_indices)
+        if (point >= mesh.point_count())
+          return fail("Invalid blend shape point index");
+      out << "def BlendShape \"Shape_" << b
+          << "\" (displayName=" << Quote(shape.name)
+          << ") {\nvector3f[] offsets=";
+      if (!array(shape.point_offsets, 3)) return false;
+      out << '\n';
+      if (!shape.normal_offsets.empty()) {
+        out << "vector3f[] normalOffsets=";
+        if (!array(shape.normal_offsets, 3)) return false;
+        out << '\n';
+      }
+      if (!shape.point_indices.empty()) {
+        out << "int[] pointIndices=";
+        if (!array(shape.point_indices)) return false;
+        out << '\n';
+      }
+      for (size_t j = 0; j < shape.inbetweens.size(); j++) {
+        const auto& inbetween = shape.inbetweens[j];
+        if (inbetween.point_offsets.size() != elements * 3)
+          return fail("Invalid inbetween offsets");
+        out << "vector3f[] inbetweens:Inbetween_" << j << '=';
+        if (!array(inbetween.point_offsets, 3)) return false;
+        out << " (weight=";
+        if (!number(inbetween.weight)) return false;
+        out << ")\n";
+      }
+      out << "}\n";
+    }
+  }
+  out << "}\n";
+  return static_cast<bool>(out);
+}
+bool Exporter::skeletons() {
+  for (size_t s = 0; s < scene.skeletons.size(); s++) {
+    const auto& skeleton = scene.skeletons[s];
+    out << "def Skeleton \"Skeleton_" << s
+        << "\" (displayName=" << Quote(skeleton.name)
+        << ") {\nuniform token[] joints=[";
+    for (size_t j = 0; j < skeleton.joints.size(); j++) {
+      if (j) out << ", ";
+      out << Quote(skeleton.joints[j].path);
+    }
+    out << "]\nuniform token[] jointNames=[";
+    for (size_t j = 0; j < skeleton.joints.size(); j++) {
+      if (j) out << ", ";
+      out << Quote(skeleton.joints[j].name);
+    }
+    out << "]\nuniform matrix4d[] bindTransforms=[";
+    for (size_t j = 0; j < skeleton.joints.size(); j++) {
+      if (j) out << ", ";
+      if (!matrix(skeleton.joints[j].bind_transform.m)) return false;
+    }
+    out << "]\nuniform matrix4d[] restTransforms=[";
+    for (size_t j = 0; j < skeleton.joints.size(); j++) {
+      if (j) out << ", ";
+      if (!matrix(skeleton.joints[j].rest_transform.m)) return false;
+    }
+    out << "]\n}\n";
+  }
+  return static_cast<bool>(out);
+}
+}  // namespace
+bool export_to_usda(const RenderScene& scene, std::string& output,
+                    std::string* warning, std::string* error,
+                    size_t max_output_bytes) {
+  export_detail::TextBuffer buffer(max_output_bytes);
+  std::ostream out(&buffer);
+  out.imbue(std::locale::classic());
+  out.precision(std::numeric_limits<double>::max_digits10);
+  Exporter e{scene, out, warning, error};
+  // The previous exporter explicitly rejected animation clips as unsupported.
+  if (!scene.animations.empty())
+    return e.fail("RenderScene animation export is not implemented");
+  out << "#usda 1.0\n(defaultPrim=\"World\"; upAxis="
+      << Quote(scene.up_axis == RenderScene::UpAxis::Z ? "Z" : "Y")
+      << "; metersPerUnit=";
+  if (!e.number(scene.meters_per_unit)) return false;
+  out << ")\ndef SkelRoot \"World\" {\n";
+  if (!e.materials() || !e.skeletons())
+    return e.fail("USDA output limit exceeded or invalid render data");
+  std::vector<bool> used(scene.meshes.size());
+  size_t instance = 0;
+  for (const auto& node : scene.nodes)
+    if (node.type == NodeType::Mesh) {
+      if (node.data_id < 0 ||
+          static_cast<size_t>(node.data_id) >= scene.meshes.size())
+        return e.fail("Invalid mesh node");
+      const size_t mesh = static_cast<size_t>(node.data_id);
+      used[mesh] = true;
+      if (!e.mesh(scene.meshes[mesh], instance++, node.world_transform))
+        return e.fail("USDA output limit exceeded or invalid render data");
+    }
+  for (size_t m = 0; m < scene.meshes.size(); m++)
+    if (!used[m] && !e.mesh(scene.meshes[m], instance++, Matrix4::Identity()))
+      return e.fail("USDA output limit exceeded or invalid render data");
+  out << "}\n";
+  if (!out) return e.fail("USDA output limit exceeded");
+  if (!scene.points.empty() || !scene.curves.empty() || !scene.lights.empty() ||
+      !scene.cameras.empty() || !scene.volumes.empty())
+    e.warn(
+        "Non-mesh render resources are omitted from the diagnostic mesh "
+        "export");
+  output.swap(buffer.text);
   return true;
 }
-
-
-} // namespace tydra
-} // namespace lightusd
+}  // namespace tydra
+}  // namespace lightusd

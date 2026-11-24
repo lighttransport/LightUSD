@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import createLightUSD from '../src/lightusd/lightusd.js';
+import createLightUSD from '../src/lightusd/lightusd_legacy.js';
 import { transferXatlasMaterialGroups } from '../lucia-code/src/operations.js';
 
 const module = await createLightUSD();

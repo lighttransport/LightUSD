@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-#include "binding-next-api.h"
-#include "next/validation/usd-validation.hh"
-#include "next/crate/crate-reader.hh"
-#include "next/load-usd.hh"
+#include "binding-core-api.h"
+#include "validation/usd-validation.hh"
+#include "crate/crate-reader.hh"
+#include "load-usd.hh"
 #include "core/minijson.hh"
 #include <cstdlib>
 #include <cstring>
-namespace lightusd { namespace web_next {
-namespace tn = lightusd::next;
+namespace lightusd { namespace web_core {
+namespace tn = lightusd;
 namespace {
 
 tn::ValidationOptions ParseValidationOptionsJSONForWeb(
@@ -94,7 +94,7 @@ lightusd::minijson::Value ValidationResultToJSON(const tn::USDValidationResult& 
 
 // validateFromBinary(bytes, filename, optionsJson) -> JSON string, matching
 // the legacy LightUSDLoaderNative.validateFromBinary contract consumed by
-// web/js/validation.js. Runs AOUSD-core validation over next::Layer.
+// web/js/validation.js. Runs AOUSD-core validation over ::lightusd::Layer.
 static std::string validateFromBytes(const uint8_t* data, size_t size,
                                       const std::string& filename,
                                       const std::string& options_json) {
@@ -156,7 +156,7 @@ static std::string validateFromBytes(const uint8_t* data, size_t size,
   return result.dump();
 }
 
-uint8_t* NextValidateJSON(const uint8_t* data, uint32_t size,
+uint8_t* ValidateJSON(const uint8_t* data, uint32_t size,
                           const uint8_t* filename, uint32_t filename_size,
                           const uint8_t* options, uint32_t options_size) {
   if (size > (uint32_t{1} << 30) || (size && !data) ||

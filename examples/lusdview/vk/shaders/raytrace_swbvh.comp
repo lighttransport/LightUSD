@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_control_flow_attributes : enable
@@ -119,6 +120,34 @@ layout(push_constant) uniform PC {
   uint pathParams;
 } pc;
 
+// MaterialX GGX multiple-scattering compensation (mx_ggx_energy_compensation)
+// on the metallic share of the GGX reflection, as LightRT's verified conductor.
+vec3 ptGgxEnergyComp(float nv, float rough, vec3 f0, float metal) {
+  float x = clamp(nv, 0.0, 1.0), y = max(rough * rough, 0.002), x2 = x * x, y2 = y * y;
+  vec4 r = vec4(0.1003, 0.9345, 1.0, 1.0) + vec4(-0.6303, -2.323, -1.765, 0.2281) * x +
+           vec4(9.748, 2.229, 8.263, 15.94) * y + vec4(-2.038, -3.748, 11.53, -55.83) * x * y +
+           vec4(29.34, 1.424, 28.96, 13.08) * x2 + vec4(-8.245, -0.7684, -7.507, 41.26) * y2 +
+           vec4(-26.44, 1.436, -36.11, 54.9) * x2 * y + vec4(19.99, 0.2913, 15.86, 300.2) * x * y2 +
+           vec4(-5.448, 0.6286, 33.37, -285.1) * x2 * y2;
+  vec2 ab = clamp(r.xy / r.zw, 0.0, 1.0);
+  float ess = ab.x + ab.y;
+  if (!(ess > 1.0e-4)) return vec3(1.0);
+  vec3 favg = f0 + (vec3(1.0) - f0) / 21.0;
+  return vec3(1.0) + clamp(metal, 0.0, 1.0) * favg * ((1.0 - ess) / ess);
+}
+
+// OpenPBR coat darkening (open_pbr_surface 1.1, LightRT's verified CPU BSDF):
+// factor = (1 - Kcoat) / (1 - Ebase * Kcoat), mixed toward 1 by
+// coat_weight * coat_darkening. A white base is not darkened.
+vec3 ptCoatDarkening(vec3 base, vec3 ssColor, float ss, float metal, float specW,
+                     float coatIor, float t) {
+  float n = max(coatIor, 1.0), c = (n - 1.0) / (n + 1.0);
+  float k = clamp(1.0 - (1.0 - c * c) / (n * n), 0.0, 0.9999);
+  vec3 e = mix(mix(base, ssColor, ss), base * max(specW, 0.0), metal);
+  vec3 f = vec3(1.0 - k) / max(vec3(1.0e-4), vec3(1.0) - e * k);
+  return mix(vec3(1.0), f, clamp(t, 0.0, 1.0));
+}
+
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
 }
@@ -131,6 +160,45 @@ vec3 linearToSrgb(vec3 c) {
   vec3 lo = c * 12.92;
   vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
   return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
+}
+
+layout(binding=27, std430) readonly buffer GaussianRecords { float gsS[]; };
+layout(binding=28, std430) readonly buffer GaussianNodes { uint gsN[]; };
+layout(binding=29, std430) readonly buffer GaussianChunks { int gsC[]; };
+layout(binding=30, std430) readonly buffer GaussianSH { float gsF[]; };
+uint gsChunkCount() { return uint(gsC.length()) / 2u; }
+uint gsKeyCount() { return max(floatBitsToUint(gsF[3]), 1u); }
+#include "../../../../src/external/lightrt/vk/shaders/gsplat_cycles.glsl"
+
+vec3 mtlxCorrectSampleTransfer(vec3 c, int correction) {
+  if (correction == 0) return c;
+  for (int i = 0; i < 3; ++i) {
+    float x = c[i];
+    if (correction <= 5 || correction == 11) {
+      if (correction == 1) {
+        float a = abs(x);
+        c[i] = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                    : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+        continue;
+      }
+      float a = abs(x);
+      x = sign(x) * (a <= 0.0031308 ? 12.92 * a
+                   : 1.055 * pow(a, 1.0 / 2.4) - 0.055);
+    }
+    int transfer = correction >= 11 ? 6 : (correction >= 6 ? correction - 5 : correction);
+    float a = abs(x), y;
+    if (transfer == 1)
+      y = a <= 0.04045 ? a / 12.92 : pow((a + 0.055) / 1.055, 2.4);
+    else if (transfer == 6)
+      y = x > 0.0 ? pow(a, 2.4) : 0.0;  // cmlib rec709_display clamps negatives
+    else {
+      float gamma = transfer == 2 ? 2.2 : transfer == 3 ? 1.8
+                    : transfer == 4 ? 2.4 : 563.0 / 256.0;
+      y = pow(a, gamma);
+    }
+    c[i] = sign(x) * y;
+  }
+  return c;
 }
 
 // Slab-method ray/AABB test with a current-best-t early-out, matching
@@ -428,9 +496,61 @@ vec4 swSampleTexture(int id, vec2 uv, vec2 duvdx, vec2 duvdy,
              mix(swTexel(td, p0.x, p1.y), swTexel(td, p1.x, p1.y), f.x), f.y);
 }
 
+vec4 swSampleGraphTexture(int id, vec2 uv, uint face, vec4 missing,
+                          int correction) {
+  if (id < 0 || id >= int(texDescs.length())) return missing;
+  RtTexDesc td = texDescs[id];
+  if (td.isUdim != 0) {
+    ivec2 tile = ivec2(floor(uv));
+    int lut = tile.x + tile.y * 10;
+    if (lut < 0 || lut >= 100) return missing;
+    int tileId = td.udimLayer[lut];
+    if (tileId < 0 || tileId >= int(texDescs.length())) return missing;
+    td = texDescs[tileId];
+    uv = fract(uv);
+  }
+  if (td.width <= 0 || td.height <= 0) return missing;
+  if (td.isPtex != 0 && td.imageSlot >= 0 &&
+      td.imageSlot < LUSDVIEW_RT_PTEXTURE_IMAGE_CAP) {
+    vec4 value = swSampleTexture(id, uv, vec2(0.0), vec2(0.0), face, missing);
+    value.rgb = mtlxCorrectSampleTransfer(value.rgb, correction);
+    return value;
+  }
+  vec2 p = vec2(swWrap(uv.x, td.wrapS), swWrap(uv.y, td.wrapT)) *
+           vec2(td.width - 1, td.height - 1);
+  ivec2 p0 = ivec2(clamp(floor(p), vec2(0.0), vec2(td.width - 1, td.height - 1)));
+  ivec2 p1 = min(p0 + ivec2(1), ivec2(td.width - 1, td.height - 1));
+  vec2 f = fract(p);
+  vec4 c00 = swTexel(td, p0.x, p0.y), c10 = swTexel(td, p1.x, p0.y);
+  vec4 c01 = swTexel(td, p0.x, p1.y), c11 = swTexel(td, p1.x, p1.y);
+  c00.rgb = mtlxCorrectSampleTransfer(c00.rgb, correction);
+  c10.rgb = mtlxCorrectSampleTransfer(c10.rgb, correction);
+  c01.rgb = mtlxCorrectSampleTransfer(c01.rgb, correction);
+  c11.rgb = mtlxCorrectSampleTransfer(c11.rgb, correction);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
 // Bounded interpreter for the same compact MaterialX IR used by the
 // ray-query path. Fixed-point passes resolve forward references while keeping
 // malformed graphs bounded and deterministic.
+vec3 mtlxColorPrimariesToRec709(vec3 c, int mode) {
+  if (mode == 1) return mat3(1.70505, -0.13026, -0.02400,
+                            -0.62179, 1.14080, -0.12897,
+                            -0.08326, -0.01054, 1.15297) * c;
+  if (mode == 2) return mat3(2.52169, -0.27648, -0.01538,
+                            -1.13413, 1.37272, -0.15298,
+                            -0.38756, -0.09624, 1.16836) * c;
+  if (mode == 3) return mat3(1.66049, -0.12455, -0.01815,
+                            -0.58764, 1.13290, -0.10058,
+                            -0.07285, -0.00835, 1.11873) * c;
+  if (mode == 4) return mat3(1.22494, -0.04206, -0.01964,
+                            -0.22494, 1.04206, -0.07864,
+                             0.0,      0.0,      1.09828) * c;
+  if (mode == 5) return mat3(1.39835536, 0.0, -0.0,
+                            -0.39835569, 1.0, -0.04292889,
+                             0.0, -0.0, 1.04292905) * c;
+  return c;
+}
 #if LUSDVIEW_SW_DISABLE_MTLX
 vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
   return vec4(0.0);
@@ -482,8 +602,14 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
           break;
         }
       }
-      else if (op == 1 || op == 2) v[i] = tex >= 0
-          ? swSampleTexture(tex, graphUv, vec2(0.0), vec2(0.0), face, value) : value;
+      else if (op == 1 || op == 2) {
+        int transfer = int(floor(graphRows[p + 13u] + 0.5));
+        value = tex >= 0 ? swSampleGraphTexture(tex, graphUv, face, value, transfer)
+                         : value;
+        value.rgb = mtlxColorPrimariesToRec709(
+            value.rgb, int(floor(graphRows[p + 12u] + 0.5)));
+        v[i] = value;
+      }
       else if (op == 3) v[i] = vec4(normalize(av.xyz * 2.0 - 1.0) * 0.5 + 0.5, av.w);
       else if (op == 4) v[i] = av + bv;
       else if (op == 5) v[i] = av - bv;
@@ -491,9 +617,28 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
       else if (op == 7) v[i] = av / max(abs(bv), vec4(1e-6));
       else if (op == 8) v[i] = mix(av, bv, cv);
       else if (op == 9) v[i] = clamp(av, bv, cv);
-      else if (op == 10) v[i] = vec4(dot(av.xyz, bv.xyz));
-      else if (op == 11) v[i] = vec4(normalize(av.xyz), av.w);
+      else if (op == 10) {
+        int width = clamp(int(floor(graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? av.x * bv.x
+                  : width == 2 ? dot(av.xy, bv.xy)
+                  : width == 3 ? dot(av.xyz, bv.xyz)
+                               : dot(av, bv);
+        v[i] = vec4(d);
+      }
+      else if (op == 11) {
+        int width = clamp(int(floor(graphRows[p + 3u] + 0.5)), 1, 4);
+        float nlength = width == 1 ? abs(av.x)
+                        : width == 2 ? length(av.xy)
+                        : width == 3 ? length(av.xyz) : length(av);
+        vec4 n = av;
+        if (nlength > 1e-6)
+          for (int lane = 0; lane < width; ++lane) n[lane] = av[lane] / nlength;
+        v[i] = n;
+      }
       else if (op == 12) v[i] = pow(max(av, vec4(0.0)), bv);
+      else if (op == 136)
+        v[i] = mix(sign(av) * pow(abs(av), bv), vec4(0.0),
+                   equal(av, vec4(0.0)));
       else if (op == 13) v[i] = min(av, bv);
       else if (op == 14) v[i] = max(av, bv);
       else if (op == 15) v[i] = abs(av);
@@ -504,14 +649,25 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
         float l = dot(av.xyz, vec3(0.2126, 0.7152, 0.0722));
         v[i] = vec4(l, l, l, av.w);
       } else if (op == 20) v[i] = av.x >= 0.5 ? bv : cv;
-      else if (op == 21) v[i] = vec4(uv1, 0.0, 1.0);
+      else if (op == 21)
+        v[i] = vec4((c >= 0 ? cv.x == 1.0 : graphRows[p + 14u] > 0.5)
+                        ? uv1 : uv0, 0.0, 1.0);
       else if (op == 22) v[i] = floor(av);
       else if (op == 23) v[i] = ceil(av);
       else if (op == 24) v[i] = fract(av);
       else if (op == 25) v[i] = step(av, bv);
-      else if (op == 26) v[i] = smoothstep(bv, cv, av);
+      else if (op == 26) {
+        vec4 t = clamp((av - bv) / max(cv - bv, vec4(1e-6)),
+                       vec4(0.0), vec4(1.0));
+        v[i] = t * t * (vec4(3.0) - 2.0 * t);
+      }
       else if (op == 27) v[i] = vec4(cross(av.xyz, bv.xyz), av.w);
-      else if (op == 28) v[i] = vec4(length(av.xyz));
+      else if (op == 28) {
+        int width = clamp(int(floor(graphRows[p + 3u] + 0.5)), 1, 4);
+        float l = width == 1 ? abs(av.x) : width == 2 ? length(av.xy)
+                  : width == 3 ? length(av.xyz) : length(av);
+        v[i] = vec4(l);
+      }
       else if (op == 29) v[i] = vec4(fract(sin(dot(av.xy + uv0, vec2(127.1, 311.7))) * 43758.5453));
       else if (op == 40) v[i] = vec4(fract(sin(dot(av.xyz + vec3(uv0, uv0.x + uv0.y),
                                                         vec3(127.1, 311.7, 74.7))) *
@@ -519,7 +675,10 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
       else if (op == 30) v[i] = tan(av);
       else if (op == 31) v[i] = exp(av);
       else if (op == 32) v[i] = log(max(av, vec4(1e-6)));
-      else if (op == 33) v[i] = mod(av, max(abs(bv), vec4(1e-6)));
+      else if (op == 33) {
+        vec4 divisor = max(abs(bv), vec4(1e-6));
+        v[i] = av - divisor * trunc(av / divisor);
+      }
       else if (op == 41) v[i] = atan(av, bv);
       else if (op == 42) v[i] = sign(av);
       else if (op == 43) v[i] = round(av);
@@ -528,11 +687,14 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
       else if (op == 36) v[i] = vec4(0.0, 0.0, 1.0, 1.0);
       else if (op == 37) v[i] = vec4(1.0, 0.0, 0.0, 1.0);
       else if (op == 38) {
-        vec3 axis = normalize(bv.xyz);
         float ang = radians(av.x);
         vec3 q = cv.xyz;
-        v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
-                    axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        float axisLength = length(bv.xyz);
+        if (axisLength > 1e-6) {
+          vec3 axis = bv.xyz / axisLength;
+          v[i] = vec4(q * cos(ang) + cross(axis, q) * sin(ang) +
+                      axis * dot(axis, q) * (1.0 - cos(ang)), cv.w);
+        } else v[i] = cv;
       }
       else if (op == 39) {
         vec2 t = av.xy * vec2(graphRows[p + 17u], graphRows[p + 18u]) +
@@ -540,6 +702,14 @@ vec4 swEvalMaterialXGraph(uint mid, int route, vec2 uv0, vec2 uv1, uint face) {
         float a2 = radians(graphRows[p + 15u]);
         v[i] = vec4(vec2(t.x * cos(a2) - t.y * sin(a2),
                          t.x * sin(a2) + t.y * cos(a2)), av.zw);
+      }
+      else if (op == 70) {
+        int width = clamp(int(floor(graphRows[p + 3u] + 0.5)), 1, 4);
+        float d = width == 1 ? distance(av.x, bv.x)
+                  : width == 2 ? distance(av.xy, bv.xy)
+                  : width == 3 ? distance(av.xyz, bv.xyz)
+                               : distance(av, bv);
+        v[i] = vec4(d);
       }
       else v[i] = value;
   }
@@ -850,7 +1020,7 @@ vec3 swLayerTransmissionTint(int iid, int tri) {
 void swRayForPixel(ivec2 px, ivec2 size, out vec3 origin, out vec3 dir) {
   float seed = float(px.x * 1973 + px.y * 9277) +
                float(pc.sampleIndex) * 26699.0;
-  vec2 jitter = pc.accumEnabled != 0u
+  vec2 jitter = (pc.accumEnabled & 1u) != 0u
                     ? vec2(fract(sin(seed) * 43758.5453),
                            fract(sin(seed * 1.37) * 22578.1459)) - 0.5
                     : vec2(0.0);
@@ -1080,6 +1250,7 @@ vec3 swLayerRefractedColor(int iid, int tri, vec2 bc, bool front,
 // self-contained so the established preview/AOV shader below remains stable,
 // but use the same packed material/light ABI and estimators as raytrace.comp.
 struct SwPtSurface {
+  vec3 coatDark;
   vec3 p; vec3 n; vec3 coatN; vec3 tangent; vec3 bitangent;
   vec3 base; vec3 emission; vec3 transmissionColor;
   vec3 transmissionScatter; vec3 subsurfaceColor; vec3 subsurfaceRadius;
@@ -1121,6 +1292,7 @@ bool swTraceAccepted(vec3 o, vec3 d, float minT, float maxT,
   }
   return false;
 }
+
 
 void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
                         out SwPtSurface s) {
@@ -1184,6 +1356,7 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
   s.dispersion = 0.0; s.dispersionAbbe = 0.0;
   s.subsurface = 0.0; s.specularWeight = 1.0;
   s.coatWeight = 0.0; s.coatRoughness = 0.1; s.coatIor = 1.5;
+  s.coatDark = vec3(1.0);
   s.coatAnisotropy = 0.0; s.coatRotation = 0.0;
   s.sheenWeight = 0.0; s.sheenRoughness = 0.3;
   s.subsurfaceAnisotropy = 0.0; s.subsurfaceScatterAnisotropy = 0.0;
@@ -1201,10 +1374,11 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
   vec2 buv = swPtUv(mid, 0, uv0, uv1);
   vec4 bt = swSampleTexture(matTexIds[tb], buv, vec2(0.0), vec2(0.0),
                             uint(max(faceIds[tri], 0)), vec4(1.0));
-  s.base *= bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
-                           matTexParams[pb + 38u]) +
-            vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
-                 matTexParams[pb + 42u]);
+  vec3 baseTexFactor = bt.rgb * vec3(matTexParams[pb + 36u], matTexParams[pb + 37u],
+                                     matTexParams[pb + 38u]) +
+                       vec3(matTexParams[pb + 40u], matTexParams[pb + 41u],
+                            matTexParams[pb + 42u]);
+  s.base *= baseTexFactor;
   s.metallic = clamp(mat(mid, 1u).x, 0.0, 1.0);
   s.roughness = clamp(mat(mid, 1u).y, 0.02, 1.0);
   s.emission = max(mat(mid, 2u).rgb, vec3(0.0));
@@ -1232,7 +1406,10 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
     s.emission *= et.rgb;
   }
   if (lrt(mid, 12u).w > 0.5) {
-    s.base *= max(lrt(mid, 0u).rgb, vec3(0.0)) * lrt(mid, 0u).w;
+    // The canonical OpenPBR record already carries the authored base colour,
+    // which the CPU also mirrors into mat(mid, 0); multiplying the two squared
+    // it (issues/lightusd/07). Use the record's colour times the texture factor.
+    s.base = max(lrt(mid, 0u).rgb, vec3(0.0)) * lrt(mid, 0u).w * baseTexFactor;
     s.specularColor = max(lrt(mid, 1u).rgb, vec3(0.0));
     s.specularWeight = clamp(lrt(mid, 1u).w, 0.0, 1.0);
     s.transmissionColor = max(lrt(mid, 2u).rgb, vec3(0.0));
@@ -1386,6 +1563,24 @@ void swResolvePtSurface(int iid, int tri, vec2 bc, bool front,
                               ? lrt(mid, 9u).w : mat(mid, 0u).a;
   if (resolvedMode > 1.5 && s.ior > 1.01 && authoredOpacity < 0.999)
     s.transmission = max(s.transmission, 1.0 - resolvedOpacity);
+  {
+    // OpenPBR coat darkening (index 70 = lrt(mid, 17u).z), as in raytrace.comp.
+    float coatDarkening = clamp(lrt(mid, 17u).z, 0.0, 1.0);
+#if !LUSDVIEW_SW_DISABLE_MTLX
+    if (gb + 49u < uint(graphRows.length()) && graphRows[gb + 48u] >= 0.0)
+      coatDarkening = clamp(swEvalMaterialXGraph(uint(mid), 47, uv0, uv1, sourceFace).x,
+                            0.0, 1.0);
+#endif
+    s.coatDark = ptCoatDarkening(s.base, s.subsurfaceColor, s.subsurface, s.metallic,
+                              s.specularWeight, s.coatIor, s.coatWeight * coatDarkening);
+  }
+  if (s.coatWeight > 0.0 && s.transmission <= 0.0) {  // OpenPBR graph: base IOR relative to the coat; roughness raised toward the coat's
+    float cw = s.coatWeight, ratio = s.ior / max(s.coatIor, 1.0e-4);
+    s.ior = (1.0 - cw) * s.ior + cw * max(ratio, 1.0 / ratio);
+    float sr = clamp(s.roughness, 0.0, 1.0), cr = clamp(s.coatRoughness, 0.0, 1.0);
+    s.roughness = (1.0 - cw) * s.roughness +
+                  cw * pow(min(1.0, 2.0 * cr * cr * cr * cr + sr * sr * sr * sr), 0.25);
+  }
   s.base *= inst.tint.rgb;
 }
 
@@ -1547,6 +1742,28 @@ vec3 swPtHg(vec3 forward, float g, inout uint seed) {
                    normalize(forward) * ct);
 }
 
+// Base-layer Fresnel with F90 = specular weight for dielectrics (1 for metals), as
+// LightRT's L.F90: a zero specular weight removes the grazing reflection too.
+vec3 ptFresnelBase(float c, vec3 f0, float specW, float metal) {
+  float f90 = 1.0 + (clamp(specW, 0.0, 1.0) - 1.0) * (1.0 - clamp(metal, 0.0, 1.0));
+  float q = pow(1.0 - clamp(c, 0.0, 1.0), 5.0);
+  return f0 + (vec3(f90) - f0) * q;
+}
+// OpenPBR coat directional albedo with Turquin compensation (LightRT
+// coat_substrate_attenuation): albedo = (a f0 + b) comp. The coat lobe is scaled
+// by comp and the base by 1 - coatWeight albedo.
+vec3 ptCoatComp(float nv, float rough, vec3 f0, out vec3 albedo) {
+  float x = clamp(nv, 0.0, 1.0), y = max(rough * rough, 0.002), x2 = x * x, y2 = y * y;
+  float r0 = .1003 - .6303 * x + 9.748 * y - 2.038 * x * y + 29.34 * x2 - 8.245 * y2 - 26.44 * x2 * y + 19.99 * x * y2 - 5.448 * x2 * y2;
+  float r1 = .9345 - 2.323 * x + 2.229 * y - 3.748 * x * y + 1.424 * x2 - .7684 * y2 + 1.436 * x2 * y + .2913 * x * y2 + .6286 * x2 * y2;
+  float r2 = 1. - 1.765 * x + 8.263 * y + 11.53 * x * y + 28.96 * x2 - 7.507 * y2 - 36.11 * x2 * y + 15.86 * x * y2 + 33.37 * x2 * y2;
+  float r3 = 1. + .2281 * x + 15.94 * y - 55.83 * x * y + 13.08 * x2 + 41.26 * y2 + 54.9 * x2 * y + 300.2 * x * y2 - 285.1 * x2 * y2;
+  float a = clamp(r0 / r2, 0.0, 1.0), b = clamp(r1 / r3, 0.0, 1.0), ess = a + b;
+  if (!(ess > 1.0e-4)) { albedo = f0 + (vec3(1.0) - f0) * pow(1.0 - x, 5.0); return vec3(1.0); }
+  vec3 comp = vec3(1.0) + (f0 + (vec3(1.0) - f0) / 21.0) * ((1.0 - ess) / ess);
+  albedo = (a * f0 + vec3(b)) * comp;
+  return comp;
+}
 vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
     vec3 diffuseC, vec3 f0, vec3 sheenC, vec3 coatF0,
     float diffuseP, float glossyP, float coatP, out float pdf) {
@@ -1555,7 +1772,7 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   vec3 h = normalize(v + l), t, b;
   swPtBasis(s.n, s.anisotropyRotation, t, b);
   float nh = max(dot(s.n, h), 0.0), vh = max(dot(v, h), 0.0);
-  vec3 F = swPtFresnel(vh, f0);
+  vec3 F = ptFresnelBase(vh, f0, s.specularWeight, s.metallic);
   float glossy = swPtGgxD(nh, dot(h, t), dot(h, b), s.roughness,
                            s.anisotropy) *
                  swPtGgxG1(s.n, v, t, b, s.roughness, s.anisotropy) *
@@ -1565,7 +1782,8 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
   swPtBasis(s.coatN, s.coatRotation, ct, cb);
   float cnl = max(dot(s.coatN, l), 0.0), cnv = max(dot(s.coatN, v), 1.0e-6);
   float cnh = max(dot(s.coatN, ch), 0.0), cvh = max(dot(v, ch), 0.0);
-  vec3 coat = swPtFresnel(cvh, coatF0) * s.coatWeight *
+  vec3 coatAlb; vec3 coatComp = ptCoatComp(cnv, s.coatRoughness, coatF0, coatAlb);
+  vec3 coat = swPtFresnel(cvh, coatF0) * coatComp * s.coatWeight *
       swPtGgxD(cnh, dot(ch, ct), dot(ch, cb), s.coatRoughness,
                s.coatAnisotropy) *
       swPtGgxG1(s.coatN, v, ct, cb, s.coatRoughness, s.coatAnisotropy) *
@@ -1578,12 +1796,27 @@ vec3 swPtEvaluateReflection(SwPtSurface s, vec3 v, vec3 l,
                              s.anisotropyRotation) +
         coatP * swPtGgxPdf(s.coatN, v, l, s.coatRoughness,
                            s.coatAnisotropy, s.coatRotation);
-  return (vec3(1.0) - F) * diffuseC / 3.14159265359 +
-         sheen + F * glossy + coat;
+  // Energy-conserving layering (materialx-conformance issues/lightusd/04), as in
+  // raytrace.comp ptEvaluateReflection: diffuse under the specular layer
+  // (1 - F(view)), sheen attenuates the diffuse by its albedo, the coat
+  // attenuates the whole base by 1 - coatWeight F_coat(view).
+  vec3 Fv = ptFresnelBase(nv, f0, s.specularWeight, s.metallic);
+  float sheenAlb = (0.5 + 0.5 * s.sheenRoughness) / 21.0;
+  vec3 sheenAtt = vec3(1.0) - min(sheenC * sheenAlb, vec3(1.0));
+  vec3 base = (vec3(1.0) - Fv) * sheenAtt * diffuseC / 3.14159265359 +
+              sheen + F * glossy * ptGgxEnergyComp(nv, s.roughness, f0, s.metallic);
+  vec3 coatFv = coatAlb * s.coatWeight;
+  return base * (vec3(1.0) - coatFv) * s.coatDark + coat;
 }
 
 vec3 swPtVisibility(SwPtSurface s, vec3 direction, float maxT,
                     uint lightIndex, int flags) {
+  if (gsChunkCount() > 0u) {
+    int splat;
+    traceCyclesSplats(s.p + s.n * 1e-4, direction, maxT,
+                      swHash(pc.sampleIndex ^ lightIndex), splat);
+    if (splat >= 0) return vec3(0.0);
+  }
   float cursor = 1.0e-4;
   vec3 visibility = vec3(1.0);
   [[dont_unroll]] for (int pass = 0; pass < 32; ++pass) {
@@ -1730,7 +1963,13 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   }
   [[dont_unroll]] for (uint bounce = 0u; bounce < maxDepth; ++bounce) {
     int iid, tri; vec2 bc; bool front; float hitT;
-    if (!swTraceAccepted(ro, rd, 1.0e-4, 1.0e30, iid, tri, bc, front, hitT)) {
+    bool meshHit = swTraceAccepted(ro, rd, 1.0e-4, 1.0e30, iid, tri, bc, front, hitT);
+    if (!inSubsurface && gsChunkCount() > 0u) {
+      int splat;
+      traceCyclesSplats(ro, rd, meshHit ? hitT : 1e30, seed ^ bounce, splat);
+      if (splat >= 0) { result += throughput * cyclesSplatRadiance(splat, rd); break; }
+    }
+    if (!meshHit) {
       if (!inSubsurface) {
         float envPdf = swPtEnvironmentPdf(rd);
         result += throughput * swPtEnvironment(rd) *
@@ -1956,6 +2195,7 @@ vec3 swProductionPath(vec3 ro, vec3 rd, uint seed, uint maxDepth,
   }
   return max(result, vec3(0.0));
 }
+
 #endif
 
 void main() {
@@ -1966,6 +2206,13 @@ void main() {
   vec3 origin, dir;
   swRayForPixel(px, size, origin, dir);
 
+  uint gsSeed = swHash(uint(px.x) + uint(px.y) * uint(size.x) + pc.sampleIndex * 26699u);
+  g_gsTime = float(gsSeed >> 8) / 16777216.0;
+  if ((pc.accumEnabled & 2u) != 0u) {
+    float center = float((pc.accumEnabled >> 2u) & 32767u) / 32767.0;
+    float width = float(pc.accumEnabled >> 17u) / 32767.0;
+    g_gsTime = clamp(center + width * (g_gsTime - 0.5), 0.0, 1.0);
+  }
   vec3 bgc = srgbToLinear(pc.clearColor.rgb);
   bgc = swDomeBackground(dir, bgc);
   vec3 outc = bgc;
@@ -1980,7 +2227,7 @@ void main() {
     uint rrDepth = min((pc.pathParams >> 8u) & 0xffu, depth);
     uint sssEvents = max((pc.pathParams >> 23u) & 0xffu, 1u);
     outc = swProductionPath(origin, dir, seed, depth, rrDepth, sssEvents);
-    if (pc.accumEnabled != 0u) {
+    if ((pc.accumEnabled & 1u) != 0u) {
       vec4 sum = imageLoad(accumImg, px);
       sum.rgb = pc.sampleIndex == 0u ? outc : sum.rgb + outc;
       sum.a = 1.0;
@@ -2017,6 +2264,14 @@ void main() {
     hitT = candidateT;
     haveHit = true;
     break;
+  }
+  if (gsChunkCount() > 0u) {
+    int splat;
+    traceCyclesSplats(origin, dir, haveHit ? hitT : 1e30, gsSeed, splat);
+    if (splat >= 0) {
+      outc = cyclesSplatRadiance(splat, dir);
+      haveHit = false;
+    }
   }
   if (haveHit) {
     Inst inst = insts[hitInst];
@@ -2138,7 +2393,7 @@ void main() {
         coatAffectColor = lrt(mid, 16u).w;
         coatAffectRoughness = lrt(mid, 17u).x;
         coatRoughnessAnisotropy = lrt(mid, 17u).y;
-        coatDarkening = lrt(mid, 17u).w;
+        coatDarkening = lrt(mid, 17u).z;  // index 70 (.w is thin_walled)
         volumeAlbedo = lrt(mid, 18u).rgb;
         volumeDensity = lrt(mid, 18u).w;
         volumeEmission = lrt(mid, 19u).rgb;
@@ -2398,7 +2653,8 @@ void main() {
                                1.0 - 0.25 * dispersion);
     base = mix(base, base * coatColor,
                clamp(coatWeight * coatAffectColor, 0.0, 1.0));
-    base *= 1.0 - 0.2 * clamp(coatWeight * coatDarkening, 0.0, 1.0);
+    base *= ptCoatDarkening(base, base, 0.0, metallic, specWeight,
+                            max(lrt(mid, 11u).y, 1.0001), coatWeight * coatDarkening);
     roughness = mix(roughness, coatRoughness,
                     clamp(coatWeight * coatAffectRoughness, 0.0, 1.0));
     roughness = clamp(roughness *
@@ -2497,6 +2753,11 @@ void main() {
       float visibility = 1.0;
       if (renderMode == 0 && (flags & 2) != 0) {
         vec3 shadowOrigin = hit + N * 1e-3;
+        if (gsChunkCount() > 0u) {
+          int splat;
+          traceCyclesSplats(shadowOrigin, L, maxShadowT, gsSeed ^ li, splat);
+          if (splat >= 0) visibility = 0.0;
+        }
         float cursor = 1e-3;
         int blendLayers = 0;
         [[dont_unroll]] for (int pass = 0; pass < 32 && visibility > 1e-3; ++pass) {
@@ -2709,7 +2970,7 @@ void main() {
     }
   }
 
-  if (pc.accumEnabled != 0u) {
+  if ((pc.accumEnabled & 1u) != 0u) {
     vec4 sum = imageLoad(accumImg, px);
     sum.rgb = pc.sampleIndex == 0u ? outc : sum.rgb + outc;
     sum.a = 1.0;

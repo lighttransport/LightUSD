@@ -23,6 +23,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 int g_failures = 0;
 #define CHECK(cond, msg)                                                  \
@@ -36,13 +38,13 @@ int g_failures = 0;
 
 const char *kRoot = "tests/feat/large-scene/fixture/root.usda";
 
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
-bool HasPrim(const next::Stage &stage, const char *path) {
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
+bool HasPrim(const ::lightusd::Stage &stage, const char *path) {
   return stage.HasPrimAtPath(path);
 }
 
-std::string PrimTypeName(const next::Stage &stage, const char *path) {
-  next::UsdPrim prim = stage.GetPrimAtPath(path);
+std::string PrimTypeName(const ::lightusd::Stage &stage, const char *path) {
+  ::lightusd::UsdPrim prim = stage.GetPrimAtPath(path);
   return prim ? prim.GetTypeName() : std::string();
 }
 #else
@@ -147,9 +149,9 @@ int main(int argc, char **argv) {
             "payload asset parsed via the authoring layer's anchor");
       const auto snapshot = aloader.stage_snapshot();
       CHECK(bool(snapshot), "stage_snapshot is valid after budget load");
-#if defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
       // (legacy BuildStage has a known duplicate same-name prim quirk with
-      // nested payloads, so content presence is pinned on the next backend.)
+      // nested payloads, so content presence is pinned on the core backend.)
       if (snapshot) {
         CHECK(HasPrim(*snapshot, "/World/P/M"),
               "payload content composed and visible via snapshot");
@@ -160,7 +162,7 @@ int main(int argc, char **argv) {
 
   // The referenced prim's descendants must be reconstructed into the namespace:
   // /P references </Leaf>, and Leaf has a child Mesh M, so /P/M must exist.
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   {
     CHECK(HasPrim(loader.stage(), "/P/M"),
           "/P/M reconstructed (referenced-prim descendant present)");
@@ -194,7 +196,7 @@ int main(int argc, char **argv) {
     }
   }
 
-#if !defined(LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE)
+#if !defined(LIGHTUSD_LEGACY_USE_CORE_PCP)
   // --- Scenario 3: variant-content composition. The variantSet content is in a
   // weaker sublayer, the selection in the root; the selected variant's child
   // prims must reconstruct (the ALab baked_procedurals pattern). ---

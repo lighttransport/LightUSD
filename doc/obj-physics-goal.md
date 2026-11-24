@@ -221,7 +221,7 @@ avoid implementing a second conversion or validation engine in Python.
   Newton); native primitive visuals with rgba display colors, baked
   ellipsoid meshes, capsule caps, camera fovy/clipping, light intensity,
   texrepeat; URDF ghost-link collapse and dummy-inertia merge matching the
-  urdf-usd-converter test corpus; `fuzz_next_import` libFuzzer harness
+  urdf-usd-converter test corpus; `fuzz_core_import` libFuzzer harness
   (OBJ/URDF/MJCF via the C API, COLLADA directly) with seeds in
   `tests/fuzzer/next_import_seeds` - it found an unaligned pugixml read in
   the COLLADA path and deep-cable stack overflows (now an iterative flexcomp

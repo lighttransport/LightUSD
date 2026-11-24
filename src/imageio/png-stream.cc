@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <limits>
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -102,15 +103,19 @@ PngScanlineReader::PngScanlineReader() : impl_(new Impl()) {}
 PngScanlineReader::~PngScanlineReader() { delete impl_; }
 
 bool PngScanlineReader::Open(const uint8_t *data, size_t size) {
+  return Open(data,size,std::numeric_limits<size_t>::max());
+}
+bool PngScanlineReader::Open(const uint8_t *data,size_t size,size_t metadata_limit) {
   static const uint8_t SIG[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  if (size < 8 || std::memcmp(data, SIG, 8) != 0) return false;
+  if (!data || size < 8 || std::memcmp(data, SIG, 8) != 0) return false;
 
   PngImageInfo raw{};
   bool have_ihdr = false;
   for (size_t pos = 8; pos + 12 <= size;) {
     uint32_t len = rd32be(data + pos);
     const uint8_t *type = data + pos + 4;
-    if (pos + 12 + static_cast<size_t>(len) > size) return false;  // truncated
+    if (size_t(len)>size-pos-12)return false; // subtraction avoids wasm32 overflow
+    if(chunks_.size()>=metadata_limit/64)return false; // both vectors + capacity growth
     const uint8_t *cdata = data + pos + 8;
     size_t total = 12 + static_cast<size_t>(len);
     if (std::memcmp(type, "IHDR", 4) == 0) {
@@ -222,6 +227,7 @@ struct PngScanlineWriter::Impl {
   mz_stream dstrm;
   bool dstrm_init = false;
   std::vector<uint8_t> idat_out;
+  size_t output_limit=std::numeric_limits<size_t>::max();
   std::vector<uint8_t> dbuf;       // 64KB deflate output staging
   std::vector<uint8_t> prev, filt; // prev raw row, filtered scanline (stride)
   bool first_row = true;
@@ -242,7 +248,7 @@ struct PngScanlineWriter::Impl {
     prev.assign(rowlen, 0);
     filt.resize(stride);
     dbuf.resize(1 << 16);
-    idat_out.reserve(rowlen * 4 + 4096);
+    idat_out.reserve(std::min(output_limit,rowlen * 4 + 4096));
     std::memset(&dstrm, 0, sizeof(dstrm));
     if (mz_deflateInit2(&dstrm, level, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 9,
                         MZ_DEFAULT_STRATEGY) != MZ_OK)
@@ -260,8 +266,15 @@ struct PngScanlineWriter::Impl {
       int r = mz_deflate(&dstrm, flush);
       if (r != MZ_OK && r != MZ_STREAM_END && r != MZ_BUF_ERROR) return false;
       size_t produced = dbuf.size() - dstrm.avail_out;
-      if (produced)
-        idat_out.insert(idat_out.end(), dbuf.data(), dbuf.data() + produced);
+      if(produced) {
+        if(produced>output_limit-std::min(output_limit,idat_out.size()))return false;
+        const size_t needed=idat_out.size()+produced;
+        if(needed>idat_out.capacity()) {
+          const size_t grown=idat_out.capacity()>output_limit/2?output_limit:idat_out.capacity()*2;
+          idat_out.reserve(std::max(needed,grown));
+        }
+        idat_out.insert(idat_out.end(),dbuf.data(),dbuf.data()+produced);
+      }
       if (r == MZ_STREAM_END) break;
       if (dstrm.avail_out != 0) {
         if (flush != MZ_FINISH) break;
@@ -273,6 +286,7 @@ struct PngScanlineWriter::Impl {
 
 PngScanlineWriter::PngScanlineWriter() : impl_(new Impl()) {}
 PngScanlineWriter::~PngScanlineWriter() { delete impl_; }
+void PngScanlineWriter::SetOutputLimit(size_t max_bytes) { impl_->output_limit=max_bytes; }
 
 bool PngScanlineWriter::BeginPassthrough(const PngScanlineReader &templ,
                                          int deflate_level) {
@@ -352,8 +366,23 @@ bool PngScanlineWriter::Finish(std::vector<uint8_t> &out) {
   }
 
   static const uint8_t SIG[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  size_t total=8;
+  auto charge=[&](size_t bytes) {
+    if(bytes>m.output_limit-std::min(m.output_limit,total))return false;
+    total+=bytes;return true;
+  };
+  if(m.passthrough && m.templ) {
+    bool emitted=false;
+    for(const auto& chunk:m.templ->chunks()) {
+      if(std::memcmp(chunk.first+4,"IDAT",4)==0) {
+        if (emitted) continue;
+        emitted = true;
+        if(!charge(m.idat_out.size()) || !charge(12))return false;
+      } else if(!charge(chunk.second))return false;
+    }
+  } else if(!charge(25+12) || !charge(m.idat_out.size()) || !charge(12))return false;
   out.clear();
-  out.reserve(m.idat_out.size() + 1024);
+  out.reserve(total);
   out.insert(out.end(), SIG, SIG + 8);
   auto wr32 = [&](uint32_t v) {
     out.push_back(static_cast<uint8_t>(v >> 24));
@@ -512,8 +541,13 @@ inline float SrgbCurve(float c, ColorspaceXform xf) {
 
 bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
                           std::vector<uint8_t> &out) {
+  return ConvertColorspacePNG(data,size,xf,out,std::numeric_limits<size_t>::max());
+}
+
+bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
+                          std::vector<uint8_t> &out,size_t output_limit) {
   PngScanlineReader reader;
-  if (!reader.Open(data, size)) return false;
+  if (!reader.Open(data,size,output_limit/8)) return false;
   const PngImageInfo &in = reader.info();
   if (in.color_type == 3) return false;                       // palette
   if (in.bit_depth != 8 && in.bit_depth != 16) return false;  // sub-byte
@@ -524,6 +558,7 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
   const int ncolor = (total_ch <= 2) ? 1 : 3;
 
   PngScanlineWriter writer;
+  writer.SetOutputLimit(output_limit);
   if (!writer.Begin(in)) return false;  // fresh: drop stale color-profile chunks
   std::vector<uint8_t> row(in.row_bytes);
 
@@ -571,10 +606,15 @@ bool ConvertColorspacePNG(const uint8_t *data, size_t size, ColorspaceXform xf,
 
 bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
                bool srgb, std::vector<uint8_t> &out) {
+  return ResizePNG(data,size,out_w,out_h,srgb,out,std::numeric_limits<size_t>::max());
+}
+
+bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
+               bool srgb, std::vector<uint8_t> &out,size_t output_limit) {
   if (out_w == 0 || out_h == 0) return false;
   if (out_w > kMaxDim || out_h > kMaxDim) return false;  // bound output buffers
   PngScanlineReader reader;
-  if (!reader.Open(data, size)) return false;
+  if (!reader.Open(data,size,output_limit/8)) return false;
   const PngImageInfo &in = reader.info();
   if (in.bit_depth != 8 && in.bit_depth != 16) return false;  // sub-byte -> fall back
   if (in.color_type == 3 && in.bit_depth != 8) return false;   // palette is 8-bit
@@ -620,6 +660,7 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
   if (ctx.swap16) ctx.out_swap.resize(static_cast<size_t>(out_w) * static_cast<size_t>(ctx.rs_channels) * 2);
 
   PngScanlineWriter writer;
+  writer.SetOutputLimit(output_limit);
   PngImageInfo oinfo;
   oinfo.width = out_w;
   oinfo.height = out_h;
@@ -644,9 +685,14 @@ bool ResizePNG(const uint8_t *data, size_t size, uint32_t out_w, uint32_t out_h,
 }
 
 bool TranscodePNG(const uint8_t *data, size_t size, std::vector<uint8_t> &out) {
+  return TranscodePNG(data,size,out,std::numeric_limits<size_t>::max());
+}
+
+bool TranscodePNG(const uint8_t *data, size_t size, std::vector<uint8_t> &out,size_t output_limit) {
   PngScanlineReader reader;
-  if (!reader.Open(data, size)) return false;
+  if (!reader.Open(data,size,output_limit/8)) return false;
   PngScanlineWriter writer;
+  writer.SetOutputLimit(output_limit);
   if (!writer.BeginPassthrough(reader)) return false;
 
   std::vector<uint8_t> row(reader.info().row_bytes);

@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 
 
 def _script():
-    path = Path(__file__).resolve().parents[2] / "tests/next/run-openusd-physics-check.py"
+    path = Path(__file__).resolve().parents[2] / "tests/core/run-openusd-physics-check.py"
     spec = importlib.util.spec_from_file_location("openusd_physics_check", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

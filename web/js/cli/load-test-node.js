@@ -1,10 +1,7 @@
 // require nodejs v24.0 or later(to load wasm)
-import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
-import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
-import { LightUSDComposer } from 'lightusd/LightUSDComposer.js';
+import { LightUSDLoader } from '../src/lightusd/LightUSDLoader.js';
 
 import fs from 'node:fs';
-import { pipeline } from 'node:stream/promises';
 
 function reportMemUsage() {
  const used = process.memoryUsage()
@@ -33,76 +30,9 @@ function loadFile(filename) {
   return null;
 }
 
-// Stream file reading and set to Asset using streaming API
 async function streamFileToAsset(filename, loader, assetName) {
-  return new Promise((resolve, reject) => {
-    const stats = fs.statSync(filename);
-    const fileSize = stats.size;
-    const chunkSize = 65536; // 64KB chunks
-
-    console.log(`Starting streaming asset: ${assetName}, size: ${fileSize} bytes`);
-
-    // Start the streaming asset
-    if (!loader.native_ || !loader.native_.LightUSDLoaderNative) {
-      reject(new Error('Native module not initialized'));
-      return;
-    }
-
-    const usd = new loader.native_.LightUSDLoaderNative();
-
-    // Initialize streaming for this asset
-    if (!usd.startStreamingAsset(assetName, fileSize)) {
-      reject(new Error('Failed to start streaming asset'));
-      return;
-    }
-
-    const stream = fs.createReadStream(filename, {
-      highWaterMark: chunkSize
-    });
-
-    let bytesRead = 0;
-
-    stream.on('data', (chunk) => {
-      // Convert chunk to Uint8Array then to string for the API
-      const uint8Array = new Uint8Array(chunk);
-
-      // Append the chunk to the streaming asset
-      if (!usd.appendAssetChunk(assetName, uint8Array)) {
-        stream.destroy();
-        reject(new Error('Failed to append asset chunk'));
-        return;
-      }
-
-      bytesRead += chunk.length;
-
-      // Check progress
-      const progress = usd.getStreamingProgress(assetName);
-      if (progress && progress.exists) {
-        // Use fileSize if expected is not provided
-        const expectedBytes = progress.expected || fileSize;
-        const percentage = expectedBytes > 0 ? Math.round(progress.current/expectedBytes * 100) : 0;
-        console.log(`Progress: ${progress.current}/${expectedBytes} bytes (${percentage}%)`);
-      }
-    });
-
-    stream.on('end', () => {
-      console.log(`Stream ended, finalizing asset: ${assetName}`);
-
-      // Finalize the streaming asset
-      if (!usd.finalizeStreamingAsset(assetName)) {
-        reject(new Error('Failed to finalize streaming asset'));
-        return;
-      }
-
-      console.log(`Asset ${assetName} successfully loaded via streaming`);
-      resolve(usd);
-    });
-
-    stream.on('error', (err) => {
-      console.error('Stream error:', err);
-      reject(err);
-    });
-  });
+  const result=await loader.streamFileToWasm(filename,assetName,{chunkSize:65536});
+  return result.usdInstance;
 }
 
 console.log(process.versions.node);
@@ -210,35 +140,17 @@ async function initScene() {
   console.log("Load completed");
   reportMemUsage();
 
-  /*
-  // Option 2: Use streaming API to load asset
+  const directMeshes=usd.numMeshes();
+  usd.delete();URL.revokeObjectURL(url);
   console.log("\n=== Streaming file loading ===");
+  const streamedUsd=await streamFileToAsset(usd_filename,loader,usd_filename);
   try {
-    // Stream the file content to the asset cache
-    const assetName = "streamed_model.usdc";
-    const streamedUsd = await streamFileToAsset(usd_filename, loader, assetName);
-
-    // Now the asset is in the cache and can be used
-    if (streamedUsd.hasAsset(assetName)) {
-      console.log(`Asset ${assetName} is now available in cache`);
-
-      // Get UUID of the streamed asset
-      const uuid = streamedUsd.getAssetUUID(assetName);
-      console.log(`Asset UUID: ${uuid}`);
-
-      // You can now load from the cached asset
-      // The asset is already in memory and can be accessed via the resolver
-      // Skip loadTest for now - just verify streaming worked
-      // const testResult = streamedUsd.loadTest(assetName, assetData);
-      // console.log(`Load test result: ${testResult}`);
-    }
-
-    console.log("Streaming loading completed");
+    const loaded=streamedUsd.beginStreamedAsset(usd_filename);
+    if(!loaded.success)throw Error(loaded.error||streamedUsd.error());
+    if(streamedUsd.numMeshes()!==directMeshes)throw Error('Streaming mesh count differs from direct loading');
+    console.log(`Streaming loading completed: ${directMeshes} meshes`);
     reportMemUsage();
-  } catch (err) {
-    console.error("Streaming failed:", err);
-  }
-  */
+  }finally{streamedUsd.delete();}
 
 }
 

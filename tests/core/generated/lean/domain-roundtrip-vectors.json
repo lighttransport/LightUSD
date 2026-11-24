@@ -1,0 +1,509 @@
+[{"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n",
+  "id": "geom-mesh",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n",
+  "id": "geom-mesh-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n",
+  "id": "geom-mesh-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n}\n\"alternate\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "geom-mesh-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n}\n\"alternate\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "geom-mesh-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Mesh \"Template\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Mesh \"Subject\" (prepend inherits = </Template>) {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n",
+  "id": "geom-mesh-inherits",
+  "composed":
+  "#usda 1.0\nclass Mesh \"Template\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Mesh \"Template\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Mesh \"Subject\" (prepend specializes = </Template>) {\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n",
+  "id": "geom-mesh-specializes",
+  "composed":
+  "#usda 1.0\nclass Mesh \"Template\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [2,1,0]\n    uniform token subdivisionScheme = \"none\"\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    rel skel:animationSource = </Run>\n}\n",
+  "id": "skel-skeleton",
+  "composed":
+  "#usda 1.0\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Source/Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    rel skel:animationSource = </World/Run>\n}\n}\n",
+  "id": "skel-skeleton-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Source/Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    rel skel:animationSource = </World/Run>\n}\n}\n",
+  "id": "skel-skeleton-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    rel skel:animationSource = </World/Run>\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n\"alternate\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "skel-skeleton-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n\"alternate\" {\ndef Skeleton \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "skel-skeleton-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </World/Run>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Skeleton \"Template\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Skeleton \"Subject\" (prepend inherits = </Template>) {\n    rel skel:animationSource = </Run>\n}\n",
+  "id": "skel-skeleton-inherits",
+  "composed":
+  "#usda 1.0\nclass Skeleton \"Template\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Run>\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Skeleton \"Template\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Skeleton \"Subject\" (prepend specializes = </Template>) {\n    rel skel:animationSource = </Run>\n}\n",
+  "id": "skel-skeleton-specializes",
+  "composed":
+  "#usda 1.0\nclass Skeleton \"Template\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\ndef Skeleton \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Run>\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n",
+  "id": "skel-blend-shape",
+  "composed":
+  "#usda 1.0\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n",
+  "id": "skel-blend-shape-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n",
+  "id": "skel-blend-shape-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n}\n\"alternate\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "skel-blend-shape-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n}\n\"alternate\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "skel-blend-shape-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass BlendShape \"Template\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef BlendShape \"Subject\" (prepend inherits = </Template>) {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n",
+  "id": "skel-blend-shape-inherits",
+  "composed":
+  "#usda 1.0\nclass BlendShape \"Template\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass BlendShape \"Template\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef BlendShape \"Subject\" (prepend specializes = </Template>) {\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n",
+  "id": "skel-blend-shape-specializes",
+  "composed":
+  "#usda 1.0\nclass BlendShape \"Template\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\ndef BlendShape \"Subject\" {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.25,0)]\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1 = None\n}\n",
+  "id": "physics-drive",
+  "composed":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </Body>\n    rel physics:body1\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Source/Body>\n    rel physics:body1 = </Source/Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1 = None\n}\n}\n",
+  "id": "physics-drive-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </World/Body>\n    rel physics:body1\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Source/Body>\n    rel physics:body1 = </Source/Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1 = None\n}\n}\n",
+  "id": "physics-drive-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </World/Body>\n    rel physics:body1\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </World/Body>\n    rel physics:body1 = </World/Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n\"alternate\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </World/Body>\n    rel physics:body1 = None\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "physics-drive-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </World/Body>\n    rel physics:body1 = </World/Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </World/Body>\n    rel physics:body1 = </World/Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n\"alternate\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </World/Body>\n    rel physics:body1 = None\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "physics-drive-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </World/Body>\n    rel physics:body1\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass PhysicsRevoluteJoint \"Template\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef PhysicsRevoluteJoint \"Subject\" (prepend inherits = </Template>) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1 = None\n}\n",
+  "id": "physics-drive-inherits",
+  "composed":
+  "#usda 1.0\nclass PhysicsRevoluteJoint \"Template\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </Body>\n    rel physics:body1\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass PhysicsRevoluteJoint \"Template\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef PhysicsRevoluteJoint \"Subject\" (prepend specializes = </Template>) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body1 = None\n}\n",
+  "id": "physics-drive-specializes",
+  "composed":
+  "#usda 1.0\nclass PhysicsRevoluteJoint \"Template\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n    rel physics:body0 = </Body>\n    rel physics:body1\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    string config:mtlx:version = \"1.39\"\n}\n",
+  "id": "mtlx-config",
+  "composed":
+  "#usda 1.0\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Source/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    string config:mtlx:version = \"1.39\"\n}\n}\n",
+  "id": "mtlx-config-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Source/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    string config:mtlx:version = \"1.39\"\n}\n}\n",
+  "id": "mtlx-config-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    string config:mtlx:version = \"1.39\"\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n\"alternate\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "mtlx-config-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n\"alternate\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "mtlx-config-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </World/Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Material \"Template\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Material \"Subject\" (prepend inherits = </Template>) {\n    string config:mtlx:version = \"1.39\"\n}\n",
+  "id": "mtlx-config-inherits",
+  "composed":
+  "#usda 1.0\nclass Material \"Template\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Material \"Template\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Material \"Subject\" (prepend specializes = </Template>) {\n    string config:mtlx:version = \"1.39\"\n}\n",
+  "id": "mtlx-config-specializes",
+  "composed":
+  "#usda 1.0\nclass Material \"Template\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    rel field:density = </Field>\n}\n",
+  "id": "vol-openvdb",
+  "composed":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density = </Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Volume \"Subject\" {\n    rel field:density = </Source/OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    rel field:density = </World/Field>\n}\n}\n",
+  "id": "vol-openvdb-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Volume \"Subject\" {\n    rel field:density = </Source/OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend payload = @weak.usda@</Source>) {\nover \"Subject\" {\n    rel field:density = </World/Field>\n}\n}\n",
+  "id": "vol-openvdb-payload",
+  "deferred":
+  "#usda 1.0\ndef Xform \"World\" {\nover \"Subject\" {\n    rel field:density = </World/Field>\n}\n}\n",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n\"alternate\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"base\" }) {\n}\n",
+  "id": "vol-openvdb-variant-base",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"World\" (prepend variantSets = \"detail\") {\nvariantSet \"detail\" = {\n\"base\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n\"alternate\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n}\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"World\" (variants = { string detail = \"alternate\" }) {\n}\n",
+  "id": "vol-openvdb-variant-alternate",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Volume \"Subject\" {\n    rel field:density = </World/Field>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Volume \"Template\" {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Volume \"Subject\" (prepend inherits = </Template>) {\n    rel field:density = </Field>\n}\n",
+  "id": "vol-openvdb-inherits",
+  "composed":
+  "#usda 1.0\nclass Volume \"Template\" {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\ndef Volume \"Subject\" {\n    rel field:density = </Field>\n}\n"},
+ {"weak":
+  "#usda 1.0\nclass Volume \"Template\" {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\ndef Volume \"Subject\" (prepend specializes = </Template>) {\n    rel field:density = </Field>\n}\n",
+  "id": "vol-openvdb-specializes",
+  "composed":
+  "#usda 1.0\nclass Volume \"Template\" {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\ndef Volume \"Subject\" {\n    rel field:density = </Field>\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n    uniform token subdivisionScheme = \"none\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    point3f[] points = None\n    uniform token subdivisionScheme = None\n}\n",
+  "id": "geom-block",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    point3f[] points = None\n    uniform token subdivisionScheme = None\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Mesh \"Subject\" {\n    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n    uniform token subdivisionScheme = \"none\"\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    point3f[] points = None\n    uniform token subdivisionScheme = None\n}\n}\n",
+  "id": "geom-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Mesh \"Subject\" {\n    point3f[] points = None\n    uniform token subdivisionScheme = None\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef SkelAnimation \"Subject\" {\n    uniform token[] joints = [\"root\"]\n    float3[] translations = [(0,0,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    uniform token[] joints = None\n    float3[] translations = None\n}\n",
+  "id": "skel-block",
+  "composed":
+  "#usda 1.0\ndef SkelAnimation \"Subject\" {\n    uniform token[] joints = None\n    float3[] translations = None\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef SkelAnimation \"Subject\" {\n    uniform token[] joints = [\"root\"]\n    float3[] translations = [(0,0,0)]\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    uniform token[] joints = None\n    float3[] translations = None\n}\n}\n",
+  "id": "skel-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef SkelAnimation \"Subject\" {\n    uniform token[] joints = None\n    float3[] translations = None\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    uniform token physics:axis = None\n    float drive:angular:physics:stiffness = None\n}\n",
+  "id": "physics-block",
+  "composed":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = None\n    float drive:angular:physics:stiffness = None\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef PhysicsRevoluteJoint \"Subject\" (prepend apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = \"Z\"\n    float drive:angular:physics:stiffness = 8\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    uniform token physics:axis = None\n    float drive:angular:physics:stiffness = None\n}\n}\n",
+  "id": "physics-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef PhysicsRevoluteJoint \"Subject\" (apiSchemas = [\"PhysicsDriveAPI:angular\"]) {\n    uniform token physics:axis = None\n    float drive:angular:physics:stiffness = None\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    string config:mtlx:version = None\n}\n",
+  "id": "mtlx-block",
+  "composed":
+  "#usda 1.0\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = None\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = \"1.39\"\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    string config:mtlx:version = None\n}\n}\n",
+  "id": "mtlx-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    string config:mtlx:version = None\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density = </Field>\n}\ndef OpenVDBAsset \"Field\" {\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    rel field:density = None\n}\n",
+  "id": "vol-block",
+  "composed":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density\n}\ndef OpenVDBAsset \"Field\" {\n    asset filePath = @smoke.vdb@\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef Volume \"Subject\" {\n    rel field:density = </Source/Field>\n}\ndef OpenVDBAsset \"Field\" {\n    asset filePath = @smoke.vdb@\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    rel field:density = None\n}\n}\n",
+  "id": "vol-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef Volume \"Subject\" {\n    rel field:density\n}\ndef OpenVDBAsset \"Field\" {\n    asset filePath = @smoke.vdb@\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    asset filePath = None\n}\n",
+  "id": "vol-field-block",
+  "composed":
+  "#usda 1.0\ndef OpenVDBAsset \"Subject\" {\n    asset filePath = None\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Xform \"Source\" {\ndef OpenVDBAsset \"Subject\" {\n    asset filePath = @smoke.vdb@\n}\n}\n",
+  "root":
+  "#usda 1.0\ndef Xform \"World\" (prepend references = @weak.usda@</Source>) {\nover \"Subject\" {\n    asset filePath = None\n}\n}\n",
+  "id": "vol-field-block-reference",
+  "composed":
+  "#usda 1.0\ndef Xform \"World\" {\ndef OpenVDBAsset \"Subject\" {\n    asset filePath = None\n}\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "geom-mesh-api-edits",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"CollectionAPI:retained\", \"CollectionAPI:last\"]\n) {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "geom-mesh-api-clear",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" (\napiSchemas = None\n) {\n    point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]\n    int[] faceVertexCounts = [3]\n    int[] faceVertexIndices = [0,1,2]\n    uniform token subdivisionScheme = \"catmullClark\"\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Skeleton \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"SkelBindingAPI\"]\n) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "skel-skeleton-api-edits",
+  "composed":
+  "#usda 1.0\ndef Skeleton \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"SkelBindingAPI\", \"CollectionAPI:last\"]\n) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Skeleton \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"SkelBindingAPI\"]\n) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "skel-skeleton-api-clear",
+  "composed":
+  "#usda 1.0\ndef Skeleton \"Subject\" (\napiSchemas = None\n) {\n    uniform token[] joints = [\"root\", \"root/child\"]\n    uniform matrix4d[] bindTransforms = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)), ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))]\n    rel skel:animationSource = </Walk>\n}\ndef SkelAnimation \"Walk\" {}\ndef SkelAnimation \"Run\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef BlendShape \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "skel-blend-shape-api-edits",
+  "composed":
+  "#usda 1.0\ndef BlendShape \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"CollectionAPI:retained\", \"CollectionAPI:last\"]\n) {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef BlendShape \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "skel-blend-shape-api-clear",
+  "composed":
+  "#usda 1.0\ndef BlendShape \"Subject\" (\napiSchemas = None\n) {\n    uniform vector3f[] offsets = [(0,0,0),(1,0,0)]\n    uniform int[] pointIndices = [1,3]\n    uniform point3f[] inbetweens:half = [(0,0,0),(0.5,0,0)] (weight = 0.5)\n    vector3f[] inbetweens:half:normalOffsets = [(0,0,0),(0,0.5,0)]\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"PhysicsDriveAPI:angular\"]\n) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "physics-drive-api-edits",
+  "composed":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"PhysicsDriveAPI:angular\", \"CollectionAPI:last\"]\n) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n"},
+ {"weak":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"PhysicsDriveAPI:angular\"]\n) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "physics-drive-api-clear",
+  "composed":
+  "#usda 1.0\ndef PhysicsRevoluteJoint \"Subject\" (\napiSchemas = None\n) {\n    uniform token physics:axis = \"X\"\n    float drive:angular:physics:stiffness = 5\n    rel physics:body0 = </Body>\n    rel physics:body1 = </Body>\n}\ndef Xform \"Body\" (apiSchemas = [\"PhysicsRigidBodyAPI\"]) {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Material \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"MaterialXConfigAPI\"]\n) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "mtlx-config-api-edits",
+  "composed":
+  "#usda 1.0\ndef Material \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"MaterialXConfigAPI\", \"CollectionAPI:last\"]\n) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Material \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"MaterialXConfigAPI\"]\n) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "mtlx-config-api-clear",
+  "composed":
+  "#usda 1.0\ndef Material \"Subject\" (\napiSchemas = None\n) {\n    string config:mtlx:version = \"1.38\"\n    token outputs:mtlx:surface.connect = </Shader.outputs:out>\n}\ndef Shader \"Shader\" {\n    uniform token info:id = \"ND_standard_surface_surfaceshader\"\n    token outputs:out\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Volume \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\ndelete apiSchemas = [\"CollectionAPI:old\"]\nprepend apiSchemas = [\"CollectionAPI:first\"]\nappend apiSchemas = [\"CollectionAPI:last\"]\n) {\n}\n",
+  "id": "vol-openvdb-api-edits",
+  "composed":
+  "#usda 1.0\ndef Volume \"Subject\" (\napiSchemas = [\"CollectionAPI:first\", \"CollectionAPI:retained\", \"CollectionAPI:last\"]\n) {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Volume \"Subject\" (\napiSchemas = [\"CollectionAPI:old\", \"CollectionAPI:retained\"]\n) {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" (\napiSchemas = None\n) {\n}\n",
+  "id": "vol-openvdb-api-clear",
+  "composed":
+  "#usda 1.0\ndef Volume \"Subject\" (\napiSchemas = None\n) {\n    rel field:density = </OldField>\n}\ndef OpenVDBAsset \"OldField\" {\n    token fieldName = \"oldDensity\"\n    asset filePath = @old.vdb@\n}\ndef OpenVDBAsset \"Field\" {\n    token fieldName = \"density\"\n    asset filePath = @smoke.vdb@\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    rel proxyPrim = [</Old>, </Retained>]\n}\ndef Mesh \"Old\" {}\ndef Mesh \"Retained\" {}\ndef Mesh \"First\" {}\ndef Mesh \"Last\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    delete rel proxyPrim = [</Old>]\n    prepend rel proxyPrim = [</First>]\n    append rel proxyPrim = [</Last>]\n}\n",
+  "id": "geom-target-edits",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" {\n    rel proxyPrim = [</First>, </Retained>, </Last>]\n}\ndef Mesh \"Old\" {}\ndef Mesh \"Retained\" {}\ndef Mesh \"First\" {}\ndef Mesh \"Last\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {\n    rel skel:blendShapeTargets = [</Old>, </Retained>]\n}\ndef BlendShape \"Old\" {}\ndef BlendShape \"Retained\" {}\ndef BlendShape \"First\" {}\ndef BlendShape \"Last\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    delete rel skel:blendShapeTargets = [</Old>]\n    prepend rel skel:blendShapeTargets = [</First>]\n    append rel skel:blendShapeTargets = [</Last>]\n}\n",
+  "id": "skel-target-edits",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" (apiSchemas = [\"SkelBindingAPI\"]) {\n    rel skel:blendShapeTargets = [</First>, </Retained>, </Last>]\n}\ndef BlendShape \"Old\" {}\ndef BlendShape \"Retained\" {}\ndef BlendShape \"First\" {}\ndef BlendShape \"Last\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Mesh \"Subject\" (prepend apiSchemas = [\"PhysicsCollisionAPI\"]) {\n    rel physics:simulationOwner = [</Old>, </Retained>]\n}\ndef PhysicsScene \"Old\" {}\ndef PhysicsScene \"Retained\" {}\ndef PhysicsScene \"First\" {}\ndef PhysicsScene \"Last\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    delete rel physics:simulationOwner = [</Old>]\n    prepend rel physics:simulationOwner = [</First>]\n    append rel physics:simulationOwner = [</Last>]\n}\n",
+  "id": "physics-target-edits",
+  "composed":
+  "#usda 1.0\ndef Mesh \"Subject\" (apiSchemas = [\"PhysicsCollisionAPI\"]) {\n    rel physics:simulationOwner = [</First>, </Retained>, </Last>]\n}\ndef PhysicsScene \"Old\" {}\ndef PhysicsScene \"Retained\" {}\ndef PhysicsScene \"First\" {}\ndef PhysicsScene \"Last\" {}\n"},
+ {"weak":
+  "#usda 1.0\ndef Material \"Subject\" (prepend apiSchemas = [\"MaterialXConfigAPI\"]) {\n    token outputs:mtlx:surface.connect = [</Old.outputs:out>, </Retained.outputs:out>]\n}\ndef Shader \"Old\" {\n    token outputs:out\n}\ndef Shader \"Retained\" {\n    token outputs:out\n}\ndef Shader \"First\" {\n    token outputs:out\n}\ndef Shader \"Last\" {\n    token outputs:out\n}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    delete token outputs:mtlx:surface.connect = [</Old.outputs:out>]\n    prepend token outputs:mtlx:surface.connect = [</First.outputs:out>]\n    append token outputs:mtlx:surface.connect = [</Last.outputs:out>]\n}\n",
+  "id": "mtlx-target-edits",
+  "composed":
+  "#usda 1.0\ndef Material \"Subject\" (apiSchemas = [\"MaterialXConfigAPI\"]) {\n    token outputs:mtlx:surface.connect = [</First.outputs:out>, </Retained.outputs:out>, </Last.outputs:out>]\n}\ndef Shader \"Old\" {\n    token outputs:out\n}\ndef Shader \"Retained\" {\n    token outputs:out\n}\ndef Shader \"First\" {\n    token outputs:out\n}\ndef Shader \"Last\" {\n    token outputs:out\n}\n"},
+ {"weak":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density = [</Old>, </Retained>]\n}\ndef OpenVDBAsset \"Old\" {}\ndef OpenVDBAsset \"Retained\" {}\ndef OpenVDBAsset \"First\" {}\ndef OpenVDBAsset \"Last\" {}\n",
+  "root":
+  "#usda 1.0\n(subLayers = [@weak.usda@])\nover \"Subject\" {\n    delete rel field:density = [</Old>]\n    prepend rel field:density = [</First>]\n    append rel field:density = [</Last>]\n}\n",
+  "id": "vol-target-edits",
+  "composed":
+  "#usda 1.0\ndef Volume \"Subject\" {\n    rel field:density = [</First>, </Retained>, </Last>]\n}\ndef OpenVDBAsset \"Old\" {}\ndef OpenVDBAsset \"Retained\" {}\ndef OpenVDBAsset \"First\" {}\ndef OpenVDBAsset \"Last\" {}\n"}]

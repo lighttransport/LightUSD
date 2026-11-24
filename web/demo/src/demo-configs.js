@@ -7,7 +7,7 @@ export const DEMOS = [
     defaultAsset: '',
     preferredMaterialType: 'auto',
     materialModeLabel: 'MaterialX Chiang Hair BSDF approximation',
-    requiredBackend: 'next',
+    requiredBackend: 'core',
     preserveBuildData: true,
     image: './assets/previews/hair-fur.svg',
     href: './hair-fur.html'
@@ -22,7 +22,7 @@ export const DEMOS = [
     materialModeLabel: 'MaterialX Standard Surface / OpenPBR',
     useComposition: true,
     useUsdLux: true,
-    requiredBackend: 'next',
+    requiredBackend: 'core',
     openChessRendering: true,
     image: './assets/previews/materialx-openchess.svg',
     href: './materialx-openchess.html'
@@ -73,7 +73,7 @@ export const DEMOS = [
     // selected through the export-folder picker and is never shipped here.
     defaultAsset: './assets/metahuman-fixture/MetaHuman_Hero.usda',
     preferredMaterialType: 'openpbr',
-    requiredBackend: 'next',
+    requiredBackend: 'core',
     openFileLabel: 'Open MetaHuman USDZ',
     enableFolderInput: true,
     useComposition: true,
@@ -281,8 +281,8 @@ export const DEMOS = [
   },
   {
     id: 'backend-compare',
-    title: 'Backend Comparison',
-    subtitle: 'Compare legacy vs next rendering backends side by side with synchronized cameras and per-backend stats.',
+    title: 'Core Roundtrip Comparison',
+    subtitle: 'Compare a source scene with its USDC roundtrip using synchronized cameras and scene counts.',
     defaultAsset: './assets/suzanne-pbr.usda',
     preferredMaterialType: 'auto',
     image: './assets/previews/backend-compare.svg',

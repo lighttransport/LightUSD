@@ -53,9 +53,11 @@ static_assert(sizeof(LusdviewOptixLaunchParams) == lusdview::kOptixLaunchParamsB
 struct LusdviewTextureDesc {
   int offset, width, height, wrapS, wrapT, srgb, isUdim, isPtex;
   int ptexCols, ptexRows, ptexTileEdge, ptexRectTexelOffset, ptexFaceCount;
-  int mipCount, firstMip, imageSlot;
+  int ptexMipLevels, mipCount, firstMip, imageSlot;
   int udimLayer[100];
 };
+static_assert(sizeof(LusdviewTextureDesc) == 468,
+              "OptiX texture descriptor layout mismatch");
 
 struct LusdviewInstance {
   float worldToObject[12];

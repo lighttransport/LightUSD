@@ -3,13 +3,13 @@
 
 Three bugs, one behind the other:
 
-  1. tydra-next derived the SECONDARY UV set as `<primary> + "1"`, so only st1 /
+  1. Tydra derived the SECONDARY UV set as `<primary> + "1"`, so only st1 /
      UVMap1 / uv1 were ever extracted. A mesh whose second set is named `uvSet1`,
      `map2` or `UVMap.001` (all common) had no second set at all, and
      RenderTexture::uv_primvar pointed at a set that did not exist.
   2. Even when it did exist, nothing routed it: every texture sampled uv0. The
      second set reached the GPU only as a debug AOV.
-  3. Even once it was extracted AND routed, it never reached the GPU on the --next
+  3. Even once it was extracted AND routed, it never reached the GPU on the --core
      path: uv0 rides inside DrawVertex, but uv1 is a parallel array, and the batch
      builder appended the vertices without it. Every batched draw got an EMPTY uv1,
      so the sampler fetched one fixed coordinate and the crop came out FLAT.
@@ -129,7 +129,7 @@ def stdev_of_lit(px):
 
 
 def render(binary, model, out_png, backend):
-    args = [binary, "--backend", backend, "--next", "--frames", "4",
+    args = [binary, "--backend", backend, "--core", "--frames", "4",
             "--no-grid", "--view-dir", "0,0,-1",
             "--screenshot", out_png, model]
     args[1:1] = vk_device_args(backend)
@@ -183,7 +183,7 @@ def check_backend(binary, secondary, primary, work, backend):
     if sec == pri:
         print(f"FAIL [{backend}]: routing a texture to `uvSet1` rendered exactly "
               f"the same image as routing it to `st`. The secondary UV set is "
-              f"either not extracted (tydra-next used to hard-code it as "
+              f"either not extracted (Tydra used to hard-code it as "
               f"<primary>+'1') or not routed (every texture sampled uv0).")
         return 1
 

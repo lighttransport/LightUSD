@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    doc = "Two NATIVE-INSTANCED copies of the animated skinned rig (skintest-animated.usda). Regression fixture for --next instanced-prototype skinning: the prototype's SkelRoot must pose (and animate) inside every instance, not render at rest. All instances of a prototype necessarily share one skeleton + animation, so they pose identically and differ only by placement."
+    doc = "Two NATIVE-INSTANCED copies of the animated skinned rig (skintest-animated.usda). Regression fixture for --core instanced-prototype skinning: the prototype's SkelRoot must pose (and animate) inside every instance, not render at rest. All instances of a prototype necessarily share one skeleton + animation, so they pose identically and differ only by placement."
     defaultPrim = "world"
     endTimeCode = 48
     metersPerUnit = 1

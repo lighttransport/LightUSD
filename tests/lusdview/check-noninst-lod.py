@@ -3,7 +3,7 @@
 
 Two bugs, one test:
 
-  1. The next loader gave every static-batched (non-instanced) mesh the running
+  1. The core loader gave every static-batched (non-instanced) mesh the running
      SCENE-bounds accumulator as its AABB, not its own bounds. Every unique mesh
      therefore claimed to span the whole scene, which silently disabled the
      per-mesh frustum cull (nothing is ever outside the frustum) and any
@@ -79,7 +79,7 @@ def write_scene(path):
 
 
 def render(binary, scene, out, lod):
-    cmd = [binary, "--next", "--headless", "--frames", "3", "--screenshot", out,
+    cmd = [binary, "--core", "--headless", "--frames", "3", "--screenshot", out,
            scene]
     if lod:
         cmd.insert(3, "--raster-lod")

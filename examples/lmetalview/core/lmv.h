@@ -2,7 +2,7 @@
  *
  * lmetalview - preview scene ABI used by the Swift + Metal viewer.
  *
- * The core converts a USD file with lightusd-next + tydra-next and publishes a
+ * The core converts a USD file with the LightUSD core + Tydra and publishes a
  * flat, GPU-ready preview scene: interleaved triangle meshes, per-draw world
  * matrices, packed OpenPBR materials, decoded textures, lights and cameras.
  *

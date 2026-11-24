@@ -28,8 +28,8 @@
 #include <unistd.h>  // realpath, getpid
 #endif
 
-#include "next/pcp/prim-index.hh"  // pcp::CompositionOptions
-#include "tydra/next/resource-budget.hh"
+#include "pcp/prim-index.hh"  // pcp::CompositionOptions
+#include "tydra/resource-budget.hh"
 #include "lusdr_context.hh"
 #include "io-util.hh"
 
@@ -119,10 +119,10 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const double time = opt->timecode;
 
   // 1) Compose the scene in proxy LOD (cheap: ~1.7 GiB for Caldera).
-  lightusd::next::Stage stage;
+  lightusd::Stage stage;
   std::string warn, err;
-  lightusd::next::pcp::CompositionOptions copts;  // authored (proxy) selections
-  if (!lightusd::next::LoadUSDComposed(opt->input, &stage, &warn, &err, &copts)) {
+  lightusd::pcp::CompositionOptions copts;  // authored (proxy) selections
+  if (!lightusd::LoadUSDComposed(opt->input, &stage, &warn, &err, &copts)) {
     std::cerr << "[lodStream] proxy compose failed: " << err << "\n";
     return false;
   }
@@ -131,25 +131,25 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   // 2) Reference point: the framed USD camera, else the scene-bbox centre.
   CameraFrame cam;
   float aspect = 1.0f;
-  bool have_cam = FindNextCameraFrame(stage, opt->camera, time, &cam, &aspect);
+  bool have_cam = FindCoreCameraFrame(stage, opt->camera, time, &cam, &aspect);
   Vec3 cam_ref = have_cam ? cam.origin : Vec3{0, 0, 0};
 
   // 3) Collect proxy meshes and aggregate per district.
-  std::vector<MeshJobNext> jobs;
+  std::vector<MeshJobCore> jobs;
   for (const auto &root : stage.GetRootPrims()) {
-    CollectRTPreviewMeshesNext(stage, root, matrix4d::identity(),
-                               lightusd::Purpose::Default, time, opt->mask,
+    CollectRTPreviewMeshesCore(stage, root, matrix4d::identity(),
+                               lusdr::Purpose::Default, time, opt->mask,
                                &jobs);
   }
 
   std::map<std::string, District> districts;
   Vec3 scene_min{1e30f, 1e30f, 1e30f}, scene_max{-1e30f, -1e30f, -1e30f};
-  for (MeshJobNext &job : jobs) {
+  for (MeshJobCore &job : jobs) {
     const std::string path = job.prim.GetPath().str();
     std::string dpath, dname;
     if (!DistrictOf(path, opt->lod_container, &dpath, &dname)) continue;
 
-    const lightusd::next::Value *val = job.prim.GetPropertyValue("points");
+    const lightusd::Value *val = job.prim.GetPropertyValue("points");
     if (!val) continue;
     const auto pts = val->as_float_array();
     if (!pts || pts->empty()) continue;
@@ -242,11 +242,11 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   const uint64_t host_capacity = host_avail > 0.0
                                      ? std::min<uint64_t>(
                                            static_cast<uint64_t>(host_avail),
-                                           lightusd::tydra::next::GiB(32))
-                                     : lightusd::tydra::next::GiB(32);
+                                           lightusd::tydra::GiB(32))
+                                     : lightusd::tydra::GiB(32);
   const double vram_total = gpu ? double(QueryDeviceLocalVRAMBytes()) : 0.0;
-  const lightusd::tydra::next::ResourceBudget automatic =
-      lightusd::tydra::next::ComputeResourceBudget(
+  const lightusd::tydra::ResourceBudget automatic =
+      lightusd::tydra::ComputeResourceBudget(
           host_capacity, static_cast<uint64_t>(vram_total));
   const double host_budget = opt->max_mem_gib > 0.0
                                  ? opt->max_mem_gib * kGiB

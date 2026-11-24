@@ -12,7 +12,7 @@ s=Path(sys.argv[1]).read_text().replace('protoIndices = [0]','protoIndices = [0,
 Path(sys.argv[2]).write_text(s)
 PY
 if ! env LRT_VK_BLAS_COMPACT=1 "$BIN" "$TMP/scene.usda" "$TMP/narrow.png" -vkInstanced -camera /C -w 64 -height 64 > "$TMP/narrow.log" 2>&1; then
-  if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/narrow.log"; then
+  if grep -qiE 'ray.query unavailable|needs ray query|Failed to create.*Vulkan|no Vulkan' "$TMP/narrow.log"; then
     echo 'SKIP: hardware ray query unavailable';exit 77
   fi
   cat "$TMP/narrow.log";exit 1

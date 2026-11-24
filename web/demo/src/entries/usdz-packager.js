@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildNextDemoScene } from '../next-scene.js';
+import { buildCoreScene } from '../core-scene.js';
 import { showLoader, hideLoader } from '../lightusd-loader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -127,7 +127,7 @@ async function ensureLoader() {
   setStatus('Initializing LightUSD WASM...');
   loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     showLoader('Loading LightUSD WASM...', document.getElementById('viewport'));
-  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'next' });
+  await loader.init({ useZstdCompressedWasm: false, useMemory64: false, backend: 'core' });
     hideLoader();
   LightUSDLoaderUtils.setLightUSD(loader.native_);
   return loader;
@@ -162,8 +162,8 @@ let lastExportSizes = {};
 
 async function exportFormat(kind) {
   if (!nativeScene || !currentBytes) { setStatus('No scene loaded.'); return; }
-  const Exporter = loader.native_?.NextUSDZConverterNative;
-  if (typeof Exporter !== 'function') { setStatus('Next exporter is unavailable.'); return; }
+  const Exporter = loader.native_?.USDZConverterNative;
+  if (typeof Exporter !== 'function') { setStatus('core exporter is unavailable.'); return; }
   const exporter = new Exporter();
   try {
     if (!exporter.loadFromBinary(currentBytes, currentFilename || 'scene.usd')) {
@@ -247,13 +247,13 @@ async function loadScene(url, label) {
   setStatus(`Parsing ${label}...`);
   nativeScene = await new Promise((resolve, reject) => {
     loader.parse(data, currentFilename, resolve, reject, {
-      backend: 'next', maxMemoryLimitMB: 512,
+      backend: 'core', maxMemoryLimitMB: 512,
     });
   });
 
   setStatus(`Building scene...`);
   world.clear();
-  const { node: threeNode } = await buildNextDemoScene(nativeScene, { sourceUrl: url });
+  const { node: threeNode } = await buildCoreScene(nativeScene, { sourceUrl: url });
   world.add(threeNode);
 
   let tris = 0;
@@ -316,10 +316,10 @@ async function loadLocalFile(file) {
   currentBytes = new Uint8Array(await file.arrayBuffer());
   currentFilename = file.name;
   nativeScene = await new Promise((resolve, reject) => {
-    loader.parse(currentBytes, currentFilename, resolve, reject, { backend: 'next', maxMemoryLimitMB: 512 });
+    loader.parse(currentBytes, currentFilename, resolve, reject, { backend: 'core', maxMemoryLimitMB: 512 });
   });
   world.clear();
-  const { node: threeNode } = await buildNextDemoScene(nativeScene);
+  const { node: threeNode } = await buildCoreScene(nativeScene);
   world.add(threeNode);
   let tris = 0;
   world.traverse((obj) => { if (obj.isMesh && obj.geometry) { const idx = obj.geometry.index; tris += idx ? idx.count / 3 : obj.geometry.attributes.position.count / 3; } });

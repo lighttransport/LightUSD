@@ -24,7 +24,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 mkdir -p "$out_dir"
-common=(--next --frames 2 --load-payloads --texture-compress auto
+common=(--core --frames 2 --load-payloads --texture-compress auto
         --large-scene-profile instance-heavy --timing --no-grid --vram-budget 12)
 if [[ -n "$camera" ]]; then common+=(--camera "$camera"); fi
 

@@ -1,0 +1,58 @@
+[
+  {
+    "legacyMethod": "loadAsLayerFromBinary",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "load",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadAsLayerFromCachedAsset",
+    "coreSurface": "LayerDocument",
+    "coreEquivalent": "load",
+    "workflow": [
+      {
+        "surface": "AssetStore",
+        "method": "getAsset"
+      },
+      {
+        "surface": "LayerDocument",
+        "method": "load"
+      }
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinary",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "begin",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinaryAsync",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "beginAsync",
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "loadFromBinaryWithProgress",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "begin",
+    "parityStatus": "behavior_verified",
+    "workflow": [
+      {
+        "surface": "RenderStream",
+        "method": "setProgressCallback"
+      },
+      {
+        "surface": "RenderStream",
+        "method": "begin"
+      }
+    ]
+  },
+  {
+    "legacyMethod": "loadFromCachedAsset",
+    "coreSurface": "RenderStream",
+    "coreEquivalent": "beginCachedAsset",
+    "parityStatus": "behavior_verified"
+  }
+]

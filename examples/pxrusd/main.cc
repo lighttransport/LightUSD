@@ -23,8 +23,7 @@
 #include <pxr/usd/usdGeom/basisCurves.h>
 
 // lightusd
-#include "lightusd.hh"
-#include "math-util.inc"
+#include "math-trig.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic pop

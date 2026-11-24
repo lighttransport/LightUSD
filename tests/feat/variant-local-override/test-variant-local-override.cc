@@ -29,6 +29,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 namespace {
 
 int g_failures = 0;
@@ -119,7 +121,7 @@ int main(int argc, char **argv) {
     if (pit != lod0->props().end() && pit->second.is_attribute()) {
       const Attribute &attr = pit->second.get_attribute();
       std::string got;
-      if (auto pv = attr.get_value<value::AssetPath>()) {
+      if (auto pv = attr.get_value<lightusd::legacy::value::AssetPath>()) {
         got = pv.value().GetAssetPath();
       }
       CHECK(got == "WORN",

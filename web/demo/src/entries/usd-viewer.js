@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from 'lightusd/LightUSDLoaderUtils.js';
-import { buildNextDemoScene } from '../next-scene.js';
+import { buildCoreScene } from '../core-scene.js';
 import { setLightUSD as setMaterialXLightUSD } from 'lightusd/LightUSDMaterialX.js';
 import { extractSkinnedMeshData } from 'lightusd/USDSceneSkinningData.js';
 import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
@@ -118,7 +118,7 @@ function updateStats(layer, composition = 'references') {
 async function ensureLoader() {
   if (state.loader) return state.loader;
   status('Initializing LightUSD…'); state.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
-  await state.loader.init({ backend: 'next', useZstdCompressedWasm: false, useMemory64: false });
+  await state.loader.init({ backend: 'core', useZstdCompressedWasm: false, useMemory64: false });
   LightUSDLoaderUtils.setLightUSD(state.loader.native_); setMaterialXLightUSD(state.loader.native_); state.loader.setMaxMemoryLimitMB?.(512); return state.loader;
 }
 function clearWorld() {
@@ -396,7 +396,7 @@ async function buildScene(layer) {
   state.animationFPS = metadata.framesPerSecond;
   stat('stat-fps', `${state.animationFPS} fps`);
   await applyDomeEnvironment(layer);
-  const built = await buildNextDemoScene(layer, {
+  const built = await buildCoreScene(layer, {
     envMap: scene.environment,
     awaitTextures: false,
     onProgress: (info) => status(info.message || 'Building scene…'),

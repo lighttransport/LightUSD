@@ -1,0 +1,165 @@
+[
+  {
+    "legacyMethod": "flattenAsyncBegin",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenAsyncBeginRemap",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenAsyncBeginRemapVariants",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenAsyncEnd",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "end"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenAsyncProvideLayer",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "provideLayer"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenAsyncStep",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBuffer",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBufferRemap",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBufferRemapVariants",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBufferToSink",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBufferToSinkRemap",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenBufferToSinkRemapVariants",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSink",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetch",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "provideLayer",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetchRemap",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenMultiBufferToSinkFetchRemapVariants",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "provideLayer",
+      "setAssetPathRemap",
+      "setVariantOverride",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  },
+  {
+    "legacyMethod": "flattenUSDC",
+    "coreSurface": "FlattenSession",
+    "coreWorkflow": [
+      "begin",
+      "step"
+    ],
+    "parityStatus": "behavior_verified"
+  }
+]

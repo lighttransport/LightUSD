@@ -13,6 +13,26 @@ The C++ test infrastructure is split into four layers:
 
 Core functionality is tested by the parser, reader, writer, composition, and crate-writer coverage. Tydra is covered in both the Acutest suite and the manual `tydra_to_renderscene` corpus runner.
 
+## USD schema conformance
+
+`core_test_validation` replays Lean-generated diagnostics for usdGeom,
+usdSkel, usdPhysics, usdMtlx, and usdVol. It also checks schema registry
+inheritance, applied APIs, and fallback values.
+
+```sh
+cmake --build build_ninja --target test_validation lusdcat lusdchecker lusdzconvert
+scripts/xctest.sh ctest --test-dir build_ninja -R '^core_test_validation$' --output-on-failure
+```
+
+The companion `usdspec-conformance` checkout provides the Lean sources and
+the `domain_composed_validation`, `domain_roundtrip`, and `domain_package`
+gates. They exercise authored layers, composed opinions, and USDA, USDC,
+and USDZ output with OpenUSD 26.11 as the interoperability oracle.
+
+`core_test_tydra` checks that grouped indexed mesh normals expand in selector
+order and take precedence over the built-in normals attribute. It also
+checks the separate behavior of empty and blocked indices.
+
 ## Explicit runtime configuration
 
 Library-owned code and `lusdrender` do not read process environment variables.
@@ -57,7 +77,7 @@ copy/move assignment. Name-table tests retain references across rehashing and
 frozen-snapshot updates; threaded builds exercise concurrent interning and
 array detachment.
 
-Run standalone next tests with threading both off and on after primitive changes.
+Run standalone core tests with threading both off and on after primitive changes.
 For memory checks, use an optimized sanitizer build (for example Debug with
 `-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer`): the large-instance
 suite has a wall-clock bound that an unoptimized sanitizer build can exceed.
@@ -66,12 +86,12 @@ this checkout, and the web gate against freshly built next and combined modules;
 a legacy-only `lightusd.js` lacks APIs required by the combined-module tests.
 
 After TU or include-boundary changes, also build next with
-`LIGHTUSD_NEXT_USE_PCH=OFF` and `TYDRA_NEXT_USE_PCH=OFF`. The threaded optimized
+`LIGHTUSD_USE_PCH=OFF` and `LIGHTUSD_TYDRA_USE_PCH=OFF`. The threaded optimized
 ASan/UBSan configuration above can serve this purpose. This checks actual
 dependencies that a precompiled header can otherwise conceal, including the
 session logger, USDA printer metadata/threading types, schema predicates, and
-shader texture extraction. Run both `next_test_tydra` and
-`next_test_urdf_to_usd` when splitting the next render/robot converters.
+shader texture extraction. Run both `core_tydra` and
+`core_urdf_to_usd` when splitting the next render/robot converters.
 For GCC sanitizer builds with the default RTTI-disabled libraries, add
 `-fno-sanitize=vptr` to the C++ flags: otherwise RTTI-enabled test TUs can emit
 references to library typeinfo that is deliberately absent. Address checking
@@ -97,7 +117,7 @@ scripts/verify.sh prepare --target menagerie --offline
 scripts/verify.sh test --target web-physics --software
 ```
 
-Profiles are `native`, `next`, `web`, `oracle`, `assets`, `gpu`, and `full`.
+Profiles are `native`, `core`, `web`, `oracle`, `assets`, `gpu`, and `full`.
 The `gpu` profile is opt-in. Private large-scene inputs remain opt-in and are
 not part of the reproducible public `full` profile. Each action writes a JSON
 report under the ignored verification cache.
@@ -124,11 +144,11 @@ without fetching.
 
 ## Build
 
-Native `lusdzconvert` currently requires `LIGHTUSD_NATIVE_PRODUCT=legacy` and
-`LIGHTUSD_BUILD_TOOLS=ON`; use a separate Ninja tree such as
-`build_ninja/legacy-convert` (see [converter build instructions](../tools/lusdzconvert/README.md#build)).
-With tests enabled, `lusdzconvert-regression-driver` checks JPEG asset remapping,
-material deduplication, directory root discovery, both USDA/USDC package roots,
+Native `lusdzconvert` builds against the core with
+`LIGHTUSD_BUILD_TOOLS=ON`; use `build_ninja/` (see
+[converter build instructions](../tools/lusdzconvert/README.md#build)).
+With tests enabled, `core_lusdzconvert_regression` checks JPEG asset remapping,
+directory root discovery, both USDA/USDC package roots,
 and both flat layer formats. Flat outputs written into a different directory
 must retain reachable references to the original external images.
 
@@ -184,12 +204,12 @@ The fixture root can also be supplied directly to a test executable with the
 Run the full regression suite before changes that affect parsing, composition,
 USDA/USDC writing, USDZ packaging, schema reconstruction, or tool output.
 
-> **Scope:** The experimental `next` module (`src/next/`, `lightusd_next`) and
-> its tests under `tests/next/` are **not** part of this regression suite. They
+> **Scope:** The experimental `core` module (`src/`, `lightusd_core`) and
+> its tests under `tests/core/` are **not** part of this regression suite. They
 > are a standalone CMake project, are not built by the main `build/` (so they do
 > not appear in `ctest`), and are not run by the Pixar comparison runner. Do not
-> treat `next` results as part of the regression gate. See
-> [Experimental `next` library tests](#experimental-next-library-tests) for how
+> treat `core` results as part of the regression gate. See
+> [Experimental `core` library tests](#experimental-next-library-tests) for how
 > to build and run them on demand.
 
 The full regression pass has two parts:
@@ -212,10 +232,10 @@ cd build
 ctest --output-on-failure
 cd ..
 
-# 2. Run the stable next module tests. Keep this Debug: tests use assert().
-cmake -S src/next -B build-next -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
+# 2. Run the stable core module tests. Keep this Debug: tests use assert().
+cmake -S src -B build-core -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-core -j16
+ctest --test-dir build-core --output-on-failure
 
 ## JSON backend
 
@@ -362,7 +382,7 @@ and recovery from a broken sandbox X socket, see
 [`doc/lusdview.md`](lusdview.md#vulkan-on-nvidia-primeoffload-under-xvfb).
 
 `lusdview-value-clip-carrier` uses the shared small fixtures in
-`tests/feat/value-clip/carrier/`. The CPU `lusdview_next_mesh_adapter_test` checks
+`tests/feat/value-clip/carrier/`. The CPU `lusdview_core_mesh_adapter_test` checks
 the clip points at both times, ownership after stage release, and filesystem
 resolver opt-out. The WASM dispatch suite checks the same supplied clip assets
 through the lazy mesh path and the clips enable flag; disabled geometry retains
@@ -405,11 +425,11 @@ The Vulkan render smoke also requires meshes with custom scalar float/int and
 vector rest-position primvars to survive the public API buffer copy. Sizes are
 measured in scalar elements; using the chunk-container size discards geometry
 such as the composed public Teapot asset even though composition succeeds.
-The CPU `lusdview_next_mesh_adapter_test` checks copied bounds, independently
+The CPU `lusdview_core_mesh_adapter_test` checks copied bounds, independently
 interpolated UV sets, indexed/custom primvars, proxies, and ownership after the
 temporary render record and stage are destroyed. Secondary-UV interpolation
 uses a formerly reserved byte of the public mesh info, preserving its ABI layout.
-`lusdview-next-mesh-materials` compares ordinary meshes with PointInstancer
+`lusdview-core-mesh-materials` compares ordinary meshes with PointInstancer
 and native-instance panels using generated textures under Vulkan ray query.
 Both panels must use the secondary UV set for preview bindings and the full
 material for `--material-purpose full`. A malformed-topology panel also checks
@@ -497,7 +517,7 @@ CMake registers these tests when the corresponding targets are built (most in th
 | `feat-subdiv-verify` | Feature test (only when `LIGHTUSD_TSD_VERIFY_WITH_OSD`, label `osd-verify`) | `build/feat-subdiv-verify` |
 | `bench-parse-opt` | Benchmark target (label `benchmark`) | `build/bench-parse-opt --quick` |
 | `bench-render-convert` | Stage→renderable-mesh conversion benchmark (label `benchmark`) | `build/bench-render-convert --iters 1 --prims 64` |
-| `bench-render-convert-next` | Same, + tydra-next pipeline (only when `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
+| `bench-render-convert-next` | Same, + Tydra pipeline (only when `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON`) | `build/bench-render-convert-next` |
 | `unit-test-lightusd` | Acutest unit suite | `build/unit-test-lightusd` |
 | `mcp-test` | MCP server unit test (only when `LIGHTUSD_WITH_MCP_SERVER`) | `build/mcp-test` |
 
@@ -514,6 +534,40 @@ ctest --print-labels
 
 The lusdview viewer example registers GPU-dependent tests under the `lusdview` ctest label:
 
+`core_test_tydra` also checks sampled MaterialX volume coefficients, spatial
+sample contexts, named-space transforms and geometry-property callbacks, reusable evaluator and texture-cache
+behavior, invalid-context rejection, resolver-backed textures, missing assets,
+traversal rejection, volume look binding and transactional failure, and mip
+filtering under a decoded-memory cap. Volume bindings also cover shader
+connections through a nodegraph output. The level-set field test samples an
+actual VDB through a volume graph and checks missing-field defaults and read
+failure handling. The
+shared texture decoder's MaterialX mip test covers odd dimensions, linear-light
+conversion, HDR values, decoded-image integration and resident-budget leases.
+The CPU-only `mtlx_mip_evaluator_test` checks the volume closure work limit and the
+texture reader's decoded-memory limit. Run them headless with
+`scripts/xctest.sh ctest --test-dir build_ninja -R '^(core_test_tydra|mtlx_mip_evaluator_test)$' --output-on-failure`.
+
+The separate `materialx-conformance` checkout also registers
+`integrated_energy_native` when both native source trees are configured. It
+compiles a temporary probe against LightRT and LightUSD's vendored `bsdf.c`,
+checks Lambert/EON albedos and raw GGX against independent equations, and compares
+432 converged material cases. It records known compensated OpenPBR energy and
+attenuation-budget findings; a passing registry check does not assert that those
+native materials conserve energy. The conformance repository's
+`doc/validation/integrated-energy.md` describes the conditional Lean layer proofs,
+parameter coverage and finding thresholds. Run that suite through this
+repository's `scripts/xctest.sh` as well.
+
+`tool-lusdrender-materialx-validation` also renders a minified checker with
+`--mtlx-mipmaps`, checks the filtered node AOV against its linear mean, and
+checks that base pixels and mip levels share the configured texture budget.
+`tool-lusdrender-materialx-volume-cpu` exercises a field-driven volume look,
+RGB absorption, missing-field defaults and worker determinism. It skips unless
+`LIGHTUSD_OPENUSD_VDB_FIXTURES` or `OPENUSD_ROOT` identifies the OpenUSD fixtures.
+It also checks that overlapping MaterialX and mixed legacy/MaterialX volumes
+produce the same result when their scene order is reversed.
+
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|
 | `lusdview_lighting_test` | Non-mesh RT proxy topology + opacity | None (compiled unit) |
@@ -526,7 +580,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `tool-lusdrender-materialx-cpu-graph` | Default CPU lusdrender evaluation of deep connected MaterialX graphs without fallback | None (headless CLI) |
 | `lusdview_geometry_primvar_test` | Geometry primvar reconstruction | None (compiled unit) |
 | `lusdview_camera_nav_test` | Camera navigation | None (compiled unit) |
-| `lusdview-next-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
+| `lusdview-core-nonmesh-extraction` | Default-loader Points/Curves records | Vulkan backend |
 | `lusdview-gl-nonmesh-render` | GL carrier-render for Points/Curves | No GL context |
 | `lusdview-vk-nonmesh-render` | VK carrier-render for Points/Curves | No Vulkan backend |
 | `lusdview-dome-orientation` | DomeLight IBL orientation | No GPU |
@@ -535,7 +589,7 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-camera-clipping-planes` | Authored camera clipping on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
 | `lusdview-camera-dof-raster` | Thin-lens response on GL/Vulkan raster | `xvfb-run`, Vulkan backend |
 | `lusdview-camera-motion-raster-export` | Native/companion Vulkan shutter accumulation and closed shutter | Vulkan backend |
-| `lusdview-camera-motion-raster-legacy` | Legacy-loader native/companion camera shutter parity | Vulkan backend |
+| `lusdview-camera-motion-raster-static` | Static-scene native/companion camera shutter parity | Vulkan backend |
 | `lusdview-camera-motion-raster-gl` | Native/companion OpenGL shutter accumulation and closed shutter | `xvfb-run` |
 | `lusdview-camera-motion-vulkan` | Vulkan RT temporal poses retain progressive accumulation | Vulkan RT adapter |
 | `lusdview-shadow-alpha-inst` | Alpha-cutout + PointInstancer shadow | No GPU |
@@ -559,10 +613,10 @@ The lusdview viewer example registers GPU-dependent tests under the `lusdview` c
 | `lusdview-area-light-vulkan` | Vulkan RT finite-light soft-shadow response | Hardware Vulkan RT |
 | `lusdview-area-light-cuda` | CUDA finite-light soft-shadow response | CUDA device |
 
-The `lmetalview` example (native macOS Swift + Metal viewer, `next` product
+The `lmetalview` example (native macOS Swift + Metal viewer, `core` product
 only) registers its own tests. Configure with
 `-DLIGHTUSD_NATIVE_PRODUCT=next -DLIGHTUSD_BUILD_EXAMPLES=ON
--DLIGHTUSD_NEXT_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
+-DLIGHTUSD_BUILD_LMETALVIEW=ON`; both are also part of `ctest -R lmetalview`.
 
 | Name | What it tests | Skip condition |
 |------|---------------|----------------|
@@ -586,11 +640,11 @@ only) registers its own tests. Configure with
 ctest -R '^lmetalview' --output-on-failure
 ```
 
-The `ld3d12view` example (native Windows Direct3D 12 viewer, `next` product
+The `ld3d12view` example (native Windows Direct3D 12 viewer, `core` product
 only, Windows only) shares `lmetalview_core`, so `lmetalview_core_test` also runs
 on Windows. Configure with `-DLIGHTUSD_NATIVE_PRODUCT=next
--DLIGHTUSD_NEXT_BUILD_EXAMPLES=ON -DLIGHTUSD_NEXT_BUILD_LD3D12VIEW=ON
--DLIGHTUSD_NEXT_BUILD_TESTS=ON`. Every `ld3d12view-*` test uses the WARP software
+-DLIGHTUSD_BUILD_EXAMPLES=ON -DLIGHTUSD_BUILD_LD3D12VIEW=ON
+-DLIGHTUSD_BUILD_TESTS=ON`. Every `ld3d12view-*` test uses the WARP software
 adapter and a hidden window, so none needs a GPU; the input and loading tests
 post real window messages (`WM_DROPFILES`, `WM_KEYDOWN`, mouse clicks, `WM_SIZE`)
 through the window procedure. Tests marked "log" also check the program's stderr
@@ -686,7 +740,7 @@ memory pipeline checks local array edits through both composition engines:
 
 ```sh
 ctest --test-dir build_ninja \
-  -R '^next_test_(pcp|memory_flatten)$' --output-on-failure
+  -R '^core_(pcp|memory_flatten)$' --output-on-failure
 ```
 
 The strict OpenUSD flatten runner additionally compares the complete USDA,
@@ -694,8 +748,8 @@ USDC and optional supplemental composition corpora without relaxing list-op
 semantics or numeric tolerances:
 
 ```sh
-PXR_WORK_THREAD_LIMIT=1 node tests/next/run-next-pxr-flatten-diff.mjs \
-  --next-usdcat build_ninja/lusdcat \
+PXR_WORK_THREAD_LIMIT=1 node tests/core/run-core-pxr-flatten-diff.mjs \
+  --lusdcat build_ninja/lusdcat \
   --usdcat ref/dist/bin/usdcat --jobs 4 \
   --suite-root /path/to/aousd/releases/1.0.1
 ```
@@ -720,20 +774,20 @@ Collection and material-binding writer regressions can be run with:
 ```sh
 ./build_ninja/unit-test-lightusd usdc_reader_collection_binding_roundtrip_test
 ctest --test-dir build_ninja -R '^scope-imageable-roundtrip$' --output-on-failure
-node tests/next/test-compare-usda-booleans.cjs
+node tests/core/test-compare-usda-booleans.cjs
 ```
 
 The writer test covers typed bindings and collections on Model, Scope, and
 Xform through USDA and USDC, including membership-expression metadata, blocked
 values, and declarations without values. The comparison test accepts equivalent
 boolean spellings only on matching `bool` declarations, while preserving real
-value differences. It also runs in the standalone `next` CTest suite.
+value differences. It also runs in the standalone `core` CTest suite.
 
 Explicit empty list-op regressions can be run with:
 
 ```sh
 ./build_ninja/unit-test-lightusd usdc_reader_prim_metadata_roundtrip_test
-node tests/next/test-compare-usda-listops.cjs
+node tests/core/test-compare-usda-listops.cjs
 ```
 
 AOUSD Core 1.0.1 makes `None` and `[]` equivalent for list ops. Both author an
@@ -744,7 +798,7 @@ writer uses `None` as its canonical empty spelling. The comparator accepts both
 spellings for relationship targets and known list-op metadata, preserves
 list-op qualifiers and multiple edits on one relationship, and does not equate
 attribute value blocks with empty arrays. The comparator test is also registered
-as `next_compare_usda_listops` in the standalone `next` suite.
+as `next_compare_usda_listops` in the standalone `core` suite.
 
 For Vulkan transparency changes, run the persistent-viewer promotion tests as
 well as the fixed-frame transparency matrix:
@@ -838,9 +892,9 @@ node tests/compare-usda.js --detailed-diff \
 raster/RT-renderable mesh conversion for both pipelines:
 
 - legacy `tydra::RenderSceneConverter::ConvertToRenderScene` (default target),
-- tydra-next `tydra::next::RenderSceneConverter::Convert` (when built with
-  `PERFRC_ENABLE_NEXT`: the `bench-render-convert-next` target, or the
-  `bench_tydra_render` target in the standalone `src/next` tree).
+- Tydra `lightusd::tydra::RenderSceneConverter::Convert` (when built with
+  `PERFRC_ENABLE_CORE`: the `bench-render-convert-next` target, or the
+  `bench_tydra_render` target in the standalone `src` tree).
 
 It generates a deterministic synthetic multi-mesh scene (`--prims N`, mixed
 sizes; ~1.5M tris at the default 2048) or loads `--scene <file>`, runs
@@ -853,18 +907,18 @@ runs of the same build must print the same hash.
 ./build/bench-render-convert --prims 2048 --legacy-threads 0 --json
 ./build/bench-render-convert --prims 2048 --legacy-threads 1 --json
 
-# tydra-next with explicit worker count
+# Tydra with explicit worker count
 ./build/bench-render-convert-next --prims 2048 --threads 8
 ```
 
 Report-only: never fails on timings. Threading follows the repo-wide
-`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_NEXT_ENABLE_THREAD` CMake options. The
+`LIGHTUSD_ENABLE_THREAD` / `LIGHTUSD_ENABLE_THREAD` CMake options. The
 **legacy** `LIGHTUSD_ENABLE_THREAD` stays opt-in (default OFF = fully serial);
-the **next core**'s `LIGHTUSD_NEXT_ENABLE_THREAD` now defaults **ON for native
+the **core**'s `LIGHTUSD_ENABLE_THREAD` now defaults **ON for native
 builds** (WASM/Emscripten stays OFF, and `web/CMakeLists.txt` forces it off) —
 that switch enables the next parallel paths (source warm, arc-layer prefetch,
 parallel opinion fill, parallel crate-writer build). Pass
-`-DLIGHTUSD_NEXT_ENABLE_THREAD=OFF` to force the serial next path; without
+`-DLIGHTUSD_ENABLE_THREAD=OFF` to force the serial core path; without
 either switch the tool still runs and reports, just single-threaded.
 
 ## Fixture Coverage
@@ -1099,9 +1153,9 @@ python3 ../tests/tydra_to_renderscene/runner.py ../models
 
 ## Standalone and Manual Targets
 
-### Stable `next` library tests
+### Core library tests
 
-CI builds the default `next` product with the MCP server enabled and with
+CI builds the default `core` product with the MCP server enabled and with
 ASan/UBSan. The C ABI test stays compiled as C11 and links through the C++
 driver so Clang supplies the C++ UBSan runtime used by the shared library.
 The legacy product with `LIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON` and examples
@@ -1109,14 +1163,14 @@ also needs a configure check: the unified `lusdcat` target must be created
 only once. Keep compact writer-layout assertions valid on both 32-bit and
 64-bit targets.
 
-`next` (`src/next/`, library `lightusd_next`) has a standalone regression suite.
-Run it explicitly when changing shared code or the next product:
+`core` (`src/`, library `lightusd_core`) has a standalone regression suite.
+Run it explicitly when changing shared code or the core product:
 
-- It is a **standalone CMake project** (`src/next/CMakeLists.txt` with its own
+- It is a **standalone CMake project** (`src/CMakeLists.txt` with its own
   `project()`). Its tests do not appear in the default legacy `ctest` tree.
   The root build can also select it with `LIGHTUSD_NATIVE_PRODUCT=next`; use a
   separate Ninja build tree for each product.
-- Its tests are gated behind `LIGHTUSD_NEXT_BUILD_TESTS` (**OFF by default**).
+- Its tests are gated behind `LIGHTUSD_BUILD_TESTS` (**OFF by default**).
 - These checks are a required regression gate in addition to the default
   native suite; passing one does not replace the other.
 
@@ -1134,7 +1188,7 @@ forwards the same core layout revision and value dimensions. Consumers must
 reject a mismatched core major/revision or target layout before passing value
 storage across a shared-library boundary.
 
-`next_test_int64_listop` checks signed 64-bit list-op metadata through USDA,
+`core_int64_listop` checks signed 64-bit list-op metadata through USDA,
 USDC, composition and PointInstancer masking. It covers all six authored runs,
 empty versus explicit clear, exact IDs beyond 2^53, malformed/count-limited
 payloads, three-layer edits, and deterministic comparisons with the string
@@ -1144,7 +1198,7 @@ Nested list-op values outside metadata are not covered by this codec.
 The CPU preview test checks inactiveIds visibility and rejection of preview
 cache version 3; current preview and source geometry versions are 4 and 2.
 
-`next_test_stream_residency` compares staged/streamed bytes for owned and
+`core_stream_residency` compares staged/streamed bytes for owned and
 observable mapped sources around the 32 MiB digest threshold. It checks serial
 and parallel encoders (9,001 prims), source-range and cross-source content
 deduplication, page advice before writing, bounded sink calls, lazy-value reuse
@@ -1173,7 +1227,7 @@ For C-core size measurements, configure a Ninja tree with
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then use the shared measurement harness:
 
 ```bash
-scripts/bench-core-port.sh --build-dir build_ninja/next-release --repeat 3
+scripts/bench-core-port.sh --build-dir build_ninja/core-release --repeat 3
 scripts/bench-core-port.sh --build-dir web/build_ninja --wasm --repeat 3
 ```
 
@@ -1194,8 +1248,8 @@ and export timings as well as size; investigate repeatable regressions above
 > Lean vectors against stock OpenUSD (`next_lean_build`, `next_lean_*_vectors`,
 > `next_lean_reflection_*`, `next_lean_axioms`, `next_lean_unicode_conformance`, ...)
 > now live in the separate `usdspec-conformance` repository. Only the C++
-> consumers (`next_test_lean_vectors*`, `next_test_name_order`) remain here, reading
-> the pinned copy in `tests/next/generated/lean/`. Paths and test names in the
+> consumers (`core_lean_vectors*`, `core_name_order`) remain here, reading
+> the pinned copy in `tests/core/generated/lean/`. Paths and test names in the
 > Lean-specific text below that refer to `verif/lean`, `scripts/*lean*` or
 > `next_lean_*` describe that repository.
 
@@ -1241,9 +1295,9 @@ Initial sublayer messages reach the CLI, session and composition helper outputs.
 #### Lean-generated conformance vectors
 
 `verif/lean` formalizes the AOUSD Core Spec v1.1.0 in Lean 4 + Mathlib and
-emits X-macro tables into `tests/next/generated/lean/` (committed). The
-`next_test_lean_vectors` ctest replays them against `src/next` and never
-skips; `next_test_lean_vectors_combine_chain` replays the corpus list-op
+emits X-macro tables into `tests/core/generated/lean/` (committed). The
+`core_lean_vectors` ctest replays them against `src` and never
+skips; `core_lean_vectors_combine_chain` replays the corpus list-op
 chains. When `lake` is on `PATH` or in `~/.elan/bin`, `next_lean_build`,
 `next_lean_test` and `next_lean_vectors_check` also run (the first build
 needs `lake exe cache get` for Mathlib). `next_lean_reflection_table`
@@ -1389,12 +1443,12 @@ ordinary prims and inline/content-backed variants, and reads LightUSD-written
 crate files through the pinned stock oracle. Native writer regressions cover raw
 property order through USDA (`sort_properties=false`), USDC and USDC-to-USDA,
 independently of authored `propertyOrder` metadata and sorted lookup slots.
-`next_test_name_order` checks the shared compatibility comparator and separates
+`core_name_order` checks the shared compatibility comparator and separates
 stage property ordering from raw PCP property children. The stock comparison
 also runs in Lean CI and can be reproduced with:
 
 ```bash
-python3 tests/next/test-name-order.py \
+python3 tests/core/test-name-order.py \
   --tool build_ninja/next_debug/test_name_order \
   --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
 ```
@@ -1416,7 +1470,7 @@ payload bytes and reader-retained vectors with the Lean expectations. Type-speci
 byte/index validation and allocation budgets remain in each production consumer.
 Non-canonical header semantics use the separate Lean `pxrRead` compatibility
 model: 256 generated mode vectors cover all 128 legal headers with empty and
-populated vectors. `tests/next/test-listop-modes.py` also compares 2,048 real crate
+populated vectors. `tests/core/test-listop-modes.py` also compares 2,048 real crate
 fields against stock 26.11 across Int64, token, string, path, reference and payload
 list ops, plus relationship targets and attribute connections. Discarded explicit vectors remain validated: malformed indices warn and drop the
 field in compatibility mode and reject strict AOUSD loads; memory/count limits
@@ -1424,7 +1478,7 @@ remain hard failures.
 Run it with:
 
 ```bash
-python3 tests/next/test-listop-modes.py \
+python3 tests/core/test-listop-modes.py \
   --tool build_ninja/next_debug/test_int64_listop \
   --oracle-python "$ORACLE_PYTHON" --oracle-pythonpath "$ORACLE_SITE_PACKAGES"
 ```
@@ -1438,7 +1492,7 @@ arc survive and that no recursive child subtree appears.
 Regenerate after changing the model:
 
 ```bash
-cd verif/lean && lake exe usdspec-gen --out ../../tests/next/generated/lean
+cd verif/lean && lake exe usdspec-gen --out ../../tests/core/generated/lean
 ```
 
 See `doc/validation/lean-verification-2026-11-06.md` and `verif/lean/README.md`.
@@ -1454,12 +1508,12 @@ the standalone Debug suite at the release directory:
 git clone --depth 1 --branch release/1.0.1.post0 \
   https://github.com/aousd/core-spec-supplemental-public.git \
   build_ninja/aousd-supplemental
-cmake -S src/next -B build_ninja/next-debug -G Ninja \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
+cmake -S src -B build_ninja/core-debug -G Ninja \
+  -DLIGHTUSD_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
   -DLIGHTUSD_AOUSD_SUPPLEMENTAL_ROOT="$PWD/build_ninja/aousd-supplemental/releases/1.0.1"
-cmake --build build_ninja/next-debug -j16
-ctest --test-dir build_ninja/next-debug --output-on-failure
-ctest --test-dir build_ninja/next-debug -L aousd -V
+cmake --build build_ninja/core-debug -j16
+ctest --test-dir build_ninja/core-debug --output-on-failure
+ctest --test-dir build_ninja/core-debug -L aousd -V
 ```
 
 This release pins commit `c15ae0cad3ed9e07a25dffd6699627d2c166cab0`.
@@ -1468,7 +1522,7 @@ composition cases, and checks resolved samples in eight value-resolution cases.
 Three composition roots contain invalid text paths and must be rejected:
 `BasicInherits_root`, `ErrorRelocateWithVariantSelection_root`, and
 `SubrootReferenceAndVariants_root`. Their classification in
-`tests/next/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
+`tests/core/aousd-invalid-text.json` pins each text SHA-256 and diagnostic;
 accepted text, changed bytes, a different failure, or an unreadable binary
 dependency fails the gate. The release supplies no binary root for these three
 cases; all six available original binary dependencies are still required loads.
@@ -1502,12 +1556,12 @@ isolated directory and run:
 
 ```bash
 python3 -m pip install --target build_ninja/stock-oracle --no-deps 'usd-core==26.11'
-python3 tests/next/test-pcp-json.py --lusdcat build_ninja/next-debug/lusdcat \
+python3 tests/core/test-pcp-json.py --lusdcat build_ninja/core-debug/lusdcat \
   --oracle-python "$(command -v python3)" \
   --oracle-pythonpath build_ninja/stock-oracle
-python3 tests/next/run-aousd-supplemental.py \
+python3 tests/core/run-aousd-supplemental.py \
   --suite-root build_ninja/aousd-supplemental/releases/1.0.1 \
-  --next-usdcat build_ninja/next-debug/lusdcat --category composition \
+  --lusdcat build_ninja/core-debug/lusdcat --category composition \
   --pcp-oracle-python "$(command -v python3)" \
   --pcp-oracle-pythonpath build_ninja/stock-oracle
 ```
@@ -1524,9 +1578,9 @@ Legacy metadata roundtrip tests also require explicit `None` opinions for
 relationships, inherits, and specializes. WASM layer tests cover reference
 dictionaries through USDA, USDC, and JSON exports.
 
-Regression coverage to keep in mind when touching `next`:
+Regression coverage to keep in mind when touching `core`:
 
-- `test_tydra_next.cc` also covers the compiled chunk-storage engine: exact-tail
+- `test_tydra.cc` also covers the compiled chunk-storage engine: exact-tail
   compaction repeated under allocation accounting, self-append and COW,
   over-aligned POD elements, move/reuse, allocation-budget refusal, and
   read-only iteration/indexing without detachment. Writes now use
@@ -1534,7 +1588,7 @@ Regression coverage to keep in mind when touching `next`:
 - `unit-test-lightusd` includes `minijson_shortest_double_roundtrip_test`:
   finite binary64 boundary values and 4096 deterministic bit-pattern samples
   must serialize/reparse exactly (with a separate signed-zero spelling check).
-  Run this legacy unit target as well as standalone next tests after changing
+  Run this legacy unit target as well as standalone core tests after changing
   the shared MiniJSON serializer.
 - `test_validation.cc` covers the immutable rule table's pointer/count contract
   and idempotent severity upgrades. Run the full PCP and threaded PCP tests
@@ -1547,7 +1601,7 @@ Regression coverage to keep in mind when touching `next`:
   render path — see `property-index.cc`).
 - `test_schemas.cc` — schema accessors (UsdGeomMesh etc.) must return empty /
   schema-fallback values on prims missing the queried arrays.
-- `test_tydra_next.cc` — the animation-extraction gate
+- `test_tydra.cc` — the animation-extraction gate
   (`animation.enabled && (HasTimeSamples() || HasValueClips())`) must keep
   emitting AnimationClips for value-clip-only stages (authored-time-sample
   stages, static stages, and `animation.enabled = false` are covered too,
@@ -1561,31 +1615,31 @@ Build and run them on demand in a separate build directory. The preferred
 entrypoint is:
 
 ```bash
-scripts/run-next-checks.sh
+scripts/run-core-checks.sh
 ```
 
 Useful environment overrides:
 
 ```bash
-scripts/run-next-checks.sh --help
-BUILD_DIR=build-next-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release scripts/run-next-checks.sh
-RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-next-checks.sh
+scripts/run-core-checks.sh --help
+BUILD_DIR=build-core-tsan BUILD_TYPE=Debug THREADS=ON scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release scripts/run-core-checks.sh
+RUN_BENCH=1 BUILD_TYPE=Release BENCH_LAZY_VERTS=4000000 BENCH_LAZY_CLONES=32 scripts/run-core-checks.sh
 ```
 
 The equivalent manual commands are:
 
 ```bash
 # Configure the standalone next project with its tests enabled.
-cmake -S src/next -B build-next \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
-  -DLIGHTUSD_NEXT_ENABLE_THREAD=ON \
+cmake -S src -B build-core \
+  -DLIGHTUSD_BUILD_TESTS=ON \
+  -DLIGHTUSD_ENABLE_THREAD=ON \
   -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-next -j16
-ctest --test-dir build-next --output-on-failure
+cmake --build build-core -j16
+ctest --test-dir build-core --output-on-failure
 ```
 
-> **Caveat — use a Debug build.** The `tests/next/` programs validate via bare
+> **Caveat — use a Debug build.** The `tests/core/` programs validate via bare
 > `assert()`. Under `NDEBUG` (i.e. `Release`/`RelWithDebInfo`) `assert(expr)`
 > does not evaluate `expr`, so these tests check nothing — and any side effect
 > placed inside an `assert()` is silently dropped (this previously caused a
@@ -1595,7 +1649,7 @@ ctest --test-dir build-next --output-on-failure
 
 Current USDC-focused next coverage:
 
-- `next_test_usdc_malformed` uses generated in-memory crate fixtures for bad
+- `core_usdc_malformed` uses generated in-memory crate fixtures for bad
   magic, truncated bootstrap, invalid TOC offsets/ranges, excessive section
   counts, missing required sections, allocation caps, and malformed
   FIELD/FIELDSET/SPECS payloads. Generated valid compressed float/half arrays
@@ -1606,10 +1660,10 @@ Current USDC-focused next coverage:
   preserve deferred memory limits after reader destruction, and charge
   compressed bool integer scratch before allocation. Prefer compact cases when
   a malformed input can be described structurally.
-- `next_test_crash_regressions` replays minimized fuzzer-found binary inputs
-  from `tests/next/crash_regressions/`. Prefer this only when the exact byte
+- `core_crash_regressions` replays minimized fuzzer-found binary inputs
+  from `tests/core/crash_regressions/`. Prefer this only when the exact byte
   sequence matters.
-- `next_test_usdc_roundtrip` includes focused roundtrip cases plus a dense
+- `core_usdc_roundtrip` includes focused roundtrip cases plus a dense
   generated fixture covering layer metadata, dictionaries, composition arcs,
   mesh arrays, per-property metadata, relationships, connection-flagged
   properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
@@ -1619,7 +1673,7 @@ Current USDC-focused next coverage:
   widening and bounded source views used by eager array decoding. Reference
   and payload offsets/scales retain binary64 precision through two crate cycles,
   including tiny scales that must not round to zero.
-- `next_test_lazy_array` checks that separate materializations share a cumulative
+- `core_lazy_array` checks that separate materializations share a cumulative
   allocation budget (including after source-owner release). Threaded builds
   race independent lazy copies under a budget admitting only one decode.
   The byte-backed bool factory must canonicalize nonzero lanes while adopting
@@ -1664,6 +1718,77 @@ These directories hold `.usda` fixtures used by feature tests or as reference ma
 | `tests/feat/skinning/` | Skeletal animation fixtures (static, timesampled, mixed) |
 
 ### MaterialX standalone tests
+
+The shared CPU MaterialX BSDF uses height-correlated Smith visibility for its
+isotropic base and coat GGX lobes. When changing it, run the LightRT
+`examples/mtlxrender` `make test` suite: its generated point-response vectors
+include a grazing case, and its white-furnace test checks a material/view sweep.
+`tool-lusdrender-mtlx-conductor-response` checks isotropic and anisotropic
+MaterialX conductor responses against independent reference vectors.
+`tool-lusdrender-mtlx-conductor-mixture` checks independent conductor lobes,
+RGB weights, diffuse mixtures, opaque layers, anisotropic visible-normal
+sampling and its PDF, grazing-angle distribution histograms, conductor thin-film
+responses, mixed films, per-lobe normals and retroreflection, Monte Carlo versus quadrature,
+smooth-GGX PDF stability, furnace bounds and
+the 32/33-lobe boundary. The environment preview uses an approximate split-sum
+response with geometric-mean roughness and a film-aware split-sum approximation.
+The LightRT `make test` suite also renders anisotropic conductor tangents,
+normals, retroreflection and thin films with both CPU integrators.
+`tool-lusdrender-mtlx-sheen-mixture` checks Conty–Kulla and Zeltner sheen
+responses, RGB-weighted mixtures, the lobe limit, the default BSDF mix weight,
+and view-dependent sheen-layer throughput.
+`tool-lusdrender-mtlx-volume-lobes` checks VDF/EDF composition, default mix
+weights and phase-lobe overflow.
+`tool-lusdrender-mtlx-diffuse-mixture` checks mixed diffuse closure responses,
+the lobe limit, literal and connected RGB weights, opaque diffuse layer
+throughput, dielectric/generalized Schlick reflection-layer throughput and
+independent reflection lobes (including films), mixed lobes, RGB weights,
+sampling, and overflow. Transmission composition remains approximate;
+Its rough-transmission checks use the side-dependent glass selection probability
+`pg/(1+pg)` from inside OpenPBR glass (`interior_glass_rebalance`).
+`tool-lusdrender-mtlx-cert-energy` integrates OpenPBR glass reflection plus
+transmission in `--energy-mode reference` and `conservative`. Conservative must
+stay `<= 1` (the certified table `cert_albedo_table.h`, from
+materialx-conformance `scripts/certify-albedo.py`), recover energy inside its
+domain, and leave out-of-domain materials unchanged.
+`tool-lusdrender-mtlx-film-energy` checks that a thin film on glass does not
+create energy: transmission uses one minus the film Fresnel.
+`tool-lusdrender-mtlx-vf-special` replays the special values (NaN,
+infinities, signed zeros, flags) of the verified binary32 operations against
+`MtlxSpec/Binary32Special.lean`.
+`tool-lusdrender-materialx-validation` checks diffuse and sheen mixtures
+and opaque diffuse, sheen and conductor layers through the rendered CPU path,
+and verifies that
+disabled scattering remains black.
+Sheen environment lighting uses a directional-albedo fit and an irradiance
+approximation for nonuniform environments.
+The CPU path also evaluates qualitative Oren–Nayar and Burley diffuse; use
+`tool-lusdrender-bsdf-rough-diffuse` for their point-response checks.
+The CPU OpenPBR path also evaluates energy-compensated Oren–Nayar diffuse
+roughness. `tool-lusdrender-bsdf-eon-response` checks point responses, and
+`tool-lusdrender-materialx-validation` checks that authored roughness changes a
+render. LightRT's `make test-white-furnace` includes rough white diffuse cases.
+These checks do not establish complete OpenPBR or GPU parity.
+
+`tool-lusdrender-materialx-validation` also checks CPU path-traced linear PFM
+output against analytic Lambert and emission values, deterministic results
+across worker counts, seed variation, and a two-interface transmission path
+at different depth limits. The native and vendored diffuse-mixture tests check
+the glass branch's sampling probability with a white-furnace Monte Carlo test.
+The MaterialX validation also checks that a connected OpenPBR coat-darkening
+input affects path-traced color. The white-furnace test checks the per-channel
+OpenPBR coat-darkening formula, authored interpolation and energy bounds.
+It also checks three coat-relative IOR and base-roughness remap cases, including
+the inverted IOR ratio, saturation, and a non-finite coat-roughness fallback.
+The diffuse-mixture regression compares OpenPBR base and coat responses with
+reference-checked dielectric closures, including weighted IORs. The furnace
+test covers compensated OpenPBR materials and compares sampled energy with
+numerical quadrature.
+It checks the OpenPBR dielectric/metal response mixture against independent
+closures, verifies zero-thickness film leaves the mixture unchanged, and tests
+sampled energy at zero, half, and full metalness.
+Tydra and the MaterialX validation render also check that the CPU path
+preserves OpenPBR specular weights above one and positive IORs below one.
 
 After changing the WASM shading snapshot binding, rebuild both web modules and
 run `node tests/webgpu-mtlx-usd-graph.mjs` from `web/js`; the aggregate Node
@@ -1786,22 +1911,17 @@ ctest --test-dir build_ninja -R '^python-lightusd-tests$' --output-on-failure
 
 ## Fuzzing
 
-Fuzzer targets live under `tests/fuzzer/`. They are built separately from the CMake test suite using Meson and libFuzzer.
-
-Documented setup in `tests/fuzzer/README.md`:
+Core libFuzzer harnesses are built with the canonical CMake project:
 
 ```bash
-CXX=clang++ CC=clang meson build -Db_sanitize=address
-cd build
-ninja
+CC=clang CXX=clang++ cmake -S . -B build_ninja/fuzz -G Ninja \
+  -DLIGHTUSD_BUILD_FUZZERS=ON
+cmake --build build_ninja/fuzz
 ```
 
-Examples from the current README:
-
-```bash
-./fuzz_lightusd -max_len=128m
-./fuzz_intcoding_decompress -rss_limit_mb=8192 -jobs 4
-```
+See `tests/fuzzer/README.md` for core harness targets and corpus setup. The
+standalone Meson harnesses use the legacy implementation and require explicit
+`-Dlegacy=true`; keep those builds compile-only.
 
 Relevant fuzz entry points include:
 
@@ -1875,25 +1995,25 @@ The current infrastructure has a few operational gaps worth keeping in mind:
 - Several standalone feature benchmarks and tools under `tests/feat/` (hash, tangent, tydra-mesh-build, zstdusd) use local Makefiles and are not part of CMake or `ctest`.
 - The Python bindings tests (`python/tests/`) are not integrated into `ctest`.
 - Feature fixture directories (`lux/`, `node-mtlx/`, `skinning/`) provide test data but are not exercised by any automated runner.
-- The experimental `next` module (`src/next/`, `tests/next/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_NEXT_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `next` library tests](#experimental-next-library-tests).
+- The experimental `core` module (`src/`, `tests/core/`) is a standalone CMake project excluded from `build/` `ctest` and the regression gate by design (`LIGHTUSD_BUILD_TESTS=OFF`); its `assert()`-based tests are only meaningful in Debug builds. See [Experimental `core` library tests](#experimental-next-library-tests).
 
 `security_sha256_digest_test` checks empty/null handling, standard ASCII and
 binary SHA-256 vectors, and both padding/block boundaries. The asset-cache
-fixture in `web/js/tests/apply-variant-selection-overload.test.mjs` compares
+fixture in `web/js/tests/core-c-dispatch.test.mjs` compares
 against Node's crypto implementation on wasm32 and memory64, where native-only
 coverage would miss size_t-width bugs in bit-count encoding.
 
-## Workflow tools and next examples
+## Workflow tools and core examples
 
-`next_workflow_examples` generates small inputs and checks composition, typed
+`core_workflow_examples` generates small inputs and checks composition, typed
 queries, USDA/USDC reopening, payload/variant edits after snapshot publication,
 cancellation, sampled/spline/skeletal evaluation and portable package relocation.
-It is also registered in standalone next builds with examples enabled.
+It is also registered in standalone core builds with examples enabled.
 All four C++ workflow examples consume the public ownership facade; the
 animation traversal keeps stage-retaining `Prim` objects through its work list.
 The interactive workflow exercises the installed-header C++ document/render
 session facade over the C boundary, including RAII snapshot ownership and
-retained-snapshot prim queries. `next_test_document_session_c` separately compiles as strict
+retained-snapshot prim queries. `core_document_session_c` separately compiles as strict
 C11 and checks retained snapshots, revisions, render updates, stale snapshots,
 prepare/abort/commit, and cancellation; it is registered when Tydra is enabled.
 
@@ -1906,12 +2026,12 @@ When `lusdrender` is built, it runs the two-camera synthetic capture and checks
 raw depth, world normals and source IDs numerically. Temporary assets are removed
 after the run. `next_gltf_export` tests API budget failures, invalid attribute
 indices, malformed corner mappings, non-finite values and cyclic node graphs.
-`next_test_render_session_c` also checks the public GLB export's binary result
+`core_render_session_c` also checks the public GLB export's binary result
 and output-limit validation through a strict C11 consumer. The GLB writer is
 isolated in its own object file; a render-only static consumer does not link it.
 `lusdview_lod_stream_test` covers the C/POD viewer pre-pass with a composed
 camera and two transformed districts, checking the generated promotion wrapper.
-`next_test_c_api` loads the instancing fixture in both holder and native modes
+`core_c_api` loads the instancing fixture in both holder and native modes
 to verify the new traversal option without changing the export default.
 
 ```sh
@@ -1935,16 +2055,16 @@ The `lusdcat --explain` path is also a public-C-API consumer and should be
 smoke-tested with a USDA fixture when changing property-trace behavior.
 
 ```sh
-cmake -S src/next -B build_ninja/next-core -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake -S src -B build_ninja/core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=OFF
-cmake --build build_ninja/next-core
-ctest --test-dir build_ninja/next-core --output-on-failure
-cmake -S src/next -B build_ninja/next-render -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake --build build_ninja/core
+ctest --test-dir build_ninja/core --output-on-failure
+cmake -S src -B build_ninja/core-render -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_WITH_TYDRA=ON
-cmake --build build_ninja/next-render
-ctest --test-dir build_ninja/next-render --output-on-failure
+cmake --build build_ninja/core-render
+ctest --test-dir build_ninja/core-render --output-on-failure
 ```
 
 To validate the root product-selection path and its public consumer gate:
@@ -1963,22 +2083,17 @@ with `find_package(LightUSD CONFIG)` using only the installed public headers.
 For comparable full compile measurements, use target `lightusd_render_c` after
 the split: measuring only `lightusd_c` would omit render functionality present
 in the old combined target. `scripts/bench-compile.py --target ... --changed
-src/next/stage/stage.hh` measures incremental rebuild time and compilation
+src/stage/stage.hh` measures incremental rebuild time and compilation
 count, restoring the input timestamp afterward. Run measurements without
 concurrent builds or regression workloads.
 
-The combined WASM loading fixture in
-`web/js/tests/apply-variant-selection-overload.test.mjs` checks synchronous,
-layer/cached and async loading, validation JSON, lifecycle/progress state, and
-memory-probe size_t results on wasm32 and memory64. It also exercises the typed
-C task/record validation and JS ownership across async yields, including a
-callback deleting the original loader and a callback throwing `TypeError`.
-Memory probes reject negative lengths and lengths whose conservative scratch
-estimate exceeds the configured load-memory limit. The combined async binding
-uses C++17 tasks and remains available independently of the legacy-only
-`LIGHTUSD_WASM_COROUTINE` option. Select isolated rebuilt modules with
-`LIGHTUSD_COMBINED_MODULE`; see `web/js/docs/regression.md` for the Node override
-loader and full product regression procedure.
+The core WASM loading, ownership, and async contracts are checked by
+`web/js/tests/core-c-dispatch.test.mjs`,
+`web/js/tests/core-allocation-failure.test.mjs`, and
+`web/js/tests/core-usda-composition.test.mjs`. Core uses C++17 tasks.
+Legacy coroutine support is isolated behind `LIGHTUSD_WASM_COROUTINE` in the
+optional standalone legacy product. See `web/js/docs/regression.md` for the
+module override loader and complete regression procedure.
 
 The same combined fixture covers MCP context isolation across sessions and
 loader instances, counted Unicode/NUL-containing inputs, tool/resource JSON,
@@ -2162,16 +2277,16 @@ also validate C records, JS arguments, borrowed-output aliasing and bounds,
 exceptions without replay and receiver retention. Explicit copies survive
 reset; returned heap views retain the existing borrowed-buffer lifetime.
 
-`next_test_render_session_c` covers the render C configuration's extended
+`core_render_session_c` covers the render C configuration's extended
 controls: unchanged v4 layout/defaults, fan triangulation, each tangent method,
 animation suppression, geometry release, instancer arrays required for draw
 expansion, persistent resolver lifetime and rejected invalid control values.
-`tydra-next-c-api-smoke` exercises the `tydra_to_renderscene --next` facade path
-with animation enabled/disabled and a mesh triangulation/tangent configuration;
-it checks both exit status and scene counts. The command's legacy conversion
-path remains separate.
+`core_render_scene_c_api_smoke` retains the former facade smoke cases against
+`tydra_to_renderscene --core` (compatibility alias for its core default):
+animation enabled/disabled and mesh triangulation/tangent configuration, with
+exit-status and scene-count checks. The example has no legacy conversion path.
 
-`next_test_volume_c` covers the UsdVol render C surface: volume/field info
+`core_volume_c` covers the UsdVol render C surface: volume/field info
 (binding, grid name, value type, components, bounds), dense voxels,
 `lightusd_render_volume_field_nanovdb` (grid magic, header grid type, cached
 buffer identity), `lightusd_render_volume_field_sample` in world space
@@ -2192,7 +2307,7 @@ header and sparse decoder budget failures release partial allocations and
 rejects sampling below the retained grid-and-sampler footprint.
 
 On a 32-bit native build, `volumetric-tet-overflow-32` (legacy) or
-`next_test_tet_overflow_32` (next) checks that a lattice whose position buffer
+`core_tet_overflow_32` (next) checks that a lattice whose position buffer
 would overflow `size_t` is rejected before allocation or sampling. A standalone
 build against a 32-bit tinyvdb checkout can run the same fixture:
 
@@ -2271,12 +2386,12 @@ The `volumetric-tet-float-range` CPU test checks that both uniform and graded
 stuffing reject coordinates outside float range and tetrahedra that collapse
 when a small object is represented at a large world offset, while preserving
 the caller's existing output.
-`next_test_tydra` exercises bounded VDB decoding, grid-selection fallback and
+`core_tydra` exercises bounded VDB decoding, grid-selection fallback and
 allocator ownership across moves. The Python volumetric suite additionally
 tests that a compressed MJCF VDB exceeding the decoded-memory budget is
 rejected and that a larger budget succeeds.
 
-`volumetric-level-set-allocator` (legacy) and `next_test_level_set_allocator`
+`volumetric-level-set-allocator` (legacy) and `core_level_set_allocator`
 (next) sweep allocation failures through the CPU mesh-to-level-set pipeline.
 They verify unchanged existing outputs/reports, complete cleanup, exact-cap
 success and just-below-cap rejection, byte-identical serialized grids versus
@@ -2284,7 +2399,7 @@ normal allocation and multiple worker counts, and independent concurrent calls.
 The initial tetrahedron fixture covers 350 allocation sites. The sweep also
 passes Valgrind with zero errors and no leaked blocks.
 
-`next_test_tydra` additionally checks generated-field peak/retained accounting,
+`core_tydra` additionally checks generated-field peak/retained accounting,
 move ownership, bounded replacement failure and retry, and serialized identity.
 The Python volumetric suite exercises repeated distinct SDF assets within one
 import budget and successful retry after optional generation failures.
@@ -2324,7 +2439,7 @@ EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
 node /tmp/graded-refine-wasm.js
 EMCC_CORES=2 emcc -O2 -std=c11 -Isrc/external/tinyvdb \
   tests/volumetric/test-graded-stencil.c src/lz4/lz4.c \
-  web/build_ninja/vol-next/lightusd_next_build/tydra_next_build/liblightusd_tinyvdb.a \
+  web/build_ninja/vol-next/lightusd_core_build/tydra_build/liblightusd_tinyvdb.a \
   -sENVIRONMENT=node -sEXIT_RUNTIME=1 -o /tmp/graded-stencil-wasm.js
 node /tmp/graded-stencil-wasm.js
 ```
@@ -2386,7 +2501,7 @@ Use representative meshes and retain instruction counts when comparing runs
 under shared CPU load. `--host-only`
 uses a synthetic evaluator, so its output is not a correctness comparison.
 
-`lusdview_incremental_scene_update_test` now builds without linking next core
+`lusdview_incremental_scene_update_test` now builds without linking core
 and exercises the public C change-record planner interface. It retains the
 slot/remap/deformation/material/texture cases and checks short records, null
 path/property spans, unsupported flags, stale revisions, full resync, and
@@ -2395,12 +2510,12 @@ The `lusdview-incremental-*` Vulkan/OpenGL tests cover the viewer's temporary
 adapter from native next changes to those borrowed C records during real
 topology, layer-reload and texture updates.
 
-`next_test_document_session_c` also creates a temporary shader layer in its
+`core_document_session_c` also creates a temporary shader layer in its
 build directory, reloads property/stage-metadata edits, and verifies the full
 caller-owned snapshot change export. It checks required counts, flags,
 revisions, property names, short-buffer atomicity, invalid arguments, empty
 changes and snapshot-backed string lifetime after later publications and
-session destruction. `next_workflow_examples` verifies the C++ facade exposes
+session destruction. `core_workflow_examples` verifies the C++ facade exposes
 the variant-edited `/World.level` property in the interactive-session example.
 
 The same C document test covers uncomposed loading, source-layer-only cache
@@ -2411,12 +2526,12 @@ snapshots. After transfer, snapshot access fails until reopen; transferred data
 remains valid and independently editable after reopen and session destruction.
 The interactive workflow also exercises the C++ memory query and stage transfer.
 
-`next_test_document_session_c` also tests batch variant replacement and payload
+`core_document_session_c` also tests batch variant replacement and payload
 loading on two sibling prims. It verifies single-revision publication, omitted
 override removal, empty batches, malformed paths, duplicate selections, count
 overflow, retained snapshots, and cancellation rollback followed by rebuild.
 Loading both sibling payloads exercises pseudo-root cache invalidation with
-previously retained composition data. `next_workflow_examples` uses the C++ batch
+previously retained composition data. `core_workflow_examples` uses the C++ batch
 facade for its variant edit and deferred payload loads.
 
 Document-session coverage also checks public state/dependency queries and cache
@@ -2474,7 +2589,7 @@ ctest --test-dir build_ninja -R '^lusdview_(preview_cache|vchar_control_map)_tes
 
 For a live composition-preview cache check, run the interactive viewer twice
 against the same reference scene with authored mesh extents and an initially
-empty cache directory. Use `--next --backend vk --no-threaded
+empty cache directory. Use `--core --backend vk --no-threaded
 --large-scene-profile balanced --preview-cache auto --preview-cache-dir <dir>
 --timing`, under the documented Xvfb/offload environment when needed. Verify
 `preview cache: stored` on the cold run, then `preview cache: hit` and
@@ -2533,14 +2648,14 @@ The incremental-topology regression also checks MCP `prim_get`, `attr_list` and
 `attr_get` through the public stage API, including schema fallback visibility and
 array type/count summaries. Variant queries preserve the empty enumeration of a
 flattened composed snapshot; subsequent topology/material edits still verify
-recomposition. `next_test_c_api` covers owned resolved property-name lists,
+recomposition. `core_c_api` covers owned resolved property-name lists,
 schema defaults, scalar/string views, array summaries without data buffers,
 blocked/missing defaults, invalid handles and list lifetime after stage destruction.
 
 When changing viewer document payload interfaces, run
 `lusdview-usdz-deferred-payload` alongside the document unit and incremental
 regressions. It checks the exact deferred prim/arc reported through MCP, the
-next loader's proxy geometry, and successful deferred USDZ payload loading in
+core loader's proxy geometry, and successful deferred USDZ payload loading in
 both loaders. The document unit verifies owned path-list contents survive edits
 and memory queries return the public C stats layout.
 
@@ -2570,7 +2685,7 @@ private native-snapshot retention adapter has been removed; its symbol should
 not appear in shared-library exports.
 
 The GUI scene hierarchy uses public prim handles and retains its own Stage
-owner. `next_test_c_api` covers its authored-payload presence query. Include
+owner. `core_c_api` covers its authored-payload presence query. Include
 reload/incremental, deferred-payload and camera/animation runtime tests when
 changing GUI Stage ownership; native inspector/deformation borrowers must remain
 valid across replacement and recomposition.
@@ -2686,7 +2801,7 @@ and warning-only exports. The UDIM browser check rejects Apply when an edited
 tile limit is invalid. `npm run test:lucia:performance` measures
 unchanged asset snapshot retention and bounded tile streaming; the browser smoke
 also reports a 131072-triangle viewport workload. Shared WASM UDIM tests cover
-HDR-to-EXR and EXR round-trip thumbnails on combined/next wasm32/memory64, with
+HDR-to-EXR and EXR round-trip thumbnails on combined/core wasm32/memory64, with
 16-bit atlas precision preserved. Rebuild next-only WASM with
 `LIGHTUSD_WASM_WITH_EXR=ON` to enable both EXR reading and writing.
 
@@ -2712,7 +2827,7 @@ Configure `build_ninja` with `LIGHTUSD_BUILD_TOOLS=ON` and
 exact exit status and structured diagnostics for strict/Core profiles, schema
 and shader manifests, compiled callbacks, sampled topology, reachable variants,
 resource limits, JSON/SARIF failures, and baselines. Generated table freshness
-is checked separately. Standalone Debug `next` testing and AOUSD supplemental
+is checked separately. Standalone Debug `core` testing and AOUSD supplemental
 checks remain required when changing the shared validators or compositor.
 
 `tests/checker-parity.py` compares exact IDs, severity, sites, and rejection
@@ -2729,8 +2844,8 @@ They compare native/WASM reports and exercise both existing web applications.
 
 ### Typed authoring and sampled-value follow-up
 
-The standalone `next_test_c_api` covers empty numeric arrays, integer-vector
-arrays, and authored custom flags. `next_test_aousd_conformance` generates 30
+The standalone `core_c_api` covers empty numeric arrays, integer-vector
+arrays, and authored custom flags. `core_aousd_conformance` generates 30
 round-trip cases from the elective-field inventory: explicit empty/default
 values must differ from unauthored fields through both USDA and USDC.
 Structural type/order fields retain their separate syntax-specific matrices.
@@ -2742,7 +2857,7 @@ names through both formats without inventing semantics for extension fields.
 Local unknown-metadata assignment folding is covered separately across layer,
 prim, variant and property scopes. Repeated qualifiers replace their earlier
 value; a bare assignment removes prior qualified opinions and suppresses later
-qualified edits. `tests/next/test-raw-metadata.py` retains all 36 fixtures against
+qualified edits. `tests/core/test-raw-metadata.py` retains all 36 fixtures against
 pinned stock OpenUSD 26.11: 32 accepted inputs produce 64 comparisons through
 USDA and native USDC round trips, and four qualified-empty-list inputs are
 explicitly classified as stock text rejections. Native conformance tests retain
@@ -2761,7 +2876,7 @@ relationship defaults to crate, and native crate preservation remains outstandin
 When the AOUSD checkout and pinned OpenUSD Python package are available,
 `next_aousd_sampled_value_pxrdiff` checks 304 DefaultTime/numeric queries across
 held/linear interpolation and clip transitions. Set
-`LIGHTUSD_NEXT_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
+`LIGHTUSD_PXR_PYTHON` to relocate the oracle. The isolated stock 26.11 run
 matches all 304 queries, with zero unexpected or classified timing differences.
 The harness retains explicit classifications for previously observed corpus
 timing differences; any unclassified mismatch fails. Held
@@ -2799,7 +2914,7 @@ render pins keep their immutable scene catalog alive.
 
 Run the standalone Debug suite as documented above. For a sanitizer pass without
 precompiled headers, configure a separate Ninja directory with
-`LIGHTUSD_NEXT_USE_PCH=OFF`, `LIGHTUSD_NEXT_ENABLE_THREAD=ON`, and ASan/UBSan on
+`LIGHTUSD_USE_PCH=OFF`, `LIGHTUSD_ENABLE_THREAD=ON`, and ASan/UBSan on
 both C and C++ compilation/linking. This repository disables C++ RTTI, so use
 `-fno-sanitize=vptr`. Leak detection may need disabling in sandbox environments.
 Check the individual `render-data*.hh` headers with `-fsyntax-only` and no PCH.
@@ -2814,14 +2929,14 @@ interfaces have been removed.
 
 The independent WASM feature contracts are in
 [web regression documentation](../web/js/docs/regression.md#independent-next-feature-modules).
-Build and ship the complete `lightusd_next_distribution`, including geometry,
+Build and ship the complete `lightusd_core_distribution`, including geometry,
 raytrace, validator and EXR for each pointer width. `loadFeature(name)` is the
 feature loader; constructors and functions belong to its returned module.
 
 ### Viewer, examples and tool consumers
 
 The compatibility product configures `lusdview` and the older examples/tools,
-while also linking the refactored next/Tydra-next libraries for their next paths.
+while also linking the core/Tydra libraries for their core paths.
 Use this build in addition to the standalone next checks:
 
 ```sh
@@ -2831,9 +2946,9 @@ cmake -S . -B build_ninja -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DLIGHTUSD_BUILD_TOOLS=ON -DLIGHTUSD_BUILD_GUI_VIEWER=ON \
   -DLIGHTUSD_WITH_TYDRA=ON -DLIGHTUSD_WITH_C_API=ON \
   -DLIGHTUSD_WITH_MCP_SERVER=ON -DLIGHTUSD_USE_NEXT_PCP_LARGE_SCENE=ON \
-  -DLIGHTUSD_NEXT_BUILD_TESTS=ON -DLIGHTUSD_NEXT_BUILD_EXAMPLES=OFF \
-  -DLIGHTUSD_NEXT_BUILD_C_API_EXAMPLE=OFF \
-  -DLIGHTUSD_ENABLE_THREAD=ON -DLIGHTUSD_NEXT_ENABLE_THREAD=ON
+  -DLIGHTUSD_BUILD_TESTS=ON -DLIGHTUSD_BUILD_EXAMPLES=OFF \
+  -DLIGHTUSD_BUILD_C_API_EXAMPLE=OFF \
+  -DLIGHTUSD_ENABLE_THREAD=ON -DLIGHTUSD_ENABLE_THREAD=ON
 cmake --build build_ninja --parallel 12
 ctest --test-dir build_ninja --parallel 4 --output-on-failure \
   -R '^lusdview_.*_test$|^lusdview-gpu-material-abi$|^lusdchecker_|^lusddiff_|^workflow_tools$|^next_(workflow_examples|comprehensive_example)$'
@@ -2882,9 +2997,9 @@ and runs Vulkan raster/RT plus renderer CPU/Vulkan. Keep `no_renderable` and
 warning statuses visible in the report. See [the viewer corpus procedure](lusdview.md#external-usd-assets-smoke-rendering)
 and [the WASM corpus parser](../web/js/docs/regression.md#usd-wg-corpus-parsing).
 
-### Large-scene next-core performance gates
+### Large-scene core performance gates
 
-Use `tests/next/bench-large-scene.py` with two saved Release `lusdcat` binaries
+Use `tests/core/bench-large-scene.py` with two saved Release `lusdcat` binaries
 built with the same compiler, flags, allocator, and thread support. Its JSON
 manifest is a list of local cases, for example:
 
@@ -2898,7 +3013,7 @@ manifest is a list of local cases, for example:
 ```
 
 ```sh
-python3 tests/next/bench-large-scene.py \
+python3 tests/core/bench-large-scene.py \
   --baseline /tmp/lusdcat.baseline --candidate /tmp/lusdcat.candidate \
   --manifest /tmp/scenes.json --output /tmp/scene-results
 ```
@@ -2937,7 +3052,7 @@ unchanged). The USDA and crate reader options expose the same threshold and
 use their actual input/source length without an extra filesystem probe. The
 USDA hint is restored after successful and failed parses for parser reuse.
 Timing is opt-in through options in the library and
-`LIGHTUSD_NEXT_TIMING=1` in the CLI.
+`LIGHTUSD_TIMING=1` in the CLI.
 
 Qualify Caldera proxy, one full district, then all 45 full districts before
 Island and the merged ALab techvar scene. Treat baked procedural frame 1004 as
@@ -2967,7 +3082,7 @@ hash against the saved original executable before measuring it.
 
 The reader decodes validated field value-representation tables directly into
 their final buffer, using an explicit decompression budget. The generic C
-blob decoder keeps its 1 GiB default cap. `next_test_crate_alloc_guard` checks
+blob decoder keeps its 1 GiB default cap. `core_crate_alloc_guard` checks
 explicit-budget rejection, truncated multi-chunk frames, and (on 64-bit native
 Unix) sparse mappings above 2 GiB without committing gigabytes of test RAM.
 Large-file readback must also exercise a real table above 1 GiB; the all-full
@@ -2976,8 +3091,8 @@ Caldera crate expands its value-representation table to 1,413,255,776 bytes.
 ## Native OBJ/robot imports and Python physics
 
 The native CLI and Python bindings share the C11 OBJ reader and native
-URDF/MJCF frontends. `next_test_asset_import` checks the public import C API;
-`next_test_urdf_to_usd` checks stage authoring, and
+URDF/MJCF frontends. `core_asset_import` checks the public import C API;
+`core_urdf_to_usd` checks stage authoring, and
 `physics_obj_c11_import_test` checks the legacy usdObj adapter.
 `python/tests/test_native_import.py` covers OBJ/MTL data and texture packaging,
 URDF/MJCF frames/inertia, include and package resolution, missing assets,
@@ -2986,8 +3101,8 @@ resource limits, physics snapshots, and authoring.
 Use isolated build trees when another checkout consumer is compiling:
 
 ```sh
-cmake -S src/next -B build_ninja/physics-import-next -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON
+cmake -S src -B build_ninja/physics-import-next -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON
 cmake --build build_ninja/physics-import-next -j8
 ctest --test-dir build_ninja/physics-import-next --output-on-failure
 LIGHTUSD_PY_BUILD_DIR="$PWD/build_ninja/physics-import-python/native" \
@@ -3001,7 +3116,7 @@ area regression. For sanitizer verification, build both C and C++ sources with
 AddressSanitizer/UBSan; environments running under ptrace require
 `ASAN_OPTIONS=detect_leaks=0` for the test process.
 
-`next_test_obj_reader` additionally checks both C11 precision families, strict
+`core_obj_reader` additionally checks both C11 precision families, strict
 `vw` errors, influence metadata and mixed Mesh/BasisCurves/Points imports. It
 also runs with `LIGHTUSD_WITH_TYDRA=OFF`; that configuration creates no XML
 frontend target. `LIGHTUSD_WITH_USDOBJ=OFF` removes the layer adapter entirely.
@@ -3020,7 +3135,7 @@ PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" \
 
 ### Generated large OBJ tests
 
-`next_test_obj_large` builds OBJ text entirely in memory and checks the C11
+`core_obj_large` builds OBJ text entirely in memory and checks the C11
 reader and typed USD conversion. It covers overflowed/invalid indices, global
 limits across groups and primitive types, allocation-failure cleanup, bounded
 blank-line handling, non-terminated guarded input, large-coordinate normals and
@@ -3038,7 +3153,7 @@ The generator has explicit size arguments and writes no asset files. Run the
 small case under ASan/UBSan as well as the ordinary native build; do not use the
 multi-gigabyte configuration as a routine sanitizer/CI requirement.
 
-`next_test_obj_materials` supplies generated MTL bytes to both C precision
+`core_obj_materials` supplies generated MTL bytes to both C precision
 families through standalone parsing, referenced OBJ materials and callbacks.
 It rejects malformed/non-finite numeric fields and overflowing integer options,
 checks optional transform components and numeric texture filenames, and sweeps
@@ -3056,10 +3171,10 @@ load. Allocation-failure sweeps cover both indexes in scene and callback paths.
 runs. Python cases preserve per-definition texture anchors and `Pr`/`Pm` flags
 for duplicate names across BOM and LF/CRLF/CR source variants.
 
-`next_test_obj_textures` checks request/canonical texture caching, separate
+`core_obj_textures` checks request/canonical texture caching, separate
 resolution and I/O, immutable shared ownership through layer cloning, per-import
 cache lifetimes, compatibility with combined read callbacks, resource limits
-and authoritative resolver failures. `next_test_usdz_writer` compares owning
+and authoritative resolver failures. `core_usdz_writer` compares owning
 and borrowed asset views byte-for-byte through memory and streaming writers,
 including empty assets, invalid pointers and budget failures.
 `python/tests/test_import_textures.py` checks OBJ/URDF/MJCF texture aliasing under
@@ -3068,7 +3183,7 @@ deletion. Both save methods must produce one texture entry and shader paths
 that reopen from the resulting USDZ without the original resolver. The source
 stage's paths remain unchanged.
 
-`next_test_asset_import` covers owned report queries, failure reports, option
+`core_asset_import` covers owned report queries, failure reports, option
 validation and the shared unsupported-feature policies through the C API.
 Its MJCF flexcomp cases reject incomplete pin tuples, fractional or out-of-range
 pin indices, and out-of-bounds reversed ranges; they also check valid tuples
@@ -3076,7 +3191,7 @@ split across pin elements and valid empty ranges. Direct flexcomp connectivity
 rejects fractional, out-of-range and missing vertex indices while accepting a
 valid triangle. `python/tests/test_mjcf_raw_flex.py` verifies raw flex index
 diagnostics in warn and error policies.
-`next_test_obj_textures` also checks native collector reuse, bounded diagnostic
+`core_obj_textures` also checks native collector reuse, bounded diagnostic
 storage, malformed UTF-8 and explicit truncation counts.
 `python/tests/test_import_report.py` exercises independent input/memory/depth
 limits, warning drainage, concurrent failed imports, resolver exception identity,
@@ -3084,7 +3199,7 @@ included XML policies, preservation budget failures and preserved metadata
 round trips through USDA/USDC/USDZ. Reports remain runtime data after reopening.
 The contract is documented in [import-report.md](import-report.md).
 
-`next_test_physics_query` checks the shared native C++/C typed snapshot path:
+`core_physics_query` checks the shared native C++/C typed snapshot path:
 coherent numeric time, overlapping groups, authored types/variability,
 relationship targets, owned array lifetime, shared immutable storage and
 snapshot memory limits. It links only `lightusd_c`.
@@ -3099,7 +3214,7 @@ provenance against the generated schema manifests. The descriptor
 lookups also link from a pure C11 consumer of `lightusd_core_c`, without the
 C++ validation engine.
 
-`next_test_validation_report` checks the owned C/C++ report, native streaming
+`core_validation_report` checks the owned C/C++ report, native streaming
 issue/byte limits, merge accounting, input validation, stage-independent lifetime
 and explicit failure when all findings are omitted. Existing validation registry
 and semantic suites cover the shared engine. `python/tests/test_physics_validation.py`
@@ -3115,7 +3230,7 @@ to test explicit mesh colliders; see
 
 ### Updated Menagerie native/Python sweep
 
-`tests/next/run-menagerie-import.py` inventories git-tracked XML/OBJ files at the
+`tests/core/run-menagerie-import.py` inventories git-tracked XML/OBJ files at the
 local checkout's actual revision. It does not update or pin the dataset. XML
 fragments are accounted for separately, including the auxiliary Aloha actuator
 fragment that has worldbody sites but cannot compile without its parent bodies.
@@ -3132,7 +3247,7 @@ rebuild cannot replace a mapped binary. Reports contain per-file warnings,
 reference mismatches, timing and peak RSS; failed case artifacts are retained.
 
 ```sh
-PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/next/run-menagerie-import.py \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" python3 tests/core/run-menagerie-import.py \
   --menagerie "$MENAGERIE_ROOT" --out build_ninja/obj-skel-report/final \
   --cli "$LEGACY_IMPORT_CLI" --cli "$NEXT_IMPORT_CLI" \
   --usdcat "$OPENUSD_USDCAT" --workers 4
@@ -3146,7 +3261,7 @@ See [OBJ mapping and skinning](usdobj.md) for supported records and binding rule
 
 ### Downstream Newton and OpenUSD checks
 
-`tests/next/run-newton-compare.py` builds two Newton models per MJCF file in
+`tests/core/run-newton-compare.py` builds two Newton models per MJCF file in
 one process: `ModelBuilder.add_mjcf` on the source and `add_usd` (with
 `SchemaResolverMjc` and `SchemaResolverNewton`) on LightUSD's output for each
 `--profile`. It compares DOF, collider, site and body counts, per-body mass,
@@ -3158,7 +3273,7 @@ Newton needs `warp-lang`, `mujoco`, `mujoco-warp`, `usd-core` and
 `newton-usd-schemas`; CPU is sufficient.
 
 ```sh
-PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/next/run-newton-compare.py \
+PYTHONPATH="$ISOLATED_PYTHON_PACKAGE" "$NEWTON_PYTHON" tests/core/run-newton-compare.py \
   --menagerie "$MENAGERIE_ROOT" --profile newton --out newton-compare.json
 ```
 
@@ -3177,7 +3292,7 @@ include fragments without `<worldbody>`, writes each input to a unique file
 D6 whose DOFs differ only in order as `dof_order` (Newton orders merged
 joints by sorted prim path, not authored order).
 
-`tests/next/run-openusd-physics-check.py` saves every profile as USDA, runs all
+`tests/core/run-openusd-physics-check.py` saves every profile as USDA, runs all
 registered OpenUSD `UsdValidation` validators (including
 `usdPhysicsValidators:*`) and reports what `UsdPhysics.LoadUsdPhysicsFromRange`
 recovers. It fails if the four physics validators are unavailable, a converted
@@ -3187,7 +3302,7 @@ example:
 
 ```sh
 PYTHONPATH="$ISOLATED_PYTHON_PACKAGE:$OPENUSD_PYTHONPATH" "$OPENUSD_PYTHON" \
-  tests/next/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
+  tests/core/run-openusd-physics-check.py --require-kind RevoluteJoint=1 \
   --require-kind CubeShape=2 tests/feat/physics-oracle/hinge.urdf
 ```
 
@@ -3214,14 +3329,14 @@ includes heterogeneous nested arrays to protect builders holding PrimSpec
 pointers during layer growth. Run that case under ASan/UBSan with the same RTTI
 setting as the core (`-fno-rtti`).
 
-`tests/next/test-obj-wasm.mjs` checks the isolated WASM OBJ layer parser, changed
+`tests/core/test-obj-wasm.mjs` checks the isolated WASM OBJ layer parser, changed
 skin weights, geometry-property parity with a native USDA import, binary/package
 roundtrips and physics JSON authoring. Pass its module path and a native USDA
 fixture exported from the inline OBJ source in the script. This avoids replacing
 another worker's WASM artifacts.
 
 Parallel instance-claim repair (large-scene §10.91) needs fresh coverage in
-`next_test_pcp_parallel` and `next_test_instance_group`: compare serial and
+`core_pcp_parallel` and `core_instance_group`: compare serial and
 parallel prototype selection/child order when a discarded subtree owns a
 speculative claim, including nested repairs, donations and earlier-batch seeds.
 Check depth-limit/unresolved-source fallback as well. This qualification is
@@ -3401,7 +3516,7 @@ ordinary output with 1/4 compose threads, require preparation before Plan
 completion with no Run pass, and verify scratch-limit failure cleanup. See
 [planning/encoding overlap](large-scene.md#10117-planning-overlaps-writer-encoding-and-scratch-io).
 
-The `next_test_pcp` suite also checks opt-in immutable source snapshots:
+The `core_pcp` suite also checks opt-in immutable source snapshots:
 read-once callback replay, concurrent initial/replay loads, parsed-layer
 expiration, byte-limit failures, native-file removal, original asset anchors,
 pass-1 back references, retained mapped USDC values after registry cleanup and
@@ -3410,7 +3525,7 @@ POSIX disk directory; preloads and foreign dependency owners remain retained.
 See [large-scene snapshot details](large-scene.md#10116-immutable-source-snapshots-and-pass-1-eviction)
 for options, focused CLI parity evidence and remaining qualification.
 
-The `next_test_spill_array` test checks append/resolve equivalence with spilling
+The `core_spill_array` test checks append/resolve equivalence with spilling
 enabled and disabled. On Windows, requesting spill uses an in-memory fallback;
 the test verifies that no bytes spill and no I/O failure is reported. The
 structural-column spill budget and directory have no effect on Windows.
@@ -3437,7 +3552,7 @@ allocations must use `posix_memalign` there (`aligned_alloc` requires API 28).
 ### Cached large-scene preview regression
 
 Build `lusdpreview` and `test_scene_preview`, then run
-`ctest --test-dir build_ninja -R '^next_test_scene_preview$' --output-on-failure`.
+`ctest --test-dir build_ninja -R '^core_scene_preview$' --output-on-failure`.
 The generated fixtures cover all three representations, bounded outputs,
 portable export, cross-batch native instances, forward PointInstancers,
 texture baking, dependency invalidation, malformed/truncated cache recovery,
@@ -3468,11 +3583,11 @@ for shader/descriptor qualification. Keep large source assets, cached sidecars,
 images and measurement logs in ignored build directories.
 
 
-For extended previews, `next_test_scene_preview_compute` checks CPU conversion
+For extended previews, `core_scene_preview_compute` checks CPU conversion
 and direct UsdVol SDF/albedo rendering, rejects malformed compute buffers and
 verifies camera updates reuse immutable grid data. Run its executable with
 `vulkan` and `cuda` on hardware to compare each kernel against the CPU reference;
-an unavailable requested backend fails. `next_test_light_filter` checks the
+an unavailable requested backend fails. `core_light_filter` checks the
 portable light-filter registry, `lightusd:filter:kind`/parameter parsing with
 clamping, the fold into the render-ready light intensity/color, warnings for
 unknown kinds and missing targets, custom-kind registration/unregistration, and
@@ -3481,10 +3596,10 @@ preview light and shadow linking (mask exclusion/inclusion, independent light an
 shadow masks, CPU/lavapipe parity), and `check-source-refinement.py --software`
 runs the 12-capture refinement matrix against Mesa without NVIDIA probing.
 Custom filter kinds register through the C API
-(`lightusd_register_light_filter`, covered by `next_test_light_filter_c`) and
+(`lightusd_register_light_filter`, covered by `core_light_filter_c`) and
 through Python (`lightusd.register_light_filter`, covered by
 `python/tests/test_light_filter.py`); both surfaces share the C++ registry used
-by conversion and preview caches. `next_test_scene_preview` also checks
+by conversion and preview caches. `core_scene_preview` also checks
 that regional source resampling produces finer detail and retains the background,
 including PointInstancer targets inside native instances and nested prototype
 triangle/placement graphs.
@@ -3621,7 +3736,7 @@ the tool README.
 `tool-lusdrender-analytic-primitives` checks schema-default Cube/Sphere geometry,
 payload material bindings and transforms, native and point instances, masks,
 visibility/purpose, generated UVs, and animated radius/BVH invalidation. It uses
-small generated fixtures and requires no external assets. The Tydra next suite
+small generated fixtures and requires no external assets. The Tydra suite
 also checks default-time and interpolated analytic dimensions. See
 [headless GPU commands and texture coverage](lusdrender.md#analytic-geometry-regression).
 The same fixtures verify PreviewSurface image routing on generated and authored
@@ -3828,7 +3943,7 @@ one-sample clip files without `interpolateMissingClipValues`, plus held mode.
 `test_connection_to_clip_keeps_lazy_file_loader` requires the C API's stage-level
 value-clip stage cache to revalidate each cached clip against its file stamp, so a
 rewritten `clip.usda` is observed by the next resolve; the AOUSD conformance test
-(`next_test_aousd_conformance`) separately requires a caller-owned
+(`core_aousd_conformance`) separately requires a caller-owned
 `ValueClipStageCache` to keep reusing stages across queries (`clip_load_count ==
 1`), which is why file-stamp revalidation is an opt-in cache property rather than
 unconditional. `TestConcurrentValueClipCache` runs eight threads against one
@@ -3838,7 +3953,7 @@ warmed cache must not load the clip again.
 requires a default (holder-flattened) load to expose the same mesh set as a
 native-instance load for shared and nested instances; the extracted-prototype
 writer representation keeps its deliberately orphaned members
-(`next_test_pcp`).
+(`core_pcp`).
 The small `tests/usda/pcp-ancestor-variant` fixtures check ancestor variant
 strength against direct child reference/payload/inherit arcs and a weaker
 referenced ancestor, in serial/parallel and expanded/native-instance modes.
@@ -3859,7 +3974,7 @@ covering sheared UVs, degenerate parametrizations and malformed vectors. A third
 check (`lusdview-cpu-graph-tangent`) proves the MaterialX `tangent` and
 `bitangent` graph nodes return that same frame: `tangent * (1,0,0)` and
 `bitangent * (0,0,-1)` must shade byte-identically to their constant controls.
-The next-tydra converter also carries unit checks that (a) a texture asset
+The Tydra converter also carries unit checks that (a) a texture asset
 forwarded through a referenced material interface (`inputs:file.connect =
 </Mat.inputs:surfaceMap>`) resolves against the layer that authors the value,
 not the referenced look layer (`TestForwardedTextureAssetAnchor`), and (b) a
@@ -3961,7 +4076,7 @@ explicit native thread,input-policy and array limits and fingerprint the
 frozen Python package as well as its extension/library. Trusted/mmap profiles
 must be reported separately from the unchanged untrusted default.
 
-The internal `next_test_c_api_lazy_view` regression requires numeric arrays to
+The internal `core_c_api_lazy_view` regression requires numeric arrays to
 remain undecoded during wrong-type probes and aliases validated uncompressed
 POD storage through a C buffer pin. A counting source verifies zero decodes,
 exact source-pointer identity and source retention after value destruction.
@@ -3974,7 +4089,7 @@ policy or the decoded-array count ceiling.
 ### Resumed dataset verification, 2026-11-03
 
 The [resumed report](validation/session-resumed-2026-11-03.md) records the final
-276-test native sweep, separate Python/next/AOUSD/WASM checks and AMD captures.
+276-test native sweep, separate Python/core/AOUSD/WASM checks and AMD captures.
 [USD-assets sampled diagnostics](validation/usd-assets-native-parameters-2026-11-03.md)
 now require actual native roughness/metallic field checks in addition to shared
 emissive adapters. [Island subset masks](validation/island-subset-population-2026-11-03.md)
@@ -4041,10 +4156,2714 @@ Focused no-I/O verification (the ordinary disk-fixture tests require native
 I/O and should run in the default build):
 
 ```sh
-cmake -S src/next -B build_ninja/no-native-io -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_NEXT_BUILD_TESTS=ON \
+cmake -S src -B build_ninja/no-native-io -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DLIGHTUSD_BUILD_TESTS=ON \
   -DLIGHTUSD_NATIVE_IO=OFF
 cmake --build build_ninja/no-native-io --target test_host_services test_host_services_c
 scripts/xctest.sh ctest --test-dir build_ninja/no-native-io \
-  -R 'next_test_host_services' --output-on-failure
+  -R 'core_host_services' --output-on-failure
 ```
+
+## Legacy tests (compiled, not run)
+
+Since 1.1 the legacy implementation (`src/legacy/`, `-DLIGHTUSD_BUILD_LEGACY=ON`)
+is built but registers no CTest cases. Add `-DLIGHTUSD_WITH_LEGACY_TYDRA=ON`
+to compile the legacy scene converter and its test binaries. The legacy test programs live under
+`tests/legacy/` and still compile. Core replacements for the legacy-only
+shell drivers are `core_scope_imageable_roundtrip`, `core_variant_chain` and
+(with a pinned OpenUSD usdcat) `core_pxr_crate_fidelity`.
+
+The canonical asset-resolution and variant-listing example sources now use core
+APIs; the old `*-next.cc` duplicates and their legacy example registrations have
+been removed. `core_asset_resolution_example` and `core_variant_lister_smoke`
+exercise the public example entry points. The OpenChess tracing worker loads
+`loadFeature('raytrace')` from the core distribution. Demo production builds copy
+all optional feature JS/WASM pairs, and shared composition/export demo loading
+uses the core path. `web/js/tests/core-features.test.mjs` checks feature loading,
+independent heaps, ray tracing, and Worker transfers. The former backend comparison
+page now compares the source with a USDC-rooted USDZ roundtrip. After building
+`web/demo` with Vite, run `cd web/js && npm run test:demo-core` to check
+all 27 production demo entry points and the landing-page links in headless
+Chromium. Coverage includes 12 shared-foundation pages with offline USDA,
+USDC and USDZ fixtures; the custom animation, composition/streaming, inspector,
+material, viewer, diff and packager pages; actual MuJoCo simulation and
+validation; and the production OpenChess raytrace Worker. Packager checks
+exercise all three download formats. `--custom-only` and `--page=<name>` allow
+focused custom-page runs. The URDF converter source and example CMake entry point also use core
+APIs exclusively; `--format all` exercises USDA, USDC, and USDZ output.
+
+`core_test_geometry_optimize` checks mesh merging with nonuniform/mirrored
+transforms, inverse-transpose normals, indexed face-varying continuity,
+element-sized and uint2 primvars, subdivision creases/corners/holes, material
+subsets, size limits, transactional budget failure, and Crate output without
+reviving removed meshes. `core_lusdzconvert_geometry` exercises flat USDA/USDC
+and both USDZ root formats. `web/js/tests/core-converter-geometry.test.mjs` checks
+the shared WASM exporter, source-stage isolation, and numeric option validation.
+
+`core_test_asset_rebase` verifies source-layer-relative asset defaults and time
+samples, inline variants, shared-content clone isolation, and material dedupe
+that distinguishes equal filenames anchored to different directories. The
+resumable WASM flatten path rebases source values before merging opinions, so a
+weak layer's texture remains anchored correctly when a stronger layer overrides
+another field on the same shader.
+
+`web/js/tests/core-converter-orchestration.test.mjs` exercises the public folder
+and streaming converter APIs with sublayers/references, variant overrides,
+source-relative texture paths and animated asset paths, both root formats,
+material dedupe, mesh merging, append-only ZIP sinks, missing dependencies, and
+input limits. Core conversion now flattens by default; `flatten: false` retains
+single-root authoring unless optimization or variant overrides require a
+composed stage. The single-USDZ passthrough shortcut excludes these options so it
+cannot silently ignore requested optimization. Texture-free scenes accept the
+default CLI/UI image settings. Converted USDZ inputs retain their embedded assets
+with `repackUsdz: false`, and custom asset processors disable passthrough.
+
+`core_lusdzconvert_images` covers ordinary uint16 PNG resize and JPEG asset
+remapping. The shared image engine also powers counted core WASM conversion,
+channel packing and size/quality fitting. `core-image-convert.test.mjs` covers
+bounded scanline fallback, precision, colorspaces, optional EXR and HDR output;
+`core-converter-textures.test.mjs` checks folder/streaming remaps and name
+collisions for both root formats. Format-only configured exports use the direct
+writer without imposing the remap/optimization clone's working-set budget.
+
+The MCP embedding example now uses `lightusd::mcp::Server` with stdio and
+HTTP transports. `core_mcp_example` checks both entry points, notifications,
+invalid CLI ports and bounded request bodies on loopback. Build it with
+`-DLIGHTUSD_WITH_MCP_SERVER=ON -DLIGHTUSD_BUILD_EXAMPLES=ON`; the standalone
+`lightusd-mcp` executable and `core_test_mcp` use the same core server library.
+
+Lucia now separates core MCP authoring from the core RenderStream preview
+adapter. Loose/embedded assets are packaged with the preview root, validation
+uses a core LayerDocument, USDZ export uses the core converter, and channel
+packing uses the counted image API. Its fidelity tests require Node 23+ when
+running both WASM32 and WASM64. Geometry-node assertions locate prim blocks
+instead of treating braces in quoted graph JSON as the end of a prim.
+The xatlas worker loads the core geometry feature; `core-xatlas.test.mjs` checks
+UV generation, options, source-vertex maps, output ownership and worker remapping.
+Generated primitives now extract authored primvars before triangulation.
+`core-generated-colors.test.mjs` checks constant/indexed-uniform display colors,
+opacity, analytic-output welding at attribute discontinuities, and the shared
+Three.js preview. Lucia builds through that shared core scene builder, including
+material conversion and archive textures. Its full headless browser gate covers
+UDIM, concurrency, sculpting, geometry nodes, persistence and a 131,072-triangle
+grid (with an explicit successful-import assertion).
+The standalone USD export demo uses the core converter; the validation worker
+uses the independent core validator for every URL/backend selection.
+`standalone-core-demos.test.mjs` checks browser downloads and worker validation.
+The high-level loader's progress/async methods also use the core adapter.
+`core-loader-progress.test.mjs` checks phase completion, cancellation, memory
+limits, callback failures, concurrent loads and native-owner cleanup. Native
+progress callbacks are installed only across the synchronous native call.
+The `test:progress` CLI uses the same adapter and requires real phase callbacks,
+100% completion and the expected mesh counts on its three generated scenes.
+The MaterialX GL inspector uses the core adapter, preserves structured parameter
+metadata during edits, and rebuilds physical/OpenPBR materials while retaining
+textures and source color transforms. The production standalone gate also checks
+its custom shader compilation. `core-texture-bindings.test.mjs` checks pending
+textures after material cloning/replacement and custom OpenPBR color hooks.
+The MaterialX WebGPU and debug inspectors now retain core RenderStreams. Their
+shared inspector imports packaged assets into a counted core store, and named
+root/cached/streamed inputs retain authoring-layer anchors. A matching anchored
+memory asset wins over a same-name root-level key. `core-render-inspector.test.mjs`
+checks this on WASM32/64, including owned decoded bytes after stream deletion and
+invalid source-name records; the native Tydra test checks the same collision.
+`core-image-texture.test.mjs` checks RGB expansion, integer normalization,
+Float16/Float32 HDR data and owned storage. The shared texture helpers use actual
+image bytes rather than requiring the removed legacy buffer IDs.
+`core-materialx-demos.test.mjs` loads textured USDZ input into both inspectors,
+checks Z-up conversion and exercises both WebGPU shader modes. Its Chromium
+software-Vulkan setup avoids incompatible headless swapchain backends. The
+`web/demo` smoke gate alone does not cover these standalone inspectors.
+The UDIM demo also uses core RenderStream and an imported asset store, with
+owned geometry copies and root-relative tile resolution. Sparse export preserves
+the original layer and tile bytes. The standalone browser regression checks both
+sparse and combined modes and all four exported tiles; `MUJOCO_WASM_DIR` also
+enables the browser physics demo's real MuJoCo startup check.
+The streaming viewer now uses core RenderStream for both load paths, including
+loose USDA and nested USDZ roots. Its material fast path resolves authoring-layer
+texture anchors; image payloads stay off the WASM heap. The browser regression
+`core-streaming-demo.test.mjs` checks production/development rendering, a
+same-name texture decoy, world bounds, non-uniform normal matrices, native handle
+cleanup and GL buffer deletion across successful and failed loads.
+The HTTP resolver, streamed loading utility, UDIM demo and development inspection
+entry points now use core APIs. The JavaScript USD CLI uses core composition,
+retains arcs with `--no-flatten`, and preserves nested USDZ roots and texture
+anchors. Its tests run in the Node regression profile alongside core asset-store
+allocation/readback/release diagnostics and the USD Physics/URDF roundtrip CLI. The high-level loader now imports the package asset store and passes the root
+identifier through the named render entry point. Nested-root and referenced-layer
+texture regressions include an identically named decoy at the archive root.
+Sparse UDIM pattern anchoring still needs equivalent cross-layer coverage.
+
+The browser physics simulation and physics/USD-to-MJCF CLIs use the core converter's physics
+extraction; render geometry comes from the core adapter. OBJ vertices are baked
+into the owning rigid body's frame, including intermediate transforms and
+mirrored winding. `core-physics-cli.test.mjs` checks loose USDA and nested USDZ
+inputs, real OBJ output and independent physics extraction with malformed
+render-only UVs. The `physics` regression profile also runs the robot-arm
+simulation against MuJoCo.
+
+The `large-scene-load` example now uses core StageSession snapshots and
+payload edits. `core_large_scene_example` exercises deferred/eager loading,
+byte/extent policies, load/unload, USDC roots, relative paths and invalid CLI
+arguments. `--no-dedup` now releases parsed-layer/composition caches between
+edits; source layers still share storage within each composition. Memoized
+payload-policy decisions keep byte/extent admissions stable across those
+recompositions. The diagnostic reports source-layer count rather than claiming
+a cumulative parser-invocation count.
+
+The variant analyzer now reads core authored variants directly, with real nested
+depth, overflow-safe capped combinations and JSON escaping. `core_variant_analyzer`
+checks empty reports, nesting, cap behavior and USDA/USDC parity. `tydra_api`
+uses core scene access, UsdShade and attribute evaluation; `core_tydra_api_example`
+checks external references, parent paths, inherited bindings and shader inputs.
+
+The optional `js-script` example embeds a stage-independent QuickJS runtime and
+reads core authored layer metadata. `core_js_script_example` checks Unicode,
+sublayer offsets, root prim names, JavaScript errors and execution limits for
+both loops and Promise jobs. Enable it with `LIGHTUSD_WITH_QJS=ON`; the same
+runtime supplies `lusdrender` scripting without linking the legacy library.
+`tool-lusdrender-qjs` checks scene statistics, bounds, scripted resolution,
+PNG output and script-error exit status on that core renderer path.
+
+`usd-texcomp` now authors companions through core Stage/layer APIs and the
+shared image codec library. `core_usd_texcomp_example` verifies USDA/USDC input,
+existing customData preservation, mip count, optional Zstd supercompression,
+HDR BC6H output, exported layer reload and missing-image failure. It requires
+Tydra and textools, with no legacy library dependency.
+
+`progressive_composition` now uses the core loader, resolver and compositor.
+Its cumulative LIVRPS passes recompose from the authored root. Selective passes
+preserve disabled arc values and list-op qualifiers, covered by
+`core_test_composition`; `core_progressive_composition_example` checks all six
+controls, later reload, variants, relative mesh paths, missing dependencies and
+USDA/USDC/nested USDZ inputs. Default compositor flattening remains unchanged.
+
+The render-scene example now uses core loading/composition, retained conversion,
+JSON/YAML diagnostics, animation sample inspection, image decoding and core
+OBJ/USDA exporters. It is registered with the core examples, independently of
+legacy. Its default index builder preserves attribute seams, skin weights, morphs
+and material subsets. `--fast-index-build` expands corners without deduplication;
+`--noidxbuild` retains separate attribute streams. `core_mesh_index` checks these
+modes, polygon topology, tangent winding, indexed primvars, memory limits and
+invalid input. Deduplication keeps distinct source points separate; triangulated
+output receives canonical triangle face counts and corner mappings.
+`usda_parser` and `usdc_parser` now use format-specific core readers and share
+core CLI/composition handling. They build with examples enabled or their existing
+`LIGHTUSD_WITH_TOOL_USDA_PARSER` / `LIGHTUSD_WITH_TOOL_USDC_PARSER` flags,
+independently of legacy reader module flags. `core_usda_parser_example` and
+`core_usdc_parser_example` cover all six arc controls, retained disabled list
+edits, output reload, format rejection, malformed input and CLI errors.
+`triangulation_method_example` now builds as a core Tydra example.
+`core_triangulation_example` checks Earcut and fan modes, original polygon
+statistics, triangle totals, external mesh references and invalid arguments.
+`usd_to_json` now uses the core archive reader and shared
+`WriteLayerToJSON` API. The WASM layer exporter delegates to that same core
+serializer and shares its typed metadata conversion helpers. `core_usdz_json_example`
+checks USDA/USDC scene parity, first-entry root selection in the presence of a
+USDC dependency, default runtime schema fields/arrays, an explicit authored
+layer JSON mode, exact base64 sidecars (including empty files, Unicode/quoted
+names and chunk boundaries), default prefixes and invalid input/output paths.
+Public examples, tools, and demo entry points use the core implementation.
+The native build, optional viewer/texture benchmark, Node profile, and both
+production demo sites are checked independently; legacy is a separate
+compile-only product.
+
+Migration follow-ups and coverage are tracked below:
+
+| Area | Gap | Found by |
+|---|---|---|
+| lusdcat | Core `--explain` uses the public C API property tracer; workflow checks require sampled values, selected-variant provenance and connection chains | `workflow_tools` |
+| usd_to_gltf | Core C API example; workflow checks require GLB structure, strict loss refusal, UVs and embedded textures for loose files and USDZ | `workflow_tools` |
+| lusdzconvert | `-optimizeMaterials dedupe` is now shared core functionality with restored regression coverage; PreviewSurface graph deduplication now canonicalizes surface shader names and ignores unused shader children, with conservative exact comparison for unsupported graphs; atlas mode generates shared PNG diffuse atlases for compatible static PreviewSurface materials and preserves indexed UVs; static whole-mesh geometry merging is now shared with the core WASM configured-export API; native UDIM grid/dense baking now shares the WASM implementation. High-level core JS composition/variant overrides and dedupe/mesh merging are wired; core image conversion, channel packing, size/quality fitting, folder/streaming texture remapping, and audio processor hooks are wired and covered by `core-image-convert.test.mjs` and `core-converter-textures.test.mjs`; core JS ARKit policy forces composition, a USDC root, Y-up metadata and PNG/JPEG textures; non-flattened dependency packaging preserves archive directories and source bytes | `tests/run-lusdzconvert-regression.sh` |
+| lusdview | `lusdview_{lighting,texture_pipeline,geometry_primvar,openpbr_material}_test` exercised the removed legacy RenderScene -> DrawScene converter and were deleted; core-path coverage is the screenshot/backend suites in `examples/lusdview/tests.cmake` | removed with the legacy loader |
+| lusdview | Light/camera gizmos now use retained core records and the Render scene hierarchy uses composed draw-record paths. The MCP `vchar_physics` preview now uses public C API physics queries and an independent editable core stage | `lusdview_scene_gizmos_test`, `lusdview_physics_preview_test`, `lusdview-core-physics-preview` |
+| lusdview | The opacity and both HIP texture-semantic tests pass with matching host and device texture descriptors. The backend parity test passes in headless mode. | `examples/lusdview/tests.cmake` |
+| lusdview | `lusdview-dome-orientation` passes with texture tools enabled; it checks that rotation changes core IBL and loose/USDZ renders agree. Camera/light record checks likewise compare loose input with USDZ instead of the ignored legacy-loader flag | `examples/lusdview/tests.cmake` |
+
+The multi-UV normal-map fixture uses an oblique key light so both tangent
+directions affect shading. Its `lusdrender` normal-map assertions are enabled;
+an axis-aligned key made the previous tilted/flat control vacuous.
+
+`core_lusdzconvert_ktx2` verifies KTX2-to-PNG conversion, archive contents,
+shader asset remapping and reopening the resulting USDZ. It is registered
+when `LIGHTUSD_WITH_TEXTOOLS` is enabled (the core default).
+
+`core_reader_parity_sceneLibrary-001` and `core_reader_extension_parity`
+compare USDA raw metadata opinions with decoded USDC extension fields. The
+negative control edits `sceneName` and requires a metadata differential;
+raw spelling and unregistered-field storage remain available for round trips.
+
+Core example migration checks include `core_api_tutorial` (authoring, shader
+connections, schema access, indexed UV expansion, time interpolation and USDA
+reload), `core_file_format_example` (custom binary assets preloaded as core
+layers and composed through references), `core_file_format_missing_root`
+(input-error propagation), and `core_c_api_example` (portable C ABI load,
+traverse and export). These targets require `LIGHTUSD_BUILD_EXAMPLES=ON`.
+
+USDC readers now expose inline variant metadata/content like the USDA reader;
+bracketed holder specs are transient reconstruction details. The
+`core_test_variant_inline` API test checks that representation and a second
+Crate round trip. `core_reader_variant_parity` covers paired fixtures, selected
+composition, nested options, property metadata/time samples and unselected
+body-value edits. `variantSet-prop-001.usdc` genuinely lacks the selection in
+its USDA namesake (confirmed with OpenUSD); the test requires that real
+differential to remain visible.
+
+The scalar/array `uint2` fixture parity cases are covered by
+`core_reader_parity_uint2-type-001` and `core_reader_parity_uint2-array-001`.
+`core_test_aousd_conformance` checks compatibility acceptance with a warning,
+strict rejection, and Crate round-trip fidelity for `varying rel`.
+
+`core_lusdzconvert_udim` verifies native grid/dense atlas pixels, USDA/USDC
+package roots and flat outputs, authoring-layer anchors, USDZ input,
+non-flattened variant contents, animated-file common layouts, 16-bit PNG and
+(with `LIGHTUSD_WITH_EXR`) floating-point EXR round trips. Failure controls
+cover tile/memory limits, crossing-face reject/split and precision-losing output
+requests; pre-existing atlas-name collisions must not overwrite unrelated files.
+The WASM `udim-bake.test.mjs` suite exercises the same extracted core adapter.
+
+The HTTP asset resolver demo uses core `FlattenSession` and the incremental
+RenderStream renderer. `core-http-demo.test.mjs` checks remote dependency layers,
+texture paths anchored to different authoring directories, collision-free USDZ
+packaging, preloaded assets without network requests, and missing-layer errors.
+`FlattenSession.setRebaseAssetPaths(true)` preserves asset provenance before
+composition even when no remap is supplied; call it after `begin`. URI path
+normalization preserves the authority and opaque scheme payloads.
+
+The export CLI uses the core converter and runs directly with Node. The Node
+profile includes `core-export-cli.test.mjs`: sample generation, USDA/USDC/USDZ
+exports, reimported USDZ output in all formats, and invalid-input errors. The
+browser conversion benchmark reloads its generated root through `LayerDocument`.
+
+Core streaming transfer coverage is in `core-stream-transfer.test.mjs` (Node
+profile, also runnable with `LIGHTUSD_WASM64=1`). It checks known/unknown HTTP
+lengths, overrun/truncation rejection, limits, cancellation, callback failures,
+caller-owned streams, chunked files, layer loading and full-progress loading.
+Successful `streamFetchToWasm`/`streamFileToWasm` results own a core RenderStream;
+call `beginStreamedAsset(assetPath)` to parse and `delete()` when finished. The
+completed transfer remains a streaming root buffer until parsed. The examples
+and `cli/load-test-node.js` use this API and release both comparison scenes.
+
+The material-dedup demo defaults to core in both main-thread and worker modes;
+its GUI offers the shipped backend. `core-material-dedup-demo.test.mjs` compares
+renderable sample geometry and material counts across both paths. It also runs
+against the production bundle with `--production` after a Vite build.
+
+The experimental OpenPBR `mtlx-webgpu.html` viewer now uses core RenderStream
+and owned mesh/image records. `core-openpbr-webgpu-demo.test.mjs` runs it on
+headless SwiftShader WebGPU and checks authored transforms, repeated loads,
+invalid-input cleanup, exact packaged RGBA texture uploads and GPU validation.
+Run with `--production` after building Vite to check the bundled entry. The Node
+profile's `core-webgpu-texture.test.mjs` covers grayscale/alpha expansion and HDR
+half-float uploads without clipping values above one.
+
+The ShaderBall MaterialX adapter uses core HTTP composition, LayerDocument graph
+inspection and RenderStream geometry. `core-shaderball-adapter.test.mjs` checks a
+selected variant with references to separate authoring directories, distinct
+same-name texture provenance, deferred image fetches, UVs, mesh primvars, material
+bindings and camera optics. Its `--production` mode drives the bundled
+MaterialX WebGPU page's scene selector using the same fixture. Graph validation
+also runs against the core WASM
+module (`webgpu-mtlx-usd-graph.mjs`) and retains connected defaults and color-space
+metadata. HTTP flatten callers may request `packageAssets:false` to retain the
+rebased external asset paths and receive owned flattened `rootBytes`; optional
+`variantOverrides` are applied before composition.
+
+`core_obj_export` exercises the core RenderScene OBJ/MTL exporter used by the
+render-scene example migration: polygon/triangle topology, hole faces, source
+corner UVs, uniform normals, authored subset names, PBR texture references,
+normal maps, skin weights, atomic failure, output budgets and invalid indices.
+Core conversion now retains GeomSubset names across split runs and triangulation
+so diagnostic exports can keep authored group names. Mesh coordinates and scene
+up-axis remain unchanged in OBJ output.
+
+`core_usd_export` reparses and reconverts the core RenderScene USDA export. It
+checks triangulated source-corner UVs and uniform normals, material subsets,
+texture channels and normal-map scale/bias, asset quoting, skeleton bindings,
+blend shapes, instance transforms, RGBA alpha multiplied by displayOpacity,
+matrix primvars, output budgets and atomic rejection of invalid data. Animation
+clips remain an explicit export error, matching the legacy exporter; non-mesh
+resources are reported as omitted by this diagnostic mesh-export API.
+
+`core_render_scene_example` covers the migrated native diagnostic CLI: JSON/YAML,
+source metadata, automatic/forced/disabled tangents and all tangent methods,
+SNorm8 storage, low-memory source release, polygon preservation during normal
+computation, evaluated time codes, OBJ/MTL/USDA reload, local and USDZ texture
+pixels, USDA/USDC/USDZ loading, references/payload controls, animation samples and
+invalid options. The converter's polygon mode now computes normals using a
+shared-payload temporary triangulation, leaving authored output topology intact.
+
+The colorspace browser oracle compares the core scene adapter and direct
+RenderStream material paths against independently transformed expected pixels.
+The separate WASM parity test intentionally loads the combined module as its
+legacy reference. The optional Pixar math example uses `math-trig.hh`, with
+exact quarter turns and bounded reduction for large finite angles.
+
+The JavaScript production build includes every top-level demo HTML page (the
+validation-body fragment and test harness pages are excluded). Its ES2022 target
+supports the top-level await already used by demo modules. Local preparation
+also builds the independent C11 texture codec demo. The material validator uses
+Three.js `colorSpace` for both color and data textures; removed `encoding`
+constants no longer bypass normal/roughness/metalness/AO checks.
+
+Retained-layer JS export keeps dependency and image/audio bytes unchanged, matching
+the native converter's no-flatten processing policy. Root format conversion
+keeps the original root as an alias when its filename changes, preserving
+back-references; filename collisions select a fresh output root name. The folder
+and streaming tests reopen these packages, compose their external layers, check
+texture anchors, verify exact dependency bytes and reject unsafe archive paths.
+UDIM baking across retained dependency layers still requires flattening.
+
+The public `examples/lusdcat` entry point configures the canonical core CLI;
+historical sources are archived under `src/legacy/examples/lusdcat`. The optional
+legacy PCP bridge reuses an existing core target and leaves global CLI/test
+options intact instead of adding the core project twice.
+
+Core physics JSON snapshots describe meshes with `pointCount`/`faceCount`; raw
+vertex, index, normal, UV, skin and other render arrays belong to RenderStream.
+Expanding those arrays twice as JSON made small compressed scenes exhaust the
+WASM heap during physics-only conversion. Physics/engine array properties,
+transform ordering, bounds, analytic geometry and relationships remain in the
+snapshot. The core physics regression includes a large indexed mesh to verify
+bounded snapshot size and preserved counts.
+
+The production copy plugin includes complete 32-bit and, when built, 64-bit
+core/feature factory pairs (and optional MCP pairs). The production codec and
+colorspace regression checks every demo HTML entry and loads the copied 64-bit
+core, geometry and validator with independent heaps in capable browsers.
+`core-shaderball-adapter.test.mjs --production --hardware` validates the actual
+production page, adapter input and packed GPU scene under private Xvfb; run it
+through `scripts/xctest.sh`. The hardware flag requires a non-fallback adapter.
+
+The public `LightUSDComposer` helper now consumes caller-owned core
+`LayerDocument` objects and uses `FlattenSession` for dependency discovery.
+`core-composer.test.mjs` covers nested layer anchors, references, optional
+payload loading, preloaded partial composition and resolver errors.
+`setCompositionMask` selects sublayers (1), references (2), payloads (4),
+inherits (8), specializes (16), and variants (32); disabled arcs stay authored
+for subsequent passes. Call it after `begin`; the default mask is 63.
+
+The USD-independent collision/dynamics implementation lives in
+`src/tydra/rb-{solver,collision}.cc`; both the core preview and the optional
+legacy bridge link `lightusd_rb_solver`. `core_test_rb_solver` ports eleven
+numerical/contact/hinge/sleep/capacity checks without running legacy tests.
+The full-capacity case exposed an island offset overrun caused by reusing
+root-map storage as per-island counts; counts now live in island records.
+The solver suite also passes AddressSanitizer and UndefinedBehaviorSanitizer.
+
+`lusdview_physics_preview_test` covers core render-catalog transform retention,
+world-space contacts/writeback under a transformed parent, rotation and scale,
+immutable source stages, kinematic velocities, compound colliders, joint axes
+and angle units, bounded mesh-point scans and reset. `lusdview-core-physics-preview`
+drives the real MCP operations and verifies GPU pixel motion/reset, the mesh
+world matrix and bounds, hide/status, invalid steps and reset. The preview uses primitive
+colliders and conservative mesh bounds; it is a diagnostic solver, not an
+engine-exact MuJoCo/PhysX replacement. Unsupported geometry or non-rigid frames
+return an explicit error. Mesh bounds scan at most 16 million points using a
+fixed scratch buffer. Physics records are limited to 4096 and 64 MiB.
+
+Viewer regression scripts no longer select the ignored `--legacy-load` alias.
+Material, lighting, proxy and AOUSD checks run core semantic assertions;
+camera clipping, supported material outputs, GeomSubset materials and
+texture/displacement tests compare loose files with stored USDZ inputs where
+applicable. The static camera shutter control is
+`lusdview-camera-motion-raster-static`; RT texture archive shards are named
+`lusdview-texture-semantic-rt-package-parity-*`.
+
+The optional `LIGHTUSD_BUILD_TEXTURE_GPU_BENCH=ON` target is restored at the
+root and links the core image/Ptex providers explicitly. Its executable is
+`build_ninja/lusdview_texture_gpu_bench`; it no longer needs a legacy target.
+The Vulkan synthetic smoke runs BC1/3/5/6H/7 and ASTC through two mip levels.
+Native TIFF/DNG support (`LIGHTUSD_WITH_TIFF=ON`) now reaches the core image
+provider. `core_test_native_tiff` checks raw/deflate RGB8, RGB16 and float HDR,
+metadata, JPEG-in-TIFF, tight decode budgets, oversized dimensions and embedded
+JPEG frame sizes. TIFF preflight accounts aggregate IFD pixels and strip/tile
+scratch before decoding; embedded JPEG dimensions are inspected independently
+of the IFD dimensions. The texture benchmark normalizes 16-bit integer LDR
+inputs and validates their buffer sizes before uploading.
+
+Final migration verification (2026-11-11): the native Ninja suite registers
+276 tests, with zero failures and nine expected optional-fixture/capability
+skips. The optional legacy tree compiles without running legacy tests.
+The final viewer checks pass physics-preview pixel movement/reset, static
+camera control, material-binding inheritance and CPU normal-map shading.
+Both WASM widths build; all 27 production website demos plus the landing page
+pass, as do production codec/colorspace and independent memory64 feature
+loading. The Node regression profile passes 76 checks. Pixar comparison covers
+499 USDA and 227 USDC inputs with no unexpected differences; usdchecker parity
+compares 499 inputs without failures. The optional texture benchmark passes
+all six Vulkan compression formats and native 8/16-bit TIFF inputs (hardware
+and software Vulkan smoke runs were checked separately).
+
+Material atlas regressions run through `core_lusdzconvert_materials` and
+`web/js/tests/core-converter-materials.test.mjs`. They check shared material
+bindings, atlas UVs and loose sidecars, and confirm that an incompatible
+repeat-wrapped material retains its texture. The web regression samples PNG
+tile and gutter pixels and reloads the folder and streaming packages with
+both root formats.
+
+The Ptex atlas fallback test covers both sides of its minimum byte budget.
+An 80-byte budget covers the two face-table records and rejects the build.
+An 88-byte budget also holds two fallback pixels and verifies virtual
+downsampling. The test checks that a build succeeded before indexing its output.
+CPU Ptex routing also checks that a texture forwarded through a referenced
+material interface resolves at the scene anchor when the inherited look-layer
+anchor has no matching file. The viewer enables the public material converter's
+default resolver for this lookup.
+
+The Tydra MaterialX constant-evaluator suite (`./build_ninja/src/test_tydra`)
+checks boolean-output `ifgreater`, `ifgreatereq` and `ifequal` with integer,
+boolean and float comparison inputs, including adjacent binary32 values for
+exact equality. These nodes return the comparison result directly.
+The same suite checks MaterialX line classification at the inclusive radius
+boundary and for a negative radius on a degenerate segment.
+The Tydra Lean-vector replay includes crosshatch cases with negative thickness,
+which must produce black even on a diagonal.
+The same replay covers regular and staggered MaterialX tiled circles, negative
+UV coordinates and signed size.
+The Tydra replay also covers cloverleaf and tiled-cloverleaf nodes with
+regular and staggered layouts, negative coordinates and signed size.
+Tiled-hexagon vector replay covers regular and staggered layouts, negative UVs,
+and signed size, alongside the direct hexagon cases.
+The same vector replay checks that `ramplr`, `ramptb`, and `ramp4` clamp
+out-of-range UV coordinates, including scalar and color-valued outputs.
+The replay also checks MaterialX range reciprocal gamma, signed and out-of-range
+inputs, optional output clamping with reversed bounds, and per-channel values.
+An unresolved authored `doclamp` connection must not be treated as the default.
+Trianglewave and reflection vector replay includes negative and periodic inputs
+and non-unit normals; the reference graph applies the supplied normal directly.
+MaterialX place2d vectors check SRT and TRS ordering, reference rotation,
+nonuniform scales, offset subtraction, and out-of-range order selectors. An
+unresolved authored `operationorder` connection must not use the default.
+The Tydra vector replay covers MaterialX colorcorrect saturation, hue wrap,
+gamma, lift/gain/contrast/exposure ordering, and color4 alpha preservation;
+an unresolved authored control is rejected rather than defaulted.
+
+The MaterialX graph-resolution regression (`core_test_mtlx_lean_vectors`) also
+checks typed nodegraph outputs with literal values or no connection. These are
+accepted by the MaterialX 1.39.5 document validator; invalid typed literals
+and the tested cross-graph connection to an unconnected or literal output are
+rejected. Run it headlessly with:
+
+```sh
+scripts/xctest.sh ctest --test-dir build_ninja -R '^core_test_mtlx_lean_vectors$' --output-on-failure
+```
+The same regression checks that a connected graph output's authored value is
+still validated and that graph outputs cannot use `interfacename`, both for
+the graph itself and when another graph references it. The valid connected
+output with a fallback value remains accepted.
+The graph-resolution regression also rejects node inputs that combine an
+authored value with a node, nodegraph, or interface connection, and rejects an
+explicit input with no binding. Omitted inputs remain eligible for nodedef
+defaults. These cases match the MaterialX 1.39.5 input validator.
+The graph-resolution regression also covers an `output`-only node input
+referencing a document-level output, including missing output or source,
+incompatible type, and invalid output value cases. The valid reference and
+missing-reference cases were checked with MaterialX 1.39.5.
+The MaterialX graph-order regression covers dependencies reached through a
+document-level output and root nodes, including multiple hops, shared upstream
+nodes, and cycles returning to a graph or confined to reachable root nodes. The
+cycle returning to a graph was checked against MaterialX 1.39.5.
+The same graph-order test covers `nodegraph` connections authored directly on
+compound graph inputs, including a missing graph and a cycle. MaterialX 1.39.5
+accepts the tested compound input connection. Ordering treats all such authored
+connections as dependencies, including unused ones. It validates nodegraph
+source outputs and types on graph inputs, including inputs connected to
+document root nodes; it traces those root-node dependencies for graph ordering.
+The graph-input regression checks missing outputs, incompatible source types,
+invalid source-output values, and valid or invalid fallback values on a
+nodegraph-connected graph input. MaterialX 1.39.5 accepts the valid connected
+input and rejects the tested missing output, incompatible type, and invalid
+fallback value.
+Graph-input regressions also cover root-node sources: valid and missing nodes,
+type mismatches, indirect ordering and a cycle through a graph input. MaterialX
+1.39.5 accepts the tested valid root-node input and rejects missing or
+mismatched sources.
+The graph-input regression additionally covers `output`-only bindings to a
+document output, including missing and mismatched outputs, indirect dependency
+ordering and a cycle through the graph input. MaterialX 1.39.5 accepts the
+tested valid output binding and rejects the missing and mismatched cases.
+The same regression exercises native graph-call inlining for direct and linked
+implementations, upstream and downstream connections, literal outputs,
+nodedef defaults and authored input metadata. It also checks nested expansion,
+source-code-only implementations, recursive graph rejection, the expansion
+limit and atomic failure. MaterialX 1.39.5 was used to check the connected,
+nested and nodedef-default cases. The inliner currently rejects unsupported
+implementation selection and scope cases; these
+tests do not establish general corpus or renderer parity. A geometry-property
+default with a matching document `geompropdef` creates a connected geometry
+node, preserving its `space` and `index` and sharing repeated uses; MaterialX
+1.39.5 confirms the UV and world-space examples. Missing,
+ambiguous or incompatible definitions fail without changing the output.
+The regression also calls `lu_mtlx_document_flatten_graph` (formerly `MtlxDocument::FlattenNodeGraph`) on parsed documents,
+including external nodedefs and matching inherited scope, and checks that
+expansion-limit, differing-scope, token-scope and missing geometry-definition
+failures leave the document unchanged. Authored nodedef geometry-property
+defaults are not replaced with literal defaults during document parsing. The
+generated standard-nodedef table retains this metadata. Document flattening
+uses generated standard geometry definitions as a fallback, without inserting
+them into the document; regressions cover implicit UV and world-position nodes,
+an authored geometry-definition override and an explicitly authored UV. Geometry
+definitions supplied through merged external libraries are also checked, with
+document, external and standard precedence, duplicate external definitions,
+and atomic failure. MaterialX 1.39.5 confirms the tested external and document
+precedence cases.
+`lusdview_lightrt_mtlx_graph_evaluation_test` also checks implicit UV0 and
+object-space position defaults, object/world geometry transforms under
+nonuniform scale, authored geometry overrides, shared generated nodes and
+rejection of unsupported indices. The LightRT evaluator currently supports a
+single UV/tangent set and object/world default geometry spaces.
+`lusdview_lightrt_mtlx_eval_test` checks authored image coordinates with and
+without screen derivatives, zero footprints for literal coordinates, and
+scaled tiled-image footprints across a UDIM seam. It also covers connected
+coordinate graphs, varying tiling, position-driven and nonlinear coordinates,
+channel swizzles, shared memoized nodes and a cycle. Nontrivial connections
+use forward differences at neighboring UV, position and view inputs; nested
+texture lookups in those probes use point sampling. The probes allocate scratch
+memory proportional to document size and do not have normal, tangent or
+arbitrary geomprop derivatives. Failed probes retain the previous derivative
+approximation.
+
+### Opt-in verified graph trigonometry
+
+`lusdrender --mtlx material.mtlx output.png --verified-math` selects the strict
+binary32 sine/cosine backend for CPU MaterialX graph evaluation. The default
+remains libm; unsupported renderer paths reject the option. The corresponding
+LightRT option has the same name. The strict sources form a separate CMake target
+with contraction/fast-math disabled (or MSVC `/fp:strict`), and activation requires
+nearest/even and gradual underflow.
+
+Conformance `verified_sincos_native` checks generated constants, model bit replay,
+MPFR accuracy and actual XML/doc/graph dispatch in both source trees.
+`verified_math_cli` renders reference and strict modes through both CLIs and both
+CPU integrators. The Lean `sincos_finite_error` theorem bounds sine/cosine absolute
+error by `2^-20` on all finite binary32 inputs; remaining angle, normalization and
+rotation arithmetic are separate proof obligations. This option does not claim
+that the full renderer, graph evaluator or C compiler has been verified.
+
+`verified_bounds_native` adds strict scalar add/subtract/multiply/divide/sqrt
+bounds for the energy-certification work. Each native tree replays 61,534 model
+cases, including cancellation/subnormals and explicit nonfinite rejection; all
+51,052 accepted bounds also enclose independent directed MPFR-256 results.
+The Lean core now proves full finite square-root nearest/even rounding and
+inexact flags. These helpers do not yet constitute an albedo certificate or
+change the existing sampled compensation option.
+
+`verified_ranges_native` extends this to whole real intervals and certified sign
+queries: 63,690 bit-exact model cases per source and 248,155 directed MPFR sample
+checks preserve caller flags, rounding and MXCSR. `verified_normal_native` checks
+a generated normal-view GGX joint-power interval program against the executable
+Lean expression and independent 120-digit real samples. Its header is generated
+by `mtlxspec-normal-program` and checked for drift in both source trees. The Lean
+expression proof, integrability and whole-cell integral bounds are root-imported;
+unresolved cells have the analytic upper mass b²-a². These helpers still require
+adaptive partition certificates, transport adapters and compensation integration
+before they establish the requested conservative energy mode.
+
+The conformance `normal_albedo_certificate` gate now checks a full normal-view
+GGX density integral with the proved exact-rational partition checker. It compares
+16,384- and 32,768-cell native proposals, then asks Lean to recompute the finer
+partition and accept only if its exact enclosure width is at most 1/5000. The
+normal-view alpha=1, eta=1/2 regression has a genuine nontrivial integral near
+0.8238759196; independent 80/140-digit quadrature supplies an additional cross-check.
+The tail-recursive accumulator is proved equivalent to the recursive definition.
+This verifies the density integral; the physical angular/CDF adapter and native
+compensation connection remain separate obligations. Run with the conformance
+build's CTest timeout (1800 seconds), through `scripts/xctest.sh` as above.
+
+`microfacet_transport_native` checks the existing rough-transmission evaluator in
+both native source trees against independent 100-digit Snell geometry. It covers
+258 regular Jacobian/proposal-power cases and 46 TIR cases per source, plus the
+unit-IOR regular-map guard. Maximum observed relative Jacobian error is 1.22e-6;
+absolute power-factor error is 4.18e-7. Root Lean proofs derive unit transmitted
+and reflected directions, actual chart-axis derivatives, tangent area factors,
+and the local kernel pullbacks. This is a local geometry/finite-sample check;
+global angular measure transport and a proved uniform arithmetic reserve remain
+separate requirements for conservative mode. Default behavior is unchanged.
+
+`ggx_half_measure_native` checks the normal-view VNDF sampler, NDF and Smith factor
+in both native source trees against independent 100-digit projected-GGX formulas.
+Each passes 175 sample cases plus five density-normalization checks. Root Lean
+proofs derive the actual projected NDF density, its normalizing integral and exact
+radial Jacobian, and transfer accepted certificate bounds to the integrable
+projected half-vector joint-power integral. This still requires the outgoing
+angular-support adapter and finite numerical reserve before conservative native
+compensation is established. No renderer behavior changed.
+
+The angular continuation now proves spherical half-vector integration and the
+accepted reflection outgoing-cosine adapter, transferring the normal certificate
+to the full half-vector solid-angle integral. The joint outgoing transmission
+adapter and native numerical reserves remain pending. The isolated pinned OSL
+toolchain was rebuilt; four-material white/HDR baselines pass the unchanged gates
+with finite float EXRs. Extended rough/layered probes retain failures, and the
+OSL film-no-effect limitation is reproduced. Passing baseline images do not
+certify energy or unclipped radiometric parity; conservative-mode comparisons
+remain dependent on implementing that mode.
+
+`ggx_transmission_support_native` sweeps the real native normal-view refraction
+cone: 120 accepted and 186 rejected cases per source. `ggx_joint_angular_native`
+compares outgoing raw-SS angular integration against independent radial
+quadrature for 12 cases per source; maximum observed absolute difference is
+3.99e-7, with 128/256 convergence and TIR-cusp splits. The alpha=1/eta=1/2 result
+lies inside the completed narrow certificate. Root proofs now connect that
+certificate to joint ideal-real normal-view outgoing albedo, including actual
+support, integrability and rejected intervals. These checks do not establish
+arbitrary-view finite-native conservative compensation or cover the native
+near-unit-IOR/delta guards. No renderer defaults changed.
+
+`fixed_normal_native` exercises the new strict `verified_normal` helper in both
+native trees. The helper encloses the whole ideal-real isotropic normal-view
+joint SS albedo on a dyadic partition, with exact 2^-48 outward integer sums.
+Unresolved cells retain their analytic mass; certification requires width
+<=1/5000. The gate compares 306 exact Lean cell rows and 27 coarse partitions,
+checks domain/host rejection and FP-state preservation in optimized/UBSan builds,
+and has Lean recompute the genuine 32,768-cell certificate. Independent exact
+sums and a 100-digit integral also agree. The depth-14 partition is too coarse;
+depth 15 passes with one fallback and width about 0.000194771655710. Root proofs
+cover finite dyadic endpoint encoding, exact cap bounds/sums, clipped-cell and
+partition containment, tail-checker equivalence and joint outgoing-albedo transfer.
+This is not a native BSDF numerical reserve or an arbitrary-view certificate;
+conservative energy mode still requires both. The helper is compiled into the
+strict backend but is not selected by the rendering path.
+
+The fixed certificate now returns `upper_bits`, an integer-only upward binary32
+conversion of its exact upper sum. Root `FixedUpper.lean` proves finite output
+and containment over the entire accepted [0,2^48] integer domain, including
+significand carry; a certificate-transfer theorem bounds the true normal-view
+joint-albedo integral by that binary32 value. The expanded `verified_fixed_native`
+gate covers 57,487 rows, including 17,475 conversions with independent exact
+containment/minimality checks, both native sources, UBSan and all rounding modes.
+The full certificate gate checks its returned converted field as well. This
+conversion preserves FP state and does not supply a reserve for rounded native
+BSDF response or a conservative compensation factor.
+
+`joint_factor_native` checks the strict downward shared compensation helper. Its
+2,777 exact-model cases include 2,276 accepted factors, with independent rational
+ratio and arbitrary R/T split budgets, optimized/UBSan builds in both sources,
+and domain/FP-state rejection and preservation checks. The genuine 32,768-cell
+factory certificate is checked against its prior exact endpoints, then passed
+through the wrapper with six reserves; malformed/stale/coarse records reject.
+Root proofs connect the certificate upper to the same downward factor on both
+outgoing branches. The remaining native reserve hypothesis is explicit:
+`nativeIntegratedResponse <= factor * idealJointAlbedo + reserve`. It includes
+post-factor rounding; this helper does not establish it for any BSDF. Both strict
+product backends compile the helper, but the renderer does not select it yet.
+
+`float_program_native` validates the generated strict rounded normal-density
+program against the executable finite binary32 expression semantics. Root proofs
+now lift real interval bounds through actual rounded operations, including
+subnormals, signed zeros, division/square-root domain rejection and branch guards;
+shared-program acceptance encloses the finite returned value. A local width bound
+also permits different ideal and rounded inputs in the same certified box.
+The gate checks both generated headers for drift, 1,536 IEEE zero comparisons and
+279 rounded density executions in both sources with optimized/UBSan builds,
+FP-state preservation and unsupported-host rejection. Independent 180-digit
+checks cover real/rounded and perturbed-input enclosures. This is not yet an
+integrated reserve for the outgoing native BSDF: its matched kernel/geometry,
+unresolved-cell finite bounds and post-factor error remain separate obligations.
+
+The finite unit-power continuation adds `mtlx_vf_clamp_unit` and
+`mtlx_vf_normal_unit_power_f32`, separate from the raw rounded density. Root proofs
+show finite power in [0,1], non-increasing projection error against ideal unit
+power, and finite radial-CDF cell mass <=b^2-a^2. Accepted-cell integral error is
+bounded by that mass times the clipped power-interval width, with measurability
+and input-box hypotheses explicit. Extended native replay checks 1,536 projection
+cases in all rounding modes, 279 density/power executions and six exceptional-
+power cases (four with nonfinite raw power), both trees with optimized/UBSan
+builds. This does not bound the old raw rounded density or the outgoing BSDF;
+whole-partition assembly, sampler mapping and final-factor rounding remain open.
+
+The hybrid certificate proof now reuses the existing exact/fixed partition bounds
+for exact CDF weighting times rounded projected power, under explicit measurable,
+cell-compatible input-map hypotheses. This covers unresolved cells using the
+proved finite unit-power cap; it does not reuse a real-only bound for raw rounded
+density. Native replay now checks the interval program on the same point rows
+and independently validates mixed weighting. `power_scale_native` adds 4,888
+cases (4,133 accepted) for actual RNE scaling after projection, both trees with
+optimized/UBSan builds, exact nearest/even/error and policy-constant checks, and
+FP-state preservation. A proved 2^-23 reserve covers final power multiplication,
+including subnormals, and composes with the certificate/shared factor. It covers
+that CDF-power component only: actual sampler mapping, outgoing geometry/Jacobian/
+PDF evaluation and R/T branch allocation still require separate verification.
+
+The conformance `real_input_native` gate checks 8,542 exact rational-to-binary32
+conversion cases, including 636 midpoint ties, against the proved direct real
+nearest/even input map. It verifies exact binary64 payload representation before
+conversion, independent nearest/even expectations, caller FP state, and both
+native trees in optimized/UBSan variants. It does not validate intermediate
+binary64 arithmetic or the staged renderer GGX sampler. The concrete real map
+now supplies measurable/cell-compatible inputs to the existing finite CDF-power
+certificate and final scaling budget; outgoing native BSDF integration is open.
+
+The conformance `expanded_normal_native` gate replays 720 exact Lean cell bounds
+with finite-input boxes wider than their dyadic integration cells. Both native
+trees must match optimized/UBSan builds, preserve FP state, reject non-RNE hosts
+and invalid boxes, and retain the original analytic cell cap. The corresponding
+root proofs assemble checked expanded partitions, bound ideal/finite CDF-power
+integrals within 1/5000, and transfer shared factors/final scaling reserves.
+Staged expressions after rounding u=1-t^2 have a proved measurable map and
+range-derived containment; complete renderer sampling and outgoing BSDF geometry
+remain separate obligations.
+
+The conformance `ndf_sampling_native` gate verifies the concrete strict GGX NDF
+half-cosine schedule and joint power directly from its result: 1,440 exact
+schedules, 1,384 accepted cosine ranges and 90 CDF cells, both native trees in
+optimized/UBSan builds. `ndf_sample_certificate` is a slower full 32,768-cell
+Lean/native factory comparison (CTest timeout 1,800 seconds). Its alpha=1,
+eta=1/2 enclosure has width 0.0001946592016857096 and contains both ideal normal
+albedo and rounded projected power under continuous uniform input followed by
+RNE. This is separate from the PCG 24-bit input law, vector normalization and
+outgoing BSDF/PDF geometry. Final scalar scaling has the proved 2^-23 reserve;
+no renderer path selects conservative energy yet.
+
+The conformance `uniform24_native` gate exhaustively compares all 16,777,216
+PCG grid values with the original native cast-and-scale map, both source trees
+optimized/UBSan. It checks 8,356 exact Lean word encodings, all caller rounding
+modes/FP state, and 4,096 original PCG steps. `ndf24_sampling_native` checks
+strict power schedules and widened CDF cells for this floor-grid input law;
+`ndf24_sample_certificate` recomputes a full 32,768-cell certificate (timeout
+1,800 seconds). Lean proves the floor-grid integral equals the finite uniform
+average and counts 256 low-byte variants per index. This does not prove PCG
+state independence. Vector normalization, outgoing geometry and conservative
+renderer integration remain open.
+
+The conformance `ndf_direction_native` gate checks strict local NDF direction
+construction against the Lean bit model in both native trees, optimized/UBSan:
+1,024 vectors, 44 nontrivial normalization changes and 15 enlarged cosine boxes.
+Independent exact rational checks cover squared-length and cosine-error bounds;
+FP state, non-RNE/FTZ and invalid-alpha rejection are tested. Root proofs cover
+all valid 24-bit input words: finite components, squared-length error<=2^-15 and
+clipped-cosine perturbation<=2^-17. Normalization uses the actual rounded
+reciprocal-then-multiply schedule. `verified_direction.c` is a strict FP source
+in both product builds. Existing scalar energy certificates do not automatically
+cover this changed cosine: their input boxes must be enlarged and width checked
+again before use. World frames, outgoing BSDF/PDF geometry and R/T allocation
+remain open.
+
+The adjacent MaterialX conformance suite now also registers
+`geometry_albedo_native`, `geometry_albedo_certificate` and
+`shared_allocation_native`. These check normalized local NDF cosine power
+against enlarged cell bounds (including a fresh full depth-16 width gate), and
+accepted finite nonnegative shared branch allocation. Both native source copies
+are replayed under optimized and UBSan builds. These helpers do not activate a
+conservative BSDF mode; world/outgoing transport and a proved renderer fallback
+remain separate work.
+
+`branch_power_native` in the adjacent conformance suite checks the generated
+physical normal-view reflection/transmission expression children, their exact
+finite joint-sum identity, and nonnegative shared allocation against a rounded
+geometry-certified joint budget. Both native trees pass 652 exact cases under
+optimized/UBSan builds with independent rational sum checks. This does not yet
+validate finite branch importance weights or the full outgoing BSDF/PDF.
+
+`branch_event_native` additionally checks finite PCG24 threshold selection and
+downward importance weights: 652 generic kernels, 396 physical events and five
+exhaustive 24-bit selection grids in both copies under optimized/UBSan builds.
+The Lean finite-word product-law energy proof includes azimuth, radial and
+branch words; it does not claim PRNG independence or world-space BSDF coverage.
+
+`world_half_native` checks the strict raw-local -> Duff frame -> world transform
+-> single normalization path and its world-cosine power events. Both native
+copies pass 391 frame and 391 event cases under optimized/UBSan builds, including
+original vecmath bit replay and independent rational norm/cosine/energy checks.
+The enlarged-cell certificate is transferred by a general tube-containment
+proof; outgoing reflection/refraction and the full BSDF/PDF remain separate.
+
+`outgoing_native` checks strict selected reflection/refraction, explicit eta=1
+delta transmission and composed world-scattering samples in both source trees.
+It covers 226 outgoing and 292 scattering cases under optimized/UBSan builds,
+including original vecmath operation replay and exact rational norm, hemisphere,
+Snell and parent-power checks. This is checked geometry/power-event coverage;
+complete BSDF/PDF and arbitrary-view albedo certification remain separate.
+
+`transmission_native` validates regular-transmission reconstruction/Jacobians,
+base-white reference BSDF/PDF and checked power/radiance pairs. Both native
+copies run optimized/UBSan replay for 84 evaluator, 1,200 generic-pair and 184
+sampled-world-pair cases. Independent 120-digit calculations check real
+Jacobian/PDF/BSDF/throughput enclosures; exact rational checks cover converted
+and rounded power bounds. This normal-view sampled-packet work does not yet
+complete reflection/delta, continuous-light/MIS or arbitrary-view certification.
+
+`surface_native` validates reflection geometry/pairing and typed sampled
+normal-view routing across reflection, regular transmission and atomic delta
+packets. Both native copies pass 60 reflection and 212 surface cases under
+optimized/UBSan builds with 120-digit/rational checks. Atomic density is a
+conditional branch mass, not a completed marginal-MIS claim. The corpus exposes
+56 positive-parent rejections; proved fallback remains required before routing
+these helpers through the renderer.
+
+Exact index-matched verified packets are exposed in both native trees through
+`mtlx_vf_index_matched_packet` and
+`mtlx_vf_ndf24_index_aware_surface_packet`. The former supports arbitrary
+near-unit incoming views; the latter dispatches exact eta=1 before any NDF or
+branch sampling. They return a deterministic straight-through atom with
+marginal mass one and a finite capped-factor power budget. Signed-zero bits
+are preserved under sign inversion without another normalization. The existing
+conditional-mass surface helper remains diagnostic. The conformance workspace's
+`index_matched_native` gate replays the Lean oracle at O2 and under UBSan,
+including floating-point environment checks. No default renderer selects these
+helpers yet; near-index-matching and tiny-roughness rejection fallback remain
+open, along with the broader conservative-mode work.
+
+The verified native classifier `mtlx_vf_ndf_alpha_collapsed` identifies finite
+nonnegative roughness in [0,1] whose strict rounded `(alpha*alpha-1)` is -1.
+The Lean `NdfCollapsed` proof covers every PCG24 radial word: cosine is exactly
+1.0, radius is zero, and every finite azimuth gives the same decoded local
+axis. The condition includes squared-roughness underflow but is broader.
+The conformance gate `ndf_collapsed_native` replays both native copies at O2
+and under UBSan with exact rational transition checks. Classification is a
+foundation for a typed atomic proposal, not yet a paired R/T fallback; the
+existing continuous sampler retains its positive-alpha input domain.
+
+The `atomic_surface_native` conformance gate checks prepared fixed-atom R/T
+proposals and the combined quantized surface dispatcher. Both nonempty branches
+are certified before the branch word is used; masses are exact marginal word
+counts. Collapsed normal-incidence proposals store canonical normal/negative
+normal directions, with exact unit-ray reflection and Snell interpretation in
+Lean. This handles collapsed cases that the continuous half/PDF reconstruction
+rejected. It does not enable a default renderer consumer or complete the general
+single-scattering fallback. The native APIs live in `verified_direction.h`,
+including `mtlx_vf_ndf24_quantized_surface_packet`; radiance atomic transmission
+uses eta-squared conversion, and zero event budgets return valid zero packets.
+
+The `scaled_transmission_native` conformance gate checks exact singleton
+add/multiply enclosures and scaled reconstruction using `eta*view+outgoing`.
+Lean proves the same real oriented half and Jacobian as the original
+reciprocal-eta program for positive eta/nonzero raw norm; the new rounded
+result is enclosed separately. The native
+`mtlx_vf_ndf24_stable_surface_packet` preserves accepted typed packets and
+tries this schedule only after a regular-transmission certificate fails.
+The four diagnosed eta-one-plus-ulp corpus failures are recovered without an
+eta-gap heuristic, proposal change, or resampling. General rejection fallback
+and default conservative renderer selection remain open.
+
+The separate strict `verified_single_power.c` component prepares arbitrary
+local-view anisotropic single-scattering conditional powers. Its common factor
+cannot amplify either rounded R/T branch. Proposal preparation requires real
+and rounded branch enclosures of width at most 2^-16 each; the resulting joint
+component roundoff reserve is 2^-15. This is not a global albedo certificate.
+`anisotropic_single_native` checks the generated program, independent
+120-digit physical fractions, axis symmetry, protected event weights, and FP
+guards in both native trees. The native APIs return no geometry or area PDF;
+failed preparation remains explicit, and no default renderer selects them.
+
+`verified_local_geometry.c` connects that conditional-power component to
+checked local +Z reflection/refraction candidates. Both candidates and all
+power enclosures are prepared before branch selection. The
+`anisotropic_local_native` gate replays actual view/half inputs through Lean
+and both native copies, including oblique views, independent rational norm and
+budget checks, unsupported FP modes and UBSan. Exact eta=1, TIR, invalid
+hemispheres and unresolved certificates remain explicit rejection here; this
+helper supplies neither a VNDF area PDF nor a renderer fallback.
+
+The typed local adapter now has a certified TIR route. An outward Snell
+**upper** discriminant bound must be nonpositive; checked reflection geometry,
+power enclosures and an exact reflection-only grid threshold are required
+before sampling. Uncertain discriminants remain explicit failures.
+`anisotropic_tir_native` checks oblique cases and a critical-angle sweep
+against Lean and exact rational discriminants in both native copies under
+optimized and UBSan builds. The regular route is preserved. This establishes
+TIR in the decoded/clipped incidence model; unit-reference incidence transfer,
+missing-hemisphere handling, VNDF density and renderer fallback remain open.
+
+The local horizon route requires a finite reflected norm certificate and an
+upper bound proving both ideal decoded and rounded reflection Z nonpositive.
+Only then does it zero reflection masking and prepare a transmission-only
+proposal. `anisotropic_horizon_native` checks the generated range-program
+drift, exact rational reflection geometry, preserved regular/TIR proposals,
+selected directions and weights, near-horizon cases, FP guards and UBSan in
+both native copies. A failed or unresolved reflection remains an explicit
+rejection. This helper still supplies no VNDF PDF or renderer fallback.
+
+The typed local event API now distinguishes certified zero-power termination
+from unresolved preparation. `anisotropic_null_native` requires both horizon
+and TIR certificates, independently checks their real signs and norm bounds,
+and replays all event states and the shared outgoing-input preflight against
+Lean in both copies under optimized/UBSan builds. Failed certificates remain
+invalid, while certified nulls have no valid outgoing scatter. Existing scatter
+proposals are preserved. These are decoded local dielectric-component claims;
+exact-unit/frame transfer and actual conservative renderer selection remain
+open.
+
+The indexed local event entry point selects the exact eta=1 straight-through
+atom before touching roughness or half-vector data. Its atomic flag and mass
+are explicit; direction uses sign inversion with no renormalization.
+`anisotropic_matched_native` checks grazing/back-facing views, signed zeros,
+unused invalid data, view rejection, adjacent eta values, preserved prior
+events, FP guards and optimized/UBSan parity in both copies. This is local
+routing; remaining nonmatched hemisphere handling, VNDF/PDF/error-transfer
+proofs and actual conservative renderer selection remain open.
+
+The extended local entry point also supports non-TIR transmission above the
+macro horizon. It requires positive Snell and ideal raw-norm certificates,
+finite near-unit normalized geometry, and nonnegative ideal/rounded
+transmitted Z before preparing reflection-only power. The
+`transmission_horizon_native` gate checks generated range-program drift,
+120-digit independent Snell/norm/Z values, exact rational direction norms,
+boundary rejection, preserved prior events, FP guards and optimized/UBSan
+parity in both copies. Geometry error transfer, VNDF/PDF, albedo/reserve and
+actual conservative renderer selection remain open.
+
+The conformance real-reference VNDF modules now derive the complete
+anisotropic spherical-cap construction and its actual input-coordinate area,
+with the local identity GGX/Smith density*area=1. They also prove cap-map
+bijection, arbitrary-view reflection area, normalized-stretch area, and real
+sampler probability/support. `vndf_real_source_drift` pins twelve reviewed
+sampler/PDF/helper/constant fragments in both trees. These exact-real proofs
+use real pi/trig; source hashes do not establish C/libm/compiler or binary32
+semantics. Global measure equality, finite-word transfer and error reserve,
+albedo/fallback and actual conservative renderer selection remain open.
+
+The conformance `VndfSlopeCoordinates` module extends the ideal-real VNDF proof
+with a positive-Z sphere/slope inverse and the arbitrary-view anisotropic
+cap-to-visible-slope bijection. It is connected to the real sampler, including
+its inactive clamp. Global UV measure transport, finite-word sampling, and
+native floating-point transfer are still open; this phase changes no runtime
+code and does not require repeating native render regressions.
+
+The real VNDF slope-map extension now proves its two-dimensional Fréchet
+derivative, signed Jacobian, nonzero determinant, and visible-slope density
+times absolute determinant equal to one. Global measure equality still needs
+UV injectivity and seam/pole null-set accounting. This proof phase changes no
+native runtime sources.
+
+The ideal-real VNDF global measure transport is now proved in conformance
+`VndfUvInjectivity` and `VndfMeasureTransport`: the actual sampler's slope
+pushforward equals the normalized anisotropic visible-GGX measure for positive
+axes and positive-Z views. Actual derivatives and injectivity give image mass
+one; target normalization gives zero target mass to the omitted image, and the
+continuous input pole is a null set. The half-vector measure equality follows
+through the inverse chart. Finite-word poles and IEEE/native transfer remain
+open. No runtime source changed in this proof phase.
+
+Finite VNDF grid coupling now proves an exact two-dimensional input-grid law
+(including binary32 input encoding), coordinate displacement bounds and
+pointwise enclosure transport. The pole row has mass `2^-24`; a response
+proved in `[0,1]` contributes at most that amount. This conditional pole reserve
+does not certify the native BSDF or assume independent consecutive PCG states.
+
+The strict binary32 VNDF cap-height schedule now has an all-grid-input error
+proof: exact `1-u`, finite remaining intermediates, and absolute height error
+at most `3/4194304` relative to the decoded input's real cap height. The decoded
+stretched Z must be in `[0,1]`. Rounded normalization and the remaining sampler
+operations/compiler contract are not covered by this theorem.
+
+The finite VNDF radial range proof composes with the cap-height theorem:
+rounded square, subtraction, clamp and square root remain finite, with final
+radius in `[0,1]`. This does not establish radial error or native `fmaxf`
+signed-zero/compiler correspondence.
+
+Finite VNDF radial error now includes the clamp and IEEE root: all-grid
+squared-radius error is at most `17/4194304` against the decoded-input ideal
+cap radius. Absolute error is at most `1/256`, or `(17/4194304)/m` when a
+positive ideal-radius lower bound `m` is proved. These stage bounds do not
+establish the full sampler or integrated albedo tolerance.
+
+The finite VNDF phase proof includes the native `0x40c90fdb` constant's error
+and strict multiplication rounding. Verified sin/cos output errors are at most
+`7/4194304` against exact `2*pi*u`. This applies to the verified backend;
+default libm and native compiler/literal correspondence remain open.
+
+The strict verified-trig VNDF cap-point model now composes finite cap height,
+radius, phase, trig and X/Y multiplication errors. Its coordinates are finite;
+X/Y error is bounded by proved radial error plus `31/16777216`, and Z error by
+`3/4194304`. Rounded view normalization and the remaining sampler/response
+pipeline are still open. Runtime source is unchanged in this proof phase.
+
+The conformance `lean_vndf_stretched_view` gate exercises certificates for the
+strict rounded stretched-view normalization. Accepted outputs have positive
+rounded length, decoded Z in `(0,1]`, finite coordinates and component error at
+most `2^-20` from exact anisotropic normalization. Its 16 valid fixtures include
+12 oblique cases and roughness down to `1e-8`; seven invalid cases reject.
+Universal acceptance, full sampler composition and native renderer fallback
+remain open.
+
+The VNDF exact-view/cap composition proof now propagates accepted rounded-view
+error through cap construction, against the exact anisotropically normalized
+input view's real capSample. The stretched-view executable check also exercises
+pole, interior and near-boundary input pairs through the composed finite cap.
+Final half-vector construction, native correspondence and albedo reserve remain
+open.
+
+The strict VNDF raw-vector proof now covers cap/view addition, anisotropic
+stretch-back and Z clamp, tied to the real sampler reference. Its tighter
+Z error proves positive rounded raw Z outside a conservatively bounded final
+64 height rows. The executable view/cap check also exercises raw-vector
+finiteness and records positive finite lengths. Final normalization and the
+tail's response/fallback treatment remain open.
+
+The bulk VNDF normalization proof now derives rounded length in `[2^-21,16]`
+and finite reciprocal/final scaling from the certified raw-vector domain.
+The executable check also tests final half-vector finiteness and a rational
+squared-norm band. Universal norm/direction error and tail fallback are still
+open; no native renderer path is activated by these word-model results.
+
+The bulk VNDF squared-norm band is now a universal Lean theorem, rather than
+only fixture evidence: decoded final squared norm differs from one by at
+most `2^-15`. The proof includes the actual rounded dot, root, reciprocal and
+component products, retaining gradual-underflow reserve. Ideal direction
+error and the endpoint tail remain open.
+
+The strict `verified_vndf.c/.h` helper now exists in both renderer trees and is
+built separately from fast-math code. `vndf_native` replays 237 Lean stage
+traces under optimized and UBSan builds, including rounding/FTZ rejection and
+FP-state preservation. Production archive/object replay and public C11/C++17
+headers are also checked. The trace validity flag reports finite stages and
+positive lengths; it is not an energy certificate or renderer fallback.
+Renderer selection remains unchanged. View/geometry/albedo certification,
+ideal-direction error, tail handling and useful compensation remain open.
+
+Bulk VNDF direction error now has a universal Lean transfer theorem, with a
+`2^-16` per-component normalization-rounding term plus twice the Euclidean
+raw-input error divided by decoded raw length. The native replay independently
+checks the ideal direction at 100 decimal digits for certified bulk records.
+Small raw lengths can make the bound too coarse for the requested integrated
+albedo tolerance; tail/fallback and full native certification remain open.
+
+### Two-dimensional finite-grid region reserves (2026-11-15)
+
+Added root-imported `VndfGridRegions.lean`: exact rectangle mass on the
+product grid, bounded contributions, masked-average decomposition, hybrid
+outside-cell enclosures, and a two-rectangle reserve valid even with overlap.
+The response bound is an explicit premise, not an assumed native BSDF property.
+
+The last 64 height rows have mass 1/262144. A candidate rectangle of width
+16384 around the azimuth half-turn and height 16384 has mass 1/1048576 and
+provably contains the observed cancellation case. Their summed reserve for a
+proved [0,1] response is 5/1048576. This does not classify all problematic cells
+or establish a full numerical reserve: outside-cell bounds, the actual response
+bound, and integration with the true albedo factory remain required. Masks are
+an analysis decomposition, not permission to discard native samples.
+
+`lean_vndf_grid_regions` independently enumerates all 270 valid rectangles on
+1, 2, and 4 grids, checking rational masses and reserve inequalities, plus an
+overlap case and large-grid candidate arithmetic. Direct check and root build
+passed. Runtime C source unchanged; the full original goal remains open.
+
+### Cell-sensitive VNDF direction transfer (2026-11-15)
+
+Added root-imported `VndfCellDirection.lean`. The strict cap/view/stretch-back
+proof now accepts a radial error Er in [0,1/256]. Its raw XY errors are
+alpha*(Er+52/16777216)+9/16777216; the sharper raw Z error remains
+49/16777216. The bulk direction theorem uses these errors through the actual
+rounded normalizer. A separate denominator-margin theorem permits replacing
+the decoded raw length by a certified positive lower bound.
+
+Proved that the radial error can use min(1/256,(29/4194304)/m), where m is a
+positive ideal radial margin. Endpoint absolute cap-height bounds imply that
+margin throughout a height interval. For every j≤jMax, the accepted sampler
+also has decoded raw Z ≥ (16777216-jMax-49)/16777216; raw Z supplies a raw-length
+lower bound. These are usable cell obligations, not a claim that every cell
+has a useful bound. Near-cancellation cells still need explicit integration.
+
+The independent 100-digit native replay now checks both the refined radial
+bound and refined ideal-direction bound, and checks that the latter never
+widens the previous global bound. Renderer C code and activation unchanged.
+Still required: a cell enclosure producer, BSDF response bounds and event
+boundaries, finite-to-integral transfer, the full width/reserve certificate,
+useful compensation and all original native/layers/film/OSL scope.
+
+### Executable cap-cell certificate producer (2026-11-15)
+
+Added root-imported `VndfCellCertificate.lean`. `checkCapCell` validates exact
+rational corner height bounds, a positive radial margin, ordered view and
+height intervals, and the bulk endpoint cut. Its soundness theorem proves the
+radial margin at every real point of the height interval and every stretched
+view Z inside the supplied enclosure. No sampled-corner assumption is used:
+monotonicity in view and height is proved.
+
+`certifyCapCell` computes the maximum absolute corner height and searches
+1, 1/2, ..., 1/4096 for a checked radial margin. Every returned certificate
+provably passes the checker. Connected the real stretched-view Z enclosure
+from `certifyStretchedView`, the exact 24-bit grid decoding, the rounded radial
+error, and a positive raw-length lower bound. `checkedCapCell_half_direction`
+therefore bounds the actual strict decoded half-vector direction throughout
+the accepted height band, for every valid azimuth index. The bound is not
+promised small: the raw-Z lower bound is deliberately coarse near the tail.
+
+New `lean_vndf_cell_certificate` regression: 252/256 synthetic bands accepted,
+4 pole-touching bands rejected; 756 interior/endpoint rational sample checks,
+7 invalid margins rejected, and 45/48 bands accepted using actual normal and
+oblique stretched-view certificates. Direct root build and executable checks
+passed. This is a geometry certificate producer, not the true albedo factory.
+Remaining: cellwise BSDF response bounds and event handling, tighter 2D raw
+length bounds around cancellation, finite/integral transfer, full width and
+numerical reserve, useful compensation/native selection, layers/film/OSL and
+the full original scope. No renderer C/runtime changes in this phase.
+
+### Rational direction-cell certificate output (2026-11-15)
+
+Added root-imported `VndfCellRationalBound.lean`. Proved the nonnegative
+three-component L1 bound for the raw-error Euclidean norm. The executable
+`capCellDirectionErrorQ` uses exact rational arithmetic throughout, replacing
+the real square root conservatively by that proved upper bound.
+
+`certifyVndfDirectionCell` combines roughness checks, the actual stretched-view
+certificate, the cap-cell producer, and the rational direction-error output.
+Its accepted-result theorem bounds every component of the actual strict
+half-vector against the ideal anisotropic cap map for all azimuth indices and
+all height indices in the accepted band. Callers need only supply index
+membership; the producer discharges the geometric certificate premises.
+
+Extended `lean_vndf_cell_certificate`: 24/45 representative accepted view bands
+have direction bound ≤1/5000; smallest exact bound 1210777/11166875648
+(about 1.0842e-4). Largest bound 3118333955/196608 (about 15860) exposes the
+coarseness of the raw-Z-only length margin near the tail. These are direction
+bounds, not albedo error estimates. Combined producer accepted two oblique
+interior bands and rejected five invalid axes/view/endpoint cases. Existing
+252 accepted/4 rejected synthetic bands and 756 margin samples retained.
+Direct proof/root build and executable checks passed. No renderer runtime
+source changes. Tight 2D cancellation bounds, BSDF event/response enclosures,
+integrated albedo width/full reserve/useful compensation and all original
+native/layers/film/OSL scope remain open; the full goal remains active.
+
+### Azimuth-dependent raw-length margins (2026-11-15)
+
+Added root-imported `VndfAzimuthCell.lean`. Exact rational cosine enclosures
+use the strict verified trig value at the azimuth interval's first grid index,
+its proved 7/4194304 ideal-phase error, and a proved phase-distance bound
+7*(i1-i0)/16777216. The theorem covers every grid index in the interval;
+endpoint sampling is not used as a proof of interior coverage.
+
+Proved unit-radius product bounds and a signed raw-X length margin. Connected
+the exact stretched-view X enclosure and the cell radial error to the actual
+rounded raw sampler. `certifiedRaw_azimuth_x_margin` gives decoded raw length
+at least alphaX*(min(0,cosLower)+viewXLower)-rawXError. It is valid for arbitrary
+accepted views; usefulness depends on this lower bound being positive. It
+complements, rather than replaces, the raw-Z margin. Negative/small margins
+cannot justify a positive denominator or certify cancellation cells.
+
+New `lean_vndf_azimuth_cell` gate uses an oblique view, 16 azimuth cells and a
+height band extending from N/2 through N-64. Nine cells have positive margins
+stronger than the old Z-only margin. All 144 rounded raw-vector endpoint and
+interior checks passed. Direct proof/root build passed. No renderer runtime
+changes. Remaining: combine margins into the direction producer, signed Y/
+upper-component bounds and tighter cancellation handling, BSDF event/response
+enclosures, integrated albedo width/full numerical reserve/useful compensation,
+and the full original native/layers/film/OSL scope. Full goal remains active.
+
+### Combined two-dimensional direction certificates (2026-11-15)
+
+Added root-imported `VndfDirectionCell2D.lean`. The executable length margin is
+the maximum of the certified Z margin and the azimuth-dependent X margin.
+The accepted-result proof carries that positive margin through the actual
+rounded normalizer and rational raw-error bound. `certifyDirectionCell2D`
+checks roughness, view, ordered azimuth endpoints inside the 24-bit domain,
+and the height-band radial certificate. Its theorem covers every azimuth and
+height grid index in the accepted rectangle, not only sampled corners.
+
+Proved that this bound never widens the previous height-only bound whenever
+the existing positivity conditions hold. Extended `lean_vndf_azimuth_cell`
+checks non-widening on 16 azimuth cells, retains the 144 rounded raw checks,
+and exercises two valid producer results and two rejected azimuth ranges.
+Direct proof/root build and regression passed. Best new/old error ratio was
+5831047/3490846841223 (about 1.67e-6), reflecting the old near-tail Z margin's
+coarseness. This is a geometry-bound improvement, not a certified albedo
+error or full numerical reserve. Remaining signs/Y, cancellation treatment,
+actual BSDF event/response enclosures, integrated width/reserve, useful
+compensation and the full native/layers/film/OSL goal remain open.
+No renderer runtime source changes; full goal active.
+
+### Half-vector to reflection/horizon transfer (2026-11-15)
+
+Added root-imported `VndfReflectionTransfer.lean`. Proved dot-product and real
+reflection perturbation bounds. When view and ideal half-vector components
+are bounded by one and the component half-vector error e≤1, reflection error
+is at most 18e per component. Connected this to accepted 2D VNDF certificates;
+ideal half-vector unit length is derived from the actual anisotropic cap-map
+visible-domain theorem. The view-component bound and e≤1 remain explicit
+premises, not hidden assumptions about arbitrary accepted input values.
+
+Added positive/nonpositive horizon transfer lemmas with explicit error margins,
+and a composed reflection theorem with an additional rounded-instruction error
+rho. The latter rho is a premise: this phase does not prove a universal native
+outgoing-reflection roundoff bound. Extended the independent 100-digit native
+replay to reconstruct real reflection of ideal and decoded half vectors and
+check the reflection error and both horizon-margin classifications. The replay
+does not conflate this with rounded native outgoing instructions.
+
+The conditional power budget alone was insufficient to identify finite and
+ideal BSDF events. This closes a coarse reflection-direction link toward those
+event enclosures. Still required: checked rounded outgoing error, Snell/TIR
+and transmission perturbation bounds, Fresnel/masking response enclosures,
+integrated albedo width/full reserve/useful compensation and all original
+native/layers/film/OSL scope. No runtime C changes; full goal active.
+
+### Checked outgoing-reflection roundoff (2026-11-15)
+
+Added root-imported `CheckedReflectionRoundoff.lean`. The executable checker
+uses the existing actual ordered `reflectedComponentExpr`/`reflectedF32`
+schedule. Each component certificate encloses both its exact real evaluation
+and actual binary32 result. The returned rational error is the maximum of the
+three enclosure widths. Accepted-result soundness proves the output finite
+and bounds every rounded component against real reflection of decoded inputs.
+Exceptional inputs or overflowing/uncertifiable programs reject explicitly.
+
+`certifiedCell2D_rounded_reflection_error` composes this checked roundoff with
+the actual 2D VNDF direction certificate and the ideal anisotropic cap-map
+reflection. Its error is roundoff.error+18*cell.error. The earlier explicit
+view-component bound and cell.error≤1 remain premises. A roundoff certificate
+is required for the sampled half vector; acceptance for an entire cell has
+not been inferred from one sample. No new compiler/hardware correctness claim
+or native renderer activation is made.
+
+New `lean_reflection_roundoff` gate checks 18 finite reflection cases against
+exact rational reflection, including signed zero, normal/oblique views and
+negative incidence, plus three NaN/infinity/finite-overflow rejections.
+Maximum certified roundoff among those cases: 11/8388608 (~1.31e-6).
+Direct proof/root build and executable check passed. Still required: whole-cell
+outgoing/event bounds, Snell/TIR transmission perturbation, Fresnel/masking
+response enclosures, true integrated albedo width/full reserve/useful
+compensation, all native/layers/film/OSL scope. No runtime C changes; goal active.
+
+### Snell/TIR and raw-transmission perturbation (2026-11-15)
+
+Added root-imported `VndfSnellTransfer.lean`. For ideal and perturbed incidence
+cosines in [0,1] differing by at most d, proved Snell discriminant error at
+most 2*eta^2*d. Explicit margin lemmas preserve the native positive-transmission
+and nonpositive-TIR classification. A positive ideal root margin m bounds root
+error by 2*eta^2*d/m when the perturbed discriminant is nonnegative. Scale and
+raw-transmission component bounds follow, with half-vector error e≤1 and
+ideal half-vector components bounded by one. Critical-angle cases lacking a
+positive margin are not silently certified.
+
+Connected finite `clampUnitF32` incidence projection: a rounded dot error rho
+and half-vector component error e give incidence error ≤rho+3e on the stated
+bounded-view/physical-incidence domain, then discriminant error
+≤2*eta^2*(rho+3e). The rounded-dot error remains explicit; this phase does not
+infer a universal native dot/discriminant/root/outgoing-normalization reserve.
+The raw map is linked algebraically to `Transport.transmitted` when its cosine
+is the view-half dot product. Eta=1 delta routing remains separate.
+
+Extended independent 100-digit native replay across eta=.5,1,1.5,2 to check
+clamped geometric incidence, discriminants, both branch-margin decisions,
+root errors and raw-transmission errors. These are real reconstructions of
+decoded/ideal half vectors, not a replay of rounded Snell instructions. Runtime
+C unchanged. Remaining: checked rounded incidence/Snell/transmission schedules,
+whole-cell event and Fresnel/masking response enclosures, true integrated
+albedo width/full reserve/useful compensation, and all original native/layers/
+film/OSL scope. Full goal remains active.
+
+### Checked rounded incidence and Snell discriminant (2026-11-15)
+
+Added root-imported `CheckedSnellRoundoff.lean`. The executable checker encloses
+the ordered binary32 half/view dot product and the outgoing discriminant
+program using the actual `clampUnitF32 (half.dotF32 view)` incidence. Soundness
+proves finite results, enclosure membership of both decoded-real and rounded
+values, and rational roundoff bounds from enclosure widths. Eta=1 is rejected
+here to preserve the separate delta route; nonfinite, nonpositive eta and
+uncertifiable/overflow inputs reject.
+
+The separate classifier returns transmission only when the enclosure lower
+endpoint is positive and TIR only when its upper endpoint is nonpositive.
+Its theorem proves both the decoded-cosine real discriminant and rounded
+binary32 discriminant satisfy that classification. Ambiguous signs remain
+unclassified. `checkedSnell_ideal_discriminant_error` composes actual dot and
+discriminant roundoff with half-vector perturbation: total error ≤
+discriminantWidth+2*eta^2*(incidenceWidth+3*halfError), on the explicit bounded
+view and physical ideal-incidence domain. This is per-input certification;
+whole-cell acceptance and a full numerical reserve are not inferred.
+
+New `lean_snell_roundoff` gate independently checks exact rational dot and
+discriminant values for 60 inputs: 33 transmission, 26 TIR, one uncertain sign.
+Five invalid/delta/overflow cases reject; an artificial sign-straddling box
+also remains unclassified. Largest checked widths: dot 1/2097152 and
+discriminant 1/524288. Direct root build/proof/executable check passed.
+Still required: checked root/raw transmission/normalization, whole-cell
+response/event enclosures, integrated albedo width/full reserve/useful gain,
+and the full original native/layers/film/OSL scope. Runtime C unchanged;
+full goal remains active.
+
+### Checked full normalized-transmission roundoff (2026-11-15)
+
+Added root-imported `CheckedTransmissionRoundoff.lean`. The expression adapter
+matches the actual raw Snell program followed by ordered dot/sqrt, reciprocal,
+and component multiplication. Proved its binary32 evaluation equals the
+existing `transmittedF32` schedule; no componentwise-division substitution.
+The real reference is normalization of raw transmission at the decoded
+clamped incidence. The prior ideal-incidence perturbation bridge remains
+necessary before identifying it with the ideal sampled physical direction.
+
+The producer requires a checked positive Snell branch, a common real/rounded
+raw-length enclosure with positive lower endpoint, and full normalized output
+component enclosures. Accepted-result soundness proves finite output and a
+rational component error bound against that real reference. A separate theorem
+proves both exact-real and rounded raw lengths positive. The certificate is
+per-input; it does not infer whole-cell acceptance or reserve from samples.
+
+New `transmission_roundoff` gate executes the Lean producer and independently
+reconstructs normalized transmission at 100 decimal digits. Direct run:
+33 accepted, 27 rejected from 60 finite candidates; three explicit invalid/
+delta/TIR rejections. Largest returned bound 51/16777216 (~3.04e-6), largest
+observed normalized component error 1.23385391e-7. Rounded instruction-chain
+coverage is the Lean model, not a new production compiler/hardware claim.
+No runtime C changes. Remaining: compose decoded-incidence normalization with
+ideal Snell perturbation, whole-cell BSDF event/Fresnel/masking enclosures,
+true integrated albedo width/full reserve/useful compensation and the full
+original native/layers/film/OSL scope. Full goal remains active.
+
+### Ideal-incidence normalized-transmission composition (2026-11-15)
+
+Exposed the accepted normalized-transmission certificate sources and its
+positive rational raw-length lower bound. Added root-imported
+`TransmissionIdealTransfer.lean`: a generic normalized-vector perturbation
+adapter gives component error ≤6*rawComponentError/lengthLower, combining the
+proved Euclidean normalization inequality with a conservative component L1
+bound. No exact-unit assumption about decoded native view vectors is needed.
+
+`checkedTransmission_ideal_error` composes checked dot roundoff, finite
+incidence clamping, Snell root/scale perturbation, raw-vector error, normalization
+sensitivity and full normalized-schedule roundoff. Its reference is normalized
+`Transport.transmitted` at ideal view-half incidence. Explicit premises remain:
+bounded view/ideal-half components, half error≤1, physical incidence, positive
+critical-angle root margin, and nonzero ideal raw transmission. The finite
+certificate proves positive actual-reference length. Cells lacking these
+premises are not certified by this theorem.
+
+Extended the independent 100-digit transmission replay to validate exported
+length lower bounds and composed ideal-incidence bounds using normalized ideal
+half vectors wherever the theorem domain applies. This supplements the decoded-
+incidence schedule replay; it does not infer whole-cell acceptance or an albedo
+reserve from sampled checks. Still required: cellwise BSDF event/Fresnel/masking
+response enclosures and rejection/reserve integration, true integrated albedo
+width/full numerical reserve/useful compensation, and all original native/
+layers/film/OSL scope. Runtime C unchanged; full goal remains active.
+
+### Prepared-scalar anisotropic response cells (2026-11-16)
+
+Added root-imported `AnisotropicResponseCell.lean`. The executable interval
+producer encloses the existing anisotropic Fresnel/masking reflection,
+transmission and joint power expressions over 13 prepared-scalar boxes.
+Accepted-cell theorems cover every real input in the box and every finite
+binary32 input in the box using their separate evaluator soundness proofs.
+Guard uncertainty, zero-denominator/exceptional interval operations and
+uncertified horizon/Fresnel branches reject through the evaluator. Regular
+eta boxes crossing 1 reject to preserve separate delta treatment.
+
+A separate real joint upper bound uses min(intervalUpper,1) and the proved
+anisotropic power passivity theorem. The binary32 joint enclosure is retained
+unchanged; ideal passivity is not used to trim away native roundoff. This is
+prepared-scalar response certification, not a proof that every actual BSDF
+path has been covered: the geometry-to-scalar-box producer, proposal-density
+matching and runtime acceptance/rejection accounting remain obligations.
+
+New `anisotropic_response_cell` gate checks 12 nontrivial boxes, 36 rounded
+samples and 60 independent 100-digit Fresnel/masking real points (20 TIR).
+Largest initial joint interval width: 97/16777216 (~5.78e-6). Rejection cases
+cover horizon crossing, eta=1 crossing, zero roughness/view Z, and a critical-
+angle crossing. These samples supplement the quantified box theorem; they
+do not certify a 2e-4 integrated albedo width. Direct root build and initial
+independent replay passed. Full gate suite pending. Runtime C unchanged;
+full goal active. Remaining: geometric cell scalar-box coverage, event/reserve
+integration, true albedo width/full reserve/useful compensation and all original
+native/layers/film/OSL scope.
+
+### Geometric scalar-tube to response-box adapter (2026-11-16)
+
+Added root-imported `PreparedResponseTubes.lean`. `scalarTubeBox` converts a
+finite binary32 center and nonnegative rational radius into outward finite
+endpoints using proved rational rounding enclosures. Radius zero preserves
+an exact singleton, avoiding accidental widening across roughness/cosine one.
+A quantified theorem covers every real value in the tube, including underflow
+and signed-zero neighborhoods; overflowing/exceptional endpoints reject.
+
+The 13-component producer and soundness theorem lift scalar tubes to prepared
+response boxes. Proved the adapter from geometric incidence/reflection/
+transmission errors to `anisotropicLocalScalars`, including the transmission
+Z negation used by the masking expression. `certifyPreparedTubeResponse`
+composes tube generation and anisotropic response certification. Accepted-result
+theorems cover real response and finite binary32 joint power for every input
+satisfying the supplied tubes. Uniform validity of those radii across a VNDF
+cell remains explicit; this adapter does not infer cell coverage from a center.
+
+Extended response regression: 48 tube endpoint checks including signed zero,
+subnormal radii, exact singleton behavior; three invalid/overflow rejections.
+Eight prepared response tubes use actual rounded reflection/transmission
+centers with prescribed 2^-20 incidence/direction radii. Largest joint width
+189/8388608 (~2.25e-5). Combined independent replay covers 20 boxes and 100
+100-digit real points, retaining 36 original rounded response checks and five
+branch/invalid box rejections. These are adapter tests, not proof that the
+prescribed radii cover all samples in a geometric cell.
+
+Direct root build/proof/replay passed; full gates pending. Runtime C unchanged.
+Remaining: produce certified uniform scalar tubes from geometric VNDF cells,
+finite/integral and rejected-region accounting, true integrated albedo width/
+full reserve/useful compensation and all original native/layers/film/OSL scope.
+Full goal remains active.
+
+### Whole-cell VNDF geometric variation (2026-11-16)
+
+Added root-imported `VndfCellVariation.lean`. Proved cap radial variation from
+height displacement and a positive anchor radial margin, trigonometric phase
+variation, and cap-point variation. The result applies to arbitrary real UV
+points in the stated domain, not only finite-grid sample locations. Propagated
+through anisotropic stretch-back and the nonnegative Z clamp. A proved raw-Z
+length margin 1-vmax controls normalization throughout v≤vmax<1.
+
+The final theorem is connected to the actual ideal `anisotropicCapHalf` map:
+component variation is at most
+6*max(4*dv/m+7*du,2*dv)/(1-vmax), where du/dv bound displacement from the
+anchor and m bounds its cap radius below. A finite anchor-tube lemma composes
+uniform execution errors F with ideal variation G to give 2*F+G. This provides
+a proved route to uniform half-vector tubes; the combined scalar-response
+producer still needs incidence/outgoing variation and cellwide roundoff/
+critical-angle acceptance. Coarse margins can make the tube large.
+
+New `vndf_cell_variation` gate checks 16 anisotropic/view cells, 144 finite
+sample-to-anchor cases and 80 independent 100-digit real UV points, including
+non-grid interior coordinates. Direct replay passed: largest observed real
+variation 4.05455048e-6; largest conservative finite tube
+72773608472641/144113796508581888 (~5.05e-4). This is not the requested integrated
+albedo tolerance or a full reserve. Direct root build and proofs passed.
+Runtime C unchanged. Remaining: scalar response tubes derived uniformly from
+these half tubes, finite/integral and rejected-region accounting, tighter
+bounds where needed for true albedo width/full reserve/useful gain, and all
+original native/layers/film/OSL scope. Full goal active.
+
+### Whole-half-box incidence/reflection coverage (2026-11-16)
+
+Added root-imported `HalfCellReflection.lean`. Its executable producer evaluates
+incidence and reflection expression ranges over an entire half-vector box
+with a fixed finite view. Accepted-result theorems enclose every real half
+vector in the box and every finite binary32 half vector in the box. The proof
+uses the separate real and finite evaluator laws; it does not extrapolate
+sampled point certificates to all inputs.
+
+The current producer requires incidence lower>0 and upper<1. This certifies
+that the actual finite incidence clamp is inactive throughout the covered
+box. The clamp-inactive theorem is proved from the common enclosure and actual
+finite comparison semantics. Boxes touching clamp boundaries reject here;
+additional routes/reserves remain necessary for full coverage. No unit-length
+claim about arbitrary box members is needed for the reflection algebra.
+
+New `lean_half_cell_reflection` gate: 12 accepted half boxes, four incidence-
+guard rejections, 324 rounded incidence/reflection checks and 60 independently
+computed exact-rational real points (including interior non-f32 values).
+Two explicit invalid/nonpositive-boundary inputs reject. Maximum tested Z
+interval width 7397/8388608 (~8.82e-4) includes the prescribed input variation;
+it is not a roundoff error or albedo-width claim. Direct root build/proofs and
+regression passed. Full gates pending. Runtime C unchanged; full goal active.
+
+Remaining: compose the VNDF half-tube producer with this input coverage,
+whole-half-box Snell and normalized transmission, assemble response scalar
+boxes, finite/integral and rejected-region accounting, tighter bounds for true
+albedo width/full reserve/useful compensation, and all original native/layers/
+film/OSL scope.
+
+### Whole-half-box regular transmission coverage (2026-11-16)
+
+Added root-imported `HalfCellTransmission.lean`. It builds on the common
+incidence/reflection box, checks finite positive nonmatched eta, and evaluates
+Snell discriminant, raw length and all normalized transmission components over
+the entire input half box. Positive discriminant and length lower endpoints
+are required. TIR/delta and unresolved critical/length intervals reject here;
+other physical routes and their reserve accounting remain separate.
+
+Quantified real coverage uses the view-half incidence from each real half in
+the box and encloses normalized `Transport.transmitted`. Quantified finite
+coverage uses the actual `snellCosineF32` and proves the existing rounded
+`transmittedF32` components finite, inside their output enclosures, and with
+positive rounded raw length for every covered finite half vector. Clamp
+inactivity follows from the prior whole-box incidence theorem, not from the
+center alone. A separate theorem proves positive real raw-length expression
+throughout accepted boxes. No exact-unit assertion about arbitrary box members
+is introduced.
+
+The new `half_cell_transmission` regression checks rounded box corners and
+independent 100-digit real points, including non-f32 rational interior points,
+and explicitly rejects delta, TIR and critical-angle-crossing boxes. Direct
+root build and proofs passed; regression/full gates pending. Runtime C remains
+unchanged. Remaining: compose all outgoing boxes into prepared response boxes
+and connect the VNDF tube producer, finite/integral and rejected-region
+accounting, true albedo width/full reserve/useful compensation and the full
+original native/layers/film/OSL scope. Full goal active.
+
+### Assembled geometric half-box joint response (2026-11-16)
+
+Added root-imported `HalfCellResponse.lean`. The executable producer composes
+whole-half-box incidence/reflection and normalized transmission, negates the
+transmission-Z enclosure, assembles the actual 13 prepared response slots,
+and certifies anisotropic reflection/transmission/joint power. Accepted-result
+proofs cover every real half vector and every finite binary32 half vector in
+the supplied box, including finiteness of all prepared native inputs and the
+rounded joint expression. Reflection-output finiteness is now exposed in its
+existing soundness theorem for this composition.
+
+The ideal-real response also has a proved nonnegative branch budget and joint
+upper bound min(intervalUpper,1). Native joint coverage retains the untrimmed
+finite enclosure. These are prepared conditional joint-power expressions, not
+a new proposal-density match, event-probability, compiled-runtime or integrated
+albedo claim. The input half box must still be supplied with uniform VNDF
+coverage, and other TIR/delta/clamp-crossing routes need accounting.
+
+New `half_cell_response` gate independently reconstructs full real geometry,
+Fresnel and anisotropic masking, and compares rounded prepared responses at
+box corners/centers. It includes regular transmission with absent reflection
+and a broader box whose outgoing geometry is certifiable but whose reflection
+horizon crosses the response guard and must reject. Direct root build and
+proofs passed; replay/full gates pending. Runtime C unchanged; full goal active.
+Remaining: connect VNDF input tubes, finite/integral and rejected-region
+accounting, true albedo width/full numerical reserve/useful compensation, and
+all original native/layers/film/OSL scope.
+
+### Automatic VNDF half-box and response-cell producer (2026-11-16)
+
+Added root-imported `VndfHalfBox.lean` and exposed the accepted 2D direction
+certificate obligations. The real variation radius is computed exactly from
+UV index widths, the certified anchor radial margin and the height endpoint.
+The common outward half-box radius is 2*finiteDirectionError+idealVariation,
+centered at the actual rounded anchor. Quantified proofs cover every real UV
+point in the closed endpoint rectangle and every covered finite-grid sample;
+a separate theorem proves those sampled half vectors finite, rather than
+inferring it from the convenience decoded-value accessor.
+
+`certifyVndfResponseCell` feeds that common box into the whole-box outgoing and
+prepared-response producer. Its accepted-result theorems enclose both the ideal
+real UV-to-joint-power function and the actual modeled binary32 VNDF-to-joint-
+power function. No geometric radius is supplied by a caller. Rejections remain
+explicit for unsupported/pole/tail/branch/length cells. This covers regular
+prepared conditional power; it does not establish proposal-density matching,
+branch-event expectation, rejected-region mass accounting, or integration.
+For future partitioning, geometric endpoints are closed; finite partitions
+should use the existing half-open index rectangles to avoid double counting.
+
+New `vndf_half_box` gate reconstructs continuous real UV samples at 100 digits
+and checks finite grid samples against the same automatic half and response
+boxes, including invalid endpoint/pole/tail rejection. Direct root proofs/build
+passed; full focused suite running. Width≤2e-4 and the complete numerical
+reserve/useful compensation are still unproved. Runtime C unchanged; full goal
+active, including all original native/layers/film/OSL scope.
+
+### Refinement floor and ideal-only trig path (2026-11-16)
+
+Added `Check/VndfRefinement.lean` and reproducible
+`tests/vndf_refinement_report.py`. Baseline data with exact rational values and
+source hashes is in `doc/validation/vndf-refinement-floor.json`. Four normal/
+oblique isotropic/anisotropic cases were measured at grid spans 16, 4 and 0.
+At span zero, common real/finite response widths remain 0.003047–0.010794,
+while finite direction bounds remain roughly 7.10e-5–1.16e-4. All four point
+cases exceed 2e-4. Thus partition refinement alone cannot remove the current
+numerical enclosure floor. Prepared singleton response widths are about
+2.15e-6–2.68e-6, but use rounded prepared geometry; they are diagnostic evidence,
+not an ideal-point or albedo certificate.
+
+Started a separate ideal-only precision route with root-imported
+`IdealSmallTrig.lean`. It evaluates the already-proved exact rational degree-13
+sine / degree-14 cosine Taylor polynomials without binary32 intermediate
+rounding, adds the proved 2^-34 remainder and supplied phase uncertainty, then
+rounds only final outward endpoints. Accepted certificates cover all real
+angles in the supplied phase tube. A proved pi/4 rational phase margin connects
+the enclosure to the diagnostic anchor phase. Domain is small-angle |q|≤4/5;
+full UV quadrant reduction/reconstruction and ideal geometry integration are
+not yet proved for this producer. Existing finite verified-math code and its
+reserve obligations remain unchanged.
+
+The new ideal trig gate independently checks small-angle tubes and pi/4 at
+100 digits, with invalid/overflow rejection. Direct root build/proofs passed;
+focused gates running. This separates ideal approximation from finite execution
+uncertainty rather than trimming a common enclosure unsoundly. Remaining:
+full ideal phase/cap response enclosures, finite reserve and density/integral/
+rejected-region accounting, true albedo width/useful compensation and all
+original native/layers/film/OSL scope. Runtime C unchanged; full goal active.
+
+The proof-only full-turn ideal azimuth phase gate is `ideal_azimuth_trig` in the
+MaterialX conformance build. It checks rational quadrant reduction/reconstruction
+against 100-digit ideal sine/cosine values at boundaries and wraparound. It does
+not certify the renderer's complete numerical energy reserve; native code is
+unchanged by this addition.
+
+The `ideal_cap_cell` conformance gate checks the ideal spherical-cap cell
+producer against 100-digit calculations throughout stretched-Z and UV boxes.
+It covers 54 interior cells and 810 real points. This proof-only gate checks
+ideal geometry; native sampler execution and the complete energy reserve are
+separate obligations.
+
+The `ideal_half_cell` conformance gate checks ideal VNDF cap-to-half normalization
+and regular joint reflection/transmission response against 100-digit real
+calculations. It covers normal and oblique views and anisotropic axes, including
+point-cell width diagnostics. It does not replace finite execution reserve or
+integrated albedo verification.
+
+The `vndf_rectangle_integral` conformance gate checks analytic two-dimensional
+integral examples and exact rational UV rectangle area/weighted Q2^48
+accumulation across four polynomial partitions (85 cells). The underlying
+ideal-response integral bridge retains explicit integrability and coverage
+premises; this gate does not certify a complete renderer albedo partition.
+
+The root Lean proof now derives actual ideal VNDF response measurability and
+accepted-cell inner/outer integrability in `VndfResponseMeasurable.lean`.
+The accepted-cell rectangle integral theorem no longer requires callers to
+supply integrability. Its verification uses the root audit and the existing
+`ideal_half_cell` and `vndf_rectangle_integral` gates; complete domain coverage
+and finite execution reserves remain separate requirements.
+
+The `vndf_partition` conformance gate checks nonuniform rectangular tree
+coverage, exact rational accumulation, invalid split and missing-leaf rejection,
+and two local ideal VNDF response partitions. The root proof connects successful
+trees to their complete parent integral; it does not assume rejected cells are
+unit bounded or establish a successful full-square albedo certificate.
+
+The `vndf_unit_fallback` conformance gate checks the proved ideal closed-square
+unit response bound against high-precision TIR and pole cases, retains narrow
+regular leaf checks, and exercises a whole-square reserve partition. These are
+real mathematical reserve bounds. Broad fallback intervals do not satisfy the
+albedo-width requirement or replace a full finite numerical reserve.
+
+The `vndf_adaptive` gate checks refinement stopping, explicit depth exhaustion,
+and final-width acceptance independently of successful partition coverage.
+It records normal/oblique whole-square bounds at bounded refinement depths.
+A returned wide certificate remains a diagnostic; compensation requires the
+actual target width and full finite numerical reserve to be proved.
+
+The `ideal_normalize_upper` gate checks a dependency-aware positive component
+normalization bound against 100-digit values. This bound tightens ideal half-Z
+boxes while preserving the component's contribution to its own length.
+`Check/VndfLeafFailures.lean` reproduces rejection-stage counts on the 64-cell
+VNDF diagnostic grid. Neither changes native finite execution bounds.
+
+The `ideal_square_expr` gate checks signed square and sqrt-square bounds for
+the separate ideal-real expression evaluator. `ideal_half_response` checks
+square-aware response boxes and Fresnel-weighted mask reserves on the coarse
+8x8 VNDF grid. These preserve the original real power expression and leave the
+finite/common evaluator unchanged; full finite energy reserve remains required.
+
+The `ideal_sqrt_boundary` gate checks the separate ideal-real sqrt and clamp
+interval rules, including negative/crossing radicands and both closed VNDF cap
+pole rows for normal/oblique views. The original finite/common expression
+checks remain unchanged. Ideal boundary acceptance does not replace native
+roundoff reserve or the full albedo precision requirement.
+
+The `vndf_midpoint` gate checks certified tensor midpoint error and outward
+accumulation on an exact polynomial benchmark (1109 cells, five grid sizes).
+The root proof derives the area-weighted quadratic error budget and removes
+integrability premises for the actual ideal response. Material-specific Taylor
+remainder certificates are still required before this can tighten material
+albedo; polynomial target success does not satisfy that requirement.
+
+The `vndf_cap_curvature` gate checks actual VNDF cap-radius derivative formulas,
+checked radial-margin curvature bounds, and certified midpoint integral errors
+against 100-digit calculations on 24 bands. The root proof connects uniform
+second-derivative bounds to Taylor/midpoint contracts. Full material response
+curvature and its native numerical reserve remain separate obligations.
+
+The `second_jet_bounds` gate checks composed value/first/second derivative
+intervals for arithmetic and nonlinear normalization against 100-digit
+calculations, including singular-domain rejection. Root proofs retain explicit
+reciprocal/sqrt domains and neighborhood correctness for linking to actual
+second derivatives. Full material input boxes and curvature remain required.
+
+The `cap_radius_jet_bounds` gate checks uniform actual cap-radius value and
+first/second derivative input boxes over stretched-Z ranges and height bands,
+then exercises reciprocal, sqrt and nonlinear normalization composition.
+The root theorem covers all real points in accepted intervals; high-precision
+samples supplement that proof. Full material curvature and native reserve
+requirements remain separate.
+
+The `cap_coordinate_jet_bounds` gate checks all ideal cap XYZ values and pure
+first/second UV derivatives across uniform cells, stretched-Z ranges, all
+quadrants and wraparound. Root proofs link boxes to actual iterated derivatives
+and retain checked radius margins. Normalized-half and full material response
+curvature remain separate requirements.
+
+The `half_geometry_jet_bounds` gate checks actual anisotropic VNDF half-vector
+values and pure UV first/second derivatives for normal, oblique and grazing
+views. Root proofs connect normalization boxes to the actual clamped model
+through checked positive-length/radius domains and neighborhood equality.
+Singular/pole/invalid cases reject. Full response curvature and native energy
+reserve remain separate requirements.
+
+
+### 2026-11-16: checked response-expression second-derivative compiler
+
+Added root-imported `JetExpressionCompiler.lean`. The compiler reuses the
+existing Expr definitions and produces checked value/first/second boxes plus a
+smooth arithmetic code. Soundness covers every expression constructor,
+square-aware repeated factors, reciprocal sign checks, positive square-root
+domains and certified conditional branches. The actual iterated-second theorem
+requires input enclosures and derivative correctness throughout a neighborhood;
+a single-point derivative claim is insufficient. A nonpositive condition may
+select the first branch only under that same uniform-neighborhood premise.
+
+Added `jet_expression_compiler`: independent 100-digit value/first/second
+checks of existing prepared Fresnel and joint-power expressions, regular and
+TIR cases, with distinct outgoing masks. Four rejection cases cover uncertain
+reciprocal/sqrt/branch domains and nonfinite literals; constant-zero branch
+selection is also checked. These prepared scalar cases do not yet establish
+curvature of the coupled physical material geometry. Runtime C unchanged.
+
+Remaining: assemble prepared scalar jets from actual half-vector geometry,
+reflection/Snell/transmission directions, obtain full response curvature and
+smoothness, then actual material midpoint leaves with albedo width <=2e-4.
+Density linkage, full finite reserve, useful native compensation and original
+layers/film/OSL requirements remain open.
+
+Verification completed: all nine focused gates passed in 169.49s
+(`/tmp/jet-expression-gates.log`). Root audit: 5627 theorems (559 private),
+244 modules, only Classical.choice, Quot.sound and propext. New compiler gate
+passed in 8.10s with 108 independent 100-digit value/derivative comparisons.
+Existing half-geometry/arithmetic gates passed in 15.32s/6.05s. Both workspace
+whitespace checks pass; runtime C unchanged, no commits/pushes. Full plan
+remains incomplete with the integration requirements listed above.
+
+
+### 2026-11-16: actual geometry-to-expression curvature composition
+
+Added root-imported `HalfExpressionJetBounds.lean`. A reusable checked factory
+composes actual anisotropic normalized-half jets with the existing outgoing
+Expr definitions. Its input environment uses half-coordinate jets and finite
+constant view components. Proved input derivative correctness from the checked
+normalization/domain certificates. The actual-second theorem derives uniform
+neighborhood input coverage from strict rectangle-interior membership, then
+transfers derivatives to physical anisotropicCapHalf through the existing
+inactive-clamp/value lemmas. No caller-supplied neighborhood certificate remains
+for accepted interior points. Endpoints are not included in this derivative
+theorem; no pole or boundary extrapolation is asserted.
+
+Added `half_expression_jet_bounds`: actual incidence and all three reflection
+coordinates, both UV axes, 24 cells/192 boxes over normal, oblique and near-grazing
+views, isotropic/anisotropic axes and two phase/height bands. Independent
+100-digit value/first/second comparisons passed (5184 comparisons); pole and
+nonfinite-view inputs reject. Boundary samples are numerical regression checks,
+not an extension of the formal interior theorem. Integrated root build passed.
+Runtime C unchanged.
+
+Remaining: inline eta and incidence into the existing Snell/normalized
+transmission expressions, compose prepared joint response and certify smooth
+branch domains/curvature. Existing ideal value-cell certificates may tighten
+normalized-jet value boxes without changing derivative bounds. Material midpoint
+leaves and actual albedo width <=2e-4, density linkage, full numerical reserve,
+useful native compensation, layers/film/OSL completion remain open.
+
+Actual geometry-to-expression verification completed: all nine focused gates
+passed in 167.23s (`/tmp/half-expression-gates.log`). Root audit: 5636 theorems
+(559 private), 245 modules, only Classical.choice, Quot.sound and propext.
+New actual incidence/reflection gate passed in 44.88s with 24 cells, 192 pure-axis
+boxes and 5184 independent 100-digit value/derivative checks. Existing geometry
+and prepared-expression regressions passed in 15.32s/8.08s. Both workspace
+whitespace checks pass; all own handles terminal, runtime C unchanged,
+no commits/pushes. Full objective remains active and incomplete.
+
+
+### 2026-11-16: actual Snell and full coupled material response curvature
+
+Added root-imported `InlineHalfTransmission.lean` and `InlineHalfResponse.lean`.
+A proved semantics-preserving Expr substitution inlines eta and the actual
+view/half incidence into the existing outgoing Snell and normalized transmission
+schedules. Regular certification checks positive eta, excludes matched-index
+delta, requires a uniformly positive whole-cell discriminant and retains the
+compiler's positive normalization/sqrt and nonzero denominator checks.
+The actual-second theorem covers normalized transmitted components on accepted
+cell interiors; closed-cell value coverage now also has a reusable theorem.
+
+Full response inlining assembles the existing prepared scalar slots, reflection,
+normalized transmission with the correct reversed transmission-Z hemisphere
+slot, Fresnel and masking expressions. Proved equivalence to the authoritative
+idealVndfCellPower, then transferred both pure UV second-derivative boxes to that
+actual coupled function. Branch selection and discriminant coverage hold
+throughout the checked cell. No independent scalar-input assumption remains in
+this full response theorem; physical anisotropic VNDF geometry is composed.
+Integrated root build passed. Runtime C unchanged.
+
+Added `inline_half_transmission`: 10 accepted actual cells, 30 component cases,
+60 pure-axis boxes and 1620 independent 100-digit comparisons. Includes
+normal/oblique/near-grazing views, isotropic/anisotropic axes and eta .5/1.5.
+Six uncertified high-index grazing component cases, three invalid/delta eta
+cases and one explicit TIR cell reject. All standalone checks passed.
+Added `inline_half_response`: actual anisotropic joint response normal/oblique/
+near-grazing cells, both pure UV axes, with independent value/first/second checks
+and invalid/delta/TIR rejections. The three acceptance probes passed; complete
+independent regression and root gates pending below. Endpoint samples remain
+numerical regressions; the actual second-derivative theorems require interiors.
+
+Remaining: smoothness/center derivative and closed-integration-domain linkage
+for material midpoint certificates, actual material albedo width <=2e-4,
+density matching, full finite numerical reserve/useful native compensation,
+and original layers/film/OSL requirements. Curvature boxes alone are not an
+integral enclosure or a claim that the requested width has been attained.
+
+Actual Snell and full material-response verification completed: all ten focused
+gates passed in 247.60s (`/tmp/inline-half-gates.log`). Root audit: 5680 theorems
+(569 private), 247 modules, only Classical.choice, Quot.sound and propext.
+Transmission gate passed in 101.09s (10 cells, 60 pure-axis component boxes,
+1620 independent 100-digit comparisons, 10 domain rejections). Actual coupled
+joint-response gate passed in 81.24s (3 anisotropic normal/oblique/near-grazing
+cells, 6 pure-axis boxes, 162 independent comparisons, 4 domain rejections).
+Existing actual incidence/reflection and prepared-expression gates passed in
+45.00s/8.03s. Both workspace whitespace checks pass; all own handles terminal,
+runtime C unchanged, no commits/pushes. Full objective remains active.
+
+The next integral bridge must prove actual response smoothness/center first
+derivatives, and reconcile interior second-derivative bounds with the midpoint
+contract. Lagrange's intermediate point is strictly interior, so the curvature
+bound premise can be weakened from Icc to Ioo with proof; boundary smoothness
+still needs a within-domain proof or a checked enclosing cell. Do not assume
+C2 from pointwise second-jet correctness alone. No material albedo-width or
+full finite reserve claim follows yet from the new derivative certificates.
+
+
+### 2026-11-16: actual material midpoint integral certificates
+
+Added root-imported `JetMidpoint.lean`, `MaterialJetMidpoint.lean` and
+`MaterialMidpointCell.lean`. Uniform actual second-jet correctness now proves
+C1 regularity of the compiled smooth extension and differentiability of its
+first derivative throughout the interval. Taylor's Lagrange theorem then gives
+the exact M*(x-m)^2/2 remainder. This proof does not infer C2 from a pointwise
+jet assertion or assume continuity of the second derivative.
+
+Proved closed-cell value equality between the compiled response extensions and
+the physical coupled idealVndfCellPower for both UV directions. Their checked
+second-coordinate boxes give exact rational uniform absolute curvature bounds.
+The two Taylor remainders compose into the tensor midpoint integral error;
+measurability and checked whole-cell value boxes discharge inner/outer
+integrability, and uniform jet correctness discharges center-line integrability.
+No caller-provided smoothness, Taylor or integration premise remains.
+
+`certifyMaterialMidpointCell` checks positive rectangle extents, obtains the
+actual joint-response jet certificate and independently encloses the exact
+rational midpoint through the existing ideal value-cell factory. Its soundness
+theorem proves the returned rational bounds contain the actual iterated UV
+rectangle integral. The closed-cell extension argument retains all endpoint
+values without claiming global physical derivatives across a branch boundary.
+Integrated root build passed; normal/oblique/near-grazing anisotropic probes all
+accepted. Runtime C unchanged.
+
+Added `material_midpoint_cell`: six coarse/refined actual cells, independent
+100-digit 8/16-point tensor Gauss quadrature comparisons, normalized enclosure
+width refinement checks, and zero/reversed/pole rectangle rejections. Full
+focused gates running; final results recorded below. These are actual material
+integral cells, not the older polynomial benchmark, but do not establish a
+whole-square albedo width <=2e-4.
+
+Remaining: integrate these midpoint leaves into whole-square checked adaptive
+partition coverage, refine singular/critical/horizon regions with proved area
+reserves, establish actual all-view albedo width <=2e-4, density linkage, full
+finite numerical reserve/useful native compensation and original layers/film/
+OSL requirements. Native compiled execution of the checked factory may be
+needed for practical whole-square refinement; interpreted full-response checks
+currently take tens of seconds per cell. Preserve compiler/runtime trust
+boundaries and do not replace kernel proofs with native_decide.
+
+Actual material midpoint verification completed. The root/audit/citation/
+provenance/existing-response/midpoint gates passed in the focused run
+(`/tmp/material-midpoint-gates.log`); its new driver initially had a rational
+rather than Nat grid-index inference error. Corrected explicit driver types,
+then `material_midpoint_cell` passed in 164.97s
+(`/tmp/material-midpoint-recheck.log`). No mathematical proof or algorithm
+change was needed for this driver correction. Root audit: 5697 theorems
+(569 private), 250 modules, only Classical.choice, Quot.sound and propext.
+
+All six actual integral enclosures contain independent 100-digit 8/16-point
+tensor quadrature results, with converged numerical references. Three
+normalized enclosure widths narrow under refinement:
+- normal: 0.000403239369 -> 0.0000393899002;
+- oblique: 0.000639679028 -> 0.0000521000762;
+- near-grazing: 0.00284408614 -> 0.000166605657.
+Four zero/reversed/pole rectangles reject. These local-cell normalized widths
+are useful evidence, not the required whole-square all-view albedo certificate.
+Both workspace whitespace checks pass; all own handles terminal, runtime C
+unchanged, no commits/pushes. Full objective remains active and incomplete.
+
+Next structural requirement: `checkUvPartition` currently treats leaf outputs
+as pointwise ranges and multiplies by area. Add a checked integral-leaf variant
+carrying both a pointwise range (for split integrability) and a directly proved
+integral enclosure. Combine midpoint leaves with existing proved unit-area or
+range leaves, exact checked parent coverage and an independently checked final
+width flag. Use area-weighted local error budgets; depth exhaustion must remain
+failure to establish precision. Whole-square TIR/critical/horizon/pole coverage
+and practical certificate execution still need work.
+
+
+### 2026-11-16: mixed integral-leaf partition coverage and adaptive width audits
+
+Added root-imported `UvIntegralPartition.lean`, `MaterialIntegralLeaf.lean` and
+`AdaptiveMaterialIntegral.lean`. The new partition checker accepts separately
+proved pointwise and integral leaf enclosures, retains ranges to establish
+split integrability, checks every U/V split and exactly sums direct child
+integrals without multiplying them by area a second time. Its soundness theorem
+proves full parent coverage and actual integral containment.
+
+Mixed material leaves use exact rational-to-2^24-grid conversion (nongrid
+endpoints reject without rounding), actual midpoint certificates and the existing
+proved range/unit-area route. Accepted midpoint bounds intersect both baseline
+pointwise and integral enclosures; rejected midpoint checks retain the proved
+baseline. The material partition theorem covers idealVndfCellPower on the full
+checked rectangle. Adaptive generation uses target*rectangle-area local budgets;
+coverage and final global width are independently checked. Fuel exhaustion and
+negative targets never establish requested precision.
+
+Added native `mtlxspec-material-integral` and `material_integral_partition`.
+Tests cover asymmetric U/V splits with exact affine integrals (detects double
+area scaling), invalid splits/reversed/missing leaves/nongrid endpoints,
+area-weighted stopping, actual local midpoint/intersection, a full-square
+five-leaf mixed partition, and depth/negative-target precision guards. Native
+regression passed in 20.09s before the final added local-budget assertion;
+final focused gates running below. Root build passed. Native execution remains
+a compiler/runtime trust boundary; these checks do not use native_decide or
+replace the kernel-checked generic soundness proofs. Runtime C unchanged.
+
+The coarse full-square mixed result still has width near 1; its target flag
+remains false. This is coverage/integral composition progress, not completion
+of the required all-view albedo width <=2e-4. Practical refinement needs more
+work: native full-response certificate execution remains seconds per cell.
+Next candidates are memoization of repeated response-expression subtrees or
+staged prepared-scalar jet composition, followed by actual whole-square
+refinement, TIR/horizon/critical/pole treatment and final width evidence.
+Density linkage, full finite reserve/useful native compensation and original
+layers/film/OSL scope remain unfinished.
+
+Mixed integral partition verification completed: all ten focused gates passed
+in 167.09s (`/tmp/material-integral-partition-gates.log`). Root audit: 5713
+theorems (572 private), 253 modules, only Classical.choice, Quot.sound and
+propext. Native mixed-integral regression passed in 20.18s, including exact
+asymmetric U/V coverage, direct integral leaves, midpoint retention in the full
+square, area-weighted stopping, invalid/missing/nongrid rejection and precision
+flags. Old partition/fallback/adaptive gates passed in 10.91s/11.77s/59.11s.
+
+The tested local normalized width is 0.0000374842936; the coarse five-leaf
+whole-square integral width is 0.999999046. The latter explicitly fails the
+required 0.0002 target and is not an albedo completion claim. Native execution
+improves interpreted checking but still costs seconds per response cell; a
+shared-subexpression/staged derivative evaluator is the next practical issue
+before substantial actual whole-square refinement. Both workspace whitespace
+checks pass; all own handles terminal, runtime C unchanged, no commits/pushes.
+Full objective remains active, including full numerical reserve/density/native
+compensation and layers/film/OSL requirements.
+
+
+### 2026-11-16: exact memoized interval and derivative compilation
+
+Added root-imported `MemoIdealRange.lean` and `MemoJetCompiler.lean`. Each cache
+has a kernel-proved invariant equating every stored result (including rejection)
+to the reference evaluator. Lookup, one-node evaluation and cache construction
+preserve that invariant; the public memo evaluators equal the reference for all
+inputs. Missing entries retain a lazy reference path. Distinct-subexpression
+postorder is a performance heuristic, not an extra correctness assumption.
+No approximate key, cross-environment cache or unchecked implementation
+annotation is used.
+
+Actual half-expression certification now selects the memoized jet compiler;
+its source theorem converts back to the exact original compiler contract.
+Primitive second-jet sqrt shares ideal interval subexpressions across value,
+first and second fields, with a proved exact equality to the old evaluator.
+Square-aware ranges, positive-part/hull branch semantics, rejected domains and
+non-selected invalid branches are preserved. Runtime C remains unchanged.
+
+Added native `mtlxspec-memo-jet-compiler` / `memo_jet_compiler`: six actual
+normal/oblique/near-grazing pure-axis certificate comparisons (all code and six
+bound endpoints), five derivative branch/rejection cases, six ideal-range
+square/positive-part/hull/rejection cases, one primitive sqrt comparison and a
+repeated-expression case. Actual response trees have 6547 occurrences but only
+107-109 distinct subexpressions. All standalone reference comparisons passed.
+
+Unchanged native mixed-partition outputs match the pre-optimization rational
+bounds exactly. Runtime improved from 20.09s to 2.66s for expression caching,
+then 2.57s with distinct traversal/primitive sharing. Independent actual
+midpoint and joint-response regressions passed during final gates in
+24.43s/12.88s, versus earlier 164.97s/81.24s. This is a practical speed improvement,
+not a change to certified precision. Root/audit/focused gates and a real
+whole-square depth-8 adaptive probe are running; results follow below.
+
+Remaining: actual whole-square albedo width <=2e-4, further performance and
+refinement strategy work as measured by the probe, critical/TIR/horizon/pole
+coverage, density linkage, full finite numerical reserve/useful native
+compensation and original layers/film/OSL requirements. No local-cell or
+coarse-partition result substitutes for the required whole-square certificate.
+
+Memoized material verification completed: all twelve focused gates passed in
+178.58s (`/tmp/memo-material-gates.log`). Root audit: 5798 theorems
+(606 private), 255 modules, only Classical.choice, Quot.sound and propext.
+Native exact memo/reference certificate gate passed in 19.58s; actual material
+midpoint quadrature passed in 24.43s, full response in 12.88s, mixed integral
+partition in 2.58s, geometry/arithmetic regressions in 15.20s/6.11s. The native
+partition output rationals are exactly unchanged from the pre-memo run.
+
+Actual whole-square probe completed in 248.43s:
+`verif/lean/.lake/build/bin/mtlxspec-material-integral --adaptive 8`.
+It checks 256 leaves and returns targetMet=false, lower
+6813772741/17179869184, upper 8365789/8388608, width
+0.600665989972. This is an actual full-square integral enclosure for the
+normal-view anisotropic ax=.25, ay=.75, eta=.5 case. It is far above the required
+0.0002; do not reinterpret it as a completed albedo certificate. The probe's
+runtime shows that deeper global refinement still needs profiling and improved
+cell selection/evaluation. Longest-side splitting, repeated generation/check
+leaf evaluation and the baseline range factory are concrete next profiling
+candidates, rather than assuming more subtree caching will solve the cost.
+
+Both workspace whitespace checks pass; all own handles terminal, runtime C
+unchanged, no commits/pushes. Full objective remains active, including useful
+all-view precision, density linkage, full numerical reserve/native compensation
+and original layers/film/OSL scope.
+
+
+### 2026-11-16: measured refinement profiling and convergent radius jet seeds
+
+Added `--profile` to the native material integral diagnostic. Measured normal
+anisotropic cells: geometry ~68-71ms, discriminant ~95-96ms, full response
+~507-509ms, midpoint ~666-669ms, baseline ~143-146ms, combined ~808-817ms.
+Coarse horizon geometry/discriminant accepted but full response/midpoint
+rejected (~324-327ms); top-pole geometry rejected and retained a proved baseline
+(~19ms combined). Fine interior cells cost almost the same as coarse interior
+cells. This identifies both repeated work and wide geometric/curvature bounds;
+faster primitive evaluation alone does not establish practical refinement.
+
+Added root-imported `AnalyticCapRadiusJet.lean` and selected its refinement in
+`certifyCapRadiusJet`. The actual radius sqrt(1-z^2), first derivative
+(1+s)*z/r and second derivative -(1+s)^2/r^3 are evaluated with whole stretched-Z
+and height bands using outward interval arithmetic. A kernel proof links all
+three fields to the actual radius jet at every real point in those bands.
+Successful analytic bounds intersect the old margin-based boxes; failed analytic
+checks retain the old boxes. The existing positive cap-margin/domain checks and
+actual derivative correctness theorem remain in force. This removes the old
+persistent [m,1], +/-2/m and [-4/m^3,0] uncertainty when the checked formulas
+succeed, instead of relying on sampled extrema or weakening safety bounds.
+
+Added `analytic_cap_radius_jet`: 27 boxes over three stretched-Z bands, three
+height regions and three refinement levels; 1215 independent 100-digit value/
+first/second comparisons, 27 strict interval-narrowing checks, baseline subset
+checks and singular rejection. Standalone checks passed. Root build passed.
+Focused root/audit/citation/provenance/radius/geometry/material/integral gates
+and the same depth-8 whole-square comparison are running; final evidence below.
+Runtime C unchanged.
+
+Remaining: required whole-square all-view albedo width <=2e-4, refinement policy
+and evaluation work indicated by measurements, density linkage, full finite
+reserve/useful native compensation and original layers/film/OSL requirements.
+The radius refinement is a proved sharper seed, not a whole-albedo completion
+claim. A future global-error-driven refinement policy can use the existing
+independent partition checker; area-relative local budgets currently over-refine
+proved tiny fallback strips because their relative width remains one.
+
+Analytic radius verification completed: all fourteen focused gates passed in
+180.82s (`/tmp/analytic-radius-material-gates.log`). Root audit: 5804 theorems
+(606 private), 256 modules; only Classical.choice, Quot.sound and propext.
+All 27 analytic boxes, 1215 independent 100-digit comparisons and 27 strict
+convergence checks passed. Existing radius composition/coordinate/geometry/
+material/integral and memo-equivalence gates passed with the selected refinement.
+
+Actual local normalized integral widths now narrow as follows:
+- normal: 0.0000271223637 -> 0.0000194556489;
+- oblique: 0.0000290600473 -> 0.0000199637384;
+- near-grazing: 0.0000378219999 -> 0.0000201027938.
+The native mixed-patch normalized width is 0.0000175483093. These remain local
+results, not all-view whole-square precision claims.
+
+The same actual normal-view anisotropic whole-square depth-8 probe completed
+in 250.78s (`/tmp/material-adaptive-tight-depth8.log`), with 256 leaves,
+targetMet=false, lower 22335686395/51539607552 and upper 8365789/8388608.
+Width 0.563910409905, improved from 0.600665989972 at identical depth/material,
+but still far above 0.0002. No precision requirement has been relaxed.
+Post-refinement profiling (`/tmp/material-tight-cell-profile.log`) still shows
+coarse-horizon response rejection and similar ~0.8s combined cost per accepted
+interior cell. Boundary/uncertain cells and coarse response intervals remain
+important; the convergent radius seed alone is insufficient.
+
+Concrete next candidates: tighten normalized-component value boxes with the
+existing dependency-aware normalization upper-bound machinery (retaining
+separate derivative fields), and use global integral-width-driven refinement
+rather than forcing every proved tiny fallback strip to meet an area-relative
+width target. A generator may choose a different tree, but the independent
+partition checker and final target flag must remain authoritative. Stage/profile
+costs also expose repeated geometry computation for discriminant/response and
+midpoint construction. All own handles terminal, both workspace whitespace
+checks pass, runtime C unchanged, no commits/pushes. Full goal remains active,
+including density/full numerical reserve/useful native compensation and
+original layers/film/OSL scope.
+
+
+### 2026-11-16: dependency-aware normalized value endpoints
+
+Added root-imported `PositiveNormalizedJet.lean`. Positive component bounds now
+retain the component's own square in the denominator at each endpoint. The
+upper bound uses other-component minimum squares and the component upper
+endpoint; the lower bound uses other-component maximum squares and the positive
+lower endpoint. Proved both ratio comparisons for every real vector in the
+input boxes. The normalizer intersects these value bounds with its original
+value enclosure while retaining the original first/second derivative fields
+exactly. Negative/crossing signs or failed checks retain the original bounds.
+The existing strict positive norm/domain checks and actual derivative proofs
+remain authoritative. Runtime C unchanged.
+
+Selected the refinement in `certifyNormalizeJets` and rebuilt all dependent
+actual half-vector/material/integral proofs. An initially expensive congruence
+step through Real.sqrt was replaced with direct algebraic rewriting; final
+normalizer proof elaboration is back to seconds. No proof placeholder, project
+axiom, native_decide or unchecked implementation override was introduced.
+
+Added `positive_normalized_jet`: five arbitrary-vector boxes, positive/negative/
+crossing/near-zero components and other-component zero crossings, 675 independent
+100-digit actual value/first/second comparisons. Tests assert exact derivative
+field retention, interval subset, strict improvement of both value endpoints
+and unchanged negative/crossing fallback. Standalone and focused checks passed.
+
+The focused run passed the root audit and thirteen other gates; the Snell driver
+initially failed because it hardcoded rejection of formerly uncertified grazing
+high-index cells. Sharper value bounds certify additional regular cells. Updated
+the driver to verify every accepted component, retain all ten original mandatory
+cells and keep explicit true-TIR/invalid/delta rejection tests. Corrected independent
+Snell test is running; final evidence below.
+
+The coarse rejected cell still has an unresolved reflection hemisphere:
+its normalized half-Z enclosure is 11438477/16777216 .. 14903431/16777216,
+and the first rejected ifLE0 condition spans -9440209/134217728 ..
+9700637/16777216. Component-box bounds do not recover all shared cap-circle/
+phase correlation. The refinement nevertheless sharpens other accepted cells;
+whole-square same-depth comparison completed and is recorded below. Do not
+infer whole-albedo precision from local endpoint or sampling checks.
+
+Remaining: actual all-view whole-square width <=2e-4, global integral-width
+refinement policy and measured evaluation work, density linkage/full finite
+reserve/useful native compensation and original layers/film/OSL requirements.
+
+Two-sided normalized value verification completed. The focused root/audit/
+citation/provenance/geometry/response/integral/memo/normalizer run passed thirteen
+gates (`/tmp/positive-normalized-material-gates.log`, 207.29s); its Snell driver
+was corrected to distinguish prior interval uncertainty from actual TIR.
+The final corrected and strengthened Snell gate passed in 48.33s
+(`/tmp/positive-normalized-transmission-final.log`): 11 actual cells, 33 component
+cases, 66 pure-axis boxes and 1782 independent 100-digit comparisons, with seven
+remaining invalid/delta/TIR/uncertified component rejections. The newly certified
+isotropic high-index grazing regular cell is now mandatory, preserving the
+improvement. All original ten mandatory cases and explicit true-TIR/delta
+rejections remain covered. All fourteen selected checks therefore pass on the
+final sources. Root audit: 5809 theorems (606 private), 257 modules, only
+Classical.choice, Quot.sound and propext.
+
+Actual local normalized midpoint widths now narrow:
+- normal: 0.0000262862325 -> 0.0000194477136;
+- oblique: 0.0000281352322 -> 0.000019953404;
+- near-grazing: 0.0000364679557 -> 0.0000200836305.
+The native mixed-patch normalized width is 0.0000175403735.
+
+The same 256-leaf normal-view anisotropic depth-8 whole-square probe completed
+in 280.60s (`/tmp/material-adaptive-normalized-depth8.log`), targetMet=false,
+lower 104301716821/206158430208 and upper 8365789/8388608. Width
+101295913643/206158430208 = 0.491349849438, improved from 0.563910409905 with the
+radius-only refinement. It remains far above 0.0002; no albedo completion or
+useful native compensation activation is claimed. Independent profiles retain
+rejection of the coarse reflection-hemisphere cell; value-box correlation and
+refinement policy remain practical issues.
+
+Next priority is global integral-width-driven tree generation using the existing
+independent checked partition/final-width flag, so tiny proved fallback regions
+can consume a controlled absolute error budget instead of being forced to have
+small relative width. Shared cap-circle/phase information may further tighten
+coarse normalized geometry, but local improvements do not replace the global
+precision requirement. Both workspace whitespace checks pass; all own handles
+terminal, runtime C unchanged, no commits/pushes. Full goal remains active,
+including all-view precision, density linkage/full finite reserve/native
+compensation and original layers/film/OSL requirements.
+
+
+### 2026-11-16: global integral-width refinement and certified leaf reuse
+
+Added root-imported `GlobalMaterialIntegral.lean`. Generation now supports a
+cached binary refinement tree, prioritizes the largest absolute leaf-integral
+width and stops against the global integral-width target. The material split
+heuristic refines height at cap-domain endpoints and otherwise the longest
+side. These choices are heuristic; they do not carry precision authority.
+
+Each cached leaf carries a kernel proof that its bounds equal the original
+leaf factory result for its exact rational rectangle. Proved lookup soundness
+and equality of cached/miss-fallback leaf evaluation to the fresh factory for
+every rectangle. The independent partition checker therefore validates exact
+coverage and computes bounds equal to a fresh check, without reevaluating the
+expensive certified leaf computations. Cached parent estimates/priorities may
+guide generation but are ignored by final validation. Proved actual material
+integral containment and the final width guarantee conditional on targetMet.
+Fuel exhaustion and a heuristic stop cannot claim requested precision.
+
+Added native `mtlxspec-global-material-integral` and `global_material_integral`.
+Tests demonstrate a globally budgeted tiny fallback strip stopping at 11 leaves,
+limited-budget failure, cached/fresh equality, forged zero-width parent estimates
+rejected by final precision audit, foreign-rectangle cache misses, invalid
+splits, missing leaves, negative targets, actual material patch absolute budgets
+and all-fallback whole-square nonacceptance. Native standalone checks passed.
+Root proof build passed; focused root/audit/citation/provenance/old partition/
+fallback/adaptive/mixed/global gates running below. Runtime C unchanged.
+
+An actual same-budget whole-square probe is running:
+`verif/lean/.lake/build/bin/mtlxspec-global-material-integral 255` (at most 256
+leaves), normal view, ax=.25, ay=.75, eta=.5, target 1/5000. Final bounds/target
+flag, rather than cached estimates, determine its precision result. This is not
+yet evidence for the required all-view width <=2e-4.
+
+Remaining: measured whole-square refinement/precision, potentially improved
+axis selection and geometric/phase correlation, density linkage, full finite
+reserve/useful native compensation and original layers/film/OSL requirements.
+
+The first actual global-width 255-step probe completed in 311.82s with 256
+leaves, targetMet=false, lower 54391731013/103079215104 and upper
+4266685389/4294967296; width 48008718323/103079215104 = 0.465745866173.
+This modestly improves the previous fixed-depth width 0.491349849438, while
+costing more; it does not establish practical target precision.
+
+Inspection then found an unused sound enclosure: successful mixed leaves
+retained their tightened pointwise range for coverage, but did not intersect
+its area-scaled enclosure into the returned direct integral bounds. Added that
+intersection and proved it sound using existing measurability, bounded
+integrability and rectangle integral theorems. Midpoint bounds remain retained;
+the extra enclosure can only narrow a given leaf. Added an actual coarse-cell
+regression that checks the tightened pointwise range is reflected in the
+integral. The selected global policy can benefit through both final bounds and
+its priority scores. Root/native builds passed.
+
+All nine final focused proof/audit/citation/provenance/actual midpoint/mixed/
+global gates passed in 167.31s (`/tmp/global-material-final-gates.log`). A same
+255-step actual whole-square comparison with the additional range enclosure
+is still running; final result below. Runtime C unchanged.
+
+Final global-width/range-retention verification completed. All nine final gates
+passed in 167.31s (`/tmp/global-material-final-gates.log`); the initial broader
+global-policy run also passed all eleven gates in 165.92s
+(`/tmp/global-material-gates.log`). Root audit: 5831 theorems (611 private),
+258 modules, only Classical.choice, Quot.sound and propext. Native global
+regression passed in 0.95s; actual coarse range-retention/mixed coverage in
+3.52s and independent actual material midpoint quadrature in 24.72s.
+
+The final actual global 255-step comparison completed in 305.01s
+(`/tmp/global-material-range-tight-255.log`), with 256 leaves, targetMet=false,
+lower 18797691241/34359738368 and upper 4261697051/4294967296. Width
+15295885167/34359738368 = 0.445168848586. At the same leaf budget,
+this improves the old area-relative/longest-side result 0.491349849438 and the
+initial global-policy result 0.465745866173, but remains far above 0.0002.
+No completion or native gain activation is claimed. Both workspace whitespace
+checks pass; all own handles terminal, runtime C unchanged, no commits/pushes.
+Full objective remains active.
+
+A concrete next interval-quality candidate is the algebraically identical joint
+response Gt + F*(Gr-Gt), instead of independently bounding F*Gr + (1-F)*Gt.
+It can retain the shared Fresnel dependency in value and derivative expressions,
+particularly cancellation of F' and F'' when the two masks are close. Any such
+rewrite must have a real-expression equivalence proof and independent actual
+response/integral regression checks; retain old certificates if needed to avoid
+losing certified cases. More complete phase/cap-circle correlation, critical/
+TIR handling, measured global refinement, density linkage, full finite reserve/
+useful native compensation and original layers/film/OSL scope remain open.
+
+
+The MaterialX conformance `shared_fresnel_response` gate checks the proved
+shared-Fresnel material jet selection, reference-certificate preservation, and
+216 independent high-precision actual near-critical response/derivative values.
+Run it with the Lean build, root axiom/citation/provenance checks and the affected
+material midpoint/integral gates. It certifies a real-expression interval
+refinement; the runtime C evaluation order is unchanged.
+
+The `material_midpoint_cell` gate now requires ten actual integral enclosures,
+including four near-critical eta=1.5 cells with strict complete-enclosure
+improvement over the original response schedule. Independent 100-digit
+8/16-point tensor quadrature checks all ten; ordinary-view refinement and
+invalid-rectangle rejection coverage remain required.
+
+The global material integral executable accepts `--profile N` for exact rational
+per-leaf uncertainty diagnostics and `--lookahead N` for the experimental
+certified-child-width split policy. Both retain independent coverage and final
+precision checking; a refinement budget never implies `targetMet=true`. The
+`global_material_integral` gate guards equal-width split ties, a strict split
+preference, and unmet-target handling.
+
+The `ideal_half_response` conformance gate also requires strict improvement
+from the proved shared-weight convex response enclosure and unchanged output
+when the computed Fresnel interval fails its [0,1] guard. Its 100-digit oracle
+checks the original physical response at 240 real UV points across 48 accepted
+cells, alongside a prepared constant-mask response.
+
+The shared-weight response gate additionally checks the proved affine hull at
+the actual Fresnel interval endpoints. Its asymmetric fixture requires a
+[.375,.875] real interval with outward endpoint error at most 2^-20 and 27
+independent response combinations. Failed optional endpoint calculations retain
+the prior range; the general soundness theorem covers either mask ordering.
+
+Pointwise ideal VNDF half cells now share the proved positive normalized Z
+lower bound with the jet path. The coarse `ideal_half_response` gate rejects
+any Z-lower widening and requires strict actual-cell improvement (currently
+48/48 accepted coarse cells), with 240 independent 100-digit UV comparisons.
+Run `ideal_half_cell`, `positive_normalized_jet`, `inline_half_transmission`
+and the affected material integral gates with the root audit after changes to
+these shared helpers. Improved cell geometry does not imply a completed albedo
+integral certificate.
+
+The pointwise half-cell normalization refinement applies by coordinate
+permutation to positive X/Y components as well as Z. Coarse-cell regressions
+require X and Y improvements, subset retention for all three component ranges,
+and the existing 240 independent UV checks. Unresolved signs retain old bounds.
+
+Signed pointwise normalization uses exact negation and endpoint reversal for
+strictly negative component intervals. The coarse actual-response gate requires
+negative X and Y improvements and every-coordinate subset retention alongside
+240 independent UV checks. The generic real proof preserves the finite sign
+negation boundary; it adds no native execution reserve claim.
+
+Normalization range checks cover intervals crossing zero: the positive upper
+producer now uses a positive upper endpoint, with a proved nonpositive-value
+case; the signed lower bound uses exact sign symmetry. Coarse-cell tests require
+actual crossing X/Y improvements. The jet fixture requires strict upper
+improvement and unchanged lower/derivative fields, with 675 independent
+100-digit value/derivative comparisons retained.
+
+Global material integral partitions can be saved with `--save N path` and
+freshly checked/intersected with `--recheck path...`. UVP1 contains only tree
+geometry; cached bounds are never imported. `scripts/vndf-profile-partition.py`
+recovers geometry from exact profile records. The global gate checks parser
+roundtrip/rejection, invalid/duplicate/empty candidates and precision guards.
+The root candidate proofs establish integral containment and checked width.
+
+Saved material partitions can continue with `--refine input.uvp count output.uvp`.
+Every leaf is rebuilt with the current factory, then seed/refined bounds are
+independently checked and intersected. Output stores geometry only: retain both
+files and use `--recheck input.uvp output.uvp` to reproduce that intersection.
+The global gate requires exact reconstruction, invalid/missing seed rejection,
+zero-budget equality, seed-bound retention and honest exhausted-budget flags.
+
+Specialized ideal VNDF half cells additionally use the proved unit cap/view
+norm identity to retain geometric correlation. The coarse-cell gate requires
+strict raw-norm and half-component improvements over the previous producer,
+subset retention, and independent 100-digit norm/half/response checks at all
+240 UV samples. Recheck a saved partition to compare bound changes without
+changing adaptive split choices. This is an ideal-real enclosure refinement.
+
+Geometry jets optionally intersect their values with closed-cell physical VNDF
+half bounds while retaining base first/second derivative intervals. The geometry
+gate requires exact derivative retention, strict value improvement and 3888
+independent samples. The inline-response gate covers twelve signed-phase cells,
+requires non-widening response values/curvature and strict improvements in all
+three view families, with 648 independent value/derivative comparisons.
+
+Correlated normalization certifies actual raw-norm jets from the unit cap/view
+identity using neighborhood derivative transfer. The geometry gate checks 1296
+independent norm and 3888 component samples, full base-field subset retention,
+and exact derivative retention by the final value-only stage. Response selection
+uses the actual cell's Mu*du²+Mv*dv² midpoint-error score with value containment;
+critical tests also retain comparisons against the previous selected bounds.
+
+
+### Checked leaf inspection and uncertainty attribution (2026-11-16)
+
+Added `mtlxspec-global-material-integral --inspect input.uvp`. It reconstructs
+all leaf bounds from geometry, checks whole-square coverage with the existing
+checker, and emits exact L/E records plus an I aggregate. E includes final range
+and integral endpoints and whether the integral is strictly narrower than its
+area-scaled range. No serialized estimates are trusted. The companion
+`scripts/vndf-inspect-report.py` checks rational records, duplicate/missing leaves,
+areas, integral/range consistency, effectiveness flags, exact aggregate width,
+target status and recursive geometric coverage before ranking contributions.
+It is diagnostic tooling, not an additional certification authority.
+
+The unchanged saved 256-leaf geometry reproduces width
+1336271727511/3298534883328 = 0.405110685433, targetMet=false, in 271.65s
+(`/tmp/material-inspect-256.log`). Of 256 leaves, 60 have effective midpoint
+bounds (width contribution 352906163/6442450944 = 0.054778246054); 196 are
+range-limited (385194590685/1099511627776 = 0.350332439380). Only two leaves
+retain full [0,1] ranges, contributing 1/256. Thus endpoint full-range fallback
+is not the dominant current uncertainty. A three-cell stage probe finds both
+response-jet rejection with accepted geometry and accepted-but-too-wide midpoint
+bounds among the largest contributors (`/tmp/material-largest-leaf-probe.log`).
+This diagnosis does not establish a tighter material integral.
+
+Build and focused `global_material_integral` gate pass (13.02s). New permanent
+`global_material_inspection` gate passes (0.60s): fresh root reconstruction,
+five corrupted reports rejected and five malformed/out-of-domain partitions
+rejected. No mathematical library or native renderer changed, so the previously
+completed 5989-theorem root audit remains applicable; no new audit is claimed.
+Continued seeded refinement to 512 leaves is running; record its exact result
+separately after completion. Full 0.0002 accuracy, finite reserve/useful all-view
+compensation, layers/film/OSL objective remains unachieved. No commit or push.
+
+The inspection regression was extended to a valid two-cell split and a deliberately
+overlapping pair whose areas still sum to one. It accepts the valid split and
+rejects the overlap; the final 0.60s gate rejects six corrupted reports plus
+five invalid partitions (`/tmp/material-inspection-regression-final.log`).
+A temporary raw-transmission-mask schedule probe reduces curvature on two
+largest-contributor cells, but still rejects the third. No equivalence proof,
+production schedule change or integral improvement is claimed for this candidate
+(`/tmp/raw-transmission-mask-probe.log`).
+
+
+The 512-leaf seeded continuation completed in 822.38s
+(`/tmp/seeded-material-512.log`). Adding 256 refinements to the checked 256-leaf
+seed produces 512 leaves and targetMet=false. Seed-preserving final bounds:
+[798693993035/1099511627776,405502075195/412316860416]. Exact width 847934622455/3298534883328 = 0.257064015524,
+36.5447% narrower than the current 256-leaf width
+0.405110685433. Saved geometry: `/tmp/seed-refined-512-current.uvp`.
+This is a new refinement result, not an isolated algorithmic improvement. The
+0.0002 requirement remains unmet by a factor of 1285.3;
+full finite reserve/useful all-view compensation and layers/film/OSL remain open.
+No further long jobs remain live. Both workspace whitespace checks pass.
+No native C changes, commits or pushes. Full original objective remains active.
+
+
+### Normalization-free ideal transmission response schedules (2026-11-16)
+
+Added root-imported `AnisotropicMaskHomogeneity`: outgoing-only positive scaling
+of the anisotropic Smith mask and invariance under `normalizedReal`, including
+zero raw length. No unit-vector or view-positivity premise was added to the
+existing generic response semantics. Existing general scaling results are reused
+for the anisotropic root; the outgoing-only result removes an unnecessary view
+premise from the general mask theorem's interface. This is ideal real arithmetic;
+it grants no finite execution reassociation or numerical reserve.
+
+`InlineHalfResponse` now proves raw-transmission reference/difference expressions
+have the same physical joint response as their normalized counterparts. The
+original two-schedule factory remains as `selectNormalizedHalfResponseJets`.
+The public selector optionally compiles raw schedules, checks value-range subset
+retention in both axes and the exact cell-weighted midpoint score, and retains
+the old selected certificate on rejection/non-improvement. Kernel theorems cover
+source provenance, old acceptance, score retention and both value ranges. Every
+accepted selected expression continues through the existing actual derivative,
+closed-cell regularity and integral proofs; no caller-supplied equivalence is
+trusted.
+
+Build and root audit pass: 6033 theorems (652 private), 264 modules, only
+Classical.choice/Quot.sound/propext. Independent actual-response oracle selects
+raw schedules in all 12/12 signed-phase normal/oblique/grazing cells and strictly
+reduces their previous midpoint score in all 12/12; all 648 independent 100-digit
+actual value/derivative comparisons pass. Shared-Fresnel critical tests retain
+previous value and both curvature bounds. The initial 18-gate run passed 17 and
+failed an obsolete critical midpoint `difference` tag assertion. Replaced that
+assertion with direct retention of the previous selected complete integral
+interval, retaining all four strict improvements vs current reference. The
+corrected 10-cell independent 8/16-point 100-digit tensor-integral oracle passes;
+final CTest rerun passes in 88.83s. Thus all 18 affected gates have passing final
+results (`/tmp/raw-response-gates.log`, `/tmp/raw-response-midpoint-final-gate.log`).
+No mathematical library changed after that root audit.
+
+The identical saved 256-leaf geometry is being rechecked to measure actual global
+benefit. Its prior width is 0.405110685433; the broader 512-leaf prior width is
+0.257064015524. Neither is near the required 0.0002. The full finite reserve,
+useful all-view native compensation and original layers/film/OSL work remain open.
+No native C changes, commits or pushes. Full original objective remains active.
+
+
+Final unchanged-geometry recheck completed in 391.93s
+(`/tmp/raw-response-256.log`): lower 2108397163/3221225472, upper 2132070569/2147483648,
+width 2179417381/6442450944 = 0.338290101072, targetMet=false. This is
+16.4944% narrower than the same 256-leaf geometry's previous
+0.405110685433, an isolated improvement from the normalization-free schedules.
+It still exceeds the required 0.0002 by a factor of 1691.5.
+The previous finer 512-leaf geometry has not yet been rechecked with these new
+schedules; do not present its earlier 0.257064015524 as a new-schedule measurement.
+
+A next concrete range-bound candidate is to enclose the proved raw-transmission
+response directly over the physical half boxes, intersect it with the existing
+range-only leaf, and prove fallback/closed-cell linkage. The current change only
+adds response-jet schedules; it does not remove normalization dependency from
+the separate pointwise range producer that dominated the prior leaf diagnosis.
+That range adapter is not implemented here. All own handles are terminal, both
+workspace whitespace checks pass. No native C changes, commits or pushes.
+Full original objective remains active and unachieved.
+
+
+### Normalization-free physical pointwise response ranges (2026-11-16)
+
+Implemented root-imported `IdealRawHalfResponse`. Its producer prepares ideal
+incidence, reflection and raw-transmission component ranges from a physical half
+box, checks a nonnegative Snell discriminant, and applies the existing correlated
+Fresnel/mask response range logic. Kernel proofs link all prepared scalars to the
+actual physical half, then use the proved mask-normalization identity to recover
+the same normalized physical joint response. Zero discriminant is allowed for
+pointwise ranges; no derivative regularity or finite execution reserve is inferred.
+Nonfinite parameters reject through explicit guards.
+
+Retained `materialBaseRangeIntegralLeaf` and added optional raw-response refinement
+in the public `materialRangeIntegralLeaf`. Successful candidates intersect the
+baseline pointwise range and its area-scaled integral enclosure. Failed candidates
+return the baseline exactly. Kernel proofs establish pointwise/integral soundness,
+non-widening of all four range/integral endpoints and preservation of every base
+acceptance. The existing midpoint/range combination and global partition checker
+consume the refined leaf without a change to their mathematical contracts.
+
+New permanent `ideal_raw_half_response` gate: 80 coarse/fine/critical physical
+cases, 72 accepted and strictly tightened, eight exact fallbacks; normal, oblique
+and grazing families all improve. All 360 independent 100-digit normalized actual
+response samples lie in both the raw candidate and final refined ranges. Invalid
+nonfinite parameters reject. All 19 affected gates pass in 305.11s
+(`/tmp/ideal-raw-range-gates.log`), including the new 107.05s gate and full root
+build/audit. Root audit: 6043 theorems (654 private), 265 modules, only
+Classical.choice/Quot.sound/propext. No mathematical library changed afterward.
+
+The identical saved 256-leaf geometry is being rechecked. Its previous raw-jet-only
+width was 0.338290101072; final pointwise-range benefit is not yet measured.
+The 0.0002 target, complete finite reserve/useful all-view native compensation and
+original layers/film/OSL scope remain open. No native C changes, commits or pushes.
+Full original objective remains active.
+
+A temporary next-candidate probe (`/tmp/CorrelatedOutgoingNormProbe.lean`,
+`/tmp/correlated-outgoing-norm-probe.log`) kernel-checks general unit-half identities
+|R|²=|V|² and |Traw|²=1+eta²*(|V|²-1), retaining decoded non-unit views. It also
+checks the shifted anisotropic root identity for arbitrary m. Diagnostic compiled
+correlated-root expressions improve both curvature magnitudes on two difficult
+cells, but still reject the third. This is not an integrated production schedule,
+not a proved physical expression-source adapter and not part of the root-audit
+count above. Future integration must discharge the actual unit-half premise on
+the accepted closed cells/neighborhoods and retain existing certificates. It must
+not infer unit length for finite native half vectors.
+
+
+Final identical-geometry pointwise-range benchmark completed in 419.67s
+(`/tmp/ideal-raw-range-256.log`): lower 577571259907/824633720832, upper 8513656219/8589934592,
+width 239739737117/824633720832 = 0.290722694283, targetMet=false. Compared with the same 256-leaf
+geometry's previous raw-jet-only width 0.338290101072, the new pointwise producer
+is 14.0611% narrower. This isolates its benefit from mesh refinement.
+The result remains 1453.6 times wider than 0.0002; neither the
+true-albedo target nor the full original objective is complete. The saved finer
+512-leaf geometry has not been rechecked with either latest raw-response change;
+its old 0.257064015524 width is not a measurement of the current implementation.
+
+All own process handles are terminal. Both workspace whitespace checks pass.
+No native C changes, commits or pushes. Full goal remains active, including full
+finite reserve, useful all-view compensation and original layers/film/OSL scope.
+
+
+### Correlated ideal outgoing Smith-root schedules (2026-11-16)
+
+Implemented root-imported `CorrelatedOutgoingResponse`. Kernel proofs preserve
+the decoded view norm explicitly: for unit ideal half h, |R|²=|V|² and
+|Traw|²=1+eta²*(|V|²-1). The shifted anisotropic root identity holds for arbitrary
+m; correctness does not depend on a coefficient sign or the direction in which
+the selected pivot is rounded. Correlated prepared-mask/reference/difference
+expressions are proved equal to the original physical joint response under the
+actual unit-half and nonnegative-discriminant premises. These are real identities,
+not finite native normalization assumptions or execution reassociations.
+
+The public response selector now optionally compiles correlated reference and
+difference schedules. `selectUncorrelatedHalfResponseJets` retains the previous
+four-schedule baseline. Checked value-range subset and tensor midpoint-score
+comparison retain that baseline whenever the optional candidate rejects or fails
+to dominate. Kernel proofs preserve old acceptance, source provenance, both
+value ranges and score, including the transitive normalized-schedule contract.
+Accepted physical geometry supplies unit half vectors throughout the closed cell;
+neighboring-point linkage is used in actual derivative proofs. The union-form
+real-semantics theorem now takes this unit premise explicitly; the older generic
+normalized/raw semantic helper theorems retain their interfaces. No caller-supplied
+unit annotation or finite unit-half claim is trusted.
+
+All 19 affected gates pass in 372.38s (`/tmp/correlated-outgoing-gates.log`),
+including build, midpoint/integral regressions, old critical value/curvature
+retention and transitive audit: 6085 theorems (658 private), 266 modules, only
+Classical.choice/Quot.sound/propext. The initial twelve signed-phase cells select
+correlated schedules and strictly improve previous uncorrelated scores in 12/12.
+The permanent independent actual-response oracle is further expanded to a clearly
+non-unit decoded view (.6,0,.9), so omitting the view norm correction is observable.
+It passes sixteen cells, 32 pure-axis boxes and 864 independent 100-digit actual
+value/derivative comparisons. Correlated and normalization-free scores strictly
+improve all 16/16 cases; the non-unit view is specifically required to improve
+(`/tmp/correlated-outgoing-expanded-oracle.log`). No mathematical library changed
+after the root audit; the only later Check change corrects its view-count message.
+
+The unchanged saved 256-leaf geometry is being inspected, retaining L/E/I exact
+leaf diagnostics for the next attribution step. The previous pointwise-raw width
+was 0.290722694283. This change adds correlated jet schedules; the separate
+pointwise prepared-mask producer still uses uncorrelated outgoing roots.
+The full 0.0002 target, finite reserve/useful all-view native compensation and
+original layers/film/OSL scope remain open. No native C changes, commits or pushes.
+Full original objective remains active.
+
+
+Final correlated-outgoing same-geometry inspection completed in 558.46s
+(`/tmp/correlated-outgoing-256.log`): I 256 false, lower
+582662216503/824633720832, upper 8513656219/8589934592. Exact width
+234648780521/824633720832 = 0.284549096882, 2.1235% narrower than the identical
+256-leaf geometry's previous 0.290722694283. This is an isolated bound change,
+not an added-refinement result. It still exceeds 0.0002 by a factor of
+1422.7; no true-albedo target or native compensation completion is claimed.
+
+The exact report checks leaf totals and recursive coverage
+(`/tmp/correlated-outgoing-256-report.log`). Of 256 leaves, 76 have effective
+midpoint bounds (4659925189/103079215104 = 0.045207224214 width); 180 remain
+range-limited (65789793003/274877906944 = 0.239341872668), accounting for
+84.113% of total width. Only one full-unit-range endpoint strip remains,
+contributing 1/512. The largest diagnosed cell rejects differentiable response
+certification and spans a reflection horizon: independent 100-digit samples at
+(u,v)=(13/16,3/4) and (7/8,3/4) give reflected z approximately -0.1895714330
+and +0.03225806452 (`/tmp/correlated-outgoing-largest-horizon.log`). Thus sharper
+smooth-cell jets alone do not resolve that cell. The separate pointwise prepared-mask producer
+has not yet adopted the new outgoing-norm correlations.
+
+A concrete next step is a unit-aware pointwise correlated-mask range adapter,
+retaining the raw producer as fallback and proving accepted physical unit-half
+linkage. Another warranted implementation improvement is sharing geometry and
+expression DAG compilation across all six schedules: the current public selector
+runs three independent paired geometry/compile factories. Exact-result equivalence
+must be proved before replacing it. Neither next step is implemented here.
+The finer saved 512-leaf geometry has not been rechecked with the latest changes.
+
+All own process handles are terminal. Both workspace whitespace checks pass.
+No native C changes, commits or pushes. Full original goal remains active and
+unachieved, including finite reserve/useful all-view compensation and original
+layers/film/OSL work.
+
+
+### Materialized shared six-schedule forest (2026-11-16)
+
+Added expression/half-geometry forest packets in `PairHalfExpressionJets`. All six
+candidate schedules share one geometry certificate and one memoized expression
+DAG per axis. Cache soundness establishes exact standalone-result equivalence
+for every lookup, including rejected, duplicate and outside-forest requests.
+The public selector uses the packet and has an exact equality theorem to the
+previous three-pair selector. Existing source, acceptance, physical derivative,
+value-range and midpoint-score contracts are derived through that equality.
+No mathematical bound or schedule-selection behavior is changed.
+
+An initial function-valued getter design built and proved equivalent, but generated
+C inspection showed Lean eta-expansion would recompute its cache on each lookup.
+Stopped only the own preliminary CTest process tree (terminal 143), before measuring
+it, and replaced getters with materialized data packets. Generated C now has a
+single half-forest construction in the selector; its lookups consume that packet.
+No preliminary-run pass claim or speedup is made. The corrected implementation
+passes all 14 focused gates in 295.27s (`/tmp/response-forest-packet-gates.log`),
+including 36 real six-schedule certificate comparisons, eight empty/duplicate/
+outside-forest comparisons, all 864 independent actual response samples and the
+full root audit: 6094 theorems (658 private), 266 modules, only
+Classical.choice/Quot.sound/propext.
+
+The identical saved 256-leaf geometry completes in 350.80s instead of 558.46s:
+37.1844% less wall time, observed speedup 1.5920x. All 513 exact L/E/I records
+are identical (`/tmp/response-forest-packet-comparison.log`); independent record
+validation still confirms coverage, leaf totals and the unchanged width
+234648780521/824633720832 = 0.284549096882, targetMet=false.
+This is verifier-runtime progress, not tighter albedo or native-renderer speed.
+
+The remaining 84.113% range-limited contribution is unchanged. A temporary
+`/tmp/PositiveMaskRangeProbe.lean` kernel-checks a branch-free positive-part
+identity for the Smith numerator/denominator, retaining the original direction
+inside its anisotropic root. It reuses existing `nonnegativePartRange`. On the
+second diagnosed horizon cell, a diagnostic reflection-mask upper bound drops
+from 1 to 4458333/8388608 (~0.5315), after intersection with the proved unit range.
+On the largest cell the diagnostic bound still exceeds one and gives no unit-range
+improvement. This is not an integrated producer or source-soundness adapter;
+`/tmp/positive-mask-range-probe.log` records the limited evidence. Pointwise
+positive-part/correlated-root refinement remains a concrete accuracy task.
+
+All own handles terminal; both workspace whitespace checks pass. No native C
+changes, commits or pushes. Full original objective remains active: width ≤0.0002,
+full finite numerical reserve, useful all-view compensation and original
+layers/film/OSL end state remain unachieved. No smaller completion criterion is used.
+
+## Sharing a GPU across Linux checkouts
+
+Prefix GPU suite invocations with `XCTEST_GPU=1` in each checkout that
+shares the device. For example:
+
+```sh
+XCTEST_GPU=1 scripts/xctest.sh ctest --test-dir build_ninja -j4 -R '^lusdview' --output-on-failure
+```
+
+The launcher uses util-linux flock on `/tmp/lightusd_gpu_device.lock`
+for the duration of the command. Processes must share the same lock file.
+Set `XCTEST_GPU_LOCK` to an accessible common file when checkouts use
+different temporary directories or user accounts. CTest's resource lock
+continues to serialize GPU tests within the suite.
+
+### Gaussian splat regression coverage
+
+The offline mixed-scene reference tests exercise visibility and emitted light
+with fixed geometry, moving splats, and a moving camera on CPU, Vulkan ray
+queries, and HIP. The Vulkan compute-BVH path also runs the pure and mixed
+viewer references with software traversal forced. Set `LIGHTUSD_BLENDER` to
+the Blender 5.3 executable to run the live comparisons. CUDA kernel
+compilation runs independently of NVIDIA runtime qualification.
+
+`tool-lusdpreview-sharded-replay` compares cold exports from the default
+sharded path, grouped transforms with serial insertion, and fully serial replay,
+including equal-rank colour collisions, repeated coarsening, and explicit
+resolution failure. `core_test_lazy_array` compares float3 and half3 range
+reads with full decode and exercises the released parse-buffer path.

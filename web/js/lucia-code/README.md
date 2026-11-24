@@ -27,7 +27,9 @@ redo actions when a text field or dialog is not active.
 
 ## Start locally
 
-Prepare the generated LightUSD modules when they are not already present, then
+Lucia uses the core scene distribution and the separate core MCP server for
+authoring. The UV-unwrapping worker loads xatlas from the independent core geometry
+feature and transfers owned output buffers. Prepare the generated LightUSD modules when they are not already present, then
 start Vite from `web/js`:
 
 ```bash
@@ -114,7 +116,7 @@ restoring an asset creates separate mutable bytes. Scene history stores changed
 USDA intervals with SHA-256 checks rather than two complete stage strings.
 Distant edits on aligned lines retain separate intervals, bounded to 256 edits;
 changed line structure uses a lossless single-interval fallback.
-Transform and visibility edits use next-core typed attributes, with explicit
+Transform and visibility edits use core-typed attributes, with explicit
 custom/uniform flags and double-precision translation values. Other processors
 still use validated USDA reconstruction.
 Independent export-time stitching and assistant tools are not part of this UI.

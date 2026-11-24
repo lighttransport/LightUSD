@@ -12,7 +12,7 @@ set(SOURCES
     src/mtlx-xml-tokenizer.cc
     src/mtlx-xml-parser.cc
     src/mtlx-dom.cc
-    src/mtlx-simple-parser.cc
+    src/legacy/mtlx-simple-parser.cc
 )
 
 # Header files

@@ -411,6 +411,12 @@ class Renderer {
   virtual void setTransparencyMode(TransparencyMode /*mode*/) {}
   virtual TransparencyStatus transparencyStatus() const { return {}; }
   virtual void setRasterQualityHigh(bool /*high*/) {}
+  // --gsplat-kernel cycles: trace Gaussian splats with the Blender Cycles
+  // kernel (RT backends that support it); srgb = Blender's colour convention.
+  virtual void setGsplatKernel(bool /*cycles*/, bool /*srgb*/) {}
+  // Shutter segment the next RT frame renders (app-driven camera/mesh motion
+  // blur): normalized centre in [0,1] and width; centre < 0 = whole shutter.
+  virtual void setGsplatShutterSegment(float /*center*/, float /*width*/) {}
 
   // Resize the headless composite at runtime (recreate the offscreen swap images
   // + framebuffers). Returns false if unsupported / not headless. The caller must

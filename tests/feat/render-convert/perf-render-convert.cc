@@ -4,13 +4,13 @@
 // Render-conversion benchmark: Stage -> raster/RT renderable mesh conversion.
 //
 // Measures the legacy tydra::RenderSceneConverter pipeline and/or the
-// tydra::next converter over a deterministic synthetic multi-mesh USDA scene
+// tydra converter over a deterministic synthetic multi-mesh USDA scene
 // or an explicit scene file.
 //
 // Pipeline selection at compile time:
 //   - PERFRC_ENABLE_LEGACY (=1 default): legacy tydra conversion.
-//   - PERFRC_ENABLE_NEXT: tydra-next conversion (requires tydra_next +
-//     lightusd_next libs; the standalone src/next tree cannot build the
+//   - PERFRC_ENABLE_CORE: tydra conversion (requires tydra +
+//     lightusd_core libs; the standalone src tree cannot build the
 //     legacy pipeline, so it sets PERFRC_ENABLE_LEGACY=0).
 // When both are compiled into one binary they are measured back to back on
 // the same input.
@@ -35,10 +35,10 @@
 #define PERFRC_ENABLE_LEGACY 1
 #endif
 
-#if defined(PERFRC_ENABLE_NEXT)
-#define PERFRC_HAS_NEXT 1
+#if defined(PERFRC_ENABLE_CORE)
+#define PERFRC_HAS_CORE 1
 #else
-#define PERFRC_HAS_NEXT 0
+#define PERFRC_HAS_CORE 0
 #endif
 
 #if PERFRC_ENABLE_LEGACY
@@ -46,11 +46,10 @@
 #include "tydra/render-data.hh"
 #endif
 
-#if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_NEXT
-// The next pipeline headers live under src/next; consumers add src/ and
-// src/next to their include path.
-#include "next/lightusd-next.hh"
-#include "tydra/next/render-converter.hh"
+#if !PERFRC_ENABLE_LEGACY || PERFRC_HAS_CORE
+// The core pipeline headers use the src/ include directory.
+#include "lightusd-core.hh"
+#include "tydra/render-converter.hh"
 #endif
 
 namespace {
@@ -60,11 +59,11 @@ namespace {
 struct Options {
   int prims = 256;    // synthetic meshes when generating
   int iters = 3;
-  int threads = 0;    // next-converter workers (0 = auto)
+  int threads = 0;    // core-converter workers (0 = auto)
   int legacy_threads = -2;  // legacy converter num_threads (-2 = default)
   bool json = false;
   bool legacy_only = false;
-  bool next_only = false;
+  bool core_only = false;
   std::string scene;  // explicit scene file (optional)
 };
 
@@ -102,12 +101,12 @@ bool ParseOptions(int argc, char **argv, Options *opts) {
       opts->json = true;
     } else if (arg == "--legacy-only") {
       opts->legacy_only = true;
-    } else if (arg == "--next-only") {
-      opts->next_only = true;
+    } else if (arg == "--core-only") {
+      opts->core_only = true;
     } else if (arg == "--help" || arg == "-h") {
       std::printf(
           "Usage: %s [--prims N] [--iters N] [--threads N] [--json] "
-          "[--legacy-only] [--next-only] [--scene file.usda]\n",
+          "[--legacy-only] [--core-only] [--scene file.usda]\n",
           argv[0]);
       std::exit(0);
     } else {
@@ -286,7 +285,7 @@ struct BenchResult {
 
 namespace legacy_bench {
 
-void HashVertexAttribute(const lightusd::tydra::VertexAttribute &va,
+void HashVertexAttribute(const lightusd::legacy::tydra::VertexAttribute &va,
                          Hasher *hsh) {
   hsh->Str(va.name);
   hsh->Pod(va.format);
@@ -299,7 +298,7 @@ void HashVertexAttribute(const lightusd::tydra::VertexAttribute &va,
   hsh->Pod(va.variability);
 }
 
-void HashNode(const lightusd::tydra::Node &node, Hasher *hsh) {
+void HashNode(const lightusd::legacy::tydra::Node &node, Hasher *hsh) {
   hsh->Str(node.abs_path);
   hsh->U64(uint64_t(node.id));
   hsh->Pod(node.local_matrix);
@@ -310,7 +309,7 @@ void HashNode(const lightusd::tydra::Node &node, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
+uint64_t HashScene(const lightusd::legacy::tydra::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -326,7 +325,7 @@ uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
   for (const auto &m : scene.meshes) {
     hsh.Str(m.abs_path);
     hsh.U64(m.points.size());
-    hsh.Bytes(m.points.data(), m.points.size() * sizeof(lightusd::tydra::vec3));
+    hsh.Bytes(m.points.data(), m.points.size() * sizeof(lightusd::legacy::tydra::vec3));
     hsh.U64(m.faceVertexIndices().size());
     hsh.Bytes(m.faceVertexIndices().data(),
               m.faceVertexIndices().size() * sizeof(uint32_t));
@@ -365,24 +364,24 @@ uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int num_threads) {
   BenchResult res;
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn, err;
-  if (!lightusd::LoadUSDFromFile(path, &stage, &warn, &err)) {
+  if (!lightusd::legacy::LoadUSDFromFile(path, &stage, &warn, &err)) {
     res.err = "load failed: " + err;
     if (!warn.empty()) res.err += " warn: " + warn;
     return res;
   }
 
-  lightusd::tydra::RenderSceneConverterEnv env(stage);
+  lightusd::legacy::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   if (num_threads != -2) {
     // -2 keeps the config default (auto); otherwise override for A/B runs.
     env.scene_config.num_threads = num_threads;
   }
 
-  lightusd::tydra::RenderSceneConverter converter;
+  lightusd::legacy::tydra::RenderSceneConverter converter;
 
-  lightusd::tydra::RenderScene scene;
+  lightusd::legacy::tydra::RenderScene scene;
   std::vector<double> times;
   for (int it = 0; it < iters; it++) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -412,11 +411,11 @@ BenchResult Bench(const std::string &path, int iters, int num_threads) {
 
 #endif  // PERFRC_ENABLE_LEGACY
 
-#if PERFRC_HAS_NEXT
+#if PERFRC_HAS_CORE
 
-// ---------------------------- next pipeline -----------------------------
+// ---------------------------- core pipeline -----------------------------
 
-namespace next_bench {
+namespace core_bench {
 
 template <typename ChunkedT>
 void HashChunked(const ChunkedT &arr, Hasher *hsh) {
@@ -426,7 +425,7 @@ void HashChunked(const ChunkedT &arr, Hasher *hsh) {
   }
 }
 
-uint64_t HashScene(const lightusd::tydra::next::RenderScene &scene) {
+uint64_t HashScene(const lightusd::tydra::RenderScene &scene) {
   Hasher hsh;
 
   hsh.U64(scene.meshes.size());
@@ -466,29 +465,29 @@ uint64_t HashScene(const lightusd::tydra::next::RenderScene &scene) {
 BenchResult Bench(const std::string &path, int iters, int threads) {
   BenchResult res;
 
-  lightusd::next::StageSession session;
+  lightusd::StageSession session;
   if (!session.OpenFile(path)) {
-    res.err = "next StageSession open failed: " + session.GetError();
+    res.err = "core StageSession open failed: " + session.GetError();
     return res;
   }
-  const lightusd::next::StageSnapshot stage_snapshot = session.GetSnapshot();
-  const lightusd::next::Stage &stage = *stage_snapshot;
+  const lightusd::StageSnapshot stage_snapshot = session.GetSnapshot();
+  const lightusd::Stage &stage = *stage_snapshot;
 
-  lightusd::tydra::next::ConverterConfig cfg;
+  lightusd::tydra::ConverterConfig cfg;
   cfg.execution.max_threads = threads > 0 ? threads : 0;
   cfg.mesh.compute_normals = true;
   cfg.mesh.triangulate = true;
   cfg.mesh.build_vertex_indices = true;
 
   std::vector<double> times;
-  lightusd::tydra::next::RenderScene ref_scene;
+  lightusd::tydra::RenderScene ref_scene;
   for (int it = 0; it < iters; it++) {
-    lightusd::tydra::next::RenderSceneConverter conv(cfg);
+    lightusd::tydra::RenderSceneConverter conv(cfg);
     const auto t0 = std::chrono::steady_clock::now();
-    lightusd::tydra::next::ConvertResult result = conv.Convert(stage);
+    lightusd::tydra::ConvertResult result = conv.Convert(stage);
     const auto t1 = std::chrono::steady_clock::now();
     if (!result.success) {
-      res.err = "next Convert failed: " + result.error;
+      res.err = "core Convert failed: " + result.error;
       return res;
     }
     times.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
@@ -506,9 +505,9 @@ BenchResult Bench(const std::string &path, int iters, int threads) {
   return res;
 }
 
-}  // namespace next_bench
+}  // namespace core_bench
 
-#endif  // PERFRC_HAS_NEXT
+#endif  // PERFRC_HAS_CORE
 
 // -------------------------------- main ----------------------------------
 
@@ -519,7 +518,7 @@ int main(int argc, char **argv) {
   }
 
   constexpr bool have_legacy = (PERFRC_ENABLE_LEGACY != 0);
-  constexpr bool have_next = (PERFRC_HAS_NEXT != 0);
+  constexpr bool have_core = (PERFRC_HAS_CORE != 0);
 
   std::string scene_path = opts.scene;
   std::string cleanup_path;
@@ -546,13 +545,13 @@ int main(int argc, char **argv) {
     }
   }
 
-  const bool want_legacy = have_legacy && !opts.next_only;
-  const bool want_next = have_next && !opts.legacy_only;
+  const bool want_legacy = have_legacy && !opts.core_only;
+  const bool want_core = have_core && !opts.legacy_only;
 
-  if (opts.next_only && !have_next) {
+  if (opts.core_only && !have_core) {
     std::fprintf(stderr,
-                 "next converter not compiled in (build with "
-                 "PERFRC_ENABLE_NEXT)\n");
+                 "core converter not compiled in (build with "
+                 "PERFRC_ENABLE_CORE)\n");
     return 1;
   }
   if (opts.legacy_only && !have_legacy) {
@@ -585,20 +584,20 @@ int main(int argc, char **argv) {
   }
 #endif
 
-#if PERFRC_HAS_NEXT
-  if (want_next) {
-    BenchResult r = next_bench::Bench(scene_path, opts.iters, opts.threads);
+#if PERFRC_HAS_CORE
+  if (want_core) {
+    BenchResult r = core_bench::Bench(scene_path, opts.iters, opts.threads);
     if (!r.ok) {
-      std::fprintf(stderr, "next: %s\n", r.err.c_str());
+      std::fprintf(stderr, "core: %s\n", r.err.c_str());
       all_ok = false;
     } else if (opts.json) {
       std::printf(
-          "{\"pipeline\":\"next\",\"ms\":%.3f,\"threads\":%d,\"meshes\":%zu,"
+          "{\"pipeline\":\"core\",\"ms\":%.3f,\"threads\":%d,\"meshes\":%zu,"
           "\"faces\":%zu,\"tris\":%zu,\"hash\":%016llx}\n",
           r.ms, opts.threads, r.meshes, r.faces, r.tris,
           static_cast<unsigned long long>(r.hash));
     } else {
-      std::printf("[next]   median %.3f ms (threads=%d) | meshes %zu "
+      std::printf("[core]   median %.3f ms (threads=%d) | meshes %zu "
                   "faces %zu tris %zu | hash %016llx\n",
                   r.ms, opts.threads, r.meshes, r.faces, r.tris,
                   static_cast<unsigned long long>(r.hash));

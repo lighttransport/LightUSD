@@ -399,9 +399,8 @@ bool FieldCache::Resolve(const FieldRequest &request, ResolvedField *out, std::s
       request.field_class != grid->grid_class)
     r.warnings.push_back(request.field_prim + ": fieldClass '" + request.field_class +
                          "' but the grid is '" + grid->grid_class + "'");
-  // The file's own class wins when the authored hint contradicts it, matching
-  // the fieldDataType rule above: a density grid labelled levelSet would
-  // otherwise be rendered as an isosurface of its densities (nothing visible).
+  // An authored class can opt out of level-set meshing. It cannot opt a grid
+  // with a known non-level-set file class into that path.
   r.level_set = r.grid_class == "levelSet" &&
                 (grid->grid_class == "levelSet" || grid->grid_class == "unknown");
   if (!FieldDataTypeMatches(request.field_data_type, grid->value_type, grid->saved_as_half))

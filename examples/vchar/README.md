@@ -53,22 +53,26 @@ defaults directly; hovering a control shows its mapped USD blendshape. UsdSkel
 joint animation and blendshapes execute in realtime.
 
 `vchar_physics` initializes and steps LightUSD's bounded rigid-body solver from
-authored UsdPhysics APIs. Animated or deformed kinematic prim transforms are
+authored UsdPhysics APIs. Animated kinematic prim transforms are
 copied into their solver proxies before every step; dynamic solver transforms
-are then written back to the matching prims and renderer mesh-world buffers.
+are then written back to matching prims in an independent editable core
+preview stage and to renderer mesh-world buffers. The document snapshot stays
+immutable; reset restores its authored pose.
 Proxy linear and angular velocities are derived from consecutive poses, so
 animation-driven colliders transfer motion through contacts instead of behaving
 like teleported static geometry.
 This makes attachments follow a skinned/animated character while retaining
 two-way coupling for simulated rigid pieces. `status`, `initialize`, `step`,
-`reset`, and `hide` are supported with `--legacy-load`.
+`reset`, and `hide` use the default core loader.
 
 Physics diagnostics draw awake bodies as orange crosses (sleeping bodies are
 dimmed), collider AABBs in cyan, joint anchors and axes in magenta, and contact
 normals in red. The geometry and solver overlays remain visible together for
-spotting incorrect proxy transforms, joint frames, and penetration. The
-next-core loader rejects simulation explicitly until its physics annotation
-bridge can retain the same body-to-prim mapping.
+spotting incorrect proxy transforms, joint frames, and penetration. Mesh
+colliders use conservative local bounds, scanned with fixed scratch storage
+when no extent is authored. Unsupported geometry, shear and reflections
+return an explicit diagnostic error. This preview is not an engine-exact
+MuJoCo/PhysX replacement.
 
 ## External auto-rigger boundary
 

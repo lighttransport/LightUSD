@@ -20,7 +20,7 @@ run_mode() {
   local mode="$1"
   shift
   local log="$out/$mode.log"
-  if ! timeout 60s "$viewer" --headless --backend vk "$@" --next \
+  if ! timeout 60s "$viewer" --headless --backend vk "$@" --core \
       --frames 5 --size 192x128 --checkpoint-every 2 \
       --checkpoint-pattern "$out/$mode-{frame}.png" \
       --screenshot "$out/$mode-final.png" --render-report "$out/$mode.json" \

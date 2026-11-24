@@ -18,12 +18,12 @@ static void parse_usda(const uint8_t *data, size_t size)
 
   size_t total_size = content.size() + size;
 
-  lightusd::StreamReader sr(buf.data(), total_size, /* endianswap */false);
+  lightusd::legacy::StreamReader sr(buf.data(), total_size, /* endianswap */false);
 
-  lightusd::usda::USDAReaderConfig config;
+  lightusd::legacy::usda::USDAReaderConfig config;
   config.max_memory_limit_in_mb = 1024 * 4; // 4GB for fuzzer
 
-  lightusd::usda::USDAReader reader(&sr);
+  lightusd::legacy::usda::USDAReader reader(&sr);
   reader.set_reader_config(config);
 
   bool ret = reader.Read();

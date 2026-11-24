@@ -10,6 +10,18 @@
 
 static int nearf(float a, float b) { return fabsf(a - b) <= 1.0e-6f; }
 
+static int sample_texcoord(void *user, int index, int probe_axis,
+                           float out_uv[2]) {
+  (void)user;
+  if (index != 1) return 0;
+  out_uv[0] = 0.375f;
+  out_uv[1] = 0.625f;
+  if (probe_axis == 1) { out_uv[0] += 0.05f; out_uv[1] += 0.01f; }
+  if (probe_axis == 2) { out_uv[0] -= 0.02f; out_uv[1] += 0.04f; }
+  return 1;
+}
+
+
 static int eval_xml(const char *xml, OpenPBRParams *p) {
   MtlxDoc *doc = mtlx_load_string(xml);
   if (!doc) {
@@ -76,7 +88,115 @@ static int eval_volume_xml(const char *xml, MtlxVolumeParams *p) {
   return ok;
 }
 
+static int test_texture_colorspace_aliases(void) {
+  const char *spaces[] = {"srgb_texture", "sRGB", "srgb",
+                          "srgb_rec709_scene", "lin_rec709_scene", "raw"};
+  const int expected[] = {1, 1, 1, 1, 0, 0};
+  char xml[2048] = "<materialx version=\"1.39\">";
+  size_t used = strlen(xml);
+  for (size_t i = 0; i < sizeof(spaces) / sizeof(spaces[0]); ++i) {
+    int n = snprintf(xml + used, sizeof(xml) - used,
+                     "<image name=\"image%zu\" type=\"color3\">"
+                     "<input name=\"file\" type=\"filename\" "
+                     "value=\"unused%zu.png\" colorspace=\"%s\"/>"
+                     "</image>", i, i, spaces[i]);
+    if (n < 0 || (size_t)n >= sizeof(xml) - used) return 0;
+    used += (size_t)n;
+  }
+  strcat(xml, "</materialx>");
+  MtlxDoc *doc = mtlx_load_string(xml);
+  if (!doc) return 0;
+  int ok = 1;
+  int found = 0;
+  for (int i = 0; ok && i < doc->nnode; ++i) {
+    const MtlxNode *node = &doc->nodes[i];
+    if (strcmp(node->category, "image") != 0) continue;
+    if (strncmp(node->name, "image", 5) != 0) { ok = 0; break; }
+    const int case_index = atoi(node->name + 5);
+    if (case_index < 0 || case_index >= (int)(sizeof(spaces) / sizeof(spaces[0]))) {
+      ok = 0; break;
+    }
+    ++found;
+    const MtlxInput *file = NULL;
+    for (int j = 0; j < node->ninput; ++j)
+      if (!strcmp(node->inputs[j].name, "file")) file = &node->inputs[j];
+    if (!file || file->colorspace_srgb != expected[case_index]) {
+      fprintf(stderr, "colorspace case %d (%s): node=%s flag=%d expected=%d\n",
+              case_index, spaces[case_index], node->name,
+              file ? file->colorspace_srgb : -1, expected[case_index]);
+      ok = 0;
+    }
+  }
+  ok = ok && found == (int)(sizeof(spaces) / sizeof(spaces[0]));
+  mtlx_free(doc);
+  return ok;
+}
+
 int main(void) {
+  if (!test_texture_colorspace_aliases()) {
+    fprintf(stderr, "MaterialX texture colorspace aliases were not parsed\n");
+    return 1;
+  }
+  const char *anisotropic_standard_xml =
+      "<materialx version=\"1.39\">"
+      "<standard_surface name=\"ss\" type=\"surfaceshader\">"
+      "<input name=\"base_color\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
+      "<input name=\"metalness\" type=\"float\" value=\"0.2\"/>"
+      "<input name=\"specular_color\" type=\"color3\" value=\"0.5,0.6,0.7\"/>"
+      "<input name=\"specular\" type=\"float\" value=\"0.75\"/>"
+      "<input name=\"specular_roughness\" type=\"float\" value=\"0.25\"/>"
+      "<input name=\"specular_IOR\" type=\"float\" value=\"2.4\"/>"
+      "<input name=\"specular_anisotropy\" type=\"float\" value=\"0.5\"/>"
+      "<input name=\"specular_rotation\" type=\"float\" value=\"0.25\"/>"
+      "</standard_surface>"
+      "<surfacematerial name=\"mat\" type=\"material\">"
+      "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"ss\"/>"
+      "</surfacematerial></materialx>";
+  OpenPBRParams anisotropic_standard;
+  if (!eval_xml(anisotropic_standard_xml, &anisotropic_standard) ||
+      anisotropic_standard.specular_lobe_count != 1 ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.roughness,
+             0.08838835f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.roughness_y,
+             0.04419417f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.tangent.x, 0.0f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.tangent.y, 1.0f) ||
+      !nearf(anisotropic_standard.specular_lobes[0].frame.weight, 0.6f) ||
+      anisotropic_standard.diffuse_lobe_count != 1 ||
+      anisotropic_standard.conductor_lobe_count != 1) {
+    fprintf(stderr, "Standard Surface anisotropic specular closure was not retained\n");
+    return 1;
+  }
+  /* A document geompropdef can redirect the standard UV0 alias to UV set 1.
+   * Verify the generated texcoord node carries that index to the renderer. */
+  MtlxDoc *uv_doc = mtlx_load_string(
+      "<materialx version=\"1.39\"><geompropdef name=\"UV0\" "
+      "geomprop=\"texcoord\" type=\"vector2\" index=\"1\"/>"
+      "<image name=\"img\" type=\"color3\"><input name=\"file\" "
+      "type=\"filename\" value=\"unused.png\"/></image></materialx>");
+  int uv_node = -1;
+  if (uv_doc) for (int i = 0; i < uv_doc->nnode; ++i)
+    if (!strcmp(uv_doc->nodes[i].category, "texcoord")) { uv_node = i; break; }
+  ShadeContext uv_ctx = {0};
+  uv_ctx.doc = uv_doc;
+  uv_ctx.uv[0] = 0.1f; uv_ctx.uv[1] = 0.2f;
+  uv_ctx.texcoord = sample_texcoord;
+  if (uv_doc && uv_doc->nnode > 0) {
+    const size_t uv_node_count = (size_t)uv_doc->nnode;
+    uv_ctx.memo = (MtlxValue *)calloc(uv_node_count, sizeof(MtlxValue));
+    uv_ctx.memo_done = (char *)calloc(uv_node_count, 1);
+  }
+  int uv_ok = uv_doc && uv_node >= 0 && uv_ctx.memo && uv_ctx.memo_done;
+  if (uv_ok) {
+    const MtlxValue uv = mtlx_eval_node_test(&uv_ctx, uv_node);
+    uv_ok = uv.type == MV_VEC2 && nearf(uv.v[0], 0.375f) && nearf(uv.v[1], 0.625f);
+  }
+  free(uv_ctx.memo); free(uv_ctx.memo_done); mtlx_free(uv_doc);
+  if (!uv_ok) {
+    fprintf(stderr, "indexed geomprop texcoord callback failed\n");
+    return 1;
+  }
+
   /* Exercise the shared UDIM resolver directly. Keep the fixture local to the
    * test working directory so the texture cache's relative search semantics
    * are identical to a real MaterialX document. */
@@ -104,12 +224,51 @@ int main(void) {
   MtlxDoc *udim_doc = mtlx_load_string(
       "<materialx><image name=\"udim\" type=\"color3\"><input "
       "name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
-      "</image></materialx>");
+      "</image><tiledimage name=\"udim_scaled\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" value=\"2,1\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</tiledimage><image name=\"udim_literal\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.92,0.5\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</image><texcoord name=\"udim_uv_source\" type=\"vector2\"/>"
+      "<place2d name=\"udim_uv_scaled\" type=\"vector2\">"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"udim_uv_source\"/>"
+      "<input name=\"scale\" type=\"vector2\" value=\"0.25,1\"/></place2d>"
+      "<image name=\"udim_graph\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_udim_regression.<UDIM>.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"udim_uv_scaled\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image></materialx>");
   if (!udim_doc) {
     texcache_free(udim_cache); remove(udim_1001); remove(udim_1002);
     remove(udim_1101); return 1;
   }
   texcache_preload(udim_cache, udim_doc);
+  ShadeContext udim_ctx = {0};
+  udim_ctx.doc = udim_doc;
+  udim_ctx.tex = udim_cache;
+  udim_ctx.uv[0] = 0.46f; udim_ctx.uv[1] = 0.5f;
+  udim_ctx.uv_dx[0] = 0.4f; udim_ctx.has_uv_derivatives = 1;
+  udim_ctx.memo = (MtlxValue *)calloc((size_t)udim_doc->nnode, sizeof(MtlxValue));
+  udim_ctx.memo_done = (char *)calloc((size_t)udim_doc->nnode, 1);
+  const int udim_scaled_node = mtlx_find_node(udim_doc, -1, "udim_scaled");
+  const int udim_literal_node = mtlx_find_node(udim_doc, -1, "udim_literal");
+  const int udim_graph_node = mtlx_find_node(udim_doc, -1, "udim_graph");
+  int udim_scaled_ok = udim_ctx.memo && udim_ctx.memo_done &&
+                       udim_scaled_node >= 0 && udim_literal_node >= 0 && udim_graph_node >= 0;
+  if (udim_scaled_ok) {
+    const MtlxValue value = mtlx_eval_node_test(&udim_ctx, udim_scaled_node);
+    udim_scaled_ok = fabsf(value.v[0] - 0.5f) < 1e-6f &&
+                     fabsf(value.v[2] - 0.5f) < 1e-6f;
+    const MtlxValue literal = mtlx_eval_node_test(&udim_ctx, udim_literal_node);
+    udim_scaled_ok = udim_scaled_ok && literal.v[0] > 0.99f && literal.v[2] < 0.01f;
+    udim_ctx.uv[0] = 0.23f; udim_ctx.uv_dx[0] = 0.2f;
+    const MtlxValue graph = mtlx_eval_node_test(&udim_ctx, udim_graph_node);
+    udim_scaled_ok = udim_scaled_ok && fabsf(graph.v[0] - 0.5f) < 1e-6f &&
+                     fabsf(graph.v[2] - 0.5f) < 1e-6f;
+  }
+  free(udim_ctx.memo); free(udim_ctx.memo_done);
   mtlx_free(udim_doc);
   float udim_sample[4];
   const int udim_first = texcache_sample_file(
@@ -132,7 +291,7 @@ int main(void) {
   remove(udim_1002);
   remove(udim_1101);
   if (!udim_first || !udim_second || !udim_high || !first_red ||
-      !second_blue || !high_green || udim_missing ||
+      !second_blue || !high_green || !udim_scaled_ok || udim_missing ||
       udim_sample[3] != 1.0f) {
     fprintf(stderr, "UDIM present/missing tile resolution failed\n");
     return 1;
@@ -195,7 +354,7 @@ int main(void) {
       "<materialx>"
       "<latlongimage name=\"latf\" type=\"color3\"><input name=\"file\" "
       "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</latlongimage>"
       "<latlongimage name=\"latg\" type=\"color3\"><input name=\"file\" "
       "type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
@@ -204,7 +363,7 @@ int main(void) {
       "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filey\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
       "<input name=\"filez\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</triplanarprojection>"
       "<triplanarprojection name=\"trig\" type=\"color3\">"
       "<input name=\"filex\" type=\"filename\" value=\"lightrt_projection_filter.ppm\"/>"
@@ -270,7 +429,7 @@ int main(void) {
   mtlx_free(projection_filter_doc);
   remove(projection_filter_file);
   if (!projection_filter_ok) {
-    fprintf(stderr, "projection nearest filtering failed\n");
+    fprintf(stderr, "projection closest or gradient filtering failed\n");
     return 1;
   }
 
@@ -316,10 +475,68 @@ int main(void) {
   MtlxDoc *nearest_doc = mtlx_load_string(
       "<materialx><image name=\"nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
+      "</image><texcoord name=\"uv_source\" type=\"vector2\"/>"
+      "<place2d name=\"uv_scaled\" type=\"vector2\">"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"scale\" type=\"vector2\" value=\"0.25,1\"/></place2d>"
+      "<constant name=\"uv_constant\" type=\"vector2\">"
+      "<input name=\"value\" type=\"vector2\" value=\"0.25,0.5\"/></constant>"
+      "<position name=\"uv_position\" type=\"vector3\">"
+      "<input name=\"space\" type=\"string\" value=\"world\"/></position>"
+      "<convert name=\"uv_from_position\" type=\"vector2\">"
+      "<input name=\"in\" type=\"vector3\" nodename=\"uv_position\"/></convert>"
+      "<multiply name=\"uv_squared\" type=\"vector2\">"
+      "<input name=\"in1\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"in2\" type=\"vector2\" nodename=\"uv_source\"/></multiply>"
+      "<image name=\"mapped_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_scaled\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"constant_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_constant\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"swizzle_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_source\" channels=\"yx\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"position_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_from_position\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"squared_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"uv_squared\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<tiledimage name=\"dynamic_tiling\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.75,0.5\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" nodename=\"uv_source\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></tiledimage>"
+      "<tiledimage name=\"dynamic_position\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.75,0.5\"/>"
+      "<input name=\"uvtiling\" type=\"vector2\" nodename=\"uv_from_position\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></tiledimage>"
+      "<convert name=\"uv_as_color\" type=\"color3\">"
+      "<input name=\"in\" type=\"vector2\" nodename=\"uv_scaled\"/></convert>"
+      "<add name=\"shared_uv\" type=\"color3\">"
+      "<input name=\"in1\" type=\"color3\" nodename=\"mapped_uv\"/>"
+      "<input name=\"in2\" type=\"color3\" nodename=\"uv_as_color\"/></add>"
+      "<convert name=\"cycle_uv\" type=\"vector2\">"
+      "<input name=\"in\" type=\"color3\" nodename=\"cycle_image\"/></convert>"
+      "<image name=\"cycle_image\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" nodename=\"cycle_uv\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/></image>"
+      "<image name=\"literal_uv\" type=\"color3\">"
+      "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
+      "<input name=\"texcoord\" type=\"vector2\" value=\"0.25,0.5\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "</image><hextiledimage name=\"hex_nearest\" type=\"color3\">"
       "<input name=\"file\" type=\"filename\" value=\"lightrt_nearest_regression.ppm\"/>"
-      "<input name=\"filtertype\" type=\"string\" value=\"nearest\"/>"
+      "<input name=\"filtertype\" type=\"string\" value=\"closest\"/>"
       "<input name=\"rotationrange\" type=\"vector2\" value=\"0,0\"/>"
       "<input name=\"scalerange\" type=\"vector2\" value=\"1,1\"/>"
       "<input name=\"offsetrange\" type=\"vector2\" value=\"0,0\"/>"
@@ -345,14 +562,35 @@ int main(void) {
                                             sizeof(MtlxValue));
     nearest_ctx.memo_done = (char *)calloc((size_t)nearest_doc->nnode, 1);
     int nearest_node = mtlx_find_node(nearest_doc, -1, "nearest");
+    int literal_uv_node = mtlx_find_node(nearest_doc, -1, "literal_uv");
+    int mapped_uv_node = mtlx_find_node(nearest_doc, -1, "mapped_uv");
+    int constant_uv_node = mtlx_find_node(nearest_doc, -1, "constant_uv");
+    int swizzle_uv_node = mtlx_find_node(nearest_doc, -1, "swizzle_uv");
+    int position_uv_node = mtlx_find_node(nearest_doc, -1, "position_uv");
+    int dynamic_tiling_node = mtlx_find_node(nearest_doc, -1, "dynamic_tiling");
+    int dynamic_position_node = mtlx_find_node(nearest_doc, -1, "dynamic_position");
+    int squared_uv_node = mtlx_find_node(nearest_doc, -1, "squared_uv");
+    int shared_uv_node = mtlx_find_node(nearest_doc, -1, "shared_uv");
+    int cycle_image_node = mtlx_find_node(nearest_doc, -1, "cycle_image");
     int hex_nearest_node = mtlx_find_node(nearest_doc, -1, "hex_nearest");
     int hex_linear_node = mtlx_find_node(nearest_doc, -1, "hex_linear");
-    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 ||
+    if (!nearest_ctx.memo || !nearest_ctx.memo_done || nearest_node < 0 || literal_uv_node < 0 ||
+        mapped_uv_node < 0 || constant_uv_node < 0 || swizzle_uv_node < 0 || position_uv_node < 0 ||
+        dynamic_tiling_node < 0 || dynamic_position_node < 0 || squared_uv_node < 0 ||
+        shared_uv_node < 0 || cycle_image_node < 0 ||
         hex_nearest_node < 0 || hex_linear_node < 0) {
       nearest_ok = 0;
     } else {
       nearest_value = mtlx_eval_node_test(&nearest_ctx, nearest_node);
       nearest_ok = nearest_value.v[2] > 0.99f && nearest_value.v[0] < 0.01f;
+      MtlxValue literal_value = mtlx_eval_node_test(&nearest_ctx, literal_uv_node);
+      nearest_ok = nearest_ok && literal_value.v[0] > 0.99f && literal_value.v[2] < 0.01f;
+      nearest_ctx.has_uv_derivatives = 1;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      literal_value = mtlx_eval_node_test(&nearest_ctx, literal_uv_node);
+      nearest_ok = nearest_ok && literal_value.v[0] > 0.99f && literal_value.v[2] < 0.01f;
+      nearest_ctx.has_uv_derivatives = 0;
+      nearest_ctx.uv_dx[0] = 0.0f;
       memset(nearest_ctx.memo_done, 0, (size_t)nearest_doc->nnode);
       MtlxValue hex_nearest_value =
           mtlx_eval_node_test(&nearest_ctx, hex_nearest_node);
@@ -363,6 +601,45 @@ int main(void) {
           (fabsf(hex_nearest_value.v[0] - hex_linear_value.v[0]) > 0.001f ||
            fabsf(hex_nearest_value.v[1] - hex_linear_value.v[1]) > 0.001f ||
            fabsf(hex_nearest_value.v[2] - hex_linear_value.v[2]) > 0.001f);
+      nearest_ctx.uv[0] = 0.0625f; nearest_ctx.uv[1] = 0.5f;
+      nearest_ctx.uv_dx[0] = 0.25f; nearest_ctx.has_uv_derivatives = 1;
+      MtlxValue mapped = mtlx_eval_node_test(&nearest_ctx, mapped_uv_node);
+      nearest_ok = nearest_ok && fabsf(mapped.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(mapped.v[2] - 0.5f) < 1e-6f;
+      nearest_ctx.uv_dy[1] = 0.1f;
+      MtlxValue shared = mtlx_eval_node_test(&nearest_ctx, shared_uv_node);
+      nearest_ok = nearest_ok && fabsf(shared.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(shared.v[1] - 0.5f) < 1e-6f &&
+                   fabsf(shared.v[2] - 0.5f) < 1e-6f;
+      MtlxValue cycle = mtlx_eval_node_test(&nearest_ctx, cycle_image_node);
+      nearest_ok = nearest_ok && isfinite(cycle.v[0]) && isfinite(cycle.v[2]);
+      nearest_ctx.uv_dy[1] = 0.0f;
+      nearest_ctx.uv[0] = 0.25f; nearest_ctx.uv[1] = 0.5f;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      MtlxValue dynamic_tiling = mtlx_eval_node_test(&nearest_ctx, dynamic_tiling_node);
+      nearest_ok = nearest_ok && fabsf(dynamic_tiling.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(dynamic_tiling.v[2] - 0.25f) < 1e-6f;
+      MtlxValue squared = mtlx_eval_node_test(&nearest_ctx, squared_uv_node);
+      nearest_ok = nearest_ok && fabsf(squared.v[0] - 0.25f) < 1e-6f &&
+                   fabsf(squared.v[2] - 0.75f) < 1e-6f;
+      nearest_ctx.uv_dx[0] = 1.0f;
+      MtlxValue constant = mtlx_eval_node_test(&nearest_ctx, constant_uv_node);
+      nearest_ok = nearest_ok && constant.v[0] > 0.99f && constant.v[2] < 0.01f;
+      nearest_ctx.uv[0] = 0.5f; nearest_ctx.uv[1] = 0.0625f;
+      nearest_ctx.uv_dx[0] = 0.0f; nearest_ctx.uv_dx[1] = 1.0f;
+      MtlxValue swizzle = mtlx_eval_node_test(&nearest_ctx, swizzle_uv_node);
+      nearest_ok = nearest_ok && fabsf(swizzle.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(swizzle.v[2] - 0.5f) < 1e-6f;
+      nearest_ctx.has_uv_derivatives = 0;
+      nearest_ctx.P = v3_make(0.25f, 0.5f, 0.0f);
+      nearest_ctx.dPdx = v3_make(1.0f, 0.0f, 0.0f);
+      nearest_ctx.has_position_derivatives = 1;
+      MtlxValue projected = mtlx_eval_node_test(&nearest_ctx, position_uv_node);
+      nearest_ok = nearest_ok && fabsf(projected.v[0] - 0.5f) < 1e-6f &&
+                   fabsf(projected.v[2] - 0.5f) < 1e-6f;
+      MtlxValue position_tiling = mtlx_eval_node_test(&nearest_ctx, dynamic_position_node);
+      nearest_ok = nearest_ok && fabsf(position_tiling.v[0] - 0.75f) < 1e-6f &&
+                   fabsf(position_tiling.v[2] - 0.25f) < 1e-6f;
     }
     free(nearest_ctx.memo);
     free(nearest_ctx.memo_done);
@@ -444,7 +721,7 @@ int main(void) {
       "    <input name=\"subsurface_radius\" type=\"color3\" value=\"0.2,0.4,0.6\"/>"
       "    <input name=\"subsurface_radius_scale\" type=\"color3\" value=\"2,3,4\"/>"
       "    <input name=\"subsurface_scale\" type=\"float\" value=\"1.5\"/>"
-      "    <input name=\"thin_film_thickness\" type=\"float\" value=\"450\"/>"
+      "    <input name=\"thin_film_thickness\" type=\"float\" value=\"0.45\"/>"
       "    <input name=\"specular_weight\" type=\"float\" value=\"0.25\"/>"
       "    <input name=\"base_roughness\" type=\"float\" value=\"0.35\"/>"
       "    <input name=\"specular_ior\" type=\"float\" value=\"1.6\"/>"
@@ -803,6 +1080,9 @@ int main(void) {
        nearf(volume.scattering.y, 0.375f) &&
        nearf(volume.scattering.z, 0.45f) &&
        nearf(volume.anisotropy, 0.35f) &&
+       volume.lobe_count == 1 &&
+       nearf(volume.lobes[0].anisotropy, 0.35f) &&
+       nearf(volume.lobes[0].scattering.y, 0.375f) &&
        nearf(volume.emission.x, 1.5625f) &&
        nearf(volume.emission.y, 0.875f) &&
        nearf(volume.emission.z, 0.5625f);
@@ -811,9 +1091,25 @@ int main(void) {
     return 1;
   }
 
-  /* Measured profiles require a renderer-specific spectral/table backend.
-   * The standalone evaluator's documented fallback preserves an authored
-   * color while ignoring the unavailable profile filename. */
+  /* Multiple VDF closures retain their individual phase functions. */
+  const char *two_lobes_xml =
+      "<materialx version=\"1.39\">"
+      "<anisotropic_vdf name=\"a\" type=\"VDF\"><input name=\"scattering\" type=\"vector3\" value=\"1,0,0\"/><input name=\"anisotropy\" type=\"float\" value=\"0.6\"/></anisotropic_vdf>"
+      "<anisotropic_vdf name=\"b\" type=\"VDF\"><input name=\"scattering\" type=\"vector3\" value=\"0,0,2\"/><input name=\"anisotropy\" type=\"float\" value=\"-0.6\"/></anisotropic_vdf>"
+      "<add name=\"sum\" type=\"VDF\"><input name=\"in1\" type=\"VDF\" nodename=\"a\"/><input name=\"in2\" type=\"VDF\" nodename=\"b\"/></add>"
+      "<volume name=\"V\" type=\"volumeshader\"><input name=\"vdf\" type=\"VDF\" nodename=\"sum\"/></volume>"
+      "<volumematerial name=\"M\"><input name=\"volumeshader\" type=\"volumeshader\" nodename=\"V\"/></volumematerial></materialx>";
+  if (!eval_volume_xml(two_lobes_xml, &volume) || volume.lobe_count != 2 ||
+      !nearf(volume.lobes[0].anisotropy, 0.6f) ||
+      !nearf(volume.lobes[1].anisotropy, -0.6f) ||
+      !nearf(volume.lobes[0].scattering.x, 1.0f) ||
+      !nearf(volume.lobes[1].scattering.z, 2.0f)) {
+    fprintf(stderr, "MaterialX volume phase lobes were not preserved\n");
+    return 1;
+  }
+
+  /* Measured profiles require IES evaluation. The volume evaluator must
+   * reject an unsupported profile rather than silently ignore the file. */
   const char *measured_volume_xml =
       "<materialx version=\"1.39\">"
       " <measured_edf name=\"MeasuredGlow\" type=\"EDF\">"
@@ -826,11 +1122,8 @@ int main(void) {
       " <volumematerial name=\"MeasuredMat\" type=\"material\">"
       "  <input name=\"volumeshader\" type=\"volumeshader\" nodename=\"MeasuredVolume\"/>"
       " </volumematerial></materialx>";
-  if (!eval_volume_xml(measured_volume_xml, &volume) ||
-      !nearf(volume.emission.x, 0.15f) ||
-      !nearf(volume.emission.y, 0.35f) ||
-      !nearf(volume.emission.z, 0.65f)) {
-    fprintf(stderr, "MaterialX measured EDF color fallback was not evaluated\n");
+  if (eval_volume_xml(measured_volume_xml, &volume)) {
+    fprintf(stderr, "MaterialX measured EDF was accepted without IES evaluation\n");
     return 1;
   }
 

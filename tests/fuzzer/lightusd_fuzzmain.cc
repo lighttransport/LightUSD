@@ -4,10 +4,10 @@
 
 static void parse_usdz(const uint8_t *data, size_t size)
 {
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
   std::string err;
-  bool ret = lightusd::LoadUSDZFromMemory(data, size, "", &stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDZFromMemory(data, size, "", &stage, &warn, &err);
   (void)ret;
 
   return;

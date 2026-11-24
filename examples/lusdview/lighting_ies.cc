@@ -2,7 +2,7 @@
 // App-side adapter over the shared preview photometry parser. The GL and RT
 // paths consume raw LM-63 tables and normalize by maximum candela, so this file
 // keeps that storage contract while delegating parsing (LM-63, TILT, limits) to
-// src/tydra/next/scene-preview-photometry.cc: one parser for the app and the
+// src/tydra/scene-preview-photometry.cc: one parser for the app and the
 // preview caches.
 #include "lighting_ies.hh"
 
@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-#include "tydra/next/scene-preview-photometry.hh"
+#include "tydra/scene-preview-photometry.hh"
 
 namespace lusdview {
 namespace {
@@ -109,19 +109,19 @@ std::string NormalizeTilt(std::string text) {
 
 bool BuildProfile(const std::string& path, CachedIesProfile* out,
                   std::string* err) {
-  lightusd::tydra::next::PreviewIesProfile profile;
+  lightusd::tydra::PreviewIesProfile profile;
   std::string error;
-  bool ok = lightusd::tydra::next::LoadPreviewIes(path, &profile, &error);
+  bool ok = lightusd::tydra::LoadPreviewIes(path, &profile, &error);
   if (!ok) {
     std::string text;
     const auto normalized =
         ReadText(path, &text) ? NormalizeTilt(text) : std::string();
     if (!normalized.empty() &&
-        lightusd::tydra::next::ParsePreviewIes(normalized, &profile, &error)) {
+        lightusd::tydra::ParsePreviewIes(normalized, &profile, &error)) {
       ok = true;
     } else if (!normalized.empty()) {
       // External TILT tables use the same count-first layout.
-      ok = lightusd::tydra::next::ParsePreviewIes(
+      ok = lightusd::tydra::ParsePreviewIes(
           normalized, &profile, &error,
           [&](const std::string& name, std::string* data, std::string* e) {
             const auto file = (std::filesystem::path(path).parent_path() /

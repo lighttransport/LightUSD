@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # material:binding:back regression: whole-mesh and GeomSubset back bindings,
-# including degraded (unknown implementation) surfaces, must survive --next
+# including degraded (unknown implementation) surfaces, must survive --core
 # batching and render with the authored recovered constants.
 set -uo pipefail
 SKIP=77

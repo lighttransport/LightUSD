@@ -19,7 +19,6 @@ cd ${builddir} && CXX="${CXX}" CC="${CC}" cmake \
   -DSANITIZE_ADDRESS=1 \
   -DLIGHTUSD_NO_WERROR=On \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 
 # -DLIGHTUSD_NO_WERROR=On: gcc's static analyzer under ASan

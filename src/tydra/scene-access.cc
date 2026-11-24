@@ -1,449 +1,913 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2022-Present Light Transport Entertainment, Inc.
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2024-Present Light Transport Entertainment Inc.
 //
+// Tydra - Scene Access Implementation
 
-// src
-#include "common-macros.inc"
-#include "pprint-enum.hh"
-#include "core/prim.hh"
-#include "primvar.hh"
-#include "tiny-container.hh"
-#include "tiny-format.hh"
-#include "tydra/prim-apply.hh"
-#include "usdGeom.hh"
-#include "xform.hh"  // For matrix inverse
-
-// src/tydra
 #include "scene-access.hh"
-
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#if __has_warning("-Wnrvo")
-#pragma clang diagnostic ignored "-Wnrvo"
-#endif
-#endif
+#include "layer/prim-spec.hh"
+#include "prim/path.hh"
+#include <cstring>
+#include <cmath>
+#include <string_view>
+#include <unordered_map>
 
 namespace lightusd {
 namespace tydra {
 
-#include "tydra/scene-access-traverse-impl.inc"
+using ::lightusd::Path;
+using ::lightusd::PrimSpec;
+using ::lightusd::PropMeta;
 
-const Prim *GetParentPrim(const lightusd::Stage &stage,
-                          const lightusd::Path &path, std::string *err) {
-  if (!path.is_valid()) {
-    if (err) {
-      (*err) = "Input Path " + lightusd::to_string(path) + " is invalid.\n";
-    }
-    return nullptr;
-  }
+//
+// Prim type checking
+//
 
-  if (path.is_root_path()) {
-    if (err) {
-      (*err) = "Input Path is root(\"/\").\n";
-    }
-    return nullptr;
-  }
+bool IsMesh(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Mesh";
+}
 
-  if (path.is_root_prim()) {
-    if (err) {
-      (*err) = "Input Path is root Prim, so no parent Prim exists.\n";
-    }
-    return nullptr;
-  }
+bool IsXform(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Xform";
+}
 
-  if (!path.is_absolute_path()) {
-    if (err) {
-      (*err) = "Input Path must be absolute path(i.e. starts with \"/\").\n";
-    }
-    return nullptr;
-  }
+bool IsCamera(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Camera";
+}
 
-  lightusd::Path parentPath = path.get_parent_prim_path();
+bool IsMaterial(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Material";
+}
 
-  nonstd::expected<const Prim *, std::string> ret =
-      stage.GetPrimAtPath(parentPath);
-  if (ret) {
-    return ret.value();
-  } else {
-    if (err) {
-      (*err) += "Failed to get parent Prim from Path " +
-                lightusd::to_string(path) + ". Reason = " + ret.error() + "\n";
-    }
-    return nullptr;
-  }
+bool IsShader(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Shader";
+}
+
+bool IsLight(const UsdPrim& prim) {
+  if (!prim.IsValid()) return false;
+  const std::string& type = prim.GetTypeName();
+  return type == "DistantLight" || type == "DomeLight" ||
+         type == "DomeLight_1" || type == "RectLight" || type == "DiskLight" ||
+         type == "SphereLight" || type == "CylinderLight" ||
+         type == "PointLight" || type == "GeometryLight" ||
+         type == "PortalLight" || type == "PluginLight" ||
+         type == "LightFilter" || type == "PluginLightFilter";
+}
+
+bool IsSkeleton(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Skeleton";
+}
+
+bool IsSkelRoot(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "SkelRoot";
+}
+
+bool IsGeomSubset(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "GeomSubset";
+}
+
+bool IsScope(const UsdPrim& prim) {
+  return prim.IsValid() && prim.GetTypeName() == "Scope";
+}
+
+LightKind GetLightKind(const UsdPrim& prim) {
+  if (!prim.IsValid()) return LightKind::Unknown;
+  const std::string& type = prim.GetTypeName();
+
+  if (type == "DistantLight") return LightKind::DistantLight;
+  if (type == "DomeLight" || type == "DomeLight_1") return LightKind::DomeLight;
+  if (type == "RectLight") return LightKind::RectLight;
+  if (type == "DiskLight") return LightKind::DiskLight;
+  if (type == "SphereLight") return LightKind::SphereLight;
+  if (type == "CylinderLight") return LightKind::CylinderLight;
+  if (type == "PointLight") return LightKind::PointLight;
+  if (type == "GeometryLight") return LightKind::GeometryLight;
+  if (type == "PortalLight") return LightKind::PortalLight;
+  if (type == "PluginLight") return LightKind::PluginLight;
+  if (type == "LightFilter") return LightKind::LightFilter;
+  if (type == "PluginLightFilter") return LightKind::PluginLightFilter;
+
+  return LightKind::Unknown;
 }
 
 //
-// Template Instanciations
+// Find prims by type
 //
 
+std::vector<UsdPrim> FindMeshes(const Stage& stage) {
+  return FindPrimsByType(stage, "Mesh");
+}
+
+std::vector<UsdPrim> FindXforms(const Stage& stage) {
+  return FindPrimsByType(stage, "Xform");
+}
+
+std::vector<UsdPrim> FindCameras(const Stage& stage) {
+  return FindPrimsByType(stage, "Camera");
+}
+
+std::vector<UsdPrim> FindMaterials(const Stage& stage) {
+  return FindPrimsByType(stage, "Material");
+}
+
+std::vector<UsdPrim> FindLights(const Stage& stage) {
+  return FindPrims(stage, IsLight);
+}
+
+std::vector<UsdPrim> FindSkeletons(const Stage& stage) {
+  return FindPrimsByType(stage, "Skeleton");
+}
+
+std::vector<UsdPrim> FindPrimsByType(const Stage& stage, const std::string& type_name) {
+  std::vector<UsdPrim> result;
+  stage.Traverse([&](const UsdPrim& prim) {
+    if (prim.GetTypeName() == type_name) {
+      result.push_back(prim);
+    }
+    return true;  // Continue traversal
+  });
+  return result;
+}
+
+std::vector<UsdPrim> FindPrims(const Stage& stage, PrimPredicate pred) {
+  std::vector<UsdPrim> result;
+  stage.Traverse([&](const UsdPrim& prim) {
+    if (pred(prim)) {
+      result.push_back(prim);
+    }
+    return true;
+  });
+  return result;
+}
+
+//
+// Attribute access helpers
+//
+
+const Value* GetAttribute(const UsdPrim& prim, const std::string& name) {
+  if (!prim.IsValid()) return nullptr;
+  auto name_id = lightusd::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return nullptr;
+  return prim.GetPropertyValue(name_id);
+}
+
+const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time) {
+  if (!prim.IsValid()) return nullptr;
+  auto name_id = lightusd::GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return nullptr;
+  return prim.GetValueAtTime(name_id, time);
+}
+
+bool GetFloat(const UsdPrim& prim, const std::string& name, float* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const float* f = val->as_float();
+  if (f) {
+    *out = *f;
+    return true;
+  }
+
+  // Try double
+  const double* d = val->as_double();
+  if (d) {
+    *out = static_cast<float>(*d);
+    return true;
+  }
+
+  return false;
+}
+
+bool GetFloat3(const UsdPrim& prim, const std::string& name, float* x, float* y, float* z) {
+  if (!x || !y || !z) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const float* f3 = val->as_float3();
+  if (f3) {
+    *x = f3[0]; *y = f3[1]; *z = f3[2];
+    return true;
+  }
+
+  const double* d3 = val->as_double3();
+  if (d3) {
+    *x = static_cast<float>(d3[0]);
+    *y = static_cast<float>(d3[1]);
+    *z = static_cast<float>(d3[2]);
+    return true;
+  }
+
+  return false;
+}
+
+bool GetDouble(const UsdPrim& prim, const std::string& name, double* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const double* d = val->as_double();
+  if (d) {
+    *out = *d;
+    return true;
+  }
+
+  const float* f = val->as_float();
+  if (f) {
+    *out = *f;
+    return true;
+  }
+
+  return false;
+}
+
+bool GetDouble3(const UsdPrim& prim, const std::string& name, double* x, double* y, double* z) {
+  if (!x || !y || !z) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const double* d3 = val->as_double3();
+  if (d3) {
+    *x = d3[0]; *y = d3[1]; *z = d3[2];
+    return true;
+  }
+
+  const float* f3 = val->as_float3();
+  if (f3) {
+    *x = f3[0]; *y = f3[1]; *z = f3[2];
+    return true;
+  }
+
+  return false;
+}
+
+bool GetInt(const UsdPrim& prim, const std::string& name, int* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const int* i = val->as_int();
+  if (i) {
+    *out = *i;
+    return true;
+  }
+
+  return false;
+}
+
+bool GetBool(const UsdPrim& prim, const std::string& name, bool* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const bool* b = val->as_bool();
+  if (b) {
+    *out = *b;
+    return true;
+  }
+
+  return false;
+}
+
+bool GetString(const UsdPrim& prim, const std::string& name, std::string* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  auto s = val->as_string();
+  if (s) {
+    *out = *s;
+    return true;
+  }
+
+  return false;
+}
+
+bool GetToken(const UsdPrim& prim, const std::string& name, std::string* out) {
+  if (!out) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  auto t = val->as_token();
+  if (t) {
+    *out = *t;
+    return true;
+  }
+
+  return false;
+}
+
+bool GetMatrix4(const UsdPrim& prim, const std::string& name, float* matrix16) {
+  if (!matrix16) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const float* m = val->as_matrix4f();
+  if (m) {
+    std::memcpy(matrix16, m, 16 * sizeof(float));
+    return true;
+  }
+
+  const double* md = val->as_matrix4d();
+  if (md) {
+    for (int i = 0; i < 16; ++i) {
+      matrix16[i] = static_cast<float>(md[i]);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool GetMatrix4d(const UsdPrim& prim, const std::string& name, double* matrix16) {
+  if (!matrix16) return false;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return false;
+
+  const double* m = val->as_matrix4d();
+  if (m) {
+    std::memcpy(matrix16, m, 16 * sizeof(double));
+    return true;
+  }
+
+  const float* mf = val->as_matrix4f();
+  if (mf) {
+    for (int i = 0; i < 16; ++i) {
+      matrix16[i] = mf[i];
+    }
+    return true;
+  }
+
+  return false;
+}
+
+std::vector<float> GetFloatArray(const UsdPrim& prim, const std::string& name) {
+  std::vector<float> result;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return result;
+
+  auto arr = val->as_float_array();
+  if (arr) {
+    result.assign(arr->begin(), arr->end());
+  }
+  return result;
+}
+
+std::vector<std::string> GetTokenArray(const UsdPrim& prim,
+                                       const std::string& name) {
+  std::vector<std::string> result;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return result;
+  if (auto arr = val->as_token_array()) {
+    result.assign(arr->begin(), arr->end());
+  }
+  return result;
+}
+
+::lightusd::ValueArrayView<const int32_t> GetIntArrayView(const UsdPrim& prim,
+                                            const std::string& name) {
+  const Value* val = GetAttribute(prim, name);
+  return val ? val->as_int_array() : nullptr;
+}
+
+::lightusd::ValueArrayView<const float> GetFloatArrayView(const UsdPrim& prim,
+                                            const std::string& name) {
+  const Value* val = GetAttribute(prim, name);
+  return val ? val->as_float_array() : nullptr;
+}
+
+std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name) {
+  std::vector<int32_t> result;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return result;
+
+  auto arr = val->as_int_array();
+  if (arr) {
+    result.assign(arr->begin(), arr->end());
+  }
+  return result;
+}
+
+//
+// Relationship access
+//
+
+std::vector<std::string> GetRelationshipTargets(const UsdPrim& prim, const std::string& rel_name) {
+  std::vector<std::string> result;
+  if (!prim.IsValid()) return result;
+
+  if (const std::vector<Path>* targets = prim.GetRelationship(rel_name)) {
+    result.reserve(targets->size());
+    for (const Path& p : *targets) {
+      result.push_back(p.str());
+    }
+  }
+  return result;
+}
+
+std::string GetBoundMaterial(const UsdPrim& prim) {
+  if (!prim.IsValid()) return "";
+
+  // Try material:binding relationship
+  auto targets = GetRelationshipTargets(prim, "material:binding");
+  if (!targets.empty()) {
+    return targets[0];
+  }
+
+  return "";
+}
+
+std::string GetBoundSkeleton(const UsdPrim& prim) {
+  if (!prim.IsValid()) return "";
+
+  auto targets = GetRelationshipTargets(prim, "skel:skeleton");
+  if (!targets.empty()) {
+    return targets[0];
+  }
+
+  return "";
+}
+
+//
+// Hierarchy access
+//
+
+UsdPrim GetParent(const Stage& stage, const UsdPrim& prim) {
+  if (!prim.IsValid()) return UsdPrim();
+
+  std::string path = prim.GetPath().str();
+  std::string parent_path = GetParentPath(path);
+
+  if (parent_path.empty() || parent_path == "/") {
+    return UsdPrim();
+  }
+
+  return stage.GetPrimAtPath(parent_path);
+}
+
+std::vector<UsdPrim> GetChildren(const UsdPrim& prim) {
+  if (!prim.IsValid()) return {};
+  return prim.GetChildren();
+}
+
+std::vector<UsdPrim> GetDescendants(const UsdPrim& prim) {
+  std::vector<UsdPrim> result;
+  if (!prim.IsValid()) return result;
+
+  // Iterative pre-order DFS. Stages parsed from USDA have a depth limit, but
+  // callers can build Layers programmatically; recursing here made a valid
+  // deep hierarchy exhaust the native/WASM stack.
+  std::vector<UsdPrim> stack;
+  const size_t child_count = prim.GetChildCount();
+  stack.reserve(child_count);
+  for (size_t i = child_count; i > 0; --i) {
+    const UsdPrim child = prim.GetChildAt(i - 1);
+    if (child.IsValid()) stack.push_back(child);
+  }
+
+  while (!stack.empty()) {
+    UsdPrim current = stack.back();
+    stack.pop_back();
+    if (!current.IsValid()) continue;
+
+    result.push_back(current);
+
+    const size_t child_count = current.GetChildCount();
+    for (size_t i = child_count; i > 0; --i) {
+      const UsdPrim child = current.GetChildAt(i - 1);
+      if (child.IsValid()) stack.push_back(child);
+    }
+  }
+  return result;
+}
+
+std::string GetPrimName(const UsdPrim& prim) {
+  if (!prim.IsValid()) return "";
+  return prim.GetName();
+}
+
+std::string GetParentPath(const std::string& path) {
+  if (path.empty() || path == "/") return "";
+
+  size_t last_slash = path.rfind('/');
+  if (last_slash == 0) return "/";
+  if (last_slash == std::string::npos) return "";
+
+  return path.substr(0, last_slash);
+}
+
+//
+// GeomSubset access
+//
+
+std::vector<GeomSubset> GetGeomSubsets(const UsdPrim& mesh_prim) {
+  std::vector<GeomSubset> result;
+  if (!mesh_prim.IsValid()) return result;
+
+  const size_t child_count = mesh_prim.GetChildCount();
+  for (size_t i = 0; i < child_count; ++i) {
+    const UsdPrim child = mesh_prim.GetChildAt(i);
+    if (!child.IsValid()) continue;
+    if (IsGeomSubset(child)) {
+      GeomSubset gs;
+      gs.name = child.GetName();
+      gs.path = child.GetPath().str();
+
+      GetToken(child, "familyName", &gs.family_name);
+
+      // View, not a copy: the array lives in the stage's Value storage and
+      // the consumer builds its own working copy regardless.
+      if (const Value* iv = GetAttribute(child, "indices")) {
+        gs.indices_view = iv->as_int_array();
+      }
+
+      // Get material binding
+      gs.material_path = GetBoundMaterial(child);
+
+      result.push_back(std::move(gs));
+    }
+  }
+
+  return result;
+}
+
+//
+// Primvar access
+//
+
+std::vector<Primvar> GetPrimvars(const UsdPrim& prim) {
+  std::vector<Primvar> result;
+  if (!prim.IsValid()) return result;
+
+  // Get all properties that start with "primvars:"
+  auto prop_names = prim.GetPropertyNames();
+  for (const auto& name : prop_names) {
+    if (name.find("primvars:") == 0 && name.find(":indices") == std::string::npos) {
+      Primvar pv;
+      pv.name = name.substr(9);  // Remove "primvars:" prefix
+      pv.value = GetAttribute(prim, name);
+      if (pv.value) {
+        pv.type_id = pv.value->type_id();
+
+        // Get interpolation: authored property metadata first (the usda/crate
+        // readers store it in PropMeta), then the legacy attribute form.
+        if (const PrimSpec* spec = prim.GetPrimSpec()) {
+          if (const PropMeta* pm = spec->property_meta(name)) {
+            if (pm->authored & PropMeta::kInterpolation) {
+              pv.interpolation = pm->interpolation;
+            }
+          }
+        }
+        if (pv.interpolation.empty()) {
+          std::string interp_attr = name + ":interpolation";
+          GetToken(prim, interp_attr, &pv.interpolation);
+        }
+        pv.interpolation_authored = !pv.interpolation.empty();
+        if (pv.interpolation.empty()) {
+          pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
+        }
+
+        // Get indices if present (view, not a copy -- see Primvar::indices_view)
+        std::string indices_attr = name + ":indices";
+        if (const Value* iv = GetAttribute(prim, indices_attr)) {
+          pv.indices_view = iv->as_int_array();
+        }
+
+        result.push_back(std::move(pv));
+      }
+    }
+  }
+
+  return result;
+}
+
+Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
+  Primvar pv;
+  pv.name = name;
+
+  std::string full_name = "primvars:" + name;
+  pv.value = GetAttribute(prim, full_name);
+
+  if (pv.value) {
+    pv.type_id = pv.value->type_id();
+
+    if (const PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const PropMeta* pm = spec->property_meta(full_name)) {
+        if (pm->authored & PropMeta::kInterpolation) {
+          pv.interpolation = pm->interpolation;
+        }
+      }
+    }
+    if (pv.interpolation.empty()) {
+      std::string interp_attr = full_name + ":interpolation";
+      GetToken(prim, interp_attr, &pv.interpolation);
+    }
+    pv.interpolation_authored = !pv.interpolation.empty();
+    if (pv.interpolation.empty()) {
+      pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
+    }
+
+    std::string indices_attr = full_name + ":indices";
+    if (const Value* iv = GetAttribute(prim, indices_attr)) {
+      pv.indices_view = iv->as_int_array();
+    }
+  }
+
+  return pv;
+}
+
+//
+// Blend shape access
+//
 
 namespace {
 
-// Optimized iterative version of VisitPrimsRec
-// Handles primChildren ordering and early termination
-bool VisitPrimsIterative(const lightusd::Path &start_abs_path,
-                         const lightusd::Prim &start_prim, int32_t start_level,
-                         VisitPrimFunction visitor_fun, void *userdata,
-                         std::string *err,
-                         size_t max_iter = kMaxDefaultTraversalLimit) {
-  // Stack entry: (prim pointer, ordered children to visit, current child index, level, parent path)
-  struct StackEntry {
-    const lightusd::Prim *prim;
-    std::vector<const lightusd::Prim *> ordered_children;
-    size_t child_idx;
-    int32_t level;
-    lightusd::Path abs_path;
-
-    StackEntry(const lightusd::Prim *p, int32_t lvl, lightusd::Path path)
-        : prim(p), child_idx(0), level(lvl), abs_path(std::move(path)) {}
-  };
-
-  StackVector<StackEntry, 4> stack;
-  stack.reserve(64);
-
-  // Helper to get ordered children list
-  auto get_ordered_children = [err](const lightusd::Prim &prim)
-      -> std::pair<bool, std::vector<const lightusd::Prim *>> {
-    std::vector<const lightusd::Prim *> result;
-
-    if (prim.children().empty()) {
-      return {true, result};
-    }
-
-    // If primChildren metadata matches children count, use it for ordering
-    if (prim.metas().primChildren.size() == prim.children().size()) {
-      std::unordered_map<std::string, const lightusd::Prim *, FNV1StringHash>
-          primNameTable;
-      primNameTable.reserve(prim.children().size());
-      for (size_t i = 0; i < prim.children().size(); i++) {
-        primNameTable.emplace(prim.children()[i].element_name(),
-                              &prim.children()[i]);
-      }
-
-      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
-        value::token nameTok = prim.metas().primChildren[i];
-        const auto it = primNameTable.find(nameTok.str());
-        if (it != primNameTable.end()) {
-          result.push_back(it->second);
-        } else {
-          if (err) {
-            (*err) += fmt::format(
-                "Prim name `{}` in `primChildren` metadatum not found in this "
-                "Prim's children",
-                nameTok.str());
-          }
-          return {false, {}};
-        }
-      }
-    } else {
-      // Use natural order
-      for (const auto &child : prim.children()) {
-        result.push_back(&child);
-      }
-    }
-
-    return {true, result};
-  };
-
-  // Visit start prim first
-  {
-    std::string fun_error;
-    bool ret = visitor_fun(start_abs_path, start_prim, start_level, userdata, &fun_error);
-    if (!ret) {
-      if (fun_error.empty()) {
-        DCOUT("Early termination requested");
-      } else {
-        if (err) {
-          (*err) += fmt::format(
-              "Visit function returned an error for Prim {} (id {}). err = {}",
-              start_abs_path.full_path_name(), start_prim.prim_id(), fun_error);
-        }
-      }
-      return false;
-    }
+std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
+                                        const std::string& name) {
+  std::vector<std::string> out;
+  if (const Value* v = GetAttribute(prim, name)) {
+    if (auto toks = v->as_token_array()) out.assign(toks->begin(), toks->end());
   }
-
-  // Get ordered children for start prim
-  std::pair<bool, std::vector<const lightusd::Prim *>> start_result =
-      get_ordered_children(start_prim);
-  if (!start_result.first) {
-    return false;
-  }
-
-  if (!start_result.second.empty()) {
-    StackEntry entry(&start_prim, start_level, start_abs_path);
-    entry.ordered_children = std::move(start_result.second);
-    stack.push_back(std::move(entry));
-  }
-
-  // Iterative traversal
-  size_t iter = 0;
-  while (!stack.empty()) {
-    if (iter++ >= max_iter) {
-      if (err) {
-        (*err) += "VisitPrims exceeded max iteration limit.\n";
-      }
-      return false;
-    }
-    auto &top = stack.back();
-
-    if (top.child_idx >= top.ordered_children.size()) {
-      // All children processed, backtrack
-      stack.pop_back();
-      continue;
-    }
-
-    const lightusd::Prim *child = top.ordered_children[top.child_idx];
-    ++top.child_idx;
-
-    // Build path for this child
-    lightusd::Path child_abs_path = top.abs_path.AppendPrim(child->element_name());
-    int32_t child_level = top.level + 1;
-
-    // Call visitor
-    std::string fun_error;
-    bool ret = visitor_fun(child_abs_path, *child, child_level, userdata, &fun_error);
-    if (!ret) {
-      if (fun_error.empty()) {
-        DCOUT("Early termination requested");
-      } else {
-        if (err) {
-          (*err) += fmt::format(
-              "Visit function returned an error for Prim {} (id {}). err = {}",
-              child_abs_path.full_path_name(), child->prim_id(), fun_error);
-        }
-      }
-      return false;
-    }
-
-    // Get ordered children for this child
-    std::pair<bool, std::vector<const lightusd::Prim *>> child_result =
-        get_ordered_children(*child);
-    if (!child_result.first) {
-      return false;
-    }
-
-    if (!child_result.second.empty()) {
-      StackEntry entry(child, child_level, std::move(child_abs_path));
-      entry.ordered_children = std::move(child_result.second);
-      stack.push_back(std::move(entry));
-    }
-  }
-
-  return true;
+  return out;
 }
 
+// Read a matrix4d[] / double[] array without materializing a conversion copy.
+// Some encoders author float[] instead; the view keeps that representation and
+// converts one lane at a time at the final destination.
+struct DoubleArrayView {
+  ::lightusd::ValueArrayView<const double> doubles = nullptr;
+  ::lightusd::ValueArrayView<const float> floats = nullptr;
 
-// Scalar-valued attribute.
-// TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
+  size_t size() const {
+    return doubles ? doubles->size() : (floats ? floats->size() : 0);
+  }
+
+  double operator[](size_t index) const {
+    return doubles ? (*doubles)[index] : double((*floats)[index]);
+  }
+};
+
+DoubleArrayView ReadDoubleArrayView(const UsdPrim& prim,
+                                    const std::string& name) {
+  DoubleArrayView view;
+  const Value* v = GetAttribute(prim, name);
+  if (!v) return view;
+  view.doubles = v->as_double_array();
+  if (!view.doubles) view.floats = v->as_float_array();
+  return view;
+}
+
+void FillIdentity(float* m16) {
+  for (int i = 0; i < 16; ++i) m16[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+}
+
 }  // namespace
 
-bool VisitPrims(const lightusd::Stage &stage, VisitPrimFunction visitor_fun,
-                void *userdata, std::string *err) {
-  // if `primChildren` is available, use it
-  if (stage.metas().primChildren.size() == stage.root_prims().size()) {
-    std::unordered_map<std::string, const Prim *, FNV1StringHash> primNameTable;
-    primNameTable.reserve(stage.root_prims().size());
-    for (size_t i = 0; i < stage.root_prims().size(); i++) {
-      primNameTable.emplace(stage.root_prims()[i].element_name(),
-                            &stage.root_prims()[i]);
-    }
+std::vector<BlendShapeInfo> GetBlendShapes(const UsdPrim& mesh_prim) {
+  std::vector<BlendShapeInfo> result;
+  if (!mesh_prim.IsValid()) return result;
 
-    for (size_t i = 0; i < stage.metas().primChildren.size(); i++) {
-      value::token nameTok = stage.metas().primChildren[i];
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        const Path root_abs_path("/" + nameTok.str(), "");
-        if (!VisitPrimsIterative(root_abs_path, *it->second, 0, visitor_fun,
-                                 userdata, err)) {
-          return false;
+  // skel:blendShapes (token[]) names paired with skel:blendShapeTargets
+  // (relationship) paths. The per-shape point/normal offsets live in the
+  // referenced BlendShape prims; resolving those requires a Stage, so callers
+  // fetch them via the core GetBlendShapeData(stage, prim) using `path`.
+  std::vector<std::string> names =
+      ReadTokenArray(mesh_prim, "skel:blendShapes");
+  std::vector<std::string> targets =
+      GetRelationshipTargets(mesh_prim, "skel:blendShapeTargets");
+
+  const size_t n = std::max(names.size(), targets.size());
+  result.resize(n);
+  for (size_t i = 0; i < n; ++i) {
+    if (i < names.size()) result[i].name = std::move(names[i]);
+    if (i < targets.size()) result[i].path = std::move(targets[i]);
+  }
+  return result;
+}
+
+//
+// Skeleton access
+//
+
+bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
+  if (!out || !skel_prim.IsValid() || !IsSkeleton(skel_prim)) {
+    return false;
+  }
+
+  out->name = skel_prim.GetName();
+  out->path = skel_prim.GetPath().str();
+
+  out->joint_order = ReadTokenArray(skel_prim, "joints");
+  const std::vector<std::string>& joints = out->joint_order;
+
+  const DoubleArrayView bind =
+      ReadDoubleArrayView(skel_prim, "bindTransforms");
+  const DoubleArrayView rest =
+      ReadDoubleArrayView(skel_prim, "restTransforms");
+
+  out->joints.resize(joints.size());
+  // Parent lookup is quadratic if every hierarchical joint scans the full
+  // skeleton. Keep the common small-skeleton path allocation-free, but use
+  // non-owning views into `joints` for large skeletons so lookup is O(1)
+  // without duplicating the authored path strings.
+  std::unordered_map<std::string_view, int32_t> joint_index;
+  if (joints.size() > 32) {
+    joint_index.reserve(joints.size());
+    joint_index.max_load_factor(0.7f);
+    for (size_t i = 0; i < joints.size(); ++i) {
+      joint_index.emplace(joints[i], static_cast<int32_t>(i));
+    }
+  }
+  for (size_t i = 0; i < joints.size(); ++i) {
+    JointInfo& j = out->joints[i];
+    j.path = joints[i];
+
+    // Joint paths are slash-separated (e.g. "Shoulder/Elbow/Hand"); the leaf
+    // token is the name and the prefix identifies the parent joint.
+    const size_t slash = joints[i].rfind('/');
+    j.name = (slash == std::string::npos) ? joints[i] : joints[i].substr(slash + 1);
+    j.parent_index = -1;
+    if (slash != std::string::npos) {
+      const std::string_view parent_path(joints[i].data(), slash);
+      if (!joint_index.empty()) {
+        const auto parent = joint_index.find(parent_path);
+        if (parent != joint_index.end()) {
+          j.parent_index = parent->second;
         }
       } else {
-        if (err) {
-          (*err) += fmt::format(
-              "Prim name `{}` in root Layer's `primChildren` metadatum not "
-              "found in Layer root.",
-              nameTok.str());
+        for (size_t k = 0; k < joints.size(); ++k) {
+          if (joints[k].size() == parent_path.size() &&
+              joints[k].compare(0, parent_path.size(), parent_path.data(),
+                                parent_path.size()) == 0) {
+            j.parent_index = static_cast<int32_t>(k);
+            break;
+          }
         }
-        return false;
       }
     }
 
+    size_t bind_offset = 0;
+    if (bind.size() >= 16 && i <= (bind.size() - 16) / 16) {
+      bind_offset = i * 16;
+      for (int e = 0; e < 16; ++e) {
+        j.bind_transform[e] = static_cast<float>(bind[bind_offset + e]);
+      }
+    } else {
+      FillIdentity(j.bind_transform);
+    }
+    size_t rest_offset = 0;
+    if (rest.size() >= 16 && i <= (rest.size() - 16) / 16) {
+      rest_offset = i * 16;
+      for (int e = 0; e < 16; ++e) {
+        j.rest_transform[e] = static_cast<float>(rest[rest_offset + e]);
+      }
+    } else {
+      FillIdentity(j.rest_transform);
+    }
+  }
+
+  return true;
+}
+
+//
+// Skin binding access
+//
+
+bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
+  if (!out || !mesh_prim.IsValid()) return false;
+
+  bool any = false;
+
+  const std::vector<std::string> skels =
+      GetRelationshipTargets(mesh_prim, "skel:skeleton");
+  if (!skels.empty()) {
+    out->skeleton_path = skels[0];
+    any = true;
+  }
+
+  out->joint_indices = GetIntArray(mesh_prim, "primvars:skel:jointIndices");
+  out->joint_weights = GetFloatArray(mesh_prim, "primvars:skel:jointWeights");
+
+  // Indexed primvars (`primvars:skel:jointIndices:indices`): flatten to the
+  // expanded form all consumers expect. Per UsdGeomPrimvar, each index
+  // addresses a GROUP of elementSize consecutive values.
+  {
+    const PrimSpec* spec = mesh_prim.GetPrimSpec();
+    auto elem_size = [&](const char* pv_name) -> size_t {
+      if (spec) {
+        if (const PropMeta* pm = spec->property_meta(pv_name)) {
+          if (pm->elementSize > 0) return size_t(pm->elementSize);
+        }
+      }
+      return 1;
+    };
+    auto expand_indexed = [](auto& vals, ::lightusd::ValueArrayView<const int32_t> idx,
+                             size_t esize) {
+      if (idx.empty() || vals.empty() || esize == 0 ||
+          (vals.size() % esize) != 0) {
+        return;
+      }
+      // Expansion size is authored data (indices count x elementSize) — a
+      // hostile file can request terabytes, and this TU builds without
+      // exceptions so an oversized reserve aborts. 2^28 lanes (~1 GiB of
+      // int32) is far past any real skin (10M points x 8 influences = 80M).
+      const size_t kMaxExpandedLanes = size_t(1) << 28;
+      if (esize > kMaxExpandedLanes / idx.size()) return;  // keep authored
+      const size_t elems = vals.size() / esize;
+      typename std::remove_reference<decltype(vals)>::type expanded;
+      expanded.reserve(idx.size() * esize);
+      for (int32_t i : idx) {
+        if (i < 0 || size_t(i) >= elems) return;  // malformed: keep authored
+        expanded.insert(expanded.end(), vals.begin() + size_t(i) * esize,
+                        vals.begin() + (size_t(i) + 1) * esize);
+      }
+      vals = std::move(expanded);
+    };
+    // Views: these index arrays are only read. On a dense skin each can be
+    // tens of MB, and the expansion below already builds the owned result.
+    static const std::vector<int32_t> kNoIdx;
+    ::lightusd::ValueArrayView<const int32_t> ji_idx =
+        GetIntArrayView(mesh_prim, "primvars:skel:jointIndices:indices");
+    ::lightusd::ValueArrayView<const int32_t> jw_idx =
+        GetIntArrayView(mesh_prim, "primvars:skel:jointWeights:indices");
+    expand_indexed(out->joint_indices, ji_idx ? *ji_idx : kNoIdx,
+                   elem_size("primvars:skel:jointIndices"));
+    expand_indexed(out->joint_weights, jw_idx ? *jw_idx : kNoIdx,
+                   elem_size("primvars:skel:jointWeights"));
+  }
+  if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;
+
+  // Mesh-local joint order (subset/permutation of the skeleton's joints).
+  out->joint_order = GetTokenArray(mesh_prim, "skel:joints");
+
+  // Influences per vertex = the jointIndices primvar's elementSize.
+  out->influences_per_vertex = 0;
+  if (const PrimSpec* spec = mesh_prim.GetPrimSpec()) {
+    if (const PropMeta* pm =
+            spec->property_meta("primvars:skel:jointIndices")) {
+      out->influences_per_vertex = pm->elementSize;
+    }
+  }
+
+  double gm[16];
+  if (GetMatrix4d(mesh_prim, "primvars:skel:geomBindTransform", gm)) {
+    for (int i = 0; i < 16; ++i) out->geom_bind_transform[i] = float(gm[i]);
+    any = true;
   } else {
-    for (const auto &root : stage.root_prims()) {
-      const Path root_abs_path("/" + root.element_name(), /* prop part */ "");
-      if (!VisitPrimsIterative(root_abs_path, root, /* root level */ 0,
-                               visitor_fun, userdata, err)) {
-        return false;
-      }
+    FillIdentity(out->geom_bind_transform);
+  }
+
+  return any;
+}
+
+//
+// Connection following
+//
+
+const Value* ResolveConnection(const Stage& stage, const UsdPrim& prim, const std::string& attr_name) {
+  if (!prim.IsValid()) return nullptr;
+
+  // A directly-authored value wins over a connection.
+  if (const Value* val = GetAttribute(prim, attr_name)) {
+    return val;
+  }
+
+  // Follow the connection chain: attr.connect -> target attribute, which may
+  // itself hold a value or connect onward (e.g. shader input -> shader output
+  // -> ...). Bounded depth guards against cycles.
+  UsdPrim cur = prim;
+  std::string attr = attr_name;
+  for (int depth = 0; depth < 64; ++depth) {
+    const PrimSpec* spec = cur.GetPrimSpec();
+    if (!spec) break;
+    const std::vector<Path>* conns = spec->connection(attr);
+    if (!conns || conns->empty()) break;
+
+    const Path& target = (*conns)[0];
+    const std::string prop = target.property_name();
+    if (prop.empty()) break;
+    UsdPrim next = stage.GetPrimAtPath(target.prim_path());
+    if (!next.IsValid()) break;
+
+    // A value on the target ends the chain.
+    if (const Value* v = GetAttribute(next, prop)) {
+      return v;
     }
+    cur = next;
+    attr = prop;
   }
-
-  return true;
+  return nullptr;
 }
 
-template <typename T>
-bool PrimToPrimSpecImpl(const T &p, PrimSpec &ps, std::string *err);
+std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name) {
+  if (!prim.IsValid()) return "";
 
-template <>
-bool PrimToPrimSpecImpl(const Model &p, PrimSpec &ps, std::string *err) {
-  (void)err;
-
-  ps.name() = p.name;
-  ps.specifier() = p.spec;
-
-  ps.props() = p.props;
-  ps.metas() = p.meta;
-
-  // TODO: variantSet
-  // ps.variantSets
-
-  return true;
-}
-
-template <>
-bool PrimToPrimSpecImpl(const Xform &p, PrimSpec &ps, std::string *err) {
-  (void)err;
-
-  ps.name() = p.name;
-  ps.specifier() = p.spec;
-
-  ps.props() = p.props;
-
-  // TODO..
-  std::vector<value::token> toks;
-  Attribute xformOpOrderAttr;
-  xformOpOrderAttr.set_value(std::move(toks));
-  ps.props().emplace("xformOpOrder",
-                     Property(xformOpOrderAttr, /* custom */ false));
-
-  ps.metas() = p.meta;
-
-  // TODO: variantSet
-  // ps.variantSets
-
-  return true;
-}
-
-bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err) {
-#define TO_PRIMSPEC(__ty)                                   \
-  if (prim.as<__ty>()) {                                    \
-    return PrimToPrimSpecImpl(*(prim.as<__ty>()), ps, err); \
-  } else
-
-  TO_PRIMSPEC(Model) {
-    if (err) {
-      (*err) +=
-          "Unsupported/unimplemented Prim type: " + prim.prim_type_name() +
-          "\n";
-    }
-    return false;
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return "";
+  if (const std::vector<Path>* conns = spec->connection(attr_name)) {
+    if (!conns->empty()) return (*conns)[0].str();
   }
-
-#undef TO_PRIMSPEC
-}
-
-std::vector<const GeomSubset *> GetGeomSubsets(
-    const lightusd::Stage &stage, const lightusd::Path &prim_path,
-    const lightusd::value::token &familyName, bool prim_must_be_geommesh) {
-  std::vector<const GeomSubset *> result;
-
-  const Prim *pprim{nullptr};
-  if (!stage.find_prim_at_path(prim_path, pprim)) {
-    return result;
-  }
-
-  if (!pprim) {
-    return result;
-  }
-
-  if (prim_must_be_geommesh && !pprim->is<GeomMesh>()) {
-    return result;
-  }
-
-  // Only account for child Prims.
-  for (const auto &p : pprim->children()) {
-    if (auto pv = p.as<GeomSubset>()) {
-      if (familyName.valid()) {
-        if (pv->familyName.authored()) {
-          if (pv->familyName.get_value().has_value()) {
-            const value::token tok = pv->familyName.get_value().value();
-            if (familyName.str() == tok.str()) {
-              result.push_back(pv);
-            }
-          } else {
-            // connection attr or value block?
-            // skip adding this GeomSubset.
-          }
-        } else {
-          result.push_back(pv);
-        }
-      } else {
-        result.push_back(pv);
-      }
-    }
-  }
-
-  return result;
-}
-
-std::vector<const GeomSubset *> GetGeomSubsetChildren(
-    const lightusd::Prim &prim, const lightusd::value::token &familyName,
-    bool prim_must_be_geommesh) {
-  std::vector<const GeomSubset *> result;
-
-  if (prim_must_be_geommesh && !prim.is<GeomMesh>()) {
-    return result;
-  }
-
-  // Only account for child Prims.
-  for (const auto &p : prim.children()) {
-    if (auto pv = p.as<GeomSubset>()) {
-      if (familyName.valid()) {
-        if (pv->familyName.authored()) {
-          if (pv->familyName.get_value().has_value()) {
-            const value::token tok = pv->familyName.get_value().value();
-            if (familyName.str() == tok.str()) {
-              result.push_back(pv);
-            }
-          } else {
-            // connection attr or value block?
-            // skip adding this GeomSubset.
-          }
-        } else {
-          result.push_back(pv);
-        }
-      } else {
-        result.push_back(pv);
-      }
-    }
-  }
-
-  return result;
-}
-
-
-bool GetCollection(const Prim &prim, const Collection **dst) {
-  if (!dst) {
-    return false;
-  }
-
-  auto fn = [dst](const Collection *coll) {
-    (*dst) = coll;
-    return true;
-  };
-
-  bool ret = ApplyToCollection(prim, fn);
-
-  return ret;
+  return "";
 }
 
 }  // namespace tydra
-
 }  // namespace lightusd
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif

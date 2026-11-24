@@ -54,7 +54,7 @@ static std::string GetDataDir(const std::string &argv0) {
 
   for (const auto &c : candidates) {
     std::string test_file = std::string(c) + "/basic_openpbr.mtlx";
-    lightusd::AssetResolutionResolver resolver;
+    lightusd::legacy::AssetResolutionResolver resolver;
     std::string resolved = resolver.resolve(test_file);
     if (!resolved.empty()) {
       return std::string(c);
@@ -68,11 +68,11 @@ static std::string GetDataDir(const std::string &argv0) {
 static void test_parse_openpbr_file(const std::string &data_dir) {
   TEST_BEGIN("Parse OpenPBR Surface from file");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/basic_openpbr.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -91,11 +91,11 @@ static void test_parse_openpbr_file(const std::string &data_dir) {
 static void test_parse_standard_surface_file(const std::string &data_dir) {
   TEST_BEGIN("Parse StandardSurface from file");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/standard_surface.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -114,11 +114,11 @@ static void test_parse_standard_surface_file(const std::string &data_dir) {
 static void test_parse_usd_preview_surface_file(const std::string &data_dir) {
   TEST_BEGIN("Parse UsdPreviewSurface from file");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/usd_preview_surface.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -135,11 +135,11 @@ static void test_parse_usd_preview_surface_file(const std::string &data_dir) {
 static void test_parse_nodegraph_file(const std::string &data_dir) {
   TEST_BEGIN("Parse NodeGraph with textures from file");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/nodegraph_texture.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -168,11 +168,11 @@ static void test_parse_nodegraph_file(const std::string &data_dir) {
 static void test_parse_doc_attributes(const std::string &data_dir) {
   TEST_BEGIN("Parse document attributes (version, colorspace, cms, cmsconfig, namespace)");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/doc_attributes.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -189,11 +189,11 @@ static void test_parse_doc_attributes(const std::string &data_dir) {
 static void test_parse_include(const std::string &data_dir) {
   TEST_BEGIN("Parse <include> multi-file loading");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/include_main.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -225,11 +225,11 @@ static void test_parse_include(const std::string &data_dir) {
 static void test_parse_colorspace_inputs(const std::string &data_dir) {
   TEST_BEGIN("Parse per-input colorspace attributes");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/colorspace_inputs.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -249,7 +249,7 @@ static void test_parse_colorspace_inputs(const std::string &data_dir) {
       auto it = child.props().find("inputs:file");
       if (it != child.props().end() && it->second.is_attribute()) {
         found_srgb_file_input = true;
-        const lightusd::Attribute *attr_ptr = it->second.get_attribute_or_null();
+        const lightusd::legacy::Attribute *attr_ptr = it->second.get_attribute_or_null();
         if (attr_ptr && attr_ptr->metas().has_colorSpace()) {
           found_colorspace = attr_ptr->metas().get_colorSpace().str();
         }
@@ -268,11 +268,11 @@ static void test_parse_colorspace_inputs(const std::string &data_dir) {
 static void test_parse_lights(const std::string &data_dir) {
   TEST_BEGIN("Parse light shaders (EDF)");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/lights.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -286,9 +286,9 @@ static void test_parse_lights(const std::string &data_dir) {
   CHECK(mtlx.light_shaders.count("my_spot_light") == 1,
         "Expected my_spot_light in light_shaders");
 
-  CHECK(mtlx.light_shaders.at("env_light_edf").as<lightusd::MtlxUniformEdf>() != nullptr,
+  CHECK(mtlx.light_shaders.at("env_light_edf").as<lightusd::legacy::MtlxUniformEdf>() != nullptr,
         "env_light_edf should be MtlxUniformEdf");
-  CHECK(mtlx.light_shaders.at("spot_edf").as<lightusd::MtlxConicalEdf>() != nullptr,
+  CHECK(mtlx.light_shaders.at("spot_edf").as<lightusd::legacy::MtlxConicalEdf>() != nullptr,
         "spot_edf should be MtlxConicalEdf");
 
   TEST_PASS();
@@ -311,10 +311,10 @@ static void test_parse_from_string() {
 </materialx>
 )";
 
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromString(xml, "inline.mtlx", &mtlx, &warn, &err);
+  bool ret = lightusd::legacy::ReadMaterialXFromString(xml, "inline.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromString failed: " + err);
   CHECK(mtlx.version == "1.38", "Expected version 1.38");
@@ -340,13 +340,13 @@ static void test_to_primspec() {
 </materialx>
 )";
 
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
-  bool ret = lightusd::ReadMaterialXFromString(xml, "test.mtlx", &mtlx, &warn, &err);
+  bool ret = lightusd::legacy::ReadMaterialXFromString(xml, "test.mtlx", &mtlx, &warn, &err);
   CHECK(ret, "ReadMaterialXFromString failed: " + err);
 
-  lightusd::PrimSpec ps;
-  ret = lightusd::ToPrimSpec(mtlx, ps, &err);
+  lightusd::legacy::PrimSpec ps;
+  ret = lightusd::legacy::ToPrimSpec(mtlx, ps, &err);
   CHECK(ret, "ToPrimSpec failed: " + err);
 
   CHECK(ps.name() == "MaterialX", "PrimSpec root name should be 'MaterialX', got: " + ps.name());
@@ -383,14 +383,14 @@ static void test_roundtrip() {
 </materialx>
 )";
 
-  lightusd::MtlxModel mtlx1;
+  lightusd::legacy::MtlxModel mtlx1;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromString(xml, "roundtrip.mtlx", &mtlx1, &warn, &err);
+  bool ret = lightusd::legacy::ReadMaterialXFromString(xml, "roundtrip.mtlx", &mtlx1, &warn, &err);
   CHECK(ret, "First parse failed: " + err);
 
   std::string xml_out;
-  ret = lightusd::WriteMaterialXToString(mtlx1, xml_out, &warn, &err);
+  ret = lightusd::legacy::WriteMaterialXToString(mtlx1, xml_out, &warn, &err);
   if (!ret) {
     // Known issue: WriteMaterialXToString uses .as<MtlxFoo>() but shader is stored as base type
     std::cout << "(write not yet supported for this shader type - skipping roundtrip) ";
@@ -399,10 +399,10 @@ static void test_roundtrip() {
   }
   CHECK(!xml_out.empty(), "Written XML should not be empty");
 
-  lightusd::MtlxModel mtlx2;
+  lightusd::legacy::MtlxModel mtlx2;
   warn.clear();
   err.clear();
-  ret = lightusd::ReadMaterialXFromString(xml_out, "roundtrip_out.mtlx", &mtlx2, &warn, &err);
+  ret = lightusd::legacy::ReadMaterialXFromString(xml_out, "roundtrip_out.mtlx", &mtlx2, &warn, &err);
   CHECK(ret, "Re-parse failed: " + err);
 
   CHECK(mtlx2.version == mtlx1.version, "Version mismatch after roundtrip");
@@ -416,47 +416,47 @@ static void test_roundtrip() {
 static void test_error_handling() {
   TEST_BEGIN("Error handling: invalid inputs");
 
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
   // Empty string
-  bool ret = lightusd::ReadMaterialXFromString("", "empty.mtlx", &mtlx, &warn, &err);
+  bool ret = lightusd::legacy::ReadMaterialXFromString("", "empty.mtlx", &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on empty string");
 
   // Invalid XML
   err.clear();
-  ret = lightusd::ReadMaterialXFromString("<invalid>not closed", "bad.mtlx", &mtlx, &warn, &err);
+  ret = lightusd::legacy::ReadMaterialXFromString("<invalid>not closed", "bad.mtlx", &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on invalid XML");
 
   // Missing <materialx> root
   err.clear();
-  ret = lightusd::ReadMaterialXFromString("<?xml version=\"1.0\"?>\n<notmaterialx/>",
+  ret = lightusd::legacy::ReadMaterialXFromString("<?xml version=\"1.0\"?>\n<notmaterialx/>",
                                            "no_root.mtlx", &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on missing <materialx> root");
 
   // Missing version attribute
   err.clear();
-  ret = lightusd::ReadMaterialXFromString("<?xml version=\"1.0\"?>\n<materialx></materialx>",
+  ret = lightusd::legacy::ReadMaterialXFromString("<?xml version=\"1.0\"?>\n<materialx></materialx>",
                                            "no_ver.mtlx", &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on missing version");
 
   // Version too old
   err.clear();
-  ret = lightusd::ReadMaterialXFromString(
+  ret = lightusd::legacy::ReadMaterialXFromString(
       "<?xml version=\"1.0\"?>\n<materialx version=\"1.30\"></materialx>",
       "old_ver.mtlx", &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on version < 1.38");
 
   // Null pointer
   err.clear();
-  ret = lightusd::ReadMaterialXFromString("<materialx version=\"1.38\"/>",
+  ret = lightusd::legacy::ReadMaterialXFromString("<materialx version=\"1.38\"/>",
                                            "null.mtlx", nullptr, &warn, &err);
   CHECK(!ret, "Expected failure on null mtlx pointer");
 
   // Non-existent file
   err.clear();
-  lightusd::AssetResolutionResolver resolver;
-  ret = lightusd::ReadMaterialXFromFile(resolver, "nonexistent_file.mtlx",
+  lightusd::legacy::AssetResolutionResolver resolver;
+  ret = lightusd::legacy::ReadMaterialXFromFile(resolver, "nonexistent_file.mtlx",
                                          &mtlx, &warn, &err);
   CHECK(!ret, "Expected failure on non-existent file");
 
@@ -467,10 +467,10 @@ static void test_error_handling() {
 static void test_usd_mtlx_reference(const std::string &data_dir) {
   TEST_BEGIN("USD file referencing .mtlx (load USD with mtlx reference)");
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile(data_dir + "/mtlx_ref.usda", &stage, &warn, &err);
+  bool ret = lightusd::legacy::LoadUSDFromFile(data_dir + "/mtlx_ref.usda", &stage, &warn, &err);
 
   if (ret) {
     std::cout << "(USD loaded) ";
@@ -486,17 +486,17 @@ static void test_usd_mtlx_reference(const std::string &data_dir) {
 static void test_parse_openpbr_with_nodegraph(const std::string &data_dir) {
   TEST_BEGIN("Parse OpenPBR + NodeGraph connections -> ToPrimSpec");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/nodegraph_texture.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
 
-  lightusd::PrimSpec ps;
-  ret = lightusd::ToPrimSpec(mtlx, ps, &err);
+  lightusd::legacy::PrimSpec ps;
+  ret = lightusd::legacy::ToPrimSpec(mtlx, ps, &err);
   CHECK(ret, "ToPrimSpec failed: " + err);
 
   bool found_nodegraphs = false;
@@ -515,11 +515,11 @@ static void test_parse_openpbr_with_nodegraph(const std::string &data_dir) {
 static void test_light_conversion(const std::string &data_dir) {
   TEST_BEGIN("Convert MaterialX light to UsdLux");
 
-  lightusd::AssetResolutionResolver resolver;
-  lightusd::MtlxModel mtlx;
+  lightusd::legacy::AssetResolutionResolver resolver;
+  lightusd::legacy::MtlxModel mtlx;
   std::string warn, err;
 
-  bool ret = lightusd::ReadMaterialXFromFile(
+  bool ret = lightusd::legacy::ReadMaterialXFromFile(
       resolver, data_dir + "/lights.mtlx", &mtlx, &warn, &err);
 
   CHECK(ret, "ReadMaterialXFromFile failed: " + err);
@@ -527,11 +527,11 @@ static void test_light_conversion(const std::string &data_dir) {
   auto light_it = mtlx.light_shaders.find("my_env_light");
   CHECK(light_it != mtlx.light_shaders.end(), "Expected my_env_light");
 
-  const lightusd::MtlxLight *mtlx_light = light_it->second.as<lightusd::MtlxLight>();
+  const lightusd::legacy::MtlxLight *mtlx_light = light_it->second.as<lightusd::legacy::MtlxLight>();
   CHECK(mtlx_light != nullptr, "my_env_light should be MtlxLight type");
 
-  lightusd::value::Value usd_light;
-  ret = lightusd::ConvertMtlxLightToUsdLux(*mtlx_light, mtlx.light_shaders,
+  lightusd::legacy::value::Value usd_light;
+  ret = lightusd::legacy::ConvertMtlxLightToUsdLux(*mtlx_light, mtlx.light_shaders,
                                              &usd_light, &warn, &err);
   CHECK(ret, "ConvertMtlxLightToUsdLux failed: " + err);
 

@@ -31,10 +31,10 @@ if (typeof document === 'undefined') {
 
 import * as THREE from 'three';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
-import { LightUSDLoader, NextRenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
+import { LightUSDLoader, RenderSceneAdapter } from './src/lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils } from './src/lightusd/LightUSDLoaderUtils.js';
 import { setLightUSD as setMaterialXLightUSD } from './src/lightusd/LightUSDMaterialX.js';
-import { buildNextThreeNode } from './src/lightusd/NextRenderSceneUtils.js';
+import { buildThreeNode } from './src/lightusd/RenderSceneUtils.js';
 
 // ─── Worker-compatible image loading patch ─────────────────────────────────
 // THREE.ImageLoader normally calls document.createElementNS('...', 'img')
@@ -205,10 +205,10 @@ function initThreeJS(offscreenCanvas, width, height, pixelRatio) {
 // ─── LightUSD WASM loader setup ────────────────────────────────────────────
 
 async function initLoader() {
-    // The worker renders through the next backend: the next-only module and
+    // The worker renders through the core backend: the core module and
     // its RenderStream, presented to the scene builders by
-    // NextRenderSceneAdapter (the legacy loader interface).
-    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'next' });
+    // RenderSceneAdapter (the legacy loader interface).
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'core' });
     await loaderState.loader.init({ useMemory64: USE_MEMORY64 });
 
     const wasmModule = loaderState.loader.native_;
@@ -318,7 +318,7 @@ async function loadUSDFromData(data, filename) {
     sendStatus(`Parsing: ${filename}…`);
 
     try {
-        loaderState.nativeLoader = await NextRenderSceneAdapter.create(
+        loaderState.nativeLoader = await RenderSceneAdapter.create(
             loaderState.loader.native_, data, filename);
     } catch (err) {
         sendError(`Failed to parse USD file: ${filename}: ${err?.message || err}`);
@@ -369,9 +369,9 @@ async function buildSceneGraph() {
     sceneState.textureCache.clear();
 
     // The next adapter carries next render records (materials, renderables
-    // attached by prim path), so build with the next scene builder rather
+    // attached by prim path), so build with the core scene builder rather
     // than the legacy node-tree converter.
-    const built = buildNextThreeNode(loaderState.nativeLoader, {
+    const built = buildThreeNode(loaderState.nativeLoader, {
         skipTextures: false,
         lazyTextures: true,
     });

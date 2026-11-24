@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender RT-preview purpose classification regression. The next-loader path
+# lusdrender RT-preview purpose classification regression. The core-loader path
 # must preserve default/render/proxy/guide purpose bits into renderer stats so
 # CLI purpose masks and viewer parity checks can diagnose filtered geometry.
 set -uo pipefail

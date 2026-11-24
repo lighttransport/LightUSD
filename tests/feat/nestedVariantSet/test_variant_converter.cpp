@@ -8,7 +8,10 @@
 #include "tydra/variant-support.hh"
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::tydra;
+using namespace lightusd::legacy::tydra;  // NOLINT
 
 // Test 1: Load a USD file and convert variants
 bool test_variant_conversion_basic() {
@@ -18,7 +21,7 @@ bool test_variant_conversion_basic() {
   std::string warn, err;
 
   bool ret =
-      lightusd::LoadUSDFromFile("tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn,
+      lightusd::legacy::LoadUSDFromFile("tests/feat/nestedVariantSet/basic-2level-001.usda", &stage, &warn,
                                  &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -69,7 +72,7 @@ bool test_variant_conversion_with_selection() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile("tests/feat/nestedVariantSet/with-selection-001.usda",
+  bool ret = lightusd::legacy::LoadUSDFromFile("tests/feat/nestedVariantSet/with-selection-001.usda",
                                         &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -106,7 +109,7 @@ bool test_variant_conversion_nested() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile("tests/feat/nestedVariantSet/triple-nesting-001.usda",
+  bool ret = lightusd::legacy::LoadUSDFromFile("tests/feat/nestedVariantSet/triple-nesting-001.usda",
                                         &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";
@@ -153,7 +156,7 @@ bool test_variant_statistics() {
   Stage stage;
   std::string warn, err;
 
-  bool ret = lightusd::LoadUSDFromFile("tests/feat/nestedVariantSet/asymmetric-nesting-001.usda",
+  bool ret = lightusd::legacy::LoadUSDFromFile("tests/feat/nestedVariantSet/asymmetric-nesting-001.usda",
                                         &stage, &warn, &err);
   if (!ret) {
     std::cerr << "Failed to load USD file: " << err << "\n";

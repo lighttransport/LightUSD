@@ -6,15 +6,15 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
 import { LightUSDLoaderUtils, TextureLoadingManager } from 'lightusd/LightUSDLoaderUtils.js';
 import {
-	buildNextThreeNode,
-	isNextScene,
-	readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+	buildThreeNode,
+	isScene,
+	readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 import {
 	getAssetUriFromURL,
 	getBackendFromURL,
 	LOADER_BACKEND_CHOICES,
-	makeStaticNextParseOptions,
+	makeStaticParseOptions,
 	setBackendAndReload
 } from 'lightusd/LoaderConfigUtils.js';
 import { buildSkeletonDataFromUSD } from 'lightusd/USDSkeletonData.js';
@@ -72,7 +72,7 @@ function hideLoadProgress(delayMs = 1200) {
 	}, delayMs);
 }
 
-function reportNextParseProgress(info = {}) {
+function reportCoreParseProgress(info = {}) {
 	const percentage = Number.isFinite(info.percentage) ? info.percentage : 10;
 	const message = info.message || info.stage || 'Parsing USD scene...';
 	const completeCount = Number(info.crateCurrent ?? info.meshCurrent);
@@ -3150,17 +3150,17 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 
 	const parseStart = performance.now();
 	let usd_scene;
-	if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
-		showLoadProgress('parsing', 10, 'Preparing next backend input...', true);
+	if (LOADER_BACKEND === 'core' || LOADER_BACKEND === 'auto') {
+		showLoadProgress('parsing', 10, 'Preparing core backend input...', true);
 		usd_scene = await new Promise((resolve, reject) => {
 			loader.parse(
 				new Uint8Array(arrayBuffer),
 				filename,
 				resolve,
 				reject,
-				makeStaticNextParseOptions({
+				makeStaticParseOptions({
 					backend: LOADER_BACKEND,
-					onProgress: reportNextParseProgress,
+					onProgress: reportCoreParseProgress,
 					progressBase: 10,
 					progressRange: 60
 				})
@@ -3181,9 +3181,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	stats.nativeTimings = stats.nativeStats?.timings || null;
 	const processStart = performance.now();
 
-	if (isNextScene(usd_scene)) {
+	if (isScene(usd_scene)) {
 		showLoadProgress('processing', 70, 'Preparing scene metadata and animation...', true);
-		const sceneMetadata = readNextSceneMeta(usd_scene);
+		const sceneMetadata = readSceneMeta(usd_scene);
 		const fileUpAxis = sceneMetadata.upAxis || "Y";
 		const rawSceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
 		const timeCodesPerSecond = rawSceneMetadata.timeCodesPerSecond || 24.0;
@@ -3196,7 +3196,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 			startTimeCode: rawSceneMetadata.startTimeCode ?? null,
 			endTimeCode: rawSceneMetadata.endTimeCode ?? null,
 			autoPlay: false,
-			comment: "next backend render",
+			comment: "core backend render",
 			copyright: ""
 		};
 		updateMetadataUI();
@@ -3210,7 +3210,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 			logger: console,
 			hasSkinnedMeshData
 		});
-		const built = buildNextThreeNode(usd_scene, {
+		const built = buildThreeNode(usd_scene, {
 			skipTextures: false,
 			lazyTextures: true,
 			showCurves: animationParams.showCurves,
@@ -3227,9 +3227,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		// Start texture decode only after geometry, skinning and animation are
 		// ready. Running four-to-sixteen decoders here used to compete with the
 		// synchronous build and inflated its peak memory.
-		const nextTextureManager = built.textureManager;
-		// Next animation target_node is a RenderScene node-table index; use the
-		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		const coreTextureManager = built.textureManager;
+		// Core animation target_node is a RenderScene node-table index; use the
+		// table map from buildThreeNode, not a DFS walk of the built tree.
 		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
 		const skinningResult = applyUSDSceneSkinningPipeline({
 			threeNode: built.node,
@@ -3247,7 +3247,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		usdContentNode = built.node;
 
 		// Match the legacy animation path: prefer an authored DomeLight over the
-		// demo's startup HDRI. The next path previously returned without this
+		// demo's startup HDRI. The core path previously returned without this
 		// step, leaving exported scenes under the much brighter goegap environment
 		// even though the RenderScene contained the same DomeLight.
 		// Load after the Three.js hierarchy is attached so applyEnvironment()
@@ -3258,7 +3258,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 				envPresetController.updateDisplay();
 			}
 		} catch (error) {
-			console.warn('Error checking next scene for DomeLight:', error);
+			console.warn('Error checking core scene for DomeLight:', error);
 		}
 
 		// usdSceneRoot is reused between loads, so reset stale Z-up conversion for
@@ -3270,7 +3270,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 			if (child.isMesh) {
 				const materials = Array.isArray(child.material) ? child.material : [child.material];
 				const opacityMapped = materials.some((material) =>
-					!!material?.userData?.nextTexturePaths?.opacity);
+					!!material?.userData?.coreTexturePaths?.opacity);
 				// VFX cards (lasers, beams, projected shadows) should not render
 				// another full-card pass into the directional shadow map.
 				child.userData.skipShadows = opacityMapped;
@@ -3313,7 +3313,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 				}
 				animationParams.speed = currentSceneMetadata.framesPerSecond || timeCodesPerSecond;
 				playAllUSDAnimations();
-				console.log(`[animation] next backend loaded ${usdAnimations.length} animation clip(s)`);
+				console.log(`[animation] core backend loaded ${usdAnimations.length} animation clip(s)`);
 			} else {
 				buildSceneGraphUI();
 			}
@@ -3329,10 +3329,10 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		stats.memoryAfter = captureMemorySnapshot();
 		updateLoadStatsPanel(stats);
 		window.renderComplete = true;
-		if (nextTextureManager && nextTextureManager.total > 0) {
+		if (coreTextureManager && coreTextureManager.total > 0) {
 			showLoadProgress('textures', 90,
-				`Loading textures 0 / ${nextTextureManager.total}`, true);
-			startTrackedTextureLoading(nextTextureManager, stats, 'nextTextureQueue');
+				`Loading textures 0 / ${coreTextureManager.total}`, true);
+			startTrackedTextureLoading(coreTextureManager, stats, 'coreTextureQueue');
 		} else {
 			showLoadProgress('complete', 100, 'Load complete', true);
 			hideLoadProgress();

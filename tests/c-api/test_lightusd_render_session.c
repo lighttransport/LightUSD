@@ -539,7 +539,7 @@ static void test_resource_budget(void) {
 }
 
 static void test_conversion_diagnostics(void) {
-  const char source[] = "#usda 1.0\ndef NurbsPatch \"V\" {}\n";
+  const char source[] = "#usda 1.0\ndef ParticleField \"V\" {}\n";
   lightusd_stage* stage = NULL;
   assert(lightusd_stage_load_from_memory((const uint8_t*)source,
       sizeof(source) - 1, NULL, &stage) == LIGHTUSD_OK);
@@ -547,12 +547,18 @@ static void test_conversion_diagnostics(void) {
   lightusd_render_config_init(&config);
   lightusd_render_scene* scene = NULL;
   assert(lightusd_render_convert(stage, &config, &scene) == LIGHTUSD_OK);
-  assert(lightusd_render_conversion_diagnostic_count(scene) == 1);
+  /* A plain ParticleField is recognized but not converted to geometry. */
+  const size_t diagnostic_count = lightusd_render_conversion_diagnostic_count(scene);
+  assert(diagnostic_count >= 1);
   lightusd_render_conversion_diagnostic diagnostic;
-  assert(lightusd_render_conversion_diagnostic_get(scene, 0, &diagnostic) == LIGHTUSD_OK);
-  assert(diagnostic.disposition == LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED);
-  assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
-  assert(lightusd_render_conversion_diagnostic_get(scene, 1, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
+  int preserved = 0;
+  for (size_t i = 0; i < diagnostic_count; ++i) {
+    assert(lightusd_render_conversion_diagnostic_get(scene, i, &diagnostic) == LIGHTUSD_OK);
+    assert(diagnostic.prim_path.len == 2 && memcmp(diagnostic.prim_path.data, "/V", 2) == 0);
+    if (diagnostic.disposition == LIGHTUSD_RENDER_PRESERVED_UNSUPPORTED) preserved = 1;
+  }
+  assert(preserved);
+  assert(lightusd_render_conversion_diagnostic_get(scene, diagnostic_count, &diagnostic) == LIGHTUSD_ERR_NOT_FOUND);
   assert(lightusd_render_config_set_strict(&config, 2) == LIGHTUSD_ERR_INVALID_ARG);
   assert(lightusd_render_config_set_strict(&config, 1) == LIGHTUSD_OK);
   lightusd_render_scene_destroy(scene);

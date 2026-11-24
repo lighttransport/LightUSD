@@ -248,7 +248,7 @@ export class LightProbeVisualizer {
                   'Unknown',
             mapping: envMap.mapping,
             format: this.getTextureFormat(envMap.format),
-            encoding: this.getTextureEncoding(envMap.encoding),
+            encoding: this.getTextureEncoding(envMap.colorSpace),
             dataType: this.getTextureType(envMap.type),
             generateMipmaps: envMap.generateMipmaps,
             minFilter: this.getTextureFilter(envMap.minFilter),
@@ -302,8 +302,9 @@ export class LightProbeVisualizer {
     // Helper: Get texture encoding name
     getTextureEncoding(encoding) {
         const encodings = {
-            [THREE.LinearEncoding]: 'Linear',
-            [THREE.sRGBEncoding]: 'sRGB'
+            [THREE.LinearSRGBColorSpace]: 'Linear',
+            [THREE.NoColorSpace]: 'Data',
+            [THREE.SRGBColorSpace]: 'sRGB'
         };
         return encodings[encoding] || 'Unknown';
     }

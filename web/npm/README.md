@@ -48,13 +48,9 @@ async function loadScenes() {
 }
 ```
 
-`LightUSDLoader` selects the next-only module by default. Select the legacy
-product explicitly when an application depends on the legacy conversion path:
-
-```js
-await loader.init({ backend: 'legacy' });
-const scene = await loader.loadAsync(url, { backend: 'legacy' });
-```
+The package ships the core module (`lightusd`) only; `LightUSDLoader`
+uses it by default. The legacy module is no longer published: passing
+`backend: 'legacy'` logs a warning and loads with the core backend instead.
 
 Deep imports such as `lightusd/LightUSDLoader.js` remain supported for existing code.
 
@@ -77,7 +73,7 @@ The npm package also contains a MEMORY64 build. You can request it with:
 await loader.init({ useMemory64: true });
 ```
 
-If the wasm64 module is unavailable in the runtime or bundle, the loader falls back to the standard wasm32 build.
+`useMemory64: true` needs a runtime with WebAssembly memory64 support; `init()` rejects if the wasm64 module cannot be loaded.
 
 ## More examples
 
@@ -153,10 +149,10 @@ cd web/npm
 
 The script configures and builds:
 
-- `web/cmake-build` for wasm32 legacy (`LIGHTUSD_WASM_PRODUCT=legacy`)
-- `web/cmake-build64` for wasm64 legacy
-- `web/cmake-build-next` for wasm32 next (`LIGHTUSD_WASM_PRODUCT=next`)
-- `web/cmake-build-next64` for wasm64 next
+- `web/cmake-build-core` for wasm32 core (`LIGHTUSD_WASM_PRODUCT=core`)
+- `web/cmake-build-core64` for wasm64 core
+- `web/cmake-build-mcp` / `web/cmake-build-mcp64` for the MCP server module
+  (`LIGHTUSD_WASM_PRODUCT=mcp`)
 
 `web/CMakeLists.txt` then writes the generated outputs into `web/js/src/lightusd/`.
 
@@ -173,16 +169,13 @@ After `build-wasm.sh`, the following files should exist in `web/js/src/lightusd/
 - `lightusd.wasm`
 - `lightusd_64.js`
 - `lightusd_64.wasm`
-- `lightusd_next.js`
-- `lightusd_next.wasm`
-- `lightusd_next_64.js`
-- `lightusd_next_64.wasm`
+- `lightusd_mcp.js`, `lightusd_mcp.wasm` and the `_64` variants
 
-The `lightusd_next*` modules are the lean next-core + Tydra-next builds used
-by `LightUSDLoader` by default. The deprecated `useNextOnlyWasm` option and
+The core `lightusd*` modules are the lean core + Tydra builds used
+by `LightUSDLoader` by default. The deprecated `useCoreOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
-The next distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
+The core distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
 `lightusd_validator`, and `lightusd_exr`, each with `.js` / `.wasm` files and
 matching `_64` variants. Keep these files beside the main module, or supply
 `locateFeature(filename)` to resolve both feature JS and WASM files.
@@ -204,7 +197,7 @@ callback arrays borrow the geometry heap and must be copied to retain them.
 `loadFeature` shares pending and successful promises, allows retry after failure,
 and rejects mismatched ABI versions, pointer widths, or layouts. `featureInfo`
 reports that metadata. The old `loadEXR` / `loadValidator` loaders and feature
-constructors on the main next module have been removed. Load EXR before direct
+constructors on the main core module have been removed. Load EXR before direct
 synchronous EXR rendering/encoding calls, and validator before
 `LayerDocument.validateLoadedLayer()`.
 

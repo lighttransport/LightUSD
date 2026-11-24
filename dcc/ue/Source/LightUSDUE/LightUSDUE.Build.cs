@@ -26,14 +26,22 @@ public class LightUSDUE : ModuleRules
         string ThirdParty = System.IO.Path.Combine(ModuleDirectory, "..", "..", "ThirdParty", Target.Platform.ToString());
         PublicIncludePaths.Add(System.IO.Path.Combine(ThirdParty, "include"));
         PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "lightusd_c.lib"));
-        PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "lightusd_next.lib"));
-        PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "tydra_next.lib"));
+        PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "lightusd_core.lib"));
+        PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "tydra.lib"));
         if (Target.Platform == UnrealTargetPlatform.Linux)
         {
             PublicAdditionalLibraries.Clear();
-            PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "liblightusd_c.a"));
-            PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "libtydra_next.a"));
-            PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "liblightusd_next.a"));
+            foreach (string Library in new[] {
+                "lightusd_render_c", "lightusd_c", "tydra", "lightusd_rb_solver",
+                "lightusd_asset_import", "lightusd_core", "lightusd_obj_import",
+                "lightusd_tinyvdb", "lightusd_core_c"
+                // Note: lightusd_validation[_c] is staged by build_plugin.sh but
+                // deliberately not linked: the module only calls the lightusd-c /
+                // lightusd-render-c APIs, never the validation ABI.
+            })
+            {
+                PublicAdditionalLibraries.Add(System.IO.Path.Combine(ThirdParty, "lib", "lib" + Library + ".a"));
+            }
             PublicSystemLibraries.AddRange(new[] { "dl", "pthread" });
         }
         else if (Target.Platform == UnrealTargetPlatform.Win64)

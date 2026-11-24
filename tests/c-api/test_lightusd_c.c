@@ -722,8 +722,13 @@ static int test_dependency_boundary(void) {
       &is_package));
   {
     lightusd_sv text = lightusd_string_view(resolved);
+    char folded[256] = {0};  /* the resolver yields native separators on Windows */
+    size_t folded_len = text.len < sizeof(folded) - 1 ? text.len : sizeof(folded) - 1;
+    for (size_t i = 0; i < folded_len; ++i) {
+      folded[i] = text.data[i] == '\\' ? '/' : text.data[i];
+    }
     CHECK(!exists && !is_package && text.len == strlen("/tmp/look/sub/new.usda") &&
-          memcmp(text.data, "/tmp/look/sub/new.usda", text.len) == 0);
+          memcmp(folded, "/tmp/look/sub/new.usda", text.len) == 0);
   }
   lightusd_string_destroy(resolved);
 
@@ -835,8 +840,13 @@ static int test_dependency_boundary(void) {
     CHECK_OK(lightusd_asset_resolver_create_identifier(
         resolver, "future.usda", "/tmp/look/layer.usda", &identifier));
     lightusd_sv view = lightusd_string_view(identifier);
+    char folded[256] = {0};  /* native separators on Windows */
+    size_t folded_len = view.len < sizeof(folded) - 1 ? view.len : sizeof(folded) - 1;
+    for (size_t i = 0; i < folded_len; ++i) {
+      folded[i] = view.data[i] == '\\' ? '/' : view.data[i];
+    }
     CHECK(view.len == strlen("/tmp/look/future.usda") &&
-              memcmp(view.data, "/tmp/look/future.usda", view.len) == 0);
+              memcmp(folded, "/tmp/look/future.usda", view.len) == 0);
     lightusd_string_destroy(identifier);
   }
 
@@ -1585,7 +1595,7 @@ int main(int argc, char** argv) {
   if (test_resolved_property_inspection()) return 1;
   CHECK(lightusd_api_version() == ((LIGHTUSD_API_VERSION_MAJOR << 16) |
       (LIGHTUSD_API_VERSION_MINOR << 8) | LIGHTUSD_API_VERSION_PATCH));
-  CHECK(strcmp(lightusd_version_string(), "1.0.0") == 0);
+  CHECK(strcmp(lightusd_version_string(), "1.1.0") == 0);
   CHECK(strcmp(lightusd_type_name(LIGHTUSD_TYPE_POINT3F), "point3f") == 0);
   CHECK(lightusd_type_from_name("float3") == LIGHTUSD_TYPE_FLOAT3);
   CHECK(lightusd_type_component_count(LIGHTUSD_TYPE_MATRIX4D) == 16);

@@ -58,6 +58,8 @@ struct TypeTraits<std::vector<int>> {
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 void test_basic_types() {
     std::cout << "Testing basic types..." << std::endl;
 

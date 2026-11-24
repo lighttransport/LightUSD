@@ -109,7 +109,7 @@ def Camera "C" {
  'float focalLength = 50', 'float2 clippingRange = (0.1,5.5)\n  float focalLength = 50'))
 PY
 ARGS=(-rtPreview); if [ "$BACKEND" = vkr ]; then ARGS=(-vkr); fi
-for RESOLVER in legacy tydra-next; do
+for RESOLVER in legacy tydra; do
  for MODE in blend-transparent blend-presence cutout-transparent cutout-presence; do
   "$BIN" "$TMP/$MODE.usda" "$TMP/$RESOLVER-$MODE.png" "${ARGS[@]}" "$@" \
    -diagnosticEmission -camera /C -w 16 -height 16 -threads 1 -materialResolver "$RESOLVER" \
@@ -140,7 +140,7 @@ sys.path.insert(0,str(Path(sys.argv[2])/'examples/lusdview/tests'))
 from asset_fingerprint import _read_image
 root=Path(sys.argv[1])
 def encode(x):return round(255*(12.92*x if x<=.0031308 else 1.055*x**(1/2.4)-.055))
-for resolver in ('legacy','tydra-next'):
+for resolver in ('legacy','tydra'):
  for mode in ('blend-transparent','blend-presence','cutout-transparent','cutout-presence'):
   w,h,pixels=_read_image(str(root/f'{resolver}-{mode}.png'));assert (w,h)==(16,16)
   for x,alpha in [(4,64/255*.5+.1),(12,192/255*.5+.1)]:

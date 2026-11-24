@@ -22,6 +22,58 @@ typedef struct {
     int   subsurface;  /* diffuse lobe flagged as subsurface entry */
 } BsdfSample;
 
+typedef struct {
+    float diffuse;
+    float specular;
+    float coat;
+    float transmission;
+} BsdfLobeWeights;
+
+/* OpenPBR coat-relative IOR and coat-affected base roughness remapping. */
+void bsdf_openpbr_coat_remap(float specular_ior, float coat_ior, float coat_weight,
+                             float specular_roughness, float coat_roughness,
+                             float *out_ior, float *out_roughness);
+
+/* MaterialX Zeltner directional-albedo fit (cosine and roughness in [0,1]). */
+float bsdf_zeltner_sheen_albedo(float ndotv, float roughness);
+
+/* Airy Fresnel for a positive-thickness conductor film (thickness in nm). */
+v3 bsdf_materialx_conductor_film_fresnel(float cosine, v3 eta, v3 extinction,
+                                         float thickness, float film_ior);
+
+/* Unweighted MaterialX Fresnel for an explicit specular closure. */
+v3 bsdf_materialx_specular_fresnel(const MtlxSpecularLobe *lobe, float cosine);
+
+/* MaterialX genglsl isotropic conductor BRDF (unit weight, no thin film).
+ * alpha is the authored microfacet roughness, not its square. Directions are
+ * represented by positive cosine inputs; a nonpositive NdotV/L returns zero. */
+v3 bsdf_materialx_conductor(v3 eta, v3 extinction, float alpha,
+                           float ndotv, float ndotl, float ndoth, float vdoth);
+
+/* Anisotropic version: H components are expressed in the orthonormal
+ * tangent, bitangent, normal frame. Masking follows the reference's geometric
+ * mean alpha approximation. */
+v3 bsdf_materialx_conductor_anisotropic(v3 eta, v3 extinction, float alpha_x,
+    float alpha_y, float ndotv, float ndotl, float hx, float hy, float hz, float vdoth);
+
+/* Enable Turquin-style energy compensation of rough dielectric transmission (default off). */
+void bsdf_set_dielectric_multiscatter(int enable);
+/* 0 = reference (default), 1 = conservative certified dielectric compensation */
+void bsdf_set_energy_mode(int mode);
+int bsdf_energy_mode(void);
+
+/* Conservative-mode thin-film reflectance provider. The renderer injects the
+ * proved passive channel model (passive_film.h); when unset, film keeps the
+ * reference Airy behaviour. This keeps bsdf.c free of a link dependency on the
+ * strict-floating-point film source. */
+typedef int (*MtlxFilmReflectanceFn)(float cosTheta, const float eta[3],
+                                     const float extinction[3], float thickness_nm,
+                                     float film_ior, float out[3]);
+void bsdf_set_conservative_film_fn(MtlxFilmReflectanceFn fn);
+/* --layering physical (0, default) | graph (1): see graph_layer_throughput in bsdf.c. */
+void bsdf_set_layering_graph(int on);
+int bsdf_layering_graph(void);
+
 /* Importance-sample the BSDF. Returns 0 if no valid sample. */
 int bsdf_sample(const OpenPBRParams *p, v3 N, v3 wo, pcg32 *rng, BsdfSample *out);
 
@@ -38,7 +90,8 @@ typedef struct {
 
 VolumeMedium transmission_medium(const OpenPBRParams *p);
 
-/* Evaluate the non-delta BSDF (diffuse + rough specular) for NEE/MIS.
+/* Evaluate the non-delta BSDF (diffuse, rough specular and OpenPBR rough
+ * transmission) for NEE/MIS.
  * Returns f (rgb); *pdf_out gets the mixture pdf for sampling wi. */
 v3 bsdf_eval(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, float *pdf_out);
 
@@ -47,8 +100,15 @@ v3 bsdf_eval(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, float *pdf_out);
  * same mixture pdf). A split-sum IBL weighs the diffuse lobe against the
  * irradiance map and the specular lobe against the prefiltered reflection map --
  * two different environments -- so it must not be handed the sum, or each lobe
- * gets counted against both. Sheen and coat are grouped with the specular half. */
+ * gets counted against both. Sheen, coat and rough transmission are grouped
+ * with the specular half. */
 v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, v3 *out_diffuse,
                    v3 *out_specular, float *pdf_out);
+
+/* Probabilities used to select diffuse, specular, coat and transmission
+ * lobes during importance sampling. These are diagnostic weights, not
+ * integrated energy fractions. Explicit conductor proposals are included in
+ * the reported specular probability. */
+BsdfLobeWeights bsdf_lobe_weights(const OpenPBRParams *p);
 
 #endif /* MTLXRENDER_BSDF_H_ */

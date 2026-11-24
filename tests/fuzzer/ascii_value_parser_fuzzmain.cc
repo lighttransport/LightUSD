@@ -11,8 +11,8 @@
 #include "tiny-string.hh"
 #include "value-types.hh"
 
-using lightusd::tstring_view;
-namespace str = lightusd::str;
+using lightusd::legacy::tstring_view;
+namespace str = lightusd::legacy::str;
 
 // 64 KB cap to avoid OOM from repeated valid array elements.
 static constexpr size_t kMaxInputSize = 64u * 1024u;
@@ -82,64 +82,64 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     // --- Vector array parsers (9-14) ---
     case 9: {
-      std::vector<lightusd::value::float2> v;
+      std::vector<lightusd::legacy::value::float2> v;
       (void)str::parse_float2_array(sv, &v);
       break;
     }
     case 10: {
-      std::vector<lightusd::value::float3> v;
+      std::vector<lightusd::legacy::value::float3> v;
       (void)str::parse_float3_array(sv, &v);
       break;
     }
     case 11: {
-      std::vector<lightusd::value::float4> v;
+      std::vector<lightusd::legacy::value::float4> v;
       (void)str::parse_float4_array(sv, &v);
       break;
     }
     case 12: {
-      std::vector<lightusd::value::double2> v;
+      std::vector<lightusd::legacy::value::double2> v;
       (void)str::parse_double2_array(sv, &v);
       break;
     }
     case 13: {
-      std::vector<lightusd::value::double3> v;
+      std::vector<lightusd::legacy::value::double3> v;
       (void)str::parse_double3_array(sv, &v);
       break;
     }
     case 14: {
-      std::vector<lightusd::value::double4> v;
+      std::vector<lightusd::legacy::value::double4> v;
       (void)str::parse_double4_array(sv, &v);
       break;
     }
 
     // --- Matrix array parsers (15-20) ---
     case 15: {
-      std::vector<lightusd::value::matrix2f> v;
+      std::vector<lightusd::legacy::value::matrix2f> v;
       (void)str::parse_matrix2f_array(sv, &v);
       break;
     }
     case 16: {
-      std::vector<lightusd::value::matrix3f> v;
+      std::vector<lightusd::legacy::value::matrix3f> v;
       (void)str::parse_matrix3f_array(sv, &v);
       break;
     }
     case 17: {
-      std::vector<lightusd::value::matrix4f> v;
+      std::vector<lightusd::legacy::value::matrix4f> v;
       (void)str::parse_matrix4f_array(sv, &v);
       break;
     }
     case 18: {
-      std::vector<lightusd::value::matrix2d> v;
+      std::vector<lightusd::legacy::value::matrix2d> v;
       (void)str::parse_matrix2d_array(sv, &v);
       break;
     }
     case 19: {
-      std::vector<lightusd::value::matrix3d> v;
+      std::vector<lightusd::legacy::value::matrix3d> v;
       (void)str::parse_matrix3d_array(sv, &v);
       break;
     }
     case 20: {
-      std::vector<lightusd::value::matrix4d> v;
+      std::vector<lightusd::legacy::value::matrix4d> v;
       (void)str::parse_matrix4d_array(sv, &v);
       break;
     }

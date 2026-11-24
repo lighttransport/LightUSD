@@ -5,7 +5,7 @@
 
 int main(int argc, char **argv) {
 
-  using myvar = lightusd::variant<bool, float, std::string>;
+  using myvar = lightusd::legacy::variant<bool, float, std::string>;
 
   myvar a;
   a.set<bool>(true);

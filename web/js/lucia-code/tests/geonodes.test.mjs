@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { composeTRS, createDefaultGraph, decomposeInstanceTransform, evaluateGraph, geometryToOutput, GeoNodesCache, geometryStats, geometryToMeshData, getNodeType, listNodeTypes, mergeByDistance, meshGeometry, realize, registerNode, subdivideMidpoint, topoOrder, validateGraph, valueNoise3 } from '../src/geonodes/index.js';
 import { evaluateGraphToMesh, GeoNodesRunner, sourceInputHash, triangulateAuthoredMesh } from '../src/geonodes/runner.js';
-import { LuciaUsdSession, xformStatements } from '../src/usd-session.js';
+import { LuciaUsdSession, xformStatements, findPrimBlock } from '../src/usd-session.js';
 import { hashValue, transformNormals } from '../src/geonodes/index.js';
 import { LuciaCommandStack, sessionCommand } from '../src/command-stack.js';
 if (!globalThis.CustomEvent) globalThis.CustomEvent = class extends Event { constructor(type, options = {}) { super(type); this.detail = options.detail; } };
@@ -113,7 +113,9 @@ test('geometry node commits persist the graph, author a sibling output and undo 
     assert.equal(info.source, path);
     assert.equal(info.inputHash, sourceInputHash(triangulateAuthoredMesh(await session.getAuthoredMesh(path))));
     assert.equal((await session.getMeshPoints('/World/Plane_geonodes')).length / 3, 9);
-    assert.match(session.exportUSDA(), /def Mesh "Plane"[^}]*token visibility = "invisible"/);
+    const sourceBlock = findPrimBlock(session.exportUSDA(), path);
+    assert.ok(sourceBlock);
+    assert.match(session.exportUSDA().slice(sourceBlock.open, sourceBlock.close), /token visibility = "invisible"/);
     assert.match(session.exportUSDA(), /def Mesh "Plane_geonodes"[^}]*float3\[\] extent = \[\(0, 0, 0\), \(1, 1, 0\)\]/);
     // Re-commit updates the same output instead of colliding.
     await commit();
@@ -191,7 +193,9 @@ test('PointInstancer output is authored with prototypes, rebuilt on re-commit an
     assert.ok(count > 0);
     assert.match(usda, /def PointInstancer "Plane_geonodes_instances"/);
     assert.match(usda, /rel prototypes = <\/World\/Plane_geonodes_instances\/Prototypes\/Proto0>/);
-    assert.match(usda, /def PointInstancer "Plane_geonodes_instances"\s*\{[^}]*xformOp:translate = \(0, 2, 0\)/, 'instancer inherits the source transform');
+    const instanceBlock = findPrimBlock(usda, '/World/Plane_geonodes_instances');
+    assert.ok(instanceBlock);
+    assert.match(usda.slice(instanceBlock.open, instanceBlock.close), /xformOp:translate = \(0, 2, 0\)/, 'instancer inherits the source transform');
     assert.equal(usda.match(/int\[\] protoIndices = \[([^\]]*)\]/)[1].split(',').length, count);
     assert.equal(session.getGeomNodesOutputInfo('/World/Plane_geonodes_instances').source, path);
     assert.match(usda, /def Mesh "Plane_geonodes"/, 'joined source mesh stays a mesh output');

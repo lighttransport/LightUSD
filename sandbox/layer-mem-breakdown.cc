@@ -23,6 +23,8 @@
 
 using namespace lightusd;
 
+using namespace lightusd::legacy;  // NOLINT
+
 struct Tally {
   size_t prims = 0;
   size_t props = 0;

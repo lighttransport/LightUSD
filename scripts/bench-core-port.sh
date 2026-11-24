@@ -3,14 +3,14 @@
 # Copyright 2024-Present Light Transport Entertainment Inc.
 # Measure a clean C11 core/product build using the common measurement harness.
 # Reports are JSON. Configure with CMAKE_EXPORT_COMPILE_COMMANDS=ON first.
-# --wasm selects lightusd_next_wasm; --artifact may add any linked artifact.
+# --wasm selects lightusd_core_wasm; --artifact may add any linked artifact.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build_ninja"
 OUTPUT=""
 JOBS=16
 REPEAT=3
-TARGET=lightusd_next
+TARGET=lightusd_core
 SIZE_TOOL=""
 ARTIFACTS=()
 while [[ $# -gt 0 ]]; do
@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
     --target) TARGET="$2"; shift 2 ;;
     --size-tool) SIZE_TOOL="$2"; shift 2 ;;
     --artifact) ARTIFACTS+=(--artifact "$2"); shift 2 ;;
-    --wasm) TARGET=lightusd_next_wasm; shift ;;
+    --wasm) TARGET=lightusd_core_wasm; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done

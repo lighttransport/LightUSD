@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <string>
 
-#include "asset-resolution.hh"
 #include "tsd/tinysubdiv.hh"
 #include "lusdr_context.hh"
 
@@ -97,7 +96,16 @@ void PrintUsage(const char *prog) {
       << "lusdrender - CPU preview raytrace renderer for USD\n\n"
       << "Usage:\n"
       << "  " << prog << " input.usd output.png [options]\n\n"
+      << "  " << prog << " --mtlx material.mtlx output.png [--mtlx-material name]\n\n"
       << "Options:\n"
+      << "  --verified-math       Strict modeled graph sine/cosine (CPU --mtlx).\n"
+      << "  --energy-mode M       reference (default) | conservative (certified glass R/T\n"
+      << "                        scale; CPU MaterialX BSDF).\n"
+      << "  --layering L          physical (default) | graph: the OpenPBR graph's layer\n"
+      << "                        throughput on transmission (double Fresnel; diagnostic\n"
+      << "                        for comparison with OSL/MaterialX; CPU MaterialX BSDF).\n"
+      << "  --mtlx-mipmaps        Build MaterialX texture mips for per-hit filtering.\n"
+      << "  --volume-mtlx FILE --volume-mtlx-look NAME  Apply a MaterialX look to CPU volumes.\n"
       << "  -h, -help              Show this help.\n"
       << "  --scene-preview       Convert/cache a bounded preview before rendering.\n"
       << "  --preview-kind gaussian|points|volume (default gaussian).\n"
@@ -126,7 +134,7 @@ void PrintUsage(const char *prog) {
       << "  -height <N>            Output height (default from aspect or 540).\n"
       << "  -camera <path|name>    Camera absolute path or camera name.\n"
       << "  -renderSettings <path> Select a UsdRender RenderSettings prim.\n"
-      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId> capture (.pfm for data; raw depth/normals also support -vkr)\n"
+      << "  --aov <color|depth|worldNormal|geometricNormal|shadingNormal|primId|mtlxNode:NAME|mtlxDiffuseWeight|mtlxSpecularWeight|mtlxCoatWeight|mtlxTransmissionWeight> capture (.pfm for data)\n"
       << "  --all-products        Render settings products; output is a filename prefix.\n"
       << "  -renderProduct <path>  Select one product from the settings.\n"
       << "  -renderPass <path>     Apply a local RenderPass render source/visibility.\n"
@@ -139,6 +147,16 @@ void PrintUsage(const char *prog) {
       << "  -hideDefault           Hide default-purpose geometry.\n"
       << "  -timecode <value>      USD timecode to evaluate.\n"
       << "  -samples <N>           Deterministic supersamples per pixel (default 1).\n"
+      << "  --gsplat-kernel disc|cycles  Gaussian splat kernel (default disc).\n"
+      << "      cycles: Blender Cycles 3D ellipsoid + stochastic opacity via\n"
+      << "      LightRT on the CPU, or -vk/-vkr (Vulkan) / -hip (HIP) within\n"
+      << "      -maxVram GiB (default 4); -samples sets spp (16 if left at 1).\n"
+      << "      With meshes, CPU, Vulkan ray queries and HIP trace splats on camera,\n"
+      << "      bounce and shadow rays. CPU defaults to -materialShading lightrt-bsdf,\n"
+      << "      -ambient 0 and scene-linear .exr (as Blender's Cycles).\n"
+      << "  --gsplat-colorspace linear|srgb  Splat SH radiance encoding (default linear).\n"
+      << "  --gsplat-motion-steps N  Motion-blur samples per splat across the camera\n"
+      << "      shutter (shutter:open/close), as Cycles motion steps (default 3, 1 = off).\n"
       << "  -bg <r,g,b>            Background color in linear RGB (default 0,0,0).\n"
       << "  -ambient <value>       Ambient diffuse term (default 0.05).\n"
       << "  -noShadows             Disable hard shadow rays.\n"
@@ -229,11 +247,10 @@ void PrintUsage(const char *prog) {
       << "                         Resolve a Vulkan large-scene preset over existing\n"
       << "                         backend/LOD/memory knobs. Explicit CLI flags win;\n"
       << "                         texture resize/compression flags are unchanged.\n"
-      << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
-      << "  -materialResolver legacy|tydra-next|compare\n"
-      << "                         Next-loader material resolver. tydra-next is\n"
-      << "                         the default; legacy is the compatibility path;\n"
-      << "                         compare renders legacy and reports differences.\n"
+      << "  -materialResolver legacy|tydra|compare\n"
+      << "                         Core material resolver. tydra is the default;\n"
+      << "                         legacy is the compatibility path; compare\n"
+      << "                         renders legacy and reports differences.\n"
       << "  -materialShading legacy|lightrt-bsdf\n"
       << "                         CPU material shading path. lightrt-bsdf is an\n"
       << "                         experimental opt-in direct-light BSDF path.\n"
@@ -284,7 +301,7 @@ void PrintUsage(const char *prog) {
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
       << "  -cuda                 Use the shared CUDA/NVRTC RT backend (NVIDIA).\n"
-      << "  --path-trace          Use the shared multi-bounce GPU integrator.\n"
+      << "  --path-trace          Trace paths on GPU, or on CPU with --mtlx.\n"
       << "  --pt-quality interactive|final\n"
       << "  --pt-samples <N>      Path-trace sample target (0 = backend default).\n"
       << "  --pt-max-depth <N>    Maximum path depth (1..64).\n"
@@ -405,6 +422,52 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       PrintUsage(argv[0]);
       std::exit(EXIT_SUCCESS);
     }
+    OPT_MATCH(a == "--mtlx") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->mtlx_file = v;
+    }
+    OPT_MATCH(a == "--mtlx-material") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->mtlx_material = v;
+    }
+    OPT_MATCH(a == "--verified-math") {
+      opt->verified_math = true;
+    }
+    OPT_MATCH(a == "--energy-mode") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "reference") opt->energy_mode = 0;
+      else if (std::string(v) == "conservative") opt->energy_mode = 1;
+      else {
+        std::cerr << "invalid --energy-mode: " << v << " (reference|conservative)\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "--layering") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "physical") opt->layering_graph = false;
+      else if (std::string(v) == "graph") opt->layering_graph = true;
+      else {
+        std::cerr << "invalid --layering: " << v << " (physical|graph)\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "--mtlx-mipmaps") {
+      opt->mtlx_mipmaps = true;
+    }
+    OPT_MATCH(a == "--volume-mtlx") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->volume_mtlx_file = v;
+    }
+    OPT_MATCH(a == "--volume-mtlx-look") {
+      const char *v = need_value(a.c_str());
+      if (!v || !*v) return false;
+      opt->volume_mtlx_look = v;
+    }
     OPT_MATCH(a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
       // Capped: the framebuffer is width*height*4 floats with no other guard, so
@@ -441,6 +504,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       else if (name == "geometricNormal") opt->aov = CaptureAov::GeometricNormal;
       else if (name == "shadingNormal") { opt->aov = CaptureAov::ShadingNormal; opt->smooth = true; }
       else if (name == "primId") opt->aov = CaptureAov::PrimId;
+      else if (name.rfind("mtlxNode:", 0) == 0 && name.size() > 9) {
+        opt->aov = CaptureAov::MaterialXNode;
+        opt->mtlx_aov_node = name.substr(9);
+      } else if (name == "mtlxDiffuseWeight")
+        opt->aov = CaptureAov::MaterialXDiffuseWeight;
+      else if (name == "mtlxSpecularWeight")
+        opt->aov = CaptureAov::MaterialXSpecularWeight;
+      else if (name == "mtlxCoatWeight")
+        opt->aov = CaptureAov::MaterialXCoatWeight;
+      else if (name == "mtlxTransmissionWeight")
+        opt->aov = CaptureAov::MaterialXTransmissionWeight;
       else { std::cerr << "Unknown AOV: " << name << "\n"; return false; }
       opt->aov_explicit = true;
       opt->rt_preview = true;
@@ -556,6 +630,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         std::cerr << "Invalid ambient value.\n";
         return false;
       }
+      opt->ambient_explicit = true;
     }
     OPT_MATCH(a == "-diagnosticEmission" || a == "--diagnostic-emission") {
       opt->diagnostic_emission = true;
@@ -665,7 +740,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->backend_explicit = true;
     }
     OPT_MATCH(a == "-legacyLoad" || a == "--legacyLoad") {
-      opt->legacy_load = true;
+      std::cerr << "WARN: -legacyLoad was removed; every input uses the core loader.\n";
     }
     OPT_MATCH(a == "-materialResolver" || a == "--materialResolver") {
       const char *v = need_value(a.c_str());
@@ -673,12 +748,15 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       std::string mode = v;
       if (mode == "legacy") {
         opt->material_resolver = Options::MaterialResolver::Legacy;
-      } else if (mode == "tydra-next") {
-        opt->material_resolver = Options::MaterialResolver::TydraNext;
+      } else if (mode == "tydra") {
+        opt->material_resolver = Options::MaterialResolver::Tydra;
+      } else if (mode == "tydra-next") {  // deprecated alias
+        std::cerr << "WARN: -materialResolver tydra-next is deprecated; use tydra.\n";
+        opt->material_resolver = Options::MaterialResolver::Tydra;
       } else if (mode == "compare") {
         opt->material_resolver = Options::MaterialResolver::Compare;
       } else {
-        std::cerr << "Invalid material resolver. Expected legacy, tydra-next, or compare.\n";
+        std::cerr << "Invalid material resolver. Expected legacy, tydra, or compare.\n";
         return false;
       }
     }
@@ -686,6 +764,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       std::string mode = v;
+      opt->material_shading_explicit = true;
       if (mode == "legacy") {
         opt->material_shading = Options::MaterialShading::Legacy;
       } else if (mode == "lightrt-bsdf") {
@@ -889,6 +968,35 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         opt->subdivision_level = 3;
       } else {
         std::cerr << "Invalid -complexity. Expected low|medium|high|veryhigh.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatMotionSteps" || a == "--gsplat-motion-steps") {
+      const char *v = need_value(a.c_str());
+      int n = 0;
+      if (!v || !ParseIntStrict(v, &n) || n < 1 || n > 64) {
+        std::cerr << "--gsplat-motion-steps expects 1..64.\n";
+        return false;
+      }
+      opt->gsplat_motion_steps = n;
+    }
+    OPT_MATCH(a == "-gsplatKernel" || a == "--gsplat-kernel") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "cycles") opt->gsplat_cycles = true;
+      else if (k == "disc") opt->gsplat_cycles = false;
+      else {
+        std::cerr << "Invalid --gsplat-kernel. Expected disc|cycles.\n";
+        return false;
+      }
+    }
+    OPT_MATCH(a == "-gsplatColorspace" || a == "--gsplat-colorspace") {
+      const char *v = need_value(a.c_str());
+      const std::string k = v ? v : "";
+      if (k == "srgb") opt->gsplat_srgb = true;
+      else if (k == "linear") opt->gsplat_srgb = false;
+      else {
+        std::cerr << "Invalid --gsplat-colorspace. Expected linear|srgb.\n";
         return false;
       }
     }
@@ -1176,9 +1284,53 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
   // input is required there; an output positional is optional.
   const bool output_optional =
       opt->mcp || !opt->js_script.empty() || opt->stream_http > 0;
-  if (positional.empty() || positional.size() > 2 ||
-      (!output_optional && positional.size() != 2)) {
+  if (opt->verified_math && opt->mtlx_file.empty()) {
+    std::cerr << "--verified-math requires the CPU --mtlx graph evaluator.\n";
+    return false;
+  }
+  if (opt->mtlx_file.empty() && !opt->mtlx_material.empty()) {
+    std::cerr << "--mtlx-material requires --mtlx.\n";
+    return false;
+  }
+  if (opt->mtlx_file.empty() && opt->mtlx_mipmaps) {
+    std::cerr << "--mtlx-mipmaps requires --mtlx.\n";
+    return false;
+  }
+  if (opt->volume_mtlx_file.empty() != opt->volume_mtlx_look.empty()) {
+    std::cerr << "--volume-mtlx and --volume-mtlx-look must be used together.\n";
+    return false;
+  }
+  if (!opt->volume_mtlx_file.empty() &&
+      (opt->vulkan || opt->vulkan_rt || opt->vulkan_instanced ||
+       opt->use_d3d || opt->hip || opt->cuda)) {
+    std::cerr << "MaterialX volume looks currently require the CPU renderer.\n";
+    return false;
+  }
+  if (!opt->volume_mtlx_file.empty() &&
+      (!opt->mtlx_file.empty() || opt->diagnostic_emission || opt->aov != CaptureAov::Color)) {
+    std::cerr << "MaterialX volume looks require a USD color render.\n";
+    return false;
+  }
+  if (!opt->mtlx_file.empty()) {
+    if (positional.size() != 1 || output_optional) {
+      PrintUsage(argv[0]);
+      return false;
+    }
+    opt->input = opt->mtlx_file;
+    opt->output = positional[0];
+  } else if (positional.empty() || positional.size() > 2 ||
+             (!output_optional && positional.size() != 2)) {
     PrintUsage(argv[0]);
+    return false;
+  }
+  if (!opt->mtlx_file.empty() &&
+      (opt->vulkan || opt->vulkan_rt || opt->vulkan_instanced || opt->use_d3d ||
+       opt->cuda || opt->hip)) {
+    std::cerr << "--mtlx validation mode currently uses the CPU renderer only.\n";
+    return false;
+  }
+  if (IsMaterialXAov(opt->aov) && opt->mtlx_file.empty()) {
+    std::cerr << "MaterialX node/lobe AOVs require --mtlx validation mode.\n";
     return false;
   }
   if (opt->diagnostic_material != MaterialDiagnostic::None &&
@@ -1186,15 +1338,22 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
     std::cerr << "-diagnosticMaterial cannot be combined with a data AOV.\n";
     return false;
   }
+  if (opt->diagnostic_emission && opt->aov != CaptureAov::Color) {
+    std::cerr << "-diagnosticEmission cannot be combined with a data AOV.\n";
+    return false;
+  }
   if (opt->diagnostic_emission && (opt->cuda || opt->hip || opt->vulkan_instanced || opt->use_d3d || opt->path_trace)) {
     std::cerr << "-diagnosticEmission supports CPU preview and flat Vulkan primary-ray paths only.\n";
     return false;
   }
   if (opt->diagnostic_emission) opt->gpu_shade = Options::GpuShadeMode::Cpu;
-  opt->input = positional[0];
-  opt->output = positional.size() > 1 ? positional[1] : std::string();
-  if (opt->path_trace && !opt->cuda && !opt->hip && !opt->vulkan_rt) {
-    std::cerr << "--path-trace requires -vkr, -cuda, or -hip.\n";
+  if (opt->mtlx_file.empty()) {
+    opt->input = positional[0];
+    opt->output = positional.size() > 1 ? positional[1] : std::string();
+  }
+  if (opt->path_trace && opt->mtlx_file.empty() && !opt->cuda && !opt->hip && !opt->vulkan_rt &&
+      !(opt->vulkan && opt->gsplat_cycles)) {
+    std::cerr << "--path-trace requires --mtlx, -vkr, -cuda, or -hip.\n";
     return false;
   }
   return true;
@@ -1212,15 +1371,5 @@ int NullARRead(const char *, uint64_t, uint8_t *, uint64_t *, std::string *,
   return -1;
 }
 
-void SetupNullAssetResolution(lightusd::AssetResolutionResolver *resolver) {
-  if (!resolver) return;
-  lightusd::AssetResolutionHandler handler;
-  handler.resolve_fun = NullARResolve;
-  handler.size_fun = NullARSize;
-  handler.read_fun = NullARRead;
-  handler.write_fun = nullptr;
-  handler.userdata = nullptr;
-  resolver->register_wildcard_asset_resolution_handler(handler);
-}
 
 }  // namespace lusdr

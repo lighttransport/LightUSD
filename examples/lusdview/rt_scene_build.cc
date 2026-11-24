@@ -21,6 +21,8 @@
 #include "ptex_atlas.hh"
 #include "log.hh"
 #include "texture_tools.hh"
+#include "lightrt_c_gsplat.h"
+#include "tydra/gsplat-tracer.hh"
 
 namespace lusdview {
 
@@ -234,7 +236,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     dst.components = src.components;
     dst.values.reserve((m.indices.size() / 3) * 3 * dst.components);
   }
-  // Most next-loader meshes are world-baked at load time (m.world == identity,
+  // Most core-loader meshes are world-baked at load time (m.world == identity,
   // the transform already folded into `vertices`), but `animatedWorld` meshes
   // (see gpu_scene.hh) keep a REAL per-frame world matrix on top of a fixed
   // local-space vertex buffer -- the raster GPU vertex shader always applies
@@ -369,7 +371,7 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
     }
     lg.push_back(g);
     const int frontMat = submeshMatId(static_cast<uint32_t>(t));
-    // Unbound next-loader instanced prototypes carry their flat/instance tint
+    // Unbound core-loader instanced prototypes carry their flat/instance tint
     // in Inst; suppress that loader's anonymous material-0 placeholder to avoid
     // multiplying by default gray twice. Legacy scenes may use index 0 for a
     // real authored material, identified by its populated material record.
@@ -1134,7 +1136,8 @@ size_t RtProxyTriangleLimit() {
 
 std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
                                                   bool compact,
-                                                  size_t maxTriangles, bool tessellateAnalytic) {
+                                                  size_t maxTriangles, bool tessellateAnalytic,
+                                                  bool skipGaussianPoints) {
   std::vector<DrawMeshCPU> proxies;
   proxies.reserve(scene.points.size() + scene.curves.size());
   const size_t proxyTriangleLimit = RtProxyTriangleLimit();
@@ -1146,6 +1149,7 @@ std::vector<DrawMeshCPU> BuildNonMeshRtProxyMeshes(const DrawScene& scene,
     return true;
   };
   for (const DrawPointsCPU& src : scene.points) {
+    if (skipGaussianPoints && src.gaussian) continue;
     const size_t pointCount = src.points.size() / 3;
     const bool native_gaussian =
         src.gaussian && src.ellipseRadii.size() >= pointCount * 2 &&
@@ -1434,7 +1438,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     BuildProgress* progress, RefitMap* refitOut,
                     size_t textureBudgetBytes,
                     const std::vector<uint8_t>* meshVisible,
-                    uint32_t purposeVisibleMask, bool nativePointCarriers) {
+                    uint32_t purposeVisibleMask, bool nativePointCarriers,
+                    bool skipGaussianPoints) {
   if (refitOut) {
     refitOut->valid = false;
     refitOut->meshes.clear();
@@ -1468,6 +1473,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // carrier stores local-space radii and axes; bake only the affine placement
   // here so CUDA/HIP RT does not expand disk/oval point clouds into triangles.
   if (nativePointCarriers) for (const DrawPointsCPU& src : scene.points) {
+    if (skipGaussianPoints && src.gaussian) continue;
     const size_t n = src.points.size() / 3;
     const bool gaussian =
         src.gaussian && src.ellipseRadii.size() >= n * 2 &&
@@ -1697,7 +1703,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   if (!compactNonMeshProxies)
     nonMeshProxies = BuildNonMeshRtProxyMeshes(scene, !nativePointCarriers,
                                               nativePointCarriers ? 0 : maxTris,
-                                              !nativePointCarriers);
+                                              !nativePointCarriers,
+                                              skipGaussianPoints);
   if (compactNonMeshProxies) {
     LOGI("RT geometry: compact analytic point/curve carriers enabled "
          "(sample budget=%zu, max-tris=%zu)", compactPointBudget, maxTris);
@@ -2293,6 +2300,217 @@ bool RefitHostScene(const DrawScene& scene, const RefitMap& map, HostScene* hs,
                  std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
   }
   return true;
+}
+
+uint64_t GsplatGpuBudgetBytes() {
+  if (const char* v = std::getenv("LUSDVIEW_GSPLAT_VRAM_MB")) {
+    char* end = nullptr;
+    const unsigned long long mb = std::strtoull(v, &end, 10);
+    if (end != v && *end == '\0' && mb > 0) return uint64_t(mb) << 20;
+  }
+  return uint64_t(4) << 30;
+}
+
+namespace {
+lrt_gsplat GsplatToLrt(const lightusd::gsplat::GSplatWorld& g, uint32_t id) {
+  lrt_gsplat d;
+  d.mu[0] = g.mu.x; d.mu[1] = g.mu.y; d.mu[2] = g.mu.z;
+  d.opacity = g.opacity;
+  std::memcpy(d.a, g.a, sizeof(d.a));
+  d.radius = g.radius;
+  d.id = id;
+  d.pad = 0;
+  return d;
+}
+
+// Adds one carrier to `tracer` at motion key `k` (-1 = render time).
+void AddGsplatCarrier(const DrawPointsCPU& src, int k,
+                      lightusd::gsplat::GSplatTracer* tracer) {
+  const size_t n = src.points.size() / 3;
+  const int K = src.gaussianMotionKeys;
+  const bool motion = k >= 0 && K > 1 &&
+                      src.gaussianMotionPositions.size() == n * size_t(K) * 3 &&
+                      src.gaussianMotionWorld.size() == size_t(K) * 16;
+  const float* w = motion ? &src.gaussianMotionWorld[size_t(k) * 16] : src.world;
+  // Column-major local-to-world.
+  const double linear[9] = {w[0], w[4], w[8], w[1], w[5], w[9], w[2], w[6], w[10]};
+  const double translation[3] = {w[12], w[13], w[14]};
+  std::vector<float> pos, rot, scl, opa;
+  const float *P = src.points.data(), *Q = src.gaussianRotations.data(),
+              *S = src.gaussianScales.data(), *O = nullptr;
+  if (motion) {
+    pos.resize(n * 3); rot.resize(n * 4); scl.resize(n * 3); opa.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      const size_t e = i * size_t(K) + size_t(k);
+      for (int c = 0; c < 3; ++c) pos[i * 3 + c] = src.gaussianMotionPositions[e * 3 + c];
+      for (int c = 0; c < 4; ++c) rot[i * 4 + c] = src.gaussianMotionRotations[e * 4 + c];
+      for (int c = 0; c < 3; ++c) scl[i * 3 + c] = src.gaussianMotionScales[e * 3 + c];
+      opa[i] = src.gaussianMotionOpacities[e];
+    }
+    P = pos.data(); Q = rot.data(); S = scl.data(); O = opa.data();
+  } else {
+    if (src.opacities.size() >= n) {
+      O = src.opacities.data();
+    } else {
+      opa.assign(n, src.opacities.empty() ? 1.0f : src.opacities[0]);
+      O = opa.data();
+    }
+  }
+  const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                        size_t(src.gaussianShDegree + 1) * 3;
+  const bool sh = src.gaussianSh.size() >= n * coeffs;
+  tracer->AddField(linear, translation, n, P, Q, S, O, src.gaussianShDegree,
+                   sh ? src.gaussianSh.data() : nullptr, /*keep_all=*/true);
+}
+
+bool HasGsplatKernelData(const DrawPointsCPU& src) {
+  const size_t n = src.points.size() / 3;
+  return src.gaussian && src.gaussianScales.size() >= n * 3 &&
+         src.gaussianRotations.size() >= n * 4;
+}
+}  // namespace
+
+bool BuildGsplatKeys(const std::vector<DrawPointsCPU>& points, GsplatKeys* out) {
+  *out = GsplatKeys();
+  out->center = std::make_shared<lightusd::gsplat::GSplatTracer>();
+  int K = 1;
+  for (const DrawPointsCPU& src : points) {
+    if (!src.gaussian) continue;
+    if (!HasGsplatKernelData(src)) {
+      out->skipped += src.points.size() / 3;
+      continue;
+    }
+    K = std::max(K, src.gaussianMotionKeys);
+    AddGsplatCarrier(src, -1, out->center.get());
+  }
+  out->count = out->center->size();
+  out->skipped += out->center->skipped();
+  if (out->count == 0 || out->count == out->center->skipped()) return false;
+  out->nkeys = uint32_t(K);
+  out->keys.resize(size_t(K) * out->count);
+  // Animated DC colour keys (splat order = carrier order, keep_all).
+  if (K > 1) {
+    bool any = false;
+    std::vector<float> dc(size_t(K) * out->count * 3, 0.0f);
+    size_t base = 0;
+    for (const DrawPointsCPU& src : points) {
+      if (!HasGsplatKernelData(src)) continue;
+      const size_t n = src.points.size() / 3;
+      const bool have = src.gaussianMotionKeys == K &&
+                        src.gaussianMotionDc.size() == n * size_t(K) * 3;
+      const size_t coeffs = size_t(src.gaussianShDegree + 1) *
+                            size_t(src.gaussianShDegree + 1) * 3;
+      for (size_t i = 0; i < n; ++i)
+        for (int k = 0; k < K; ++k)
+          for (int c = 0; c < 3; ++c) {
+            float v;
+            if (have) {
+              v = src.gaussianMotionDc[(i * size_t(K) + size_t(k)) * 3 + c];
+            } else {
+              v = src.gaussianSh.size() >= n * coeffs ? src.gaussianSh[i * coeffs + c] : 0.0f;
+            }
+            dc[((size_t(k) * out->count) + base + i) * 3 + c] = v;
+            const float center = src.gaussianSh.size() >= n * coeffs
+                                     ? src.gaussianSh[i * coeffs + c] : 0.0f;
+            if (v != center) any = true;
+          }
+      base += n;
+    }
+    if (any && base == out->count) out->dc.swap(dc);
+  }
+  for (int k = 0; k < K; ++k) {
+    lightusd::gsplat::GSplatTracer tk;
+    if (K > 1)
+      for (const DrawPointsCPU& src : points)
+        if (HasGsplatKernelData(src)) AddGsplatCarrier(src, k, &tk);
+    const auto& recs = K > 1 && tk.size() == out->count ? tk.splats()
+                                                         : out->center->splats();
+    for (size_t i = 0; i < out->count; ++i)
+      out->keys[size_t(k) * out->count + i] = GsplatToLrt(recs[i], uint32_t(i));
+  }
+  return true;
+}
+
+bool BuildGsplatGpuData(const std::vector<DrawPointsCPU>& points, bool srgb,
+                        GsplatGpuData* out) {
+  *out = GsplatGpuData();
+  GsplatKeys gk;
+  if (!BuildGsplatKeys(points, &gk)) return false;
+  return BuildGsplatGpuData(gk, srgb, out);
+}
+
+bool BuildGsplatGpuData(const GsplatKeys& gk, bool srgb, GsplatGpuData* out) {
+  *out = GsplatGpuData();
+  if (!gk.center || !gk.count || !gk.nkeys ||
+      gk.count != gk.center->size() || gk.count > UINT32_MAX / 16u / gk.nkeys ||
+      gk.keys.size() != gk.count * gk.nkeys ||
+      (!gk.dc.empty() && gk.dc.size() != gk.keys.size() * 3u)) return false;
+  out->skipped = gk.skipped;
+  const lightusd::gsplat::GSplatTracer& tracer = *gk.center;
+  // All shader offsets are 32-bit and the packed field ID uses 24 bits.
+  const size_t nf = tracer.field_count();
+  const size_t fieldBase = 4;
+  if (nf > (size_t(1) << 24) ||
+      tracer.sh_data().size() > UINT32_MAX - fieldBase - nf * 12 ||
+      gk.dc.size() > UINT32_MAX - fieldBase - nf * 12 - tracer.sh_data().size())
+    return false;
+  // Chunks keep each BVH shallow enough for the 64-entry GPU stack.
+  lrt_gsplat_build_options bo{};
+  bo.max_chunk_splats = size_t(1) << 22;
+  lrt_result err = LRT_RESULT_OK;
+  lrt_gsplat_scene* scene = lrt_gsplat_scene_build_motion(
+      gk.keys.data(), gk.count, gk.nkeys, &bo, &err);
+  if (!scene) return false;
+  const uint32_t K = gk.nkeys;
+  out->nkeys = K;
+  out->shData.assign(fieldBase + nf * 12, 0.f);
+  for (size_t f = 0; f < nf; ++f)
+    std::memcpy(&out->shData[fieldBase + f * 12], tracer.field_linv(f),
+                9 * sizeof(float));
+  const size_t shBase = out->shData.size();
+  out->shData.insert(out->shData.end(), tracer.sh_data().begin(),
+                     tracer.sh_data().end());
+  // DC keys are indexed by GPU record order (BVH leaf order), filled below.
+  std::vector<float> dcRecords;
+  const size_t nchunks = lrt_gsplat_scene_chunk_count(scene);
+  for (size_t c = 0; c < nchunks; ++c) {
+    const uint32_t* nodes;
+    const lrt_gsplat* sp;
+    uint32_t nn, ns;
+    lrt_gsplat_scene_chunk(scene, c, &nodes, &nn, &sp, &ns);
+    if (!nn || !ns) continue;
+    out->chunks.push_back(int32_t(out->nodes.size() / 8));
+    out->chunks.push_back(int32_t(out->splats.size() / (16 * K)));
+    out->nodes.insert(out->nodes.end(), nodes, nodes + size_t(nn) * 8);
+    for (uint32_t i = 0; i < ns * K; ++i) {
+      const lrt_gsplat& g = sp[i];
+      if (!gk.dc.empty() && i % K == 0)
+        for (uint32_t k = 0; k < K; ++k)
+          for (int comp = 0; comp < 3; ++comp)
+            dcRecords.push_back(gk.dc[(size_t(k) * gk.count + g.id) * 3 + comp]);
+      const uint32_t f = tracer.field_of(g.id);
+      const uint32_t shOff = uint32_t(shBase + tracer.sh_offset(g.id));
+      const uint32_t meta = uint32_t(tracer.field_degree(f) & 3) |
+                            (srgb ? 4u : 0u) | (f << 8);
+      float rec[16];
+      std::memcpy(rec, &g, 14 * sizeof(float));
+      std::memcpy(&rec[14], &shOff, 4);
+      std::memcpy(&rec[15], &meta, 4);
+      out->splats.insert(out->splats.end(), rec, rec + 16);
+    }
+  }
+  lrt_gsplat_scene_free(scene);
+  uint32_t dcBase = 0;
+  if (!dcRecords.empty()) {
+    dcBase = uint32_t(out->shData.size());
+    out->shData.insert(out->shData.end(), dcRecords.begin(), dcRecords.end());
+  }
+  const uint32_t header[4] = {dcBase, 0u, uint32_t(fieldBase), K};
+  std::memcpy(out->shData.data(), header, sizeof(header));
+  out->splatCount = uint32_t(out->splats.size() / (16 * K));
+  out->nodeCount = uint32_t(out->nodes.size() / 8);
+  out->chunkCount = uint32_t(out->chunks.size() / 2);
+  return out->splatCount > 0;
 }
 
 }  // namespace lusdview

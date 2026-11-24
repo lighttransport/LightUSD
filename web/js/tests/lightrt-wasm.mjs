@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 const {default: createLightUSD} = await import(process.env.LIGHTUSD_WASM64 === '1'
-  ? '../src/lightusd/lightusd_next_64.js'
-  : '../src/lightusd/lightusd_next.js');
+  ? '../src/lightusd/lightusd_64.js'
+  : '../src/lightusd/lightusd.js');
 import { raycastTriangles } from '../lucia-code/src/projection-bake.js';
 
 const module = await createLightUSD();

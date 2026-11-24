@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""lightusd.tydra — render-scene extraction (tydra-next).
+"""lightusd.tydra — render-scene extraction (Tydra).
 
 Convert a loaded :class:`lightusd.Stage` into GPU-friendly render data::
 

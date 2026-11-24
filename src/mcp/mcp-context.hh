@@ -3,7 +3,7 @@
 //
 // Per-session state of the next MCP server. Stages and loaded layers are
 // public C API stage handles (each owned exclusively by the session); diff
-// sessions keep next layers directly.
+// sessions keep core layers directly.
 #pragma once
 
 #include <array>
@@ -15,8 +15,8 @@
 
 #include "mcp-json.hh"
 #include "lightusd-c.h"
-#include "next/diff/layer-diff.hh"
-#include "next/layer/layer.hh"
+#include "diff/layer-diff.hh"
+#include "layer/layer.hh"
 
 namespace lightusd {
 namespace mcp {
@@ -86,12 +86,12 @@ struct Screenshot {
 struct DiffSession {
   std::string left_name{"left"};
   std::string right_name{"right"};
-  next::Layer left;
-  next::Layer right;
-  next::DiffOptions opts;
-  std::unordered_map<std::string, next::PrimSpecDiff> psDiffs;
-  std::unordered_map<std::string, next::PropDiff> propDiffs;
-  next::LayerMetaDiff layerMetaDiff;
+  ::lightusd::Layer left;
+  ::lightusd::Layer right;
+  ::lightusd::DiffOptions opts;
+  std::unordered_map<std::string, ::lightusd::PrimSpecDiff> psDiffs;
+  std::unordered_map<std::string, ::lightusd::PropDiff> propDiffs;
+  ::lightusd::LayerMetaDiff layerMetaDiff;
 };
 
 struct Context {

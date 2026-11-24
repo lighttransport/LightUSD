@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 namespace lightusd {
 namespace tydra {
@@ -12,11 +13,64 @@ namespace tydra {
 constexpr int kLightRtOpenPBRVec4s = 20;
 constexpr int kLightRtOpenPBRFloats = kLightRtOpenPBRVec4s * 4;
 
+constexpr int kMaxRealtimeDiffuseLobes = 32;
+struct RealtimeDiffuseLobe {
+  float color[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float weightColor[3]{1.0f, 1.0f, 1.0f};
+  float roughness{0.0f};
+  int model{0};
+};
+
+constexpr int kMaxRealtimeConductorLobes = 32;
+struct RealtimeConductorLobe {
+  float ior[3]{0.0f, 0.0f, 0.0f};
+  float extinction[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float weightColor[3]{1.0f, 1.0f, 1.0f};
+  float roughness{0.0f};
+  float roughnessY{0.0f};
+  float tangent[3]{0.0f, 0.0f, 0.0f};
+  float normal[3]{0.0f, 0.0f, 0.0f};
+  bool retroreflective{false};
+  float thinfilmThickness{0.0f};
+  float thinfilmIor{1.5f};
+};
+
+constexpr int kMaxRealtimeSpecularLobes = 32;
+struct RealtimeSpecularLobe {
+  RealtimeConductorLobe frame{};
+  int model{0};
+  float tint[3]{1.0f, 1.0f, 1.0f};
+  float color0[3]{1.0f, 1.0f, 1.0f};
+  float color82[3]{1.0f, 1.0f, 1.0f};
+  float color90[3]{1.0f, 1.0f, 1.0f};
+  float exponent{5.0f};
+};
+
+constexpr int kMaxRealtimeSheenLobes = 32;
+struct RealtimeSheenLobe {
+  float color[3]{0.0f, 0.0f, 0.0f};
+  float weight{0.0f};
+  float weightColor[3]{1.0f, 1.0f, 1.0f};
+  float roughness{0.0f};
+  int model{0};
+};
+
 struct RealtimePbrMaterial {
   float baseWeight{1.0f};
   float baseColor[3]{0.8f, 0.8f, 0.8f};
   float diffuseRoughness{0.0f};
+  // CPU model: 0 Lambert, 1 compensated Oren–Nayar, 2 Oren–Nayar, 3 Burley.
+  // Values match the vendored MTLX_DIFFUSE_* constants.
+  int diffuseModel{0};
+  int diffuseLobeCount{0};
+  RealtimeDiffuseLobe diffuseLobes[kMaxRealtimeDiffuseLobes]{};
   float metalness{0.0f};
+  int conductorLobeCount{0};
+  RealtimeConductorLobe conductorLobes[kMaxRealtimeConductorLobes]{};
+  int specularLobeCount{0};
+  RealtimeSpecularLobe specularLobes[kMaxRealtimeSpecularLobes]{};
   float specularWeight{1.0f};
   float specularColor[3]{1.0f, 1.0f, 1.0f};
   float specularRoughness{0.3f};
@@ -37,6 +91,8 @@ struct RealtimePbrMaterial {
   float sheenWeight{0.0f};
   float sheenColor[3]{1.0f, 1.0f, 1.0f};
   float sheenRoughness{0.3f};
+  int sheenLobeCount{0};
+  RealtimeSheenLobe sheenLobes[kMaxRealtimeSheenLobes]{};
   float thinFilmWeight{0.0f};
   float thinFilmThicknessNm{0.0f};
   float thinFilmIor{1.5f};
@@ -57,6 +113,8 @@ struct RealtimePbrMaterial {
   float coatAffectRoughness{0.0f};
   float coatRoughnessAnisotropy{0.0f};
   float coatDarkening{0.0f};
+  // Identifies the OpenPBR source model for CPU remaps and parameter bounds.
+  int openPbrCoatRemap{0};
   float volumeDensity{0.0f};
   float volumeAlbedo[3]{0.5f, 0.5f, 0.5f};
   float volumeEmission[3]{0.0f, 0.0f, 0.0f};
@@ -87,9 +145,15 @@ inline void ClampRealtimePbrMaterial(RealtimePbrMaterial* p) {
   auto clamp01 = [](float v) { return std::max(0.0f, std::min(1.0f, v)); };
   p->baseWeight = clamp01(p->baseWeight);
   p->metalness = clamp01(p->metalness);
-  p->specularWeight = clamp01(p->specularWeight);
+  p->specularWeight = p->openPbrCoatRemap
+                          ? (std::isfinite(p->specularWeight)
+                                 ? std::max(0.0f, p->specularWeight) : 0.0f)
+                          : clamp01(p->specularWeight);
   p->specularRoughness = std::max(0.0f, p->specularRoughness);
-  p->specularIor = std::max(1.0f, p->specularIor);
+  p->specularIor = p->openPbrCoatRemap
+                       ? (std::isfinite(p->specularIor) && p->specularIor > 0.0f
+                              ? p->specularIor : 1.5f)
+                       : std::max(1.0f, p->specularIor);
   p->transmission = clamp01(p->transmission);
   p->transmissionDepth = std::max(0.0f, p->transmissionDepth);
   p->subsurface = clamp01(p->subsurface);

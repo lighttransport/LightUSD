@@ -243,9 +243,9 @@ or darkening it.
 Additional kinds register a parser without core changes:
 
 ```cpp
-lightusd::tydra::next::RegisterLightFilter(
-    "gain", [](const lightusd::next::Stage&, const lightusd::next::UsdPrim&,
-               double, lightusd::tydra::next::LightFilter* out, std::string*) {
+lightusd::tydra::RegisterLightFilter(
+    "gain", [](const lightusd::Stage&, const lightusd::UsdPrim&,
+               double, lightusd::tydra::LightFilter* out, std::string*) {
       out->intensity = 0.5f;   // receiver-independent multiplier
       return true;
     });
@@ -311,7 +311,7 @@ For development without a hardware GPU, use the installed Mesa software stack:
 
 ```sh
 scripts/with-software-rendering.sh \
-  build_ninja/src/next/tydra_next_build/test_scene_preview_compute vulkan
+  build_ninja/src/tydra_build/test_scene_preview_compute vulkan
 python3 tools/lusdpreview/check-renderers.py scene.usda --software \
   --kinds volume --viewer build_ninja/preview-render/lusdview \
   --renderer build_ninja/preview-render/lusdview_lightrt_c_build/lusdrender \
@@ -376,6 +376,123 @@ python3 tools/lusdpreview/check-lod.py --viewer build_ninja/lusdview \
 It checks near/far automatic selection and budget accounting on CPU, Vulkan and
 CUDA for every representation, and compares refined finest captures against
 captures with LOD disabled.
+
+## Conversion presets
+
+`lusdpreview --preset fast|standard|quality` (`--preview-preset` in lusdview
+and lusdrender) sets defaults that later explicit options override, whatever
+their position on the command line:
+
+| Preset | Source refinement index | Texture samples | Automatic grid | Samples / triangle | Sample cap | Batches |
+|---|---|---|---|---|---|---|
+| fast | off | 128 px | 1024 cells | <= 16 | 1x budget | 400K prims, composition overlapped with sampling |
+| standard (default) | on | 512 px, 256 MiB | 2048 cells | <= 64 | 1x budget | 100K prims |
+| quality | on | 2048 px, 1 GiB | 4096 cells | <= 256 | 2x budget | 100K prims |
+
+The automatic grid still coarsens to the renderer budget (the sample cap) in
+every preset; `--preview-resolution` / `--preview-budget-mib` override it.
+quality may plan up to twice the budget-derived GPU memory for finer cells.
+All three presets write degree-zero spherical harmonics. The converter samples a
+single view-independent surface colour per splat. Baking higher bands would
+require measurements or shading evaluated from multiple view directions.
+Without the index or a refinement region, mesh sampling runs on up to 8 worker
+threads, and top-level instance replay transforms and keys prototype samples
+on up to 16 threads (inserted in placement order), giving the same output as
+the serial replay (`LIGHTUSD_PREVIEW_SERIAL_REPLAY=1`). Output is
+byte-identical across runs (hotel_01, ALab and Moana checked). Texture
+sampling is order-independent: Ptex faces are cached per face, and the
+decoder has no admission budget (a budget shrank or dropped images
+depending on what other sampling threads still held).
+
+Instance replay uses worker-local cell reduction by default. Set
+`LIGHTUSD_PREVIEW_SHARD_REPLAY=0` for grouped transforms and serial insertion.
+Each worker retains the earliest
+placement and lowest-ranked representative for each cell. When a window could
+cross the grid budget, replay follows the original placement order so the grid
+coarsens at the same sample. On a 60-million-sample slice of Moana with 48
+occupied cells, grouped replay took 4.07 s and worker-local reduction took
+1.33 s. These timings cover replay of that slice only.
+
+The preview cache checks each recorded source dependency against its filesystem
+stamp. A path index preserves manifest order and avoids rescanning the stamp
+list for every dependency. On the full Caldera manifest, checking 60,239 stamps
+took 1.76 s, down from 57.24 s on the same host.
+
+Mesh conversion applies its triangulation memory limit to each temporary
+render mesh. The preview host budget still bounds the overall conversion.
+Earlier versions accumulated triangulation estimates across meshes assigned
+to the same worker and could omit later meshes in a large scene. Automatic
+cache lookup uses a new key so those previews are regenerated on the next
+conversion. Previously exported USD files can still be opened directly.
+In a controlled run of 1,200 one-triangle meshes with a 4 KiB triangulation
+budget, reusing the converter admitted 170 meshes. Scoping it to each mesh
+admitted all 1,200 at the same limit.
+
+Cold conversions on a 32-thread host (default 2048 MiB budget):
+
+| Scene | Preset | Wall | Peak RSS | Splats |
+|---|---|---:|---:|---:|
+| Caldera `hotel_01.usd` (composed; 109K prims, 24K meshes, 10K instances) | fast | 7.3–8.4 s | 1.0 GiB | 751,299 |
+| Caldera `hotel_01.usd` | standard | 17.5 s | 0.85 GiB | 773,351 |
+| Caldera `hotel_01.usd` | quality | 22.0 s | 1.2 GiB | 2,525,880 |
+| ALab `_merged_ALab/entry.usda` | fast | 42 s | 2.3 GiB | 1,318,794 |
+| ALab `_merged_ALab/entry.usda` | standard | 65 s | 1.2 GiB | 1,305,421 |
+| ALab `_merged_ALab/entry.usda` | quality | 74 s | 1.6 GiB | 1,768,546 |
+| Moana `island.usda` (30.9M instances) | fast | 21 min 59 s–22 min 22 s | 4.7–4.8 GiB | 470,080 |
+| Caldera `caldera.usda` (authored proxy district LODs) | fast | 6.6 s | 2.4 GiB | 80,371 |
+| Caldera `caldera.usda`, `--variant districtLod=full` (13.0M prims, 2.18M meshes, 2.78M instances) | fast | 18 min 14 s | 18.60 GiB | 780,372 |
+
+Three cold sharded Moana runs took 22:22, 21:59 and 22:19. All nine USD
+payloads matched the original export. The last two exports, including their
+manifests, matched byte-for-byte. The manifest lists sidecars and missing
+surface textures by path so filesystem enumeration and worker scheduling do
+not change the output. With other work running on the host, the original
+converter took 37:04 and grouped transforms with serial insertion took 40:23.
+With Caldera and the regression suite idle, the original executable took
+30:15. The sharded runs reduced wall time by 26–27% relative to that control
+and retained the same 470,080 splats.
+
+For full Caldera, the pre-change executable converted 1,067,017 meshes and
+produced 775,284 splats in 25 min 58 s on the same shared host. The corrected
+grouped run converted 2,178,476 meshes in 19 min 56 s (18.54 GiB peak RSS).
+Both used the same 45 full districts,
+2,784,179 instances and 2 GiB renderer budget. Sharded replay of the corrected
+scene took 18 min 14 s (18.60 GiB peak RSS). Its 780,372 splats, USD sidecars
+and manifest were byte-identical to the grouped export. In a separate
+instrumented run, the 48 planning batches took 606 s and the 37 conversion
+batches took 557 s. The composition thread spent 581 s and 541 s in
+stage construction during those passes, respectively.
+
+A tiled, constant-colour prototype emitted one Gaussian per nondegenerate
+triangle and flushed every 65,536 samples. On the hotel scene it produced
+19,332,842 splats and a 1,083 MB sidecar in 13.85 s (903 MiB peak RSS).
+The fast grid produced 751,358 splats and 42.4 MB in 16.36 s (1,022 MiB
+peak RSS). These single runs shared the host with other workloads. At
+320 × 234, mean absolute RGB difference across pixels covered by either
+CPU auto-framed render was 0.084 on a 0–1 scale. The triangle output's
+estimated renderer budget was 18.9 GiB. The fast preset retains the grid
+for its smaller sidecar and bounded renderer footprint.
+
+
+lusdrender wall time for the hotel_01 previews (whole process, auto-framed,
+1280x720, 1 spp, RX 9070 XT / 32 threads):
+
+| Preset | Splats | CPU | `-vk` |
+|---|---:|---:|---:|
+| fast | 751,299 | 0.8 s | 1.6 s |
+| standard | 773,351 | 0.8 s | 1.5 s |
+| quality | 2,525,880 | 2.1 s | 4.7 s |
+
+`tool-lusdpreview-fast-preset-timing` checks the hotel_01 fast conversion stays
+within 10 s (configure with `-DLIGHTUSD_PRESET_SCENE=.../hotel_01.usd`;
+it skips otherwise).
+PointInstancer prototypes are drawn even when an ancestor above the prototype
+root is invisible (the common `proto` scope with `visibility = "invisible"`,
+e.g. Caldera terrain clutter); only the prototype's own and its descendants'
+visibility and purpose apply. Instance targets that are never composed
+(pruned, inactive or absent) render nothing and are reported in the warning;
+in the full Caldera source those are rock-cliff prototypes authored
+`active = false`.
 
 ## Qualification result
 

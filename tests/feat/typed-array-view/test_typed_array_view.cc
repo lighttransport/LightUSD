@@ -1,13 +1,16 @@
 ﻿// Simple test program for TypedArrayView methods in TimeSamples
-#include "src/timesamples.hh"
-#include "src/typed-array.hh"
-#include "src/value-types.hh"
+#include "src/legacy/timesamples.hh"
+#include "src/legacy/typed-array.hh"
+#include "src/legacy/value-types.hh"
 #include <iostream>
 #include <cassert>
 #include <vector>
 
 using namespace lightusd;
+
+using namespace lightusd::legacy;  // NOLINT
 using namespace lightusd::value;
+using namespace lightusd::legacy::value;  // NOLINT
 
 void test_timesamples_binary_view() {
     std::cout << "Testing TimeSamples TypedArrayView for binary float arrays...\n";

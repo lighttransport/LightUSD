@@ -111,11 +111,12 @@ def check_ppm(path):
 
 
 def capture_when_ready(client, path, timeout=10.0):
-    """Capture after a windowed viewport has a non-collapsed layout."""
+    """Capture a frame rendered after the preceding settings and viewport edits."""
+    frame = client.call("get_render_stats")["frame_serial"]
     deadline = time.monotonic() + timeout
     last = {}
     while time.monotonic() < deadline:
-        last = client.call("screenshot", {"path": str(path)})
+        last = client.call("screenshot", {"path": str(path), "after_frame": frame})
         if last.get("written"):
             return last
         if last.get("ready") is not False:

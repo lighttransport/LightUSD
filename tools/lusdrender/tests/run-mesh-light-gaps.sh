@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lusdrender: the two holes left in MeshLightAPI support on the `next` loader.
+# lusdrender: the two holes left in MeshLightAPI support on the `core` loader.
 #
 #   1. inputs:normalize was ignored. A normalized light holds its POWER fixed as
 #      its area changes, so its radiance is divided by the emitting (world) area.
@@ -210,7 +210,7 @@ if rel > 0.01:
           f"{m['flat']:.1f}, {rel * 100:.1f}% off). Mesh lights are collected from "
           f"the flat triangle list, which an instanced prototype is not in -- its "
           f"geometry lives in a BLAS placed by the TLAS. Each PLACEMENT has to "
-          f"register its own light (CollectMeshLightsNext).")
+          f"register its own light (CollectMeshLightsCore).")
     sys.exit(1)
 
 print(f"PASS: inputs:normalize divides by the emitting area (normalized "

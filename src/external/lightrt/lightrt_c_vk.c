@@ -25,7 +25,10 @@
 #include "vk/shaders/trace_ray_query.spv.h"  /* trace_ray_query_spv[] */
 #include "vk/shaders/trace_ray_query_wide.spv.h" /* trace_ray_query_wide_spv[] */
 #include "vk/shaders/shade_analytic.spv.h"   /* shade_analytic_spv[]  */
+#include "vk/shaders/trace_materialx_gsplat_path.spv.h"
 #include "vk/shaders/trace_materialx_path.spv.h"
+#include "vk/shaders/trace_gsplat.spv.h"     /* trace_gsplat_spv[]    */
+#include "lightrt_c_gsplat.h"
 
 /* Host-read sync flags not declared in lightrt_vkew.h. */
 #ifndef VK_PIPELINE_STAGE_HOST_BIT
@@ -111,7 +114,9 @@ struct lrt_vk_engine {
     vk_pipeline rtx_pipe;   /* trace_ray_query: AS + 2 SSBO bindings */
     vk_pipeline rtx_pipe_wide; /* trace_ray_query_wide: 5-word hits (inst,prim) */
     vk_pipeline shade_pipe; /* shade_analytic: 3 SSBO bindings + push */
+    vk_pipeline material_gsplat_path_pipe;
     vk_pipeline material_path_pipe; /* TLAS + packed MaterialX/path buffers */
+    vk_pipeline gsplat_pipe; /* trace_gsplat: 4 SSBO bindings + push */
 };
 
 static void vk_set_err(lrt_vk_engine *e, const char *msg) {
@@ -214,8 +219,17 @@ static int vk_buffer_create(lrt_vk_engine *e, VkDeviceSize size, vk_buffer *out)
  * are far faster than reads from write-combined HOST_COHERENT memory) while
  * keeping HOST_COHERENT too, so no manual vkInvalidateMappedMemoryRanges is
  * needed (vkew does not expose it). Falls back to plain coherent. */
+static int vk_buffer_create_cached(lrt_vk_engine *e, VkDeviceSize size,
+                                   VkBufferUsageFlags usage, vk_buffer *out);
 static int vk_buffer_create_staging(lrt_vk_engine *e, VkDeviceSize size,
                                     vk_buffer *out) {
+    return vk_buffer_create_cached(e, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, out);
+}
+
+/* As vk_buffer_create_staging with arbitrary usage: e.g. a STORAGE buffer the
+ * shader writes results into and the host reads back (gsplat hits). */
+static int vk_buffer_create_cached(lrt_vk_engine *e, VkDeviceSize size,
+                                   VkBufferUsageFlags usage, vk_buffer *out) {
     memset(out, 0, sizeof(*out));
     if (size == 0) size = 16;
     out->size = size;
@@ -223,7 +237,7 @@ static int vk_buffer_create_staging(lrt_vk_engine *e, VkDeviceSize size,
     memset(&bi, 0, sizeof(bi));
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bi.size = size;
-    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.usage = usage;
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(e->device, &bi, NULL, &out->buf) != VK_SUCCESS) {
         vk_set_err(e, "vkCreateBuffer(staging)");
@@ -756,7 +770,9 @@ void lrt_vk_engine_destroy(lrt_vk_engine *e) {
         vk_pipeline_destroy(e, &e->rtx_pipe);
         vk_pipeline_destroy(e, &e->rtx_pipe_wide);
         vk_pipeline_destroy(e, &e->shade_pipe);
+        vk_pipeline_destroy(e, &e->material_gsplat_path_pipe);
         vk_pipeline_destroy(e, &e->material_path_pipe);
+        vk_pipeline_destroy(e, &e->gsplat_pipe);
         if (e->cmd_pool) vkDestroyCommandPool(e->device, e->cmd_pool, NULL);
         vkDestroyDevice(e->device, NULL);
     }
@@ -3252,36 +3268,38 @@ typedef struct material_path_push {
     uint32_t frame[4], path[4];
 } material_path_push;
 
-static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e) {
-    VkDescriptorType types[11];
+static vk_pipeline *material_path_get_pipeline(lrt_vk_engine *e, uint32_t buffers) {
+    VkDescriptorType types[16];
+    const int mixed = buffers == 15;
+    vk_pipeline *pipe = mixed ? &e->material_gsplat_path_pipe : &e->material_path_pipe;
+    const uint32_t *code = mixed ? trace_materialx_gsplat_path_spv : trace_materialx_path_spv;
+    const size_t bytes = mixed ? sizeof(trace_materialx_gsplat_path_spv) : sizeof(trace_materialx_path_spv);
     uint32_t i;
-    if (e->material_path_pipe.valid) return &e->material_path_pipe;
+    if (pipe->valid) return pipe;
     types[0] = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 1; i < 11; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    if (!vk_pipeline_build(e, trace_materialx_path_spv,
-                           sizeof(trace_materialx_path_spv), 11, types,
-                           (uint32_t)sizeof(material_path_push), NULL,
-                           &e->material_path_pipe)) return NULL;
-    return &e->material_path_pipe;
+    for (i = 1; i <= buffers; ++i) types[i] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    if (!vk_pipeline_build(e, code, bytes, buffers + 1, types,
+                           (uint32_t)sizeof(material_path_push), NULL, pipe)) return NULL;
+    return pipe;
 }
 
 static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
                               VkAccelerationStructureKHR tlas,
-                              const vk_buffer *buffers,
+                              const vk_buffer *buffers, uint32_t count,
                               VkDescriptorPool *out_pool,
                               VkDescriptorSet *out_set) {
     VkDescriptorPoolSize ps[2];
     VkDescriptorPoolCreateInfo pci;
     VkDescriptorSetAllocateInfo ai;
-    VkDescriptorBufferInfo bi[10];
-    VkWriteDescriptorSet w[11];
+    VkDescriptorBufferInfo bi[15];
+    VkWriteDescriptorSet w[16];
     VkWriteDescriptorSetAccelerationStructureKHR asw;
     uint32_t i;
     memset(ps, 0, sizeof(ps));
     ps[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     ps[0].descriptorCount = 1;
     ps[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ps[1].descriptorCount = 10;
+    ps[1].descriptorCount = count;
     memset(&pci, 0, sizeof(pci));
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets = 1; pci.poolSizeCount = 2; pci.pPoolSizes = ps;
@@ -3300,23 +3318,24 @@ static int material_path_bind(lrt_vk_engine *e, VkDescriptorSetLayout dsl,
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[0].pNext = &asw;
     w[0].dstSet = *out_set; w[0].dstBinding = 0; w[0].descriptorCount = 1;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    for (i = 0; i < 10; ++i) {
+    for (i = 0; i < count; ++i) {
         bi[i].buffer = buffers[i].buf; bi[i].offset = 0; bi[i].range = VK_WHOLE_SIZE;
         w[i+1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[i+1].dstSet = *out_set; w[i+1].dstBinding = i+1;
         w[i+1].descriptorCount = 1; w[i+1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[i+1].pBufferInfo = &bi[i];
     }
-    vkUpdateDescriptorSets(e->device, 11, w, 0, NULL);
+    vkUpdateDescriptorSets(e->device, count + 1, w, 0, NULL);
     return 1;
 }
 
 int lrt_vk_rtx_scene_render_materialx_path(
     lrt_vk_engine *e, lrt_vk_rtx_scene *s,
     const lrt_vk_material_path_desc *d, float *out_rgba, lrt_result *err) {
-    vk_buffer b[10]; size_t sizes[10]; const void *data[10];
+    vk_buffer b[15]; size_t sizes[15]; const void *data[15];
     VkDescriptorPool pool = VK_NULL_HANDLE; VkDescriptorSet set;
     material_path_push pc; vk_pipeline *pipe; uint32_t i, pixels; int ok = 0;
+    uint32_t count;
     const char *stage = "validate";
     if (!e || !s || !d || !out_rgba || !d->vertices || !d->indices ||
         !d->triangle_materials || !d->materials || !d->graphs || !d->width ||
@@ -3324,7 +3343,22 @@ int lrt_vk_rtx_scene_render_materialx_path(
         d->material_stride_floats < 80u || s->ntlas > 1u) {
         if (err) *err = LRT_RESULT_INVALID_ARGUMENT; return -1;
     }
-    stage = "pipeline"; pipe = material_path_get_pipeline(e);
+    count = d->gs_chunk_words || d->gs_camera_count ? 15u : 10u;
+    if (d->gs_record_floats > SIZE_MAX / sizeof(float) ||
+        d->gs_node_words > SIZE_MAX / sizeof(uint32_t) ||
+        d->gs_chunk_words > SIZE_MAX / sizeof(int32_t) ||
+        d->gs_sh_floats > SIZE_MAX / sizeof(float) ||
+        (uint64_t)d->gs_camera_count * 16u > SIZE_MAX / sizeof(float) ||
+        (d->gs_chunk_words && (!d->gs_chunks || !d->gs_nodes || !d->gs_records ||
+                              !d->gs_sh || d->gs_chunk_words % 2u ||
+                              !d->gs_node_words || d->gs_node_words % 8u ||
+                              !d->gs_record_floats || d->gs_record_floats % 16u ||
+                              d->gs_sh_floats < 4u)) ||
+        (d->gs_camera_count && !d->gs_camera_matrices)) {
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    stage = "pipeline"; pipe = material_path_get_pipeline(e, count);
     if (!pipe) {
         if (e->err[0] == '\0') vk_set_err(e, "material path pipeline");
         if (err) *err = LRT_RESULT_NOT_BUILT; return -1;
@@ -3352,13 +3386,18 @@ int lrt_vk_rtx_scene_render_materialx_path(
         sizes[9]=have?(size_t)d->nptex_tri*sizeof(uint32_t):sizeof(no_ptex);
         data[9]=have?(const void *)d->ptex_tri:(const void *)&no_ptex;
     }
-    stage = "buffers"; for (i=0;i<10;++i) {
+    sizes[10]=d->gs_record_floats*sizeof(float); data[10]=d->gs_records;
+    sizes[11]=d->gs_node_words*sizeof(uint32_t); data[11]=d->gs_nodes;
+    sizes[12]=d->gs_chunk_words*sizeof(int32_t); data[12]=d->gs_chunks;
+    sizes[13]=d->gs_sh_floats*sizeof(float); data[13]=d->gs_sh;
+    sizes[14]=(size_t)d->gs_camera_count*16u*sizeof(float); data[14]=d->gs_camera_matrices;
+    stage = "buffers"; for (i=0;i<count;++i) {
         size_t n=sizes[i]?sizes[i]:4u;
         if(!vk_buffer_create(e,n,&b[i])) goto done;
         if(sizes[i]&&data[i]&&!vk_buffer_write(e,&b[i],data[i],sizes[i])) goto done;
     }
     stage = "descriptors";
-    if(!material_path_bind(e,pipe->dsl,s->tlas.as,b,&pool,&set)) goto done;
+    if(!material_path_bind(e,pipe->dsl,s->tlas.as,b,count,&pool,&set)) goto done;
     memset(&pc,0,sizeof(pc)); memcpy(pc.inv_view_proj,d->inv_view_proj,sizeof(pc.inv_view_proj));
     memcpy(pc.camera,d->camera,3u*sizeof(float)); memcpy(pc.clear_color,d->clear_color,3u*sizeof(float));
     pc.clear_color[3]=d->exposure; pc.frame[0]=d->width; pc.frame[1]=d->height;
@@ -3374,7 +3413,7 @@ int lrt_vk_rtx_scene_render_materialx_path(
 done:
     if (!ok && e->err[0] == '\0') vk_set_err(e, stage);
     if(pool!=VK_NULL_HANDLE&&!e->device_lost)vkDestroyDescriptorPool(e->device,pool,NULL);
-    for(i=0;i<10;++i)vk_buffer_destroy(e,&b[i]);
+    for(i=0;i<count;++i)vk_buffer_destroy(e,&b[i]);
     if(err)*err=ok?LRT_RESULT_OK:LRT_RESULT_OUT_OF_MEMORY;
     return ok?0:-1;
 }
@@ -3441,4 +3480,168 @@ int lrt_vk_trace_scene_rtx_indexed(lrt_vk_engine *e, const float *vertices,
     int rc = lrt_vk_rtx_scene_trace(e, s, rays, n, out, err);
     lrt_vk_rtx_scene_free(e, s);
     return rc;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 3D Gaussian splats (lightrt_c_gsplat.h).                                  */
+/* ------------------------------------------------------------------------- */
+typedef struct gsplat_push {
+    uint32_t ray_count;
+    uint32_t seed_base;
+    uint32_t node_count;
+    uint32_t nkeys;
+} gsplat_push;
+
+static vk_pipeline *gsplat_get_pipeline(lrt_vk_engine *e) {
+    if (e->gsplat_pipe.valid) return &e->gsplat_pipe;
+    if (!vk_pipeline_build(e, trace_gsplat_spv, sizeof(trace_gsplat_spv), 5, NULL,
+                           (uint32_t)sizeof(gsplat_push), NULL, &e->gsplat_pipe))
+        return NULL;
+    return &e->gsplat_pipe;
+}
+
+int lrt_vk_gsplat_trace(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                        const lrt_ray *rays, uint32_t n, uint32_t seed_base,
+                        uint64_t max_device_bytes, lrt_hit *out,
+                        lrt_result *err) {
+    return lrt_vk_gsplat_trace_time(e, s, rays, NULL, n, seed_base,
+                                    max_device_bytes, out, err);
+}
+
+int lrt_vk_gsplat_trace_time(lrt_vk_engine *e, const struct lrt_gsplat_scene *s,
+                             const lrt_ray *rays, const float *times, uint32_t n,
+                             uint32_t seed_base, uint64_t max_device_bytes,
+                             lrt_hit *out, lrt_result *err) {
+    if (!e || !s || (n && (!rays || !out))) {
+        if (err) *err = LRT_RESULT_INVALID_ARGUMENT;
+        return -1;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        out[i].t = out[i].u = out[i].v = 0.0f;
+        out[i].prim_id = LRT_TRI_NO_HIT;
+    }
+    if (n == 0 || lrt_gsplat_scene_size(s) == 0) {
+        if (err) *err = LRT_RESULT_OK;
+        return 0;
+    }
+    vk_pipeline *pipe = gsplat_get_pipeline(e);
+    if (!pipe) {
+        if (err) *err = LRT_RESULT_UNSUPPORTED;
+        return -1;
+    }
+    /* Largest chunk decides the device footprint; size the ray tile to fit. */
+    const uint32_t nkeys = lrt_gsplat_scene_key_count(s);
+    uint64_t max_chunk = 0;
+    const size_t nchunks = lrt_gsplat_scene_chunk_count(s);
+    for (size_t k = 0; k < nchunks; k++) {
+        const uint32_t *nodes;
+        const lrt_gsplat *sp;
+        uint32_t nn, ns;
+        lrt_gsplat_scene_chunk(s, k, &nodes, &nn, &sp, &ns);
+        uint64_t b = (uint64_t)nn * 32u + (uint64_t)ns * nkeys * sizeof(lrt_gsplat);
+        if (b > max_chunk) max_chunk = b;
+    }
+    uint32_t tile = vk_ray_tile_size();
+    if (tile == 0 || tile > n) tile = n;
+    const uint64_t per_ray = sizeof(lrt_ray) + sizeof(lrt_hit) + sizeof(float);
+    if (max_device_bytes) {
+        if (max_chunk + per_ray * 4096u > max_device_bytes) {
+            vk_set_err(e, "gsplat chunk exceeds the device memory budget");
+            if (err) *err = LRT_RESULT_BUILD_LIMIT;
+            return -1;
+        }
+        uint64_t fit = (max_device_bytes - max_chunk) / per_ray;
+        if (fit < tile) tile = (uint32_t)fit;
+    }
+    lrt_ray *work = (lrt_ray *)malloc((size_t)tile * sizeof(lrt_ray));
+    lrt_hit *th = (lrt_hit *)malloc((size_t)tile * sizeof(lrt_hit));
+    float *best = (float *)malloc((size_t)n * sizeof(float));
+    vk_buffer b_rays, b_hits, b_times;
+    memset(&b_rays, 0, sizeof(b_rays));
+    memset(&b_hits, 0, sizeof(b_hits));
+    memset(&b_times, 0, sizeof(b_times));
+    int ok = work && th && best &&
+             vk_buffer_create(e, (VkDeviceSize)tile * sizeof(lrt_ray), &b_rays) &&
+             vk_buffer_create(e, (VkDeviceSize)tile * sizeof(float), &b_times) &&
+             /* Read back once per tile per chunk: host-cached memory. */
+             vk_buffer_create_cached(e, (VkDeviceSize)tile * sizeof(lrt_hit),
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &b_hits);
+    if (ok)
+        for (uint32_t i = 0; i < n; i++) best[i] = rays[i].tmax;
+    if (ok && nkeys > 1 && !times) {
+        /* Untimed rays see the shutter center. */
+        float *mid = (float *)malloc((size_t)tile * sizeof(float));
+        ok = mid != NULL;
+        if (ok) {
+            for (uint32_t i = 0; i < tile; i++) mid[i] = 0.5f;
+            ok = vk_buffer_write(e, &b_times, mid, (size_t)tile * sizeof(float));
+            free(mid);
+        }
+    }
+    for (size_t k = 0; ok && k < nchunks; k++) {
+        const uint32_t *nodes;
+        const lrt_gsplat *sp;
+        uint32_t nn, ns;
+        lrt_gsplat_scene_chunk(s, k, &nodes, &nn, &sp, &ns);
+        if (!nn || !ns) continue;
+        vk_buffer b_nodes, b_splats;
+        memset(&b_nodes, 0, sizeof(b_nodes));
+        memset(&b_splats, 0, sizeof(b_splats));
+        const size_t nb = (size_t)nn * 32u, sb = (size_t)ns * nkeys * sizeof(lrt_gsplat);
+        /* Splat chunks are read at every leaf visit: prefer device-local. */
+        if (!vk_buffer_create_device_filled(e, nb, nodes, nb, &b_nodes) &&
+            !(vk_buffer_create(e, nb, &b_nodes) && vk_buffer_write(e, &b_nodes, nodes, nb)))
+            ok = 0;
+        if (ok && !vk_buffer_create_device_filled(e, sb, sp, sb, &b_splats) &&
+            !(vk_buffer_create(e, sb, &b_splats) && vk_buffer_write(e, &b_splats, sp, sb)))
+            ok = 0;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        VkDescriptorSet set;
+        if (ok) {
+            vk_buffer set_bufs[5] = {b_nodes, b_splats, b_rays, b_hits, b_times};
+            ok = vk_descriptors_bind(e, pipe->dsl, set_bufs, 5, &pool, &set);
+        }
+        for (uint32_t off = 0; ok && off < n; off += tile) {
+            const uint32_t cnt = n - off < tile ? n - off : tile;
+            for (uint32_t i = 0; i < cnt; i++) {
+                work[i] = rays[off + i];
+                work[i].tmax = best[off + i];
+            }
+            gsplat_push pc;
+            pc.ray_count = cnt;
+            pc.seed_base = seed_base + off;
+            pc.node_count = nn;
+            pc.nkeys = nkeys;
+            ok = vk_buffer_write(e, &b_rays, work, (size_t)cnt * sizeof(lrt_ray)) &&
+                 (!times || nkeys < 2 ||
+                  vk_buffer_write(e, &b_times, times + off,
+                                  (size_t)cnt * sizeof(float))) &&
+                 vk_dispatch(e, pipe, set, &pc, (uint32_t)sizeof(pc), (cnt + 63u) / 64u) &&
+                 vk_buffer_read(e, &b_hits, th, (size_t)cnt * sizeof(lrt_hit));
+            if (!ok) break;
+            for (uint32_t i = 0; i < cnt; i++)
+                if (th[i].prim_id != LRT_TRI_NO_HIT) {
+                    out[off + i] = th[i];
+                    best[off + i] = th[i].t;
+                }
+        }
+        if (pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(e->device, pool, NULL);
+        vk_buffer_destroy(e, &b_nodes);
+        vk_buffer_destroy(e, &b_splats);
+    }
+    vk_buffer_destroy(e, &b_rays);
+    vk_buffer_destroy(e, &b_hits);
+    vk_buffer_destroy(e, &b_times);
+    free(work);
+    free(th);
+    free(best);
+    if (!ok) {
+        if (err) *err = LRT_RESULT_OUT_OF_MEMORY;
+        return -1;
+    }
+    int hits = 0;
+    for (uint32_t i = 0; i < n; i++)
+        if (out[i].prim_id != LRT_TRI_NO_HIT) hits++;
+    if (err) *err = LRT_RESULT_OK;
+    return hits;
 }

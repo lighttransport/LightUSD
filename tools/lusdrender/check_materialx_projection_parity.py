@@ -125,7 +125,10 @@ def main() -> int:
                 lower_log = result.stdout.lower()
                 if any(word in lower_log for word in
                        ("unavailable", "no cuda", "no hip", "no vulkan",
-                        "renderer init failed", "failed to create")):
+                        "renderer init failed", "failed to create")) or (
+                        backend == "vkr" and
+                        re.search(r"Vulkan caps:(?!.*ray_query)", result.stdout)):
+                    # compute-only Vulkan device: no hardware ray query
                     continue
                 print(result.stdout, file=sys.stderr)
                 return 1

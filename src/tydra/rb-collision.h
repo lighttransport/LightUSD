@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: Apache-2.0 */
+/* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2026-Present Light Transport Entertainment Inc. */
 /*
  * rb-collision.h — Rigid-body collision detection (C API)

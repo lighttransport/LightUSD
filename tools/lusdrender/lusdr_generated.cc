@@ -4,12 +4,12 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
-#include "tydra/next/render-converter.hh"
-#include "tydra/next/render-extract.hh"
+#include "tydra/render-converter.hh"
+#include "tydra/render-extract.hh"
 
 namespace lusdr {
 
-void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
+void ExpandGeneratedMeshCornersCore(const GeneratedMeshCore &mesh,
                                     std::vector<float> *points,
                                     std::vector<float> *normals,
                                     std::vector<float> *uvs,
@@ -41,25 +41,25 @@ void ExpandGeneratedMeshCornersNext(const GeneratedMeshNext &mesh,
   }
 }
 
-bool IsTriangleMeshNext(const lightusd::next::UsdPrim &prim) {
+bool IsTriangleMeshCore(const lightusd::UsdPrim &prim) {
   const std::string &type = prim.GetTypeName();
   return type == "Mesh" ||
-         lightusd::tydra::next::IsAnalyticGeomTypeName(type);
+         lightusd::tydra::IsAnalyticGeomTypeName(type);
 }
 
-bool GenerateAnalyticMeshNext(const lightusd::next::Stage &stage,
-                              const lightusd::next::UsdPrim &prim, double time,
-                              GeneratedMeshNext *out) {
-  if (!out || !lightusd::tydra::next::IsAnalyticGeomTypeName(
+bool GenerateAnalyticMeshCore(const lightusd::Stage &stage,
+                              const lightusd::UsdPrim &prim, double time,
+                              GeneratedMeshCore *out) {
+  if (!out || !lightusd::tydra::IsAnalyticGeomTypeName(
                   prim.GetTypeName())) return false;
-  *out = GeneratedMeshNext{};
-  lightusd::tydra::next::ConverterConfig config;
+  *out = GeneratedMeshCore{};
+  lightusd::tydra::ConverterConfig config;
   config.time_code = time;
   // Keep polygon corners so generated face-varying normals/UVs stay aligned.
   // The consumers perform the same fan triangulation as for authored Meshes.
   config.mesh.triangulate = false;
-  lightusd::tydra::next::RenderSceneConverter converter(config);
-  lightusd::tydra::next::RenderMesh mesh;
+  lightusd::tydra::RenderSceneConverter converter(config);
+  lightusd::tydra::RenderMesh mesh;
   if (!converter.ConvertRenderableMesh(stage, prim, &mesh) ||
       mesh.has_alloc_failure()) {
     std::cerr << "Failed to tessellate " << prim.GetPath().str() << ": "
@@ -71,7 +71,7 @@ bool GenerateAnalyticMeshNext(const lightusd::next::Stage &stage,
     if (!std::isfinite(point)) {
       std::cerr << "Non-finite generated geometry: " << prim.GetPath().str()
                 << "\n";
-      *out = GeneratedMeshNext{};
+      *out = GeneratedMeshCore{};
       return false;
     }
   }
@@ -86,9 +86,9 @@ bool GenerateAnalyticMeshNext(const lightusd::next::Stage &stage,
   out->normals = mesh.normals.flatten();
   out->uvs = mesh.texcoords_0.flatten();
   out->normals_facevarying = mesh.normals_interp ==
-      lightusd::tydra::next::Interpolation::FaceVarying;
+      lightusd::tydra::Interpolation::FaceVarying;
   out->uvs_facevarying = mesh.texcoords_0_interp ==
-      lightusd::tydra::next::Interpolation::FaceVarying;
+      lightusd::tydra::Interpolation::FaceVarying;
   return !out->points.empty() && !out->indices.empty();
 }
 

@@ -7,7 +7,7 @@ near-zero extent along one axis, and when that axis is not the one being looked
 down, the camera looks ALONG the plane: the scene is exactly edge-on and the
 render comes out BLACK. The common case is a Z-up quad lying in the XY plane.
 
-Renders the Z-up textured plane through the `next` path with -autoframe and
+Renders the Z-up textured plane through the `core` path with -autoframe and
 asserts the frame is actually covered. Also renders a solid (non-degenerate) model
 to confirm ordinary framing still works.
 

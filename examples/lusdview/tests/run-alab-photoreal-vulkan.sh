@@ -31,7 +31,7 @@ if [ ! -f "$OPAQUE" ]; then echo "SKIP: missing $OPAQUE"; exit "$SKIP"; fi
 render() {
   local tag="$1" asset="$2" quality="$3"
   timeout --kill-after=10s "${LUSDVIEW_ALAB_TIMEOUT:-240s}" \
-    env LUSDVIEW_TIME_GPU=1 "$BIN" --headless --backend vk --next \
+    env LUSDVIEW_TIME_GPU=1 "$BIN" --headless --backend vk --core \
       --load-payloads --texture-fit never --frames 4 --size 1920x1080 \
       --no-grid --raster-quality "$quality" --envmap "$HDR" \
       --envmap-intensity "${LUSDVIEW_HDR_INTENSITY:-1}" \
@@ -56,7 +56,7 @@ render stoat-high "$STOAT" high
 render_rt() {
   local tag="$1" asset="$2"; shift 2
   timeout --kill-after=10s "${LUSDVIEW_ALAB_TIMEOUT:-240s}" \
-    "$BIN" --headless --backend vk --next --load-payloads --rt \
+    "$BIN" --headless --backend vk --core --load-payloads --rt \
       --frames 1 --size 640x640 --no-grid --envmap "$HDR" \
       --envmap-intensity "${LUSDVIEW_HDR_INTENSITY:-1}" "$@" \
       --screenshot "$OUT/$tag.ppm" "$asset" >"$OUT/$tag.log" 2>&1
@@ -73,7 +73,7 @@ render_rt lantern-rt-nosubd "$LANTERN" --subdivision-level 0 --no-subdivision-au
 grep -qE 'drawn tris [1-9][0-9]*' "$OUT/opaque-rt.log" || {
   echo "FAIL: opaque RT sentinel drew no geometry"; exit 1;
 }
-awk '/next: .*unique tris/ { for (i=1;i<=NF;i++) if ($(i+1)=="unique" && $i+0>0 && $i+0<100000) ok=1 }
+awk '/core: .*unique tris/ { for (i=1;i<=NF;i++) if ($(i+1)=="unique" && $i+0>0 && $i+0<100000) ok=1 }
      END { exit ok ? 0 : 1 }' "$OUT/lantern-rt-nosubd.log" || {
   echo "FAIL: Lantern no-subdivision RT did not retain lightweight topology"; exit 1;
 }

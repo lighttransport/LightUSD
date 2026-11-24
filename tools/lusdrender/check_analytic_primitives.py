@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression for analytic geometry in next-loader CPU and GPU render paths."""
+"""Regression for analytic geometry in core-loader CPU and GPU render paths."""
 import argparse
 import os
 from pathlib import Path

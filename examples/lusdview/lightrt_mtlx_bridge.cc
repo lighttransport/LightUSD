@@ -2,6 +2,8 @@
 #include "lightrt_mtlx_bridge.hh"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -10,9 +12,12 @@
 #include <set>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
 
 #include "external/jsonhpp/nlohmann/json.hpp"
+#include "core/color-transform.hh"
 #include "image-loader.hh"
+#include "tydra/texture-cache.hh"
 
 extern "C" {
 #include "external/lightrt/mtlxrender/mtlx_doc.h"
@@ -125,12 +130,12 @@ void ClampLightRtParams(tydra::LightRtOpenPBRParams* p) {
 
 
 void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
-  // Seed from the material's DIRECT fields first. The --next loader
-  // (next_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
+  // Seed from the material's DIRECT fields first. The --core loader
+  // (core_scene_loader.cc) sets baseColor/metallic/roughness/specularColor/ior/
   // alpha/emissive directly and does NOT populate mat.params, so the param
   // lookups below leave p at its constructor defaults (gray 0.8, etc.), and
   // BakeLightRtOpenPBR then copies those defaults back OVER the loader's values
-  // -- graying out every untextured constant-color material on the next path.
+  // -- graying out every untextured constant-color material on the core path.
   // The legacy path sets both the direct fields AND the params, so its lookups
   // override this seed with identical values (no behavior change there).
   p->baseColor[0] = mat.baseColor[0];
@@ -176,11 +181,11 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->emission = 1.0f;
   }
   if (mat.opacityTex >= 0) p->opacity = 1.0f;
-  // Match tydra-next's BuildRealtimePbrMaterial: inputs:specularColor is a
+  // Match Tydra's BuildRealtimePbrMaterial: inputs:specularColor is a
   // UsdPreviewSurface *specular-workflow* input whose schema fallback is
   // (0,0,0), so carrying it into the metallic workflow tints the whole
   // specular lobe to black. A bound texture is a multiplicative fallback and
-  // is neutralised too. Without this the legacy and next loaders shade the
+  // is neutralised too. Without this the legacy and core loaders shade the
   // same UsdPreviewSurface differently (measured 3 levels on the linked-light
   // fixture).
   if (!mat.useSpecularWorkflow || mat.specularColorTex >= 0) {
@@ -191,13 +196,16 @@ void BakeUsdPreviewSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRPara
     p->coatColor[0] = p->coatColor[1] = p->coatColor[2] = 1.0f;
   }
   if (mat.coatRoughnessTex >= 0) p->coatRoughness = 1.0f;
-  // Match tydra-next's BuildRealtimePbrMaterial: the metallic workflow selects
+  // Match Tydra's BuildRealtimePbrMaterial: the metallic workflow selects
   // Storm's preview F0/F90 model (slot-41 sentinel) in the RT shaders. Without
   // this the legacy loader shades the same UsdPreviewSurface differently.
   p->previewSurfaceMetallicWorkflow = !mat.useSpecularWorkflow;
 }
 
 void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams* p) {
+  p->diffuseModel = MTLX_DIFFUSE_EON;
+  p->coatDarkening = 1.0f;
+  p->openPbrCoatRemap = 1;
   FloatParam(mat, {"OpenPBRSurface"}, {"base_weight"}, &p->baseWeight);
   Vec3Param(mat, {"OpenPBRSurface"}, {"base_color"}, p->baseColor);
   if (ParamHasTexture(mat, {"OpenPBRSurface"}, {"base_color"})) {
@@ -299,9 +307,8 @@ void BakeOpenPBRSurface(const DrawMaterialCPU& mat, tydra::LightRtOpenPBRParams*
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_weight"}, &p->thinFilmWeight);
   if (FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_thickness"},
                  &p->thinFilmThicknessNm)) {
-    // OpenPBR and the LightRT evaluator both use nanometers for film
-    // thickness. Keep the canonical value unchanged; multiplying here would
-    // turn the documented 450 nm test film into a 450,000 nm layer.
+    // MaterialX OpenPBR inputs are micrometers; the renderer stores nm.
+    p->thinFilmThicknessNm *= 1000.0f;
   }
   FloatParam(mat, {"OpenPBRSurface"}, {"thin_film_ior"}, &p->thinFilmIor);
   FloatParam(mat, {"OpenPBRSurface"}, {"emission_luminance"}, &p->emission);
@@ -335,7 +342,58 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   dst->baseWeight = src.base_weight;
   CopyV3(src.base_color, dst->baseColor);
   dst->diffuseRoughness = src.diffuse_roughness;
+  dst->diffuseModel = src.diffuse_model;
+  static_assert(tydra::kMaxRealtimeDiffuseLobes == MTLX_MAX_DIFFUSE_LOBES,
+                "Diffuse lobe limits must match");
+  dst->diffuseLobeCount = std::clamp(src.diffuse_lobe_count, 0, MTLX_MAX_DIFFUSE_LOBES);
+  for (int i = 0; i < dst->diffuseLobeCount; ++i) {
+    CopyV3(src.diffuse_lobes[i].color, dst->diffuseLobes[i].color);
+    dst->diffuseLobes[i].weight = src.diffuse_lobes[i].weight;
+    CopyV3(src.diffuse_lobes[i].weight_color, dst->diffuseLobes[i].weightColor);
+    dst->diffuseLobes[i].roughness = src.diffuse_lobes[i].roughness;
+    dst->diffuseLobes[i].model = src.diffuse_lobes[i].model;
+  }
   dst->metalness = src.metalness;
+  static_assert(tydra::kMaxRealtimeConductorLobes == MTLX_MAX_CONDUCTOR_LOBES,
+                "Conductor lobe limits must match");
+  dst->conductorLobeCount = std::clamp(src.conductor_lobe_count, 0, MTLX_MAX_CONDUCTOR_LOBES);
+  for (int i = 0; i < dst->conductorLobeCount; ++i) {
+    CopyV3(src.conductor_lobes[i].ior, dst->conductorLobes[i].ior);
+    CopyV3(src.conductor_lobes[i].extinction, dst->conductorLobes[i].extinction);
+    dst->conductorLobes[i].weight = src.conductor_lobes[i].weight;
+    CopyV3(src.conductor_lobes[i].weight_color, dst->conductorLobes[i].weightColor);
+    dst->conductorLobes[i].roughness = src.conductor_lobes[i].roughness;
+    dst->conductorLobes[i].roughnessY = src.conductor_lobes[i].roughness_y;
+    CopyV3(src.conductor_lobes[i].tangent, dst->conductorLobes[i].tangent);
+    CopyV3(src.conductor_lobes[i].normal, dst->conductorLobes[i].normal);
+    dst->conductorLobes[i].retroreflective = src.conductor_lobes[i].retroreflective != 0;
+    dst->conductorLobes[i].thinfilmThickness = src.conductor_lobes[i].thinfilm_thickness;
+    dst->conductorLobes[i].thinfilmIor = src.conductor_lobes[i].thinfilm_ior;
+  }
+  static_assert(tydra::kMaxRealtimeSpecularLobes == MTLX_MAX_SPECULAR_LOBES,
+                "Specular lobe limits must match");
+  dst->specularLobeCount = std::clamp(src.specular_lobe_count, 0, MTLX_MAX_SPECULAR_LOBES);
+  for (int i = 0; i < dst->specularLobeCount; ++i) {
+    const auto &lobe = src.specular_lobes[i];
+    auto &out = dst->specularLobes[i];
+    CopyV3(lobe.frame.ior, out.frame.ior);
+    CopyV3(lobe.frame.extinction, out.frame.extinction);
+    out.frame.weight = lobe.frame.weight;
+    CopyV3(lobe.frame.weight_color, out.frame.weightColor);
+    out.frame.roughness = lobe.frame.roughness;
+    out.frame.roughnessY = lobe.frame.roughness_y;
+    CopyV3(lobe.frame.tangent, out.frame.tangent);
+    CopyV3(lobe.frame.normal, out.frame.normal);
+    out.frame.retroreflective = lobe.frame.retroreflective != 0;
+    out.frame.thinfilmThickness = lobe.frame.thinfilm_thickness;
+    out.frame.thinfilmIor = lobe.frame.thinfilm_ior;
+    out.model = lobe.model;
+    CopyV3(lobe.tint, out.tint);
+    CopyV3(lobe.color0, out.color0);
+    CopyV3(lobe.color82, out.color82);
+    CopyV3(lobe.color90, out.color90);
+    out.exponent = lobe.exponent;
+  }
   dst->specularWeight = src.specular_weight;
   CopyV3(src.specular_color, dst->specularColor);
   dst->specularRoughness = src.specular_roughness;
@@ -354,9 +412,21 @@ void CopyLightRtEval(const OpenPBRParams& src, DrawLightRtOpenPBRCPU* dst) {
   CopyV3(src.coat_color, dst->coatColor);
   dst->coatRoughness = src.coat_roughness;
   dst->coatIor = src.coat_ior;
+  dst->coatDarkening = src.coat_darkening;
+  dst->openPbrCoatRemap = src.openpbr_coat_remap;
   dst->sheenWeight = src.sheen_weight;
   CopyV3(src.sheen_color, dst->sheenColor);
   dst->sheenRoughness = src.sheen_roughness;
+  static_assert(tydra::kMaxRealtimeSheenLobes == MTLX_MAX_SHEEN_LOBES,
+                "Sheen lobe limits must match");
+  dst->sheenLobeCount = std::clamp(src.sheen_lobe_count, 0, MTLX_MAX_SHEEN_LOBES);
+  for (int i = 0; i < dst->sheenLobeCount; ++i) {
+    CopyV3(src.sheen_lobes[i].color, dst->sheenLobes[i].color);
+    dst->sheenLobes[i].weight = src.sheen_lobes[i].weight;
+    CopyV3(src.sheen_lobes[i].weight_color, dst->sheenLobes[i].weightColor);
+    dst->sheenLobes[i].roughness = src.sheen_lobes[i].roughness;
+    dst->sheenLobes[i].model = src.sheen_lobes[i].model;
+  }
   dst->thinFilmWeight = src.thin_film_weight;
   dst->thinFilmThicknessNm = src.thin_film_thickness;
   dst->thinFilmIor = src.thin_film_ior;
@@ -399,11 +469,28 @@ void MergeGraphParamsPreservingTextureDeps(
     dst3[2] = src[2];
   };
 
+  if (safe("base_weight") && safe("base_color") && safe("base_diffuse_roughness")) {
+    dst->diffuseLobeCount = graph.diffuseLobeCount;
+    std::copy(std::begin(graph.diffuseLobes), std::end(graph.diffuseLobes),
+              std::begin(dst->diffuseLobes));
+    dst->diffuseModel = graph.diffuseModel;
+  }
   if (safe("base_weight")) dst->baseWeight = graph.baseWeight;
   if (safe("base_color")) copy3(graph.baseColor, dst->baseColor);
   if (safe("base_metalness")) dst->metalness = graph.metalness;
+  if (safe("base_metalness") && safe("base_color") && safe("specular_roughness")) {
+    dst->conductorLobeCount = graph.conductorLobeCount;
+    std::copy(std::begin(graph.conductorLobes), std::end(graph.conductorLobes),
+              std::begin(dst->conductorLobes));
+  }
   if (safe("base_diffuse_roughness")) {
     dst->diffuseRoughness = graph.diffuseRoughness;
+  }
+  if (safe("specular_weight") && safe("specular_color") &&
+      safe("specular_roughness") && safe("specular_ior")) {
+    dst->specularLobeCount = graph.specularLobeCount;
+    std::copy(std::begin(graph.specularLobes), std::end(graph.specularLobes),
+              std::begin(dst->specularLobes));
   }
   if (safe("specular_weight")) dst->specularWeight = graph.specularWeight;
   if (safe("specular_color")) copy3(graph.specularColor, dst->specularColor);
@@ -443,6 +530,12 @@ void MergeGraphParamsPreservingTextureDeps(
   if (safe("coat_color")) copy3(graph.coatColor, dst->coatColor);
   if (safe("coat_roughness")) dst->coatRoughness = graph.coatRoughness;
   if (safe("coat_ior")) dst->coatIor = graph.coatIor;
+  if (safe("coat_darkening")) dst->coatDarkening = graph.coatDarkening;
+  if (safe("fuzz_weight") && safe("fuzz_color") && safe("fuzz_roughness")) {
+    dst->sheenLobeCount = graph.sheenLobeCount;
+    std::copy(std::begin(graph.sheenLobes), std::end(graph.sheenLobes),
+              std::begin(dst->sheenLobes));
+  }
   if (safe("fuzz_weight")) dst->sheenWeight = graph.sheenWeight;
   if (safe("fuzz_color")) copy3(graph.sheenColor, dst->sheenColor);
   if (safe("fuzz_roughness")) dst->sheenRoughness = graph.sheenRoughness;
@@ -1019,6 +1112,30 @@ bool EvaluateMaterialXJsonGraphForVolume(const DrawMaterialCPU& mat,
       xml.c_str(), "lusdview_material", baseDir.c_str(), out, err);
 }
 
+void TransformMaterialXFileColor(void*, const char* token, float rgb[3]) {
+  if (!token || !rgb) return;
+  thread_local std::unordered_map<std::string,
+                                  lightusd::color::ColorTransform> transforms;
+  const auto cached = transforms.find(token);
+  if (cached != transforms.end()) {
+    lightusd::color::TransformRGB(cached->second, rgb);
+    return;
+  }
+  lightusd::color::ColorSpaceDesc source, destination;
+  if (!lightusd::color::GetBuiltinColorSpace(token, &source) ||
+      !lightusd::color::GetBuiltinColorSpace("lin_rec709_scene", &destination))
+    return;
+  lightusd::color::ColorTransform transform;
+  if (!lightusd::color::BuildColorTransform(source, destination, &transform))
+    return;
+  if (transforms.size() < 64) {
+    const auto inserted = transforms.emplace(token, transform);
+    lightusd::color::TransformRGB(inserted.first->second, rgb);
+  } else {
+    lightusd::color::TransformRGB(transform, rgb);
+  }
+}
+
 int FindSurfaceNode(const MtlxDoc* doc, const char* materialName,
                     std::string* err) {
   if (!doc) return -1;
@@ -1068,6 +1185,7 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   ShadeContext ctx{};
   ctx.doc = doc;
   ctx.tex = tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = u;
   ctx.uv[1] = v;
   ctx.uv_dx[0] = dudx;
@@ -1094,7 +1212,414 @@ bool EvaluateMtlxDocAtUv(const MtlxDoc* doc, int surfaceNode,
   return true;
 }
 
+int SampleMaterialXTexcoord(void* user, int index, int probeAxis,
+                            float outUv[2]) {
+  if (!user || !outUv || index != 1) return 0;
+  const auto* context = static_cast<const MaterialXSurfaceContext*>(user);
+  if (!context->has_uv1) return 0;
+  outUv[0] = context->uv1[0];
+  outUv[1] = context->uv1[1];
+  const float* delta = probeAxis == 1 ? context->uv1_dx :
+                       probeAxis == 2 ? context->uv1_dy : nullptr;
+  if (delta) {
+    outUv[0] += delta[0];
+    outUv[1] += delta[1];
+  }
+  return 1;
+}
+
+int SampleMaterialXGeomProp(void* user, const char* name, MtlxType type,
+                            MtlxValue* out) {
+  if (!user || !name || !out) return 0;
+  const auto* context = static_cast<const MaterialXSurfaceContext*>(user);
+  if (!context->geomprops) return 0;
+  for (const MaterialXGeomPropValue& property : *context->geomprops) {
+    if (property.name != name) continue;
+    MtlxType propertyType = MV_NONE;
+    size_t componentCount = 0;
+    switch (property.type) {
+      case MaterialXGeomPropType::Float:
+        propertyType = MV_FLOAT; componentCount = 1; break;
+      case MaterialXGeomPropType::Integer:
+        propertyType = MV_INT; componentCount = 1; break;
+      case MaterialXGeomPropType::Boolean:
+        propertyType = MV_BOOL; componentCount = 1; break;
+      case MaterialXGeomPropType::Color3:
+        propertyType = MV_COLOR3; componentCount = 3; break;
+      case MaterialXGeomPropType::Color4:
+        propertyType = MV_COLOR4; componentCount = 4; break;
+      case MaterialXGeomPropType::Vector2:
+        propertyType = MV_VEC2; componentCount = 2; break;
+      case MaterialXGeomPropType::Vector3:
+        propertyType = MV_VEC3; componentCount = 3; break;
+      case MaterialXGeomPropType::Vector4:
+        propertyType = MV_VEC4; componentCount = 4; break;
+    }
+    if (type != propertyType) continue;
+    std::memset(out, 0, sizeof(*out));
+    out->type = propertyType;
+    std::copy_n(property.value, componentCount, out->v);
+    return 1;
+  }
+  return 0;
+}
+
+
 }  // namespace
+
+class MaterialXSurfaceRuntime {
+ public:
+  MaterialXSurfaceRuntime(MtlxDoc* document, TextureCache* textureCache,
+                          int node, uint64_t runtimeId,
+                          std::vector<tydra::MaterialXMipChain> mip_chains = {})
+      : doc(document), tex(textureCache), surfaceNode(node), id(runtimeId),
+        mipChains(std::move(mip_chains)) {}
+  ~MaterialXSurfaceRuntime() {
+    texcache_free(tex);
+    mtlx_free(doc);
+  }
+
+  MtlxDoc* doc{nullptr};
+  TextureCache* tex{nullptr};
+  int surfaceNode{-1};
+  uint64_t id{0};
+  std::vector<tydra::MaterialXMipChain> mipChains;
+};
+
+std::string MaterialXSurfaceRuntimeSurfaceCategory(
+    const MaterialXSurfaceRuntime* runtime) {
+  if (!runtime || !runtime->doc || runtime->surfaceNode < 0 ||
+      runtime->surfaceNode >= runtime->doc->nnode)
+    return {};
+  const char* c = runtime->doc->nodes[runtime->surfaceNode].category;
+  return c ? c : "";
+}
+
+bool IsMaterialXSurfaceCategorySupported(const std::string& c) {
+  // Must match the surface dispatch in mtlx_eval.c (mtlx_eval_surface).
+  return c == "surface" || c == "surface_unlit" || c == "open_pbr_surface" ||
+         c == "gltf_pbr" || c == "UsdPreviewSurface" ||
+         c == "disney_principled" || c == "standard_surface";
+}
+
+bool MaterialXSurfaceRuntimeNeedsTexcoordIndex(
+    const MaterialXSurfaceRuntime* runtime, int index) {
+  if (!runtime || !runtime->doc || index < 0) return false;
+  const MtlxDoc* doc = runtime->doc;
+  for (int i = 0; i < doc->nnode; ++i) {
+    const MtlxNode& node = doc->nodes[i];
+    if (!node.category || std::strcmp(node.category, "texcoord") != 0) continue;
+    int authoredIndex = 0;
+    for (int j = 0; j < node.ninput; ++j) {
+      const MtlxInput& input = node.inputs[j];
+      if (!input.name || std::strcmp(input.name, "index") != 0) continue;
+      if (input.has_value && input.type == MV_INT)
+        authoredIndex = static_cast<int>(input.value.v[0]);
+      break;
+    }
+    if (authoredIndex == index) return true;
+  }
+  return false;
+}
+
+bool MaterialXSurfaceRuntimeGeomPropRequests(
+    const MaterialXSurfaceRuntime* runtime,
+    std::vector<MaterialXGeomPropValue>* out) {
+  if (!runtime || !runtime->doc || !out) return false;
+  std::vector<MaterialXGeomPropValue> requests;
+  for (int i = 0; i < runtime->doc->nnode; ++i) {
+    const MtlxNode& node = runtime->doc->nodes[i];
+    if (!node.category ||
+        (std::strcmp(node.category, "geompropvalue") != 0 &&
+         std::strcmp(node.category, "geompropvalueuniform") != 0))
+      continue;
+    const char* name = nullptr;
+    for (int j = 0; j < node.ninput; ++j) {
+      const MtlxInput& input = node.inputs[j];
+      if (input.name && std::strcmp(input.name, "geomprop") == 0 &&
+          input.has_value && input.type == MV_STRING) {
+        name = input.value.s;
+        break;
+      }
+    }
+    if (!name || !name[0]) continue;
+    MaterialXGeomPropType type;
+    switch (node.type) {
+      case MV_FLOAT: type = MaterialXGeomPropType::Float; break;
+      case MV_INT: type = MaterialXGeomPropType::Integer; break;
+      case MV_BOOL: type = MaterialXGeomPropType::Boolean; break;
+      case MV_COLOR3: type = MaterialXGeomPropType::Color3; break;
+      case MV_COLOR4: type = MaterialXGeomPropType::Color4; break;
+      case MV_VEC2: type = MaterialXGeomPropType::Vector2; break;
+      case MV_VEC3: type = MaterialXGeomPropType::Vector3; break;
+      case MV_VEC4: type = MaterialXGeomPropType::Vector4; break;
+      default: continue;
+    }
+    const auto duplicate = std::find_if(
+        requests.begin(), requests.end(), [&](const MaterialXGeomPropValue& r) {
+          return r.name == name && r.type == type;
+        });
+    if (duplicate == requests.end()) {
+      MaterialXGeomPropValue request;
+      request.name = name;
+      request.type = type;
+      requests.push_back(std::move(request));
+    }
+  }
+  *out = std::move(requests);
+  return true;
+}
+
+namespace {
+struct MtlxThreadScratch {
+  std::vector<MtlxValue> memo;
+  std::vector<char> memoDone;
+};
+
+std::atomic<uint64_t> gMtlxRuntimeId{1};
+// The per-thread scratch map is intentionally thread_local; its dynamic
+// initializer is expected (Clang -Weverything -Werror in CI).
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wglobal-constructors"
+#endif
+thread_local std::unordered_map<uint64_t, MtlxThreadScratch> gMtlxScratch;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+}  // namespace
+
+std::shared_ptr<MaterialXSurfaceRuntime> CreateMaterialXSurfaceRuntime(
+    const char* xml, const char* materialName, const char* baseDir,
+    std::string* err, bool buildMipmaps, size_t textureBudgetBytes) {
+  if (err) err->clear();
+  if (!xml || !xml[0]) {
+    if (err) *err = "MaterialX XML string is empty";
+    return {};
+  }
+  MtlxDoc* doc = mtlx_load_string(xml);
+  if (!doc) {
+    if (err) *err = "mtlx_load_string failed";
+    return {};
+  }
+  const int surfaceNode = FindSurfaceNode(doc, materialName, err);
+  if (surfaceNode < 0) {
+    mtlx_free(doc);
+    return {};
+  }
+  TextureCache* tex = texcache_create(baseDir);
+  if (!tex) {
+    if (err) *err = "texcache_create failed";
+    mtlx_free(doc);
+    return {};
+  }
+  std::vector<tydra::MaterialXMipChain> chains;
+  if (buildMipmaps)
+    texcache_set_decode_limit(tex, textureBudgetBytes ? textureBudgetBytes : SIZE_MAX);
+  texcache_preload(tex, doc);
+  if (buildMipmaps) {
+    const size_t baseBytes = texcache_decoded_bytes(tex);
+    if (texcache_limit_exceeded(tex) ||
+        (textureBudgetBytes && baseBytes >= textureBudgetBytes && texcache_count(tex))) {
+      if (err) *err = "MaterialX textures exceed the decoded texture budget";
+      texcache_free(tex); mtlx_free(doc); return {};
+    }
+    tydra::TextureDecodeOptions options;
+    options.budget_bytes = textureBudgetBytes ? textureBudgetBytes - baseBytes : 0;
+    tydra::TextureDecoder decoder(options);
+    chains.reserve(static_cast<size_t>(texcache_count(tex)));
+    for (int i = 0; i < texcache_count(tex); ++i) {
+      const unsigned char* pixels = nullptr;
+      int width = 0, height = 0, channels = 0, srgb = 0;
+      if (!texcache_image_view(tex, i, &pixels, &width, &height, &channels, &srgb)) {
+        if (err) *err = "failed to access a MaterialX texture";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      tydra::DecodedImageView view;
+      view.width = static_cast<uint32_t>(width); view.height = static_cast<uint32_t>(height);
+      view.channels = static_cast<uint8_t>(channels); view.pixels = pixels;
+      view.value_count = static_cast<size_t>(width) * static_cast<size_t>(height) *
+                         static_cast<size_t>(channels);
+      tydra::MaterialXMipChain chain;
+      if (!decoder.BuildMaterialXMips(view, srgb != 0, &chain)) {
+        if (err) *err = "failed to build MaterialX texture mipmaps within budget";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      std::vector<MtlxTextureMipView> views;
+      for (const auto& level : chain.levels)
+        views.push_back({static_cast<int>(level.width), static_cast<int>(level.height),
+                         level.rgba.data()});
+      if (!texcache_attach_mips(tex, i, views.data(), static_cast<int>(views.size()))) {
+        if (err) *err = "failed to attach MaterialX texture mipmaps";
+        texcache_free(tex); mtlx_free(doc); return {};
+      }
+      chains.push_back(std::move(chain));
+    }
+  }
+  return std::make_shared<MaterialXSurfaceRuntime>(
+      doc, tex, surfaceNode, gMtlxRuntimeId.fetch_add(1, std::memory_order_relaxed),
+      std::move(chains));
+}
+
+bool EvaluateMaterialXSurfaceRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    tydra::LightRtOpenPBRParams* out, std::string* err) {
+  if (err) err->clear();
+  if (!runtime || !runtime->doc || !runtime->tex || !out) {
+    if (err) *err = "MaterialX surface runtime is not initialized";
+    return false;
+  }
+  MtlxThreadScratch& scratch = gMtlxScratch[runtime->id];
+  const size_t nodeCount = static_cast<size_t>(runtime->doc->nnode);
+  if (scratch.memo.size() != nodeCount) {
+    scratch.memo.resize(nodeCount);
+    scratch.memoDone.resize(nodeCount);
+  }
+  ShadeContext ctx{};
+  ctx.doc = runtime->doc;
+  ctx.tex = runtime->tex;
+  ctx.color_transform = TransformMaterialXFileColor;
+  ctx.uv[0] = context.uv[0];
+  ctx.uv[1] = context.uv[1];
+  ctx.texcoord = SampleMaterialXTexcoord;
+  ctx.texcoord_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.geomprop = SampleMaterialXGeomProp;
+  ctx.geomprop_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.uv_dx[0] = context.uv_dx[0];
+  ctx.uv_dx[1] = context.uv_dx[1];
+  ctx.uv_dy[0] = context.uv_dy[0];
+  ctx.uv_dy[1] = context.uv_dy[1];
+  ctx.has_uv_derivatives = (context.has_uv_derivatives || context.has_uv1) ? 1 : 0;
+  ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
+  ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
+                   context.shading_normal[2]);
+  ctx.Ng = v3_make(context.geometric_normal[0], context.geometric_normal[1],
+                   context.geometric_normal[2]);
+  ctx.V = v3_make(context.view_direction[0], context.view_direction[1],
+                  context.view_direction[2]);
+  ctx.dpdu = v3_make(context.dpdu[0], context.dpdu[1], context.dpdu[2]);
+  ctx.dpdv = v3_make(context.dpdv[0], context.dpdv[1], context.dpdv[2]);
+  if (context.has_uv_derivatives) {
+    ctx.dPdx = v3_add(v3_scale(ctx.dpdu, context.uv_dx[0]),
+                      v3_scale(ctx.dpdv, context.uv_dx[1]));
+    ctx.dPdy = v3_add(v3_scale(ctx.dpdu, context.uv_dy[0]),
+                      v3_scale(ctx.dpdv, context.uv_dy[1]));
+    ctx.has_position_derivatives = 1;
+  }
+  ctx.memo = scratch.memo.data();
+  ctx.memo_done = scratch.memoDone.data();
+  OpenPBRParams evaluated;
+  if (mtlx_eval_surface(&ctx, runtime->surfaceNode, &evaluated) != 0) {
+    if (err) *err = "mtlx_eval_surface failed";
+    return false;
+  }
+  CopyLightRtEval(evaluated, out);
+  out->hasTextureInputs = false;
+  out->hasNormalInput =
+      std::fabs(out->normal[0] - context.shading_normal[0]) > 1.0e-6f ||
+      std::fabs(out->normal[1] - context.shading_normal[1]) > 1.0e-6f ||
+      std::fabs(out->normal[2] - context.shading_normal[2]) > 1.0e-6f;
+  ClampLightRtParams(out);
+  return true;
+}
+
+bool EvaluateMaterialXNodeRuntimeAt(
+    MaterialXSurfaceRuntime* runtime, const MaterialXSurfaceContext& context,
+    const char* nodeName, MaterialXNodeValue* out, std::string* err) {
+  if (err) err->clear();
+  if (!runtime || !runtime->doc || !runtime->tex || !nodeName || !nodeName[0] ||
+      !out) {
+    if (err) *err = "MaterialX node AOV request is not initialized";
+    return false;
+  }
+  int nodeId = -1;
+  for (int i = 0; i < runtime->doc->nnode; ++i) {
+    const char* name = runtime->doc->nodes[i].name;
+    if (name && std::strcmp(name, nodeName) == 0) {
+      if (nodeId >= 0) {
+        if (err) *err = "MaterialX node name is ambiguous: " + std::string(nodeName);
+        return false;
+      }
+      nodeId = i;
+    }
+  }
+  if (nodeId < 0) {
+    if (err) *err = "MaterialX node not found: " + std::string(nodeName);
+    return false;
+  }
+
+  MtlxThreadScratch& scratch = gMtlxScratch[runtime->id];
+  const size_t nodeCount = static_cast<size_t>(runtime->doc->nnode);
+  if (scratch.memo.size() != nodeCount) {
+    scratch.memo.resize(nodeCount);
+    scratch.memoDone.resize(nodeCount);
+  }
+  ShadeContext ctx{};
+  ctx.doc = runtime->doc;
+  ctx.tex = runtime->tex;
+  ctx.color_transform = TransformMaterialXFileColor;
+  ctx.uv[0] = context.uv[0];
+  ctx.uv[1] = context.uv[1];
+  ctx.texcoord = SampleMaterialXTexcoord;
+  ctx.texcoord_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.geomprop = SampleMaterialXGeomProp;
+  ctx.geomprop_user = const_cast<MaterialXSurfaceContext*>(&context);
+  ctx.uv_dx[0] = context.uv_dx[0];
+  ctx.uv_dx[1] = context.uv_dx[1];
+  ctx.uv_dy[0] = context.uv_dy[0];
+  ctx.uv_dy[1] = context.uv_dy[1];
+  ctx.has_uv_derivatives = (context.has_uv_derivatives || context.has_uv1) ? 1 : 0;
+  ctx.P = v3_make(context.position[0], context.position[1], context.position[2]);
+  ctx.Ns = v3_make(context.shading_normal[0], context.shading_normal[1],
+                   context.shading_normal[2]);
+  ctx.Ng = v3_make(context.geometric_normal[0], context.geometric_normal[1],
+                   context.geometric_normal[2]);
+  ctx.V = v3_make(context.view_direction[0], context.view_direction[1],
+                  context.view_direction[2]);
+  ctx.dpdu = v3_make(context.dpdu[0], context.dpdu[1], context.dpdu[2]);
+  ctx.dpdv = v3_make(context.dpdv[0], context.dpdv[1], context.dpdv[2]);
+  if (context.has_uv_derivatives) {
+    ctx.dPdx = v3_add(v3_scale(ctx.dpdu, context.uv_dx[0]),
+                      v3_scale(ctx.dpdv, context.uv_dx[1]));
+    ctx.dPdy = v3_add(v3_scale(ctx.dpdu, context.uv_dy[0]),
+                      v3_scale(ctx.dpdv, context.uv_dy[1]));
+    ctx.has_position_derivatives = 1;
+  }
+  ctx.memo = scratch.memo.data();
+  ctx.memo_done = scratch.memoDone.data();
+  const MtlxValue value = mtlx_eval_node_test(&ctx, nodeId);
+  switch (value.type) {
+    case MV_FLOAT:
+    case MV_INT:
+    case MV_BOOL:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[0];
+      out->rgb[2] = value.v[0];
+      return true;
+    case MV_COLOR3:
+    case MV_VEC3:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = value.v[2];
+      return true;
+    case MV_COLOR4:
+    case MV_VEC4:
+    case MV_MATRIX33:
+    case MV_MATRIX44:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = value.v[2];
+      return true;
+    case MV_VEC2:
+      out->rgb[0] = value.v[0];
+      out->rgb[1] = value.v[1];
+      out->rgb[2] = 0.0f;
+      return true;
+    default:
+      if (err) *err = "MaterialX node AOV requires a numeric node output";
+      return false;
+  }
+}
 
 bool EvaluateMaterialXStringToLightRtOpenPBRAtUv(
     const char* xml, const char* materialName, const char* baseDir, float u,
@@ -1185,6 +1710,7 @@ bool EvaluateMaterialXStringToLightRtVolumeWithBaseDir(
   ShadeContext ctx{};
   ctx.doc = doc;
   ctx.tex = tex;
+  ctx.color_transform = TransformMaterialXFileColor;
   ctx.uv[0] = 0.5f;
   ctx.uv[1] = 0.5f;
   ctx.P = v3_make(0.0f, 0.0f, 0.0f);
@@ -1292,10 +1818,12 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
   for (int route : {0, 4, 7, 10, 12, 14, 17, 22, 41, 42})
     markSrgb(mat->materialXGraph.output[route]);
 
+  std::map<std::pair<int, int>, int> overrideTextures;
   for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
        ++nodeIndex) {
     MaterialXGraphNodeCPU& node = mat->materialXGraph.nodes[nodeIndex];
-    if (node.textureId >= 0 || node.imagePath.empty()) continue;
+    if (node.imagePath.empty()) continue;
+    if (node.textureId < 0) {
     const std::string wanted = normalizePath(node.imagePath);
     const size_t slash = wanted.find_last_of('/');
     const std::string basename = slash == std::string::npos
@@ -1347,6 +1875,43 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
           }
           node.textureId = static_cast<int>(scene->textures.size());
           scene->textures.push_back(std::move(texture));
+        }
+      }
+    }
+    }
+    // Explicit MaterialX tokens can disagree with the scene-wide semantic
+    // heuristic. Record the per-node transfer correction instead of cloning
+    // the image payload, so one asset can be shared without bypassing texture
+    // memory budgets.
+    if (MaterialXGraphColorSpaceSupported(node.colorSpaceToken) &&
+        node.textureId >= 0 &&
+        static_cast<size_t>(node.textureId) < scene->textures.size()) {
+      const bool sampledSrgb =
+          scene->textures[static_cast<size_t>(node.textureId)].srgb;
+      node.colorSpaceTransferCorrection = MaterialXGraphTransferCorrection(
+          node.colorSpaceToken, sampledSrgb);
+      // Mips must be filtered in the override's space, so a texture with an
+      // explicit transfer override gets a derived sRGB-encoded copy built once
+      // per (source, correction); its chain is generated like any other
+      // texture. Oversized or non-RGBA8 sources keep the per-sample fallback.
+      if (node.colorSpaceTransferCorrection != 0) {
+        const auto key = std::make_pair(node.textureId,
+                                        node.colorSpaceTransferCorrection);
+        auto cached = overrideTextures.find(key);
+        if (cached == overrideTextures.end()) {
+          DrawTextureCPU derived;
+          int derivedId = -1;
+          if (MaterialXBuildTransferOverrideTexture(
+                  scene->textures[static_cast<size_t>(node.textureId)],
+                  node.colorSpaceTransferCorrection, 64u << 20, &derived)) {
+            derivedId = static_cast<int>(scene->textures.size());
+            scene->textures.push_back(std::move(derived));
+          }
+          cached = overrideTextures.emplace(key, derivedId).first;
+        }
+        if (cached->second >= 0) {
+          node.textureId = cached->second;
+          node.colorSpaceTransferCorrection = 0;
         }
       }
     }
@@ -1468,8 +2033,13 @@ void BakeMaterialXGraphTextures(DrawMaterialCPU* mat, DrawScene* scene) {
     scene->textures.push_back(std::move(tex));
     for (size_t nodeIndex = 0; nodeIndex < mat->materialXGraph.nodes.size();
          ++nodeIndex) {
-      if (outputs[laneIndex] == static_cast<int>(nodeIndex))
+      if (outputs[laneIndex] == static_cast<int>(nodeIndex)) {
         mat->materialXGraph.nodes[nodeIndex].textureId = *lane.slot;
+        // The compatibility bake already evaluated the authored colorspace
+        // conversion into linear Rec.709 pixels.
+        mat->materialXGraph.nodes[nodeIndex].colorSpaceToken.clear();
+        mat->materialXGraph.nodes[nodeIndex].colorSpaceTransferCorrection = 0;
+      }
     }
     if (std::strcmp(lane.name, "base_color") == 0) {
       mat->baseColor[0] = mat->baseColor[1] = mat->baseColor[2] = 1.0f;
@@ -1615,7 +2185,7 @@ void ApplyOpenPBRMaterialConstants(
   color({"sheen_color", "fuzz_color"}, p.sheenColor);
   scalar({"sheen_roughness", "fuzz_roughness"}, p.sheenRoughness);
   scalar({"thin_film_weight"}, p.thinFilmWeight);
-  scalar({"thin_film_thickness"}, p.thinFilmThicknessNm);
+  scalar({"thin_film_thickness"}, p.thinFilmThicknessNm * 0.001f);
   scalar({"thin_film_ior"}, p.thinFilmIor);
   scalar({"emission_luminance"}, p.emission);
   color({"emission_color"}, p.emissionColor);
@@ -1765,6 +2335,8 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
           FindParam(*mat, "OpenPBRSurface", "base_color") != nullptr;
       const bool hasDirectMetalness =
           FindParam(*mat, "OpenPBRSurface", "base_metalness") != nullptr;
+      const bool hasDirectDiffuseRoughness =
+          FindParam(*mat, "OpenPBRSurface", "base_diffuse_roughness") != nullptr;
       const bool hasDirectRoughness =
           FindParam(*mat, "OpenPBRSurface", "specular_roughness") != nullptr ||
           FindParam(*mat, "OpenPBRSurface", "base_roughness") != nullptr;
@@ -1784,12 +2356,11 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
       if (hasDirectMetalness && mat->metallicTex < 0 &&
           !graphDrives("base_metalness"))
         p.metalness = directParams.metalness;
-      if (hasDirectRoughness && mat->roughnessTex < 0 &&
-          !graphDrives("base_diffuse_roughness") &&
-          !graphDrives("specular_roughness")) {
+      if (hasDirectDiffuseRoughness && !graphDrives("base_diffuse_roughness"))
         p.diffuseRoughness = directParams.diffuseRoughness;
+      if (hasDirectRoughness && mat->roughnessTex < 0 &&
+          !graphDrives("specular_roughness"))
         p.specularRoughness = directParams.specularRoughness;
-      }
       if (hasDirectOpacity && mat->opacityTex < 0 &&
           !graphDrives("geometry_opacity"))
         p.opacity = directParams.opacity;
@@ -1806,7 +2377,7 @@ void BakeRealtimePbrMaterial(DrawMaterialCPU* mat) {
         std::copy(std::begin(directParams.normal), std::end(directParams.normal),
                   std::begin(p.normal));
       }
-      // The next loader keeps typed OpenPBR values next to a JSON graph even
+      // The core loader keeps typed OpenPBR values next to a JSON graph even
       // when only one surface input is graph-connected. Preserve every other
       // authored typed lane; the evaluator's defaults are not authored graph
       // routes and must not replace them. The legacy loader exposed this most

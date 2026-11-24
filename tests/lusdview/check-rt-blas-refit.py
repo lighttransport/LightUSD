@@ -17,7 +17,7 @@ The assertion is an A/B over the same deterministic playback run (--play with
      by two runs that never posed anything.
 
 Uses the LEGACY loader so the refit path is exercised from
-BuildRtSkinnedMeshVertices; check-rt-skinning.py already covers the --next
+BuildRtSkinnedMeshVertices; check-rt-skinning.py already covers --core
 re-pose against its CPU bake. Exits 77 (skip) when the binary is missing or
 the GPU cannot ray trace.
 """

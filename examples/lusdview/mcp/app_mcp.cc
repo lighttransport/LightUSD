@@ -19,10 +19,10 @@
 #include <unordered_map>
 
 #include "app.hh"
+#include "core_scene_loader.hh"
 #include "light3d/math.h"
 #include "skinning.hh"
 #include "tydra/scene-access.hh"
-#include "tydra/mcp-tools.hh"  // lightusd::tydra::mcp::CallTool
 #include "vchar_control_map.hh"
 #include "../../vchar/autorigger_client.hh"
 
@@ -265,10 +265,10 @@ json App::mcpSceneInfo(const json&, std::string&) {
           json{{"prim", d.primPath}, {"asset", d.assetPath}, {"arc", d.arc}});
     }
     out["deferred_payloads"] = deferred;
-  } else if (nextSession_) {
-    out["composed"] = nextSession_->IsComposed();
+  } else if (coreSession_) {
+    out["composed"] = coreSession_->IsComposed();
     const std::vector<std::string> deferred =
-        nextSession_->GetDeferredPayloadPaths();
+        coreSession_->GetDeferredPayloadPaths();
     out["deferred_payload_count"] = deferred.size();
     json paths = json::array();
     for (const std::string& path : deferred) {
@@ -276,9 +276,9 @@ json App::mcpSceneInfo(const json&, std::string&) {
     }
     out["deferred_payloads"] = std::move(paths);
   }
-  if (nextSession_) {
-    out["stage_revision"] = nextStageRevision_;
-    out["layer_dependencies"] = nextSession_->GetLayerDependencies();
+  if (coreSession_) {
+    out["stage_revision"] = coreStageRevision_;
+    out["layer_dependencies"] = coreSession_->GetLayerDependencies();
   }
   return out;
 }
@@ -340,9 +340,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                               {"kinematic_stage_to_solver", true},
                               {"dynamic_solver_to_stage", true},
                               {"mesh_writeback", true},
-                              {"visualization", json::array(
-                                  {"bodies", "colliders", "joints", "contacts"})},
-                              {"loader", "legacy"}}},
+                              {"visualization", json::array({"bodies", "colliders", "joints", "contacts"})},
+                              {"loader", "core"}}},
             {"skin", json{{"material_model", "openpbr-multilobe"},
                             {"profile", "human-skin-v1"},
                             {"sss", true}, {"fuzz", true}, {"coat", true}}},
@@ -627,96 +626,71 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
   }
 
   std::vector<VcharControl> authoredControls;
-  if (nextSession_) {
-    auto snapshot = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto snapshot = coreSession_->PublicSnapshot();
     lightusd::api::Stage view;
     if (lightusd::api::DocumentSnapshotStage(snapshot, &view) == LIGHTUSD_OK)
       authoredControls = ReadVcharControls(view.get());
-  } else if (loaded_.ok) {
-    authoredControls = ReadVcharControls(loaded_.stage);
   }
 
   if (tool == "vchar_physics") {
     const std::string op = args.value("op", std::string());
-    if (op == "hide") {
-      gui_.setPhysicsDebugLines({});
-      return {{"visible", false}, {"initialized", physicsWorldReady_}};
-    }
-    if (op == "reset" && physicsWorldReady_) {
-      if (physicsInitialStage_) {
-        loaded_.stage = *physicsInitialStage_;
-        if (UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_) && renderer_) {
-          for (size_t i = 0; i < draw_.meshes.size(); ++i) {
-            renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
-          }
-        }
-      }
-      lightusd::tydra::FreePhysWorld(&physicsWorld_);
-      physicsWorldReady_ = false;
-      physicsSceneGen_ = ~std::uint64_t(0);
-      gui_.setPhysicsDebugLines({});
-    }
-    if ((op == "initialize" || op == "step" || op == "reset") &&
-        (!physicsWorldReady_ || physicsSceneGen_ != sceneGen_)) {
-      if (nextSession_) {
-        err = "vchar_physics simulation currently requires --legacy-load; "
-              "next-core physics annotation playback is not bridged yet";
-        return json::object();
-      }
-      if (!loaded_.ok) {
-        err = "vchar_physics requires a loaded USD scene";
-        return json::object();
-      }
-      if (physicsWorldReady_) lightusd::tydra::FreePhysWorld(&physicsWorld_);
-      lightusd::tydra::PhysWorldBuildOptions options;
-      options.max_memory_limit_mb = 64;
-      if (!lightusd::tydra::BuildPhysWorld(loaded_.stage, &physicsWorld_, &err,
-                                           options)) {
-        physicsWorldReady_ = false;
-        return json::object();
-      }
-      physicsWorldReady_ = true;
-      physicsSceneGen_ = sceneGen_;
-      physicsInitialStage_ = std::make_unique<lightusd::Stage>(loaded_.stage);
-    }
-    if (op == "step") {
-      int steps = args.value("steps", 1);
-      steps = std::max(1, std::min(600, steps));
-      if (args.contains("timestep")) {
-        if (!args["timestep"].is_number()) {
-          err = "vchar_physics timestep must be numeric";
-          return json::object();
-        }
-        physicsWorld_.timestep = std::max(
-            1.0e-5f, std::min(0.1f, args["timestep"].get<float>()));
-      }
-      if (!lightusd::tydra::SyncStageToPhysWorld(loaded_.stage, &physicsWorld_,
-                                                 &err)) {
-        return json::object();
-      }
-      for (int i = 0; i < steps; ++i) {
-        if (tydra_phys_step(&physicsWorld_) != TYDRA_PHYS_OK) {
-          err = "vchar_physics solver step failed";
-          return json::object();
-        }
-      }
-      if (!lightusd::tydra::SyncPhysWorldToStage(physicsWorld_, &loaded_.stage,
-                                                  &err)) {
-        return json::object();
-      }
-      if (UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_) && renderer_) {
-        for (size_t meshIndex = 0; meshIndex < draw_.meshes.size(); ++meshIndex) {
-          renderer_->updateMeshWorld(static_cast<int>(meshIndex),
-                                     draw_.meshes[meshIndex].world);
-        }
-      }
-    } else if (op != "status" && op != "initialize" && op != "reset") {
+    if (op != "status" && op != "initialize" && op != "step" && op != "reset" && op != "hide") {
       err = "vchar_physics op must be status, initialize, step, reset, or hide";
       return json::object();
     }
-
+    auto snapshot = coreSession_ ? coreSession_->PublicSnapshot() : lightusd::api::DocumentSnapshot{};
+    lightusd::api::Stage authored;
+    const uint64_t revision = lightusd::api::DocumentSnapshotRevision(snapshot);
+    if (physicsSceneGen_ != sceneGen_ || physicsRevision_ != revision) {
+      physicsPreview_.clear(); physicsPreviewVisible_ = false;
+      gui_.setPhysicsDebugLines({});
+    }
+    if (op == "hide") {
+      physicsPreviewVisible_ = false;
+      gui_.setPhysicsDebugLines({});
+      return {{"visible", false}, {"initialized", physicsPreview_.stage() != nullptr}};
+    }
+    if (op != "status") {
+      if (lightusd::api::DocumentSnapshotStage(snapshot, &authored) != LIGHTUSD_OK) {
+        err = "vchar_physics requires a loaded core document"; return json::object();
+      }
+      if (op == "initialize" || op == "reset" || !physicsPreview_.stage()) {
+        if (!physicsPreview_.initialize(authored.get(), animTime_, &err)) return json::object();
+        physicsSceneGen_ = sceneGen_; physicsRevision_ = revision;
+      }
+      if (op == "step") {
+        if (args.contains("steps") && !args["steps"].is_number_integer()) {
+          err = "vchar_physics steps must be an integer"; return json::object();
+        }
+        const auto requestedSteps = args.value("steps", int64_t(1));
+        if (requestedSteps < 1 || requestedSteps > 600) {
+          err = "vchar_physics steps must be in [1,600]"; return json::object();
+        }
+        if (args.contains("timestep") && !args["timestep"].is_number()) {
+          err = "vchar_physics timestep must be numeric"; return json::object();
+        }
+        const float dt = args.value("timestep", physicsPreview_.world().timestep);
+        if (!physicsPreview_.step(authored.get(), animTime_, static_cast<int>(requestedSteps), dt, &err)) return json::object();
+      }
+      UpdateCoreAnimatedMeshWorlds(physicsPreview_.stage(), &draw_, animTime_);
+      std::vector<std::pair<int, std::array<float, 16>>> uploads;
+      for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+        if (!draw_.meshes[i].animatedWorld) continue;
+        std::array<float, 16> matrix;
+        std::copy_n(draw_.meshes[i].world, 16, matrix.begin());
+        uploads.push_back({static_cast<int>(i), matrix});
+      }
+      postGpu([this, uploads = std::move(uploads)]() {
+        if (renderer_) for (const auto& upload : uploads)
+          renderer_->updateMeshWorld(upload.first, upload.second.data());
+      });
+      coreTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
+      physicsPreviewVisible_ = true;
+    }
+    const auto& world = physicsPreview_.world();
     std::vector<HelperVertex> lines;
-    if (physicsWorldReady_) {
+    if (physicsPreview_.stage() && physicsPreviewVisible_) {
       const float extent = draw_.hasBounds
                                ? std::max(0.01f, (draw_.aabbMax[0] - draw_.aabbMin[0] +
                                                 draw_.aabbMax[1] - draw_.aabbMin[1] +
@@ -725,6 +699,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                                : 0.05f;
       auto addLine = [&](float ax, float ay, float az, float bx, float by,
                          float bz, float r, float g, float b) {
+        if (lines.size() >= 131072) return;
+        for (float v : {ax, ay, az, bx, by, bz}) if (!std::isfinite(v)) return;
         lines.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
         lines.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
       };
@@ -738,8 +714,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         addLine(x0,y0,z0,x0,y0,z1,r,g,b); addLine(x1,y0,z0,x1,y0,z1,r,g,b);
         addLine(x0,y1,z0,x0,y1,z1,r,g,b); addLine(x1,y1,z0,x1,y1,z1,r,g,b);
       };
-      for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
-        const TydraPhysBody& body = physicsWorld_.bodies[i];
+      for (int32_t i = 0; i < world.num_bodies; ++i) {
+        const TydraPhysBody& body = world.bodies[i];
         const float x = body.xform.position.x;
         const float y = body.xform.position.y;
         const float z = body.xform.position.z;
@@ -750,24 +726,25 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
         addLine(x, y - extent, z, x, y + extent, z, r, g, 0.1f);
         addLine(x, y, z - extent, x, y, z + extent, r, g, 0.1f);
       }
-      for (int32_t i = 0; i < physicsWorld_.num_colliders; ++i) {
-        const TydraPhysCollider& collider = physicsWorld_.colliders[i];
+      for (int32_t i = 0; i < world.num_colliders; ++i) {
+        const TydraPhysCollider& collider = world.colliders[i];
+        if (collider.shape.type == TYDRA_PHYS_SHAPE_PLANE) continue;
         if (collider.body_index < 0 ||
-            collider.body_index >= physicsWorld_.num_bodies) continue;
+            collider.body_index >= world.num_bodies) continue;
         TydraPhysAABB box;
         tydra_phys_collider_aabb(&collider,
-            &physicsWorld_.bodies[collider.body_index].xform, &box);
+            &world.bodies[collider.body_index].xform, &box);
         addBox(box, 0.15f, 0.75f, 1.0f);
       }
-      for (int32_t i = 0; i < physicsWorld_.num_joints; ++i) {
-        const TydraPhysJoint& joint = physicsWorld_.joints[i];
+      for (int32_t i = 0; i < world.num_joints; ++i) {
+        const TydraPhysJoint& joint = world.joints[i];
         TydraPhysTransform a = joint.local_anchor_a;
         TydraPhysTransform b = joint.local_anchor_b;
-        if (joint.body_a >= 0 && joint.body_a < physicsWorld_.num_bodies) {
-          a = tp_xform_mul(physicsWorld_.bodies[joint.body_a].xform, a);
+        if (joint.body_a >= 0 && joint.body_a < world.num_bodies) {
+          a = tp_xform_mul(world.bodies[joint.body_a].xform, a);
         }
-        if (joint.body_b >= 0 && joint.body_b < physicsWorld_.num_bodies) {
-          b = tp_xform_mul(physicsWorld_.bodies[joint.body_b].xform, b);
+        if (joint.body_b >= 0 && joint.body_b < world.num_bodies) {
+          b = tp_xform_mul(world.bodies[joint.body_b].xform, b);
         }
         addLine(a.position.x, a.position.y, a.position.z,
                 b.position.x, b.position.y, b.position.z, 0.9f, 0.2f, 0.9f);
@@ -777,8 +754,8 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
                 a.position.y + axis.y * extent * 2.0f,
                 a.position.z + axis.z * extent * 2.0f, 1.0f, 0.2f, 0.8f);
       }
-      for (int32_t i = 0; i < physicsWorld_.num_contacts; ++i) {
-        const TydraPhysContact& contact = physicsWorld_.contacts[i];
+      for (int32_t i = 0; i < world.num_contacts; ++i) {
+        const TydraPhysContact& contact = world.contacts[i];
         const float length = std::max(extent, contact.depth * 4.0f);
         addLine(contact.point.x, contact.point.y, contact.point.z,
                 contact.point.x + contact.normal.x * length,
@@ -788,36 +765,21 @@ json App::mcpVirtualHuman(const std::string& tool, const json& args,
       gui_.setPhysicsDebugLines(std::move(lines));
     }
     json bodies = json::array();
-    if (physicsWorldReady_) {
-      for (int32_t i = 0; i < physicsWorld_.num_bodies; ++i) {
-        const TydraPhysBody& body = physicsWorld_.bodies[i];
-        bodies.push_back({{"index", i},
-                          {"type", body.body_type == TYDRA_PHYS_BODY_DYNAMIC
-                                       ? "dynamic"
-                                       : (body.body_type == TYDRA_PHYS_BODY_KINEMATIC
-                                              ? "kinematic" : "static")},
-                          {"position", json::array({body.xform.position.x,
-                                                    body.xform.position.y,
-                                                    body.xform.position.z})},
-                          {"linear_velocity", json::array({body.linear_velocity.x,
-                                                            body.linear_velocity.y,
-                                                            body.linear_velocity.z})},
-                          {"angular_velocity", json::array({body.angular_velocity.x,
-                                                             body.angular_velocity.y,
-                                                             body.angular_velocity.z})},
-                          {"sleeping", (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0u}});
-      }
+    for (int32_t i = 0; i < world.num_bodies; ++i) {
+      const auto& body = world.bodies[i];
+      bodies.push_back({{"index", i}, {"path", physicsPreview_.bodyPaths()[static_cast<size_t>(i)]},
+          {"type", body.body_type == TYDRA_PHYS_BODY_DYNAMIC ? "dynamic" : body.body_type == TYDRA_PHYS_BODY_KINEMATIC ? "kinematic" : "static"},
+          {"position", json::array({body.xform.position.x, body.xform.position.y, body.xform.position.z})},
+          {"linear_velocity", json::array({body.linear_velocity.x, body.linear_velocity.y, body.linear_velocity.z})},
+          {"angular_velocity", json::array({body.angular_velocity.x, body.angular_velocity.y, body.angular_velocity.z})},
+          {"sleeping", (body.flags & TYDRA_PHYS_BODY_FLAG_SLEEPING) != 0}});
     }
-    return {{"initialized", physicsWorldReady_},
-            {"visible", physicsWorldReady_},
-            {"body_count", physicsWorldReady_ ? physicsWorld_.num_bodies : 0},
-            {"collider_count", physicsWorldReady_ ? physicsWorld_.num_colliders : 0},
-            {"joint_count", physicsWorldReady_ ? physicsWorld_.num_joints : 0},
-            {"contact_count", physicsWorldReady_ ? physicsWorld_.num_contacts : 0},
-            {"timestep", physicsWorldReady_ ? physicsWorld_.timestep : 0.0f},
-            {"bodies", std::move(bodies)},
-            {"mesh_sync", physicsWorldReady_ && !nextSession_},
-            {"note", "solver bodies and authored USD transforms are synchronized"}};
+    return {{"initialized", physicsPreview_.stage() != nullptr}, {"visible", physicsPreviewVisible_},
+        {"body_count", world.num_bodies}, {"collider_count", world.num_colliders},
+        {"joint_count", world.num_joints}, {"contact_count", world.num_contacts},
+        {"timestep", world.timestep}, {"bodies", std::move(bodies)},
+        {"mesh_sync", physicsPreview_.stage() != nullptr}, {"loader", "core"},
+        {"note", "diagnostic solver writes an independent core preview stage; reset restores the document pose"}};
   }
 
   if (tool == "vchar_hair_diagnostics") {
@@ -1297,7 +1259,7 @@ json App::mcpRenderStats(const json&, std::string&) {
                                        ? "software" : "auto");
   const TransparencyStatus transparency =
       renderer_ ? renderer_->transparencyStatus() : TransparencyStatus{};
-  return json{{"next_skeleton_overlay_vertices", gui_.nextSkeletonOverlayVertexCount()}, {"cpu_frame_s", mcpCpuFrameSeconds_},
+  return json{{"core_skeleton_overlay_vertices", gui_.coreSkeletonOverlayVertexCount()}, {"cpu_frame_s", mcpCpuFrameSeconds_},
               {"timer_scope", "lusdview UI frame through present; includes CPU work and GPU waits"},
               {"frame_serial", mcpFrameSerial_},
               {"ui_fps", ImGui::GetIO().Framerate},
@@ -1331,7 +1293,7 @@ json App::mcpRenderStats(const json&, std::string&) {
 }
 
 json App::mcpLoadPayloads(const json& args, std::string& err) {
-  if (!loaded_.comp.composed && !nextSession_) {
+  if (!loaded_.comp.composed && !coreSession_) {
     err = "load_payloads: scene was not composed (no deferred payloads)";
     return json::object();
   }
@@ -1341,9 +1303,9 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
       if (p.is_string()) add.insert(p.get<std::string>());
     }
   } else {
-    if (nextSession_) {
+    if (coreSession_) {
       for (const std::string& path :
-           nextSession_->GetDeferredPayloadPaths()) {
+           coreSession_->GetDeferredPayloadPaths()) {
         add.insert(path);
       }
     } else {
@@ -1358,8 +1320,8 @@ json App::mcpLoadPayloads(const json& args, std::string& err) {
 }
 
 json App::mcpReloadLayer(const json& args, std::string& err) {
-  if (!useNextLoader_ || !nextSession_) {
-    err = "reload_layer: the active scene is not a retained next session";
+  if (!useCoreLoader_ || !coreSession_) {
+    err = "reload_layer: the active scene is not a retained core session";
     return json::object();
   }
   if (loadActive_) {
@@ -1368,7 +1330,7 @@ json App::mcpReloadLayer(const json& args, std::string& err) {
   }
   std::string layer = args.value("path", loaded_.filepath);
   const std::vector<std::string> dependencies =
-      nextSession_->GetLayerDependencies();
+      coreSession_->GetLayerDependencies();
   if (layer != loaded_.filepath &&
       std::find(dependencies.begin(), dependencies.end(), layer) ==
           dependencies.end()) {
@@ -1377,7 +1339,7 @@ json App::mcpReloadLayer(const json& args, std::string& err) {
   }
   startLayerReloadAsync(layer);
   return json{{"started", true}, {"path", layer},
-              {"base_revision", nextStageRevision_}};
+              {"base_revision", coreStageRevision_}};
 }
 
 json App::mcpTimeline(const json& args, std::string& err) {
@@ -1878,8 +1840,8 @@ json App::mcpListPrims(const json& args, std::string&) {
     if (m > 0) cap = static_cast<size_t>(m);
   }
   json paths = json::array();
-  if (nextSession_) {
-    auto snapshot = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto snapshot = coreSession_->PublicSnapshot();
     lightusd::api::Stage stage;
     if (lightusd::api::DocumentSnapshotStage(snapshot, &stage) == LIGHTUSD_OK) {
       VisitPublicPrims(stage.get(), [&](lightusd_prim prim) {
@@ -1956,17 +1918,17 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
                 {"scene", {{"loaded", loaded_.ok},
                            {"loading", loadActive_ || progressiveActive_ || reconvActive_ || (reconvHasRequest_ && reconvRequested_ != reconvApplied_)},
                            {"filepath", loaded_.filepath}, {"has_animation", hasAnimation_},
-                           {"scene_generation", sceneGen_}, {"stage_revision", nextStageRevision_},
+                           {"scene_generation", sceneGen_}, {"stage_revision", coreStageRevision_},
                            {"renderer_generation", rendererGeneration_}, {"window_generation", windowGeneration_},
                            {"backend", BackendName(backend_)}, {"ray_tracing", rtPath_}}}, {"size", {width, height}},
                 {"frame_serial", mcpFrameSerial_}, {"rendered_time", mcpRenderedTime_}, {"rendered_camera", mcpRenderedCamera_}, {"barrier", mcpBarrier_}};
   }
 
-  if (nextSession_) {
-    auto document = nextSession_->PublicSnapshot();
+  if (coreSession_) {
+    auto document = coreSession_->PublicSnapshot();
     lightusd::api::Stage view;
     if (lightusd::api::DocumentSnapshotStage(document, &view) != LIGHTUSD_OK) {
-      err = "next session has no published stage";
+      err = "core session has no published stage";
       return json();
     }
     if (name == "stage_info") {
@@ -2163,28 +2125,12 @@ json App::mcpCallLibraryTool(const std::string& name, const json& args,
       return json{{"path", path}, {"attr_name", attr}, {"value", publicDefaultJson(value, text)}};
     }
 
-    err = "Tool is not available on the read-only next document: " + name;
+    err = "Tool is not available on the read-only core document: " + name;
     return json::object();
   }
 
-  // Lazily snapshot the loaded Stage into the library-tool Context (copied at
-  // most once per loaded scene; the viewer's Stage is never disturbed).
-  if (loaded_.ok) {
-    if (mcpCtxGen_ != sceneGen_ || !mcpCtx_.stage) {
-      mcpCtx_.stage = std::make_unique<lightusd::Stage>(loaded_.stage);
-      mcpCtx_.stage_loaded = true;
-      mcpCtxGen_ = sceneGen_;
-    }
-  } else {
-    mcpCtx_.stage.reset();
-    mcpCtx_.stage_loaded = false;
-  }
-  json result;
-  if (!lightusd::tydra::mcp::CallTool(mcpCtx_, name, args, result, err)) {
-    if (err.empty()) err = "unknown tool: " + name;
-    return json::object();
-  }
-  return result;
+  err = loaded_.ok ? "unknown tool: " + name : std::string("No scene loaded");
+  return json::object();
 }
 
 }  // namespace lusdview

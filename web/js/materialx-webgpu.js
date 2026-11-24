@@ -21,6 +21,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { LightUSDLoader } from 'lightusd/LightUSDLoader.js';
+import {createCoreRenderInspector,getCoreInspectorMesh} from 'lightusd/CoreRenderInspector.js';
 
 // ============================================================================
 // Constants
@@ -298,9 +299,7 @@ function initControls() {
 
 async function initLoader() {
     updateStatus('Initializing LightUSD WASM...');
-    // Still on the legacy product: this demo drives LightUSDLoaderNative and
-    // converts legacy material JSON for WebGPU. Pinned while next is default.
-    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512, backend: 'legacy' });
+    loaderState.loader = new LightUSDLoader(null, { maxMemoryLimitMB: 512 });
     await loaderState.loader.init({ useMemory64: false });
     updateStatus('LightUSD initialized');
 }
@@ -610,7 +609,8 @@ async function convertOpenPBRToTSLMaterial(materialData, usdScene = null, option
     if (usdScene && hasTexture(baseColorParam)) {
         const texture = await loadTextureFromUSD(usdScene, getTextureId(baseColorParam), textureCache);
         if (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
+            if (texture.userData.lightusdImageColorSpace === undefined)
+                texture.colorSpace = THREE.SRGBColorSpace;
             material.map = texture;
             material.userData.textures.map = { textureId: getTextureId(baseColorParam), texture };
         }
@@ -689,7 +689,8 @@ async function convertOpenPBRToTSLMaterial(materialData, usdScene = null, option
     if (usdScene && hasTexture(emissionColorParam)) {
         const texture = await loadTextureFromUSD(usdScene, getTextureId(emissionColorParam), textureCache);
         if (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
+            if (texture.userData.lightusdImageColorSpace === undefined)
+                texture.colorSpace = THREE.SRGBColorSpace;
             material.emissiveMap = texture;
             material.userData.textures.emissiveMap = { textureId: getTextureId(emissionColorParam), texture };
         }
@@ -791,7 +792,8 @@ async function convertOpenPBRToNodeMaterial(materialData, usdScene = null, optio
     if (usdScene && hasTexture(baseColorParam)) {
         const texture = await loadTextureFromUSD(usdScene, getTextureId(baseColorParam), textureCache);
         if (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
+            if (texture.userData.lightusdImageColorSpace === undefined)
+                texture.colorSpace = THREE.SRGBColorSpace;
             material.map = texture;
             material.userData.textures.map = { textureId: getTextureId(baseColorParam), texture };
         }
@@ -913,7 +915,8 @@ async function convertOpenPBRToNodeMaterial(materialData, usdScene = null, optio
     if (usdScene && hasTexture(emissionColorParam)) {
         const texture = await loadTextureFromUSD(usdScene, getTextureId(emissionColorParam), textureCache);
         if (texture) {
-            texture.colorSpace = THREE.SRGBColorSpace;
+            if (texture.userData.lightusdImageColorSpace === undefined)
+                texture.colorSpace = THREE.SRGBColorSpace;
             material.emissiveMap = texture;
             material.userData.textures.emissiveMap = { textureId: getTextureId(emissionColorParam), texture };
         }
@@ -970,6 +973,7 @@ function convertUsdMaterialToNodeMaterial(usdMaterial, usdScene) {
     if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColorTextureId')) {
         loadTextureFromUSD(usdScene, usdMaterial.diffuseColorTextureId, sceneState.textureCache).then((texture) => {
             if (texture) {
+                if (texture.userData.lightusdImageColorSpace === undefined)
                 texture.colorSpace = THREE.SRGBColorSpace;
                 material.map = texture;
                 material.needsUpdate = true;
@@ -1015,6 +1019,7 @@ function convertUsdMaterialToNodeMaterial(usdMaterial, usdScene) {
     if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {
         loadTextureFromUSD(usdScene, usdMaterial.emissiveColorTextureId, sceneState.textureCache).then((texture) => {
             if (texture) {
+                if (texture.userData.lightusdImageColorSpace === undefined)
                 texture.colorSpace = THREE.SRGBColorSpace;
                 material.emissiveMap = texture;
                 material.needsUpdate = true;
@@ -1378,13 +1383,8 @@ async function loadUSDFromFile(file) {
 async function loadUSDFromData(data, filename) {
     clearScene();
 
-    loaderState.nativeLoader = new loaderState.loader.native_.LightUSDLoaderNative();
-
-    const success = loaderState.nativeLoader.loadFromBinary(data, filename);
-    if (!success) {
-        updateStatus(`Failed to parse USD file: ${filename}`);
-        return;
-    }
+    loaderState.nativeLoader = await createCoreRenderInspector(
+        loaderState.loader.native_, data, filename, {maxMemoryLimitMB:512});
 
     loadSceneMetadata();
     await buildSceneGraph();
@@ -1482,6 +1482,10 @@ function convertUsdMeshToThreeMesh(mesh) {
 
     if (mesh.texcoords) {
         geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+    }
+
+    if (mesh.secondaryUVs?.length) {
+        geometry.setAttribute('uv1', new THREE.BufferAttribute(mesh.secondaryUVs, 2));
     }
 
     if (mesh.normals) {
@@ -1634,7 +1638,7 @@ async function buildThreeNode(usdNode, defaultMtl, usdScene, options) {
         const matrix = toMatrix4(usdNode.localMatrix);
         node.applyMatrix4(matrix);
     } else if (usdNode.nodeType === 'mesh') {
-        const mesh = usdScene.getMeshCopy(usdNode.contentId);
+        const mesh = getCoreInspectorMesh(usdScene,usdNode.contentId);
         const threeMesh = await setupMesh(mesh, defaultMtl, usdScene, options);
         node = threeMesh;
 
@@ -1709,7 +1713,7 @@ async function buildMeshesFallback() {
     threeState.scene.add(sceneState.root);
 
     for (let i = 0; i < numMeshes; i++) {
-        const meshData = loaderState.nativeLoader.getMeshCopy(i);
+        const meshData = getCoreInspectorMesh(loaderState.nativeLoader,i);
         if (!meshData) continue;
 
         const geometry = convertUsdMeshToThreeMesh(meshData);
@@ -1835,13 +1839,7 @@ function clearScene() {
     sceneState.domeLightData = null;
 
     if (loaderState.nativeLoader) {
-        try {
-            loaderState.nativeLoader.reset();
-        } catch (e) {
-            try {
-                loaderState.nativeLoader.clearAssets();
-            } catch (e2) {}
-        }
+        loaderState.nativeLoader.delete();
         loaderState.nativeLoader = null;
     }
 }
@@ -2271,6 +2269,7 @@ window.loadFile = () => document.getElementById('file-input').click();
 
 function animate() {
     requestAnimationFrame(animate);
+    if (threeState.renderPaused) return;
     threeState.controls.update();
     threeState.renderer.render(threeState.scene, threeState.camera);
 }
@@ -2278,6 +2277,29 @@ function animate() {
 // ============================================================================
 // Start
 // ============================================================================
+
+window._debugMaterialXWebGPU = {loaderState, sceneState, threeState,
+    capturePixels: async (width=64, height=64) => {
+        const renderer=threeState.renderer;
+        const previousTarget=renderer.getRenderTarget();
+        const previousPause=threeState.renderPaused;
+        threeState.renderPaused=true;
+        const target=new THREE.RenderTarget(width,height);
+        try {
+            renderer.setRenderTarget(target);
+            await renderer.renderAsync(threeState.scene,threeState.camera);
+            const pixels=await renderer.readRenderTargetPixelsAsync(target,0,0,width,height);
+            return pixels;
+        } finally {
+            renderer.setRenderTarget(previousTarget);
+            target.dispose();
+            threeState.renderPaused=previousPause;
+        }
+    },
+    renderFrame: async () => {
+        await threeState.renderer.compileAsync(threeState.scene, threeState.camera);
+        await threeState.renderer.renderAsync(threeState.scene, threeState.camera);
+    }};
 
 init().catch(err => {
     console.error('Initialization failed:', err);

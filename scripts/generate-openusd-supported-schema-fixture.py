@@ -48,7 +48,7 @@ def generate(ledger: dict[str, object]) -> str:
 def generate_registry(ledger: dict[str, object]) -> str:
     schemas = [str(schema["name"]) for schema in required_schemas(ledger)]
     return "// Generated from the OpenUSD capability ledger; do not edit.\n" + "".join(
-        f'LIGHTUSD_NEXT_SUPPORTED_SCHEMA("{name}")\n' for name in schemas)
+        f'LIGHTUSD_SUPPORTED_SCHEMA("{name}")\n' for name in schemas)
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
@@ -58,7 +58,7 @@ def main() -> int:
         "tests/usda/generated/openusd-supported-schema-26.08.usda"))
     p.add_argument("--registry-output", type=pathlib.Path,
                    default=pathlib.Path(
-                       "src/next/schema/generated/"
+                       "src/schema/generated/"
                        "openusd-supported-schema-names.inc"))
     p.add_argument("--check", action="store_true")
     p.add_argument("--stdout", action="store_true")

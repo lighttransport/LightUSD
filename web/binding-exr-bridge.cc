@@ -6,6 +6,11 @@ EM_JS(int, LightUSDExrBridge, (int op, const uint8_t* data, size_t size,
     uint32_t width, uint32_t height, uint32_t channels, uint32_t bits,
     size_t budget, lu_exr_result* result, int pointer_bytes), {
   if (!Module['exrBridge']) return -8;
+  // wasm32 i32 arguments arrive signed, including size_t budgets >= 2 GiB.
+  if (pointer_bytes === 4) {
+    data = data >>> 0; size = size >>> 0;
+    budget = budget >>> 0; result = result >>> 0;
+  }
   return Module['exrBridge'](op, Number(data), Number(size), width, height,
     channels, bits, Number(budget), Number(result), pointer_bytes);
 });

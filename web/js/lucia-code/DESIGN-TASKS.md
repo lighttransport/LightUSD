@@ -2452,13 +2452,13 @@ maximum reduction error <= 0.5%
 
 ### Session-layer editing
 
-Current implementation: transform and visibility mutations use next-core typed
+Current implementation: transform and visibility mutations use core-typed
 attribute setters with explicit custom/uniform flags. Undo records retain only
 changed USDA intervals and verify both states with SHA-256. Asset snapshots
 intern equal content through a bounded weak index and restore mutable assets
 independently. Edits on separate aligned lines use bounded multiple intervals;
 changed line structure falls back to a single interval. Topology and mesh primvars
-now use the typed next-layer API, including indexed UV buffers, integer-vector
+now use the typed core-layer API, including indexed UV buffers, integer-vector
 arrays, double precision, four-component tangents, and skinning element sizes.
 Constant/uniform/vertex/varying/face-varying primvar authoring checks cardinality
 against the owning prim's parsed topology. Property-only undo uses semantic

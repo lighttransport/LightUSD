@@ -37,7 +37,7 @@ def Camera "C" {
 USD
 for CHANNEL in depth geometricNormal shadingNormal; do
  if ! "$BIN" "$TMP/scene.usda" "$TMP/resident-$CHANNEL.pfm" -vkInstanced --aov "$CHANNEL" -camera /C -w 32 -height 32 > "$TMP/resident-$CHANNEL.log" 2>&1; then
-  if grep -qiE 'ray.query unavailable|Failed to create.*Vulkan|no Vulkan' "$TMP/resident-$CHANNEL.log";then echo 'SKIP: hardware ray query unavailable';exit 77;fi
+  if grep -qiE 'ray.query unavailable|needs ray query|Failed to create.*Vulkan|no Vulkan' "$TMP/resident-$CHANNEL.log";then echo 'SKIP: hardware ray query unavailable';exit 77;fi
   cat "$TMP/resident-$CHANNEL.log";exit 1
  fi
  "$BIN" -gpuTriangleChunk 1 "$TMP/scene.usda" "$TMP/flat-chunks-$CHANNEL.pfm" -vkr --aov "$CHANNEL" -camera /C -w 32 -height 32 -stats > "$TMP/flat-chunks-$CHANNEL.log" 2>&1 || { cat "$TMP/flat-chunks-$CHANNEL.log";exit 1; }

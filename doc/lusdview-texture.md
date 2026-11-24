@@ -157,11 +157,11 @@ the command stream, producing no query-reset validation errors.
 
 ## lusdview integration
 
-The viewer's `--next` texture finalization can use the same Vulkan compute
+The viewer's `--core` texture finalization can use the same Vulkan compute
 processor as the benchmark:
 
 ```sh
-lusdview --next --backend vk --texture-gpu vulkan \
+lusdview --core --backend vk --texture-gpu vulkan \
   --texture-compress bc7 --texture-gpu-device=9070XT scene.usdz
 ```
 

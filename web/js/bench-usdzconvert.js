@@ -4,7 +4,7 @@
 // so Puppeteer can drive it (see tests/bench-usdzconvert-browser.mjs):
 //
 //   bench-usdzconvert.html?manifest=<url>&root=<rel>&resize=1024
-//     &textureFormat=png&codec=browser|wasm&pipeline=memory|stream|stream-next
+//     &textureFormat=png&codec=browser|wasm&pipeline=memory|stream|stream-core
 //     &wasm64=1&concurrency=8&textureMemoryBudget=1GB
 //
 // Results land in window.__usdzBench = { ready|error, timings, stats, gpu }.
@@ -14,6 +14,7 @@ import {
   convertSourceToUSDZStreaming,
   loadWasm,
   parseByteSize,
+  parseUSDZEntries,
 } from './src/usdzconvert.js';
 import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
@@ -64,8 +65,8 @@ async function main() {
   const resize = Number(params.get('resize') || 0);
   const textureFormat = params.get('textureFormat') || 'keep';
   const codec = params.get('codec') || 'wasm';
-  const pipeline = params.get('pipeline') || 'memory';  // memory | stream | stream-next
-  const streaming = pipeline === 'stream' || pipeline === 'stream-next';
+  const pipeline = params.get('pipeline') || 'memory';  // memory | stream | stream-core
+  const streaming = pipeline === 'stream' || pipeline === 'stream-core';
   const wasm64 = params.get('wasm64') !== '0';
   const concurrency = Number(params.get('concurrency') || 8);
   const textureMemoryBudget = parseByteSize(params.get('textureMemoryBudget'));
@@ -147,8 +148,8 @@ async function main() {
     };
     const chunks = [];
     const zipSink = { write: (c) => { usdzBytes += c.length; chunks.push(c.slice ? c.slice() : new Uint8Array(c)); } };
-    const streamOpts = pipeline === 'stream-next'
-      ? { ...convertOpts, pipeline: 'next', nextPreloadUsdLayers: true, zipSink }
+    const streamOpts = pipeline === 'stream-core'
+      ? { ...convertOpts, pipeline: 'core', preloadUsdLayers: true, zipSink }
       : { ...convertOpts, zipSink };
     ({ stats } = await convertSourceToUSDZStreaming(native, source, streamOpts));
     const kValidatableBytes = wasm64 ? 4e9 : 800e6;  // reload copies into the wasm heap
@@ -181,10 +182,16 @@ async function main() {
     status('validate: skipped (output exceeds in-heap reload size)');
   } else {
     try {
-      const usd = new native.LightUSDLoaderNative();
-      validate.ok = usd.loadAsLayerFromBinary(usdz, 'bench.usdz');
-      if (!validate.ok) validate.error = String(usd.error());
-      usd.delete();
+      const entries = parseUSDZEntries(usdz);
+      if (!entries.length || !/\.usd[ac]?$/i.test(entries[0].name)) {
+        throw new Error('USDZ first entry is not a USD root layer');
+      }
+      const document = new native.LayerDocument();
+      try {
+        const loaded = document.load(entries[0].data);
+        validate.ok = !!loaded.success;
+        if (!validate.ok) validate.error = loaded.error || document.error();
+      } finally { document.delete(); }
     } catch (err) {
       validate.error = String(err && err.message ? err.message : err);
     }

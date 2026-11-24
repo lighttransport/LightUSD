@@ -31,31 +31,31 @@ int test_magic_number_detection() {
 
   // Valid zstd magic number
   uint8_t valid_magic[] = {0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x00, 0x00, 0x00};
-  TEST_ASSERT(lightusd::ZstdCompression::IsZstdCompressed(valid_magic, 8),
+  TEST_ASSERT(lightusd::legacy::ZstdCompression::IsZstdCompressed(valid_magic, 8),
               "Should detect valid zstd magic");
 
   // Invalid data
   uint8_t invalid_data[] = {0x00, 0x00, 0x00, 0x00};
-  TEST_ASSERT_FALSE(lightusd::ZstdCompression::IsZstdCompressed(invalid_data, 4),
+  TEST_ASSERT_FALSE(lightusd::legacy::ZstdCompression::IsZstdCompressed(invalid_data, 4),
                     "Should reject non-zstd data");
 
   // USDA header
   uint8_t usda_header[] = {'#', 'u', 's', 'd', 'a', ' ', '1', '.'};
-  TEST_ASSERT_FALSE(lightusd::ZstdCompression::IsZstdCompressed(usda_header, 8),
+  TEST_ASSERT_FALSE(lightusd::legacy::ZstdCompression::IsZstdCompressed(usda_header, 8),
                     "Should reject USDA header");
 
   // USDC header
   uint8_t usdc_header[] = {'P', 'X', 'R', '-', 'U', 'S', 'D', 'C'};
-  TEST_ASSERT_FALSE(lightusd::ZstdCompression::IsZstdCompressed(usdc_header, 8),
+  TEST_ASSERT_FALSE(lightusd::legacy::ZstdCompression::IsZstdCompressed(usdc_header, 8),
                     "Should reject USDC header");
 
   // Too short data
   uint8_t short_data[] = {0x28, 0xB5};
-  TEST_ASSERT_FALSE(lightusd::ZstdCompression::IsZstdCompressed(short_data, 2),
+  TEST_ASSERT_FALSE(lightusd::legacy::ZstdCompression::IsZstdCompressed(short_data, 2),
                     "Should reject too short data");
 
   // Null data
-  TEST_ASSERT_FALSE(lightusd::ZstdCompression::IsZstdCompressed(nullptr, 0),
+  TEST_ASSERT_FALSE(lightusd::legacy::ZstdCompression::IsZstdCompressed(nullptr, 0),
                     "Should reject null data");
 
   return 0;
@@ -73,7 +73,7 @@ int test_compression_roundtrip() {
   std::string err;
 
   // Compress
-  bool compress_ok = lightusd::ZstdCompression::Compress(
+  bool compress_ok = lightusd::legacy::ZstdCompression::Compress(
       reinterpret_cast<const uint8_t*>(test_data), test_size,
       &compressed, 5, &err);
   TEST_ASSERT(compress_ok, "Compression should succeed");
@@ -81,17 +81,17 @@ int test_compression_roundtrip() {
   TEST_ASSERT(compressed.size() < test_size, "Compressed data should be smaller");
 
   // Verify magic number
-  TEST_ASSERT(lightusd::ZstdCompression::IsZstdCompressed(compressed.data(), compressed.size()),
+  TEST_ASSERT(lightusd::legacy::ZstdCompression::IsZstdCompressed(compressed.data(), compressed.size()),
               "Compressed data should have zstd magic number");
 
   // Get decompressed size
-  size_t decompressed_size = lightusd::ZstdCompression::GetDecompressedSize(
+  size_t decompressed_size = lightusd::legacy::ZstdCompression::GetDecompressedSize(
       compressed.data(), compressed.size(), &err);
   TEST_ASSERT(decompressed_size == test_size, "Decompressed size should match original");
 
   // Decompress
   std::vector<uint8_t> decompressed;
-  bool decompress_ok = lightusd::ZstdCompression::Decompress(
+  bool decompress_ok = lightusd::legacy::ZstdCompression::Decompress(
       compressed.data(), compressed.size(), &decompressed, &err);
   TEST_ASSERT(decompress_ok, "Decompression should succeed");
   TEST_ASSERT(decompressed.size() == test_size, "Decompressed data size should match");
@@ -119,7 +119,7 @@ int test_compression_levels() {
 
   for (int level = 1; level <= 9; level += 4) {
     std::vector<uint8_t> compressed;
-    bool ok = lightusd::ZstdCompression::Compress(
+    bool ok = lightusd::legacy::ZstdCompression::Compress(
         reinterpret_cast<const uint8_t*>(test_data.data()), test_data.size(),
         &compressed, level, &err);
     TEST_ASSERT(ok, "Compression at level " + std::to_string(level) + " should succeed");
@@ -145,7 +145,7 @@ int test_corrupt_data_handling() {
   uint8_t corrupt_data[] = {0x28, 0xB5, 0x2F, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF};
   std::vector<uint8_t> output;
 
-  bool ok = lightusd::ZstdCompression::Decompress(corrupt_data, 8, &output, &err);
+  bool ok = lightusd::legacy::ZstdCompression::Decompress(corrupt_data, 8, &output, &err);
   TEST_ASSERT_FALSE(ok, "Decompression of corrupt data should fail");
   TEST_ASSERT(err.size() > 0, "Error message should be provided");
 
@@ -158,10 +158,10 @@ int test_corrupt_data_handling() {
 int test_compress_bound() {
   std::cout << "\n=== Test: GetCompressBound ===" << std::endl;
 
-  size_t bound = lightusd::ZstdCompression::GetCompressBound(1000);
+  size_t bound = lightusd::legacy::ZstdCompression::GetCompressBound(1000);
   TEST_ASSERT(bound > 1000, "Compress bound should be larger than input size");
 
-  bound = lightusd::ZstdCompression::GetCompressBound(0);
+  bound = lightusd::legacy::ZstdCompression::GetCompressBound(0);
   TEST_ASSERT(bound > 0, "Compress bound for 0 should still return some value");
 
   return 0;
@@ -172,14 +172,14 @@ int test_usda_roundtrip() {
   std::cout << "\n=== Test: USDA Round-trip with Compression ===" << std::endl;
 
   // Create a simple stage
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   stage.metas().doc = "Test USD file for zstd compression";
 
   // Add a simple Xform prim
-  lightusd::Xform xform;
+  lightusd::legacy::Xform xform;
   xform.name = "TestXform";
 
-  lightusd::Prim prim;
+  lightusd::legacy::Prim prim;
   prim.set_data(xform);
   stage.root_prims().push_back(prim);
 
@@ -190,14 +190,14 @@ int test_usda_roundtrip() {
   // Compress the USDA content
   std::vector<uint8_t> compressed;
   std::string err;
-  bool compress_ok = lightusd::ZstdCompression::Compress(
+  bool compress_ok = lightusd::legacy::ZstdCompression::Compress(
       reinterpret_cast<const uint8_t*>(usda_content.data()), usda_content.size(),
       &compressed, 5, &err);
   TEST_ASSERT(compress_ok, "USDA compression should succeed");
 
   // Decompress
   std::vector<uint8_t> decompressed;
-  bool decompress_ok = lightusd::ZstdCompression::Decompress(
+  bool decompress_ok = lightusd::legacy::ZstdCompression::Decompress(
       compressed.data(), compressed.size(), &decompressed, &err);
   TEST_ASSERT(decompress_ok, "USDA decompression should succeed");
 
@@ -215,17 +215,17 @@ int test_usda_roundtrip() {
 
 // Test 7: IsZstdCompressed wrapper function in lightusd namespace
 int test_lightusd_is_zstd_compressed() {
-  std::cout << "\n=== Test: lightusd::IsZstdCompressed ===" << std::endl;
+  std::cout << "\n=== Test: lightusd::legacy::IsZstdCompressed ===" << std::endl;
 
   // Valid zstd magic
   uint8_t valid_magic[] = {0x28, 0xB5, 0x2F, 0xFD, 0x00, 0x00, 0x00, 0x00};
-  TEST_ASSERT(lightusd::IsZstdCompressed(valid_magic, 8),
-              "lightusd::IsZstdCompressed should detect valid zstd magic");
+  TEST_ASSERT(lightusd::legacy::IsZstdCompressed(valid_magic, 8),
+              "lightusd::legacy::IsZstdCompressed should detect valid zstd magic");
 
   // Invalid data
   uint8_t invalid_data[] = {'#', 'u', 's', 'd', 'a'};
-  TEST_ASSERT_FALSE(lightusd::IsZstdCompressed(invalid_data, 5),
-                    "lightusd::IsZstdCompressed should reject non-zstd data");
+  TEST_ASSERT_FALSE(lightusd::legacy::IsZstdCompressed(invalid_data, 5),
+                    "lightusd::legacy::IsZstdCompressed should reject non-zstd data");
 
   return 0;
 }
@@ -249,15 +249,15 @@ def Xform "TestXform"
   // Compress it
   std::vector<uint8_t> compressed;
   std::string err;
-  bool compress_ok = lightusd::ZstdCompression::Compress(
+  bool compress_ok = lightusd::legacy::ZstdCompression::Compress(
       reinterpret_cast<const uint8_t*>(usda_content), usda_size,
       &compressed, 5, &err);
   TEST_ASSERT(compress_ok, "Compression should succeed");
 
   // Load as USD from memory
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
-  bool load_ok = lightusd::LoadUSDFromMemory(
+  bool load_ok = lightusd::legacy::LoadUSDFromMemory(
       compressed.data(), compressed.size(), "", &stage, &warn, &err);
   TEST_ASSERT(load_ok, "Loading compressed USDA from memory should succeed");
 
@@ -279,23 +279,23 @@ int test_memory_budget() {
   // Compress it
   std::vector<uint8_t> compressed;
   std::string err;
-  bool compress_ok = lightusd::ZstdCompression::Compress(
+  bool compress_ok = lightusd::legacy::ZstdCompression::Compress(
       reinterpret_cast<const uint8_t*>(large_data.data()), large_data.size(),
       &compressed, 1, &err); // Use level 1 for speed
   TEST_ASSERT(compress_ok, "Compression should succeed");
 
   // Try to load with a small memory budget
-  lightusd::USDLoadOptions options;
+  lightusd::legacy::USDLoadOptions options;
   options.max_memory_limit_in_mb = 1; // Only 1MB allowed
 
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   std::string warn;
   err.clear();
 
   // This should fail because decompressed size exceeds the memory limit
   // Note: This test may not work perfectly because the compressed data
   // isn't valid USD, but it tests the memory check path
-  bool load_ok = lightusd::LoadUSDFromMemory(
+  bool load_ok = lightusd::legacy::LoadUSDFromMemory(
       compressed.data(), compressed.size(), "", &stage, &warn, &err, options);
 
   // Should fail due to memory limit
@@ -310,23 +310,23 @@ int test_write_compressed_usda() {
   std::cout << "\n=== Test: Write Compressed USDA File ===" << std::endl;
 
   // Create a simple stage
-  lightusd::Stage stage;
+  lightusd::legacy::Stage stage;
   stage.metas().doc = "Test compressed USDA write";
 
-  lightusd::Xform xform;
+  lightusd::legacy::Xform xform;
   xform.name = "WriteTest";
 
-  lightusd::Prim prim;
+  lightusd::legacy::Prim prim;
   prim.set_data(xform);
   stage.root_prims().push_back(prim);
 
   // Write with compression (using options)
-  lightusd::USDWriteOptions options;
+  lightusd::legacy::USDWriteOptions options;
   options.use_zstd_compression = true;
   options.zstd_compression_level = 5;
 
   std::string warn, err;
-  bool write_ok = lightusd::usda::SaveAsUSDA(
+  bool write_ok = lightusd::legacy::usda::SaveAsUSDA(
       "test_output.usda.zst", stage, &warn, &err, options);
   TEST_ASSERT(write_ok, "Writing compressed USDA should succeed");
 
@@ -339,12 +339,12 @@ int test_write_compressed_usda() {
   ifs.close();
 
   // Verify it's zstd compressed
-  TEST_ASSERT(lightusd::IsZstdCompressed(file_content.data(), file_content.size()),
+  TEST_ASSERT(lightusd::legacy::IsZstdCompressed(file_content.data(), file_content.size()),
               "Output file should be zstd compressed");
 
   // Load it back
-  lightusd::Stage loaded_stage;
-  bool load_ok = lightusd::LoadUSDFromMemory(
+  lightusd::legacy::Stage loaded_stage;
+  bool load_ok = lightusd::legacy::LoadUSDFromMemory(
       file_content.data(), file_content.size(), "", &loaded_stage, &warn, &err);
   TEST_ASSERT(load_ok, "Loading written compressed file should succeed");
 

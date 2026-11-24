@@ -25,6 +25,11 @@ struct PathTraceSettings {
   uint32_t maxSubsurfaceEvents{16};
   uint32_t maxVolumeEvents{16};
   uint32_t motionSegments{2};
+  // True when --pt-motion-segments was given. Otherwise, when path tracing,
+  // an authored camera shutter raises motionSegments to kShutterMotionSegments (two segments
+  // ghost visibly), with or without Gaussian splats.
+  bool motionSegmentsExplicit{false};
+  static constexpr uint32_t kShutterMotionSegments = 16;
   uint32_t seed{1};
   float varianceThreshold{0.02f};
   // Display-side robust-deviation threshold for isolated luminance samples.

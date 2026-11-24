@@ -163,11 +163,11 @@ struct variant {
 }  // namespace lightusd
 
 int main(int argc, char** argv) {
-  lightusd::variant<bool, std::string> a;
+  lightusd::legacy::variant<bool, std::string> a;
   a.set<bool>(true);
   a.set<std::string>("bora");
 
-  lightusd::variant<bool, std::string> b = a;
+  lightusd::legacy::variant<bool, std::string> b = a;
 
   std::cout << a.get<std::string>() << "\n";
   std::cout << b.get<std::string>() << "\n";

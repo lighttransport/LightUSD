@@ -32,11 +32,11 @@ static void run(const uint8_t *data, size_t size)
   std::string s1 = std::string(reinterpret_cast<const char *>(data), loc-1);
   std::string s2 = std::string(reinterpret_cast<const char *>(data+loc), size-loc-1);
 
-  lightusd::Path base_path(s1, "");
-  lightusd::Path rel_path(s2, "");
-  lightusd::Path abs_path("", "");
+  lightusd::legacy::Path base_path(s1, "");
+  lightusd::legacy::Path rel_path(s2, "");
+  lightusd::legacy::Path abs_path("", "");
 
-  bool ret = lightusd::pathutil::ResolveRelativePath(base_path, rel_path, &abs_path);
+  bool ret = lightusd::legacy::pathutil::ResolveRelativePath(base_path, rel_path, &abs_path);
   (void)ret;
 
 

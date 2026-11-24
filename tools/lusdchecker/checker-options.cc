@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cctype>
 namespace lusdchecker {
-using lightusd::next::ValidationOptions;
+using lightusd::ValidationOptions;
 using Args = CheckerOptions;
-static ValidationOptions AllAvailableGroups() { return lightusd::next::MakeValidateAllOptions(); }
+static ValidationOptions AllAvailableGroups() { return lightusd::MakeValidateAllOptions(); }
 std::vector<std::string> Split(const std::string& text, char separator) {
   std::vector<std::string> values;
   size_t start = 0;

@@ -9,7 +9,7 @@
 #include "c-stage-bridge.hh"
 #include "mcp-tools.hh"
 #include "mcp-util.hh"
-#include "next/stage/stage.hh"
+#include "stage/stage.hh"
 
 namespace lightusd {
 namespace mcp {
@@ -122,7 +122,7 @@ bool ListPrimSpecs(Context &ctx, const json &args, json &result, std::string &er
   LayerEntry *layer = FindLayer(ctx, args, err);
   if (!layer) return false;
   result["content"] = json::array();
-  for (const next::UsdPrim &p : NativeStage(layer->stage)->GetRootPrims()) {
+  for (const ::lightusd::UsdPrim &p : NativeStage(layer->stage)->GetRootPrims()) {
     result["content"].push_back({{"type", "text"}, {"text", p.GetName()}});
   }
   return true;
@@ -136,7 +136,7 @@ bool DebugPrimSpecDump(Context &ctx, const json &args, json &result, std::string
   }
   LayerEntry *layer = FindLayer(ctx, args, err);
   if (!layer) return false;
-  const next::UsdPrim prim = NativeStage(layer->stage)->GetPrimAtPath(path);
+  const ::lightusd::UsdPrim prim = NativeStage(layer->stage)->GetPrimAtPath(path);
   if (!prim) {
     err = "PrimSpec not found at " + path;
     return false;

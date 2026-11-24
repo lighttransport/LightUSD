@@ -180,7 +180,7 @@ These were validated to build + run; reuse them.
    uploadTexture/uploadSkinningFrame/updateMeshVertices/updateInstanceVisibility`)
    through it. Inject `gui_.setPostGpu([this](auto op){ postGpu(std::move(op)); })`.
 
-5. **Upload-ordering hazard (handled):** the `--next` progressive path frees CPU
+5. **Upload-ordering hazard (handled):** the `--core` progressive path frees CPU
    geometry on the main thread right after the per-mesh upload → use-after-free when
    uploads are async. Workaround that worked: when threaded, force the one-shot
    `uploadScene` path and post the upload + the CPU-geometry free **together in one
@@ -273,7 +273,7 @@ geometry-sized "resize".
 
 - **Pixel-compare (the gate):** `lusdview --threaded --backend gl --frames 6
   --screenshot /tmp/on.png models/suzanne.usdc` vs the same without `--threaded` →
-  must be byte-identical (or within AA tolerance). Then a `--next` instanced scene
+  must be byte-identical (or within AA tolerance). Then a `--core` instanced scene
   (e.g. `/tmp/grid100.usda`) + a Caldera prefab.
 - **Interactive smoke (you, at a display):** load a large scene; confirm UI/panels/
   timeline/orbit stay responsive while geometry/streaming/`rebuildTlas` happen;

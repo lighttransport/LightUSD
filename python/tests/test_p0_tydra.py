@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""P0: Tydra-next full render-scene fields and option matrix."""
+"""P0: Tydra full render-scene fields and option matrix."""
 import pytest
 
 import lightusd

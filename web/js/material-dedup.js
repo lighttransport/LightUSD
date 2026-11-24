@@ -38,13 +38,13 @@ import { dedupMaterialsByContent, batchByMaterial } from 'lightusd/MeshBatching.
 import { getAssetUriFromURL } from 'lightusd/LoaderConfigUtils.js';
 import { parseUSDZEntries } from './src/usdzconvert.js';
 import {
-	buildNextThreeNode,
-	findNextArchiveEntry,
-	isNextScene,
-	nextArchiveUDIMLayout,
-	nextCountsFromScene,
-	readNextSceneMeta
-} from 'lightusd/NextRenderSceneUtils.js';
+	buildThreeNode,
+	findArchiveEntry,
+	isScene,
+	archiveUDIMLayout,
+	countsFromScene,
+	readSceneMeta
+} from 'lightusd/RenderSceneUtils.js';
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -53,11 +53,10 @@ import {
 let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
 let loader = null; // reused LightUSDLoader instance
-let loaderModuleBackend = null; // 'legacy' combined module or 'next' next-only module
+let loaderModuleBackend = null; // Core module, retained across loads.
 let currentUsd = null; // current native scene (embind object)
 let raycaster, pointerNdc;
 let pickedObject = null;
-let legacyAsyncSupport = null;
 
 let rawBytes = null; // Uint8Array of the active model
 let currentName = 'sample scene';
@@ -278,7 +277,7 @@ function updateTextureLoadStats(info = {}) {
 
 // Optimization + scene-transform parameters (driven by lil-gui).
 const params = {
-	backend: 'legacy',
+	backend: 'core',
 
 	// Tydra render-scene optimizations.
 	materialDedup: true,
@@ -547,8 +546,8 @@ function setupCameraMovementKeys() {
 // Conversion + scene build
 // ---------------------------------------------------------------------------
 
-async function ensureLoader(backend = 'legacy') {
-	const moduleBackend = backend === 'next' ? 'next' : 'legacy';
+async function ensureLoader(_backend = 'core') {
+	const moduleBackend = 'core';
 	if (loader && loaderModuleBackend === moduleBackend) return loader;
 	loader = new LightUSDLoader();
 	await loader.init({
@@ -557,24 +556,7 @@ async function ensureLoader(backend = 'legacy') {
 		backend: moduleBackend
 	});
 	loaderModuleBackend = moduleBackend;
-	legacyAsyncSupport = null;
 	return loader;
-}
-
-function hasLegacyAsyncSupport() {
-	if (legacyAsyncSupport !== null) return legacyAsyncSupport;
-	legacyAsyncSupport = false;
-	try {
-		const native = loader?.native_;
-		if (native && typeof native.LightUSDLoaderNative === 'function') {
-			const usd = new native.LightUSDLoaderNative();
-			legacyAsyncSupport = typeof usd.loadFromBinaryAsync === 'function';
-			if (typeof usd.delete === 'function') usd.delete();
-		}
-	} catch (_) {
-		legacyAsyncSupport = false;
-	}
-	return legacyAsyncSupport;
 }
 
 function formatNativeProgressMessage(label, info = {}) {
@@ -651,7 +633,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 	const label = progressOptions.label || 'Converting';
 	const base = Number.isFinite(progressOptions.base) ? progressOptions.base : 20;
 	const range = Number.isFinite(progressOptions.range) ? progressOptions.range : 30;
-	const backend = options.backend || params.backend || 'legacy';
+	const backend = 'core';
 	let syntheticStep = 0;
 	const report = (info = {}) => {
 		let localPct = Number(info.localPercentage);
@@ -679,9 +661,9 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 	};
 
 	report({ stage: 'start', localPercentage: 0, message: `${label}: starting...` });
-	if (backend === 'next' && params.useWorker && typeof Worker !== 'undefined') {
+	if (backend === 'core' && params.useWorker && typeof Worker !== 'undefined') {
 		try {
-			return await parseNextInWorker(bytes, name, options, progressOptions, report);
+			return await parseCoreInWorker(bytes, name, options, progressOptions, report);
 		} catch (error) {
 			if (error?.workerConversionError) throw error;
 			console.warn('[material-dedup] next worker unavailable; falling back to main thread', error);
@@ -689,8 +671,7 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 		}
 	}
 
-	if (backend === 'legacy' && typeof loader.parseAsync === 'function' &&
-			hasLegacyAsyncSupport()) {
+	if (typeof loader.parseAsync === 'function') {
 		return loader.parseAsync(bytes, name, {
 			...options,
 			onLightUSDDebug: report,
@@ -877,7 +858,7 @@ function makeWorkerArchiveEntries(sourceBytes, meshes) {
 	return archiveEntries;
 }
 
-function makeWorkerNextScene(payload = {}, sourceBytes = null,
+function makeWorkerScene(payload = {}, sourceBytes = null,
 		includeArchiveEntries = false, prefetchedImages = null) {
 	const meshes = payload.meshes || [];
 	const archiveEntries = includeArchiveEntries
@@ -898,7 +879,7 @@ function makeWorkerNextScene(payload = {}, sourceBytes = null,
 		}
 	}
 	return {
-		__backend: 'next',
+		__backend: 'core',
 		__workerConverted: true,
 		filename: payload.filename || '',
 		meshes,
@@ -914,10 +895,10 @@ function makeWorkerNextScene(payload = {}, sourceBytes = null,
 		materialKeys,
 		textureKeys,
 		getArchiveTextureBytes(path) {
-			return findNextArchiveEntry(archiveEntries, path)?.bytes || null;
+			return findArchiveEntry(archiveEntries, path)?.bytes || null;
 		},
 		getArchiveUDIMTiles(path) {
-			return nextArchiveUDIMLayout(archiveEntries, path);
+			return archiveUDIMLayout(archiveEntries, path);
 		},
 		getPrefetchedArchiveImage(path) {
 			const key = normWorkerTexturePath(path);
@@ -994,7 +975,7 @@ function workerConversionInput(bytes, name) {
 	return { bytes: source, name };
 }
 
-function parseNextInWorker(bytes, name, options, progressOptions, report) {
+function parseCoreInWorker(bytes, name, options, progressOptions, report) {
 	const worker = getConversionWorker();
 	const id = ++conversionWorkerSeq;
 	const prefetchedImages = options.returnArchiveEntries
@@ -1037,7 +1018,7 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 				report(msg.info || {});
 			} else if (msg.type === 'result') {
 				cleanup();
-				resolve(makeWorkerNextScene(msg.payload, bytes,
+				resolve(makeWorkerScene(msg.payload, bytes,
 					!!options.returnArchiveEntries, prefetchedImages));
 			} else if (msg.type === 'error') {
 				cleanup();
@@ -1054,22 +1035,11 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 }
 
 function countsFromUsd(usd) {
-	if (isNextScene(usd)) return nextCountsFromScene(usd);
+	if (isScene(usd)) return countsFromScene(usd);
 	return {
 		meshes: usd.numMeshes ? usd.numMeshes() : 0,
 		materials: usd.numMaterials ? usd.numMaterials() : 0,
 		textures: usd.numTextures ? usd.numTextures() : 0
-	};
-}
-
-// Read scene metadata (upAxis / metersPerUnit) defensively.
-function readSceneMeta(usd) {
-	if (isNextScene(usd)) return readNextSceneMeta(usd);
-	const md = (usd.getSceneMetadata) ? usd.getSceneMetadata() : {};
-	return {
-		upAxis: md.upAxis || 'Y',
-		metersPerUnit: (typeof md.metersPerUnit === 'number' && md.metersPerUnit > 0)
-			? md.metersPerUnit : 1.0
 	};
 }
 
@@ -1304,7 +1274,7 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 // Convert `bytes` with the given optimization options and return the native
 // scene + counts. Does NOT mount it into the Three.js scene.
 async function convertScene(bytes, name, opts) {
-	const requestedBackend = opts.backend || params.backend || 'legacy';
+	const requestedBackend = 'core';
 	const backend = requestedBackend;
 	await ensureLoader(backend);
 	const usd = await parseWithOptions(bytes, name, {
@@ -1364,8 +1334,8 @@ async function mountScene(usd,
 		showProgress('building', pct, message);
 	};
 
-	if (isNextScene(usd)) {
-		const built = buildNextThreeNode(usd, {
+	if (isScene(usd)) {
+		const built = buildThreeNode(usd, {
 			skipTextures,
 			lazyTextures,
 			onProgress: reportBuildProgress
@@ -1532,16 +1502,16 @@ async function loadModel(bytes, name, stats = null) {
 		// conversion used only to populate the baseline column. This applies to
 		// both main-thread and worker conversion; limiting it to workers made
 		// large main-thread loads take almost exactly twice as long.
-		if (params.backend === 'next' && !params.jsBatchByMaterial) {
+		if (params.backend === 'core' && !params.jsBatchByMaterial) {
 			let convertedAt = null;
 			const built = await rebuild({
-				deriveNextBaseline: true,
+				deriveCoreBaseline: true,
 				onConverted: () => {
 					convertedAt = performance.now();
 					if (stats) stats.parseMs = convertedAt - parseStart;
 				}
 			});
-			if (!built) throw new Error('next scene conversion failed');
+			if (!built) throw new Error('core scene conversion failed');
 			if (stats) stats.processMs = performance.now() - convertedAt;
 			frameCameraToScene();
 			finishLoadStats(stats);
@@ -1606,7 +1576,7 @@ async function loadModel(bytes, name, stats = null) {
 }
 
 // Re-convert + rebuild with the current optimization options (baseline kept).
-async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) {
+async function rebuild({ deriveCoreBaseline = false, onConverted = null } = {}) {
 	if (!rawBytes) return;
 	setStatus('Converting with current options…');
 	showProgress('processing', 45, 'Converting with current options...');
@@ -1634,7 +1604,7 @@ async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) 
 			progressBase: 55,
 			progressRange: params.loadTextures ? 25 : 40 });
 		const info = measureSceneInfo();
-		if (deriveNextBaseline) {
+		if (deriveCoreBaseline) {
 			const native = counts.stats || {};
 			const merged = Number(native.mergedMeshes) || 0;
 			const groups = Number(native.mergeGroups) || 0;
@@ -1676,13 +1646,13 @@ async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) 
 // scene (no native re-conversion). Used when toggling the JS-side options.
 async function reapplyThreePostProcess() {
 	if (!currentUsd || !currentCounts) return;
-	// buildNextThreeNode releases the adapter's copied mesh payload after the
+	// buildThreeNode releases the adapter's copied mesh payload after the
 	// first mount to keep large scenes within the wasm32/browser memory budget.
 	// Such an adapter cannot be mounted a second time: doing so produced an
 	// empty scene when Load Textures or a JS post-process option was toggled.
 	// Reconvert from the retained source bytes so texture archive entries and
 	// mesh/material data match the newly selected options.
-	if (isNextScene(currentUsd) &&
+	if (isScene(currentUsd) &&
 			(!Array.isArray(currentUsd.meshes) || currentUsd.meshes.length === 0)) {
 		await rebuild();
 		return;
@@ -1712,7 +1682,7 @@ async function reapplyThreePostProcess() {
 
 function describeOptions() {
 	const on = [];
-	const backend = currentUsd?.__backend || params.backend || 'legacy';
+	const backend = currentUsd?.__backend || 'core';
 	const workerNote = currentUsd?.__workerConverted ? '/worker' : '';
 	const backendNote = `backend ${backend}` +
 		workerNote +
@@ -1736,7 +1706,7 @@ function describeOptions() {
 	}
 	const jsNote = js.length ? ` · three.js: ${js.join(', ')}` : '';
 	const nativeStats = currentCounts?.stats;
-	const nativeNote = nativeStats && backend === 'next'
+	const nativeNote = nativeStats && backend === 'core'
 		? ` · native ${nativeStats.sourceMeshes ?? '?'}→${nativeStats.optimizedMeshes ?? '?'} meshes, ` +
 			`${nativeStats.sourceMaterials ?? '?'}→${nativeStats.optimizedMaterials ?? '?'} mats, ` +
 			`${nativeStats.sourceTextures ?? '?'}→${nativeStats.optimizedTextures ?? '?'} tex`
@@ -1794,9 +1764,9 @@ function materialTextureLines(material) {
 			lines.push(`${key}: loaded${size}`);
 		}
 	}
-	const nextPaths = material?.userData?.nextTexturePaths;
-	if (nextPaths) {
-		for (const [key, path] of Object.entries(nextPaths)) {
+	const corePaths = material?.userData?.coreTexturePaths;
+	if (corePaths) {
+		for (const [key, path] of Object.entries(corePaths)) {
 			if (path) lines.push(`${key} path: ${path}`);
 		}
 	}
@@ -1806,10 +1776,10 @@ function materialTextureLines(material) {
 function materialSummary(material, fallbackEntry = null) {
 	const lines = [];
 	const entryMaterial = fallbackEntry?.material || null;
-	const nextMaterial = material?.userData?.nextMaterial || null;
-	const id = nextMaterial?.id ?? fallbackEntry?.materialId ?? material?.userData?.materialId;
-	const key = nextMaterial?.key ?? fallbackEntry?.materialKey;
-	const primPath = nextMaterial?.primPath ?? entryMaterial?.primPath;
+	const coreMaterial = material?.userData?.coreMaterial || null;
+	const id = coreMaterial?.id ?? fallbackEntry?.materialId ?? material?.userData?.materialId;
+	const key = coreMaterial?.key ?? fallbackEntry?.materialKey;
+	const primPath = coreMaterial?.primPath ?? entryMaterial?.primPath;
 	lines.push(`material type: ${material?.type || '(none)'}`);
 	if (Number.isFinite(id)) lines.push(`material id: ${id}`);
 	if (key) lines.push(`material key: ${compactValue(key)}`);
@@ -1966,7 +1936,7 @@ function buildGui() {
 	gui = new GUI({ title: 'Dedup / Optimization' });
 
 	const backendFolder = gui.addFolder('Backend');
-	guiControllers.push(backendFolder.add(params, 'backend', ['legacy', 'next', 'auto'])
+	guiControllers.push(backendFolder.add(params, 'backend', ['core'])
 		.name('Loader Backend').onChange(rebuild));
 	guiControllers.push(backendFolder.add(params, 'useWorker')
 		.name('Worker Conversion').onChange(rebuild));
@@ -2138,8 +2108,8 @@ async function main() {
 	params.loadTextures = flag('textures', params.loadTextures);
 	params.useWorker = flag('worker', params.useWorker);
 	const backend = search.get('backend');
-	if (backend === 'legacy' || backend === 'next' || backend === 'auto') {
-		params.backend = backend;
+	if (backend === 'legacy' || backend === 'core' || backend === 'auto') {
+		params.backend = 'core';
 	}
 	params.materialDedup = flag('dedup', params.materialDedup);
 	params.mergeMeshes = flag('merge', params.mergeMeshes);

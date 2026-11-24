@@ -23,6 +23,7 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "light3d/math.h"
 #include "lusdr_camera.hh"
+#include "lusdr_gsplat_cycles.hh"
 #include "image-writer.hh"
 #include "lusdr_context.hh"
 
@@ -371,7 +372,7 @@ bool MakeDrawScene(const std::vector<Vec3> &base_colors,
         sample->tex = texture;
         sample->channel = channel;
         // Which geometry UV stream this lane samples, recorded per material by
-        // ResolveMeshMaterialTydraNext. RouteSemanticTextures turns it into the
+        // ResolveMeshMaterialTydraCore. RouteSemanticTextures turns it into the
         // Texcoord node's second-set flag consumed by the vkr shader.
         sample->uvSet =
             static_cast<int>(RtTexUvSet(material_src.uv_set_bits, lane));
@@ -568,7 +569,8 @@ bool RunSharedRT(const char *backend, const Options &opt,
                  const std::vector<Texture> &textures,
                  const LightCache &lights,
                  const CameraFrame &camera, int height,
-                 const std::vector<EllipseSceneChunk>* ellipses = nullptr) {
+                 const std::vector<EllipseSceneChunk>* ellipses = nullptr,
+                 MixedGsplatFrame* mixed = nullptr) {
   lusdview::DrawScene scene;
   if (!BuildSharedDrawScene(base_colors, geos, materials, textures, lights,
                             opt.input, &scene) &&
@@ -615,8 +617,10 @@ bool RunSharedRT(const char *backend, const Options &opt,
     std::cerr << backend << " RT unavailable: " << err << "\n";
     return false;
   }
+  tracer.setGsplatKernel(mixed != nullptr, opt.gsplat_srgb);
   if (!tracer.build(scene, scene.triangleCount, 0, &err,
-                    opt.displace ? opt.displace_scale : 0.0f)) {
+                    opt.displace ? opt.displace_scale : 0.0f, nullptr, false, 0x3u,
+                    mixed ? &mixed->data : nullptr)) {
     std::cerr << backend << " RT scene build failed: " << err << "\n";
     return false;
   }
@@ -681,13 +685,51 @@ bool RunSharedRT(const char *backend, const Options &opt,
   std::vector<uint8_t> rgba;
   std::vector<float> linear_rgba;
   uint32_t rendered_samples = 0;
-  if (!tracer.trace(inv.m, vp.m, cam, light, clear, opt.scene_preview_albedo?0.0f:1.0f, 0, 1.0f,
-                    scene_min, scene_extent, w, h, &rgba, &err,
-                    spp, nullptr, path_trace.enabled ? &path_trace : nullptr,
-                    path_trace.enabled ? &linear_rgba : nullptr,
-                    path_trace.enabled ? &rendered_samples : nullptr)) {
-    std::cerr << backend << " RT trace failed: " << err << "\n";
-    return false;
+  const int segments = mixed && mixed->cameras.size() > 1 ? std::min(16, spp) : 1;
+  std::vector<float> total;
+  if (mixed) {
+    path_trace.fireflyClamp = 0;
+    path_trace.varianceThreshold = 0;
+  }
+  for (int segment = 0; segment < segments; ++segment) {
+    auto segment_inv = inv, segment_vp = vp;
+    float origin[3] = {cam[0], cam[1], cam[2]};
+    auto settings = path_trace;
+    const int samples = spp / segments + (segment < spp % segments ? 1 : 0);
+    if (segments > 1) {
+      float tau = (float(segment) + 0.5f) / float(segments);
+      const auto key = LerpCameraFrame(mixed->cameras, tau);
+      light3d::Vec3 eye_key{key.origin.x, key.origin.y, key.origin.z};
+      light3d::Vec3 forward{key.forward.x, key.forward.y, key.forward.z};
+      light3d::Vec3 up_key{key.up.x, key.up.y, key.up.z};
+      segment_vp = CameraProjectionZeroOne(key, float(w) / float(h)) *
+                   light3d::lookAt(eye_key, eye_key + forward, up_key);
+      segment_inv = segment_vp.inverse();
+      origin[0] = key.origin.x; origin[1] = key.origin.y; origin[2] = key.origin.z;
+      tracer.setGsplatShutterSegment(tau, 1.0f / float(segments));
+      settings.seed += uint32_t(segment);
+      settings.targetSamples = uint32_t(samples);
+    }
+    uint32_t completed = 0;
+    if (!tracer.trace(segment_inv.m, segment_vp.m, origin, light, clear,
+                      opt.scene_preview_albedo ? 0.0f : 1.0f, 0, 1.0f,
+                      scene_min, scene_extent, w, h, &rgba, &err,
+                      samples, nullptr, settings.enabled ? &settings : nullptr,
+                      settings.enabled ? &linear_rgba : nullptr,
+                      settings.enabled ? &completed : nullptr)) {
+      std::cerr << backend << " RT trace failed: " << err << "\n";
+      return false;
+    }
+    rendered_samples += completed;
+    if (segments > 1) {
+      if (total.empty()) total.resize(linear_rgba.size());
+      for (size_t i = 0; i < total.size(); ++i)
+        total[i] += float(completed) * linear_rgba[i];
+    }
+  }
+  if (!total.empty() && rendered_samples) {
+    for (float& v : total) v /= float(rendered_samples);
+    linear_rgba.swap(total);
   }
   if (path_trace.enabled) {
     rgba = ToneMapLinear(linear_rgba, w, h, 1.0f);
@@ -697,7 +739,15 @@ bool RunSharedRT(const char *backend, const Options &opt,
   image.height = h;
   image.channels = 4;
   image.bpp = 8;
-  image.data = std::move(rgba);
+  if (mixed && path_trace.enabled && opt.output.size() >= 4 &&
+      opt.output.substr(opt.output.size() - 4) == ".exr") {
+    image.bpp = 32;
+    image.format = lightusd::Image::PixelFormat::Float;
+    image.data.resize(linear_rgba.size() * sizeof(float));
+    std::memcpy(image.data.data(), linear_rgba.data(), image.data.size());
+  } else {
+    image.data = std::move(rgba);
+  }
   lightusd::image::WriteOption write_opt;
   write_opt.format = lightusd::image::WriteImageFormat::Autodetect;
   auto written = lightusd::image::WriteImageToFile(opt.output, image, write_opt);
@@ -735,10 +785,10 @@ bool RunHipSharedRT(const Options &opt,
                     const std::vector<ResolvedMat> &materials,
                     const std::vector<Texture> &textures,
                     const LightCache &lights,
-                    const CameraFrame &camera, int height) {
+                    const CameraFrame &camera, int height, MixedGsplatFrame* splats) {
   return RunSharedRT<lusdview::HipRayTracer>(
       "HIP", opt, base_colors, geos, materials, textures, lights, camera,
-      height);
+      height, nullptr, splats);
 }
 #endif
 

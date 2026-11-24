@@ -1,0 +1,17 @@
+{
+ "floor": 0.010380068183477744,
+ "mean": [
+  0.2661002840630762,
+  0.35257665589600545,
+  0.4925789364985475
+ ],
+ "lusdrender_args": [
+  "-bg",
+  "0.20,0.35,0.60"
+ ],
+ "spp": 256,
+ "width": 320,
+ "height": 180,
+ "blender": "5.3",
+ "note": "regenerate: check_cycles_compare.py LUSDRENDER variants --write-refs"
+}

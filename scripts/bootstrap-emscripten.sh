@@ -10,6 +10,5 @@ mkdir ${builddir}
 cd ${builddir} && CXX=em++ CC=emcc cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DSANITIZE_ADDRESS=1 \
-  -DLIGHTUSD_NATIVE_PRODUCT=legacy \
   ..
 

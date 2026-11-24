@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "collection-diff.hh"
-#include "next/pcp/layer-registry.hh"
-#include "next/reader/usdz-reader.hh"
+#include "pcp/layer-registry.hh"
+#include "reader/usdz-reader.hh"
 #include "core/minijson.hh"
 #include <algorithm>
 #include <filesystem>
@@ -12,7 +12,7 @@
 
 namespace {
 namespace fs = std::filesystem;
-namespace n = lightusd::next;
+namespace n = lightusd;
 using Json = lightusd::minijson::Value;
 constexpr size_t kByteLimit = size_t(1) << 30;
 constexpr size_t kEntryLimit = 100000;

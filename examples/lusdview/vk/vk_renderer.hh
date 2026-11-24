@@ -49,6 +49,14 @@ class VulkanRenderer final : public Renderer {
   void setTransparencyMode(TransparencyMode mode) override;
   TransparencyStatus transparencyStatus() const override;
   void setRasterQualityHigh(bool high) override { rasterQualityHigh_ = high; }
+  void setGsplatKernel(bool cycles, bool srgb) override {
+    gsplatCycles_ = cycles;
+    gsplatSrgb_ = srgb;
+  }
+  void setGsplatShutterSegment(float center, float width) override {
+    gsSegCenter_ = center;
+    gsSegWidth_ = width;
+  }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -187,7 +195,7 @@ class VulkanRenderer final : public Renderer {
     const bool ready = rtTechnique_ == RtTechnique::kHardware
                            ? tlas_ != VK_NULL_HANDLE
                            : (rtTechnique_ == RtTechnique::kComputeBvh &&
-                              swTlasNodeCount_ > 0u && swInstCount_ > 0u);
+                              ((swTlasNodeCount_ > 0u && swInstCount_ > 0u) || swGsCount_ > 0));
     return ready ? rtAccumFrame_ + 1u : 0u;
   }
   uint32_t rayTracingTlasChunks() const override { return rtTlasChunkCount_; }
@@ -350,7 +358,7 @@ class VulkanRenderer final : public Renderer {
     std::vector<float> instanceColors;
     std::vector<float> instanceOpacities;
     bool hasTranslucentInstances{false};
-    // Raster GPU instancing (flat --next path): per-instance 3x4 o2w (instVbo,
+    // Raster GPU instancing (flat --core path): per-instance 3x4 o2w (instVbo,
     // 48B/inst, host-visible so per-instance culling can re-map the visible subset)
     // + per-instance RGBA color/opacity (instColorBuf) + per-vertex prototype color
     // (instVtxColorBuf, white when absent). drawInstanceCount is the count actually
@@ -1089,7 +1097,7 @@ class VulkanRenderer final : public Renderer {
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
   void refreshMdiDrawMeta();
 
-  // ---- Multi-draw-indirect instanced path (large-scene --next) ----
+  // ---- Multi-draw-indirect instanced path (large-scene --core) ----
   // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
   // vkCmdDrawIndexedIndirect batches over shared buffers instead of ~83k per-mesh
   // bind+draw calls. Geometry (positions/normals, per-vertex color, morph-zero,
@@ -1465,6 +1473,10 @@ class VulkanRenderer final : public Renderer {
   uint32_t rtPointCount_{0};
   uint32_t rtPointNodeCount_{0};
   uint32_t rtPointChunkCount_{0};
+  // --gsplat-kernel cycles: the point buffers hold the LightRT splat encoding.
+  bool gsplatCycles_{false}, gsplatSrgb_{false}, rtGsplatCycles_{false};
+  uint32_t rtGsplatKeys_{1};  // motion keys per splat in the point buffers
+  float gsSegCenter_{-1.0f}, gsSegWidth_{1.0f};  // app shutter segment
   // True when analytic Gaussian point buffers do not fit the current Vulkan
   // residency budget; raster camera-facing splat quads remain available.
   bool gaussianRtDisabled_{false};
@@ -1538,6 +1550,10 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout rtPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline rtPipeline_{VK_NULL_HANDLE};
   bool rtUsesFullShader_{true};
+  // True while the hardware ray-query pipeline is the interactive-only variant
+  // (built with LUSDVIEW_RT_INTERACTIVE_ONLY, i.e. without the production path
+  // tracer). Entering path tracing must swap it for the full/fast shader.
+  bool rtUsesInteractiveShader_{false};
   bool rtUsesProceduralMaterialX_{false};
   size_t materialXShaderMaxSourceBytes_{129u * 1024u};
   int materialXShaderCompileTimeoutSec_{30};
@@ -1581,6 +1597,10 @@ class VulkanRenderer final : public Renderer {
 
   const DrawScene* hostSceneSource_{nullptr};  // see setHostSceneSource()
 
+  VkBuffer swGsBuffers_[4]{};
+  VkDeviceMemory swGsMemory_[4]{};
+  uint32_t swGsCount_ = 0;
+  void destroySwGsBuffers();
   VkDescriptorSetLayout swRtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool swRtPool_{VK_NULL_HANDLE};
   VkDescriptorSet swRtSet_{VK_NULL_HANDLE};
