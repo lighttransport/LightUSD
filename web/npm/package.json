@@ -8,6 +8,7 @@
   "module": "./index.js",
   "exports": {
     ".": "./index.js",
+    "./core": "./core.js",
     "./package.json": "./package.json",
     "./*.js": "./*.js",
     "./*.wasm": "./*.wasm",

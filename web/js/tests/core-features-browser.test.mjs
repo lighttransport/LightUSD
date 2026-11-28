@@ -40,7 +40,7 @@ try {
         return [main,background];
       } finally {worker.terminate();}
     },bits);
-    assert.deepEqual(results,[{pointerBits:bits,heaps:5},{pointerBits:bits,heaps:5}]);
+    assert.deepEqual(results,[{pointerBits:bits,heaps:6},{pointerBits:bits,heaps:6}]);
   }
   console.log('Browser main and module Worker feature contracts: wasm32 + wasm64 PASS');
 } finally {

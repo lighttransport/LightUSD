@@ -7,23 +7,24 @@ const {default: createModule} = await import(new URL(
   wasm64 ? '../src/lightusd/lightusd_64.js' : '../src/lightusd/lightusd.js',
   import.meta.url));
 const module = await createModule();
+const tydra = await module.loadFeature('tydra');
 const nil = wasm64 ? 0n : 0;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const allocations = [];
 const allocate = bytes => {
-  const ptr = module._lightusd_wasm_alloc(bytes.length);
+  const ptr = tydra._lightusd_wasm_alloc(bytes.length);
   assert.notEqual(ptr, nil);
   allocations.push(ptr);
-  module.HEAPU8.set(bytes, Number(ptr));
+  tydra.HEAPU8.set(bytes, Number(ptr));
   return ptr;
 };
 const name = text => {
   const bytes = encoder.encode(text);
   return [allocate(bytes), bytes.length];
 };
-const stream = module._lightusd_wasm_create(4);
-const wrongKind = module._lightusd_wasm_create(1);
+const stream = tydra._lightusd_wasm_create(4);
+const wrongKind = tydra._lightusd_wasm_create(1);
 assert.ok(stream && wrongKind);
 try {
   const scene = encoder.encode(`#usda 1.0
@@ -37,7 +38,7 @@ def Xform "World_雪" {
 `);
   assert.equal(module._lightusd_wasm_render_begin(stream, allocate(scene), scene.length), 1);
   const output = allocate(new Uint8Array(128));
-  const outputBytes = () => module.HEAPU8.subarray(Number(output), Number(output) + 128);
+  const outputBytes = () => tydra.HEAPU8.subarray(Number(output), Number(output) + 128);
   const checkCopy = (copy, expected) => {
     outputBytes().fill(0xa5);
     const required = copy(nil, 0);
@@ -79,8 +80,8 @@ def Xform "World_雪" {
   assert.equal(module._lightusd_wasm_render_stream_asset_cancel(stream, ...canonical), 1);
   assert.equal(module._lightusd_wasm_render_stream_asset_size(stream, ...relative), -1);
 } finally {
-  module._lightusd_wasm_destroy(stream);
+  tydra._lightusd_wasm_destroy(stream);
   module._lightusd_wasm_destroy(wrongKind);
-  for (const ptr of allocations) module._lightusd_wasm_free(ptr);
+  for (const ptr of allocations) tydra._lightusd_wasm_free(ptr);
 }
 console.log(`ok - bounded string copies and normalized streaming names (${wasm64 ? 'memory64' : 'wasm32'})`);

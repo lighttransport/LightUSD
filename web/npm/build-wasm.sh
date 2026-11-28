@@ -57,6 +57,6 @@ cat <<EOF
   ${WEB_DIR}/js/src/lightusd/lightusd.wasm
   ${WEB_DIR}/js/src/lightusd/lightusd_64.js
   ${WEB_DIR}/js/src/lightusd/lightusd_64.wasm
-  ${WEB_DIR}/js/src/lightusd/lightusd_{geometry,raytrace,validator,exr}{,_64}.{js,wasm}
+  ${WEB_DIR}/js/src/lightusd/lightusd_{geometry,raytrace,validator,exr,tydra}{,_64}.{js,wasm}
   ${WEB_DIR}/js/src/lightusd/lightusd_mcp{,_64}.{js,wasm}
 EOF

@@ -44,6 +44,10 @@ const REQUIRED_SOURCE_FILES = [
   'lightusd_exr.wasm',
   'lightusd_exr_64.js',
   'lightusd_exr_64.wasm',
+  'lightusd_tydra.js',
+  'lightusd_tydra.wasm',
+  'lightusd_tydra_64.js',
+  'lightusd_tydra_64.wasm',
   'lightusd_mcp.js',
   'lightusd_mcp.wasm',
   'lightusd_mcp_64.js',
@@ -172,6 +176,9 @@ function main() {
     }
   }
   fs.copyFileSync(rootEntrypoint, path.join(distDir, 'index.js'));
+  const coreEntrypoint = path.resolve(packageRoot, 'core.js');
+  ensureFileExists(coreEntrypoint);
+  fs.copyFileSync(coreEntrypoint, path.join(distDir, 'core.js'));
   fs.copyFileSync(readmePath, path.join(distDir, 'README.md'));
   fs.copyFileSync(licensePath, path.join(distDir, 'LICENSE'));
 

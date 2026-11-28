@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.16)
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
+include(LightUSDWasm)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
@@ -280,7 +282,10 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
 
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src lightusd_core_build EXCLUDE_FROM_ALL)
 
-  add_executable(lightusd_core_wasm binding-udim.cc binding-core-udim.cc
+  # Shared by the core module and the Tydra feature: the render/asset/layer
+  # C dispatch owns its objects inside whichever module compiles it.
+  set(LIGHTUSD_CORE_BINDING_SOURCES
+binding-udim.cc binding-core-udim.cc
     ${PROJECT_SOURCE_DIR}/../src/imageio/png-stream.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-core-layer.cc
     ${PROJECT_SOURCE_DIR}/../src/udim-layer.cc
@@ -301,6 +306,11 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     ${PROJECT_SOURCE_DIR}/../tools/lusdpreview/image-resize-impl.cc
     binding-core-assets.cc
     binding-core-util.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
+    ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
+    material-serializer.cc)
+
+  set(LIGHTUSD_RENDER_BINDING_SOURCES
     binding-core-render-lifecycle.cc
     binding-core-render-query-geometry.cc
     binding-core-render-query-scene.cc
@@ -308,17 +318,19 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     binding-core-render-query-shading.cc
     binding-core-render-query-animation.cc
     binding-core-render-assets.cc
-    ${PROJECT_SOURCE_DIR}/../src/image-loader.cc
-    ${PROJECT_SOURCE_DIR}/../src/image-writer.cc
     binding-core-render-primvars.cc
     binding-core-render-outputs.cc
     binding-core-render-mesh-helpers.cc
     binding-core-render-mesh.cc
     binding-core-render-material-key.cc
     binding-core-render-material.cc
-    material-serializer.cc
     binding-core-render-merge.cc
     binding-core-render-material-output.cc)
+
+  # The C exports are retained in core only so the shared object-dispatch TU
+  # links; the render JS API is exposed exclusively by the Tydra feature.
+  add_executable(lightusd_core_wasm
+    ${LIGHTUSD_CORE_BINDING_SOURCES} ${LIGHTUSD_RENDER_BINDING_SOURCES})
   set_source_files_properties(${PROJECT_SOURCE_DIR}/../src/image-writer.cc PROPERTIES
     COMPILE_DEFINITIONS "LIGHTUSD_NO_STB_IMAGE_WRITE_IMPLEMENTATION=1")
   target_sources(lightusd_core_wasm PRIVATE binding-exr-bridge.cc)
@@ -336,19 +348,36 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     set_target_properties(lightusd_exr_wasm PROPERTIES
       C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   endif()
-  add_executable(lightusd_validator_wasm EXCLUDE_FROM_ALL
-    binding-validator.cc binding-validation.cc
-    ../tools/lusdchecker/lusdchecker.cc
-    ../tools/lusdchecker/checker-memory.cc ../tools/lusdchecker/checker-options.cc
-    ../tools/lusdchecker/report.cc)
+  add_lightusd_wasm_module(lightusd_validator_wasm EXCLUDE_FROM_ALL
+    SOURCES binding-validator.cc binding-validation.cc
+      ../tools/lusdchecker/lusdchecker.cc
+      ../tools/lusdchecker/checker-memory.cc ../tools/lusdchecker/checker-options.cc
+      ../tools/lusdchecker/report.cc)
   target_compile_definitions(lightusd_validator_wasm PRIVATE LUSDCHECKER_MEMORY_ONLY=1)
   target_link_libraries(lightusd_validator_wasm PRIVATE lightusd_validation)
   target_include_directories(lightusd_validator_wasm PRIVATE ../src)
   target_compile_options(lightusd_validator_wasm PRIVATE -fno-exceptions -fno-rtti)
 
+  # Standalone Tydra render-conversion feature. It owns its own Stage and
+  # RenderScene (copy-in bytes, copy-out JSON), so it needs no object sharing
+  # with the core module's heap. Built with the shared module helper.
+  add_lightusd_wasm_module(lightusd_tydra_wasm EXCLUDE_FROM_ALL
+    SOURCES ${LIGHTUSD_CORE_BINDING_SOURCES} ${LIGHTUSD_RENDER_BINDING_SOURCES}
+      binding-tydra.cc binding-exr-bridge.cc
+      ../src/sha256.cc binding-feature.c)
+  target_link_libraries(lightusd_tydra_wasm PRIVATE tydra lightusd_c lightusd_core)
+  if(TARGET lightusd_textools)
+    target_link_libraries(lightusd_tydra_wasm PRIVATE lightusd_textools)
+    target_compile_definitions(lightusd_tydra_wasm PRIVATE LIGHTUSD_WITH_TEXTOOLS=1)
+  endif()
+  target_include_directories(lightusd_tydra_wasm PRIVATE ../src)
+  target_compile_definitions(lightusd_tydra_wasm PRIVATE
+    JSON_NOEXCEPTION=1 LIGHTUSD_CXX_EXCEPTIONS=0 LIGHTUSD_TYPED_BINDINGS=1)
+  target_compile_options(lightusd_tydra_wasm PRIVATE -fno-exceptions -fno-rtti)
+
   # Distribution build includes optional artifacts without linking them into core.
   add_custom_target(lightusd_core_distribution ALL
-    DEPENDS lightusd_core_wasm lightusd_validator_wasm)
+    DEPENDS lightusd_core_wasm lightusd_validator_wasm lightusd_tydra_wasm)
   if(TARGET lightusd_exr_wasm)
     add_dependencies(lightusd_core_distribution lightusd_exr_wasm)
   endif()
@@ -399,7 +428,9 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   target_compile_features(lightusd_core_wasm PRIVATE cxx_std_17)
   set_property(TARGET lightusd_core_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/feature-runtime.js"
-    "${PROJECT_SOURCE_DIR}/core-api.js")
+    "${PROJECT_SOURCE_DIR}/core-api.js"
+    "${PROJECT_SOURCE_DIR}/render-delegate.js"
+    "${PROJECT_SOURCE_DIR}/image-api.js")
   target_compile_options(lightusd_core_wasm
                          PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
   target_compile_definitions(lightusd_core_wasm
@@ -464,7 +495,16 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
   # INCOMING_MODULE_JS_API, so pin the default list plus wasmBinary.
   string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS " -sINCOMING_MODULE_JS_API=['ENVIRONMENT','arguments','canvas','dynamicLibraries','elementPointerLock','instantiateWasm','locateFile','monitorRunDependencies','noExitRuntime','noInitialRun','onAbort','onExit','onRuntimeInitialized','postRun','preInit','preRun','print','printErr','setStatus','statusMessage','stderr','stdin','stdout','thisProgram','wasm','wasmBinary','websocket']")
   string(APPEND LIGHTUSD_CORE_EMCC_LINK_FLAGS
-    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/core-api.js\"")
+    " --post-js \"${PROJECT_SOURCE_DIR}/feature-runtime.js\" --post-js \"${PROJECT_SOURCE_DIR}/core-api.js\" --post-js \"${PROJECT_SOURCE_DIR}/render-delegate.js\" --post-js \"${PROJECT_SOURCE_DIR}/image-api.js\"")
+
+  # Independently linked features replace the core-only APIs with their own
+  # post-JS bridge. Derive their flags once so a later API split cannot leave
+  # a core-only file behind and break every feature module.
+  set(LIGHTUSD_FEATURE_EMCC_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
+  foreach(core_only_api core-api render-api render-delegate image-api)
+    string(REPLACE " --post-js \"${PROJECT_SOURCE_DIR}/${core_only_api}.js\"" ""
+      LIGHTUSD_FEATURE_EMCC_LINK_FLAGS "${LIGHTUSD_FEATURE_EMCC_LINK_FLAGS}")
+  endforeach()
 
   set_target_properties(
       lightusd_core_wasm
@@ -477,8 +517,8 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     if(LIGHTUSD_WASM64)
       string(APPEND feature_output "_64")
     endif()
-    string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js" "${PROJECT_SOURCE_DIR}/${feature}-api.js"
-      feature_flags "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
+    set(feature_flags "${LIGHTUSD_FEATURE_EMCC_LINK_FLAGS}")
+    string(APPEND feature_flags " --post-js \"${PROJECT_SOURCE_DIR}/${feature}-api.js\"")
     set_target_properties(lightusd_${feature}_wasm PROPERTIES OUTPUT_NAME ${feature_output}
       SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${feature_flags}")
     set_property(TARGET lightusd_${feature}_wasm APPEND PROPERTY LINK_DEPENDS
@@ -495,20 +535,36 @@ if (LIGHTUSD_WASM_PRODUCT STREQUAL "core")
     string(APPEND VALIDATOR_OUTPUT "_64")
   endif()
   # Independent memory and exports: no dynamic-linking retention in scene core.
-  string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js"
-                 "${PROJECT_SOURCE_DIR}/validator-api.js"
-                 VALIDATOR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
+  set(VALIDATOR_LINK_FLAGS "${LIGHTUSD_FEATURE_EMCC_LINK_FLAGS}")
+  string(APPEND VALIDATOR_LINK_FLAGS " --post-js \"${PROJECT_SOURCE_DIR}/validator-api.js\"")
   set_target_properties(lightusd_validator_wasm PROPERTIES
     OUTPUT_NAME ${VALIDATOR_OUTPUT} SUFFIX ".js"
     RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
     LINK_FLAGS "${VALIDATOR_LINK_FLAGS}")
   set_property(TARGET lightusd_validator_wasm APPEND PROPERTY LINK_DEPENDS
     "${PROJECT_SOURCE_DIR}/validator-api.js")
+  set(TYDRA_OUTPUT lightusd_tydra)
+  if(LIGHTUSD_WASM64)
+    string(APPEND TYDRA_OUTPUT "_64")
+  endif()
+  set(TYDRA_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
+  # Core's delegate must not run inside the feature (it would load itself).
+  string(REPLACE " --post-js \"${PROJECT_SOURCE_DIR}/render-delegate.js\"" ""
+    TYDRA_LINK_FLAGS "${TYDRA_LINK_FLAGS}")
+  string(APPEND TYDRA_LINK_FLAGS
+    " --post-js \"${PROJECT_SOURCE_DIR}/render-api.js\" --post-js \"${PROJECT_SOURCE_DIR}/tydra-api.js\"")
+  set_target_properties(lightusd_tydra_wasm PROPERTIES
+    OUTPUT_NAME ${TYDRA_OUTPUT} SUFFIX ".js"
+    RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR}
+    LINK_FLAGS "${TYDRA_LINK_FLAGS}")
+  set_property(TARGET lightusd_tydra_wasm APPEND PROPERTY LINK_DEPENDS
+    "${PROJECT_SOURCE_DIR}/feature-runtime.js" "${PROJECT_SOURCE_DIR}/core-api.js"
+    "${PROJECT_SOURCE_DIR}/render-api.js" "${PROJECT_SOURCE_DIR}/image-api.js"
+    "${PROJECT_SOURCE_DIR}/tydra-api.js")
   if(TARGET lightusd_exr_wasm)
     string(REPLACE "validator" "exr" EXR_OUTPUT "${VALIDATOR_OUTPUT}")
-    string(REPLACE "${PROJECT_SOURCE_DIR}/core-api.js"
-                   "${PROJECT_SOURCE_DIR}/exr-api.js"
-                   EXR_LINK_FLAGS "${LIGHTUSD_CORE_EMCC_LINK_FLAGS}")
+    set(EXR_LINK_FLAGS "${LIGHTUSD_FEATURE_EMCC_LINK_FLAGS}")
+    string(APPEND EXR_LINK_FLAGS " --post-js \"${PROJECT_SOURCE_DIR}/exr-api.js\"")
     set_target_properties(lightusd_exr_wasm PROPERTIES
       OUTPUT_NAME ${EXR_OUTPUT} SUFFIX ".js"
       RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR} LINK_FLAGS "${EXR_LINK_FLAGS}")

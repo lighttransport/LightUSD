@@ -3,6 +3,9 @@ import {
   installTextureColorTransform,
   textureColorTransform
 } from './ColorSpaceUtils.js';
+import {materialCacheKey} from './TextureCacheKeys.js';
+import {TextureLoadingManager as BaseTextureLoadingManager} from './TextureLoadingManager.js';
+export {materialCacheKey} from './TextureCacheKeys.js';
 
 export function defaultTextureConcurrency() {
   const cores = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
@@ -22,19 +25,49 @@ function textureColorTransformKey(transform) {
   ]);
 }
 
-export class TextureLoadingManager {
-  constructor() {
-    this.tasks = [];
-    this.taskMap = new Map();
-    this.promiseCache = new Map();
-    this.total = 0;
-    this.loaded = 0;
-    this.failed = 0;
-    this.warnedFailures = new Set();
-    this.aborted = false;
-    this.isLoading = false;
-    this.pendingReleaseAdapters = new Set();
+// Path-specific hooks for the archive-adapter texture pipeline. All shared
+// lifecycle logic lives in TextureLoadingManager.js.
+const renderSceneDriver = {
+  alreadyLoadingThrows: true,
+  resetAborts: true,
+  countNullAsLoaded: true,
+  defaultConcurrency: defaultTextureConcurrency,
+  initialProgress(manager) {
+    return {...manager.getStatus(), percentage: manager.total > 0 ? 0 : 100,
+      isStart: true, isComplete: manager.total === 0};
+  },
+  taskProgress(manager, task) {
+    return {...manager.getStatus(), currentTexture: task.assetPath,
+      mapProperty: task.bindings?.map(b => b.mapProperty).join(',') || ''};
+  },
+  apply(manager, binding, task, texture, {onTextureLoaded}) {
+    binding.material[binding.mapProperty] = texture;
+    installTextureColorTransform(binding.material, binding.mapProperty, task.colorTransform);
+    binding.material.needsUpdate = true;
+    if (onTextureLoaded) onTextureLoaded(binding.material, texture, task);
+  },
+  onError(manager, task, error) {
+    const unsupported = error?.name === 'UnsupportedTextureFormatError';
+    const warningKey = `${task.assetPath}:${error?.name || ''}:${error?.message || error}`;
+    if (manager.warnedFailures.has(warningKey)) return;
+    manager.warnedFailures.add(warningKey);
+    console.warn(unsupported ? '[core-render] unsupported texture format' : '[core-render] texture load failed', JSON.stringify({
+      assetPath: task.assetPath,
+      mapProperty: task.bindings?.map(b => b.mapProperty).join(',') || '',
+      error: error?.message || String(error),
+      errorName: error?.name || undefined
+    }));
+  },
+  yield: () => new Promise(resolve => setTimeout(resolve, 0)),
+  finished(manager) {
+    const adapters = manager.pendingReleaseAdapters;
+    manager.pendingReleaseAdapters = new Set();
+    manager.releaseAdapters(adapters);
   }
+};
+
+export class TextureLoadingManager extends BaseTextureLoadingManager {
+  constructor() { super(renderSceneDriver); }
 
   queueTexture(
     material, mapProperty, adapter, assetPath, colorRole = 'data', sampler = null,
@@ -57,145 +90,6 @@ export class TextureLoadingManager {
     }
     task.bindings.push({ material, mapProperty });
     this.total = this.tasks.length;
-  }
-
-  // Mesh-local material clones and implementation switches must receive the
-  // same pending texture results as the material that queued them.
-  cloneMaterialBindings(source, target) {
-    for (const task of this.tasks) {
-      for (const binding of [...task.bindings]) {
-        if (binding.material === source && !task.bindings.some(
-          item => item.material === target && item.mapProperty === binding.mapProperty)) {
-          task.bindings.push({material: target, mapProperty: binding.mapProperty});
-        }
-      }
-    }
-  }
-
-  replaceMaterials(replacements) {
-    for (const task of this.tasks) {
-      for (const binding of task.bindings) {
-        binding.material = replacements.get(binding.material) || binding.material;
-      }
-    }
-  }
-
-  reset() {
-    const adapters = new Set();
-    for (const task of this.tasks) {
-      if (task.adapter && typeof task.adapter.releaseArchiveTextureBytes === 'function') {
-        adapters.add(task.adapter);
-      }
-    }
-    this.tasks = [];
-    this.taskMap.clear();
-    this.promiseCache.clear();
-    this.total = 0;
-    this.loaded = 0;
-    this.failed = 0;
-    this.warnedFailures.clear();
-    this.aborted = true;
-    this.releaseAdapters(adapters);
-  }
-
-  abort() {
-    this.aborted = true;
-  }
-
-  releaseAdapters(adapters) {
-    if (!adapters || adapters.size === 0) return;
-    if (this.isLoading) {
-      for (const adapter of adapters) this.pendingReleaseAdapters.add(adapter);
-      return;
-    }
-    for (const adapter of adapters) adapter.releaseArchiveTextureBytes();
-  }
-
-  getStatus() {
-    const completed = this.loaded + this.failed;
-    return {
-      loaded: this.loaded,
-      failed: this.failed,
-      total: this.total,
-      pending: Math.max(0, this.total - completed),
-      percentage: this.total > 0 ? (completed / this.total) * 100 : 100,
-      isComplete: this.total === 0 || completed >= this.total
-    };
-  }
-
-  async startLoading({
-    concurrency = defaultTextureConcurrency(),
-    yieldInterval = 16,
-    onTextureLoaded = null,
-    onProgress = null
-  } = {}) {
-    if (this.isLoading) {
-      throw new Error('texture loading is already running');
-    }
-    this.isLoading = true;
-    this.aborted = false;
-    if (onProgress) {
-      onProgress({
-        ...this.getStatus(),
-        percentage: this.total > 0 ? 0 : 100,
-        isStart: true,
-        isComplete: this.total === 0
-      });
-    }
-    let nextIndex = 0;
-    let lastYieldTime = performance.now();
-    const worker = async () => {
-      while (!this.aborted && nextIndex < this.tasks.length) {
-        const task = this.tasks[nextIndex++];
-        try {
-          const texture = await this.loadTexture(task);
-          if (texture && !this.aborted) {
-            for (const binding of task.bindings) {
-              binding.material[binding.mapProperty] = texture;
-              installTextureColorTransform(binding.material,
-                binding.mapProperty, task.colorTransform);
-              binding.material.needsUpdate = true;
-              if (onTextureLoaded) onTextureLoaded(binding.material, texture, task);
-            }
-          }
-          this.loaded++;
-        } catch (error) {
-          this.failed++;
-          const unsupported = error?.name === 'UnsupportedTextureFormatError';
-          const warningKey = `${task.assetPath}:${error?.name || ''}:${error?.message || error}`;
-          if (!this.warnedFailures.has(warningKey)) {
-            this.warnedFailures.add(warningKey);
-            console.warn(unsupported ? '[core-render] unsupported texture format' : '[core-render] texture load failed', JSON.stringify({
-              assetPath: task.assetPath,
-              mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || '',
-              error: error?.message || String(error),
-              errorName: error?.name || undefined
-            }));
-          }
-        }
-        if (onProgress) {
-          onProgress({
-            ...this.getStatus(),
-            currentTexture: task.assetPath,
-            mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || ''
-          });
-        }
-        const now = performance.now();
-        if (yieldInterval > 0 && now - lastYieldTime >= yieldInterval) {
-          lastYieldTime = now;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      }
-    };
-    try {
-      await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
-      return this.getStatus();
-    } finally {
-      this.isLoading = false;
-      const adapters = this.pendingReleaseAdapters;
-      this.pendingReleaseAdapters = new Set();
-      this.releaseAdapters(adapters);
-    }
   }
 
   async loadTexture(task) {
@@ -1044,14 +938,6 @@ export function createMaterial(entry, adapter, textureManager, skipTextures) {
     queue('alphaMap', paths.opacity);
   }
   return material;
-}
-
-export function materialCacheKey(entry) {
-  if (Number.isFinite(entry?.materialId) && entry.materialId >= 0) {
-    return `id:${entry.materialId}`;
-  }
-  if (entry?.materialKey) return `key:${entry.materialKey}`;
-  return `fallback:${JSON.stringify(entry?.material || {})}:${JSON.stringify(entry?.texturePaths || {})}`;
 }
 
 // Three.js submits one draw per BufferGeometry group. USD GeomSubsets are

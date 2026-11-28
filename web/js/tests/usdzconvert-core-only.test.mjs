@@ -429,6 +429,9 @@ const wasmDir = new URL('../src/lightusd/', import.meta.url);
 const native = await loadWasm(() => import(glueUrl), {
   locateFile: (file) => new URL(file, wasmDir).href,
 });
+// RenderStream is provided by the Tydra feature's heap, not the core heap.
+const renderHeap = stream =>
+  stream?.__lightusdModule?.HEAPU8?.buffer || native.HEAPU8.buffer;
 
 await testAsync('core RenderStream runtime methods match the checked API inventory', async () => {
   const expected = JSON.parse(fs.readFileSync(
@@ -1296,7 +1299,7 @@ await testAsync('core mesh-only compound rotation keeps a decal on its wall', as
         `decal worldMatrix[${i}] should be ${expected[i]}, got ${decal.worldMatrix[i]}`);
     }
 
-    const points = new Float32Array(native.HEAPU8.buffer,
+    const points = new Float32Array(renderHeap(stream),
       Number(decal.points.ptr), Number(decal.points.length));
     for (let i = 0; i < points.length; i += 3) {
       const worldX = points[i] * decal.worldMatrix[0] +
@@ -1324,14 +1327,14 @@ await testAsync('core merge-bake keeps compound-rotated decal vertices coplanar'
       'anonymous wall and decal meshes should merge into one baked mesh');
 
     const merged = stream.getMesh(0);
-    const aggregatePoints = new Float32Array(native.HEAPU8.buffer,
+    const aggregatePoints = new Float32Array(renderHeap(stream),
       Number(merged.points.ptr), Number(merged.points.length)).slice();
     const mergedView = stream.getMeshGeometryView(0);
     assert.equal(mergedView.primPath, merged.primPath);
     assert.equal(mergedView.materialId, merged.materialId);
     assert.deepEqual(mergedView.localMatrix, merged.localMatrix);
     assert.deepEqual(mergedView.worldMatrix, merged.worldMatrix);
-    const points = new Float32Array(native.HEAPU8.buffer,
+    const points = new Float32Array(renderHeap(stream),
       Number(mergedView.points.ptr), Number(mergedView.points.length));
     assert.deepEqual(points, aggregatePoints);
     assert.ok(points.length >= 24, 'merged wall and decal should retain both quads');
@@ -1427,7 +1430,7 @@ def Xform "Second" (
       }
     }
     assert.ok(merged, 'instance meshes sharing a material should merge');
-    const points = new Float32Array(native.HEAPU8.buffer,
+    const points = new Float32Array(renderHeap(stream),
       Number(merged.points.ptr), Number(merged.points.length));
     let minX = Infinity;
     let maxX = -Infinity;
@@ -1463,9 +1466,9 @@ await testAsync('core mesh-only path uses robust concave triangulation', async (
       }
     }
     assert.ok(mesh, 'concave fixture mesh should be present');
-    const points = new Float32Array(native.HEAPU8.buffer,
+    const points = new Float32Array(renderHeap(stream),
       Number(mesh.points.ptr), Number(mesh.points.length));
-    const indices = new Uint32Array(native.HEAPU8.buffer,
+    const indices = new Uint32Array(renderHeap(stream),
       Number(mesh.indices.ptr), Number(mesh.indices.length));
     assert.equal(indices.length, 9, 'pentagon should produce three triangles');
     let area = 0;

@@ -12,6 +12,7 @@ const smokeDir = path.join(os.tmpdir(), `lightusd-npm-smoke-${process.pid}`);
 
 const REQUIRED_STAGED_FILES = [
   'index.js',
+  'core.js',
   'LICENSE',
   'README.md',
   'package.json',
@@ -45,6 +46,12 @@ const REQUIRED_STAGED_FILES = [
   'lightusd_exr_64.js',
   'lightusd_exr_64.wasm',
   'lightusd_exr_64.wasm.zst',
+  'lightusd_tydra.js',
+  'lightusd_tydra.wasm',
+  'lightusd_tydra.wasm.zst',
+  'lightusd_tydra_64.js',
+  'lightusd_tydra_64.wasm',
+  'lightusd_tydra_64.wasm.zst',
   'LightUSDLoader.js',
   'LightUSDLoaderUtils.js',
   'LightUSDWorkerLoader.js',
@@ -122,6 +129,8 @@ assert.equal(typeof pkg.LightUSDComposer, 'function');
 assert.equal(typeof pkg.MaterialX, 'object');
 assert.equal(typeof pkg.OpenPBRWebGL, 'object');
 assert.equal(typeof pkg.OpenPBRTSL, 'object');
+assert.equal(typeof pkg.MeshBatching.dedupMaterialsByContent, 'function');
+assert.equal(typeof pkg.MeshBatching.batchByMaterial, 'function');
 assert.equal(pkg.LightUSDLoader, DeepLoader);
 assert.equal(LightUSDWorkerLoaderDefault, LightUSDWorkerLoader);
 assert.equal(require.resolve('lightusd/LightUSDLoader.js').endsWith('LightUSDLoader.js'), true);
@@ -169,6 +178,38 @@ for (const useMemory64 of [false, true]) {
   fs.writeFileSync(path.join(smokeDir, 'smoke.mjs'), script.trimStart(), 'utf8');
 }
 
+// The three-free entry point must work in an environment with no `three`
+// installed. This smoke fixture deliberately never imports the main `lightusd`
+// entry (which pulls in the three.js loaders).
+function prepareCoreSmokeFixture() {
+  fs.rmSync(smokeDir, { recursive: true, force: true });
+  fs.mkdirSync(path.join(smokeDir, 'node_modules'), { recursive: true });
+  fs.symlinkSync(distDir, path.join(smokeDir, 'node_modules', 'lightusd'), 'dir');
+  const script = `
+import assert from 'node:assert/strict';
+import { createLightUSD, createLightUSD64, FEATURE_NAMES } from 'lightusd/core';
+assert.equal(typeof createLightUSD, 'function');
+assert.equal(typeof createLightUSD64, 'function');
+assert.ok(FEATURE_NAMES.includes('tydra'));
+for (const factory of [createLightUSD, createLightUSD64]) {
+  const core = await factory();
+  assert.equal(typeof core.RenderStream, 'function');
+  const tydra = await core.loadFeature('tydra');
+  assert.notEqual(tydra.HEAPU8.buffer, core.HEAPU8.buffer);
+  assert.equal(typeof tydra.RenderStream, 'function');
+  const result = tydra.convertToRenderScene(new TextEncoder().encode(
+    '#usda 1.0\\ndef Xform "Root" {}\\n'));
+  assert.equal(result.ok, true);
+}
+`;
+  fs.writeFileSync(path.join(smokeDir, 'core-smoke.mjs'), script.trimStart(), 'utf8');
+}
+
+async function runCoreSmokeTest() {
+  prepareCoreSmokeFixture();
+  await import(pathToFileURL(path.join(smokeDir, 'core-smoke.mjs')).href);
+}
+
 async function runSmokeTest() {
   prepareSmokeFixture();
   await import(pathToFileURL(path.join(smokeDir, 'smoke.mjs')).href);
@@ -187,6 +228,7 @@ async function main() {
   validatePublishableContents(manifest);
 
   if (!packOnly) {
+    await runCoreSmokeTest();
     await runSmokeTest();
   }
 

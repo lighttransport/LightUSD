@@ -759,7 +759,7 @@ export class RenderSceneAdapter {
                     throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
                 }
                 const meshJsCopyStart = now();
-                const copiedMesh = this._copyMesh(native, mesh, i);
+                const copiedMesh = this._copyMesh(native, mesh, i, renderStream);
                 if (typeof renderStream.meshColorsBuffer === 'function')
                     copiedMesh.vertexColors = renderStream.meshColorsBuffer(i);
                 if (typeof renderStream.meshOpacitiesBuffer === 'function')
@@ -881,8 +881,9 @@ export class RenderSceneAdapter {
         return { ...animation, channels, samplers, tracks };
     }
 
-    static _copyMesh(native, mesh, index) {
-        const copy = (desc, Type) => copyWasmArray(native, desc, Type);
+    static _copyMesh(native, mesh, index, stream = null) {
+        const bufferModule = stream?.__lightusdModule || native;
+        const copy = (desc, Type) => copyWasmArray(bufferModule, desc, Type);
         const normalizeMaterial = (source) => {
             const material = source || {};
             const texturePaths = {

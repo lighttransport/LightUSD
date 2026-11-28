@@ -32,10 +32,10 @@ export async function checkFeatures(factory) {
   check(first === core.loadFeature('geometry'), 'pending promise deduplication');
   const geometry = await first;
   check(first === core.loadFeature('geometry'), 'resolved promise deduplication');
-  const [raytrace, validator, exr] = await Promise.all(
-    ['raytrace', 'validator', 'exr'].map(name => core.loadFeature(name)));
-  const features = [core, geometry, raytrace, validator, exr];
-  check(new Set(features.map(m => m.HEAPU8.buffer)).size === 5, 'separate heaps');
+  const [raytrace, validator, exr, tydra] = await Promise.all(
+    ['raytrace', 'validator', 'exr', 'tydra'].map(name => core.loadFeature(name)));
+  const features = [core, geometry, raytrace, validator, exr, tydra];
+  check(new Set(features.map(m => m.HEAPU8.buffer)).size === 6, 'separate heaps');
   for (const feature of features)
     check(JSON.stringify(feature.featureInfo) === JSON.stringify(core.featureInfo), 'matching layouts');
   const points = new Float32Array([0,0,0, 1,0,0, 1,1,0, 0,1,0]);
@@ -77,5 +77,11 @@ export async function checkFeatures(factory) {
   const decoded = exr.decodeEXR(encoded);
   check(decoded.success && decoded.width === 1 && decoded.height === 1, 'EXR round trip');
   check(decoded.data.buffer !== exr.HEAPU8.buffer, 'owned EXR result');
+  const scene = tydra.convertToRenderScene(new TextEncoder().encode(
+    '#usda 1.0\ndef Mesh "M" {\n int[] faceVertexCounts = [3]\n' +
+    ' int[] faceVertexIndices = [0,1,2]\n' +
+    ' point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]\n}\n'));
+  check(scene.ok && scene.meshes === 1 && scene.firstMesh.pointCount === 3,
+    'Tydra copy-in conversion');
   return {pointerBits: core.featureInfo.pointerBits, heaps: features.length};
 }

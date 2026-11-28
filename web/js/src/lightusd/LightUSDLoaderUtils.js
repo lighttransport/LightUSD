@@ -11,6 +11,12 @@ import {
     installTextureColorTransform,
     textureColorTransform
 } from './ColorSpaceUtils.js';
+import {TextureLoadingManager as BaseTextureLoadingManager} from './TextureLoadingManager.js';
+import {
+    textureColorRole as canonicalTextureColorRole,
+    textureSignature as canonicalTextureSignature,
+    textureCacheKey as canonicalTextureCacheKey
+} from './TextureCacheKeys.js';
 
 /**
  * TextureLoadingManager - Manages delayed/progressive texture loading.
@@ -31,27 +37,105 @@ import {
  *     yieldInterval: 16  // Yield to browser every 16ms
  *   });
  */
-class TextureLoadingManager {
-    constructor() {
-        this.queue = [];           // Pending texture tasks
-        this.taskMap = new Map();  // texture key -> task with material bindings
-        this.promiseCache = new Map(); // textureId -> in-flight/completed Promise
-        this.textureSignatureCache = new Map(); // textureId -> sampler/image signature
-        this.loaded = 0;           // Number of loaded textures
-        this.failed = 0;           // Number of failed textures
-        this.total = 0;            // Total textures to load
-        this.isLoading = false;    // Loading in progress
-        this.aborted = false;      // Loading was aborted
+// Path-specific hooks for the native texture-ID pipeline. All queue, dedup,
+// concurrency and lifecycle logic lives in TextureLoadingManager.js.
+const nativeTextureDriver = {
+  alreadyLoadingThrows: false,
+  resetAborts: false,
+  reset(manager) {
+    manager.isLoading = false;
+    manager.textureSignatureCache.clear();
+    manager.aborted = false;
+  },
+  defaultConcurrency: () => LightUSDLoaderUtils.defaultTextureConcurrency(),
+  status(manager) {
+    return {
+      total: manager.total, loaded: manager.loaded, failed: manager.failed,
+      pending: manager.total - manager.loaded - manager.failed,
+      percentage: manager.total > 0 ? (manager.loaded + manager.failed) / manager.total * 100 : 100,
+      isLoading: manager.isLoading,
+      isComplete: manager.loaded + manager.failed >= manager.total && !manager.isLoading
+    };
+  },
+  initialProgress(manager) {
+    return {
+      loaded: 0, failed: 0, total: manager.total, pending: manager.total,
+      percentage: 0, currentTexture: null, isStart: true, isComplete: manager.total === 0
+    };
+  },
+  initialYield: () => new Promise(resolve => requestAnimationFrame(resolve)),
+  yield: () => new Promise(resolve => requestAnimationFrame(resolve)),
+  taskProgress(manager, task) {
+    return {
+      loaded: manager.loaded, failed: manager.failed, total: manager.total,
+      pending: manager.total - manager.loaded - manager.failed,
+      percentage: manager.total > 0 ? (manager.loaded + manager.failed) / manager.total * 100 : 100,
+      currentTexture: `${task.mapProperty} (${task.textureId})`,
+      isComplete: manager.loaded + manager.failed >= manager.total
+    };
+  },
+  finalProgress(manager) {
+    return {
+      loaded: manager.loaded, failed: manager.failed, total: manager.total,
+      pending: 0, percentage: 100, currentTexture: null, isComplete: true
+    };
+  },
+  load(manager, task, {loadTexture}) {
+    const {mapProperty, textureId, usdScene} = task;
+    const cacheKey = task.cacheKey ||
+        LightUSDLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, manager.textureSignatureCache);
+    let promise = manager.promiseCache.get(cacheKey);
+    if (!promise) {
+      promise = loadTexture
+        ? loadTexture(textureId, usdScene, mapProperty)
+        : LightUSDLoaderUtils.getTextureFromUSD(usdScene, textureId, mapProperty);
+      manager.promiseCache.set(cacheKey, promise);
     }
+    return promise;
+  },
+  apply(manager, binding, task, texture, {onTextureLoaded}) {
+    const {mapProperty, textureId, usdScene} = task;
+    const bindingMapProperty = binding.mapProperty || mapProperty;
+    const colorMetadata = LightUSDLoaderUtils.textureColorMetadata(textureId, usdScene);
+    const authoredColorSpace = LightUSDLoaderUtils.textureSourceColorSpace(
+        textureId, usdScene, colorMetadata);
+    LightUSDLoaderUtils.applyTextureMapDefaults(
+        texture, mapProperty, authoredColorSpace, colorMetadata);
+    installTextureColorTransform(
+        binding.material, bindingMapProperty,
+        textureColorTransform(authoredColorSpace, 'lin_rec709_scene', colorMetadata));
+    binding.material[bindingMapProperty] = texture;
+    const bindingOptions = binding.options || {};
+    if (bindingOptions.normalScale !== undefined && bindingMapProperty === 'normalMap' &&
+        binding.material.normalScale) {
+        binding.material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
+    }
+    binding.material.needsUpdate = true;
+    if (onTextureLoaded) onTextureLoaded(binding.material, bindingMapProperty, texture);
+  },
+  onError(manager, task, error) {
+    const isUnsupportedUDIM = error?.name === 'UnsupportedUDIMTextureError';
+    const isUnsupportedFormat = error?.name === 'UnsupportedTextureFormatError';
+    const detail = {
+        ...LightUSDLoaderUtils.textureDebugInfo(
+            task.textureId, task.usdScene, task.mapProperty,
+            (task.options || {}).sourceFileName || ''),
+        error: LightUSDLoaderUtils.textureLoadErrorInfo(error)
+    };
+    console.warn(
+        isUnsupportedUDIM ?
+            `Unsupported UDIM texture for ${task.mapProperty}; skipping texture fetch` :
+            isUnsupportedFormat ?
+                `Unsupported texture format for ${task.mapProperty}; skipping texture fetch` :
+                `Failed to load texture ${task.textureId} for ${task.mapProperty}`,
+        JSON.stringify(detail)
+    );
+  }
+};
 
-    /**
-     * Queue a texture to be loaded later
-     * @param {THREE.Material} material - Target material
-     * @param {string} mapProperty - Property name (e.g., 'map', 'normalMap')
-     * @param {number} textureId - USD texture ID
-     * @param {Object} usdScene - USD scene/loader instance
-     * @param {Object} options - Additional options (e.g., normalScale)
-     */
+class TextureLoadingManager extends BaseTextureLoadingManager {
+    constructor() { super(nativeTextureDriver); }
+
     queueTexture(material, mapProperty, textureId, usdScene, options = {}) {
         const cacheKey = LightUSDLoaderUtils.textureCacheKey(
             textureId, usdScene, mapProperty, this.textureSignatureCache);
@@ -76,235 +160,8 @@ class TextureLoadingManager {
         task.bindings.push({ material, mapProperty, options });
         this.total = this.queue.length;
     }
-
-    /**
-     * Redirect queued texture bindings when a rendering pipeline replaces a
-     * material (for example, to install extended skinning shaders).
-     */
-    rebindMaterial(previousMaterial, replacementMaterial) {
-        if (!previousMaterial || !replacementMaterial || previousMaterial === replacementMaterial) {
-            return;
-        }
-        for (const task of this.queue) {
-            for (const binding of task.bindings) {
-                if (binding.material === previousMaterial) {
-                    binding.material = replacementMaterial;
-                }
-            }
-        }
-    }
-
-    /**
-     * Get current loading status
-     */
-    getStatus() {
-        return {
-            total: this.total,
-            loaded: this.loaded,
-            failed: this.failed,
-            pending: this.total - this.loaded - this.failed,
-            percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
-            isLoading: this.isLoading,
-            isComplete: this.loaded + this.failed >= this.total && !this.isLoading
-        };
-    }
-
-    /**
-     * Abort loading
-     */
-    abort() {
-        this.aborted = true;
-    }
-
-    /**
-     * Reset manager for new loading session
-     */
-    reset() {
-        this.queue = [];
-        this.taskMap.clear();
-        this.promiseCache.clear();
-        this.textureSignatureCache.clear();
-        this.loaded = 0;
-        this.failed = 0;
-        this.total = 0;
-        this.isLoading = false;
-        this.aborted = false;
-    }
-
-    /**
-     * Start loading queued textures with progress reporting
-     * @param {Object} options - Loading options
-     * @param {Function} options.onProgress - Progress callback ({loaded, total, percentage, currentTexture})
-     * @param {Function} options.onTextureLoaded - Called when each texture loads (material, mapProperty, texture)
-     * @param {number} options.concurrency - Number of concurrent loads (default: 1)
-     * @param {number} options.yieldInterval - ms between browser yields (default: 16)
-     * @returns {Promise<Object>} - Final status {loaded, failed, total}
-     */
-    async startLoading(options = {}) {
-        const {
-            onProgress = null,
-            onTextureLoaded = null,
-            loadTexture = null,
-            concurrency = LightUSDLoaderUtils.defaultTextureConcurrency(),
-            yieldInterval = 16
-        } = options;
-
-        if (this.isLoading) {
-            console.warn('TextureLoadingManager: Already loading');
-            return this.getStatus();
-        }
-
-        this.isLoading = true;
-        this.aborted = false;
-        let lastYieldTime = performance.now();
-
-        // Report initial progress
-        if (onProgress) {
-            onProgress({
-                loaded: 0,
-                failed: 0,
-                total: this.total,
-                pending: this.total,
-                percentage: 0,
-                currentTexture: null,
-                isStart: true,
-                isComplete: this.total === 0
-            });
-        }
-
-        // Yield to allow initial render without textures
-        await new Promise(r => requestAnimationFrame(r));
-
-        // Process queue with concurrency control
-        const pendingTasks = [...this.queue];
-        const activeTasks = new Set();
-
-        const processTextureTask = async (task) => {
-            if (this.aborted) return;
-
-            task.status = 'loading';
-            const { mapProperty, textureId, usdScene, options: taskOptions } = task;
-
-            try {
-                const cacheKey = task.cacheKey ||
-                    LightUSDLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
-                let promise = this.promiseCache.get(cacheKey);
-                if (!promise) {
-                    promise = loadTexture
-                        ? loadTexture(textureId, usdScene, mapProperty)
-                        : LightUSDLoaderUtils.getTextureFromUSD(usdScene, textureId, mapProperty);
-                    this.promiseCache.set(cacheKey, promise);
-                }
-                const texture = await promise;
-
-                if (texture && !this.aborted) {
-                    const colorMetadata = LightUSDLoaderUtils.textureColorMetadata(
-                        textureId, usdScene);
-                    const authoredColorSpace = LightUSDLoaderUtils.textureSourceColorSpace(
-                        textureId, usdScene, colorMetadata);
-                    LightUSDLoaderUtils.applyTextureMapDefaults(
-                        texture, mapProperty, authoredColorSpace, colorMetadata);
-                    for (const binding of task.bindings) {
-                        const { material, options: bindingOptions } = binding;
-                        const bindingMapProperty = binding.mapProperty || mapProperty;
-                        material[bindingMapProperty] = texture;
-                        installTextureColorTransform(material, bindingMapProperty,
-                            textureColorTransform(authoredColorSpace,
-                                'lin_rec709_scene', colorMetadata));
-
-                        // Apply special options (e.g., normal map scale)
-                        if (bindingOptions.normalScale !== undefined && bindingMapProperty === 'normalMap' && material.normalScale) {
-                            material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
-                        }
-
-                        material.needsUpdate = true;
-                        if (onTextureLoaded) {
-                            onTextureLoaded(material, bindingMapProperty, texture);
-                        }
-                    }
-                    task.status = 'loaded';
-                    this.loaded++;
-                }
-            } catch (err) {
-                const isUnsupportedUDIM = err?.name === 'UnsupportedUDIMTextureError';
-                const isUnsupportedFormat = err?.name === 'UnsupportedTextureFormatError';
-                const detail = {
-                    ...LightUSDLoaderUtils.textureDebugInfo(
-                        textureId, usdScene, mapProperty, taskOptions.sourceFileName || ''),
-                    error: LightUSDLoaderUtils.textureLoadErrorInfo(err)
-                };
-                console.warn(
-                    isUnsupportedUDIM ?
-                        `Unsupported UDIM texture for ${mapProperty}; skipping texture fetch` :
-                        isUnsupportedFormat ?
-                            `Unsupported texture format for ${mapProperty}; skipping texture fetch` :
-                            `Failed to load texture ${textureId} for ${mapProperty}`,
-                    JSON.stringify(detail)
-                );
-                task.status = 'failed';
-                this.failed++;
-            }
-
-            // Report progress
-            if (onProgress && !this.aborted) {
-                onProgress({
-                    loaded: this.loaded,
-                    failed: this.failed,
-                    total: this.total,
-                    pending: this.total - this.loaded - this.failed,
-                    percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
-                    currentTexture: `${mapProperty} (${textureId})`,
-                    isComplete: this.loaded + this.failed >= this.total
-                });
-            }
-
-            // Yield to browser periodically
-            const now = performance.now();
-            if (now - lastYieldTime >= yieldInterval) {
-                lastYieldTime = now;
-                await new Promise(r => requestAnimationFrame(r));
-            }
-        };
-
-        // Process with concurrency limit
-        while (pendingTasks.length > 0 || activeTasks.size > 0) {
-            if (this.aborted) break;
-
-            // Start new tasks up to concurrency limit
-            while (pendingTasks.length > 0 && activeTasks.size < concurrency) {
-                const task = pendingTasks.shift();
-                const promise = processTextureTask(task).then(() => {
-                    activeTasks.delete(promise);
-                });
-                activeTasks.add(promise);
-            }
-
-            // Wait for at least one task to complete
-            if (activeTasks.size > 0) {
-                await Promise.race(activeTasks);
-            }
-        }
-
-        this.isLoading = false;
-
-        // Final progress report
-        if (onProgress) {
-            onProgress({
-                loaded: this.loaded,
-                failed: this.failed,
-                total: this.total,
-                pending: 0,
-                percentage: 100,
-                currentTexture: null,
-                isComplete: true
-            });
-        }
-
-        return this.getStatus();
-    }
 }
 
-// Export the manager class
 export { TextureLoadingManager };
 
 class LightUSDLoaderUtils extends LoaderUtils {
@@ -972,16 +829,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
     }
 
     static textureColorRole(mapProperty) {
-        switch (mapProperty) {
-            case 'map':
-            case 'emissiveMap':
-            case 'specularColorMap':
-            case 'sheenColorMap':
-            case 'attenuationColorMap':
-                return 'color';
-            default:
-                return 'data';
-        }
+        return canonicalTextureColorRole(mapProperty);
     }
 
     static threeWrapMode(wrap) {
@@ -1026,9 +874,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
     }
 
     static textureCacheKey(textureId, usdScene, mapProperty = '', textureSignatureCache = null) {
-        const role = this.textureColorRole(mapProperty);
-        const signature = this.textureSignature(textureId, usdScene, textureSignatureCache);
-        return `${role}:${JSON.stringify(signature)}`;
+        return canonicalTextureCacheKey(textureId, usdScene, mapProperty, textureSignatureCache);
     }
 
     static applyTextureMapDefaults(texture, mapProperty, authoredColorSpace = '',
@@ -1096,42 +942,7 @@ class LightUSDLoaderUtils extends LoaderUtils {
     }
 
     static textureSignature(textureId, usdScene, textureSignatureCache = null) {
-        if (textureId === undefined || textureId === null || textureId < 0 ||
-            !usdScene || typeof usdScene.getTexture !== 'function') {
-            return textureId;
-        }
-        if (textureSignatureCache && textureSignatureCache.has(textureId)) {
-            return textureSignatureCache.get(textureId);
-        }
-        let signature = textureId;
-        try {
-            const texture = usdScene.getTexture(textureId);
-            if (texture && texture.textureImageId !== undefined) {
-                signature = {
-                    imageId: texture.textureImageId,
-                    wrapS: texture.wrapS,
-                    wrapT: texture.wrapT,
-                    hasTransform2d: !!texture.hasTransform2d,
-                    txRotation: texture.txRotation,
-                    txScaleU: texture.txScaleU,
-                    txScaleV: texture.txScaleV,
-                    txTranslationU: texture.txTranslationU,
-                    txTranslationV: texture.txTranslationV,
-                    isUDIM: !!texture.isUDIM,
-                    udimTextureId: texture.udimTextureId,
-                    udimUvScaleU: texture.udimUvScaleU,
-                    udimUvScaleV: texture.udimUvScaleV,
-                    udimUvOffsetU: texture.udimUvOffsetU,
-                    udimUvOffsetV: texture.udimUvOffsetV
-                };
-            }
-        } catch (_) {
-            signature = textureId;
-        }
-        if (textureSignatureCache) {
-            textureSignatureCache.set(textureId, signature);
-        }
-        return signature;
+        return canonicalTextureSignature(textureId, usdScene, textureSignatureCache);
     }
 
     static textureDebugInfo(textureId, usdScene, mapProperty = '', sourceFileName = '') {

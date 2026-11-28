@@ -25,3 +25,4 @@ export * from './USDSkeletonData.js';
 export * as MaterialX from './LightUSDMaterialX.js';
 export * as OpenPBRWebGL from './LightUSDOpenPBR_WebGL.js';
 export * as OpenPBRTSL from './LightUSDOpenPBR_TSL.js';
+export * as MeshBatching from './MeshBatching.js';

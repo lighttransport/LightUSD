@@ -12,6 +12,24 @@ JS/WASM distribution of LightUSD.
 npm install lightusd
 ```
 
+## Three.js-free core
+
+Use `lightusd/core` when you only need the WASM core module and its optional
+features. It has no `three` dependency, so it works in Node, workers and
+non-rendering tools:
+
+```js
+import { createLightUSD, createLightUSD64, FEATURE_NAMES } from 'lightusd/core';
+
+const module = await createLightUSD();          // use createLightUSD64 for wasm64
+const tydra = await module.loadFeature('tydra');
+const summary = tydra.convertToRenderScene(usdBytes);
+```
+
+`FEATURE_NAMES` lists the names accepted by `loadFeature()`. The root
+entrypoint below additionally pulls in the three.js loaders and material
+converters.
+
 ## Quick usage
 
 The package now exposes a root entrypoint for the common loader APIs:
@@ -53,6 +71,20 @@ uses it by default. The legacy module is no longer published: passing
 `backend: 'legacy'` logs a warning and loads with the core backend instead.
 
 Deep imports such as `lightusd/LightUSDLoader.js` remain supported for existing code.
+
+For three.js-side scene optimization after loading, the package exports
+`MeshBatching` with two standalone helpers: `dedupMaterialsByContent(root)`
+collapses visually identical `THREE.Material` instances, and
+`batchByMaterial(root)` groups same-material indexed meshes into
+`THREE.BatchedMesh` draws while preserving per-instance transforms in
+`userData.batchedInstances`.
+
+```js
+import { MeshBatching } from 'lightusd';
+
+MeshBatching.dedupMaterialsByContent(scene);
+const stats = MeshBatching.batchByMaterial(scene);
+```
 
 ## Using zstd-compressed WASM
 
@@ -176,9 +208,10 @@ by `LightUSDLoader` by default. The deprecated `useCoreOnlyWasm` option and
 `nextWasm` query alias remain accepted during migration.
 
 The core distribution also contains `lightusd_geometry`, `lightusd_raytrace`,
-`lightusd_validator`, and `lightusd_exr`, each with `.js` / `.wasm` files and
-matching `_64` variants. Keep these files beside the main module, or supply
-`locateFeature(filename)` to resolve both feature JS and WASM files.
+`lightusd_validator`, `lightusd_exr`, and `lightusd_tydra`, each with `.js` /
+`.wasm` files and matching `_64` variants. Keep these files beside the main
+module, or supply `locateFeature(filename)` to resolve both feature JS and
+WASM files.
 
 ```js
 const module = await createLightUSD();
@@ -189,6 +222,14 @@ const raytrace = await module.loadFeature('raytrace');
 const tracer = new raytrace.LightRTPathTracer();
 const validator = await module.loadFeature('validator');
 const exr = await module.loadFeature('exr');
+const tydra = await module.loadFeature('tydra');
+// Self-contained render conversion: bytes are copied in, JSON is copied out.
+const scene = tydra.convertToRenderScene(usdBytes);
+// A stateful RenderStream is owned by the feature heap as well.
+const stream = new tydra.RenderStream();
+const load = stream.begin(usdBytes);
+const meshes = stream.meshCount();
+stream.delete();
 ```
 
 Each feature has its own heap. Pass typed arrays to its methods; the wrappers

@@ -536,7 +536,14 @@ This gate supplies a generated textured USDZ and HDR environment, checks metadat
 and Z-up conversion, renders both physical/OpenPBR TSL modes, and requires a live
 GPU device with no browser errors. Linux forces SwiftShader for Vulkan, ANGLE
 and WebGPU together; forcing only a WebGL SwiftShader backend can leave Chromium
-without a compatible WebGPU swapchain backing. See
+without a compatible WebGPU swapchain backing. On headless Linux hosts with no
+GPU device this gate is environment-blocked: Chrome with the Vulkan SwiftShader
+flags creates only a WebGL1 context (three.js r185 requires WebGL2, so the
+debug page throws `Error creating WebGL context`), while flag combinations that
+do provide WebGL2 expose no `navigator.gpu` adapter at all. Verified with
+`--use-angle=vulkan --use-vulkan=swiftshader --use-webgpu-adapter=swiftshader`
+versus `--use-angle=swiftshader`; `core-features-browser.test.mjs` still runs
+in both widths on such hosts. See
 [Chromium's SwiftShader configuration](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/gpu/swiftshader.md).
 The browser profile includes this gate and the standalone export/validation/GL
 inspector gate before any optional Menagerie assets.
